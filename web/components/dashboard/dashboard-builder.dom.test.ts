@@ -338,6 +338,8 @@ test('dashboard builder explains incompatible switches and retains fields for sw
         { id: 'dimension-0', label: 'Status', kind: 'dimension', fieldId: 'orders.status', required: true },
         { id: 'metric-0', label: 'Total', kind: 'metric', fieldId: 'orders.total', required: true },
       ]
+      const revision = 'sha256:stale-table-preview'
+      const dataState = { kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, datasets: [] }
       mergePatch({ builder: {
         visualCatalog: element.builder.visualCatalog.map((entry: any) => entry.type === 'map'
           ? { ...entry, roles: ['detail'], roleLimits: [{ role: 'detail', minimum: 2, maximum: 2 }] }
@@ -347,6 +349,13 @@ test('dashboard builder explains incompatible switches and retains fields for sw
         pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'map', slots }] }, element.builder.pages[1]],
         selectedPageId: 'overview', selectedVisualId: 'sales-chart',
         preview: { ...element.builder.preview, active: false, error: 'visual "sales-chart": map visual requires exactly two dimensions' },
+      }, builderVisuals: {
+        'sales-chart': {
+          schemaVersion: 10, visualID: 'sales-chart', rendererID: 'echarts', specRevision: revision, dataRevision: 1,
+          spec: { kind: 'cartesian', title: 'Stale table preview', accessibility: { title: 'Stale table preview', description: 'Preview from the prior visual type.' }, fields: [], x: { dataset: 'primary', field: 'category' }, y: [{ dataset: 'primary', field: 'value' }] },
+          dataState: { schemaVersion: 1, encoding: 'json', kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, payload: JSON.stringify(dataState) },
+          selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'serving-test', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'visual:sales-chart',
+        },
       } })
       await element.updateComplete
       const root = element.shadowRoot
@@ -355,6 +364,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
         retained: Array.from(root.querySelectorAll('.retained-field')).map((node: any) => node.textContent?.trim()),
         canvas: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
         banner: root.querySelector('.preview-error')?.textContent?.trim(),
+        previewHosts: root.querySelectorAll('.visual-preview lv-visualization-host').length,
         disabledTypes: root.querySelectorAll('.visual-picker-button:disabled').length,
       }
       mergePatch({ builder: {
@@ -374,7 +384,8 @@ test('dashboard builder explains incompatible switches and retains fields for sw
     expect(state.switched.requirement).toContain('Add 2 coordinate columns to preview')
     expect(state.switched.retained).toEqual(['Status', 'Total'])
     expect(state.switched.canvas).toContain('Add 2 coordinate columns')
-    expect(state.switched.banner).toContain('One or more visuals')
+    expect(state.switched.banner).toBeUndefined()
+    expect(state.switched.previewHosts).toBe(0)
     expect(state.switched.disabledTypes).toBe(0)
     expect(state.restored.requirement).toBe('Data requirements met.')
     expect(state.restored.wells).toEqual(['Status', 'Total'])

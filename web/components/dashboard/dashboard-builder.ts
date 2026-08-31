@@ -1854,15 +1854,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       font: var(--lv-type-caption);
     }
 
-    .preview-error {
-      margin: 0;
-      padding: var(--base-size-8) var(--base-size-12);
-      border-bottom: var(--lv-border-muted);
-      color: var(--lv-fg-danger, var(--lv-fg-muted));
-      background: var(--lv-bg-danger-muted, var(--lv-bg-panel));
-      font: var(--lv-type-caption);
-    }
-
     .visual,
     .filter-component {
       position: absolute;
@@ -1925,12 +1916,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual-preview-empty {
-      display: grid;
+      display: flex;
       min-height: 0;
-      place-items: center;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-4);
+      padding: var(--base-size-8);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       text-align: center;
+    }
+
+    .visual-preview-empty strong {
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .filter-component > .grid-stack-item-content {
@@ -2976,7 +2977,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
-          ${builder.preview.error ? html`<p class="preview-error" role="alert">One or more visuals cannot be previewed yet. Select a visual to see its data requirements.</p>` : nothing}
           <p id="dashboard-builder-grid-help" class="sr-only">Focus a canvas component. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
           <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
             ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
@@ -2993,7 +2993,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderVisual(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal) {
     const selected = visual.id === this.effectiveVisualID(this.builder, page)
     const visualType = this.visualTypeForRender(visual)
-    const preview = this.builderVisuals[this.visualSignalID(visual)]
+    const previewCandidate = this.builderVisuals[this.visualSignalID(visual)]
     const mobileOrder = this.mobileVisualOrder(visual, page)
     const columns = Math.max(1, page.grid.columns || 12)
     const left = `${Math.max(0, visual.placement.col - 1) * (100 / columns)}%`
@@ -3002,14 +3002,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const height = `${Math.max(1, visual.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
-    const requirementMessage = this.visualRequirementMessages(visual)[0]
+    const requirementMessages = this.visualRequirementMessages(visual)
     const previewIssue = this.visualPreviewErrorMessage(visual)
+    const previewUnavailable = requirementMessages.length > 0 || Boolean(previewIssue) || Boolean(this.builder?.preview.error && !this.builder.preview.active)
+    const preview = previewUnavailable ? undefined : previewCandidate
+    const fallbackMessage = this.builder?.preview.error ? 'Preview unavailable. Try again after the draft is valid.' : 'Add fields to preview.'
     return html`
       <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
             ? html`<span class="visual-preview"><lv-visualization-host authoring .envelope=${preview}><span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span></lv-visualization-host></span>`
-            : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty">${requirementMessage || previewIssue || (this.builder?.preview.error ? 'Preview unavailable' : 'Add fields to preview')}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
+            : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty" role="status"><strong>${this.visualLabel(visualType)} preview unavailable</strong>${requirementMessages.length > 0 ? requirementMessages.map((message) => html`<span>${message}</span>`) : html`<span>${previewIssue || fallbackMessage}</span>`}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>
     `
