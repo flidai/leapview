@@ -882,6 +882,13 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		if replayed {
 			return nil
 		}
+		mayPublish, fenceErr := p.repository.RunMayPublishTx(ctx, tx, job.RunID, job.LeaseOwner, job.LeaseRevision)
+		if fenceErr != nil {
+			return fenceErr
+		}
+		if !mayPublish {
+			return refreshpostgres.ErrStaleFence
+		}
 		pubInput, err := p.canonicalVerifier.VerifyCanonicalRefreshTx(ctx, tx, job, result)
 		if err != nil {
 			return err

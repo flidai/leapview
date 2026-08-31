@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 )
@@ -24,6 +25,41 @@ func TestNativeCreatePlanBuildFailsClosed(t *testing.T) {
 	_, err := (&NativeCreatePlanCoordinator{}).BuildPlan(context.Background(), deploymentmodule.NativeDeliveryBuildRequest{})
 	if !errors.Is(err, deploymentmodule.ErrDeliveryInputUnavailable) {
 		t.Fatalf("BuildPlan error = %v, want input unavailable", err)
+	}
+}
+
+func TestNativePlanRequestDigestIncludesCanonicalPipelinePlan(t *testing.T) {
+	request := nativePlanRequest()
+	base, err := projectpipelineplan.New(projectpipelineplan.Plan{
+		ID: "refresh-plan", PipelineID: "pipeline", ProjectID: request.ProjectID.String(), Environment: request.Environment,
+		SemanticModelID: "semantic", ServingGenerationID: "generation", ArtifactDigest: request.SourceDigest,
+		SelectionDigest: createPlanTestDigest('c'), MaterializationScope: []string{"model"}, ModelExecutionOrder: []string{"model"},
+		QualificationChecks: []string{"schema"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.PipelinePlan = &base
+	first, err := nativePlanRequestDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	changed, err := projectpipelineplan.New(projectpipelineplan.Plan{
+		ID: "refresh-plan", PipelineID: "pipeline", ProjectID: request.ProjectID.String(), Environment: request.Environment,
+		SemanticModelID: "semantic", ServingGenerationID: "generation", ArtifactDigest: request.SourceDigest,
+		SelectionDigest: createPlanTestDigest('d'), MaterializationScope: []string{"model"}, ModelExecutionOrder: []string{"model"},
+		QualificationChecks: []string{"schema"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.PipelinePlan = &changed
+	second, err := nativePlanRequestDigest(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first == second {
+		t.Fatal("semantically different pipeline plans shared a native request digest")
 	}
 }
 

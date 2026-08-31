@@ -36,6 +36,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
@@ -296,6 +297,56 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// Runtime factory resolution is entirely root-driven. No catalog database,
 	// pool ID, UUID, or snapshot is synthesized from configuration.
 	targetReader := appdeploymentpostgres.NewTargetReader(graph.DeploymentRepository)
+	// Refresh admission carries the target-owned fence and source identity
+	// forward from PostgreSQL. Neither value is inferred from the serving-state
+	// row or process configuration; both are checked against the exact active
+	// generation selected by the target pointer. The active plan may itself
+	// have been built from a predecessor generation; only its own plan ID and
+	// digest are authoritative here.
+	resolveRefreshTargetRevision := func(resolveCtx context.Context, identity projectgraph.ServingIdentity) (int64, error) {
+		target, err := targetReader.DeliveryTargetRevision(resolveCtx, instanceID)
+		if err != nil {
+			return 0, err
+		}
+		if target.ProjectID != identity.ProjectID.String() || target.Environment != identity.Environment || target.ActiveGenerationID != identity.GenerationID {
+			return 0, fmt.Errorf("%w: refresh target fence does not match active serving identity", deployment.ErrDeliveryConflict)
+		}
+		if target.TargetRevision <= 0 {
+			return 0, fmt.Errorf("%w: refresh target revision is not positive", deployment.ErrDeliveryConflict)
+		}
+		return target.TargetRevision, nil
+	}
+	resolveRefreshSourceDigest := func(resolveCtx context.Context, identity projectgraph.ServingIdentity) (string, error) {
+		target, err := targetReader.DeliveryTargetRevision(resolveCtx, instanceID)
+		if err != nil {
+			return "", err
+		}
+		if target.ProjectID != identity.ProjectID.String() || target.Environment != identity.Environment || target.ActiveGenerationID != identity.GenerationID {
+			return "", fmt.Errorf("%w: refresh source target does not match active serving identity", deployment.ErrDeliveryConflict)
+		}
+		generation, err := graph.DeploymentRepository.Generation(resolveCtx, target.ActiveGenerationID)
+		if err != nil {
+			return "", err
+		}
+		if generation.TargetID != instanceID || generation.GenerationID != identity.GenerationID || strings.TrimSpace(generation.PlanID) == "" {
+			return "", fmt.Errorf("%w: refresh active generation identity is incomplete", deployment.ErrDeliveryConflict)
+		}
+		storedPlan, err := graph.DeploymentRepository.Plan(resolveCtx, generation.PlanID)
+		if err != nil {
+			return "", err
+		}
+		rich, err := storedPlan.RichPlan()
+		if err != nil {
+			return "", err
+		}
+		if rich.ID != generation.PlanID || rich.ProjectID != identity.ProjectID || rich.TargetID != instanceID || rich.Environment != identity.Environment || rich.Digest != generation.PlanDigest {
+			return "", fmt.Errorf("%w: refresh source plan identity does not match active generation", deployment.ErrDeliveryConflict)
+		}
+		if err := platformdigest.ValidateSHA256Identity(rich.SourceDigest); err != nil {
+			return "", fmt.Errorf("%w: refresh source digest is invalid: %v", deployment.ErrDeliveryConflict, err)
+		}
+		return rich.SourceDigest, nil
+	}
 	attachChecker := appruntimefactory.NewPostgresRuntimeAttachChecker(bootstrap.DuckLakePool())
 	// BuildRuntime uses the analytics module's factory against the immutable
 	// DuckLake environment opened by the sealed runtime factory. The dashboard
@@ -546,7 +597,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// Legacy delivery projection and candidate-builder paths remain absent.
 	// Refresh dispatch stays disabled until publication/activation is composed.
 	deploymentConfig := deploymentmodule.Config{Persistence: graph.DeploymentPersistence, Production: true, Protected: true, NativeDeliveryMutations: nativeDelivery, NativeDeliveryReader: appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository), CandidateSources: nativeProjectSource.CandidateSourceReader}
-	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: false, RefreshSourceDigest: nil, CanonicalRefreshExecutor: nil}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
+	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: false, RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nil}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		lease, err := runtimeHost.Acquire(ctx)
 		if err != nil {
 			return "", err

@@ -782,6 +782,58 @@ func TestPostgresRefreshConcurrentLinkReplayAfterCommit(t *testing.T) {
 	}
 }
 
+func TestPostgresRefreshRunMayPublishTxLocksWorkerFence(t *testing.T) {
+	_, admin := refreshTestDB(t)
+	r := New(admin)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seedRefreshJob(t, admin, "job-fence-lock", "fence-lock-run", "p", "prod", "principal")
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "fence-lock-run", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "refresh_pipeline", TargetID: "pipe", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-fence-lock"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ClaimAttempt(ctx, "fence-lock-run", "worker-a", 1, 10*time.Millisecond); err != nil {
+		t.Fatal(err)
+	}
+	tx1, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx1.Rollback(ctx)
+	allowed, err := r.RunMayPublishTx(ctx, tx1, "fence-lock-run", "worker-a", 1)
+	if err != nil || !allowed {
+		t.Fatalf("RunMayPublishTx() = %v, %v; want live fence", allowed, err)
+	}
+	tx2, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx2.Rollback(ctx)
+	takeover := make(chan error, 1)
+	go func() {
+		_, claimErr := r.ClaimAttemptTx(ctx, tx2, "fence-lock-run", "worker-b", 2, time.Minute)
+		takeover <- claimErr
+	}()
+	// The lease expires while tx1 still owns the row lock. A takeover must
+	// remain blocked until the publishing transaction releases that lock.
+	time.Sleep(80 * time.Millisecond)
+	select {
+	case claimErr := <-takeover:
+		t.Fatalf("takeover completed while publication fence lock held: %v", claimErr)
+	default:
+	}
+	if err := tx1.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case claimErr := <-takeover:
+		if claimErr != nil {
+			t.Fatalf("takeover after fence release: %v", claimErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("takeover remained blocked after publication fence release")
+	}
+}
+
 func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) {
 	db, admin := refreshTestDB(t)
 	maintenance, err := pgxpool.New(t.Context(), db.URL(postgrestest.Role{Name: "leapview_control_maintenance", Password: "refresh_maintenance_password", Login: true}))

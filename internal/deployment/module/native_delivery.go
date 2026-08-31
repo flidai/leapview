@@ -16,6 +16,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 )
@@ -135,6 +136,10 @@ type NativeDeliveryPlanRequest struct {
 	SourceDigest            string
 	SourceAttestationDigest string
 	IdempotencyKey          string
+	// PipelinePlan carries the immutable generation-bound refresh selection
+	// into native delivery planning. The PostgreSQL authority persists this
+	// rich plan document; callers cannot reconstruct it from a digest later.
+	PipelinePlan *projectpipelineplan.Plan
 }
 
 // NativeDeliveryPlan is the value-only response projection returned by a
@@ -338,6 +343,15 @@ func (r NativeDeliveryPlanRequest) validate(environment string) error {
 	}
 	if err := platformdigest.ValidateSHA256Identity(r.SourceAttestationDigest); err != nil {
 		return fmt.Errorf("%w: source attestation digest: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if r.PipelinePlan != nil {
+		canonical := r.PipelinePlan.Canonical()
+		if err := canonical.Validate(); err != nil {
+			return fmt.Errorf("%w: pipeline plan: %v", deployment.ErrDeliveryInvalid, err)
+		}
+		if canonical.ProjectID != r.ProjectID.String() || canonical.Environment != r.Environment || canonical.ArtifactDigest != r.SourceDigest {
+			return fmt.Errorf("%w: pipeline plan identity differs from native delivery request", deployment.ErrDeliveryConflict)
+		}
 	}
 	switch deployment.DeliveryOperationKind(r.Operation) {
 	case deployment.DeliveryOperationCodeChange, deployment.DeliveryOperationRestatement, deployment.DeliveryOperationBindingChange, deployment.DeliveryOperationPolicyChange:

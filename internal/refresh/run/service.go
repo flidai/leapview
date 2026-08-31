@@ -134,8 +134,12 @@ type Service struct {
 	// ServingStateMutations is required only for the legacy candidate/activate
 	// flow. Native canonical execution leaves it nil and performs lifecycle
 	// writes through its canonical delivery executor instead.
-	ServingStateMutations    ServingStateRepository
-	ResolveActive            func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
+	ServingStateMutations ServingStateRepository
+	ResolveActive         func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
+	// ResolveTargetRevision reads the authoritative deployment target fence at
+	// queue time. Native PostgreSQL refreshes must carry this exact revision
+	// into the durable run; a zero or inferred revision is never publishable.
+	ResolveTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
 	ResolveSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalExecutor        func(context.Context, JobRecord) (CanonicalRefreshResult, error)
 	Runs                     WorkflowRepository
@@ -226,9 +230,22 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.TriggerType != TriggerManual && input.TriggerType != TriggerSchedule {
 		return QueueAssetResult{}, fmt.Errorf("unsupported refresh pipeline trigger %q", input.TriggerType)
 	}
+	if s.CanonicalExecutor != nil && s.ResolveTargetRevision == nil {
+		return QueueAssetResult{}, fmt.Errorf("canonical refresh target revision resolver is required")
+	}
 	active, err := s.activeForIdentity(ctx, input.Identity)
 	if err != nil {
 		return QueueAssetResult{}, err
+	}
+	targetRevision := int64(0)
+	if s.ResolveTargetRevision != nil {
+		targetRevision, err = s.ResolveTargetRevision(ctx, input.Identity)
+		if err != nil {
+			return QueueAssetResult{}, fmt.Errorf("resolve refresh target revision: %w", err)
+		}
+		if targetRevision <= 0 {
+			return QueueAssetResult{}, fmt.Errorf("resolve refresh target revision: revision must be positive")
+		}
 	}
 	if input.ArtifactDigest != "" && input.ArtifactDigest != active.Artifact.Digest {
 		return QueueAssetResult{}, fmt.Errorf("refresh pipeline schedule belongs to superseded artifact %q", input.ArtifactDigest)
@@ -314,7 +331,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if input.Occurrence != nil {
 		nominalTime = input.Occurrence.ScheduledAt.UTC().Format(time.RFC3339Nano)
 	}
-	rootInput := RunInput{RunID: input.RunID, Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload), AuditIntent: input.AuditIntent}
+	rootInput := RunInput{RunID: input.RunID, Identity: runIdentity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, ConcurrencyPolicy: policy.ConcurrencyPolicy, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetRefreshPipeline, TargetID: input.PipelineID, TargetRevision: targetRevision, TriggerType: input.TriggerType, JobKind: JobKindRefreshPipeline, PayloadJSON: string(payload), AuditIntent: input.AuditIntent}
 	dependencyTargets := make([]projectgraph.ResourceID, 0, len(plan.DependencyTables))
 	for _, table := range plan.DependencyTables {
 		targetID, parseErr := projectgraph.NewResourceID(table)

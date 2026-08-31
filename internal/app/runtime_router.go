@@ -185,6 +185,7 @@ type workflowInputs struct {
 	managedDataResolver      runtimehostmodule.ManagedDataResolver
 	refreshPipelineClock     refreshmodule.Clock
 	refreshMaterializer      refreshrun.Materializer
+	refreshTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
 	refreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	enableRefreshDispatcher  bool
@@ -293,6 +294,7 @@ type workflowAssemblyInputs struct {
 	DeploymentConfig         deploymentmodule.Config
 	RefreshPipelineClock     refreshmodule.Clock
 	RefreshMaterializer      refreshrun.Materializer
+	RefreshTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
 	RefreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
 	EnableRefreshDispatcher  bool
@@ -713,6 +715,7 @@ func buildApplicationSurfaces(
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
 	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
 	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
+	moduleWorkflow.refreshTargetRevision = workflow.RefreshTargetRevision
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle

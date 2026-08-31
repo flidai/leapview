@@ -26,6 +26,7 @@ import (
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
+	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -363,7 +364,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	input := deployment.DeliveryCandidateBuildInput{
 		ProjectID: request.ProjectID, OwnerID: sourceOwner, ArtifactDigest: request.SourceDigest,
 		Operation: deployment.DeliveryOperationKind(request.Operation), CandidateKey: operationID,
-		Candidate: candidate, Source: source,
+		Candidate: candidate, Source: source, PipelinePlan: request.PipelinePlan,
 	}
 	policy := c.policy
 	if c.policyResolver != nil {
@@ -795,6 +796,17 @@ func validateNativePlanReplay(plan deployment.DeliveryPlan, request deploymentmo
 	if plan.ID != outcome.PlanID || plan.ProjectID != request.ProjectID || plan.TargetID != request.TargetID || plan.Environment != request.Environment || plan.Operation != deployment.DeliveryOperationKind(request.Operation) || plan.SourceDigest != request.SourceDigest || plan.Provenance.AttestationDigest != request.SourceAttestationDigest || plan.ActorID != request.PrincipalID || plan.SourceOwnerID != request.SourceOwnerID || plan.Status != deployment.DeliveryPlanPlanned {
 		return fmt.Errorf("%w: replayed plan identity differs", deployment.ErrDeliveryConflict)
 	}
+	var requestedPipelineDigest string
+	if request.PipelinePlan != nil {
+		requestedPipelineDigest = request.PipelinePlan.Canonical().Digest
+	}
+	var persistedPipelineDigest string
+	if plan.PipelinePlan != nil {
+		persistedPipelineDigest = plan.PipelinePlan.Canonical().Digest
+	}
+	if requestedPipelineDigest != persistedPipelineDigest {
+		return fmt.Errorf("%w: replayed pipeline plan identity differs", deployment.ErrDeliveryConflict)
+	}
 	if outcome.ProjectID != request.ProjectID.String() || outcome.SourceDigest != request.SourceDigest || outcome.SourceAttestationDigest != request.SourceAttestationDigest || outcome.PlanDigest != plan.Digest {
 		return fmt.Errorf("%w: replay outcome does not match plan", deployment.ErrDeliveryConflict)
 	}
@@ -873,6 +885,15 @@ func validateNativeCreatePlanRequest(request deploymentmodule.NativeDeliveryPlan
 	if err := platformdigest.ValidateSHA256Identity(request.SourceAttestationDigest); err != nil {
 		return fmt.Errorf("%w: source attestation digest: %v", deployment.ErrDeliveryInvalid, err)
 	}
+	if request.PipelinePlan != nil {
+		canonical := request.PipelinePlan.Canonical()
+		if err := canonical.Validate(); err != nil {
+			return fmt.Errorf("%w: pipeline plan: %v", deployment.ErrDeliveryInvalid, err)
+		}
+		if canonical.ProjectID != request.ProjectID.String() || canonical.Environment != request.Environment || canonical.ArtifactDigest != request.SourceDigest {
+			return fmt.Errorf("%w: pipeline plan identity differs from native delivery request", deployment.ErrDeliveryConflict)
+		}
+	}
 	switch deployment.DeliveryOperationKind(request.Operation) {
 	case deployment.DeliveryOperationCodeChange, deployment.DeliveryOperationRestatement, deployment.DeliveryOperationBindingChange, deployment.DeliveryOperationPolicyChange:
 	default:
@@ -898,9 +919,15 @@ func richPlanFromRequest(request deployment.DeliveryPlanRequest, sourceOwner, pl
 }
 
 func nativePlanRequestDigest(request deploymentmodule.NativeDeliveryPlanRequest) (string, error) {
+	var pipelinePlan *projectpipelineplan.Plan
+	if request.PipelinePlan != nil {
+		canonical := request.PipelinePlan.Canonical()
+		pipelinePlan = &canonical
+	}
 	canonical := struct {
 		ProjectID, TargetID, Environment, PrincipalID, SourceOwnerID, Operation, SourceDigest, SourceAttestationDigest, IdempotencyKey string
-	}{request.ProjectID.String(), request.TargetID, request.Environment, request.PrincipalID, request.SourceOwnerID, request.Operation, request.SourceDigest, request.SourceAttestationDigest, request.IdempotencyKey}
+		PipelinePlan                                                                                                                   *projectpipelineplan.Plan `json:"pipelinePlan,omitempty"`
+	}{request.ProjectID.String(), request.TargetID, request.Environment, request.PrincipalID, request.SourceOwnerID, request.Operation, request.SourceDigest, request.SourceAttestationDigest, request.IdempotencyKey, pipelinePlan}
 	encoded, err := json.Marshal(canonical)
 	if err != nil {
 		return "", err

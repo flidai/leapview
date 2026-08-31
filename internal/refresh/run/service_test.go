@@ -338,7 +338,8 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 	identity.GenerationID = string(repo.activeDeployment.ID)
 	sourceDigest := "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
 	service := Service{
-		ServingStates: repo,
+		ServingStates:         repo,
+		ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) { return 1, nil },
 		ResolveSourceDigest: func(_ context.Context, got projectgraph.ServingIdentity) (string, error) {
 			if got != identity {
 				t.Fatalf("source digest identity = %#v, want %#v", got, identity)
@@ -366,6 +367,59 @@ func TestServiceQueuePipelineRefreshDefersCandidateToCanonicalExecutor(t *testin
 	}
 	if repo.savedArtifact.ID != "" {
 		t.Fatalf("legacy serving candidate was created: %#v", repo.savedArtifact)
+	}
+}
+
+func TestServiceQueuePipelineRefreshCarriesResolvedTargetRevision(t *testing.T) {
+	repo := newFakeRepo()
+	identity := serviceIdentity
+	identity.GenerationID = string(repo.activeDeployment.ID)
+	const sourceDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	service := Service{
+		ServingStates: repo,
+		ResolveTargetRevision: func(_ context.Context, got projectgraph.ServingIdentity) (int64, error) {
+			if got != identity {
+				t.Fatalf("target revision identity = %#v, want %#v", got, identity)
+			}
+			return 7, nil
+		},
+		ResolveSourceDigest: func(_ context.Context, got projectgraph.ServingIdentity) (string, error) {
+			if got != identity {
+				t.Fatalf("source digest identity = %#v, want %#v", got, identity)
+			}
+			return sourceDigest, nil
+		},
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) { return CanonicalRefreshResult{}, nil },
+		Runs:              repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
+	}
+	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{Identity: identity, PrincipalID: "principal", EstimatedMemoryBytes: 1, PipelineID: "sales-refresh", TriggerType: TriggerManual})
+	if err != nil {
+		t.Fatalf("QueuePipelineRefresh() error = %v", err)
+	}
+	if len(repo.createdRuns) == 0 || repo.createdRuns[0].TargetRevision != 7 {
+		var got int64
+		if len(repo.createdRuns) > 0 {
+			got = repo.createdRuns[0].TargetRevision
+		}
+		t.Fatalf("queued target revision = %d, want 7", got)
+	}
+}
+
+func TestServiceQueuePipelineRefreshRejectsUnresolvedTargetRevision(t *testing.T) {
+	repo := newFakeRepo()
+	identity := serviceIdentity
+	identity.GenerationID = string(repo.activeDeployment.ID)
+	service := Service{
+		ServingStates:         repo,
+		ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) { return 0, nil },
+		ResolveSourceDigest: func(context.Context, projectgraph.ServingIdentity) (string, error) {
+			return "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", nil
+		},
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) { return CanonicalRefreshResult{}, nil },
+		Runs:              repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()},
+	}
+	if _, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{Identity: identity, PrincipalID: "principal", EstimatedMemoryBytes: 1, PipelineID: "sales-refresh", TriggerType: TriggerManual}); err == nil || !strings.Contains(err.Error(), "revision must be positive") {
+		t.Fatalf("QueuePipelineRefresh() error = %v, want unresolved target revision", err)
 	}
 }
 

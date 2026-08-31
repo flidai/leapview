@@ -1788,6 +1788,27 @@ func (r *Repository) RunMayPublish(ctx context.Context, runID, owner string, fen
 	return ok, err
 }
 
+// RunMayPublishTx performs the exact worker-fence check on a caller-owned
+// transaction. Publication code uses this seam immediately before linking a
+// pending publication so lease loss cannot race a later publish/activate
+// decision. The transaction remains owned by the caller.
+func (r *Repository) RunMayPublishTx(ctx context.Context, tx Tx, runID, owner string, fence int64) (bool, error) {
+	if tx == nil {
+		return false, ErrInvalid
+	}
+	if runID == "" || owner == "" || fence <= 0 {
+		return false, ErrInvalid
+	}
+	_, err := refreshdb.New(tx).GetLiveRunForUpdate(contextOrBackground(ctx), refreshdb.GetLiveRunForUpdateParams{RunID: runID, LeaseOwner: owner, FenceGeneration: fence})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // CancelRun cancels a queued root run in its originating serving scope.
 // Running/prepared runs remain worker-owned and are not cancellable here.
 func (r *Repository) CancelRun(ctx context.Context, scope Scope, runID string) (Run, error) {
