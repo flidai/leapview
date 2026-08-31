@@ -80,21 +80,25 @@ func TestPostgres18ProductionAdmissionProvesNativeGraphBeforeSentinel(t *testing
 	cfg.TokenHashKey = strings.Repeat("t", 32)
 	cfg.AllowedHosts = "localhost"
 	cfg.Environment = "prod"
+	cfg.DeliveryPhysicalPoolID = "sha256:" + strings.Repeat("b", 64)
+	cfg.DeliveryPhysicalPoolCompatibilityDigest = "sha256:" + strings.Repeat("a", 64)
 
-	// Keep the direct target builder visible while the gate remains in place.
-	// This records the first concrete blocker if the full HTTP graph is not yet
-	// admissible, without weakening the production sentinel assertion below.
-	if target, targetErr := buildPostgresProductionTarget(t.Context(), cfg); targetErr != nil {
-		if !strings.Contains(targetErr.Error(), "delivery authority record not found") {
-			t.Fatalf("full PostgreSQL target composition failed at unexpected blocker: %v", targetErr)
-		}
-		t.Logf("full PostgreSQL target composition remains gated at: %v", targetErr)
-	} else if target == nil {
+	// The direct target builder exercises the complete native graph while the
+	// public production gate remains in place. A fresh install has no claim or
+	// delivery target yet, so startup must still succeed without fabricating an
+	// active project or generation.
+	target, targetErr := buildPostgresProductionTarget(t.Context(), cfg)
+	if targetErr != nil {
+		t.Fatalf("full PostgreSQL target composition on fresh unclaimed state: %v", targetErr)
+	}
+	if target == nil {
 		t.Fatal("full PostgreSQL target composition returned a nil application without an error")
-	} else {
-		if err := target.Shutdown(context.Background()); err != nil {
-			t.Fatalf("shutdown directly composed PostgreSQL target: %v", err)
-		}
+	}
+	if err := target.Start(t.Context()); err != nil {
+		t.Fatalf("start directly composed PostgreSQL target on fresh unclaimed state: %v", err)
+	}
+	if err := target.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown directly composed PostgreSQL target: %v", err)
 	}
 
 	// BuildProduction performs the exact process admission work and then

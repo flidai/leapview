@@ -13,9 +13,48 @@ import (
 
 	"github.com/flidai/leapview/internal/app/config"
 	projectsource "github.com/flidai/leapview/internal/app/projectsource"
+	"github.com/flidai/leapview/internal/deployment"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
+	"github.com/flidai/leapview/internal/servingstate"
 )
+
+type postgresTargetLookupFake struct {
+	target deployment.DeliveryTarget
+	err    error
+}
+
+func (f postgresTargetLookupFake) ResolveDeliveryTarget(context.Context, string) (deployment.DeliveryTarget, error) {
+	return f.target, f.err
+}
+
+func TestResolvePostgresSealedActiveStateAllowsFreshUnclaimedTarget(t *testing.T) {
+	id, err := resolvePostgresSealedActiveState(t.Context(), postgresTargetLookupFake{err: deployment.ErrNotFound}, "target-prod")
+	if !errors.Is(err, servingstate.ErrNotFound) {
+		t.Fatalf("missing target error = %v, want serving-state not found", err)
+	}
+	if id != "" {
+		t.Fatalf("missing target generation id = %q, want empty", id)
+	}
+}
+
+func TestResolvePostgresSealedActiveStateRequiresActiveGeneration(t *testing.T) {
+	id, err := resolvePostgresSealedActiveState(t.Context(), postgresTargetLookupFake{target: deployment.DeliveryTarget{TargetID: "target-prod"}}, "target-prod")
+	if !errors.Is(err, servingstate.ErrNotFound) {
+		t.Fatalf("target without active generation error = %v, want serving-state not found", err)
+	}
+	if id != "" {
+		t.Fatalf("target without active generation id = %q, want empty", id)
+	}
+}
+
+func TestResolvePostgresSealedActiveStatePropagatesAuthorityFailure(t *testing.T) {
+	want := errors.New("database unavailable")
+	_, err := resolvePostgresSealedActiveState(t.Context(), postgresTargetLookupFake{err: want}, "target-prod")
+	if !errors.Is(err, want) {
+		t.Fatalf("authority failure = %v, want %v", err, want)
+	}
+}
 
 func TestComposeNativeProjectSourceUsesExactDomainAndProjectAuthority(t *testing.T) {
 	home := t.TempDir()

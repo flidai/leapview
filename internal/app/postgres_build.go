@@ -61,6 +61,29 @@ type nativeProjectSourceComposition struct {
 	CandidateSourceReader *projectsource.NativeCandidateSourceSynchronizer
 }
 
+// resolvePostgresSealedActiveState resolves the sealed runtime's authoritative
+// active generation through the public deployment target port. A clean
+// PostgreSQL installation has no delivery_target row until the first plan is
+// admitted; that absence is the normal unbound/no-active state and must map to
+// servingstate.ErrNotFound so runtimehost can remain administrable without
+// fabricating an active delivery. Other authority failures stay fail-closed.
+func resolvePostgresSealedActiveState(ctx context.Context, delivery deployment.DeliveryTargetResolver, targetID string) (servingstate.ID, error) {
+	if delivery == nil || strings.TrimSpace(targetID) == "" {
+		return "", errors.New("PostgreSQL sealed active-state target authority is unavailable")
+	}
+	target, err := delivery.ResolveDeliveryTarget(ctx, targetID)
+	if err != nil {
+		if errors.Is(err, deployment.ErrNotFound) {
+			return "", servingstate.ErrNotFound
+		}
+		return "", err
+	}
+	if strings.TrimSpace(target.ActiveGenerationID) == "" {
+		return "", servingstate.ErrNotFound
+	}
+	return servingstate.ID(target.ActiveGenerationID), nil
+}
+
 // composeNativeProjectSource wires the process-bound immutable object store
 // to the PostgreSQL project authority. The caller owns transaction lifecycle
 // through begin; this helper never opens a second database or derives a
@@ -372,17 +395,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		BuildRuntime: appruntimefactory.NewPostgresDashboardRuntimeBuilder(appruntimefactory.PostgresDashboardRuntimeConfig{Projects: analytics.ProjectRuntimeFactoryForEnvironment, MaxRows: cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes}),
 	})
 	runtimeHost, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: func(ctx context.Context) (servingstate.ID, error) {
-		target, err := graph.DeploymentRepository.Target(ctx, instanceID)
-		if err != nil {
-			if errors.Is(err, deployment.ErrNotFound) {
-				return "", servingstate.ErrNotFound
-			}
-			return "", err
-		}
-		if strings.TrimSpace(target.ActiveGenerationID) == "" {
-			return "", servingstate.ErrNotFound
-		}
-		return servingstate.ID(target.ActiveGenerationID), nil
+		return resolvePostgresSealedActiveState(ctx, targetReader, instanceID)
 	}})
 	if err != nil {
 		return fail(fmt.Errorf("build runtime host: %w", err))
