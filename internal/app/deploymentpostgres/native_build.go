@@ -70,28 +70,32 @@ type NativeBuildConfig struct {
 	Repository          *deploymentnative.Repository
 	Sources             project.CandidateSourceAttestationReader
 	Artifacts           NativeBuildArtifactPhases
+	ArtifactRecovery    release.CandidateArtifactRecovery
 	Contract            NativeBuildContractResolver
 	ContractAuthority   *NativeBuildContractAuthority
 	PhysicalPoolID      string
 	CompatibilityDigest string
 
-	Operations           deploymentmodule.NativeBuildOperationAuthority
-	Heartbeat            NativeBuildHeartbeatRunner
-	AttemptAdmission     CandidateBuildAttemptAdmission
-	AttemptTermination   AttemptTermination
-	GenerationAdmission  GenerationAdmission
-	PhysicalFactory      NativePhysicalBuildEnvironmentFactory
-	ObservationWriter    ducklakepostgres.SourceObservationWriter
-	QualificationFactory NativeQualificationEnvironmentFactory
-	RuntimeVersion       string
-	Bounds               gates.Bounds
-	SessionIdentity      string
-	LeaseDuration        time.Duration
-	HeartbeatInterval    time.Duration
-	Clock                func() time.Time
-	Events               deploymentmodule.NativeDeliveryEventAppender
-	Audit                deploymentmodule.NativeDeliveryAuditAppender
-	Workflow             deploymentmodule.NativeDeliveryWorkflowRecorder
+	Operations            deploymentmodule.NativeBuildOperationAuthority
+	Heartbeat             NativeBuildHeartbeatRunner
+	AttemptAdmission      CandidateBuildAttemptAdmission
+	AttemptTermination    AttemptTermination
+	GenerationAdmission   GenerationAdmission
+	PhysicalFactory       NativePhysicalBuildEnvironmentFactory
+	ObservationWriter     ducklakepostgres.SourceObservationWriter
+	MarkerResolverFactory NativePhysicalMarkerResolverFactory
+	ObservationReader     NativeSourceObservationReader
+	SnapshotFactory       NativePhysicalSnapshotInspectorFactory
+	QualificationFactory  NativeQualificationEnvironmentFactory
+	RuntimeVersion        string
+	Bounds                gates.Bounds
+	SessionIdentity       string
+	LeaseDuration         time.Duration
+	HeartbeatInterval     time.Duration
+	Clock                 func() time.Time
+	Events                deploymentmodule.NativeDeliveryEventAppender
+	Audit                 deploymentmodule.NativeDeliveryAuditAppender
+	Workflow              deploymentmodule.NativeDeliveryWorkflowRecorder
 }
 
 // NativeBuildCoordinatorConfig is an expressive alias used by callers that
@@ -103,6 +107,7 @@ type NativeBuildCoordinator struct {
 	repository                          *deploymentnative.Repository
 	sources                             project.CandidateSourceAttestationReader
 	artifacts                           NativeBuildArtifactPhases
+	artifactRecovery                    release.CandidateArtifactRecovery
 	contract                            NativeBuildContractResolver
 	physicalPoolID, compatibilityDigest string
 	operations                          deploymentmodule.NativeBuildOperationAuthority
@@ -112,6 +117,9 @@ type NativeBuildCoordinator struct {
 	generationAdmission                 GenerationAdmission
 	physicalFactory                     NativePhysicalBuildEnvironmentFactory
 	observationWriter                   ducklakepostgres.SourceObservationWriter
+	markerResolverFactory               NativePhysicalMarkerResolverFactory
+	observationReader                   NativeSourceObservationReader
+	snapshotFactory                     NativePhysicalSnapshotInspectorFactory
 	qualificationFactory                NativeQualificationEnvironmentFactory
 	runtimeVersion, sessionIdentity     string
 	bounds                              gates.Bounds
@@ -144,6 +152,12 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	}
 	if nativeBuildAuthorityNil(config.ObservationWriter) {
 		return nil, errors.New("native build source observation writer is required")
+	}
+	if nativeBuildAuthorityNil(config.ArtifactRecovery) {
+		return nil, errors.New("native build artifact recovery authority is required")
+	}
+	if nativeBuildAuthorityNil(config.MarkerResolverFactory) || nativeBuildAuthorityNil(config.ObservationReader) || nativeBuildAuthorityNil(config.SnapshotFactory) {
+		return nil, errors.New("native build physical recovery authorities are required")
 	}
 	artifacts := config.Artifacts
 	if nativeBuildAuthorityNil(artifacts) {
@@ -210,10 +224,10 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		return nil, fmt.Errorf("native build session identity: %w", err)
 	}
 	return &NativeBuildCoordinator{
-		repository: config.Repository, sources: config.Sources, artifacts: artifacts, contract: contract,
+		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
-		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, qualificationFactory: config.QualificationFactory,
+		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
 		runtimeVersion: config.RuntimeVersion, sessionIdentity: session, bounds: config.Bounds,
 		leaseDuration: leaseDuration, clock: clock, events: config.Events, eventReader: eventReader, audit: config.Audit,
 		auditReader: auditReader, workflow: config.Workflow,
@@ -234,7 +248,7 @@ func NewNativeBuild(config NativeBuildConfig) (*NativeBuildCoordinator, error) {
 }
 
 func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest) (_ deploymentmodule.NativeDeliveryBuild, resultErr error) {
-	if c == nil || c.repository == nil || c.sources == nil || c.artifacts == nil || c.contract == nil || c.operations == nil || c.heartbeat == nil || c.attemptAdmission == nil || c.attemptTermination == nil || c.generationAdmission == nil || c.physicalFactory == nil || nativeBuildAuthorityNil(c.observationWriter) || c.qualificationFactory == nil || c.events == nil || c.audit == nil {
+	if c == nil || c.repository == nil || nativeBuildAuthorityNil(c.sources) || nativeBuildAuthorityNil(c.artifacts) || nativeBuildAuthorityNil(c.artifactRecovery) || nativeBuildAuthorityNil(c.contract) || nativeBuildAuthorityNil(c.operations) || nativeBuildAuthorityNil(c.heartbeat) || nativeBuildAuthorityNil(c.attemptAdmission) || nativeBuildAuthorityNil(c.attemptTermination) || nativeBuildAuthorityNil(c.generationAdmission) || nativeBuildAuthorityNil(c.physicalFactory) || nativeBuildAuthorityNil(c.observationWriter) || nativeBuildAuthorityNil(c.markerResolverFactory) || nativeBuildAuthorityNil(c.observationReader) || nativeBuildAuthorityNil(c.snapshotFactory) || nativeBuildAuthorityNil(c.qualificationFactory) || nativeBuildAuthorityNil(c.events) || nativeBuildAuthorityNil(c.audit) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	ctx = contextOrBackground(ctx)
@@ -264,8 +278,10 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	switch reservation.Disposition {
 	case deploymentmodule.NativeOperationReplay:
 		return c.replayBuild(ctx, normalized, requestDigest, reservation.Operation)
-	case deploymentmodule.NativeOperationBusy, deploymentmodule.NativeOperationIndeterminate:
+	case deploymentmodule.NativeOperationBusy:
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build operation is %s", deploymentdomain.ErrDeliveryConflict, reservation.Disposition)
+	case deploymentmodule.NativeOperationIndeterminate:
+		return c.recoverIndeterminateNativeBuild(ctx, normalized, requestDigest, reservation, plan)
 	case deploymentmodule.NativeOperationAcquired:
 		// Continue with the executable lease below.
 		// Until the external attempt transaction commits, every subsequent
