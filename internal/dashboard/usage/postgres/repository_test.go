@@ -39,7 +39,9 @@ func usageStore(t *testing.T) *Repository {
 
 func TestRepositoryPostgreSQL18ViewerDaySemanticsAndRetention(t *testing.T) {
 	repository := usageStore(t)
-	base := time.Now().UTC().Truncate(time.Second)
+	// Keep the two-hour view on the same UTC calendar day. A wall-clock base
+	// near midnight makes ViewerDays depend on when the hosted test starts.
+	base := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	views := []usage.View{
 		{ProjectID: "project:usage", DashboardID: "dashboard:overview", PageID: "overview", PrincipalID: "principal:a", ViewedAt: base},
 		{ProjectID: "project:usage", DashboardID: "dashboard:overview", PageID: "details", PrincipalID: "principal:a", ViewedAt: base.Add(2 * time.Hour)},
