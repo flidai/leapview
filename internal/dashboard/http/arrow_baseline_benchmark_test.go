@@ -593,9 +593,10 @@ func (o dashboardBaselineObservation) cacheMisses() int {
 }
 
 type dashboardBaselineFactory struct {
-	database           *dashboardBaselineDatabase
+	database           materializeruntime.Database
 	dependencyEvidence resultidentity.Evidence
 	resultPartition    resultidentity.Partition
+	resultLimits       dataquery.ResultLimits
 	core               *materializeruntime.Runtime
 }
 
@@ -605,7 +606,7 @@ func (f *dashboardBaselineFactory) OpenDashboardProjectDataRuntimes(ctx context.
 	core, err := materializeruntime.NewRuntimeView(ctx, materializeruntime.RuntimeConfig{
 		ModelID: dashboardBaselineModelID.String(), Model: model, Database: f.database,
 		Sources: dashboardBaselineSources{}, SnapshotOnly: true, ResultPartition: f.resultPartition,
-		DependencyEvidence: f.dependencyEvidence,
+		DependencyEvidence: f.dependencyEvidence, ResultLimits: f.resultLimits,
 	})
 	if err != nil {
 		return nil, err

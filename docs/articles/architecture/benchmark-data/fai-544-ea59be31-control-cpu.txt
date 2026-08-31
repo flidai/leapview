@@ -1,0 +1,41 @@
+FAI-544 control CPU profile summary; wide 32-column x 999-row real-DuckDB HTTP workload; 3s; GOMAXPROCS=1; commit ea59be318617d4e4a07b6421d671355ae8628b46.
+
+File: fai-544-http.test
+Build ID: dde68ad087fd17de9db213be9407cb73f7571f48
+Type: cpu
+Time: 2026-08-31 07:58:29 UTC
+Duration: 5.79s, Total samples = 5.85s (101.07%)
+Showing nodes accounting for 4.49s, 76.75% of 5.85s total
+Dropped 195 nodes (cum <= 0.03s)
+Showing top 30 nodes out of 232
+      flat  flat%   sum%        cum   cum%
+     0.61s 10.43% 10.43%      0.61s 10.43%  runtime.cgocall
+     0.58s  9.91% 20.34%      1.11s 18.97%  runtime.scanobject
+     0.49s  8.38% 28.72%      0.49s  8.38%  runtime.findObject
+     0.31s  5.30% 34.02%      0.31s  5.30%  runtime.memclrNoHeapPointers
+     0.30s  5.13% 39.15%      0.30s  5.13%  aeshashbody
+     0.17s  2.91% 42.05%      0.30s  5.13%  runtime.mallocgcSmallScanNoHeader
+     0.15s  2.56% 44.62%      0.15s  2.56%  runtime.greyobject
+     0.15s  2.56% 47.18%      1.95s 33.33%  runtime.mapassign_faststr
+     0.14s  2.39% 49.57%      0.27s  4.62%  internal/runtime/maps.(*Iter).Next
+     0.14s  2.39% 51.97%      0.14s  2.39%  runtime.memmove
+     0.13s  2.22% 54.19%      0.37s  6.32%  internal/runtime/maps.(*table).uncheckedPutSlot
+     0.12s  2.05% 56.24%      0.35s  5.98%  runtime.wbBufFlush1
+     0.11s  1.88% 58.12%      0.11s  1.88%  [fai-544-http.test]
+     0.11s  1.88% 60.00%      0.11s  1.88%  runtime.typePointers.next
+     0.10s  1.71% 61.71%      2.01s 34.36%  runtime.mallocgc
+     0.09s  1.54% 63.25%      0.10s  1.71%  runtime.mallocgcTiny
+     0.08s  1.37% 64.62%      0.08s  1.37%  [libc.so.6]
+     0.07s  1.20% 65.81%      0.09s  1.54%  runtime.(*sweepLocked).sweep
+     0.06s  1.03% 66.84%      1.27s 21.71%  github.com/flidai/leapview/internal/dashboard/runtime.tableRowsFromAnalytics
+     0.06s  1.03% 67.86%      1.18s 20.17%  internal/runtime/maps.(*table).grow
+     0.06s  1.03% 68.89%      0.06s  1.03%  runtime.duffcopy
+     0.06s  1.03% 69.91%      0.08s  1.37%  runtime.mapaccess1_faststr
+     0.06s  1.03% 70.94%      0.25s  4.27%  runtime.typedmemmove
+     0.06s  1.03% 71.97%      0.06s  1.03%  time.nextStdChunk
+     0.05s  0.85% 72.82%      0.30s  5.13%  gcWriteBarrier
+     0.05s  0.85% 73.68%      0.32s  5.47%  github.com/flidai/leapview/internal/dashboard/runtime.normalizeDBValue
+     0.05s  0.85% 74.53%         1s 17.09%  internal/runtime/maps.(*table).reset
+     0.05s  0.85% 75.38%      0.07s  1.20%  runtime.scanblock
+     0.04s  0.68% 76.07%      0.13s  2.22%  github.com/flidai/leapview/internal/dashboard/http.dashboardCellString
+     0.04s  0.68% 76.75%      0.04s  0.68%  runtime.(*mspan).heapBitsSmallForAddr

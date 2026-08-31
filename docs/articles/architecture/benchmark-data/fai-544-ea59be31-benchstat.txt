@@ -1,0 +1,327 @@
+goos: linux
+goarch: amd64
+pkg: github.com/flidai/leapview/internal/dashboard/http
+cpu: AMD EPYC-Rome Processor
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                                    sec/op                                    │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                                       8.545m ±  3%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                                     12.79m ± 13%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                                      2.055m ± 21%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                                    3.424m ±  3%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                                         41.64m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                                       59.36m ±  5%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                                        5.537m ± 13%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                                      7.910m ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      40.82m ±  2%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    59.32m ±  6%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     5.813m ± 11%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   7.957m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      175.2m ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    71.76m ±  8%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     22.61m ± 22%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   10.88m ±  9%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      341.4m ±  2%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    129.9m ± 10%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     46.39m ± 22%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   19.02m ± 20%
+geomean                                                                                                                                                              22.52m
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                  columns/op                                  │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                        8.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                      8.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                       8.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                     8.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                          32.00 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                        32.00 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                         32.00 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                       32.00 ± 0%
+geomean                                                                                                                                               16.00
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                            connection-hold-sec/op                            │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      1.710m ±  8%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    2.878m ± 10%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     1.681m ± 21%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   2.809m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        3.768m ±  8%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      6.163m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       4.707m ± 13%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     6.377m ±  4%
+geomean                                                                                                                                             3.359m
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                            connection-wait-sec/op                            │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      2.055µ ± 10%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    5.186µ ±  4%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     1.364µ ± 18%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   3.093µ ± 10%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        2.396µ ± 22%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      4.195µ ± 18%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       1.806µ ± 17%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     3.897µ ±  9%
+geomean                                                                                                                                             2.740µ
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                              duckdb-batches/op                               │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                        1.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                      1.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                       1.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                     1.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                          1.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                        1.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                         1.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                       1.000 ± 0%
+geomean                                                                                                                                               1.000
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                 gc-cycles/op                                 │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      503.3m ±  1%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    989.9m ±  1%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     68.76m ± 22%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   133.6m ±  5%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                         2.143 ±  2%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                       3.211 ±  3%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       301.5m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     500.0m ±  1%
+geomean                                                                                                                                             512.3m
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                  gomaxprocs                                  │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                        1.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                      4.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                       1.000 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                     4.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                          1.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                        4.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                         1.000 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                       4.000 ± 0%
+geomean                                                                                                                                               2.000
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                 ipc-bytes/op                                 │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      92.16Ki ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    92.16Ki ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     70.30Ki ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   70.30Ki ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        368.9Ki ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      368.9Ki ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       294.3Ki ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     294.3Ki ± 0%
+geomean                                                                                                                                             162.9Ki
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                  p50-sec/op                                  │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      9.183m ±  3%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    13.34m ± 19%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     1.858m ± 21%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   3.396m ±  3%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        40.05m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      60.05m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       5.304m ±  9%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     8.011m ±  4%
+geomean                                                                                                                                             9.709m
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                  p95-sec/op                                  │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      11.70m ±  6%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    15.54m ±  6%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     3.579m ± 27%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   4.453m ±  5%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        44.97m ±  5%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      67.55m ±  6%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       8.174m ± 37%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     9.957m ±  4%
+geomean                                                                                                                                             12.79m
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                                  p99-sec/op                                  │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      14.91m ± 15%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    17.59m ±  9%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     5.058m ± 15%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   5.103m ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        46.45m ±  7%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      68.12m ±  7%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       9.698m ± 51%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     10.92m ±  3%
+geomean                                                                                                                                             14.77m
+
+                                                                                  │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                  │                              process-rss-bytes                               │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                      105.8Mi ± 2%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                    115.6Mi ± 2%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                     114.6Mi ± 3%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                   121.5Mi ± 1%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                        129.1Mi ± 2%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                      135.2Mi ± 3%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                       142.7Mi ± 5%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                     159.9Mi ± 1%
+geomean                                                                                                                                             127.0Mi
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                                  requests/s                                  │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                                        117.0 ±  3%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                                      78.18 ± 15%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                                       487.1 ± 18%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                                     292.1 ±  3%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                                          24.02 ±  4%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                                        16.84 ±  5%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                                         180.6 ± 12%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                                       126.5 ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                       24.50 ±  2%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                     16.86 ±  7%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                      172.1 ± 10%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                    125.7 ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                       22.83 ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                     55.74 ±  8%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                      176.9 ± 18%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                    367.6 ±  8%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                       23.43 ±  3%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                     61.60 ± 11%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                      172.4 ± 18%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                    420.6 ± 17%
+geomean                                                                                                                                                               88.81
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                                     B/op                                     │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                                       2.742Mi ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                                     2.782Mi ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                                      350.8Ki ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                                    352.0Ki ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                                         18.28Mi ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                                       18.30Mi ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                                        1.785Mi ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                                      1.788Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      18.29Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    18.30Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     1.785Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   1.788Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      72.97Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    73.11Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     7.141Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   7.145Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      145.9Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    146.1Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     14.29Mi ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   14.29Mi ± 0%
+geomean                                                                                                                                                              8.020Mi
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                                  allocs/op                                   │
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http                                                                                        35.16k ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/control_api_direct_http-4                                                                                      35.21k ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http                                                                                        826.0 ± 0%
+DashboardDirectArrowQualification/real_narrow_rows_999/candidate_native_v1_http-4                                                                                      830.0 ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http                                                                                          117.1k ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/control_api_direct_http-4                                                                                        117.2k ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http                                                                                         2.205k ± 0%
+DashboardDirectArrowQualification/real_wide_rows_999/candidate_native_v1_http-4                                                                                       2.218k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                       117.1k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                     117.2k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                      2.205k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                    2.217k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                       468.4k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                     468.5k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                      8.828k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                    8.841k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                       936.9k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                     936.9k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                      17.68k ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                    17.69k ± 0%
+geomean                                                                                                                                                               25.87k
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                              ipc-bytes/request                               │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      368.9Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    368.9Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     294.3Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   294.3Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      368.9Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    368.9Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     294.3Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   294.3Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      368.9Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    368.9Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     294.3Ki ± 0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   294.3Ki ± 0%
+geomean                                                                                                                                                              329.5Ki
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                               max-connections                                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      1.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    1.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     1.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   1.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      2.000 ± 100%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    4.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     4.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   4.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      1.500 ± 167%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    8.000 ±  12%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     8.000 ±   0%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   8.000 ±   0%
+geomean                                                                                                                                                              2.606
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                               p50-sec/request                                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      39.88m ±  1%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    60.63m ± 12%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     5.614m ±  3%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   8.088m ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      169.0m ±  3%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    62.10m ±  7%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     20.18m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   9.498m ±  6%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      334.8m ±  3%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    110.6m ±  6%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     38.13m ±  9%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   15.24m ± 10%
+geomean                                                                                                                                                              36.01m
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                               p95-sec/request                                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      44.10m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    66.82m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     9.044m ± 21%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   9.956m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      198.6m ± 11%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    77.44m ±  6%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     28.45m ± 19%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   12.79m ±  3%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      353.6m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    132.9m ±  8%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     51.19m ± 37%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   20.94m ± 11%
+geomean                                                                                                                                                              45.31m
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                               p99-sec/request                                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      46.04m ±  3%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    68.01m ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     11.72m ± 22%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   10.92m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      199.1m ± 12%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    83.69m ±  7%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     39.35m ± 28%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   14.25m ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      353.8m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    143.8m ±  9%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     71.77m ± 24%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   23.70m ±  5%
+geomean                                                                                                                                                              51.19m
+
+                                                                                                   │ docs/articles/architecture/benchmark-data/fai-544-ea59be31-qualification.txt │
+                                                                                                   │                               wall-sec/request                               │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http                                                                      40.82m ±  2%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/control_api_direct_http-4                                                                    59.32m ±  6%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http                                                                     5.813m ± 11%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/candidate_native_v1_http-4                                                                   7.957m ±  5%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http                                                                      43.80m ±  4%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/control_api_direct_http-4                                                                    17.94m ±  8%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http                                                                     5.652m ± 22%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/candidate_native_v1_http-4                                                                   2.721m ±  9%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http                                                                      42.68m ±  2%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/control_api_direct_http-4                                                                    16.23m ± 10%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http                                                                     5.799m ± 22%
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/candidate_native_v1_http-4                                                                   2.377m ± 20%
+geomean                                                                                                                                                              12.38m

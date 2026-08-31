@@ -313,6 +313,23 @@ tasks:
     cmds:
       - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
+  test:arrow:direct-streaming-qualification:
+    desc: Run the isolated FAI-544 real-DuckDB and HTTP qualification contracts
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^TestDashboardDirectArrowQualification' -count=1
+
+  bench:arrow:direct-streaming-qualification:quick:
+    desc: Run a bounded local sample of the FAI-544 qualification workloads
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualification$' -benchmem -benchtime=100ms -count=1 -cpu=1
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualificationConcurrency$' -benchmem -benchtime=100ms -count=1 -cpu=1
+
+  bench:arrow:direct-streaming-qualification:
+    desc: Run comparison-grade FAI-544 real-DuckDB and HTTP qualification workloads
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualification$' -benchmem -benchtime=1s -count=10 -cpu=1,4
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualificationConcurrency$' -benchmem -benchtime=1s -count=10 -cpu=1,4
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:

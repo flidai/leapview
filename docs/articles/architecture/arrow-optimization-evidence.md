@@ -5,9 +5,10 @@ dashboard Arrow architecture. It covers the FAI-538 workload and scorecard,
 the reproducible microbenchmark foundation from FAI-539, the current-path
 dashboard baseline from FAI-540, and the warm-cache qualification from
 FAI-542. FAI-543 adds a test-only direct governed streaming prototype after
-FAI-541 locked the `native-v1` response contract. It does not authorize a
-production Arrow migration, a new cache representation, or a cache lifecycle
-change.
+FAI-541 locked the `native-v1` response contract. FAI-544 qualifies that
+prototype with real DuckDB, HTTP transport, concurrency, pagination, and
+bounded slow-consumer scenarios. It does not authorize a production Arrow
+migration, a new cache representation, or a cache lifecycle change.
 
 ## Decision boundary
 
@@ -579,6 +580,212 @@ connection/backpressure limits, cancellation under real transport, process
 memory, browser compatibility, multi-CPU behavior, and warm-cache routing
 before any production proposal is considered.
 
+## FAI-544 direct governed Arrow streaming qualification
+
+FAI-544 keeps both lanes behind the existing `fai543experiment` build tag and
+adds the `duckdb_arrow` tag for a real in-memory DuckDB executor. It adds no
+production route, handler branch, feature flag, cache access, materialization
+change, or API contract. The comparison remains current `api_direct` versus
+the FAI-543 candidate; warm-cache measurements are not used as a performance
+control.
+
+### Qualification methodology
+
+The fixture creates a deterministic `model.orders` table in DuckDB and serves
+both lanes through one test-only loopback HTTP route and client. The 32-column
+table cycles through `BIGINT`, `DOUBLE`, `BOOLEAN`, `VARCHAR`, `BLOB`,
+`TIMESTAMP`, `TIMESTAMPTZ`, `DECIMAL(38,3)`, and `DATE`, with high- and
+low-cardinality strings, empty non-null strings, mixed SQL `NULL`/`NOT NULL`
+declarations, and nulls at deterministic positions. Workloads include:
+
+- 8- and 32-column detail pages containing 999 rows;
+- a four-column real-DuckDB detail page whose requested order is interleaved as
+  dimension, metric, dimension, metric and whose nullable decimal values are
+  checked at every row;
+- a 32-column, 10,000-row result that must arrive in multiple borrowed DuckDB
+  batches;
+- an empty result that retains its complete physical schema;
+- a synthetic two-batch dictionary fixture whose producer releases each batch
+  immediately after the synchronous sink callback;
+- 2,501 rows paged as 1,000, 1,000, and 501 rows;
+- concurrency 1, 4, and 8 at `GOMAXPROCS=1` and `GOMAXPROCS=4`; and
+- normal, 100 ms delayed, disconnected, and concurrent slow/normal HTTP
+  consumers with a bounded 1 KiB server socket write buffer.
+
+The timed comparison no longer mixes a full production handler with a custom
+candidate route. One shared setup resolves the visualization, parses the
+request limit and cursor, parses the deterministic `field_00 >= 0` filter,
+normalizes the filter into the data-query contract, establishes stable sort,
+offset and physical `limit + 1`, and attaches the same principal, policy,
+admission, budget, audit, and observer context. It creates one query definition
+before the lane split. Both lanes execute that definition against the same real
+DuckDB table and buffer the HTTP response through the same test server/client:
+
+- the control obtains an owned Arrow result, decodes to Go maps, crosses the
+  current two map-ownership/normalization boundaries, creates the dashboard
+  frame/window, and calls the existing all-string IPC response writer; and
+- the candidate gives borrowed DuckDB batches synchronously to the existing
+  native-v1 IPC sink.
+
+The parity test also invokes the actual current `api_direct` handler outside
+the measured pair and requires the control adapter to match its field order,
+aliases, row values, and legacy string projection. This isolates the differing
+post-query transformations without pretending the benchmark is production
+end-to-end latency. Handler routing, body decoding, dashboard filter-control
+translation, and the current exact-count pagination query are excluded from
+both timed lanes. Those fixed costs must be measured separately before any
+production design claim.
+
+Every measured request must record exactly one physical query, one identical
+governor/admission/audit decision, one identical governed query, zero retained
+cache outcomes, no retained Arrow ownership change, and no active database
+connection after completion. The harness rejects a comparison if the control
+and candidate physical schemas differ.
+
+The reproducible commands are:
+
+```sh
+task test:arrow:direct-streaming-qualification
+task bench:arrow:direct-streaming-qualification:quick
+task bench:arrow:direct-streaming-qualification
+```
+
+The comparison-grade command uses ten one-second samples for both benchmark
+groups at one and four logical CPUs. The corrected-boundary run was captured
+on 2026-08-31 at commit `6449d6ae3bbdfa1ce0e4810e04a005a8073bb100`, Go
+1.25.14, Linux amd64 7.0.0-29-generic, and a 16-vCPU AMD EPYC-Rome host with
+one thread per core. Its exact command was
+`task bench:arrow:direct-streaming-qualification`. The raw samples, complete
+per-metric summaries, and paired benchstat comparisons are retained under
+`docs/articles/architecture/benchmark-data/`:
+
+- `fai-544-6449d6ae-qualification.txt`
+- `fai-544-6449d6ae-benchstat.txt`
+- `fai-544-6449d6ae-control-vs-candidate.txt`
+- `fai-544-6449d6ae-concurrency-comparison.txt`
+
+The earlier `ea59be31` artifacts are retained as provenance for the original
+review input, but their control used the full handler while the candidate used
+a custom route. They are superseded for numerical comparisons. Their focused
+profiles remain useful only as mechanism hints and are not evidence for an
+equivalent-boundary performance claim.
+
+Benchstat reports medians with 95% confidence intervals at alpha 0.05. The
+following table is the single-request comparison; all latency differences have
+`p=0.000`, with ten samples per lane.
+
+| Workload / CPU | Lane | Median latency | B/op | Allocs/op | IPC bytes |
+| --- | --- | ---: | ---: | ---: | ---: |
+| 8 × 999 / 1 | `api_direct` post-query control | 8.955 ms | 2,804.0 KiB | 35,153 | 94,376 |
+| 8 × 999 / 1 | Candidate native-v1 | 2.570 ms | 374.2 KiB | 1,104 | 71,992 |
+| 8 × 999 / 4 | `api_direct` post-query control | 12.339 ms | 2,812.8 KiB | 35,189 | 94,376 |
+| 8 × 999 / 4 | Candidate native-v1 | 3.521 ms | 375.7 KiB | 1,108 | 71,992 |
+| 32 × 999 / 1 | `api_direct` post-query control | 33.210 ms | 14.269 MiB | 107,156 | 377,768 |
+| 32 × 999 / 1 | Candidate native-v1 | 6.362 ms | 1.876 MiB | 3,042 | 301,344 |
+| 32 × 999 / 4 | `api_direct` post-query control | 36.834 ms | 14.285 MiB | 107,192 | 377,768 |
+| 32 × 999 / 4 | Candidate native-v1 | 7.306 ms | 1.880 MiB | 3,057 | 301,344 |
+| mixed 4 × 999 / 1 | `api_direct` post-query control | 7.476 ms | 2,208.6 KiB | 37,004 | 45,192 |
+| mixed 4 × 999 / 1 | Candidate native-v1 | 1.829 ms | 274.3 KiB | 840 | 49,656 |
+| mixed 4 × 999 / 4 | `api_direct` post-query control | 9.410 ms | 2,216.7 KiB | 37,037 | 45,192 |
+| mixed 4 × 999 / 4 | Candidate native-v1 | 2.700 ms | 274.8 KiB | 843 | 49,656 |
+
+For the representative wide workload at one CPU, the candidate reduced median
+latency by 80.8%, allocated bytes by 86.9%, allocation count by 97.2%, and IPC
+payload by 20.2% at the equivalent boundary. The mixed workload also retained
+a 75.5% latency and 87.6% allocated-byte signal, but native IPC was 9.9% larger
+than the legacy string projection. Native payload reduction is therefore not a
+general conclusion.
+
+At four CPUs, eight-user throughput was 352.0 requests/s candidate versus
+76.41 control. Several concurrency intervals are wide: the four-user candidate
+aggregate interval reached 129%, while the eight-user control interval reached
+93%. Tail and concurrency results remain directional supporting evidence, not
+production SLO or capacity estimates. The equivalent single-request samples,
+exact values, and allocation counts are the stronger result of this rerun.
+
+### Correctness, pagination, and lifetime result
+
+The real-DuckDB candidate preserves projection order, aliases, physical types,
+decimal scale and exact value, timestamp unit and timezone distinction, binary
+bytes, dates, values, and exact null positions. The interleaved mixed workload
+executes real planned dimensions and aggregate metrics; the test checks every
+integer, float, decimal, and nullable-decimal value, as well as the native-v1
+schema and field metadata. The shared control and candidate produce equivalent
+values after applying the documented legacy null-to-empty string projection,
+and the shared governed queries, admission requests, audit identities, and
+physical schemas must be identical. The existing FAI-541 oracle and the
+producer-released two-batch fixture continue to prove mixed nullable and
+non-nullable Arrow fields, exact dictionary values/indices, metadata
+allowlists, empty schema, governance, cancellation, and post-commit failure
+semantics without retaining borrowed records.
+
+Real DuckDB exposed one blocking fidelity limitation: its Arrow query schema
+marks every projected field nullable, including fixture columns declared
+`NOT NULL`. The candidate faithfully forwards that borrowed Arrow declaration,
+so it cannot reconstruct a mixed-nullability governed response from the
+DuckDB schema alone. The qualification test records this mismatch explicitly;
+it does not weaken the FAI-541 oracle or invent nullability in the adapter.
+
+Pagination is correct for the locked native-v1 contract but is not behaviorally
+identical to current `api_direct`. Current `api_direct` performs a second exact
+count query for a full page and returns its existing cursor header. The
+candidate performs one `limit + 1` query, returns at most `limit` rows, binds an
+opaque cursor to query scope and serving snapshot, emits that cursor only as a
+successful trailer, and omits it on the 501-row final page. This difference
+must be resolved as an explicit product/client migration decision; performance
+numbers must not count the avoided exact-count query as a candidate win.
+
+The normal real-HTTP request releases its DuckDB lease after synchronous IPC
+completion. A delayed reader proves the candidate retains one executor and one
+database connection for at least the reader's 100 ms delay. A disconnected
+client causes the stream to fail and both handler and connection clean up
+within the bounded two-second assertion. With a two-connection pool, a blocked
+stream does not prevent an independent request, but it consumes one complete
+pool slot until the client advances or disconnects. No asynchronous buffering
+was added. One verbose validation run observed a 512.5 ms connection hold and
+a 45,056-byte process RSS increase while blocked. That is a bounded scenario
+observation, not a production network or peak-memory distribution.
+
+The corrected comparison still exposes the shifted lifetime cost. The
+candidate's wide one-CPU connection-hold median was 5.405 ms versus 4.310 ms
+for the control (`+25.4%`, `p=0.000`): the control releases DuckDB after its
+owned copy, whereas the candidate keeps the lease through IPC emission. At
+four CPUs the difference was 5.827 versus 5.206 ms (`+11.9%`, `p=0.001`). This
+cost is operationally material even though total response latency is lower.
+
+### Resource limitations and decision
+
+Go allocation and GC signals are consistently lower for the candidate, but
+the in-process absolute RSS metric is not comparison-grade. Subbenchmarks share
+one process and execute sequentially, so later candidate samples inherit the
+process high-water/heap state; the corrected wide samples report 146.1 MiB
+candidate versus 130.1 MiB control at one CPU and 170.9 versus 141.6 MiB at
+four CPUs. This conflicts with the allocation evidence and must be resolved by
+isolated-process peak/steady-state RSS measurement rather than interpreted as
+either a regression or a win.
+
+Browser decoding, browser heap growth, actual WAN backpressure, production
+connection-pool sizing/fairness, audit sink latency, and production-like skewed
+data are not measured. The HTTP client used here is Go's Arrow reader. The
+repository has no existing browser native-v1 consumer to qualify, and FAI-544
+does not add one because doing so would expand this experiment into a client
+migration.
+
+**Decision: B — narrow the scope and revise/re-measure.** The performance
+signal remains large across narrow, wide, and real mixed dimension/metric
+workloads, and cancellation and bounded slow-client cleanup work. The mixed
+payload regression and corrected-boundary concurrency variance also reinforce
+the narrow decision. The current candidate does not clear the correctness and
+operational gates because real DuckDB loses
+`NOT NULL` declarations, native pagination differs from current exact-count
+behavior, a slow client pins a database connection, browser compatibility is
+unknown, and RSS evidence is inconclusive. FAI-544 therefore does not provide
+enough evidence for a production design proposal. A follow-up may retain the
+ordinary detail-table scope only if it first defines an authoritative governed
+nullability source, resolves pagination/client semantics, sets a bounded
+slow-consumer connection policy, and repeats isolated-process RSS and browser
+qualification. This prototype does not prove production readiness.
+
 ## Required measurements
 
 Capture raw results rather than reporting a single percentage:
@@ -670,10 +877,10 @@ FAI-538 and FAI-539 establish the scorecard and microbenchmark foundation.
 FAI-540 establishes the reproducible current dashboard round-trip baseline;
 it does not qualify production data. FAI-542 establishes a comparison-grade
 warm baseline. FAI-541 locks the `native-v1` response contract. FAI-543 shows a
-strong synthetic signal for direct governed streaming but also exposes an
-unresolved exact-count versus pagination-probe difference. None of these
-issues authorizes production behavior. Direct production detail-table
-delivery remains prohibited until a
-response-equivalent candidate demonstrates a measured benefit and response
-compatibility, lease lifetime, cancellation, slow-consumer memory, multi-CPU
-behavior, and the remaining correctness gates clear this scorecard.
+strong synthetic signal. FAI-544 confirms a real-DuckDB/HTTP performance signal
+but classifies the candidate as revise-and-remeasure because DuckDB nullability,
+pagination compatibility, slow-consumer connection lifetime, isolated RSS,
+and browser compatibility remain unresolved. None of these issues authorizes
+production behavior. Direct production detail-table delivery remains
+prohibited until a response-equivalent candidate clears every correctness and
+operational gate in this scorecard.

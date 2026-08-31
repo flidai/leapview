@@ -1,0 +1,105 @@
+FAI-544 paired benchstat comparison for concurrency 1, 4, and 8.
+Source: fai-544-ea59be31-qualification.txt
+Method: lane names were normalized only so benchstat could compare control and candidate samples with identical benchmark identities.
+Confidence: benchstat median, 95% interval, alpha 0.05; 10 samples per lane.
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │ /tmp/fai544-concurrency-candidate.txt │
+                                                                                    │               sec/op                │    sec/op      vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                           40.821m ±  2%    5.813m ± 11%  -85.76% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                         59.322m ±  6%    7.957m ±  5%  -86.59% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           175.20m ±  4%    22.61m ± 22%  -87.10% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                          71.76m ±  8%    10.88m ±  9%  -84.83% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                           341.41m ±  2%    46.39m ± 22%  -86.41% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                         129.86m ± 10%    19.02m ± 20%  -85.35% (p=0.000 n=10)
+geomean                                                                                                      105.1m          14.69m        -86.03%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │   /tmp/fai544-concurrency-candidate.txt   │
+                                                                                    │          ipc-bytes/request          │ ipc-bytes/request  vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                            368.9Ki ± 0%        294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                          368.9Ki ± 0%        294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                            368.9Ki ± 0%        294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                          368.9Ki ± 0%        294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                            368.9Ki ± 0%        294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                          368.9Ki ± 0%        294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+geomean                                                                                                      368.9Ki             294.3Ki       -20.23%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │   /tmp/fai544-concurrency-candidate.txt    │
+                                                                                    │           max-connections           │ max-connections  vs base                   │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                            1.000 ±   0%        1.000 ± 0%         ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                          1.000 ±   0%        1.000 ± 0%         ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                            2.000 ± 100%        4.000 ± 0%  +100.00% (p=0.003 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                          4.000 ±   0%        4.000 ± 0%         ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                            1.500 ± 167%        8.000 ± 0%  +433.33% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                          8.000 ±  12%        8.000 ± 0%         ~ (p=0.211 n=10)
+geomean                                                                                                      2.140               3.175        +48.37%
+¹ all samples are equal
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │  /tmp/fai544-concurrency-candidate.txt  │
+                                                                                    │           p50-sec/request           │ p50-sec/request  vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                           39.878m ±  1%      5.614m ±  3%  -85.92% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                         60.632m ± 12%      8.088m ±  4%  -86.66% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           169.03m ±  3%      20.18m ±  5%  -88.06% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                         62.103m ±  7%      9.498m ±  6%  -84.71% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                           334.75m ±  3%      38.13m ±  9%  -88.61% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                         110.56m ±  6%      15.24m ± 10%  -86.22% (p=0.000 n=10)
+geomean                                                                                                      98.96m            13.10m        -86.76%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │  /tmp/fai544-concurrency-candidate.txt  │
+                                                                                    │           p95-sec/request           │ p95-sec/request  vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                           44.099m ±  5%      9.044m ± 21%  -79.49% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                         66.821m ±  5%      9.956m ±  5%  -85.10% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           198.59m ± 11%      28.45m ± 19%  -85.67% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                          77.44m ±  6%      12.79m ±  3%  -83.49% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                           353.61m ±  5%      51.19m ± 37%  -85.52% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                         132.93m ±  8%      20.94m ± 11%  -84.25% (p=0.000 n=10)
+geomean                                                                                                      113.4m            18.10m        -84.05%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │  /tmp/fai544-concurrency-candidate.txt  │
+                                                                                    │           p99-sec/request           │ p99-sec/request  vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                            46.04m ±  3%      11.72m ± 22%  -74.55% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                          68.01m ±  4%      10.92m ±  5%  -83.95% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           199.12m ± 12%      39.35m ± 28%  -80.24% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                          83.69m ±  7%      14.25m ±  4%  -82.97% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                           353.83m ±  5%      71.77m ± 24%  -79.72% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                         143.75m ±  9%      23.70m ±  5%  -83.51% (p=0.000 n=10)
+geomean                                                                                                      117.7m            22.27m        -81.07%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │ /tmp/fai544-concurrency-candidate.txt │
+                                                                                    │             requests/s              │  requests/s   vs base                 │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                             24.50 ±  2%   172.05 ± 10%  +602.24% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                           16.86 ±  7%   125.65 ±  5%  +645.26% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                             22.83 ±  4%   176.90 ± 18%  +674.86% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                           55.74 ±  8%   367.60 ±  8%  +559.49% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                             23.43 ±  3%   172.45 ± 18%  +636.02% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                           61.60 ± 11%   420.65 ± 17%  +582.82% (p=0.000 n=10)
+geomean                                                                                                       30.20          216.1        +615.71%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │  /tmp/fai544-concurrency-candidate.txt   │
+                                                                                    │          wall-sec/request           │ wall-sec/request  vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                           40.821m ±  2%       5.813m ± 11%  -85.76% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                         59.322m ±  6%       7.957m ±  5%  -86.59% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           43.800m ±  4%       5.652m ± 22%  -87.10% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                         17.940m ±  8%       2.721m ±  9%  -84.83% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                           42.676m ±  2%       5.799m ± 22%  -86.41% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                         16.232m ± 10%       2.377m ± 20%  -85.35% (p=0.000 n=10)
+geomean                                                                                                      33.11m             4.627m        -86.03%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │ /tmp/fai544-concurrency-candidate.txt │
+                                                                                    │                B/op                 │     B/op       vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                           18.286Mi ± 0%    1.785Mi ± 0%  -90.24% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                         18.299Mi ± 0%    1.788Mi ± 0%  -90.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           72.970Mi ± 0%    7.141Mi ± 0%  -90.21% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                         73.112Mi ± 0%    7.145Mi ± 0%  -90.23% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                           145.91Mi ± 0%    14.29Mi ± 0%  -90.21% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                         146.08Mi ± 0%    14.29Mi ± 0%  -90.22% (p=0.000 n=10)
+geomean                                                                                                      57.99Mi         5.670Mi       -90.22%
+
+                                                                                    │ /tmp/fai544-concurrency-control.txt │ /tmp/fai544-concurrency-candidate.txt │
+                                                                                    │              allocs/op              │   allocs/op    vs base                │
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http                           117.133k ± 0%     2.205k ± 0%  -98.12% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_1/lane_http-4                         117.163k ± 0%     2.217k ± 0%  -98.11% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http                           468.430k ± 0%     8.828k ± 0%  -98.12% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_4/lane_http-4                         468.493k ± 0%     8.841k ± 0%  -98.11% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http                            936.86k ± 0%     17.68k ± 0%  -98.11% (p=0.000 n=10)
+DashboardDirectArrowQualificationConcurrency/real_wide_rows_999/users_8/lane_http-4                          936.91k ± 0%     17.69k ± 0%  -98.11% (p=0.000 n=10)
+geomean                                                                                                       371.8k          7.017k       -98.11%
