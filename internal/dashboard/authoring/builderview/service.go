@@ -22,13 +22,14 @@ import (
 )
 
 const (
-	maxPages            = 128
-	maxVisuals          = 1024
-	maxFilterComponents = 1024
-	maxTables           = 256
-	maxFields           = 1024
-	maxSlots            = 64
-	maxDiagnostics      = 128
+	maxPages              = 128
+	maxVisuals            = 1024
+	maxFilterComponents   = 1024
+	maxInteractionTargets = 1024
+	maxTables             = 256
+	maxFields             = 1024
+	maxSlots              = 64
+	maxDiagnostics        = 128
 )
 
 // Request identifies one project-scoped draft builder projection. Empty
@@ -475,7 +476,168 @@ func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, 
 	if err != nil {
 		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual format options: %w", err)
 	}
-	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
+	interaction, err := projectCanonicalInteraction(authored)
+	if err != nil {
+		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual interaction: %w", err)
+	}
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}, Interaction: interaction}, nil
+}
+
+// projectCanonicalInteraction exposes only the small, closed subset needed by
+// the visual builder. It never returns an authored interaction union: spatial,
+// multiple, and malformed declarations remain visible as configured but
+// non-editable metadata so the browser cannot clobber them.
+func projectCanonicalInteraction(authored dashboarddocument.DashboardVisual) (*uisignals.DashboardBuilderInteractionSignal, error) {
+	projection := &uisignals.DashboardBuilderInteractionSignal{
+		Configured: false, Editable: false, Toggle: true,
+		Mappings: []uisignals.DashboardBuilderInteractionMappingSignal{},
+		Targets:  []string{}, HighlightTargets: []string{}, NoneTargets: []string{},
+	}
+	if authored.Interactions == nil || len(*authored.Interactions) == 0 {
+		mapping, ok := inferCanonicalInteractionMapping(authored.Query)
+		if ok {
+			projection.Editable = true
+			mode := "single"
+			projection.Mode = &mode
+			projection.Mappings = []uisignals.DashboardBuilderInteractionMappingSignal{mapping}
+			return projection, nil
+		}
+		// No authored interaction and no stable selection identity: omit the
+		// optional projection so the builder can present its unavailable state.
+		return nil, nil
+	}
+	projection.Configured = true
+	if len(*authored.Interactions) != 1 {
+		message := "Multiple authored interactions are not editable in the builder."
+		projection.Message = &message
+		return projection, nil
+	}
+	interaction := (*authored.Interactions)[0]
+	selection, ok := interaction.Value.(*dashboarddocument.SelectionDashboardInteraction)
+	if !ok || selection == nil {
+		message := "Spatial or unsupported authored interactions are not editable in the builder."
+		projection.Message = &message
+		return projection, nil
+	}
+	if selection.Mode != dashboarddocument.DashboardSelectionModeSingle && selection.Mode != dashboarddocument.DashboardSelectionModeMultiple {
+		message := "Unsupported authored interaction mode is not editable in the builder."
+		projection.Message = &message
+		return projection, nil
+	}
+	if len(selection.Mappings) > maxSlots {
+		return nil, fmt.Errorf("dashboard builder interaction mappings exceed bounded limit")
+	}
+	projection.Editable = true
+	mode := string(selection.Mode)
+	projection.Mode = &mode
+	projection.Toggle = selection.Toggle
+	projection.Mappings = make([]uisignals.DashboardBuilderInteractionMappingSignal, 0, len(selection.Mappings))
+	for _, mapping := range selection.Mappings {
+		if safeFieldID(mapping.Field) == "" || safeFieldID(mapping.Value) == "" {
+			projection.Editable = false
+			message := "This authored interaction contains an unsupported field mapping."
+			projection.Message = &message
+			projection.Mappings = []uisignals.DashboardBuilderInteractionMappingSignal{}
+			return projection, nil
+		}
+		projected := uisignals.DashboardBuilderInteractionMappingSignal{Field: mapping.Field, Value: mapping.Value}
+		if mapping.Dataset != nil {
+			dataset := *mapping.Dataset
+			projected.Dataset = &dataset
+		}
+		if mapping.Grain != nil {
+			grain := string(*mapping.Grain)
+			projected.Grain = &grain
+		}
+		if mapping.Label != nil {
+			label := *mapping.Label
+			projected.Label = &label
+		}
+		projection.Mappings = append(projection.Mappings, projected)
+	}
+	projection.Targets = appendBoundedInteractionTargets(projection.Targets, selection.Targets)
+	projection.HighlightTargets = appendBoundedInteractionTargets(projection.HighlightTargets, selection.HighlightTargets)
+	projection.NoneTargets = appendBoundedInteractionTargets(projection.NoneTargets, selection.NoneTargets)
+	if len(projection.Targets) > maxInteractionTargets || len(projection.HighlightTargets) > maxInteractionTargets || len(projection.NoneTargets) > maxInteractionTargets {
+		return nil, fmt.Errorf("dashboard builder interaction targets exceed bounded visual limit")
+	}
+	if !interactionTargetsDisjoint(projection.Targets, projection.HighlightTargets, projection.NoneTargets) {
+		projection.Editable = false
+		message := "This authored interaction contains overlapping target effects."
+		projection.Message = &message
+	}
+	return projection, nil
+}
+
+func appendBoundedInteractionTargets(dst []string, targets *[]string) []string {
+	if targets == nil {
+		return dst
+	}
+	return append(dst, (*targets)...)
+}
+
+func interactionTargetsDisjoint(groups ...[]string) bool {
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, target := range group {
+			if _, exists := seen[target]; exists {
+				return false
+			}
+			seen[target] = struct{}{}
+		}
+	}
+	return true
+}
+
+// inferCanonicalInteractionMapping follows the builder's canonical query
+// field helpers, choosing the first aggregate dimension, pivot row, or record
+// field. Metrics, histograms, and distributions intentionally have no default
+// interaction mapping because they do not expose a stable selectable identity.
+func inferCanonicalInteractionMapping(query dashboarddocument.DashboardQuery) (uisignals.DashboardBuilderInteractionMappingSignal, bool) {
+	var fieldID, label, dataset string
+	var grain *string
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		if len(value.Dimensions) == 0 {
+			return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+		}
+		fieldID, label = canonicalDimension(value.Dimensions[0])
+		if reference := value.Dimensions[0].Reference; reference != nil && reference.Grain != nil {
+			value := string(*reference.Grain)
+			grain = &value
+		}
+	case *dashboarddocument.PivotDashboardQuery:
+		if len(value.Rows) == 0 {
+			return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+		}
+		fieldID, label = canonicalDimension(value.Rows[0])
+		if reference := value.Rows[0].Reference; reference != nil && reference.Grain != nil {
+			value := string(*reference.Grain)
+			grain = &value
+		}
+	case *dashboarddocument.RecordsDashboardQuery:
+		if len(value.Fields) == 0 {
+			return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+		}
+		fieldID, label = canonicalRecordField(value.Fields[0])
+		dataset = strings.TrimSpace(value.Dataset)
+	default:
+		return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+	}
+	if safeFieldID(fieldID) == "" {
+		return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+	}
+	mapping := uisignals.DashboardBuilderInteractionMappingSignal{Field: fieldID, Value: fieldID}
+	if dataset != "" {
+		mapping.Dataset = &dataset
+	}
+	if grain != nil {
+		mapping.Grain = grain
+	}
+	if safeLabel(label) && label != fieldID {
+		mapping.Label = &label
+	}
+	return mapping, true
 }
 
 func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {

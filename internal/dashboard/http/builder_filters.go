@@ -80,7 +80,7 @@ func (h Handler) DashboardBuilderFilterCommand(w nethttp.ResponseWriter, r *neth
 	}
 	request.Key.ServingStateID = builderServingStateIDForGeneration(request.Builder, compiled.SemanticEvidence.Identity.GenerationID)
 	if request.Key.ServingStateID == "" {
-		writeBuilderFilterError(w, fmt.Errorf("complete builder draft revision is required"))
+		writeBuilderFilterError(w, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload))
 		return
 	}
 	if supplied := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.ServingStateID)); supplied != "" && supplied != request.Key.ServingStateID {
@@ -164,7 +164,7 @@ func (h Handler) DashboardBuilderFilterOptions(w nethttp.ResponseWriter, r *neth
 	}
 	request.Key.ServingStateID = builderServingStateIDForGeneration(request.Builder, compiled.SemanticEvidence.Identity.GenerationID)
 	if request.Key.ServingStateID == "" {
-		writeBuilderFilterError(w, fmt.Errorf("complete builder draft revision is required"))
+		writeBuilderFilterError(w, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload))
 		return
 	}
 	if supplied := strings.TrimSpace(optionalRuntimeValue(signals.Runtime.ServingStateID)); supplied != "" && supplied != request.Key.ServingStateID {
@@ -240,13 +240,16 @@ func (h Handler) builderFilterRequest(r *nethttp.Request, signals builderFilterS
 		return builderFilterRequest{}, access.ErrForbidden
 	}
 	if signals.Builder.DashboardID != dashboardID || strings.TrimSpace(signals.Builder.DraftID) == "" {
-		return builderFilterRequest{}, fmt.Errorf("dashboard builder filter scope is invalid")
+		return builderFilterRequest{}, fmt.Errorf("%w: dashboard builder filter scope is invalid", authoring.ErrInvalidPayload)
+	}
+	if err := authoring.DraftID(signals.Builder.DraftID).Validate(); err != nil {
+		return builderFilterRequest{}, err
 	}
 	if queryDraft := strings.TrimSpace(r.URL.Query().Get("draft")); queryDraft != "" && queryDraft != signals.Builder.DraftID {
 		return builderFilterRequest{}, authoring.ErrStaleRevision
 	}
 	if signals.Builder.Revision.Number <= 0 || strings.TrimSpace(signals.Builder.Revision.ID) == "" || strings.TrimSpace(signals.Builder.Revision.ContentHash) == "" {
-		return builderFilterRequest{}, fmt.Errorf("complete builder draft revision is required")
+		return builderFilterRequest{}, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload)
 	}
 	revision := authoring.RevisionToken{RevisionID: authoring.RevisionID(signals.Builder.Revision.ID), Number: uint64(signals.Builder.Revision.Number), ContentHash: signals.Builder.Revision.ContentHash}
 	if err := revision.ValidateComplete(); err != nil {
@@ -258,7 +261,7 @@ func (h Handler) builderFilterRequest(r *nethttp.Request, signals builderFilterS
 	}
 	clientID := webtransport.ClientIDFromRequest(r, suppliedClient)
 	if clientID == "" {
-		return builderFilterRequest{}, fmt.Errorf("builder filter client identity is required")
+		return builderFilterRequest{}, fmt.Errorf("%w: builder filter client identity is required", authoring.ErrInvalidIdentifier)
 	}
 	streamID := strings.TrimSpace(r.URL.Query().Get("streamInstance"))
 	if signals.Runtime.StreamInstanceID != nil && strings.TrimSpace(*signals.Runtime.StreamInstanceID) != "" {
@@ -269,13 +272,13 @@ func (h Handler) builderFilterRequest(r *nethttp.Request, signals builderFilterS
 	}
 	dashboardResource, err := projectgraph.NewResourceID(dashboardID)
 	if err != nil {
-		return builderFilterRequest{}, err
+		return builderFilterRequest{}, fmt.Errorf("%w: dashboard id: %v", authoring.ErrInvalidIdentifier, err)
 	}
 	// ServingStateID is an opaque exact-revision identity. Including the
 	// content hash prevents a reused draft ID from inheriting old state.
 	servingStateID := builderServingStateID(signals.Builder)
 	if servingStateID == "" {
-		return builderFilterRequest{}, fmt.Errorf("complete builder draft revision is required")
+		return builderFilterRequest{}, fmt.Errorf("%w: complete builder draft revision is required", authoring.ErrInvalidPayload)
 	}
 	key := dashboardsession.Key{ProjectID: projectID, PrincipalOrClient: actorID + ":" + clientID, DashboardID: dashboardResource, ServingStateID: servingStateID, StreamInstanceID: streamID}
 	return builderFilterRequest{ProjectID: projectID, DashboardID: dashboardID, ActorID: actorID, ClientID: clientID, PageID: firstBuilderPage(signals.Builder), Key: key, Builder: signals.Builder, Revision: revision}, nil
@@ -307,16 +310,19 @@ func builderFilterValidationResponse(definition dashboarddefinition.Definition, 
 }
 
 func writeBuilderFilterError(w nethttp.ResponseWriter, err error) {
-	status := nethttp.StatusConflict
+	if err == nil {
+		err = errors.New("dashboard builder filter request failed")
+	}
+	status := nethttp.StatusServiceUnavailable
 	switch {
 	case errors.Is(err, access.ErrForbidden):
 		status = nethttp.StatusForbidden
 	case errors.Is(err, authoring.ErrNotFound):
 		status = nethttp.StatusNotFound
-	case errors.Is(err, authoring.ErrInvalidPayload), errors.Is(err, authoring.ErrInvalidIdentifier):
-		status = nethttp.StatusBadRequest
-	case errors.Is(err, dashboardsession.ErrNotFound):
+	case errors.Is(err, authoring.ErrStaleRevision), errors.Is(err, dashboardfilter.ErrStaleRevision), errors.Is(err, dashboardsession.ErrConflict), errors.Is(err, dashboardsession.ErrNotFound):
 		status = nethttp.StatusConflict
+	case errors.Is(err, authoring.ErrInvalidAuthoring), errors.Is(err, authoring.ErrInvalidPayload), errors.Is(err, authoring.ErrInvalidIdentifier), errors.Is(err, authoring.ErrInvalidTransition):
+		status = nethttp.StatusBadRequest
 	}
 	nethttp.Error(w, err.Error(), status)
 }

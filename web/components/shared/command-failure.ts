@@ -5,6 +5,8 @@ export type BrowserCommandFailureKind =
   | 'conflict'
   | 'rate-limited'
   | 'unavailable'
+  | 'invalid-draft'
+  | 'validation'
   | 'network'
   | 'unknown'
 
@@ -51,6 +53,8 @@ export function browserCommandFailure(event: Event, action = 'This action'): Bro
   if (status === 404) return failure('not-found', status, false, `${prefix} could not continue because the resource changed or is no longer available. Reload the page.`)
   if (status === 409 || status === 412) return failure('conflict', status, false, `${prefix} conflicted with a newer change. Reload the latest state before retrying.`)
   if (status === 429) return failure('rate-limited', status, true, `${prefix} was temporarily rate limited. Wait a moment, then retry.`)
+  if (status === 400) return failure('invalid-draft', status, false, `${prefix} could not be completed because the draft is invalid or incomplete. Review the draft inputs and try again.`)
+  if (status === 422) return failure('validation', status, false, `${prefix} was rejected by validation. Fix the highlighted draft issues, then retry.`)
   if (status !== null && status >= 500) return failure('unavailable', status, true, `${prefix} could not be completed because the service is temporarily unavailable. Your previous state was kept; retry when ready.`)
   if (detail.type === 'retries-failed' || status === null || status === 0) return failure('network', status, true, `${prefix} could not reach the server. Your previous state was kept; check the connection and retry.`)
   return failure('unknown', status, false, `${prefix} could not be completed. Your previous state was kept; review the page and retry.`)

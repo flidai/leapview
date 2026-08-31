@@ -21656,6 +21656,14 @@ paths:
                     pages:
                       - components: []
                         description: example
+                        filterBindings:
+                          - filter: example
+                            id: example
+                            readerEditable: true
+                            required: true
+                            targets:
+                              - example
+                            urlParameter: example
                         id: example
                         layout:
                           columns: 1
@@ -22600,6 +22608,14 @@ paths:
                     pages:
                       - components: []
                         description: example
+                        filterBindings:
+                          - filter: example
+                            id: example
+                            readerEditable: true
+                            required: true
+                            targets:
+                              - example
+                            urlParameter: example
                         id: example
                         layout:
                           columns: 1
@@ -23021,6 +23037,14 @@ paths:
                     pages:
                       - components: []
                         description: example
+                        filterBindings:
+                          - filter: example
+                            id: example
+                            readerEditable: true
+                            required: true
+                            targets:
+                              - example
+                            urlParameter: example
                         id: example
                         layout:
                           columns: 1
@@ -65884,6 +65908,7 @@ components:
         - $ref: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetFiltersCommand'
         - $ref: '#/components/schemas/DashboardAuthoringSetInteractionCommand'
+        - $ref: '#/components/schemas/DashboardAuthoringSetInteractionTargetCommand'
         - $ref: '#/components/schemas/DashboardAuthoringPublishCommand'
         - $ref: '#/components/schemas/DashboardAuthoringArchiveCommand'
       discriminator:
@@ -65904,6 +65929,7 @@ components:
           restoreRevision: '#/components/schemas/DashboardAuthoringRestoreRevisionCommand'
           setFilters: '#/components/schemas/DashboardAuthoringSetFiltersCommand'
           setInteraction: '#/components/schemas/DashboardAuthoringSetInteractionCommand'
+          setInteractionTarget: '#/components/schemas/DashboardAuthoringSetInteractionTargetCommand'
           setLayout: '#/components/schemas/DashboardAuthoringSetLayoutCommand'
           setVisibility: '#/components/schemas/DashboardAuthoringSetVisibilityCommand'
           setVisualType: '#/components/schemas/DashboardAuthoringSetVisualTypeCommand'
@@ -66137,6 +66163,14 @@ components:
             pages:
               - components: []
                 description: example
+                filterBindings:
+                  - filter: example
+                    id: example
+                    readerEditable: true
+                    required: true
+                    targets:
+                      - example
+                    urlParameter: example
                 id: example
                 layout:
                   columns: 1
@@ -69033,6 +69067,14 @@ components:
             pages:
               - components: []
                 description: example
+                filterBindings:
+                  - filter: example
+                    id: example
+                    readerEditable: true
+                    required: true
+                    targets:
+                      - example
+                    urlParameter: example
                 id: example
                 layout:
                   columns: 1
@@ -69279,6 +69321,57 @@ components:
       example:
         clear: true
         pageId: example
+        visualId: example
+    DashboardAuthoringSetInteractionTargetCommand:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardAuthoringCommandRequestBase'
+      required:
+        - kind
+        - setInteractionTarget
+      properties:
+        kind:
+          type: string
+          enum:
+            - setInteractionTarget
+          example: example
+        setInteractionTarget:
+          $ref: '#/components/schemas/DashboardAuthoringSetInteractionTargetIntent'
+      example:
+        kind: example
+        setInteractionTarget:
+          effect: example
+          pageId: example
+          targetVisualId: example
+          visualId: example
+    DashboardAuthoringSetInteractionTargetIntent:
+      type: object
+      required:
+        - pageId
+        - visualId
+        - targetVisualId
+        - effect
+      properties:
+        pageId:
+          type: string
+          example: example
+        visualId:
+          type: string
+          example: example
+        targetVisualId:
+          type: string
+          example: example
+        effect:
+          type: string
+          enum:
+            - filter
+            - highlight
+            - none
+          example: example
+      example:
+        effect: example
+        pageId: example
+        targetVisualId: example
         visualId: example
     DashboardAuthoringSetLayoutCommand:
       type: object
@@ -69654,6 +69747,14 @@ components:
         upsertPage:
           components: []
           description: example
+          filterBindings:
+            - filter: example
+              id: example
+              readerEditable: true
+              required: true
+              targets:
+                - example
+              urlParameter: example
           id: example
           layout:
             columns: 1
@@ -70550,6 +70651,14 @@ components:
           pages:
             - components: []
               description: example
+              filterBindings:
+                - filter: example
+                  id: example
+                  readerEditable: true
+                  required: true
+                  targets:
+                    - example
+                  urlParameter: example
               id: example
               layout:
                 columns: 1
@@ -70716,8 +70825,8 @@ components:
           items:
             type: string
             minLength: 1
-            maxLength: 128
-            pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+            maxLength: 257
+            pattern: ^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$
           example:
             - example
         urlParameter:
@@ -72126,6 +72235,18 @@ components:
           example: example
         layout:
           $ref: '#/components/schemas/DashboardLayoutOverride'
+        filterBindings:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardPageFilterBinding'
+          example:
+            - filter: example
+              id: example
+              readerEditable: true
+              required: true
+              targets:
+                - example
+              urlParameter: example
         components:
           type: array
           items:
@@ -72134,6 +72255,14 @@ components:
       example:
         components: []
         description: example
+        filterBindings:
+          - filter: example
+            id: example
+            readerEditable: true
+            required: true
+            targets:
+              - example
+            urlParameter: example
         id: example
         layout:
           columns: 1
@@ -72178,6 +72307,59 @@ components:
           row: 1
           rowSpan: 1
         type: example
+    DashboardPageFilterBinding:
+      type: object
+      required:
+        - id
+        - filter
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        filter:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        default:
+          $ref: '#/components/schemas/DashboardFilterExpression'
+        required:
+          type: boolean
+          example: true
+        readerEditable:
+          type: boolean
+          example: true
+        targets:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 128
+            pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example:
+            - example
+        urlParameter:
+          type: string
+          minLength: 1
+          maxLength: 64
+          pattern: ^[A-Za-z][A-Za-z0-9_-]{0,63}$
+          example: example
+      description: |-
+        A page-scoped state binding for one governed dashboard filter definition.
+        The binding identity is local to its page and is independent from any
+        in-canvas filter component that presents the same filter.
+      example:
+        filter: example
+        id: example
+        readerEditable: true
+        required: true
+        targets:
+          - example
+        urlParameter: example
     DashboardPageQueryRequest:
       type: object
       properties:
@@ -73270,6 +73452,14 @@ components:
           example:
             - components: []
               description: example
+              filterBindings:
+                - filter: example
+                  id: example
+                  readerEditable: true
+                  required: true
+                  targets:
+                    - example
+                  urlParameter: example
               id: example
               layout:
                 columns: 1
@@ -73312,6 +73502,14 @@ components:
         pages:
           - components: []
             description: example
+            filterBindings:
+              - filter: example
+                id: example
+                readerEditable: true
+                required: true
+                targets:
+                  - example
+                urlParameter: example
             id: example
             layout:
               columns: 1

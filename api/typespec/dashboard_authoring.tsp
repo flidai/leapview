@@ -196,6 +196,12 @@ model DashboardAuthoringSetInteractionIntent {
   interaction?: LeapViewDashboard.DashboardInteraction;
   clear?: boolean;
 }
+model DashboardAuthoringSetInteractionTargetIntent {
+  pageId: string;
+  visualId: string;
+  targetVisualId: string;
+  effect: "filter" | "highlight" | "none";
+}
 
 model DashboardAuthoringAssignFieldIntent {
   pageId: string;
@@ -360,6 +366,11 @@ model DashboardAuthoringSetFiltersCommand extends DashboardAuthoringCommandReque
 model DashboardAuthoringSetInteractionCommand extends DashboardAuthoringCommandRequest {
   kind: "setInteraction";
   setInteraction: DashboardAuthoringSetInteractionIntent;
+}
+
+model DashboardAuthoringSetInteractionTargetCommand extends DashboardAuthoringCommandRequest {
+  kind: "setInteractionTarget";
+  setInteractionTarget: DashboardAuthoringSetInteractionTargetIntent;
 }
 
 model DashboardAuthoringPublishCommand extends DashboardAuthoringCommandRequest {

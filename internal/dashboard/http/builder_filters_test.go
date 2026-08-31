@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
@@ -86,6 +87,36 @@ func TestBuilderFilterServingStateIdentityIncludesActiveGeneration(t *testing.T)
 	second := builderServingStateIDForGeneration(builder, "generation-2")
 	if first == "" || second == "" || first == second || !strings.Contains(first, ":generation:generation-1") || !strings.Contains(second, ":generation:generation-2") {
 		t.Fatalf("generation-scoped builder identities = %q, %q", first, second)
+	}
+}
+
+func TestWriteBuilderFilterErrorMapsOnlyKnownClientConflicts(t *testing.T) {
+	tests := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{name: "stale revision", err: authoring.ErrStaleRevision, want: http.StatusConflict},
+		{name: "stale filter revision", err: dashboardfilter.ErrStaleRevision, want: http.StatusConflict},
+		{name: "session conflict", err: dashboardsession.ErrConflict, want: http.StatusConflict},
+		{name: "missing session", err: dashboardsession.ErrNotFound, want: http.StatusConflict},
+		{name: "forbidden", err: access.ErrForbidden, want: http.StatusForbidden},
+		{name: "authoring not found", err: authoring.ErrNotFound, want: http.StatusNotFound},
+		{name: "invalid authoring", err: authoring.ErrInvalidAuthoring, want: http.StatusBadRequest},
+		{name: "invalid payload", err: authoring.ErrInvalidPayload, want: http.StatusBadRequest},
+		{name: "invalid identifier", err: authoring.ErrInvalidIdentifier, want: http.StatusBadRequest},
+		{name: "invalid transition", err: authoring.ErrInvalidTransition, want: http.StatusBadRequest},
+		{name: "unexpected runtime", err: errors.New("runtime query failed"), want: http.StatusServiceUnavailable},
+		{name: "authoring conflict is not a stale/session conflict", err: authoring.ErrConflict, want: http.StatusServiceUnavailable},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			recorder := httptest.NewRecorder()
+			writeBuilderFilterError(recorder, test.err)
+			if recorder.Code != test.want {
+				t.Fatalf("status = %d, want %d (body=%q)", recorder.Code, test.want, recorder.Body.String())
+			}
+		})
 	}
 }
 

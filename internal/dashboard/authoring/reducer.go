@@ -299,6 +299,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		}
 		value.Spec.Visuals[visualID] = visual
 		return nil
+	case *SetInteractionTargetPayload:
+		return setCanonicalInteractionTarget(value, *patch)
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
 	}
@@ -1001,6 +1003,218 @@ func resolveCanonicalInteractionVisual(value document.DashboardDocument, pageID,
 		return target, nil
 	}
 	return "", fmt.Errorf("%w: page %q", ErrNotFound, pageID)
+}
+
+// setCanonicalInteractionTarget updates one target edge while preserving the
+// authored selection's exact mode, toggle, mappings, and unrelated targets.
+// Both source and target IDs are resolved on the requested page; a visual
+// definition ID or a placed component ID is accepted for either side.
+func setCanonicalInteractionTarget(value *document.DashboardDocument, patch SetInteractionTargetPayload) error {
+	if value == nil {
+		return fmt.Errorf("%w: dashboard document is required", ErrInvalidPayload)
+	}
+	sourceID, err := resolvePageInteractionVisual(*value, patch.PageID, patch.VisualID)
+	if err != nil {
+		return err
+	}
+	targetID, err := resolvePageInteractionVisual(*value, patch.PageID, patch.TargetVisualID)
+	if err != nil {
+		return err
+	}
+	if sourceID == targetID {
+		return fmt.Errorf("%w: interaction source and target cannot be the same visual", ErrInvalidPayload)
+	}
+	effect := strings.TrimSpace(patch.Effect)
+	switch effect {
+	case "filter", "highlight", "none":
+	default:
+		return fmt.Errorf("%w: unsupported interaction target effect %q", ErrInvalidPayload, patch.Effect)
+	}
+	source, ok := value.Spec.Visuals[sourceID]
+	if !ok {
+		return fmt.Errorf("%w: visual %q", ErrNotFound, sourceID)
+	}
+	selection, err := canonicalInteractionSelectionForTarget(source)
+	if err != nil {
+		return err
+	}
+	selection.Targets = updateInteractionTargetList(selection.Targets, targetID, effect == "filter")
+	selection.HighlightTargets = updateInteractionTargetList(selection.HighlightTargets, targetID, effect == "highlight")
+	selection.NoneTargets = updateInteractionTargetList(selection.NoneTargets, targetID, effect == "none")
+	if !interactionTargetListsDisjoint(selection.Targets, selection.HighlightTargets, selection.NoneTargets) {
+		return fmt.Errorf("%w: interaction target effects overlap", ErrInvalidPayload)
+	}
+	if interactionTargetCount(selection.Targets) > maxFilterTargets || interactionTargetCount(selection.HighlightTargets) > maxFilterTargets || interactionTargetCount(selection.NoneTargets) > maxFilterTargets {
+		return fmt.Errorf("%w: interaction targets exceed bounded visual limit", ErrInvalidPayload)
+	}
+	interactions := []document.DashboardInteraction{{Value: selection}}
+	source.Interactions = &interactions
+	value.Spec.Visuals[sourceID] = source
+	return nil
+}
+
+func interactionTargetCount(value *[]string) int {
+	if value == nil {
+		return 0
+	}
+	return len(*value)
+}
+
+func interactionTargetListsDisjoint(groups ...*[]string) bool {
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		if group == nil {
+			continue
+		}
+		for _, target := range *group {
+			if _, exists := seen[target]; exists {
+				return false
+			}
+			seen[target] = struct{}{}
+		}
+	}
+	return true
+}
+
+func resolvePageInteractionVisual(value document.DashboardDocument, pageID, visualID string) (string, error) {
+	pageID, visualID = strings.TrimSpace(pageID), strings.TrimSpace(visualID)
+	if pageID == "" || visualID == "" {
+		return "", fmt.Errorf("%w: interaction source and target require page and visual ids", ErrInvalidPayload)
+	}
+	for _, page := range value.Spec.Pages {
+		if page.ID != pageID {
+			continue
+		}
+		for _, component := range page.Components {
+			visual, ok := component.Value.(*document.VisualDashboardPageComponent)
+			if !ok || strings.TrimSpace(visual.Visual) == "" {
+				continue
+			}
+			base, baseErr := component.Base()
+			if baseErr != nil {
+				return "", baseErr
+			}
+			if visual.Visual == visualID || (base != nil && base.ID == visualID) {
+				if _, exists := value.Spec.Visuals[visual.Visual]; !exists {
+					return "", fmt.Errorf("%w: visual %q", ErrNotFound, visual.Visual)
+				}
+				return visual.Visual, nil
+			}
+		}
+		return "", fmt.Errorf("%w: visual component %q on page %q", ErrNotFound, visualID, pageID)
+	}
+	return "", fmt.Errorf("%w: page %q", ErrNotFound, pageID)
+}
+
+func canonicalInteractionSelectionForTarget(visual document.DashboardVisual) (*document.SelectionDashboardInteraction, error) {
+	if visual.Interactions == nil || len(*visual.Interactions) == 0 {
+		mapping, ok := inferCanonicalInteractionMapping(visual.Query)
+		if !ok {
+			return nil, fmt.Errorf("%w: source visual has no inferable dimension or detail mapping", ErrInvalidPayload)
+		}
+		return &document.SelectionDashboardInteraction{
+			DashboardInteractionBase: document.DashboardInteractionBase{Type: "selection"},
+			Type:                     "selection", Mode: document.DashboardSelectionModeSingle, Toggle: true,
+			Mappings: []document.DashboardInteractionMapping{mapping},
+		}, nil
+	}
+	if len(*visual.Interactions) != 1 {
+		return nil, fmt.Errorf("%w: source visual has multiple authored interactions", ErrInvalidPayload)
+	}
+	selection, ok := (*visual.Interactions)[0].Value.(*document.SelectionDashboardInteraction)
+	if !ok || selection == nil {
+		return nil, fmt.Errorf("%w: source visual has spatial or unsupported interaction", ErrInvalidPayload)
+	}
+	if selection.Mode != document.DashboardSelectionModeSingle && selection.Mode != document.DashboardSelectionModeMultiple {
+		return nil, fmt.Errorf("%w: source visual has unsupported interaction mode", ErrInvalidPayload)
+	}
+	clone := *selection
+	clone.Mappings = append([]document.DashboardInteractionMapping(nil), selection.Mappings...)
+	clone.Targets = cloneInteractionTargets(selection.Targets)
+	clone.HighlightTargets = cloneInteractionTargets(selection.HighlightTargets)
+	clone.NoneTargets = cloneInteractionTargets(selection.NoneTargets)
+	return &clone, nil
+}
+
+func cloneInteractionTargets(value *[]string) *[]string {
+	if value == nil {
+		return nil
+	}
+	copyValue := append([]string(nil), (*value)...)
+	return &copyValue
+}
+
+func updateInteractionTargetList(current *[]string, target string, keep bool) *[]string {
+	var values []string
+	if current != nil {
+		values = append([]string(nil), (*current)...)
+	}
+	found := false
+	result := make([]string, 0, len(values)+1)
+	for _, candidate := range values {
+		if candidate == target {
+			if keep && !found {
+				result = append(result, candidate)
+				found = true
+			}
+			continue
+		}
+		result = append(result, candidate)
+	}
+	if keep && !found {
+		result = append(result, target)
+	}
+	if len(result) == 0 {
+		return nil
+	}
+	return &result
+}
+
+func inferCanonicalInteractionMapping(query document.DashboardQuery) (document.DashboardInteractionMapping, bool) {
+	var fieldID, label, dataset string
+	var grain *document.DashboardTimeGrain
+	switch value := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		if len(value.Dimensions) == 0 {
+			return document.DashboardInteractionMapping{}, false
+		}
+		fieldID, label = canonicalDimensionSelection(value.Dimensions[0])
+		if reference := value.Dimensions[0].Reference; reference != nil && reference.Grain != nil {
+			value := *reference.Grain
+			grain = &value
+		}
+	case *document.PivotDashboardQuery:
+		if len(value.Rows) == 0 {
+			return document.DashboardInteractionMapping{}, false
+		}
+		fieldID, label = canonicalDimensionSelection(value.Rows[0])
+		if reference := value.Rows[0].Reference; reference != nil && reference.Grain != nil {
+			value := *reference.Grain
+			grain = &value
+		}
+	case *document.RecordsDashboardQuery:
+		if len(value.Fields) == 0 {
+			return document.DashboardInteractionMapping{}, false
+		}
+		fieldID, label = canonicalRecordSelection(value.Fields[0])
+		dataset = strings.TrimSpace(value.Dataset)
+	default:
+		return document.DashboardInteractionMapping{}, false
+	}
+	if !ValidGovernedFieldID(fieldID) {
+		return document.DashboardInteractionMapping{}, false
+	}
+	mapping := document.DashboardInteractionMapping{Field: fieldID, Value: fieldID}
+	if dataset != "" {
+		mapping.Dataset = &dataset
+	}
+	if grain != nil {
+		mapping.Grain = grain
+	}
+	if strings.TrimSpace(label) != "" && label != fieldID {
+		mapping.Label = &label
+	}
+	return mapping, true
 }
 
 func resourceID(value string) graph.ResourceID { return graph.ResourceID(value) }

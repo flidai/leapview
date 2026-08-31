@@ -511,6 +511,29 @@ func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesInteractionTargetIntent(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "visualId": "source-component", "targetVisualId": "target", "effect": "highlight", "action": "set_interaction_target",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "interaction-target-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.intentCalls != 1 || fake.executeCalls != 0 || fake.executed.SetInteractionTarget == nil {
+		t.Fatalf("dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
+	}
+	intent := fake.executed.SetInteractionTarget
+	if intent.PageID != "overview" || intent.VisualID != "source-component" || intent.TargetVisualID != "target" || intent.Effect != "highlight" {
+		t.Fatalf("translated interaction target = %#v", intent)
+	}
+}
+
 func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {
 	f.previewCtx = ctx
 	f.previewReq = request
@@ -596,7 +619,7 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 	fake := &builderAuthoringFake{yaml: []byte("title: Revenue\n")}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	revisionHash := "sha256:" + strings.Repeat("b", 64)
-	previewReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?page=overview&revisionId=revision-1&revisionNumber=2&revisionContentHash="+revisionHash, nil)
+	previewReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=2&revisionContentHash="+revisionHash, nil)
 	previewRec := httptest.NewRecorder()
 	handler.DashboardBuilderPreview(previewRec, withBuilderURLParams(previewReq, "sales", "revenue"))
 	if previewRec.Code != nethttp.StatusOK || !strings.Contains(previewRec.Header().Get("Content-Type"), "application/json") {
@@ -614,6 +637,84 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 	}
 	if fake.exportDraftCalls != 1 || fake.exportDraftReq.Source.Kind != sourceadapter.SourceInstance || fake.exportDraftReq.Source.ProjectID != "sales" || fake.exportDraftReq.Source.DashboardID != "revenue" || fake.exportDraftReq.ActorID != "principal-1" {
 		t.Fatalf("draft export request = %#v calls=%d", fake.exportDraftReq, fake.exportDraftCalls)
+	}
+}
+
+func TestDashboardBuilderPreviewBindsExactDraftRevisionAndPage(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("c", 64)
+	token := authoring.RevisionToken{RevisionID: "revision-7", Number: 7, ContentHash: hash}
+	fake := &builderAuthoringFake{preview: preview.Preview{Revision: token}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.previewReq.ProjectID != "sales" || fake.previewReq.ActorID != "principal-1" || fake.previewReq.DashboardID != "revenue" || fake.previewReq.DraftID != "draft-7" || fake.previewReq.PageID != "details" || fake.previewReq.ExpectedRevision != token {
+		t.Fatalf("preview request = %#v, want exact draft/revision/page", fake.previewReq)
+	}
+	var response struct {
+		Revision authoring.RevisionToken `json:"revision"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
+		t.Fatalf("decode preview response: %v", err)
+	}
+	if response.Revision != token {
+		t.Fatalf("returned preview revision = %#v, want %#v", response.Revision, token)
+	}
+}
+
+func TestDashboardBuilderPreviewRejectsMissingOrStaleExactInputs(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("d", 64)
+	tests := []struct {
+		name       string
+		path       string
+		previewErr error
+		wantStatus int
+	}{
+		{
+			name:       "missing draft",
+			path:       "/dashboards/revenue/preview?page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			wantStatus: nethttp.StatusBadRequest,
+		},
+		{
+			name:       "missing revision",
+			path:       "/dashboards/revenue/preview?draft=draft-1&page=overview",
+			wantStatus: nethttp.StatusBadRequest,
+		},
+		{
+			name:       "missing page",
+			path:       "/dashboards/revenue/preview?draft=draft-1&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			wantStatus: nethttp.StatusBadRequest,
+		},
+		{
+			name:       "mismatched draft",
+			path:       "/dashboards/revenue/preview?draft=draft-old&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			previewErr: authoring.ErrNotFound,
+			wantStatus: nethttp.StatusNotFound,
+		},
+		{
+			name:       "stale revision",
+			path:       "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			previewErr: authoring.ErrStaleRevision,
+			wantStatus: nethttp.StatusConflict,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{previewErr: test.previewErr}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			req := httptest.NewRequest(nethttp.MethodGet, test.path, nil)
+			rec := httptest.NewRecorder()
+			handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+			if rec.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, test.wantStatus, rec.Body.String())
+			}
+			if test.previewErr == nil && fake.previewCalls != 0 {
+				t.Fatalf("preview called for invalid request: %d calls", fake.previewCalls)
+			}
+		})
 	}
 }
 

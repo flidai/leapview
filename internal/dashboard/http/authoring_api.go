@@ -832,6 +832,15 @@ func setInteractionPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAutho
 	return payload
 }
 
+func setInteractionTargetPayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringSetInteractionTargetIntent) *authoring.SetInteractionTargetPayload {
+	if value == nil {
+		return nil
+	}
+	return &authoring.SetInteractionTargetPayload{
+		PageID: value.PageId, VisualID: value.VisualId, TargetVisualID: value.TargetVisualId, Effect: value.Effect,
+	}
+}
+
 func addPagePayloadFromAPIGen(value *dashboardgen.GenSchemaDashboardAuthoringAddPageIntent) *authoring.AddPagePayload {
 	if value == nil {
 		return nil
@@ -921,6 +930,9 @@ func commandFromAPIGen(input dashboardgen.GenSchemaDashboardAuthoringCommandRequ
 	case *dashboardgen.DashboardAuthoringSetInteractionCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.SetInteraction = setInteractionPayloadFromAPIGen(&value.SetInteraction)
+	case *dashboardgen.DashboardAuthoringSetInteractionTargetCommand:
+		base = &value.DashboardAuthoringCommandRequestBase
+		command.SetInteractionTarget = setInteractionTargetPayloadFromAPIGen(&value.SetInteractionTarget)
 	case *dashboardgen.DashboardAuthoringPublishCommand:
 		base = &value.DashboardAuthoringCommandRequestBase
 		command.Publish = &authoring.PublishPayload{}
