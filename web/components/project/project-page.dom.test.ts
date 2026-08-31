@@ -257,6 +257,7 @@ test('model details move overview metadata into a responsive side rail', async (
       const railBounds = rail.getBoundingClientRect()
       return {
         columns: getComputedStyle(layout).gridTemplateColumns,
+        railPosition: getComputedStyle(rail).position,
         mainRight: mainBounds.right,
         railLeft: railBounds.left,
         railLabel: rail.getAttribute('aria-label'),
@@ -264,6 +265,7 @@ test('model details move overview metadata into a responsive side rail', async (
       }
     })
     expect(desktop.columns.split(' ')).toHaveLength(2)
+    expect(desktop.railPosition).toBe('sticky')
     expect(desktop.mainRight).toBeLessThanOrEqual(desktop.railLeft)
     expect(desktop.railLabel).toBe('Asset overview')
     expect(desktop.railHeading).toBe('Overview')
@@ -280,13 +282,13 @@ test('model details move overview metadata into a responsive side rail', async (
       return {
         columns: getComputedStyle(layout).gridTemplateColumns,
         mainTop: mainBounds.top,
-        mainBottom: mainBounds.bottom,
         railTop: railBounds.top,
+        railPosition: getComputedStyle(rail).position,
       }
     })
     expect(narrow.columns.split(' ')).toHaveLength(1)
-    expect(narrow.mainTop).toBeLessThan(narrow.railTop)
-    expect(narrow.mainBottom).toBeLessThanOrEqual(narrow.railTop)
+    expect(narrow.railTop).toBeLessThan(narrow.mainTop)
+    expect(narrow.railPosition).toBe('static')
   } finally {
     await page.close()
   }
