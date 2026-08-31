@@ -365,11 +365,12 @@ func dashboardBaselineJSONRows(t *testing.T, document map[string]any) [][]any {
 }
 
 type dashboardBaselineFixture struct {
-	service  *dashboardruntime.Service
-	core     *materializeruntime.Runtime
-	database *dashboardBaselineDatabase
-	governor dashboardBaselineGovernor
-	handler  Handler
+	service         *dashboardruntime.Service
+	core            *materializeruntime.Runtime
+	database        *dashboardBaselineDatabase
+	governor        dashboardBaselineGovernor
+	handler         Handler
+	decorateContext func(context.Context) context.Context
 }
 
 func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixture {
@@ -463,13 +464,16 @@ func (f *dashboardBaselineFixture) serve(tb testing.TB, visual string, rows int,
 	route.URLParams.Add("page", dashboardBaselinePageID)
 	route.URLParams.Add("visual", visual)
 	ctx := context.WithValue(request.Context(), chi.RouteCtxKey, route)
-	ctx = dataquery.WithGovernor(ctx, f.governor)
 	observation := dashboardBaselineObservation{}
 	ctx = dataquery.WithCacheOutcomeObserver(ctx, func(outcome string) { observation.outcomes = append(observation.outcomes, outcome) })
 	ctx = dataquery.WithPhysicalQueryObserver(ctx, func(value dataquery.PhysicalQueryObservation) {
 		observation.physicalQueries += value.Count
 		observation.results = append(observation.results, value.Result)
 	})
+	ctx = dataquery.WithGovernor(ctx, f.governor)
+	if f.decorateContext != nil {
+		ctx = f.decorateContext(ctx)
+	}
 	request = request.WithContext(ctx)
 	recorder := httptest.NewRecorder()
 	f.handler.QueryDashboardVisualData(recorder, request)
@@ -554,13 +558,17 @@ type dashboardBaselineObservation struct {
 type dashboardBaselineGovernor struct {
 	policyFingerprint string
 	calls             *atomic.Int64
+	observe           func(context.Context, dataquery.Query)
 }
 
-func (g dashboardBaselineGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+func (g dashboardBaselineGovernor) GovernDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
 	if g.calls != nil {
 		g.calls.Add(1)
 	}
 	request.EffectivePolicyFingerprint = g.policyFingerprint
+	if g.observe != nil {
+		g.observe(ctx, request)
+	}
 	return request, nil, nil
 }
 
@@ -999,11 +1007,6 @@ func dashboardBaselineDefinition(model *semanticmodel.Model) (*dashboardruntime.
 		}
 		visualizations[shape.id] = definition
 	}
-	mixed, err := dashboardDirectArrowMixedDetailDefinition()
-	if err != nil {
-		return nil, err
-	}
-	visualizations["detail_mixed"] = mixed
 	matrix, err := dashboardBaselineAggregateDefinition("matrix", false)
 	if err != nil {
 		return nil, err
@@ -1022,7 +1025,7 @@ func dashboardBaselineDefinition(model *semanticmodel.Model) (*dashboardruntime.
 		visualizations[id] = definition
 	}
 	pageVisuals := make([]dashboard.PageVisual, 0, len(visualizations))
-	for _, id := range []string{"detail_narrow", "detail_wide", "detail_mixed", "matrix", "pivot", "warm_kpi", "warm_wide_chart", "warm_bundle_chart_0", "warm_bundle_chart_1", "warm_bundle_chart_2", "warm_bundle_chart_3"} {
+	for _, id := range []string{"detail_narrow", "detail_wide", "matrix", "pivot", "warm_kpi", "warm_wide_chart", "warm_bundle_chart_0", "warm_bundle_chart_1", "warm_bundle_chart_2", "warm_bundle_chart_3"} {
 		pageVisuals = append(pageVisuals, dashboard.PageVisual{ID: id, Kind: "visual", Visual: id})
 	}
 	compiled, err := dashboarddefinition.New(dashboardBaselineDashboardID, "FAI-540 Dashboard Baseline", "", dashboardBaselineModelID.String(), []dashboard.Page{{ID: dashboardBaselinePageID, Title: "Overview", Visuals: pageVisuals}}, visualizations)

@@ -288,7 +288,6 @@ tasks:
       - go test ./internal/dashboard/http -run '^TestDashboard(Baseline|Warm)' -bench '^BenchmarkDashboardBaseline(EndToEnd|Stages)$/(detail_narrow|detail_wide|matrix|pivot)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
       - go test ./internal/dashboard/http -run '^TestDashboardWarm' -bench '^BenchmarkDashboardWarmCacheConcurrency$/(kpi|chart_bundle|wide_chart|table_window_arrow)/(users_1|users_20)$' -benchmem -benchtime=1x -count=3 -cpu=1
       - go test ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardWarmSerializationStages$' -benchmem -benchtime=100ms -count=3 -cpu=1
-      - go test ./internal/dashboard/http -run '^TestDashboardDirectArrowPrototype' -bench '^BenchmarkDashboardDirectArrowPrototype$/(detail_narrow|detail_wide)/(rows_50|rows_999)$' -benchmem -benchtime=100ms -count=3 -cpu=1
 
   bench:arrow:full:
     desc: Run all Arrow evidence workloads with comparison-grade sample counts
@@ -301,7 +300,18 @@ tasks:
       - go test ./internal/dashboard/http -run '^TestDashboard(Baseline|Warm)' -bench '^BenchmarkDashboardBaseline' -benchmem -benchtime=500ms -count=10 -cpu=1
       - go test ./internal/dashboard/http -run '^TestDashboardWarm' -bench '^BenchmarkDashboardWarmCacheConcurrency$' -benchmem -benchtime=250ms -count=10 -cpu=1
       - go test ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardWarmSerializationStages$' -benchmem -benchtime=500ms -count=10 -cpu=1
-      - go test ./internal/dashboard/http -run '^TestDashboardDirectArrowPrototype' -bench '^BenchmarkDashboardDirectArrowPrototype$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
+  test:arrow:direct-streaming-experiment:
+    desc: Run the isolated FAI-543 governed native-v1 prototype contracts
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^(TestDashboardNativeArrowContract|TestDashboardDirectArrowExperiment)' -count=1
+      - go test -tags=fai543experiment ./internal/dashboard/queryauthz -run '^(TestDashboardNativeArrowContract|TestDirectArrowExperiment)' -count=1
+      - go test ./internal/dashboard/semanticapi -run '^(TestSemanticArrowSink|TestWriteSemanticArrowResponse)' -count=1
+
+  bench:arrow:direct-streaming-experiment:
+    desc: Compare current api_direct with the isolated FAI-543 governed native-v1 prototype
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
