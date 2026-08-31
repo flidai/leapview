@@ -21,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	eventswatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -456,6 +457,10 @@ type ActivationAuditPort interface {
 // one for isolated persistence tests.
 type Options struct {
 	ActivationAudit ActivationAuditPort
+	// Events is the exact canonical repository used to append and read
+	// activation event evidence. The repository constructs its concrete
+	// Watermill boundary over this authority.
+	Events *eventspostgres.Repository
 }
 
 // ActivationInput is the complete fence and compare-and-swap proof for one
@@ -479,8 +484,10 @@ type ActivationResult struct {
 }
 
 type Repository struct {
-	db    DBTX
-	audit ActivationAuditPort
+	db               DBTX
+	audit            ActivationAuditPort
+	events           *eventspostgres.Repository
+	activationEvents *eventswatermill.Adapter
 }
 
 //go:embed schema.sql
@@ -501,18 +508,30 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	return err
 }
 
-func New(db DBTX) *Repository { return &Repository{db: db} }
+func New(db DBTX) *Repository { return newRepository(db, Options{}) }
 
 // NewWithOptions constructs a delivery repository with its composition-owned
 // activation audit adapter. A nil adapter is allowed for read/build-only
 // repository use, but Activate/ActivateTx fail closed when it is absent.
 func NewWithOptions(db DBTX, options Options) *Repository {
-	return &Repository{db: db, audit: options.ActivationAudit}
+	return newRepository(db, options)
 }
 
 // NewWithActivationAudit is a concise constructor for composition packages.
 func NewWithActivationAudit(db DBTX, audit ActivationAuditPort) *Repository {
-	return &Repository{db: db, audit: audit}
+	return newRepository(db, Options{ActivationAudit: audit})
+}
+
+func newRepository(db DBTX, options Options) *Repository {
+	events := options.Events
+	// Preserve the ergonomic low-level constructors used by persistence tests,
+	// while production composition passes the exact application-owned event
+	// repository explicitly.
+	if events == nil {
+		events = eventspostgres.New()
+	}
+	activationEvents, _ := eventswatermill.New(events)
+	return &Repository{db: db, audit: options.ActivationAudit, events: events, activationEvents: activationEvents}
 }
 
 // DB exposes the configured native PostgreSQL handle to composition-owned
@@ -558,6 +577,12 @@ func (r *Repository) TransactionCapable() bool {
 // the same caller-owned PostgreSQL transaction.
 func (r *Repository) AuditCapable() bool {
 	return r != nil && r.audit != nil
+}
+
+// EventCapable reports whether activation has both the canonical replay read
+// authority and its Watermill append boundary.
+func (r *Repository) EventCapable() bool {
+	return r != nil && r.events != nil && r.activationEvents.Matches(r.events)
 }
 
 func dbUUID(value string) pgtype.UUID {
@@ -4078,6 +4103,9 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if r == nil || r.audit == nil {
 		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
 	}
+	if !r.EventCapable() {
+		return ActivationResult{}, fmt.Errorf("%w: activation event boundary is required", ErrInvalid)
+	}
 	if tx == nil {
 		return ActivationResult{}, ErrInvalid
 	}
@@ -4282,7 +4310,7 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if err = ensureActivationRoot(ctx, tx, p, target); err != nil {
 		return ActivationResult{}, err
 	}
-	event, err := appendActivationEvent(ctx, tx, p, in, newRev, actor)
+	event, err := r.appendActivationEvent(ctx, tx, p, in, newRev, actor)
 	if err != nil {
 		return ActivationResult{}, err
 	}
@@ -4330,9 +4358,12 @@ func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, tar
 	return nil
 }
 
-func appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in ActivationInput, revision int64, actor string) (Event, error) {
+func (r *Repository) appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in ActivationInput, revision int64, actor string) (Event, error) {
+	if r == nil || !r.EventCapable() {
+		return Event{}, fmt.Errorf("%w: activation event boundary is required", ErrInvalid)
+	}
 	payload := activationPayload(p, revision)
-	e, err := eventspostgres.New().AppendEvent(ctx, tx, eventspostgres.EventInput{EventID: p.PublicationID, ScopeID: in.TargetID, AggregateType: "delivery_target", AggregateID: in.TargetID, EventType: "activation_committed", SchemaVersion: 1, CorrelationID: in.CorrelationID, Payload: payload})
+	e, err := r.activationEvents.AppendEvent(ctx, tx, eventswatermill.TopicDelivery, eventspostgres.EventInput{EventID: p.PublicationID, ScopeID: in.TargetID, AggregateType: "delivery_target", AggregateID: in.TargetID, EventType: "activation_committed", SchemaVersion: 1, CorrelationID: in.CorrelationID, Payload: payload})
 	if err != nil {
 		return Event{}, err
 	}
@@ -4355,7 +4386,10 @@ func (r *Repository) appendAudit(ctx context.Context, tx Tx, p DeliveryPublicati
 }
 
 func (r *Repository) loadActivationEvidence(ctx context.Context, tx Tx, p DeliveryPublication, actor, correlationID, publicationID string) (Event, AuditEvent, error) {
-	event, err := eventspostgres.New().GetEvent(ctx, tx, publicationID)
+	if r == nil || r.events == nil {
+		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation event authority is required", ErrInvalid)
+	}
+	event, err := r.events.GetEvent(ctx, tx, publicationID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Event{}, AuditEvent{}, fmt.Errorf("%w: activation event evidence missing", ErrConflict)
 	}

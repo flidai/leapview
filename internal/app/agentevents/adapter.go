@@ -5,34 +5,41 @@
 package agentevents
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	eventwatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 	"github.com/flidai/leapview/pkg/jobs"
-	"github.com/google/uuid"
 )
 
 // Adapter is stateless and safe to share between Agent requests.
 type Adapter struct {
-	events *eventspostgres.Repository
+	events *eventwatermill.Adapter
 }
 
 var _ agentpostgres.DomainEventAppender = (*Adapter)(nil)
 
 // New returns an adapter backed by the platform's durable PostgreSQL event
 // log.
-func New() *Adapter { return &Adapter{events: eventspostgres.New()} }
+func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
 
 // NewWithRepository is useful to composition tests and keeps the event
 // authority explicit without exposing its concrete projection to Agent.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
-	return &Adapter{events: events}
+	watermillAdapter, err := eventwatermill.New(events)
+	if err != nil {
+		return &Adapter{}
+	}
+	return &Adapter{events: watermillAdapter}
+}
+
+// Matches proves this adapter retains the exact platform event repository
+// supplied by application composition.
+func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
+	return a != nil && a.events.Matches(events)
 }
 
 // AppendDomainEvent appends through the exact caller-owned transaction and
@@ -42,24 +49,11 @@ func (a *Adapter) AppendDomainEvent(ctx context.Context, tx agentpostgres.Tx, in
 	if a == nil || a.events == nil {
 		return agentpostgres.DomainEvent{}, errors.New("agent domain event adapter is not configured")
 	}
-	if input.EventID == "" || input.EventID != strings.TrimSpace(input.EventID) {
+	if input.EventID == "" {
 		return agentpostgres.DomainEvent{}, errors.New("agent domain event id must be a canonical UUID")
-	}
-	parsed, err := uuid.Parse(input.EventID)
-	if err != nil || parsed.String() != strings.ToLower(input.EventID) {
-		return agentpostgres.DomainEvent{}, errors.New("agent domain event id must be a canonical UUID")
-	}
-	if input.CorrelationID != "" && input.CorrelationID != strings.TrimSpace(input.CorrelationID) {
-		return agentpostgres.DomainEvent{}, errors.New("agent domain correlation id must be canonical")
-	}
-	if input.CorrelationID != "" {
-		correlation, parseErr := uuid.Parse(input.CorrelationID)
-		if parseErr != nil || correlation.String() != strings.ToLower(input.CorrelationID) {
-			return agentpostgres.DomainEvent{}, errors.New("agent domain correlation id must be a canonical UUID")
-		}
 	}
 
-	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
+	stored, err := a.events.AppendEvent(ctx, tx, eventwatermill.TopicAgent, eventspostgres.EventInput{
 		EventID: input.EventID, ScopeID: input.ScopeID, AggregateType: input.AggregateType,
 		AggregateID: input.AggregateID, EventType: input.EventType, SchemaVersion: input.SchemaVersion,
 		CorrelationID: input.CorrelationID, Payload: append([]byte(nil), input.Payload...),
@@ -71,30 +65,10 @@ func (a *Adapter) AppendDomainEvent(ctx context.Context, tx agentpostgres.Tx, in
 		}
 		return agentpostgres.DomainEvent{}, err
 	}
-	if stored.EventID != input.EventID || stored.ScopeID != input.ScopeID ||
-		stored.AggregateType != input.AggregateType || stored.AggregateID != input.AggregateID ||
-		stored.EventType != input.EventType || stored.SchemaVersion != input.SchemaVersion ||
-		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 ||
-		!sameCanonical(stored.Payload, input.Payload) {
-		return agentpostgres.DomainEvent{}, fmt.Errorf("%w: agent domain event identity differs", jobs.ErrConflict)
-	}
 	return agentpostgres.DomainEvent{
 		EventID: stored.EventID, ScopeID: stored.ScopeID, AggregateType: stored.AggregateType,
 		AggregateID: stored.AggregateID, AggregateVersion: stored.AggregateVersion,
 		EventType: stored.EventType, SchemaVersion: stored.SchemaVersion,
 		CorrelationID: stored.CorrelationID, Payload: append([]byte(nil), stored.Payload...),
 	}, nil
-}
-
-func sameCanonical(left, right []byte) bool {
-	var a, b any
-	if json.Unmarshal(left, &a) != nil || json.Unmarshal(right, &b) != nil {
-		return false
-	}
-	la, err := json.Marshal(a)
-	if err != nil {
-		return false
-	}
-	ra, err := json.Marshal(b)
-	return err == nil && bytes.Equal(la, ra)
 }

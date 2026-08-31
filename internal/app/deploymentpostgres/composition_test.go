@@ -42,7 +42,7 @@ func TestNewPersistenceBuildsNativeBundle(t *testing.T) {
 	if persistence.Repository == nil || persistence.Candidates == nil || persistence.ProjectClaims == nil || persistence.DeliveryReader == nil || persistence.Activation == nil || persistence.Events == nil || persistence.Audit == nil || persistence.Workflow == nil || persistence.Operations == nil || persistence.Approval == nil {
 		t.Fatalf("native deployment bundle is incomplete: %#v", persistence)
 	}
-	if !persistence.Repository.Configured() {
+	if !persistence.Repository.Configured() || !persistence.Repository.EventCapable() {
 		t.Fatal("native deployment repository is not configured")
 	}
 

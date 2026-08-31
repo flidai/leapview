@@ -12,6 +12,21 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
+func TestNewWithRepositoryPreservesEventRepositoryIdentity(t *testing.T) {
+	events := eventspostgres.New()
+	adapter := NewWithRepository(events)
+	if !adapter.Matches(events) {
+		t.Fatal("adapter did not retain the supplied platform event repository")
+	}
+	if adapter.Matches(eventspostgres.New()) {
+		t.Fatal("adapter accepted a distinct platform event repository")
+	}
+	var nilAdapter *Adapter
+	if nilAdapter.Matches(events) {
+		t.Fatal("nil adapter matched a platform event repository")
+	}
+}
+
 func TestAppendDeliveryEventFailsClosed(t *testing.T) {
 	var adapter *Adapter
 	if _, err := adapter.AppendDeliveryEvent(context.Background(), nil, deploymentmodule.NativeDeliveryEventInput{}); !errors.Is(err, deploymentpostgres.ErrInvalid) {

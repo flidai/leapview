@@ -42,8 +42,7 @@ const (
 	// TopicDashboard accepts dashboard_appearance, dashboard_authoring, and
 	// dashboard_publication aggregates.
 	TopicDashboard = "dashboard"
-	// TopicDelivery accepts delivery_publication, delivery_approval, and
-	// delivery_target aggregates.
+	// TopicDelivery accepts the bounded deployment delivery aggregate family.
 	TopicDelivery = "delivery"
 	// TopicRelease accepts the release aggregate.
 	TopicRelease = "release"
@@ -80,6 +79,16 @@ func newAdapter(appender eventAppender) (*Adapter, error) {
 		return nil, ErrNotConfigured
 	}
 	return &Adapter{events: appender}, nil
+}
+
+// Matches proves that production composition bound this adapter to the exact
+// canonical repository supplied by the application authority graph.
+func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
+	if a == nil || events == nil {
+		return false
+	}
+	configured, ok := a.events.(*eventspostgres.Repository)
+	return ok && configured == events
 }
 
 // ErrNotConfigured indicates that an adapter has no canonical event authority.
@@ -161,6 +170,12 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx eventspostgres.Tx, topic s
 		return eventspostgres.Event{}, err
 	}
 	if err := validateFinalized(input, finalized); err != nil {
+		return eventspostgres.Event{}, err
+	}
+	// Prove that every admitted canonical row can be reconstructed as the
+	// strict Watermill envelope before the caller commits. This performs no
+	// dispatch or durable write; the Subscriber rebuilds the same bytes later.
+	if _, err := MessageForEvent(topic, finalized); err != nil {
 		return eventspostgres.Event{}, err
 	}
 	return finalized, nil
@@ -444,7 +459,8 @@ var topicAggregates = map[string]map[string]struct{}{
 		"dashboard_appearance": {}, "dashboard_authoring": {}, "dashboard_publication": {},
 	},
 	TopicDelivery: {
-		"delivery_publication": {}, "delivery_approval": {}, "delivery_target": {},
+		"delivery_approval": {}, "delivery_build": {}, "delivery_plan": {},
+		"delivery_publication": {}, "delivery_target": {},
 	},
 	TopicRelease: {
 		"release": {},

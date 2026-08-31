@@ -14,31 +14,47 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	eventswatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 	"github.com/google/uuid"
 )
 
 // Adapter is stateless and safe to share between deployment requests.
 type Adapter struct {
-	events *eventspostgres.Repository
+	events   *eventspostgres.Repository
+	boundary *eventswatermill.Adapter
 }
 
 var _ deploymentmodule.NativeDeliveryEventAppender = (*Adapter)(nil)
 
-// New returns an adapter backed by the platform's durable PostgreSQL event
-// log.
-func New() *Adapter { return &Adapter{events: eventspostgres.New()} }
+// New returns an adapter backed by a fresh platform event authority. It is
+// retained for low-level tests; production composition should bind the exact
+// application-owned repository with NewWithRepository.
+func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
 
 // NewWithRepository keeps the event authority explicit for production
 // composition and conformance tests.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
-	return &Adapter{events: events}
+	if events == nil {
+		return &Adapter{}
+	}
+	boundary, err := eventswatermill.New(events)
+	if err != nil {
+		return &Adapter{events: events}
+	}
+	return &Adapter{events: events, boundary: boundary}
+}
+
+// Matches proves this adapter retains the exact platform event repository
+// supplied by application composition.
+func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
+	return a != nil && a.events == events && a.boundary.Matches(events)
 }
 
 // AppendDeliveryEvent appends through the exact transaction supplied by the
 // deployment authority and validates the complete immutable projection before
 // returning. It never begins, commits, or rolls back tx.
 func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres.Tx, input deploymentmodule.NativeDeliveryEventInput) (deploymentpostgres.Event, error) {
-	if a == nil || a.events == nil {
+	if a == nil || a.events == nil || a.boundary == nil {
 		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event adapter is not configured", deploymentpostgres.ErrInvalid)
 	}
 	if tx == nil {
@@ -50,12 +66,15 @@ func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres
 	if err := canonicalUUIDv7(input.CorrelationID); err != nil {
 		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event correlation id: %v", deploymentpostgres.ErrInvalid, err)
 	}
-	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
+	stored, err := a.boundary.AppendEvent(ctx, tx, eventswatermill.TopicDelivery, eventspostgres.EventInput{
 		EventID: input.EventID, ScopeID: input.ScopeID, AggregateType: input.AggregateType,
 		AggregateID: input.AggregateID, EventType: input.EventType, SchemaVersion: input.SchemaVersion,
 		CorrelationID: input.CorrelationID, Payload: append([]byte(nil), input.Payload...),
 	})
 	if err != nil {
+		if isWatermillValidation(err) {
+			return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event: %v", deploymentpostgres.ErrInvalid, err)
+		}
 		var conflict *eventspostgres.EventConflictError
 		if errors.As(err, &conflict) {
 			return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event identity differs", deploymentpostgres.ErrConflict)
@@ -65,8 +84,7 @@ func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres
 	if stored.EventID != input.EventID || stored.ScopeID != input.ScopeID ||
 		stored.AggregateType != input.AggregateType || stored.AggregateID != input.AggregateID ||
 		stored.EventType != input.EventType || stored.SchemaVersion != input.SchemaVersion ||
-		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 ||
-		!sameCanonical(stored.Payload, input.Payload) {
+		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 {
 		return deploymentpostgres.Event{}, fmt.Errorf("%w: delivery event identity differs", deploymentpostgres.ErrConflict)
 	}
 	return deploymentpostgres.Event{
@@ -76,6 +94,10 @@ func (a *Adapter) AppendDeliveryEvent(ctx context.Context, tx deploymentpostgres
 		OccurredAt: stored.OccurredAt, CorrelationID: stored.CorrelationID,
 		Payload: append([]byte(nil), stored.Payload...),
 	}, nil
+}
+
+func isWatermillValidation(err error) bool {
+	return errors.Is(err, eventswatermill.ErrInvalid) || errors.Is(err, eventswatermill.ErrNotConfigured)
 }
 
 // GetDeliveryEvent reads and validates one exact durable delivery event. It

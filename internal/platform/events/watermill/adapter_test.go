@@ -108,7 +108,9 @@ func TestTopicAggregateAllowlist(t *testing.T) {
 	}{
 		{TopicAgent, "agent_conversation"}, {TopicAgent, "agent_run"},
 		{TopicDashboard, "dashboard_appearance"}, {TopicDashboard, "dashboard_authoring"}, {TopicDashboard, "dashboard_publication"},
-		{TopicDelivery, "delivery_publication"}, {TopicDelivery, "delivery_approval"}, {TopicDelivery, "delivery_target"},
+		{TopicDelivery, "delivery_approval"}, {TopicDelivery, "delivery_build"},
+		{TopicDelivery, "delivery_plan"}, {TopicDelivery, "delivery_publication"},
+		{TopicDelivery, "delivery_target"},
 		{TopicRelease, "release"},
 	}
 	for _, tc := range cases {
@@ -175,6 +177,21 @@ func TestAppendEventPreflightsInvalidExplicitEventID(t *testing.T) {
 func TestAppendEventRejectsMismatchedFinalizedProjection(t *testing.T) {
 	event := testEvent()
 	event.EventType = "agent_run.failed"
+	appender := &countingAppender{event: event}
+	adapter, err := newAdapter(appender)
+	require.NoError(t, err)
+	_, err = adapter.AppendEvent(context.Background(), nil, TopicAgent, EventInput{
+		ScopeID: "scope", AggregateType: "agent_run", AggregateID: "run-1",
+		EventType: "agent_run.completed", SchemaVersion: 1, Payload: testEvent().Payload,
+		CorrelationID: testEvent().CorrelationID,
+	})
+	require.ErrorIs(t, err, ErrEnvelope)
+	require.Equal(t, 1, appender.calls)
+}
+
+func TestAppendEventRejectsUnprojectableFinalizedEvent(t *testing.T) {
+	event := testEvent()
+	event.AggregateVersion = 0
 	appender := &countingAppender{event: event}
 	adapter, err := newAdapter(appender)
 	require.NoError(t, err)

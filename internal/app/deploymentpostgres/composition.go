@@ -57,7 +57,9 @@ func NewPersistence(control deploymentpostgresql.DBTX, authorities Authorities) 
 	}
 
 	activationAudit := deploymentaudit.NewWithRepository(authorities.Access)
-	repository := deploymentpostgresql.NewWithActivationAudit(control, activationAudit)
+	repository := deploymentpostgresql.NewWithOptions(control, deploymentpostgresql.Options{
+		ActivationAudit: activationAudit, Events: authorities.Events,
+	})
 	if authorities.ApprovalAuthorize == nil {
 		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL approval authorizer is required")
 	}

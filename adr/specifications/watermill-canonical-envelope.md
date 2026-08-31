@@ -47,6 +47,13 @@ and table boundaries and returns the stored JSONB representation. This prevents
 direct canonical rows that cannot be presented to Watermill and prevents the
 producer and subscriber from observing different envelope bytes.
 
+`jobs.event` and the Agent-local event history are not alternate Watermill
+transports. They are capability-owned workflow/progress and product read
+histories with separate API cursor contracts; Watermill never subscribes to
+them and they cannot acknowledge or retain a canonical delivery. FAI-594 owns
+the exact history inventory and removal of any record that proves to be a true
+duplicate rather than a distinct product projection.
+
 ## Remaining work
 
 FAI-592 remains open until every canonical deployment, release, dashboard,

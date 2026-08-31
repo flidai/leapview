@@ -131,7 +131,7 @@ func TestAuthoringSchemaRejectsInvalidRows(t *testing.T) {
 	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status) VALUES ('project:invalid','dashboard:bad',$1::uuid,'Bad Slug','Title','model','private','draft')`, "018f4f2e-0000-7000-0000-000000000601"); err == nil {
 		t.Fatal("invalid dashboard slug was accepted")
 	}
-	validEventID := "018f4f2e-0000-7000-0000-000000000621"
+	validEventID := "018f4f2e-0000-7000-8000-000000000621"
 	insertAuthoringEvidence(t, db, validEventID, "project:invalid", "dashboard:valid")
 	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,last_event_id) VALUES ('project:invalid','dashboard:valid',$1::uuid,'valid','Title','model','private','draft',$2::uuid)`, "018f4f2e-0000-7000-0000-000000000601", validEventID); err != nil {
 		t.Fatal(err)
@@ -157,7 +157,7 @@ func TestAuthoringSchemaIdentityAndTransitionGuards(t *testing.T) {
 	db := authoringDB(t)
 	ctx := t.Context()
 	owner := "018f4f2e-0000-7000-0000-000000000601"
-	guardEventID := "018f4f2e-0000-7000-0000-000000000622"
+	guardEventID := "018f4f2e-0000-7000-8000-000000000622"
 	insertAuthoringEvidence(t, db, guardEventID, "project:guards", "dashboard:guards")
 	if _, err := db.Exec(ctx, `INSERT INTO dashboard.authoring_dashboards(project_id,dashboard_id,owner_principal_id,slug,title,semantic_model,visibility,status,last_event_id) VALUES ('project:guards','dashboard:guards',$1::uuid,'guards','Guards','model','private','draft',$2::uuid)`, owner, guardEventID); err != nil {
 		t.Fatal(err)

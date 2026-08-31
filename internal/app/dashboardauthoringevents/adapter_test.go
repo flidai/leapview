@@ -15,6 +15,21 @@ import (
 
 type validationTx struct{ pgx.Tx }
 
+func TestNewWithRepositoryPreservesEventRepositoryIdentity(t *testing.T) {
+	events := eventspostgres.New()
+	adapter := NewWithRepository(events)
+	if !adapter.Matches(events) {
+		t.Fatal("adapter did not retain the supplied platform event repository")
+	}
+	if adapter.Matches(eventspostgres.New()) {
+		t.Fatal("adapter accepted a distinct platform event repository")
+	}
+	var nilAdapter *Adapter
+	if nilAdapter.Matches(events) {
+		t.Fatal("nil adapter matched a platform event repository")
+	}
+}
+
 func TestAppendEventRejectsInvalidIdentityBeforeStorage(t *testing.T) {
 	_, err := New().AppendEvent(context.Background(), &validationTx{}, authoringpostgres.EventInput{EventID: "not-a-uuid"})
 	if !errors.Is(err, authoring.ErrConflict) {

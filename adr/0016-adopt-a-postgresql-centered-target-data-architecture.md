@@ -644,6 +644,13 @@ canonical producer instead appends the event and delivery rows once, then the
 subscriber reconstructs the byte-identical Watermill message from that durable
 row after it is claimable.
 
+Capability-owned `jobs.event` progress records and Agent-local conversation/run
+history are product read models, not message transports. They have separate API
+cursor and retention contracts, are never subscribed to by Watermill, and do
+not acknowledge canonical deliveries. Their ownership and any genuinely
+duplicate projections are audited by FAI-594; their existence does not create
+a second asynchronous event authority.
+
 Watermill acknowledgement occurs only after the handler's idempotent domain
 effect commits. `Nack` and process loss may redeliver, consistent with
 Watermill's documented
