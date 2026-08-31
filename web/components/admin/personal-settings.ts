@@ -28,6 +28,23 @@ type ThemeOption = {
   tone: 'system' | 'light' | 'dark'
 }
 
+type TokenPermissionAccess = 'read' | 'write'
+
+type TokenPermissionAccessOption = {
+  value: TokenPermissionAccess
+  label: 'Read-only' | 'Read and write'
+  capabilities: string[]
+}
+
+type TokenPermissionDefinition = {
+  id: string
+  label: string
+  description: string
+  category: string
+  searchText: string
+  access: TokenPermissionAccessOption[]
+}
+
 const systemThemeOption: ThemeOption = { value: 'system', label: 'System', group: 'Automatic', tone: 'system' }
 
 const themeOptions: readonly ThemeOption[] = [
@@ -50,11 +67,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   @state() private currentPassword = ''
   @state() private newPassword = ''
   @state() private tokenName = ''
-  @state() private tokenCapabilities: string[] = []
+  @state() private tokenPermissionSelections: Record<string, TokenPermissionAccess> = {}
   @state() private tokenExpires = ''
   @state() private tokenCreatePending = false
   @state() private tokenPermissionMenuOpen = false
   @state() private tokenPermissionSearch = ''
+  @state() private tokenPermissionAccessMenu = ''
   @state() private message = ''
   @state() private error = ''
   @state() private avatarMenuOpen = false
@@ -108,7 +126,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .permission-picker { position: relative; flex: none; }
     .permission-trigger { display: inline-flex; align-items: center; gap: var(--base-size-8); }
     .permission-trigger:hover, .permission-trigger:focus-visible, .permission-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
-    .permission-trigger svg, .permission-remove svg, .permission-search svg { width: var(--base-size-16); height: var(--base-size-16); }
+    .permission-trigger svg, .permission-remove svg, .permission-search svg, .permission-access-trigger svg { width: var(--base-size-16); height: var(--base-size-16); }
     .permission-backdrop { display: none; }
     .permission-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(28rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, var(--permission-menu-max-height, calc(100svh - var(--base-size-64)))); box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); }
     .permission-menu-header { display: grid; gap: var(--base-size-12); padding: var(--base-size-16); border-bottom: var(--lv-border-muted); }
@@ -129,9 +147,22 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .permission-option[data-selected="true"] { background: var(--lv-bg-accent-muted, var(--lv-bg-control-hover)); }
     .permission-option:focus-within { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
     .permission-option input[type="checkbox"] { width: var(--base-size-16); height: var(--base-size-16); min-height: 0; margin: var(--base-size-2) 0 0; padding: 0; accent-color: var(--lv-bg-accent); }
-    .selected-permissions { display: grid; overflow: hidden; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); }
-    .selected-permission { display: grid; min-height: var(--base-size-64); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); }
+    .selected-permissions { display: grid; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); }
+    .selected-permission { position: relative; display: grid; min-height: var(--base-size-64); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); }
     .selected-permission:last-child { border-bottom: 0; }
+    .permission-row-actions { display: flex; align-items: center; justify-content: flex-end; gap: var(--base-size-8); }
+    .permission-access-picker { position: relative; }
+    .permission-access-trigger, .permission-access-fixed { min-width: 10.5rem; box-sizing: border-box; padding-inline: var(--base-size-12); }
+    .permission-access-trigger { display: inline-flex; align-items: center; justify-content: space-between; gap: var(--base-size-6); }
+    .permission-access-trigger:hover:not(:disabled), .permission-access-trigger:focus-visible, .permission-access-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
+    .permission-access-fixed { display: inline-flex; min-height: var(--control-small-size); align-items: center; border-radius: var(--lv-radius-small); color: var(--lv-fg-muted); background: var(--lv-bg-control); font: var(--lv-type-body-compact); }
+    .permission-access-prefix { color: var(--lv-fg-muted); font-weight: var(--base-text-weight-normal); }
+    .permission-access-value { color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
+    .permission-access-fixed .permission-access-value { color: var(--lv-fg-muted); }
+    .permission-access-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: 12rem; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-4); }
+    button.permission-access-option { display: flex; width: 100%; min-height: var(--control-medium-size); align-items: center; justify-content: space-between; gap: var(--base-size-8); border-color: transparent; background: transparent; padding-inline: var(--base-size-8); text-align: left; }
+    button.permission-access-option:hover, button.permission-access-option:focus-visible, button.permission-access-option[aria-selected="true"] { background: var(--lv-bg-control-hover); outline: 0; }
+    .permission-access-check { display: inline-grid; width: var(--base-size-16); height: var(--base-size-16); place-items: center; color: var(--lv-fg-accent); }
     .permission-remove { display: grid; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
     .permission-remove:hover, .permission-remove:focus-visible { color: var(--lv-fg-danger); border-color: var(--lv-fg-danger); outline: 0; }
     .permission-empty { display: grid; min-height: var(--base-size-48); place-items: center start; padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
@@ -182,6 +213,9 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       .permission-backdrop { position: fixed; z-index: var(--z-index-dropdown); inset: 0; display: block; background: var(--lv-modal-backdrop); }
       .permission-menu { position: fixed; z-index: var(--z-index-modal); top: auto; right: var(--base-size-16); bottom: var(--base-size-16); left: var(--base-size-16); width: auto; max-height: calc(100svh - var(--base-size-32)); }
       .permission-menu-close { display: grid; }
+      .selected-permission { grid-template-columns: minmax(0, 1fr); }
+      .permission-row-actions { width: 100%; justify-content: space-between; }
+      .permission-access-menu { right: auto; left: 0; }
     }
   `]
 
@@ -229,9 +263,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
       this.handledNewToken = newToken
       this.tokenCreatePending = false
       this.tokenName = ''
-      this.tokenCapabilities = []
+      this.tokenPermissionSelections = {}
       this.tokenExpires = ''
       this.closePermissionMenu()
+      this.closeTokenPermissionAccessMenu()
     }
   }
 
@@ -396,11 +431,12 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   }
 
   private renderTokens(tokens: PersonalSettingsSignal['tokens']) {
-    const selected = tokens.capabilities.filter((capability) => this.tokenCapabilities.includes(capability.value))
-    const categories = groupTokenCapabilities(this.filteredTokenCapabilities(tokens.capabilities))
-    const categoryStats = new Map(groupTokenCapabilities(tokens.capabilities).map(([category, capabilities]) => [category, {
-      selected: capabilities.filter((capability) => this.tokenCapabilities.includes(capability.value)).length,
-      total: capabilities.length,
+    const permissions = tokenPermissionDefinitions(tokens.capabilities)
+    const selected = permissions.filter((permission) => this.tokenPermissionAccess(permission))
+    const categories = groupTokenPermissions(this.filteredTokenPermissions(permissions))
+    const categoryStats = new Map(groupTokenPermissions(permissions).map(([category, categoryPermissions]) => [category, {
+      selected: categoryPermissions.filter((permission) => this.tokenPermissionAccess(permission)).length,
+      total: categoryPermissions.length,
     }]))
     const canCreate = Boolean(this.tokenName.trim() && !this.tokenCreatePending)
     return html`
@@ -438,7 +474,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                           <div class="permission-menu-title">
                             <div class="permission-menu-heading">
                               <span class="settings-label" id="token-permission-menu-title">Select token permissions</span>
-                              <span class="permission-menu-count" aria-live="polite">${this.tokenCapabilities.length} selected</span>
+                              <span class="permission-menu-count" aria-live="polite">${selected.length} selected</span>
                             </div>
                             <button class="permission-menu-close" type="button" aria-label="Close permission picker" @click=${() => this.closePermissionMenu(true)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
                           </div>
@@ -448,19 +484,19 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                           </label>
                         </div>
                         <div class="permission-list">
-                          ${categories.length ? categories.map(([category, capabilities], categoryIndex) => html`
+                          ${categories.length ? categories.map(([category, categoryPermissions], categoryIndex) => html`
                             <div class="permission-group" role="group" aria-labelledby=${`token-permission-category-${categoryIndex}`}>
                               <div class="permission-category" id=${`token-permission-category-${categoryIndex}`}>
                                 <span>${category}</span>
-                                <span class="permission-category-count">${categoryStats.get(category)?.selected ?? 0} / ${categoryStats.get(category)?.total ?? capabilities.length}</span>
+                                <span class="permission-category-count">${categoryStats.get(category)?.selected ?? 0} / ${categoryStats.get(category)?.total ?? categoryPermissions.length}</span>
                               </div>
-                              ${capabilities.map((capability) => {
-                                const selected = this.tokenCapabilities.includes(capability.value)
-                                const descriptionID = `token-permission-description-${capability.value}`
+                              ${categoryPermissions.map((permission) => {
+                                const permissionSelected = Boolean(this.tokenPermissionAccess(permission))
+                                const descriptionID = `token-permission-description-${permission.id}`
                                 return html`
-                                  <label class="permission-option" data-selected=${String(selected)}>
-                                    <input aria-label=${capability.label} aria-describedby=${descriptionID} type="checkbox" value=${capability.value} .checked=${selected} @change=${() => this.toggleTokenCapability(capability.value)}>
-                                    <span class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description" id=${descriptionID}>${capability.description}</span></span>
+                                  <label class="permission-option" data-selected=${String(permissionSelected)}>
+                                    <input aria-label=${permission.label} aria-describedby=${descriptionID} type="checkbox" value=${permission.id} .checked=${permissionSelected} @change=${() => this.toggleTokenPermission(permission)}>
+                                    <span class="settings-field"><span class="settings-label">${permission.label}</span><span class="settings-description" id=${descriptionID}>${permission.description}</span></span>
                                   </label>
                                 `
                               })}
@@ -472,12 +508,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                   </div>
                 </div>
                 <div class="selected-permissions" aria-live="polite">
-                  ${selected.length ? selected.map((capability) => html`
-                    <div class="selected-permission">
-                      <div class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description">${capability.description}</span></div>
-                      <button class="permission-remove" type="button" aria-label="Remove ${capability.label}" @click=${() => this.removeTokenCapability(capability.value)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
-                    </div>
-                  `) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
+                  ${selected.length ? selected.map((permission) => this.renderSelectedTokenPermission(permission)) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
                 </div>
               </div>
               <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Create token'}</button></div>
@@ -486,6 +517,60 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
         </div>
         <div class="card"><div class="row"><div class="settings-field"><h3>Personal API tokens</h3><span class="settings-description">Revoke credentials you no longer use.</span></div></div>${tokens.items.length ? tokens.items.map((token) => this.renderToken(token, tokens.capabilities)) : html`<div class="row"><span class="muted">No personal API tokens.</span></div>`}</div>
       </section>
+    `
+  }
+
+  private renderSelectedTokenPermission(permission: TokenPermissionDefinition) {
+    const access = this.tokenPermissionAccess(permission)
+    if (!access) return nothing
+    const accessMenuOpen = this.tokenPermissionAccessMenu === permission.id
+    const accessControlID = `token-permission-access-${permission.id}`
+    return html`
+      <div class="selected-permission" data-permission=${permission.id}>
+        <div class="settings-field"><span class="settings-label">${permission.label}</span><span class="settings-description">${permission.description}</span></div>
+        <div class="permission-row-actions">
+          <div class="permission-access-picker">
+            ${permission.access.length > 1 ? html`
+              <button
+                class="permission-access-trigger"
+                type="button"
+                aria-label=${`Access for ${permission.label}: ${access.label}`}
+                aria-haspopup="listbox"
+                aria-controls=${accessControlID}
+                aria-expanded=${String(accessMenuOpen)}
+                data-permission=${permission.id}
+                @click=${() => this.toggleTokenPermissionAccessMenu(permission.id)}
+                @keydown=${(event: KeyboardEvent) => this.handleTokenPermissionAccessTriggerKeydown(event, permission.id)}
+              >
+                <span><span class="permission-access-prefix">Access: </span><span class="permission-access-value">${access.label}</span></span>
+                ${lucideIcon(ChevronDown, { size: 16, strokeWidth: 2 })}
+              </button>
+            ` : html`
+              <span class="permission-access-fixed" aria-label=${`Access for ${permission.label}: ${access.label}`}>
+                <span class="permission-access-prefix">Access: </span><span class="permission-access-value">${access.label}</span>
+              </span>
+            `}
+            ${accessMenuOpen ? html`
+              <div id=${accessControlID} class="permission-access-menu" role="listbox" aria-label=${`Access for ${permission.label}`} @keydown=${this.handleTokenPermissionAccessOptionKeydown}>
+                ${permission.access.map((option) => html`
+                  <button
+                    class="permission-access-option"
+                    type="button"
+                    role="option"
+                    aria-selected=${String(option.value === access.value)}
+                    data-access=${option.value}
+                    @click=${() => this.chooseTokenPermissionAccess(permission, option)}
+                  >
+                    <span>${option.label}</span>
+                    <span class="permission-access-check" aria-hidden="true">${option.value === access.value ? lucideIcon(Check, { size: 16, strokeWidth: 2 }) : nothing}</span>
+                  </button>
+                `)}
+              </div>
+            ` : nothing}
+          </div>
+          <button class="permission-remove" type="button" aria-label=${`Remove ${permission.label}`} @click=${() => this.removeTokenPermission(permission)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
+        </div>
+      </div>
     `
   }
 
@@ -547,7 +632,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     event.preventDefault()
     if (!this.tokenName.trim()) return
     const command: Record<string, unknown> = { action: 'create', name: this.tokenName.trim(), expiresAt: localDateTimeToRFC3339(this.tokenExpires) }
-    if (this.tokenCapabilities.length) command.capabilities = [...this.tokenCapabilities]
+    const capabilities = this.selectedTokenCapabilities()
+    if (capabilities.length) command.capabilities = capabilities
     this.send('lv-personal-token-command', command)
     this.tokenCreatePending = true
   }
@@ -601,6 +687,8 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (permissionPicker && !path.includes(permissionPicker)) this.closePermissionMenu()
     const themePicker = this.renderRoot.querySelector('.theme-picker')
     if (themePicker && !path.includes(themePicker)) this.closeThemeMenu()
+    const insidePermissionAccessPicker = path.some((node) => node instanceof Element && node.classList.contains('permission-access-picker'))
+    if (!insidePermissionAccessPicker) this.closeTokenPermissionAccessMenu()
   }
   private handleWindowKeydown = (event: KeyboardEvent): void => {
     if (event.key === 'Escape' && this.avatarMenuOpen) {
@@ -614,6 +702,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (event.key === 'Escape' && this.themeMenuOpen) {
       event.preventDefault()
       this.closeThemeMenu(true)
+    }
+    if (event.key === 'Escape' && this.tokenPermissionAccessMenu) {
+      event.preventDefault()
+      this.closeTokenPermissionAccessMenu(true)
     }
   }
   private handleDatastarFetch = (event: Event): void => {
@@ -659,10 +751,10 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private onNewPasswordInput = (event: Event): void => { this.newPassword = (event.currentTarget as HTMLInputElement).value }
   private onTokenNameInput = (event: Event): void => { this.tokenName = (event.currentTarget as HTMLInputElement).value }
   private onTokenExpiresInput = (event: Event): void => { this.tokenExpires = (event.currentTarget as HTMLInputElement).value }
-  private filteredTokenCapabilities(capabilities: PersonalCapabilityOptionSignal[]): PersonalCapabilityOptionSignal[] {
+  private filteredTokenPermissions(permissions: TokenPermissionDefinition[]): TokenPermissionDefinition[] {
     const query = this.tokenPermissionSearch.trim().toLocaleLowerCase()
-    if (!query) return capabilities
-    return capabilities.filter((capability) => `${capability.label} ${capability.description} ${capability.category} ${capability.value}`.toLocaleLowerCase().includes(query))
+    if (!query) return permissions
+    return permissions.filter((permission) => `${permission.label} ${permission.description} ${permission.category} ${permission.searchText}`.toLocaleLowerCase().includes(query))
   }
   private togglePermissionMenu = (): void => {
     if (this.tokenPermissionMenuOpen) this.closePermissionMenu()
@@ -678,6 +770,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     this.tokenPermissionMenuOpen = true
     this.closeAvatarMenu()
     this.closeThemeMenu()
+    this.closeTokenPermissionAccessMenu()
     void this.updateComplete.then(() => {
       this.fitPermissionMenu()
       this.renderRoot.querySelector<HTMLInputElement>('.permission-search input')?.focus()
@@ -703,22 +796,151 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     if (returnFocus) void this.updateComplete.then(() => this.themeTrigger?.focus())
   }
   private onTokenPermissionSearch = (event: Event): void => { this.tokenPermissionSearch = (event.currentTarget as HTMLInputElement).value }
-  private toggleTokenCapability(value: string): void {
-    this.tokenCapabilities = this.tokenCapabilities.includes(value)
-      ? this.tokenCapabilities.filter((capability) => capability !== value)
-      : [...this.tokenCapabilities, value]
+  private tokenPermissionAccess(permission: TokenPermissionDefinition): TokenPermissionAccessOption | undefined {
+    const selectedAccess = this.tokenPermissionSelections[permission.id]
+    return permission.access.find((option) => option.value === selectedAccess)
   }
-  private removeTokenCapability(value: string): void { this.tokenCapabilities = this.tokenCapabilities.filter((capability) => capability !== value) }
+  private toggleTokenPermission(permission: TokenPermissionDefinition): void {
+    if (this.tokenPermissionAccess(permission)) {
+      this.removeTokenPermission(permission)
+      return
+    }
+    const defaultAccess = permission.access[0]
+    if (!defaultAccess) return
+    this.tokenPermissionSelections = { ...this.tokenPermissionSelections, [permission.id]: defaultAccess.value }
+  }
+  private removeTokenPermission(permission: TokenPermissionDefinition): void {
+    const selections = { ...this.tokenPermissionSelections }
+    delete selections[permission.id]
+    this.tokenPermissionSelections = selections
+    if (this.tokenPermissionAccessMenu === permission.id) this.closeTokenPermissionAccessMenu()
+  }
+  private chooseTokenPermissionAccess(permission: TokenPermissionDefinition, access: TokenPermissionAccessOption): void {
+    this.tokenPermissionSelections = { ...this.tokenPermissionSelections, [permission.id]: access.value }
+    this.closeTokenPermissionAccessMenu(true)
+  }
+  private selectedTokenCapabilities(): string[] {
+    const selected = new Set(tokenPermissionDefinitions(this.settings.tokens.capabilities).flatMap((permission) => {
+      const access = this.tokenPermissionAccess(permission)
+      return access?.capabilities ?? []
+    }))
+    return this.settings.tokens.capabilities.map((capability) => capability.value).filter((capability) => selected.has(capability))
+  }
+  private toggleTokenPermissionAccessMenu(permissionID: string): void {
+    if (this.tokenPermissionAccessMenu === permissionID) this.closeTokenPermissionAccessMenu()
+    else this.openTokenPermissionAccessMenu(permissionID)
+  }
+  private openTokenPermissionAccessMenu(permissionID: string): void {
+    this.tokenPermissionAccessMenu = permissionID
+    this.closeAvatarMenu()
+    this.closeThemeMenu()
+    this.closePermissionMenu()
+    void this.focusSelectedTokenPermissionAccess()
+  }
+  private handleTokenPermissionAccessTriggerKeydown(event: KeyboardEvent, permissionID: string): void {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    this.openTokenPermissionAccessMenu(permissionID)
+  }
+  private focusSelectedTokenPermissionAccess = async (): Promise<void> => {
+    await this.updateComplete
+    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.permission-access-option'))
+    ;(options.find((option) => option.getAttribute('aria-selected') === 'true') ?? options[0])?.focus()
+  }
+  private handleTokenPermissionAccessOptionKeydown = (event: KeyboardEvent): void => {
+    const options = Array.from(this.renderRoot.querySelectorAll<HTMLButtonElement>('.permission-access-option'))
+    const index = options.indexOf(this.shadowRoot?.activeElement as HTMLButtonElement)
+    if (event.key === 'ArrowDown' || event.key === 'ArrowUp') {
+      event.preventDefault()
+      const offset = event.key === 'ArrowDown' ? 1 : -1
+      options[(index + offset + options.length) % options.length]?.focus()
+    } else if (event.key === 'Home' || event.key === 'End') {
+      event.preventDefault()
+      options[event.key === 'Home' ? 0 : options.length - 1]?.focus()
+    } else if (event.key === 'Escape') {
+      event.preventDefault()
+      event.stopPropagation()
+      this.closeTokenPermissionAccessMenu(true)
+    } else if (event.key === 'Tab') {
+      this.closeTokenPermissionAccessMenu()
+    }
+  }
+  private closeTokenPermissionAccessMenu(returnFocus = false): void {
+    if (!this.tokenPermissionAccessMenu) return
+    const permissionID = this.tokenPermissionAccessMenu
+    this.tokenPermissionAccessMenu = ''
+    if (returnFocus) void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLButtonElement>(`.permission-access-trigger[data-permission="${permissionID}"]`)?.focus())
+  }
 }
 
-function groupTokenCapabilities(capabilities: PersonalCapabilityOptionSignal[]): Array<[string, PersonalCapabilityOptionSignal[]]> {
-  const groups = new Map<string, PersonalCapabilityOptionSignal[]>()
-  for (const capability of capabilities) {
-    const values = groups.get(capability.category) ?? []
-    values.push(capability)
-    groups.set(capability.category, values)
+function tokenPermissionDefinitions(capabilities: PersonalCapabilityOptionSignal[]): TokenPermissionDefinition[] {
+  const options = new Map(capabilities.map((capability) => [capability.value, capability]))
+  const permissions: TokenPermissionDefinition[] = []
+  const baseReadCapabilities = ['RESOURCE_USE', 'RESOURCE_READ'].filter((value) => options.has(value))
+  const addPermission = (
+    id: string,
+    writeCapabilityValue: string,
+    label: string,
+  ): void => {
+    const writeCapability = options.get(writeCapabilityValue)
+    if (!writeCapability) return
+    const access: TokenPermissionAccessOption[] = []
+    if (baseReadCapabilities.length) {
+      access.push({ value: 'read', label: 'Read-only', capabilities: [...baseReadCapabilities] })
+    }
+    access.push({
+      value: 'write',
+      label: 'Read and write',
+      capabilities: uniqueCapabilities([...baseReadCapabilities, writeCapability.value]),
+    })
+    permissions.push({
+      id,
+      label,
+      description: writeCapability.description,
+      category: writeCapability.category,
+      searchText: `${writeCapability.value} ${writeCapability.label}`,
+      access,
+    })
+  }
+
+  addPermission('project-administration', 'PROJECT_ADMIN', 'Project administration')
+
+  const use = options.get('RESOURCE_USE')
+  const read = options.get('RESOURCE_READ')
+  const edit = options.get('RESOURCE_EDIT')
+  if (use || read || edit) {
+    const access: TokenPermissionAccessOption[] = []
+    const readCapabilities = [use?.value, read?.value].filter((value): value is string => Boolean(value))
+    if (readCapabilities.length) access.push({ value: 'read', label: 'Read-only', capabilities: uniqueCapabilities(readCapabilities) })
+    if (edit) access.push({ value: 'write', label: 'Read and write', capabilities: uniqueCapabilities([...readCapabilities, edit.value]) })
+    permissions.push({
+      id: 'resource-content',
+      label: 'Resource access',
+      description: 'Open and view project resources, or add access to create and update them.',
+      category: use?.category ?? read?.category ?? edit?.category ?? 'Resource',
+      searchText: [use, read, edit].filter(Boolean).map((capability) => `${capability?.value} ${capability?.label} ${capability?.description}`).join(' '),
+      access,
+    })
+  }
+
+  addPermission('resource-management', 'RESOURCE_MANAGE', 'Resource management')
+  addPermission('resource-sharing', 'RESOURCE_SHARE', 'Resource sharing')
+  addPermission('resource-publishing', 'RESOURCE_PUBLISH', 'Resource publishing')
+  return permissions
+}
+
+function groupTokenPermissions(permissions: TokenPermissionDefinition[]): Array<[string, TokenPermissionDefinition[]]> {
+  const groups = new Map<string, TokenPermissionDefinition[]>()
+  for (const permission of permissions) {
+    const values = groups.get(permission.category) ?? []
+    values.push(permission)
+    groups.set(permission.category, values)
   }
   return [...groups.entries()]
+}
+
+function uniqueCapabilities(capabilities: string[]): string[] {
+  return [...new Set(capabilities)]
 }
 
 function themeOption(value: string): ThemeOption {
