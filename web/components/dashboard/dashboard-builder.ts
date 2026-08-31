@@ -2837,7 +2837,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = this.selectedPage(builder)
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const grouped = this.groupFiltersByScope(filters, page, visual)
-    const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => item.field.kind === 'dimension')
+    const dimensions = this.semanticCatalog(builder.semanticModel.datasets ?? []).filter((item) => this.fieldSupportsFilter(item.field))
     const filterError = this.builderFilterErrorMessage()
     const collapsed = this.collapsedPanes.filters
     return html`
@@ -4259,7 +4259,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private addFilterForField(field: DashboardBuilderFieldSignal): boolean {
     const builder = this.builder
-    if (!builder?.capabilities.canEdit || this.commandPending || field.kind !== 'dimension') return false
+    if (!builder?.capabilities.canEdit || this.commandPending || !this.fieldSupportsFilter(field)) return false
     const existing = (builder.filters ?? []).find((filter) => filter.dimension === field.id)
     if (existing) {
       this.selectFilterDefinition(existing.id)
@@ -4271,6 +4271,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.visualActionMessage = `Adding ${field.label} as a report filter.`
     this.emitCommand('add_filter', { fieldId: field.id, title: field.label, dataset: this.datasetForField(builder, field.id), controlType })
     return true
+  }
+
+  private fieldSupportsFilter(field: DashboardBuilderFieldSignal): boolean {
+    return field.kind === 'dimension' && Boolean(field.roles?.includes('dimension'))
   }
 
   private updateFilter(filter: DashboardBuilderFilterSignal, patch: Partial<Pick<DashboardBuilderFilterSignal, 'label' | 'controlType' | 'required' | 'readerEditable' | 'urlParameter'>>): void {

@@ -1856,15 +1856,22 @@ test('dashboard builder authors report filters from governed fields through focu
     await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [
+        { id: 'orders.status', datasetId: 'orders', label: 'Status', kind: 'dimension', roles: ['dimension'], dataType: 'string' },
+        { id: 'orders.order_id', datasetId: 'orders', label: 'Order ID', kind: 'dimension', roles: ['detail'], dataType: 'string' },
+        { id: 'orders.total', datasetId: 'orders', label: 'Total', kind: 'metric', roles: ['metric'], dataType: 'decimal' },
+      ] }] } } })
+      await element.updateComplete
       const root = element.shadowRoot
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const select = root.querySelector('.filter-add-select') as HTMLSelectElement
+      const filterOptions = Array.from(select.options).map((option) => ({ value: option.value, label: option.textContent?.trim() }))
       select.value = 'orders.status'
       select.dispatchEvent(new Event('change', { bubbles: true }))
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
-      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: { filters: [{ id: 'filter_1', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'filter_1', scope: 'report', targets: [] }] }] } })
       await element.updateComplete
       ;(root.querySelector('.filter-card') as HTMLButtonElement).click()
@@ -1902,6 +1909,7 @@ test('dashboard builder authors report filters from governed fields through focu
         scopeOptionHelpCount: filterPane.querySelectorAll('.filter-scope-option small').length,
         settingsOpen: filterSettings.open,
         filterActions,
+        filterOptions,
         commands,
       }
     })
@@ -1912,6 +1920,10 @@ test('dashboard builder authors report filters from governed fields through focu
     expect(state.scopeOptionHelpCount).toBe(0)
     expect(state.settingsOpen).toBe(false)
     expect(state.filterActions).toEqual(['Add to canvas', 'Delete'])
+    expect(state.filterOptions).toEqual([
+      { value: '', label: '+ Add filter' },
+      { value: 'orders.status', label: 'Status' },
+    ])
     expect(state.commands[0]).toMatchObject({ action: 'add_filter', fieldId: 'orders.status', dataset: 'orders', controlType: 'multiSelect' })
     expect(state.commands[1]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'page', pageId: 'overview' })
     expect(state.commands[2]).toMatchObject({ action: 'set_filter_scope', filterId: 'filter_1', scope: 'report' })
