@@ -11,8 +11,8 @@ Related: [ADR-0016](../0016-adopt-a-postgresql-centered-target-data-architecture
 Pin Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5`.  Use Watermill
 for the application message/router boundary, while keeping LeapView's
 PostgreSQL event log and consumer-delivery tables authoritative.  A future
-adapter may publish the canonical event envelope through Watermill; the stock
-SQL transport must not become a second event log.
+adapter may project the finalized canonical event as a Watermill message; the
+stock SQL transport must not become a second event log.
 
 ## Evidence
 
@@ -45,7 +45,7 @@ from the adapter's generated SQL.
 
 ## Consequence
 
-The proof confirms transaction integration and package compatibility only.  It
+The proof confirms transaction integration and package compatibility only. It
 does not claim lost-ack, poison/replay, or router adapter acceptance (those are
 FAI-592/FAI-593).  It does not authorize production Watermill tables, dual
 writes, or replacement of the canonical event repository.  Migrations continue

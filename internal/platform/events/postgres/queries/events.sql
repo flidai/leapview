@@ -11,6 +11,11 @@ SELECT event_id::text, scope_id, aggregate_type, aggregate_id, aggregate_version
 FROM event.event_log
 WHERE event_id = sqlc.arg(event_id)::uuid;
 
+-- name: EventPayloadEqual :one
+SELECT e.payload = sqlc.arg(payload)::jsonb AS equal
+FROM event.event_log AS e
+WHERE e.event_id = sqlc.arg(event_id)::uuid;
+
 -- name: EnsureEventAggregate :exec
 INSERT INTO event.event_aggregate (scope_id, aggregate_type, aggregate_id, next_version)
 VALUES (sqlc.arg(scope_id), sqlc.arg(aggregate_type), sqlc.arg(aggregate_id), 1)
@@ -31,7 +36,7 @@ VALUES (sqlc.arg(event_id)::uuid, sqlc.arg(scope_id), sqlc.arg(aggregate_type),
         sqlc.arg(aggregate_id), sqlc.arg(aggregate_version), sqlc.arg(event_type),
         sqlc.arg(schema_version), clock_timestamp(), sqlc.narg(correlation_id)::uuid,
         sqlc.arg(payload)::jsonb)
-RETURNING occurred_at;
+RETURNING occurred_at, payload::text;
 
 -- name: LockFanoutRegistryForKeyShare :one
 SELECT registry_id FROM event.event_fanout_registry

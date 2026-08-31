@@ -227,7 +227,7 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 			return Event{}, fmt.Errorf("generate event id: %w", err)
 		}
 	}
-	if err := validateUUID("event id", eventID); err != nil {
+	if err := validateUUIDv7("event id", eventID); err != nil {
 		return Event{}, err
 	}
 	correlationID := in.CorrelationID
@@ -252,11 +252,6 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 	existingRow, err := eventsdb.New(tx).GetEventByID(ctx, uuidParam(eventID))
 	if err == nil {
 		existing := eventFromRow(existingRow)
-		existingPayloadCanonical, canonicalErr := canonicalObject(existing.Payload, 65536)
-		if canonicalErr != nil {
-			return Event{}, fmt.Errorf("canonicalize existing event payload: %w", canonicalErr)
-		}
-		existing.Payload = existingPayloadCanonical
 		if existing.ScopeID != scope {
 			return Event{}, &EventConflictError{EventID: eventID, Field: "scope_id"}
 		}
@@ -275,7 +270,11 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 		if existing.CorrelationID != correlationID {
 			return Event{}, &EventConflictError{EventID: eventID, Field: "correlation_id"}
 		}
-		if !bytes.Equal(existing.Payload, payload) {
+		payloadEqual, payloadErr := eventsdb.New(tx).EventPayloadEqual(ctx, eventsdb.EventPayloadEqualParams{EventID: uuidParam(eventID), Payload: payload})
+		if payloadErr != nil {
+			return Event{}, fmt.Errorf("compare existing event payload: %w", payloadErr)
+		}
+		if !payloadEqual {
 			return Event{}, &EventConflictError{EventID: eventID, Field: "payload"}
 		}
 		return existing, nil
@@ -293,19 +292,22 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 	if err != nil {
 		return Event{}, fmt.Errorf("allocate aggregate version: %w", err)
 	}
-	// occurred_at is database-owned. The trigger and this statement both ensure
-	// the authoritative timestamp comes from PostgreSQL's clock. Returning the
-	// stored value also keeps the in-memory result identical to what a
-	// concurrent reader will observe.
+	// occurred_at and payload are database-owned. The trigger and this statement
+	// ensure the authoritative timestamp comes from PostgreSQL's clock, while
+	// returning payload::text keeps the in-memory result identical to what a
+	// concurrent reader will observe after jsonb canonicalization.
 	correlation := uuidParam(correlationID)
-	occurredAtValue, err := eventsdb.New(tx).InsertEvent(ctx, eventsdb.InsertEventParams{EventID: uuidParam(eventID), ScopeID: scope, AggregateType: aggregateType, AggregateID: aggregateID, AggregateVersion: int64(version), EventType: eventType, SchemaVersion: in.SchemaVersion, CorrelationID: correlation, Payload: payload})
+	inserted, err := eventsdb.New(tx).InsertEvent(ctx, eventsdb.InsertEventParams{EventID: uuidParam(eventID), ScopeID: scope, AggregateType: aggregateType, AggregateID: aggregateID, AggregateVersion: int64(version), EventType: eventType, SchemaVersion: in.SchemaVersion, CorrelationID: correlation, Payload: payload})
 	if err != nil {
 		return Event{}, fmt.Errorf("insert durable event: %w", err)
 	}
-	if !occurredAtValue.Valid {
+	if !inserted.OccurredAt.Valid {
 		return Event{}, errors.New("insert durable event returned null timestamp")
 	}
-	occurredAt := occurredAtValue.Time.UTC()
+	if inserted.Payload == "" {
+		return Event{}, errors.New("insert durable event returned empty payload")
+	}
+	occurredAt := inserted.OccurredAt.Time.UTC()
 
 	// This statement must complete before the consumer scan below.  Do not
 	// combine it with the scan in a CTE: READ COMMITTED command snapshots would
@@ -332,7 +334,7 @@ func (r *Repository) AppendEvent(ctx context.Context, tx Tx, in EventInput) (Eve
 	return Event{EventID: eventID, ScopeID: scope, AggregateType: aggregateType,
 		AggregateID: aggregateID, AggregateVersion: int64(version), EventType: eventType,
 		SchemaVersion: in.SchemaVersion, OccurredAt: occurredAt, CorrelationID: correlationID,
-		Payload: payload}, nil
+		Payload: json.RawMessage(inserted.Payload)}, nil
 }
 
 // EnrollConsumer creates a backfilling consumer while holding the registry
@@ -936,6 +938,28 @@ func validateUUID(label, value string) error {
 	var raw [16]byte
 	if _, err := hex.Decode(raw[:], []byte(strings.ReplaceAll(value, "-", ""))); err != nil {
 		return fmt.Errorf("%s must be a UUID: %w", label, err)
+	}
+	return nil
+}
+
+// validateUUIDv7 enforces the event authority's textual identity contract.
+// UUID values are canonical only when they use the lower-case RFC 9562
+// representation, RFC 4122 variant, and version 7. Keep this check at the
+// repository boundary because PostgreSQL's uuid type normalizes textual input
+// before storage, making the original casing unavailable to a table check.
+func validateUUIDv7(label, value string) error {
+	if value == "" || value != strings.TrimSpace(value) || value != strings.ToLower(value) {
+		return fmt.Errorf("%s must be a canonical lowercase UUIDv7", label)
+	}
+	if err := validateUUID(label, value); err != nil {
+		return fmt.Errorf("%s must be a canonical lowercase UUIDv7", label)
+	}
+	var raw [16]byte
+	if _, err := hex.Decode(raw[:], []byte(strings.ReplaceAll(value, "-", ""))); err != nil {
+		return fmt.Errorf("%s must be a canonical lowercase UUIDv7", label)
+	}
+	if raw[6]>>4 != 7 || raw[8]&0xc0 != 0x80 {
+		return fmt.Errorf("%s must be a canonical lowercase UUIDv7", label)
 	}
 	return nil
 }

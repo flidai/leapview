@@ -577,7 +577,7 @@ tables and defaults do not redefine LeapView's durable contracts.
 
 | Concern | Target owner | Framework role |
 | --- | --- | --- |
-| source mutation, aggregate version, canonical event envelope, and immutable product history | capability-owned PostgreSQL schema | Watermill publisher presents the committed event; it does not create a second history row |
+| source mutation, aggregate version, canonical event envelope, and immutable product history | capability-owned PostgreSQL schema | the canonical producer appends once; a deterministic projection presents the finalized row as a Watermill message |
 | delivery claim, attempt, acknowledgement, poison state, replay root, and retention floor | canonical event-delivery schema | Watermill subscriber and router drive the existing fenced transitions through a LeapView adapter |
 | handler orchestration, retry middleware, correlation propagation, and handler metrics | Watermill router | LeapView supplies bounded policy and idempotent domain handlers |
 | compliance audit | append-only audit schema and audit writer | outside Watermill unless an explicit asynchronous export consumer is enrolled |
@@ -592,32 +592,36 @@ second product-owned router. The canonical event row, aggregate version,
 consumer enrollment fence, replay root, delivery attempt, dead-letter state,
 and retention decision remain in LeapView-owned PostgreSQL schemas.
 
-`watermill-sql/v4` is the preferred PostgreSQL transport candidate because it
+`watermill-sql/v4` was the preferred PostgreSQL transport candidate because it
 supports caller-supplied schema and offset adapters, consumer groups,
 at-least-once delivery, and PostgreSQL transaction integration, including pgx
 handles. Its [SQL Pub/Sub contract](https://watermill.io/pubsubs/sql/) also
 documents an important boundary: the default adapter is an ordered integer
 offset log with transaction-ID caveats. That default is not evidence for
 LeapView's UUIDv7 event identities, aggregate-scoped order, per-consumer fenced
-deliveries, backfill roots, poison resolution, or retention floor. The target
-therefore uses either a proven adapter over the canonical LeapView tables or a
-small Watermill `Publisher`/`Subscriber` implementation over those tables; it
-does not create a second Watermill-owned event authority.
+deliveries, backfill roots, poison resolution, or retention floor. It is not
+the production transport. The target uses the canonical producer adapter for
+the one transactional append and a small Watermill `Subscriber` over the
+canonical delivery tables; it does not create a second Watermill-owned event
+authority.
 
 The [FAI-591 qualification](specifications/watermill-postgresql-proof.md)
 qualifies Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5` for package
-and caller-owned transaction integration only; a canonical adapter is not
-admitted. Its PostgreSQL 18 proof records that the stock SQL tables and integer
-offsets are unsuitable as an event authority. The selected target is the
-Watermill core router with a small publisher/subscriber adapter over LeapView's
-canonical event and delivery tables; the stock SQL transport remains
-qualification-only. Lost-ack redelivery, poison/replay retention, and router
-adapter conformance are separate FAI-592/FAI-593 work and are not claimed by
-this proof.
+and caller-owned transaction integration only. Its PostgreSQL 18 proof records
+that the stock SQL tables and integer offsets are unsuitable as an event
+authority. The [FAI-592 envelope decision](specifications/watermill-canonical-envelope.md)
+admits the strict message projection and canonical producer boundary, but not
+the subscriber/router path. The selected target is the
+Watermill core router with a deterministic canonical-event message projection
+and a subscriber over LeapView's delivery tables; the stock SQL transport
+remains qualification-only. Lost-ack redelivery, poison/replay retention, and
+router adapter conformance are separate FAI-592/FAI-593 work and are not
+claimed by this proof.
 
 LeapView migrations own every transport table, index, role grant, and rollback.
-Watermill publisher `AutoInitializeSchema` and subscriber `InitializeSchema` are
-always disabled, including tests outside the framework qualification fixture.
+The stock Watermill SQL publisher `AutoInitializeSchema` and subscriber
+`InitializeSchema` are always disabled, including tests outside the framework
+qualification fixture.
 The SQL adapter's documented runtime initialization is therefore not a
 production DDL path. Topics are a small allow-listed set of capability event
 families rather than caller-controlled table names. Consumer-group names are
@@ -631,8 +635,15 @@ adapter needs one, is scan mechanics only. It is neither exposed as domain
 identity nor used as business ordering. Aggregate version is the only default
 ordering contract.
 
-Watermill publication may participate in a caller-owned PostgreSQL transaction
-only when source mutation and the canonical event row still commit atomically.
+Watermill's `message.Publisher` is not used for the canonical producer write.
+Its interface has no transaction parameter, while event ID, aggregate version,
+occurrence time, and stored JSONB payload are finalized inside the caller-owned
+PostgreSQL transaction. Binding a shared publisher to a transaction or
+dispatching an in-memory message before commit would weaken the boundary. The
+canonical producer instead appends the event and delivery rows once, then the
+subscriber reconstructs the byte-identical Watermill message from that durable
+row after it is claimable.
+
 Watermill acknowledgement occurs only after the handler's idempotent domain
 effect commits. `Nack` and process loss may redeliver, consistent with
 Watermill's documented
@@ -648,8 +659,8 @@ The transactional flows are:
 1. A command locks its aggregate/version authority, writes the mutation and
    canonical event envelope, creates the delivery rows required by the fenced
    consumer registry, and commits them through the caller-owned pgx
-   transaction. The Watermill publisher adapter uses that transaction; no
-   framework-owned row is committed separately.
+   transaction. The canonical producer adapter uses that exact transaction;
+   no framework-owned row is committed separately.
 2. A subscriber claims one consumer-specific delivery with its ownership
    fence, reconstructs the Watermill message from the canonical event, and
    invokes the router. The handler commits its idempotent effect and terminal

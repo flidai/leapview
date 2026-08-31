@@ -1152,6 +1152,7 @@ tasks:
       - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
       - go test ./internal/platform/postgres/migrations -run '^TestBaselinePostgreSQL18$' -count=1 -v
       - go test ./internal/platform/events/postgres -run '^TestPostgreSQL18' -count=1 -v
+      - go test ./internal/platform/events/watermill -run '^TestPostgreSQL18' -count=1 -v
       - go test ./internal/platform/events/watermillproof -run '^TestPostgreSQL18' -count=1 -v
       - go test ./internal/platform/jobs/postgres -run '^TestPostgreSQL18' -count=1 -v
 

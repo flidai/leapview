@@ -28,6 +28,12 @@ CREATE TABLE IF NOT EXISTS event.event_log (
     occurred_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     correlation_id uuid,
     payload jsonb NOT NULL CHECK (jsonb_typeof(payload) = 'object' AND octet_length(payload::text) <= 65536),
+    -- PostgreSQL 18's uuid_extract_version primitive keeps direct SQL writes
+    -- inside the event authority's UUIDv7 identity contract. COALESCE also
+    -- rejects UUIDs with a non-RFC-9562 variant, for which the extractor
+    -- returns NULL. Canonical lower-case spelling is enforced by the Go
+    -- repository before the uuid value is handed to PostgreSQL.
+    CONSTRAINT event_log_event_id_uuidv7_ck CHECK (COALESCE(uuid_extract_version(event_id), 0) = 7),
     CHECK (octet_length(scope_id) BETWEEN 1 AND 255),
     CHECK (octet_length(aggregate_type) BETWEEN 1 AND 255),
     CHECK (octet_length(aggregate_id) BETWEEN 1 AND 255),

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -10,6 +11,68 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+func TestCanonicalEventIDValidation(t *testing.T) {
+	const canonical = "01900000-0000-7000-8000-000000000001"
+	for _, test := range []struct {
+		name  string
+		value string
+		valid bool
+	}{
+		{name: "canonical lowercase UUIDv7", value: canonical, valid: true},
+		{name: "uppercase", value: "01900000-0000-7000-8000-00000000000A", valid: false},
+		{name: "UUIDv4", value: "01900000-0000-4000-8000-000000000001", valid: false},
+		{name: "non RFC variant", value: "01900000-0000-7000-0000-000000000001", valid: false},
+		{name: "surrounding whitespace", value: " " + canonical, valid: false},
+		{name: "malformed", value: "not-a-uuid", valid: false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			err := validateUUIDv7("event id", test.value)
+			if test.valid && err != nil {
+				t.Fatalf("validateUUIDv7(%q) = %v, want nil", test.value, err)
+			}
+			if !test.valid && err == nil {
+				t.Fatalf("validateUUIDv7(%q) unexpectedly succeeded", test.value)
+			}
+		})
+	}
+	t.Run("generated UUIDv7", func(t *testing.T) {
+		for range 32 {
+			value, err := uuidv7()
+			if err != nil {
+				t.Fatalf("uuidv7() error: %v", err)
+			}
+			if err := validateUUIDv7("event id", value); err != nil {
+				t.Fatalf("generated event id %q is not canonical UUIDv7: %v", value, err)
+			}
+		}
+	})
+}
+
+func TestPostgreSQL18EventLogRejectsNonUUIDv7DirectInsert(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	insert := `INSERT INTO event.event_log
+		(event_id, scope_id, aggregate_type, aggregate_id, aggregate_version,
+		 event_type, schema_version, payload)
+		VALUES ($1::uuid, $2, 'direct', $3, 1, 'direct.insert', 1, '{}'::jsonb)`
+	if _, err := db.Exec(ctx, insert, "01900000-0000-7000-8000-000000000010", "scope", "valid"); err != nil {
+		t.Fatalf("canonical UUIDv7 direct insert: %v", err)
+	}
+	for _, test := range []struct {
+		name    string
+		eventID string
+	}{
+		{name: "UUIDv4", eventID: "01900000-0000-4000-8000-000000000011"},
+		{name: "non RFC variant", eventID: "01900000-0000-7000-0000-000000000012"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if _, err := db.Exec(ctx, insert, test.eventID, "scope", test.name); err == nil {
+				t.Fatalf("non-UUIDv7 event id %q was accepted", test.eventID)
+			}
+		})
+	}
+}
 
 func TestPostgreSQL18EventRetentionRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
@@ -154,6 +217,70 @@ func TestPostgreSQL18ConcurrentSameEventIdentityIsIdempotent(t *testing.T) {
 		}
 	}
 	_ = tx.Rollback(ctx)
+}
+
+func TestPostgreSQL18EventPayloadUsesStoredJSONBCanonicalBytes(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	eventID := "01900000-0000-7000-8000-0000000000aa"
+	initialInput := EventInput{
+		EventID: eventID, ScopeID: "scope", AggregateType: "payload", AggregateID: "canonical",
+		EventType: "created", SchemaVersion: 1,
+		Payload: []byte(`{"amount":1e3,"nested":{"large":9007199254740993,"value":2}}`),
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	initial, err := r.AppendEvent(ctx, tx, initialInput)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	var storedPayload string
+	if err := db.QueryRow(ctx, `SELECT payload::text FROM event.event_log WHERE event_id = $1::uuid`, eventID).Scan(&storedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if string(initial.Payload) != storedPayload {
+		t.Fatalf("initial payload = %q, stored payload = %q", initial.Payload, storedPayload)
+	}
+	if !strings.Contains(storedPayload, "9007199254740993") {
+		t.Fatalf("stored payload lost large integer: %q", storedPayload)
+	}
+
+	// PostgreSQL jsonb equality treats these numeric spellings as identical,
+	// while the stored text remains the exact canonical representation returned
+	// by the database on the initial append.
+	retryInput := initialInput
+	retryInput.Payload = []byte(`{"nested":{"value":2,"large":9007199254740993},"amount":1000}`)
+	tx, err = db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := r.AppendEvent(ctx, tx, retryInput)
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("numeric-equivalent retry: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if string(replay.Payload) != storedPayload {
+		t.Fatalf("replay payload = %q, stored payload = %q", replay.Payload, storedPayload)
+	}
+
+	read, err := r.GetEvent(ctx, db, eventID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(read.Payload) != storedPayload {
+		t.Fatalf("read payload = %q, stored payload = %q", read.Payload, storedPayload)
+	}
 }
 
 func TestPostgreSQL18ConcurrentEnrollmentProducerHistoricalEvent(t *testing.T) {

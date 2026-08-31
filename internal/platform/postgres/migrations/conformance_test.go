@@ -183,7 +183,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		INSERT INTO event.event_log
 		    (event_id, scope_id, aggregate_type, aggregate_id, aggregate_version,
 		     event_type, schema_version, occurred_at, payload)
-		VALUES ('00000000-0000-0000-0000-000000000004', 'schema', 'test',
+		VALUES ('01900000-0000-7000-8000-000000000004', 'schema', 'test',
 		        'schema:test', 1, 'schema.test', 1,
 		        clock_timestamp() - interval '2 hours', '{}'::jsonb)`); err != nil {
 		t.Fatal(err)
@@ -240,7 +240,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		        'sha256:0000000000000000000000000000000000000000000000000000000000000000')`); err != nil {
 		t.Fatalf("runtime audit append: %v", err)
 	}
-	if _, err := runtimeConn.Exec(ctx, `DELETE FROM event.event_log WHERE event_id = '00000000-0000-0000-0000-000000000004'`); err == nil {
+	if _, err := runtimeConn.Exec(ctx, `DELETE FROM event.event_log WHERE event_id = '01900000-0000-7000-8000-000000000004'`); err == nil {
 		t.Fatal("runtime direct event delete unexpectedly succeeded")
 	}
 	if err := runtimeConn.QueryRow(ctx, `SELECT event.prune_event_log(clock_timestamp(), 10)`).Scan(new(int64)); err == nil {
@@ -314,7 +314,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatalf("runtime event prune removed %d rows, want 1", pruned)
 	}
 	var remaining int
-	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_log WHERE event_id = '00000000-0000-0000-0000-000000000004'`).Scan(&remaining); err != nil {
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM event.event_log WHERE event_id = '01900000-0000-7000-8000-000000000004'`).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
 	if remaining != 0 {
