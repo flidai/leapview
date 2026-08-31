@@ -1468,12 +1468,22 @@ func defaultCanonicalVisual(kind, title string) document.DashboardVisual {
 	case document.DashboardVisualTypeTable:
 		query.Value = &document.RecordsDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "records"}, Type: "records", Dataset: "pending_dataset", Fields: []document.DashboardRecordFieldSelection{}}
 		presentation.Value = &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "table"}, Type: "table", RowHeight: 32, ShowHeader: true, Striped: false}
-	case document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
+	case document.DashboardVisualTypePivot:
 		query.Value = &document.PivotDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "pivot"}, Type: "pivot", Rows: []document.DashboardDimensionSelection{}, Columns: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
+		presentation.Value = &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "table"}, Type: "table", RowHeight: 32, ShowHeader: true, Striped: false}
+	case document.DashboardVisualTypeMatrix:
+		// Matrix accepts a two-dimensional aggregate binding. Using the shared
+		// aggregate query makes visual switching reversible and lets the standard
+		// Dimension/Measure wells build a previewable matrix without exposing
+		// pivot-only row/column concepts.
+		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.TableDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "table"}, Type: "table", RowHeight: 32, ShowHeader: true, Striped: false}
 	case document.DashboardVisualTypeKpi:
 		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.KPIDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "kpi"}, Type: "kpi"}
+	case document.DashboardVisualTypeScatter:
+		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
+		presentation.Value = &document.PointDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "point"}, Type: "point", Identity: []string{"pending_identity"}, X: "pending_x", Y: "pending_y"}
 	case document.DashboardVisualTypePie, document.DashboardVisualTypeDonut, document.DashboardVisualTypeFunnel:
 		query.Value = &document.AggregateDashboardQuery{DashboardQueryBase: document.DashboardQueryBase{Type: "aggregate"}, Type: "aggregate", Dimensions: []document.DashboardDimensionSelection{}, Metrics: []document.DashboardMetricSelection{}}
 		presentation.Value = &document.ProportionalDashboardPresentation{DashboardPresentationBase: document.DashboardPresentationBase{Type: "proportional"}, Type: "proportional"}
@@ -1525,29 +1535,9 @@ func resolveCanonicalPageVisual(value document.DashboardDocument, pageID, visual
 	return "", fmt.Errorf("%w: page %q", ErrNotFound, pageID)
 }
 
-func visualQueryType(query document.DashboardQuery) string {
-	typ, _ := query.Type()
-	return typ
-}
-
 func visualPresentationType(presentation document.DashboardPresentation) string {
 	typ, _ := presentation.Type()
 	return typ
-}
-
-func visualQueryKind(visualType document.DashboardVisualType) string {
-	switch visualType {
-	case document.DashboardVisualTypeHistogram:
-		return "histogram"
-	case document.DashboardVisualTypeBoxplot:
-		return "distribution"
-	case document.DashboardVisualTypeTable, document.DashboardVisualTypeMap:
-		return "records"
-	case document.DashboardVisualTypeMatrix, document.DashboardVisualTypePivot:
-		return "pivot"
-	default:
-		return "aggregate"
-	}
 }
 
 func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTypePayload) error {
@@ -1559,15 +1549,17 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	if visual.Type == patch.Type {
 		return nil
 	}
-	oldQueryType := visualQueryType(visual.Query)
 	oldPresentationType := visualPresentationType(visual.Presentation)
 	visual.Type = patch.Type
 	newDefault := defaultCanonicalVisual(string(patch.Type), visualTitle(visual, visualID))
-	// Compatible visual families keep both their bound query and presentation
-	// options (bar/column/line/area are all cartesian aggregate visuals).
-	if oldQueryType == visualQueryKind(patch.Type) {
-		newDefault.Query = visual.Query
-	}
+	// A visual-type change is an exploration operation, not a data-editing
+	// operation. Keep the authored query for every target type so an
+	// incompatible intermediate visual can report its missing requirements and
+	// switching back restores the original data bindings. The target compiler
+	// remains authoritative about whether those bindings can render the chosen
+	// visual type.
+	newDefault.Query = visual.Query
+	configureTargetPresentationBindings(&newDefault)
 	if oldPresentationType == visualPresentationType(newDefault.Presentation) {
 		if oldCartesian, oldOK := visual.Presentation.Value.(*document.CartesianDashboardPresentation); oldOK {
 			if nextCartesian, nextOK := newDefault.Presentation.Value.(*document.CartesianDashboardPresentation); nextOK {
@@ -1580,8 +1572,8 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 		} else {
 			newDefault.Presentation = visual.Presentation
 		}
-	} else if oldQueryType == visualQueryKind(patch.Type) {
-		// Preserve renderer-neutral formatting controls when only presentation
+	} else {
+		// Preserve renderer-neutral formatting controls when the presentation
 		// family changes, while letting the target family supply safe defaults.
 		if oldBase, baseErr := visual.Presentation.Base(); baseErr == nil {
 			if nextBase, nextErr := newDefault.Presentation.Base(); nextErr == nil {
@@ -1600,6 +1592,38 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Interactions = visual.Interactions
 	value.Spec.Visuals[visualID] = newDefault
 	return nil
+}
+
+func configureTargetPresentationBindings(visual *document.DashboardVisual) {
+	if visual == nil || visual.Type != document.DashboardVisualTypeScatter {
+		return
+	}
+	query, ok := visual.Query.Value.(*document.AggregateDashboardQuery)
+	if !ok {
+		return
+	}
+	presentation, ok := visual.Presentation.Value.(*document.PointDashboardPresentation)
+	if !ok {
+		return
+	}
+	if len(query.Dimensions) > 0 {
+		_, alias := canonicalDimensionSelection(query.Dimensions[0])
+		if alias != "" {
+			presentation.Identity = []string{alias}
+		}
+	}
+	if len(query.Metrics) > 0 {
+		_, alias := canonicalMetricSelection(query.Metrics[0])
+		if alias != "" {
+			presentation.X = alias
+		}
+	}
+	if len(query.Metrics) > 1 {
+		_, alias := canonicalMetricSelection(query.Metrics[1])
+		if alias != "" {
+			presentation.Y = alias
+		}
+	}
 }
 
 func mergeCartesianPresentation(target, source *document.CartesianDashboardPresentation) {
@@ -2037,9 +2061,10 @@ func moveCanonicalField(value *document.DashboardDocument, patch MoveFieldPayloa
 }
 
 type canonicalFieldSelection struct {
-	Metric    *document.DashboardMetricSelection
-	Dimension *document.DashboardDimensionSelection
-	Record    *document.DashboardRecordFieldSelection
+	Metric      *document.DashboardMetricSelection
+	Dimension   *document.DashboardDimensionSelection
+	Record      *document.DashboardRecordFieldSelection
+	PivotColumn bool
 }
 
 func removeFieldFromQuery(query *document.DashboardQuery, role FieldRole, fieldID string) (bool, error) {
@@ -2103,6 +2128,13 @@ func takeFieldFromQuery(query *document.DashboardQuery, role FieldRole, fieldID 
 				if id == fieldID {
 					value.Rows = append(value.Rows[:index], value.Rows[index+1:]...)
 					return canonicalFieldSelection{Dimension: &field}, index, nil
+				}
+			}
+			for index, field := range value.Columns {
+				id, _ := canonicalDimensionSelection(field)
+				if id == fieldID {
+					value.Columns = append(value.Columns[:index], value.Columns[index+1:]...)
+					return canonicalFieldSelection{Dimension: &field, PivotColumn: true}, index, nil
 				}
 			}
 		case FieldRoleDetail:
@@ -2195,6 +2227,15 @@ func insertFieldIntoQuery(query *document.DashboardQuery, role FieldRole, select
 			return nil
 		}
 		if selection.Dimension != nil && role == FieldRoleDimension {
+			if selection.PivotColumn {
+				if index > len(value.Columns) {
+					index = len(value.Columns)
+				}
+				value.Columns = append(value.Columns, document.DashboardDimensionSelection{})
+				copy(value.Columns[index+1:], value.Columns[index:])
+				value.Columns[index] = *selection.Dimension
+				return nil
+			}
 			if index > len(value.Rows) {
 				index = len(value.Rows)
 			}
@@ -2329,7 +2370,20 @@ func assignCanonicalField(value *document.DashboardDocument, patch AssignFieldPa
 					return nil
 				}
 			}
-			query.Rows = append(query.Rows, document.DashboardDimensionSelection{String: &ref})
+			for _, existing := range query.Columns {
+				id, _ := canonicalDimensionSelection(existing)
+				if id == ref {
+					return nil
+				}
+			}
+			// A pivot needs both axes. Keep matrix authoring row-oriented, but
+			// route the second pivot dimension into columns so a newly-created
+			// pivot can become previewable using the shared Dimension well.
+			if visual.Type == document.DashboardVisualTypePivot && len(query.Rows) > 0 && len(query.Columns) == 0 {
+				query.Columns = append(query.Columns, document.DashboardDimensionSelection{String: &ref})
+			} else {
+				query.Rows = append(query.Rows, document.DashboardDimensionSelection{String: &ref})
+			}
 		case FieldRoleMetric:
 			for _, existing := range query.Metrics {
 				id, _ := canonicalMetricSelection(existing)

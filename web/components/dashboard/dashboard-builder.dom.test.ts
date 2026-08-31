@@ -325,6 +325,65 @@ test('dashboard builder changes the selected visual type without creating a visu
   }
 })
 
+test('dashboard builder explains incompatible switches and retains fields for switching back', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const source = element.builder.pages[0].visuals[0]
+      const slots = [
+        { id: 'dimension-0', label: 'Status', kind: 'dimension', fieldId: 'orders.status', required: true },
+        { id: 'metric-0', label: 'Total', kind: 'metric', fieldId: 'orders.total', required: true },
+      ]
+      mergePatch({ builder: {
+        visualCatalog: element.builder.visualCatalog.map((entry: any) => entry.type === 'map'
+          ? { ...entry, roles: ['detail'], roleLimits: [{ role: 'detail', minimum: 2, maximum: 2 }] }
+          : entry.type === 'bar'
+            ? { ...entry, roles: ['dimension', 'metric'], roleLimits: [{ role: 'dimension', minimum: 0, maximum: 2 }, { role: 'metric', minimum: 1, maximum: 0 }] }
+            : { ...entry, roleLimits: entry.roleLimits ?? [] }),
+        pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'map', slots }] }, element.builder.pages[1]],
+        selectedPageId: 'overview', selectedVisualId: 'sales-chart',
+        preview: { ...element.builder.preview, active: false, error: 'visual "sales-chart": map visual requires exactly two dimensions' },
+      } })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const switched = {
+        requirement: root.querySelector('.visual-requirements')?.textContent?.replace(/\s+/g, ' ').trim(),
+        retained: Array.from(root.querySelectorAll('.retained-field')).map((node: any) => node.textContent?.trim()),
+        canvas: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
+        banner: root.querySelector('.preview-error')?.textContent?.trim(),
+        disabledTypes: root.querySelectorAll('.visual-picker-button:disabled').length,
+      }
+      mergePatch({ builder: {
+        pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'bar', slots }] }, element.builder.pages[1]],
+        preview: { ...element.builder.preview, active: true, error: '' },
+      } })
+      await element.updateComplete
+      return {
+        switched,
+        restored: {
+          requirement: root.querySelector('.visual-requirements')?.textContent?.replace(/\s+/g, ' ').trim(),
+          wells: Array.from(root.querySelectorAll('.field-token-label')).map((node: any) => node.textContent?.trim()),
+          retained: root.querySelectorAll('.retained-field').length,
+        },
+      }
+    })
+    expect(state.switched.requirement).toContain('Add 2 coordinate columns to preview')
+    expect(state.switched.retained).toEqual(['Status', 'Total'])
+    expect(state.switched.canvas).toContain('Add 2 coordinate columns')
+    expect(state.switched.banner).toContain('One or more visuals')
+    expect(state.switched.disabledTypes).toBe(0)
+    expect(state.restored.requirement).toBe('Data requirements met.')
+    expect(state.restored.wells).toEqual(['Status', 'Total'])
+    expect(state.restored.retained).toBe(0)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder deselects on the empty canvas and adds a visual directly from the picker', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -993,7 +1052,7 @@ test('dashboard builder blocks record-only and full-role field assignments befor
             ] }],
           },
           visualCatalog: element.builder.visualCatalog.map((entry: any) => entry.type === 'donut'
-            ? { ...entry, roleLimits: [{ role: 'dimension', maximum: 1 }, { role: 'metric', maximum: 1 }] }
+            ? { ...entry, roleLimits: [{ role: 'dimension', minimum: 1, maximum: 1 }, { role: 'metric', minimum: 1, maximum: 1 }] }
             : { ...entry, roleLimits: entry.roleLimits ?? [] }),
           pages: element.builder.pages.map((pageSignal: any) => pageSignal.id !== 'overview' ? pageSignal : {
             ...pageSignal,

@@ -521,7 +521,7 @@ func (h Handler) dashboardBuilderPreviewRequest(r *nethttp.Request) (preview.Pre
 	return preview.PreviewRequest{
 		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		DraftID:          authoring.DraftID(draftID),
-		ExpectedRevision: revision, PageID: pageID,
+		ExpectedRevision: revision, PageID: pageID, BestEffortVisuals: true,
 	}, dashboardID, nil
 }
 
@@ -842,7 +842,7 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		ExpectedRevision: authoring.RevisionToken{
 			RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
 		},
-		PageID: firstBuilderPage(builder),
+		PageID: firstBuilderPage(builder), BestEffortVisuals: true,
 	})
 	contractDefinition := result.Definition
 	contractEvidence := result.SemanticEvidence
@@ -880,6 +880,9 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		envelope.BuilderFilterValidation = uisignals.DashboardFilterValidationResult{Accepted: true, CurrentRevision: int64(filterState.Revision)}
 	}
 	envelope.BuilderVisuals = dashboardBuilderPreviewVisuals(builder, result)
+	for _, message := range result.VisualErrors {
+		envelope.Builder = dashboardBuilderWithVisualPreviewError(envelope.Builder, message)
+	}
 	envelope.Builder.Preview.Loading = false
 	previewErr := err
 	if previewErr == nil && strings.TrimSpace(result.PagePatch.Status.Error) != "" {
@@ -890,18 +893,58 @@ func (h Handler) dashboardBuilderEnvelopeWithPreviewForProject(ctx context.Conte
 		message := strings.TrimSpace(previewErr.Error())
 		if message != "" {
 			envelope.Builder.Preview.Error = &message
+			envelope.Builder = dashboardBuilderWithVisualPreviewError(envelope.Builder, message)
 		} else {
 			envelope.Builder.Preview.Error = nil
 		}
 		return envelope
 	}
 	envelope.Builder.Preview.Active = true
+	if len(result.VisualErrors) > 0 {
+		noun := "visual"
+		if len(result.VisualErrors) != 1 {
+			noun = "visuals"
+		}
+		message := fmt.Sprintf("%d %s unavailable", len(result.VisualErrors), noun)
+		envelope.Builder.Preview.Error = &message
+		return envelope
+	}
 	// Command responses are merged into the existing Datastar signal tree.
 	// Omitting an optional field leaves the previous value in place, so a
 	// successful preview must explicitly clear an error from an earlier,
 	// incomplete draft revision.
 	envelope.Builder.Preview.Error = uisignals.Pointer("")
 	return envelope
+}
+
+func dashboardBuilderWithVisualPreviewError(builder uisignals.DashboardBuilderSignal, message string) uisignals.DashboardBuilderSignal {
+	visualID := dashboardBuilderPreviewErrorVisualID(message)
+	if visualID == "" {
+		return builder
+	}
+	for pageIndex := range builder.Pages {
+		for visualIndex := range builder.Pages[pageIndex].Visuals {
+			visual := &builder.Pages[pageIndex].Visuals[visualIndex]
+			if strings.TrimSpace(visual.VisualID) == visualID || strings.TrimSpace(visual.ID) == visualID {
+				visual.PreviewError = uisignals.Pointer(message)
+			}
+		}
+	}
+	return builder
+}
+
+func dashboardBuilderPreviewErrorVisualID(message string) string {
+	const marker = `visual "`
+	start := strings.Index(message, marker)
+	if start < 0 {
+		return ""
+	}
+	remaining := message[start+len(marker):]
+	end := strings.IndexByte(remaining, '"')
+	if end <= 0 {
+		return ""
+	}
+	return strings.TrimSpace(remaining[:end])
 }
 
 func builderServingStateID(builder uisignals.DashboardBuilderSignal) string {

@@ -964,6 +964,52 @@ func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
 	}
 }
 
+func TestDashboardBuilderPreviewFailureIsAttributedToExactVisual(t *testing.T) {
+	message := `strictly compile dashboard draft: visual "orders": proportional requires at least 1 dimension(s) and 1 metric(s), got 0 and 1`
+	builder := uisignals.DashboardBuilderSignal{Pages: []uisignals.DashboardBuilderPageSignal{{
+		ID: "overview",
+		Visuals: []uisignals.DashboardBuilderVisualSignal{
+			{ID: "orders-component", VisualID: "orders"},
+			{ID: "revenue-component", VisualID: "revenue"},
+		},
+	}}}
+	attributed := dashboardBuilderWithVisualPreviewError(builder, message)
+	if attributed.Pages[0].Visuals[0].PreviewError == nil || *attributed.Pages[0].Visuals[0].PreviewError != message {
+		t.Fatalf("orders preview error = %#v", attributed.Pages[0].Visuals[0].PreviewError)
+	}
+	if attributed.Pages[0].Visuals[1].PreviewError != nil {
+		t.Fatalf("unrelated visual received preview error = %#v", attributed.Pages[0].Visuals[1].PreviewError)
+	}
+	if got := dashboardBuilderPreviewErrorVisualID(`compile failed without a visual target`); got != "" {
+		t.Fatalf("untargeted error visual = %q", got)
+	}
+}
+
+func TestDashboardBuilderBestEffortPreviewKeepsValidSurfaceActive(t *testing.T) {
+	message := `visual "orders": heatmap requires at least 2 dimension(s) and 1 metric(s), got 1 and 1`
+	builder := uisignals.DashboardBuilderSignal{
+		ProjectID: "project", DashboardID: "sales", DraftID: "draft-1",
+		Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 1, ContentHash: "sha256:abc"},
+		Pages:    []uisignals.DashboardBuilderPageSignal{{ID: "overview", Visuals: []uisignals.DashboardBuilderVisualSignal{{ID: "orders-component", VisualID: "orders"}, {ID: "revenue-component", VisualID: "revenue"}}}},
+	}
+	fake := &builderAuthoringFake{builder: builder, preview: preview.Preview{
+		Definition:   dashboarddefinition.Definition{ID: "sales", SemanticModel: "sales_model"},
+		PagePatch:    dashboard.Patch{Filters: dashboard.Filters{}, Visuals: map[string]visualizationir.VisualizationEnvelope{}},
+		VisualErrors: map[string]string{"orders": message},
+	}}
+	envelope := (Handler{Authoring: fake}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", builder)
+	if !envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "1 visual unavailable" {
+		t.Fatalf("best-effort preview state = %#v", envelope.Builder.Preview)
+	}
+	orders := envelope.Builder.Pages[0].Visuals[0]
+	if orders.PreviewError == nil || *orders.PreviewError != message || envelope.Builder.Pages[0].Visuals[1].PreviewError != nil {
+		t.Fatalf("best-effort visual attribution = %#v", envelope.Builder.Pages[0].Visuals)
+	}
+	if !fake.previewReq.BestEffortVisuals {
+		t.Fatalf("builder preview request was not fail-soft: %#v", fake.previewReq)
+	}
+}
+
 func TestDashboardBuilderPreviewSuccessExplicitlyClearsStreamedError(t *testing.T) {
 	stale := "aggregate visual requires a metric"
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{

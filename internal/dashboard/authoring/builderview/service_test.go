@@ -106,6 +106,22 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	}
 }
 
+func TestCanonicalSlotsIncludesPivotRowsAndColumns(t *testing.T) {
+	row, column, metric := "category", "purchase_month", "revenue"
+	slots, err := canonicalSlots(document.DashboardQuery{Value: &document.PivotDashboardQuery{
+		Type:    "pivot",
+		Rows:    []document.DashboardDimensionSelection{{String: &row}},
+		Columns: []document.DashboardDimensionSelection{{String: &column}},
+		Metrics: []document.DashboardMetricSelection{{String: &metric}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 3 || slots[0].ID != "row-0" || slots[1].ID != "column-0" || slots[2].ID != "metric-0" {
+		t.Fatalf("pivot slots = %#v", slots)
+	}
+}
+
 func TestProjectFiltersExposesAuthoredPageBindings(t *testing.T) {
 	bindings := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status"}}
 	authored := document.DashboardDocument{Spec: document.DashboardSpec{

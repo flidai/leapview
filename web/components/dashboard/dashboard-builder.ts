@@ -1530,6 +1530,43 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: var(--base-size-12);
     }
 
+    .visual-requirements {
+      display: grid;
+      gap: var(--base-size-4);
+      margin: 0;
+      padding: var(--base-size-8);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      background: var(--lv-bg-panel-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .visual-requirements[data-ready='false'] {
+      border-color: var(--lv-data-4, var(--lv-line-default));
+    }
+
+    .retained-fields {
+      display: grid;
+      gap: var(--base-size-6);
+      padding-top: var(--base-size-4);
+    }
+
+    .retained-field-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: var(--base-size-4);
+    }
+
+    .retained-field {
+      border: var(--lv-border-muted);
+      border-radius: 999px;
+      padding: var(--base-size-2) var(--base-size-8);
+      color: var(--lv-fg-muted);
+      background: var(--lv-bg-panel);
+      font: var(--lv-type-caption);
+    }
+
     .interaction-editor {
       padding-top: var(--base-size-12);
       border-top: var(--lv-border-muted);
@@ -2939,7 +2976,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
-          ${builder.preview.error ? html`<p class="preview-error" role="alert">${builder.preview.error}</p>` : nothing}
+          ${builder.preview.error ? html`<p class="preview-error" role="alert">One or more visuals cannot be previewed yet. Select a visual to see its data requirements.</p>` : nothing}
           <p id="dashboard-builder-grid-help" class="sr-only">Focus a canvas component. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
           <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
             ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
@@ -2965,12 +3002,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const height = `${Math.max(1, visual.placement.rowSpan) * (page.grid.rowHeight || 40)}px`
     const draggedField = this.draggedFieldFromBuilder(this.builder)
     const fieldDrop = draggedField ? (this.fieldCompatibleWithVisual(draggedField, visual) ? 'compatible' : 'incompatible') : ''
+    const requirementMessage = this.visualRequirementMessages(visual)[0]
+    const previewIssue = this.visualPreviewErrorMessage(visual)
     return html`
       <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
             ? html`<span class="visual-preview"><lv-visualization-host authoring .envelope=${preview}><span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span></lv-visualization-host></span>`
-            : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty">${this.builder?.preview.error ? 'Preview unavailable' : 'Add fields to preview'}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
+            : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty">${requirementMessage || previewIssue || (this.builder?.preview.error ? 'Preview unavailable' : 'Add fields to preview')}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>
     `
@@ -3111,11 +3150,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderFieldWells(visual: DashboardBuilderVisualSignal) {
     const entry = this.visualCatalogEntry(this.visualTypeForRender(visual))
     const roles = (entry?.roles ?? ['dimension', 'metric']).filter((role): role is BuilderFieldRole => role === 'dimension' || role === 'metric' || role === 'detail')
+    const supportedRoles = new Set<BuilderFieldRole>(roles)
+    const retained = visual.slots.filter((slot) => !supportedRoles.has(this.slotRole(slot)))
+    const requirements = this.visualRequirementMessages(visual)
+    const previewIssue = this.visualPreviewErrorMessage(visual)
+    const ready = requirements.length === 0 && !previewIssue
     return html`
       <section class="property-group" aria-label="Field wells">
         <span class="property-label">Fields</span>
         <p class="pane-hint">Drag fields into a role, or click a compatible field below.</p>
+        <div class="visual-requirements" data-ready=${ready} role="status">
+          ${ready
+            ? html`<span>Data requirements met.</span>`
+            : requirements.map((message) => html`<span>${message}</span>`)}
+          ${previewIssue && requirements.length === 0 ? html`<span>${previewIssue}</span>` : nothing}
+        </div>
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
+        ${retained.length > 0 ? html`
+          <div class="retained-fields" role="note">
+            <span class="pane-hint">Retained for switching back</span>
+            <div class="retained-field-list">${retained.map((slot) => html`<span class="retained-field" title=${`${this.fieldWellLabel(visual, this.slotRole(slot))} field`}>${this.fieldLabel(slot.fieldId ?? '', slot.label)}</span>`)}</div>
+          </div>
+        ` : nothing}
       </section>
     `
   }
@@ -3554,8 +3610,46 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private roleHasCapacity(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole): boolean {
     const limit = this.visualCatalogEntry(this.visualTypeForRender(visual))?.roleLimits?.find((candidate) => candidate.role === role)
-    if (!limit) return true
+    if (!limit || limit.maximum <= 0) return true
     return visual.slots.filter((slot) => this.slotRole(slot) === role).length < limit.maximum
+  }
+
+  private visualRequirementMessages(visual: DashboardBuilderVisualSignal): string[] {
+    const entry = this.visualCatalogEntry(this.visualTypeForRender(visual))
+    if (!entry) return []
+    const messages: string[] = []
+    for (const requirement of entry.roleLimits ?? []) {
+      const count = visual.slots.filter((slot) => this.slotRole(slot) === requirement.role).length
+      if (count < requirement.minimum) {
+        const missing = requirement.minimum - count
+        messages.push(`Add ${missing} ${this.requirementRoleLabel(visual, requirement.role, missing)} to preview.`)
+      }
+      if (requirement.maximum > 0 && count > requirement.maximum) {
+        const extra = count - requirement.maximum
+        messages.push(`Remove ${extra} ${this.requirementRoleLabel(visual, requirement.role, extra)} to preview.`)
+      }
+    }
+    return messages
+  }
+
+  private visualPreviewErrorMessage(visual: DashboardBuilderVisualSignal): string {
+    const message = visual.previewError?.trim() ?? ''
+    if (!message) return ''
+    const marker = `visual "${this.visualSignalID(visual)}":`
+    const markerIndex = message.indexOf(marker)
+    const detail = (markerIndex >= 0 ? message.slice(markerIndex + marker.length) : message)
+      .replace(/^\s*(query|presentation|references|result aliases|interactions|geographic delivery|calculations|IR|definition):\s*/i, '')
+      .trim()
+    if (!detail) return 'Preview unavailable for this field combination.'
+    const bounded = detail.length > 180 ? `${detail.slice(0, 177)}…` : detail
+    return bounded.charAt(0).toUpperCase() + bounded.slice(1)
+  }
+
+  private requirementRoleLabel(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole, count: number): string {
+    let label = role === 'metric' ? 'measure' : role === 'detail' ? 'column' : 'dimension'
+    if (this.visualTypeForRender(visual) === 'map' && role === 'detail') label = count === 1 ? 'coordinate column' : 'coordinate columns'
+    else if (count !== 1) label += 's'
+    return label
   }
 
   private roleForField(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal): BuilderFieldRole {
