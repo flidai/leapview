@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { ChartColumn, Database, ListFilter, PanelRightClose, PanelRightOpen, Redo2, Undo2 } from 'lucide'
+import { ChartColumn, ChevronLeft, ChevronRight, Copy, Database, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Trash2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -123,6 +123,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private gridInteractionMessage = ''
   @state() private visualActionMessage = ''
   @state() private draggedFieldID = ''
+  @state() private draggedPageID = ''
+  @state() private pageDropTargetID = ''
   @state() private undoStack: BuilderRevisionReference[] = []
   @state() private redoStack: BuilderRevisionReference[] = []
   @state() private visualTypeOverrides: Record<string, BuilderVisualType> = {}
@@ -159,6 +161,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   // the page created by that intent, even when the response's selectedPageId
   // still reflects the page that was active before the mutation.
   private pendingAddPage: { revision: string; pageIDs: Set<string> } | null = null
+  private pendingRemovePage: { revision: string; pageID: string; visualID: string | null } | null = null
   private pendingAddVisual: { revision: string; visualIDs: Set<string>; pageID: string } | null = null
   private pendingAddFilter: { revision: string; filterIDs: Set<string> } | null = null
   private pendingAddFilterComponent: { revision: string; componentIDs: Set<string>; pageID: string } | null = null
@@ -697,9 +700,72 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       flex: 0 0 auto;
       width: var(--control-large-size);
       min-height: var(--control-large-size);
-      margin-right: var(--base-size-8);
       padding: 0;
       border-color: transparent;
+    }
+
+    .page-add {
+      margin-right: var(--base-size-8);
+    }
+
+    .page-actions {
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .page-actions > summary {
+      display: grid;
+      width: var(--control-medium-size);
+      min-height: var(--control-medium-size);
+      place-items: center;
+      border-radius: var(--lv-button-radius, var(--lv-radius-default));
+      color: var(--lv-fg-muted);
+      cursor: pointer;
+      list-style: none;
+    }
+
+    .page-actions > summary::-webkit-details-marker {
+      display: none;
+    }
+
+    .page-actions > summary:hover {
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .page-actions-menu {
+      position: absolute;
+      z-index: 4;
+      right: 0;
+      bottom: calc(100% + var(--base-size-4));
+      display: grid;
+      min-width: 10rem;
+      gap: var(--base-size-2);
+      padding: var(--base-size-4);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-sm);
+    }
+
+    .page-actions-menu button {
+      display: flex;
+      width: 100%;
+      min-height: var(--control-small-size);
+      align-items: center;
+      justify-content: flex-start;
+      gap: var(--base-size-8);
+      border-color: transparent;
+      background: transparent;
+      text-align: left;
+    }
+
+    .page-actions-menu button:hover:not(:disabled) {
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .page-actions-menu .page-delete {
+      color: var(--lv-fg-danger, var(--lv-fg-default));
     }
 
     .pane-header {
@@ -1072,6 +1138,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       background: var(--lv-data-3-muted);
       font-weight: var(--base-text-weight-semibold);
+    }
+
+    .page-tab[data-page-dragging='true'] {
+      opacity: 0.55;
+    }
+
+    .page-tab[data-page-drop='true'] {
+      box-shadow: inset 3px 0 0 var(--lv-line-emphasis);
     }
 
     .canvas-scroll {
@@ -1638,6 +1712,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       color: var(--lv-fg-muted);
     }
 
+    .page-layout-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: var(--base-size-8);
+    }
+
+    .page-format-summary {
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      gap: var(--base-size-8);
+      margin: 0;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
     .preview-error {
       margin: 0;
       padding: var(--base-size-8) var(--base-size-12);
@@ -2049,6 +2138,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     })
     this.reconcileVisualTypeOverrides(builder)
     this.selectPendingAddedPage(builder)
+    this.reconcilePendingRemovedPage(builder)
     this.selectPendingAddedVisual(builder)
     this.selectPendingAddedFilter(builder)
     this.selectPendingAddedFilterComponent(builder)
@@ -2417,6 +2507,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.pendingHistorySnapshot = null
     }
     this.visualTypeOverrides = {}
+    this.pendingAddPage = null
+    if (this.pendingRemovePage) {
+      this.localPageID = this.pendingRemovePage.pageID
+      this.localVisualID = this.pendingRemovePage.visualID
+      this.pendingRemovePage = null
+    }
     this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
     this.terminalFailure = commandFailure
     this.requestUpdate()
@@ -2440,15 +2536,60 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderPageBar(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined) {
+    const pageIndex = page ? builder.pages.findIndex((item) => item.id === page.id) : -1
     return html`
       <footer class="page-bar">
         <span class="sr-only">Pages</span>
         <nav class="page-tabs" aria-label="Dashboard pages" role=${this.pageBaseHref ? nothing : 'tablist'}>
           ${repeat(builder.pages, (item) => item.id, (item) => this.pageBaseHref
-            ? html`<a class="page-tab" aria-current=${item.id === page?.id ? 'page' : nothing} href=${this.pageHref(item.id)} title=${item.title}>${item.title}</a>`
-            : html`<button class="page-tab" role="tab" aria-selected=${item.id === page?.id} @click=${() => this.selectPage(item.id)} title=${item.title}>${item.title}</button>`)}
+            ? html`<a
+                class="page-tab"
+                aria-current=${item.id === page?.id ? 'page' : nothing}
+                href=${this.pageHref(item.id)}
+                title=${`${item.title}. Drag or use Alt+Arrow keys to reorder.`}
+                .draggable=${builder.capabilities.canEdit}
+                data-page-id=${item.id}
+                data-page-dragging=${this.draggedPageID === item.id}
+                data-page-drop=${this.pageDropTargetID === item.id}
+                @dragstart=${(event: DragEvent) => this.startPageDrag(event, item.id)}
+                @dragover=${(event: DragEvent) => this.dragPageOver(event, item.id)}
+                @dragleave=${() => this.leavePageDrop(item.id)}
+                @drop=${(event: DragEvent) => this.dropPage(event, item.id)}
+                @dragend=${this.endPageDrag}
+                @keydown=${(event: KeyboardEvent) => this.handlePageTabKeydown(event, item.id)}
+              >${item.title}</a>`
+            : html`<button
+                type="button"
+                class="page-tab"
+                role="tab"
+                aria-selected=${item.id === page?.id}
+                tabindex=${item.id === page?.id ? '0' : '-1'}
+                title=${`${item.title}. Drag or use Alt+Arrow keys to reorder.`}
+                .draggable=${builder.capabilities.canEdit}
+                data-page-id=${item.id}
+                data-page-dragging=${this.draggedPageID === item.id}
+                data-page-drop=${this.pageDropTargetID === item.id}
+                @click=${() => this.selectPage(item.id)}
+                @dragstart=${(event: DragEvent) => this.startPageDrag(event, item.id)}
+                @dragover=${(event: DragEvent) => this.dragPageOver(event, item.id)}
+                @dragleave=${() => this.leavePageDrop(item.id)}
+                @drop=${(event: DragEvent) => this.dropPage(event, item.id)}
+                @dragend=${this.endPageDrag}
+                @keydown=${(event: KeyboardEvent) => this.handlePageTabKeydown(event, item.id)}
+              >${item.title}</button>`)}
         </nav>
-        ${builder.capabilities.canAddPage ? html`<button @click=${this.addPage} aria-label="Add page" title="Add page">+</button>` : nothing}
+        ${page && builder.capabilities.canEdit ? html`
+          <details class="page-actions">
+            <summary aria-label=${`Actions for ${page.title}`} title=${`Actions for ${page.title}`}>${lucideIcon(MoreHorizontal, { size: 16, strokeWidth: 2 })}</summary>
+            <div class="page-actions-menu" role="menu" aria-label=${`${page.title} page actions`}>
+              <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex <= 0} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex - 1)}>${lucideIcon(ChevronLeft, { size: 14, strokeWidth: 2 })}<span>Move earlier</span></button>
+              <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex < 0 || pageIndex >= builder.pages.length - 1} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex + 1)}>${lucideIcon(ChevronRight, { size: 14, strokeWidth: 2 })}<span>Move later</span></button>
+              <button type="button" role="menuitem" ?disabled=${this.commandPending} @click=${(event: Event) => this.duplicatePage(event, page)}>${lucideIcon(Copy, { size: 14, strokeWidth: 2 })}<span>Duplicate page</span></button>
+              <button type="button" role="menuitem" class="page-delete" ?disabled=${this.commandPending || builder.pages.length <= 1} @click=${(event: Event) => this.removePage(event, page)}>${lucideIcon(Trash2, { size: 14, strokeWidth: 2 })}<span>Delete page</span></button>
+            </div>
+          </details>
+        ` : nothing}
+        ${builder.capabilities.canAddPage ? html`<button type="button" class="page-add" @click=${this.addPage} aria-label="Add page" title="Add page">${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span class="sr-only">+</span></button>` : nothing}
       </footer>
     `
   }
@@ -2770,19 +2911,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
     const collapsed = this.collapsedPanes.visuals
+    const formattingPage = Boolean(page && !visual && this.inspectorTab === 'format')
     return html`
-      <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label="Visual builder">
+      <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label=${formattingPage ? 'Page properties' : 'Visual builder'}>
         <div class="pane-header">
           <div class="inspector-heading">
             <div class="inspector-title">
               <span class="pane-title-icon">${lucideIcon(ChartColumn, { size: 16, strokeWidth: 2 })}</span>
-              <h2 class="pane-title">${collapsed ? 'Visuals' : visual ? visual.title : page ? 'Add a visual' : 'Visual builder'}</h2>
+              <h2 class="pane-title">${collapsed ? 'Visuals' : visual ? visual.title : formattingPage ? page?.title : page ? 'Add a visual' : 'Visual builder'}</h2>
               ${visual && !collapsed ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}
             </div>
             ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
           <div class="pane-header-details" ?hidden=${collapsed}>
-            <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
+            <p class="pane-hint">${visual ? 'Build this visual with governed fields.' : formattingPage ? 'Configure this page in dashboard code.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
           </div>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
@@ -2796,7 +2938,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 ${this.renderVisualPicker(builder, page, visual)}
                 ${visual ? this.renderFieldWells(visual) : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
               </div>`
-            : html`<div class="inspector-panel" role="tabpanel" aria-label="Format visual">
+            : html`<div class="inspector-panel" role="tabpanel" aria-label=${visual ? 'Format visual' : 'Format page'}>
                 ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
               </div>`}
           <div class="properties-body">
@@ -3031,10 +3173,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderPageProperties(page: DashboardBuilderPageSignal | undefined) {
     if (!page) return html`<span class="pane-hint">Select a page to edit its properties.</span>`
+    const editable = Boolean(this.builder?.capabilities.canEdit && !this.commandPending)
+    const minimumColumns = Math.max(1, ...[...page.visuals, ...(page.filterComponents ?? [])].map((component) => component.placement.col + component.placement.colSpan - 1))
     return html`
-      <section class="property-group"><span class="property-label">Page</span><span class="property-value">${page.title}</span></section>
-      <section class="property-group"><span class="property-label">Canvas</span><span class="property-value">${page.canvas.width} × ${page.canvas.height}</span></section>
-      <section class="property-group"><span class="property-label">Grid</span><span class="property-value">${page.grid.columns} columns · ${page.grid.rowHeight}px rows</span></section>
+      <section class="format-controls" aria-label="Page formatting">
+        <div class="format-section">
+          <h3>Page</h3>
+          <label class="format-text-field">
+            <span>Page name</span>
+            <input type="text" maxlength="128" data-page-control="title" aria-label="Page name" .value=${page.title} ?disabled=${!editable} @change=${(event: Event) => this.updatePageTitle(page, event)} />
+          </label>
+          ${page.canvas.width > 0 && page.canvas.height > 0 ? html`<p class="page-format-summary"><span>Current canvas</span><span>${page.canvas.width} × ${page.canvas.height}</span></p>` : nothing}
+        </div>
+        <div class="format-section">
+          <h3>Grid</h3>
+          <div class="page-layout-grid">
+            <label class="format-text-field"><span>Columns</span><input type="number" min=${minimumColumns} step="1" data-page-control="columns" aria-label="Grid columns" .value=${String(page.grid.columns)} ?disabled=${!editable} @change=${(event: Event) => this.updatePageLayout(page, 'columns', event, minimumColumns)} /></label>
+            <label class="format-text-field"><span>Row height</span><input type="number" min="1" step="1" data-page-control="rowHeight" aria-label="Grid row height" .value=${String(page.grid.rowHeight)} ?disabled=${!editable} @change=${(event: Event) => this.updatePageLayout(page, 'rowHeight', event, 1)} /></label>
+            <label class="format-text-field"><span>Gap</span><input type="number" min="0" step="1" data-page-control="gap" aria-label="Grid gap" .value=${String(page.grid.gap)} ?disabled=${!editable} @change=${(event: Event) => this.updatePageLayout(page, 'gap', event, 0)} /></label>
+            <label class="format-text-field"><span>Padding</span><input type="number" min="0" step="1" data-page-control="padding" aria-label="Grid padding" .value=${String(page.grid.padding)} ?disabled=${!editable} @change=${(event: Event) => this.updatePageLayout(page, 'padding', event, 0)} /></label>
+          </div>
+          <p class="pane-hint">The grid is stored on this page in dashboard code. Columns cannot clip an existing visual.</p>
+        </div>
+      </section>
     `
   }
 
@@ -3223,6 +3384,151 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     this.emitCommand('add_page', { pageId: '', title: '' })
   }
+
+  private updatePageTitle(page: DashboardBuilderPageSignal, event: Event): void {
+    const input = event.currentTarget as HTMLInputElement
+    const title = input.value.trim()
+    if (!title) {
+      input.value = page.title
+      this.visualActionMessage = 'Page name cannot be empty.'
+      return
+    }
+    if (title === page.title || !this.builder?.capabilities.canEdit || this.commandPending) return
+    this.visualActionMessage = `Renaming ${page.title}.`
+    this.emitCommand('rename_page', { pageId: page.id, title })
+  }
+
+  private updatePageLayout(page: DashboardBuilderPageSignal, key: keyof DashboardBuilderPageSignal['grid'], event: Event, minimum: number): void {
+    const input = event.currentTarget as HTMLInputElement
+    const parsed = Number(input.value)
+    if (!Number.isInteger(parsed) || parsed < minimum) {
+      input.value = String(page.grid[key])
+      this.visualActionMessage = `${input.getAttribute('aria-label') ?? 'Grid value'} must be ${minimum} or greater.`
+      return
+    }
+    if (parsed === page.grid[key] || !this.builder?.capabilities.canEdit || this.commandPending) return
+    const grid = { ...page.grid, [key]: parsed }
+    this.visualActionMessage = `Saving ${page.title} grid settings.`
+    this.emitCommand('update_page_layout', {
+      pageId: page.id,
+      columns: grid.columns,
+      rowHeight: grid.rowHeight,
+      gap: grid.gap,
+      padding: grid.padding,
+    })
+  }
+
+  private duplicatePage(event: Event, page: DashboardBuilderPageSignal): void {
+    this.closePageActions(event)
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit || this.commandPending) return
+    this.pendingAddPage = { revision: this.revisionKey(builder), pageIDs: new Set(builder.pages.map((item) => item.id)) }
+    this.visualActionMessage = `Duplicating ${page.title}.`
+    this.emitCommand('duplicate_page', { pageId: page.id, newPageId: '', title: `${page.title} copy` })
+  }
+
+  private removePage(event: Event, page: DashboardBuilderPageSignal): void {
+    this.closePageActions(event)
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit || this.commandPending || builder.pages.length <= 1) return
+    const index = builder.pages.findIndex((item) => item.id === page.id)
+    const fallback = builder.pages[index + 1] ?? builder.pages[index - 1] ?? builder.pages[0]
+    this.pendingRemovePage = {
+      revision: this.revisionKey(builder),
+      pageID: page.id,
+      visualID: this.localVisualID,
+    }
+    if (fallback?.id && fallback.id !== page.id) {
+      this.localPageID = fallback.id
+      this.localVisualID = ''
+      this.selectedFilterID = ''
+      this.selectedFilterComponentID = ''
+    }
+    this.visualActionMessage = `Deleting ${page.title}. Use Undo to restore it.`
+    this.emitCommand('remove_page', { pageId: page.id })
+  }
+
+  private movePageFromMenu(event: Event, page: DashboardBuilderPageSignal, index: number): void {
+    this.closePageActions(event)
+    this.movePage(page.id, index)
+  }
+
+  private movePage(pageID: string, index: number): void {
+    const builder = this.builder
+    const current = builder?.pages.findIndex((page) => page.id === pageID) ?? -1
+    if (!builder?.capabilities.canEdit || this.commandPending || current < 0 || index < 0 || index >= builder.pages.length || current === index) return
+    this.visualActionMessage = `Moving ${builder.pages[current].title}.`
+    this.emitCommand('move_page', { pageId: pageID, index })
+  }
+
+  private closePageActions(event: Event): void {
+    const details = (event.currentTarget as HTMLElement | null)?.closest('details') as HTMLDetailsElement | null
+    if (details) details.open = false
+  }
+
+  private startPageDrag(event: DragEvent, pageID: string): void {
+    if (!this.builder?.capabilities.canEdit || this.commandPending) {
+      event.preventDefault()
+      return
+    }
+    this.draggedPageID = pageID
+    this.pageDropTargetID = ''
+    event.dataTransfer?.setData('text/x-leapview-page', pageID)
+    if (event.dataTransfer) event.dataTransfer.effectAllowed = 'move'
+  }
+
+  private dragPageOver(event: DragEvent, pageID: string): void {
+    if (!this.draggedPageID || this.draggedPageID === pageID || this.commandPending) return
+    event.preventDefault()
+    if (event.dataTransfer) event.dataTransfer.dropEffect = 'move'
+    this.pageDropTargetID = pageID
+  }
+
+  private leavePageDrop(pageID: string): void {
+    if (this.pageDropTargetID === pageID) this.pageDropTargetID = ''
+  }
+
+  private dropPage(event: DragEvent, targetPageID: string): void {
+    event.preventDefault()
+    const builder = this.builder
+    const sourcePageID = this.draggedPageID || event.dataTransfer?.getData('text/x-leapview-page') || ''
+    const sourceIndex = builder?.pages.findIndex((page) => page.id === sourcePageID) ?? -1
+    const targetIndex = builder?.pages.findIndex((page) => page.id === targetPageID) ?? -1
+    if (!builder || sourceIndex < 0 || targetIndex < 0 || sourceIndex === targetIndex) {
+      this.endPageDrag()
+      return
+    }
+    const target = event.currentTarget as HTMLElement
+    const after = event.clientX > target.getBoundingClientRect().left + target.getBoundingClientRect().width / 2
+    let finalIndex = targetIndex + (after ? 1 : 0)
+    if (sourceIndex < finalIndex) finalIndex--
+    this.endPageDrag()
+    this.movePage(sourcePageID, finalIndex)
+  }
+
+  private endPageDrag = (): void => {
+    this.draggedPageID = ''
+    this.pageDropTargetID = ''
+  }
+
+  private handlePageTabKeydown(event: KeyboardEvent, pageID: string): void {
+    const builder = this.builder
+    const index = builder?.pages.findIndex((page) => page.id === pageID) ?? -1
+    if (!builder || index < 0) return
+    if (event.altKey && (event.key === 'ArrowLeft' || event.key === 'ArrowRight')) {
+      event.preventDefault()
+      this.movePage(pageID, index + (event.key === 'ArrowLeft' ? -1 : 1))
+      return
+    }
+    if (this.pageBaseHref || !['ArrowLeft', 'ArrowRight', 'Home', 'End'].includes(event.key)) return
+    event.preventDefault()
+    const nextIndex = event.key === 'Home' ? 0 : event.key === 'End' ? builder.pages.length - 1 : index + (event.key === 'ArrowLeft' ? -1 : 1)
+    const next = builder.pages[Math.max(0, Math.min(builder.pages.length - 1, nextIndex))]
+    if (!next || next.id === pageID) return
+    this.selectPage(next.id)
+    void this.updateComplete.then(() => this.renderRoot.querySelector<HTMLElement>(`.page-tab[data-page-id="${CSS.escape(next.id)}"]`)?.focus())
+  }
+
   private addVisual(type: BuilderVisualType = this.visualType): void {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
@@ -3906,6 +4212,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!addedPage) return
     this.localPageID = addedPage.id
     this.localVisualID = ''
+  }
+
+  private reconcilePendingRemovedPage(builder: DashboardBuilderSignal | null): void {
+    const pending = this.pendingRemovePage
+    if (!pending || !builder || pending.revision === this.revisionKey(builder)) return
+    this.pendingRemovePage = null
   }
 
   private selectPendingAddedVisual(builder: DashboardBuilderSignal | null): void {

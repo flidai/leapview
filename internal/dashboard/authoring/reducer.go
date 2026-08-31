@@ -2,6 +2,7 @@ package authoring
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -162,6 +163,9 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 	case *SetVisibilityPayload:
 		return nil
 	case *AddPagePayload:
+		if len(value.Spec.Pages) >= maxAuthoringPages {
+			return fmt.Errorf("%w: dashboard builder pages exceed bounded limit", ErrInvalidPayload)
+		}
 		id := strings.TrimSpace(patch.PageID)
 		if id == "" {
 			id = nextCanonicalBuilderID("page", len(value.Spec.Pages)+1, func(candidate string) bool {
@@ -184,6 +188,14 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		}
 		value.Spec.Pages = append(value.Spec.Pages, document.DashboardPage{ID: id, Title: title, Components: []document.DashboardPageComponent{}})
 		return nil
+	case *RenamePagePayload:
+		return renameCanonicalPage(value, *patch)
+	case *DuplicatePagePayload:
+		return duplicateCanonicalPage(value, *patch)
+	case *MovePagePayload:
+		return moveCanonicalPage(value, *patch)
+	case *UpdatePageLayoutPayload:
+		return updateCanonicalPageLayout(value, *patch)
 	case *RemovePagePayload:
 		for index, page := range value.Spec.Pages {
 			if page.ID == patch.PageID {
@@ -290,6 +302,225 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 	default:
 		return fmt.Errorf("%w: unsupported payload %T", ErrInvalidPayload, payload)
 	}
+}
+
+func renameCanonicalPage(value *document.DashboardDocument, patch RenamePagePayload) error {
+	for index := range value.Spec.Pages {
+		if value.Spec.Pages[index].ID != patch.PageID {
+			continue
+		}
+		title := strings.TrimSpace(patch.Title)
+		value.Spec.Pages[index].Title = title
+		return nil
+	}
+	return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+}
+
+func duplicateCanonicalPage(value *document.DashboardDocument, patch DuplicatePagePayload) error {
+	sourceIndex := -1
+	for index := range value.Spec.Pages {
+		if value.Spec.Pages[index].ID == patch.PageID {
+			sourceIndex = index
+			break
+		}
+	}
+	if sourceIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+	}
+	if len(value.Spec.Pages) >= maxAuthoringPages {
+		return fmt.Errorf("%w: dashboard builder pages exceed bounded limit", ErrInvalidPayload)
+	}
+	visualCount := canonicalVisualComponentCount(*value)
+	sourceVisualCount := canonicalPageVisualComponentCount(value.Spec.Pages[sourceIndex])
+	if sourceVisualCount > maxAuthoringVisualComponents-visualCount {
+		return fmt.Errorf("%w: dashboard builder visuals exceed bounded limit", ErrInvalidPayload)
+	}
+	filterComponentCount := canonicalFilterComponentCount(*value)
+	sourceFilterComponentCount := canonicalPageFilterComponentCount(value.Spec.Pages[sourceIndex])
+	if sourceFilterComponentCount > maxAuthoringFilterComponents-filterComponentCount {
+		return fmt.Errorf("%w: dashboard builder filter components exceed bounded limit", ErrInvalidPayload)
+	}
+
+	newPageID := strings.TrimSpace(patch.NewPageID)
+	if newPageID == "" {
+		newPageID = nextCanonicalBuilderID("page", len(value.Spec.Pages)+1, func(candidate string) bool {
+			for _, page := range value.Spec.Pages {
+				if page.ID == candidate {
+					return true
+				}
+			}
+			return false
+		})
+	}
+	for _, page := range value.Spec.Pages {
+		if page.ID == newPageID {
+			return fmt.Errorf("%w: page %q already exists", ErrConflict, newPageID)
+		}
+	}
+
+	// JSON round-tripping is the canonical deep-copy boundary for generated
+	// document unions and pointer-owned nested values (filter bindings,
+	// component variants, and visual definitions).
+	encoded, err := json.Marshal(value.Spec.Pages[sourceIndex])
+	if err != nil {
+		return fmt.Errorf("%w: clone page: %v", ErrInvalidPayload, err)
+	}
+	var clone document.DashboardPage
+	if err := json.Unmarshal(encoded, &clone); err != nil {
+		return fmt.Errorf("%w: clone page: %v", ErrInvalidPayload, err)
+	}
+	clone.ID = newPageID
+	if title := strings.TrimSpace(patch.Title); title != "" {
+		clone.Title = title
+	}
+
+	if value.Spec.Visuals == nil {
+		value.Spec.Visuals = make(map[string]document.DashboardVisual)
+	}
+	clonedVisualIDs := make(map[string]string)
+	for index, component := range clone.Components {
+		visualComponent, ok := component.Value.(*document.VisualDashboardPageComponent)
+		if !ok || strings.TrimSpace(visualComponent.Visual) == "" {
+			continue
+		}
+		sourceVisualID := visualComponent.Visual
+		newVisualID, alreadyCloned := clonedVisualIDs[sourceVisualID]
+		if !alreadyCloned {
+			sourceVisual, exists := value.Spec.Visuals[sourceVisualID]
+			if !exists {
+				return fmt.Errorf("%w: visual %q", ErrNotFound, sourceVisualID)
+			}
+			visualEncoded, encodeErr := json.Marshal(sourceVisual)
+			if encodeErr != nil {
+				return fmt.Errorf("%w: clone visual %q: %v", ErrInvalidPayload, sourceVisualID, encodeErr)
+			}
+			var visualClone document.DashboardVisual
+			if decodeErr := json.Unmarshal(visualEncoded, &visualClone); decodeErr != nil {
+				return fmt.Errorf("%w: clone visual %q: %v", ErrInvalidPayload, sourceVisualID, decodeErr)
+			}
+			newVisualID = nextCanonicalBuilderID("visual", len(value.Spec.Visuals)+1, func(candidate string) bool {
+				_, exists := value.Spec.Visuals[candidate]
+				return exists
+			})
+			value.Spec.Visuals[newVisualID] = visualClone
+			clonedVisualIDs[sourceVisualID] = newVisualID
+		}
+		clonedComponent, componentOK := clone.Components[index].Value.(*document.VisualDashboardPageComponent)
+		if !componentOK {
+			return fmt.Errorf("%w: clone visual component %q", ErrInvalidPayload, visualComponent.Visual)
+		}
+		clonedComponent.Visual = newVisualID
+	}
+
+	// Insert directly after the source while preserving authored page order.
+	pages := make([]document.DashboardPage, 0, len(value.Spec.Pages)+1)
+	pages = append(pages, value.Spec.Pages[:sourceIndex+1]...)
+	pages = append(pages, clone)
+	pages = append(pages, value.Spec.Pages[sourceIndex+1:]...)
+	value.Spec.Pages = pages
+	return nil
+}
+
+func canonicalVisualComponentCount(value document.DashboardDocument) int {
+	count := 0
+	for _, page := range value.Spec.Pages {
+		count += canonicalPageVisualComponentCount(page)
+	}
+	return count
+}
+
+func canonicalPageVisualComponentCount(page document.DashboardPage) int {
+	count := 0
+	for _, component := range page.Components {
+		if _, ok := component.Value.(*document.VisualDashboardPageComponent); ok {
+			count++
+		}
+	}
+	return count
+}
+
+func canonicalFilterComponentCount(value document.DashboardDocument) int {
+	count := 0
+	for _, page := range value.Spec.Pages {
+		count += canonicalPageFilterComponentCount(page)
+	}
+	return count
+}
+
+func canonicalPageFilterComponentCount(page document.DashboardPage) int {
+	count := 0
+	for _, component := range page.Components {
+		if _, ok := component.Value.(*document.FilterDashboardPageComponent); ok {
+			count++
+		}
+	}
+	return count
+}
+
+func moveCanonicalPage(value *document.DashboardDocument, patch MovePagePayload) error {
+	sourceIndex := -1
+	for index := range value.Spec.Pages {
+		if value.Spec.Pages[index].ID == patch.PageID {
+			sourceIndex = index
+			break
+		}
+	}
+	if sourceIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+	}
+	if patch.Index < 0 || patch.Index >= len(value.Spec.Pages) {
+		return fmt.Errorf("%w: page index %d is outside 0..%d", ErrInvalidPayload, patch.Index, len(value.Spec.Pages)-1)
+	}
+	if sourceIndex == patch.Index {
+		return nil
+	}
+	page := value.Spec.Pages[sourceIndex]
+	pages := append(value.Spec.Pages[:sourceIndex], value.Spec.Pages[sourceIndex+1:]...)
+	// The requested index is the final zero-based position. After removal the
+	// slice has one fewer item, so index len(pages) intentionally appends.
+	if patch.Index == len(pages) {
+		pages = append(pages, page)
+	} else {
+		pages = append(pages, document.DashboardPage{})
+		copy(pages[patch.Index+1:], pages[patch.Index:])
+		pages[patch.Index] = page
+	}
+	value.Spec.Pages = pages
+	return nil
+}
+
+func updateCanonicalPageLayout(value *document.DashboardDocument, patch UpdatePageLayoutPayload) error {
+	pageIndex := -1
+	for index := range value.Spec.Pages {
+		if value.Spec.Pages[index].ID == patch.PageID {
+			pageIndex = index
+			break
+		}
+	}
+	if pageIndex < 0 {
+		return fmt.Errorf("%w: page %q", ErrNotFound, patch.PageID)
+	}
+	columns := int64(patch.Columns)
+	page := &value.Spec.Pages[pageIndex]
+	for componentIndex, component := range page.Components {
+		base, err := component.Base()
+		if err != nil || base == nil {
+			if err == nil {
+				err = errors.New("component base is empty")
+			}
+			return fmt.Errorf("%w: page layout component %d: %v", ErrInvalidPayload, componentIndex, err)
+		}
+		if err := validatePlacementCoordinates(base.Placement); err != nil {
+			return fmt.Errorf("%w: page layout component %q: %v", ErrInvalidPayload, base.ID, err)
+		}
+		columnEnd := int64(base.Placement.Column) + int64(base.Placement.ColumnSpan) - 1
+		if int64(base.Placement.Column) > columns || columnEnd > columns {
+			return fmt.Errorf("%w: page layout component %q columns %d..%d exceed grid of %d columns", ErrInvalidPayload, base.ID, base.Placement.Column, columnEnd, columns)
+		}
+	}
+	columnsValue, rowHeight, gap, padding := patch.Columns, patch.RowHeight, patch.Gap, patch.Padding
+	page.Layout = &document.DashboardLayoutOverride{Columns: &columnsValue, RowHeight: &rowHeight, Gap: &gap, Padding: &padding}
+	return nil
 }
 
 func addCanonicalFilter(value *document.DashboardDocument, patch AddFilterPayload) error {

@@ -329,7 +329,6 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 		return nil, nil, "", "", fmt.Errorf("dashboard builder pages exceed bounded limit")
 	}
 	pages := append([]dashboarddocument.DashboardPage(nil), authored.Spec.Pages...)
-	sort.SliceStable(pages, func(i, j int) bool { return pages[i].ID < pages[j].ID })
 	result := make([]uisignals.DashboardBuilderPageSignal, 0, len(pages))
 	diagnostics := make([]uisignals.DashboardBuilderDiagnosticSignal, 0)
 	visualTotal := 0

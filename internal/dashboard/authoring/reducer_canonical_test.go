@@ -639,6 +639,14 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.Metadata = value
 	case *AddPagePayload:
 		command.AddPage = value
+	case *RenamePagePayload:
+		command.RenamePage = value
+	case *DuplicatePagePayload:
+		command.DuplicatePage = value
+	case *MovePagePayload:
+		command.MovePage = value
+	case *UpdatePageLayoutPayload:
+		command.UpdatePageLayout = value
 	case *RemovePagePayload:
 		command.RemovePage = value
 	case *AddVisualPayload:

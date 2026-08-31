@@ -203,14 +203,14 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 	}
 }
 
-func TestProjectPagesCanonicalOrderingAndGlobalBounds(t *testing.T) {
+func TestProjectPagesPreservesAuthoredOrderingAndGlobalBounds(t *testing.T) {
 	doc := builderDocument()
 	doc.Spec.Pages = []document.DashboardPage{{ID: "z-page", Title: "Z"}, {ID: "a-page", Title: "A"}}
 	pages, _, selected, _, err := projectPages(doc, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := []string{pages[0].ID, pages[1].ID}; !reflect.DeepEqual(got, []string{"a-page", "z-page"}) || selected != "a-page" {
+	if got := []string{pages[0].ID, pages[1].ID}; !reflect.DeepEqual(got, []string{"z-page", "a-page"}) || selected != "z-page" {
 		t.Fatalf("pages/selection = %#v/%q", got, selected)
 	}
 	doc.Spec.Pages = make([]document.DashboardPage, maxPages+1)

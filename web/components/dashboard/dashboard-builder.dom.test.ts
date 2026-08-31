@@ -642,6 +642,108 @@ test('dashboard builder keeps bottom-tab navigation and add-page actions wired',
   }
 })
 
+test('dashboard builder edits page name and grid through the page Format contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      ;(root.querySelector('.page-tab[data-page-id="details"]') as HTMLButtonElement).click()
+      ;(root.querySelector('[data-inspector-tab="format"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const before = {
+        heading: root.querySelector('.visual-builder .pane-title')?.textContent?.trim(),
+        panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
+        controls: Array.from(root.querySelectorAll<HTMLInputElement>('[data-page-control]')).map((control) => ({ key: control.dataset.pageControl, value: control.value, min: control.min })),
+      }
+      const title = root.querySelector<HTMLInputElement>('[data-page-control="title"]')!
+      title.value = 'Order details'
+      title.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const columns = root.querySelector<HTMLInputElement>('[data-page-control="columns"]')!
+      columns.value = '14'
+      columns.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { before, commands }
+    })
+    expect(state.before.heading).toBe('Details')
+    expect(state.before.panel).toBe('Format page')
+    expect(state.before.controls).toEqual([
+      { key: 'title', value: 'Details', min: '' },
+      { key: 'columns', value: '12', min: '1' },
+      { key: 'rowHeight', value: '48', min: '1' },
+      { key: 'gap', value: '16', min: '0' },
+      { key: 'padding', value: '16', min: '0' },
+    ])
+    expect(state.commands[0]).toMatchObject({ action: 'rename_page', pageId: 'details', title: 'Order details' })
+    expect(state.commands[1]).toMatchObject({ action: 'update_page_layout', pageId: 'details', columns: 14, rowHeight: 48, gap: 16, padding: 16 })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder reorders, duplicates, and immediately deletes pages through bounded commands', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const overview = root.querySelector('.page-tab[data-page-id="overview"]') as HTMLElement
+      const details = root.querySelector('.page-tab[data-page-id="details"]') as HTMLElement
+      const dataTransfer = new DataTransfer()
+      overview.dispatchEvent(new DragEvent('dragstart', { bubbles: true, cancelable: true, dataTransfer }))
+      const target = details.getBoundingClientRect()
+      details.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer, clientX: target.right - 1 }))
+      details.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer, clientX: target.right - 1 }))
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const menu = root.querySelector('.page-actions') as HTMLDetailsElement
+      menu.open = true
+      ;(menu.querySelector('button:nth-of-type(3)') as HTMLButtonElement).click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const nextMenu = root.querySelector('.page-actions') as HTMLDetailsElement
+      nextMenu.open = true
+      const deleteButton = nextMenu.querySelector('.page-delete') as HTMLButtonElement
+      const deleteDisabled = deleteButton.disabled
+      deleteButton.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const selectedPageBeforeFailure = root.querySelector('.page-tab[aria-selected="true"]')?.getAttribute('data-page-id')
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      await element.updateComplete
+      return {
+        commands,
+        deleteDisabled,
+        actionLabels: Array.from(nextMenu.querySelectorAll('button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
+        selectedPageBeforeFailure,
+        selectedPage: root.querySelector('.page-tab[aria-selected="true"]')?.getAttribute('data-page-id'),
+      }
+    })
+    expect(state.deleteDisabled).toBe(false)
+    expect(state.actionLabels).toEqual(['Move earlier', 'Move later', 'Duplicate page', 'Delete page'])
+    expect(state.commands[0]).toMatchObject({ action: 'move_page', pageId: 'overview', index: 1 })
+    expect(state.commands[1]).toMatchObject({ action: 'duplicate_page', pageId: 'overview', newPageId: '', title: 'Overview copy' })
+    expect(state.commands[2]).toMatchObject({ action: 'remove_page', pageId: 'overview' })
+    expect(state.selectedPageBeforeFailure).toBe('details')
+    expect(state.selectedPage).toBe('overview')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder initializes GridStack tiles with stable ids and dedicated controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1170,7 +1272,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
         canvasRadius: getComputedStyle(canvas).borderRadius,
         canvasShadow: getComputedStyle(canvas).boxShadow,
         emptyPreview: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
-        addPageLabel: root.querySelector('button[aria-label="Add page"]')?.textContent?.trim(),
+        addPageHasIcon: Boolean(root.querySelector('button[aria-label="Add page"] svg[data-lucide="icon"]')),
       }
     })
     expect(state.canvasScrollCount).toBe(1)
@@ -1179,7 +1281,7 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     expect(state.canvasRadius).toBe('0px')
     expect(state.canvasShadow).toBe('none')
     expect(state.emptyPreview).toContain('Add fields')
-    expect(state.addPageLabel).toBe('+')
+    expect(state.addPageHasIcon).toBe(true)
   } finally {
     await page.close()
   }
@@ -1425,7 +1527,7 @@ test('dashboard builder retains the draft and exposes terminal command recovery'
       }
       buttons.find((button) => button.textContent?.includes('Dismiss'))?.click()
       await element.updateComplete
-      return { ...beforeDismiss, unrelatedIgnored, alertAfterDismiss: Boolean(element.shadowRoot?.querySelector('[role="alert"]')) }
+      return { ...beforeDismiss, unrelatedIgnored, pendingAddPage: element.pendingAddPage, alertAfterDismiss: Boolean(element.shadowRoot?.querySelector('[role="alert"]')) }
     })
     expect(state.title).toBe('Revenue draft')
     expect(state.pageCount).toBe(2)
@@ -1433,6 +1535,7 @@ test('dashboard builder retains the draft and exposes terminal command recovery'
     expect(state.message).toContain('previous state was kept')
     expect(state.actions).toEqual(['Reload latest draft', 'Dismiss'])
     expect(state.unrelatedIgnored).toBe(true)
+    expect(state.pendingAddPage).toBeNull()
     expect(state.alertAfterDismiss).toBe(false)
   } finally {
     await page.close()
