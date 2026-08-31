@@ -286,6 +286,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       flex: 0 0 auto;
     }
 
+    .breadcrumb {
+      overflow: hidden;
+    }
+
     .breadcrumb-dashboard,
     .breadcrumb-current {
       flex: 0 1 auto;

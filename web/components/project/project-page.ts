@@ -27,7 +27,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
-import { breadcrumbStyles, renderBreadcrumb } from '../shared/breadcrumb'
+import { breadcrumbStyles, renderBreadcrumb, type BreadcrumbItem } from '../shared/breadcrumb'
 import '../shared/entity-list'
 import '../shared/loading-spinner'
 import '../shared/record-table'
@@ -956,12 +956,17 @@ function renderRecordTableSection(title: string, table?: RecordTableSignal) {
 }
 
 function renderAssetBreadcrumb(page: ResourceAssetPageSignal) {
-  return renderBreadcrumb(page.breadcrumbs.map((crumb) => ({
-    label: crumb.label,
-    href: crumb.href,
-    current: crumb.current,
-    prefix: crumb.current ? assetTypeGlyph(page.asset.type, 'breadcrumb') : undefined,
-  })))
+  return renderBreadcrumb(page.breadcrumbs.flatMap<BreadcrumbItem>((crumb) => {
+    if (crumb.current) {
+      return [{
+        label: crumb.label,
+        current: true as const,
+        prefix: assetTypeGlyph(page.asset.type, 'breadcrumb'),
+      }]
+    }
+    if (!crumb.href) return []
+    return [{ label: crumb.label, href: crumb.href }]
+  }))
 }
 
 function assetTypeGlyph(type: string, size: 'table' | 'inline' | 'breadcrumb' = 'table') {

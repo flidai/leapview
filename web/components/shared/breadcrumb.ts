@@ -2,18 +2,20 @@ import { css, html, nothing } from 'lit'
 import { ChevronRight } from 'lucide'
 import { lucideIcon } from './lucide-icons'
 
-export interface BreadcrumbItem {
+interface BreadcrumbItemBase {
   label: string
-  href?: string
-  current?: boolean
   prefix?: unknown
   className?: string
 }
 
+export type BreadcrumbItem = BreadcrumbItemBase & (
+  | { current: true; href?: never }
+  | { current?: false; href: string }
+)
+
 export const breadcrumbStyles = css`
   .breadcrumb {
     min-width: 0;
-    overflow: hidden;
   }
 
   .breadcrumb ol {
@@ -95,7 +97,7 @@ export function renderBreadcrumb(items: BreadcrumbItem[], label = 'Breadcrumb') 
           <li class=${`breadcrumb-item ${item.className ?? ''}`} aria-current=${item.current ? 'page' : nothing}>
             ${item.current
               ? html`<h1>${item.prefix ?? nothing}<span class="breadcrumb-label">${item.label}</span></h1>`
-              : html`<a class="breadcrumb-link" href=${item.href ?? ''}>${item.prefix ?? nothing}<span class="breadcrumb-label">${item.label}</span></a>`}
+              : html`<a class="breadcrumb-link" href=${item.href}>${item.prefix ?? nothing}<span class="breadcrumb-label">${item.label}</span></a>`}
           </li>
         `)}
       </ol>
