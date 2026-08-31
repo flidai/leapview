@@ -245,7 +245,7 @@ func TestPostgreSQL18SubscriberConformance(t *testing.T) {
 		require.Equal(t, first.UUID, second.UUID)
 		require.Equal(t, first.Payload, second.Payload)
 		assertDelivery(t, fixture.db, fixture.consumer.ConsumerID, event.EventID, "claimed", 2, 2)
-		require.ErrorIs(t, CompleteMessage(context.Background(), first, json.RawMessage(`{"stale":true}`)), eventspostgres.ErrDeliveryClaimLost)
+		require.ErrorIs(t, completeMessage(context.Background(), first, json.RawMessage(`{"stale":true}`)), eventspostgres.ErrDeliveryClaimLost)
 		require.NoError(t, successor.Close())
 	})
 
@@ -260,7 +260,7 @@ func TestPostgreSQL18SubscriberConformance(t *testing.T) {
 		require.Equal(t, firstEvent.EventID, first.UUID)
 		secondEvent := appendSubscriberEvent(t, fixture, "in-flight-second")
 		assertDelivery(t, fixture.db, fixture.consumer.ConsumerID, secondEvent.EventID, "pending", 0, 0)
-		require.NoError(t, CompleteMessage(context.Background(), first, json.RawMessage(`{"outcome":"succeeded"}`)))
+		require.NoError(t, completeMessage(context.Background(), first, json.RawMessage(`{"outcome":"succeeded"}`)))
 		require.True(t, first.Ack())
 		second := receiveSubscriberMessage(t, messages)
 		require.Equal(t, secondEvent.EventID, second.UUID)

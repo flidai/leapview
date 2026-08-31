@@ -75,10 +75,44 @@ handler execution, or Router middleware.
 ## Router and middleware boundary
 
 Use the Watermill core `Router` and only the mature, explicitly configured
-`Retry`, `Recoverer`, `Timeout`, `Prometheus`, and `slog` middleware. Their
-bounded in-process behavior must not become a second attempt, poison, replay,
-or retention authority; durable attempt and terminal decisions remain in
+`Retry`, `Recoverer`, `Timeout`, handler-level `Prometheus`, and `slog`
+middleware. The Prometheus handler middleware is built with the injected
+registerer; `AddPrometheusRouterMetrics` is prohibited because its subscriber
+decorator starts per-message Ack/Nack goroutines that can outlive subscriber
+shutdown. No publisher or subscriber decorators are installed. All bounded
+in-process behavior must not become a second attempt, poison, replay, or
+retention authority; durable attempt and terminal decisions remain in
 `event_delivery`.
+
+The runtime execution tracker is the outer lifecycle frame and has a
+stop-accepting gate; inside it, the functional middleware order is handler
+Prometheus instrumentation, topic capture, one outer handler deadline,
+bounded in-process Retry, Recoverer inside Retry, and durable completion
+immediately around the handler. Recoverer therefore turns a panic into a
+retryable handler error, while the outer deadline bounds the complete local
+retry window. Watermill's Timeout cancels the message context; the completion
+boundary also rejects a handler that ignores cancellation and returns a late
+nil result, so a deadline-expired effect cannot become `Complete`/`Ack`.
+
+The runtime is an application lifecycle component. Startup pre-subscribes every
+canonical Subscriber and verifies its persisted enrollment before invoking
+`Router.Run`; an enrollment failure therefore never starts Watermill's handler
+wait-group or startup watcher. An internal prepared-subscriber adapter passes
+those already-verified channels to the Router while registrations remain
+canonical `*Subscriber` values. Subscriber and Router failures are forwarded
+through the process fatal channel. Shutdown first closes canonical subscribers
+and the Router, then waits for the runtime execution tracker (including
+`Complete`) before returning. `RouterConfig.CloseTimeout` is an alert/soft
+bound: if it expires while a user handler is still running, safe component
+`Stop` continues waiting for execution ownership. User handlers are required
+to honor their context so this final drain can complete before PostgreSQL pool
+teardown.
+
+Registrations accept only the canonical PostgreSQL-backed Subscriber and
+Watermill's no-publisher consumer handler type. A concrete registration,
+stable consumer identity, or aggregate filter is created only for an approved
+idempotent consuming effect; the existence of a topic or producer alone does
+not justify a placeholder consumer that would block retention.
 
 The following are prohibited in the canonical path:
 

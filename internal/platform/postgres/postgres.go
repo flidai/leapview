@@ -278,11 +278,19 @@ func (p *Pool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
 // Begin starts a caller-owned transaction on a connection obtained through
 // the bounded acquisition policy. Commit or Rollback releases the connection.
 func (p *Pool) Begin(ctx context.Context) (pgx.Tx, error) {
+	return p.BeginTx(ctx, pgx.TxOptions{})
+}
+
+// BeginTx starts a caller-owned transaction with an explicit transaction
+// mode. It preserves the pool's bounded acquisition policy while allowing
+// capability adapters (such as the canonical Watermill subscriber) to require
+// READ COMMITTED rather than inheriting a server default.
+func (p *Pool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
 	conn, err := p.Acquire(ctx)
 	if err != nil {
 		return nil, err
 	}
-	tx, err := conn.Begin(ctx)
+	tx, err := conn.BeginTx(ctx, options)
 	if err != nil {
 		conn.Release()
 		return nil, err

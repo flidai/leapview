@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"reflect"
 	"sort"
 	"strings"
 	"sync"
@@ -19,7 +20,6 @@ import (
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -166,9 +166,16 @@ type subscriberRepository interface {
 	Complete(context.Context, eventspostgres.Tx, string, string, string, int64, eventspostgres.DeliveryOutcome, json.RawMessage) error
 }
 
-type pgxPoolBeginner struct{ pool *pgxpool.Pool }
+// TransactionBeginner is the narrow PostgreSQL transaction seam required by
+// the canonical subscriber. Both pgxpool.Pool and LeapView's bounded
+// platform/postgres.Pool implement it; the caller owns the pool lifecycle.
+type TransactionBeginner interface {
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+}
 
-func (p pgxPoolBeginner) Begin(ctx context.Context) (subscriberTx, error) {
+type transactionBeginner struct{ pool TransactionBeginner }
+
+func (p transactionBeginner) Begin(ctx context.Context) (subscriberTx, error) {
 	tx, err := p.pool.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.ReadCommitted})
 	if err != nil {
 		return nil, err
@@ -182,16 +189,18 @@ type Subscriber struct {
 	repo   subscriberRepository
 	config SubscriberConfig
 
-	mu          sync.Mutex
-	closed      bool
-	subscribing bool
-	subscribed  bool
-	ctx         context.Context
-	cancel      context.CancelFunc
-	out         chan *message.Message
-	done        chan struct{}
-	inFlight    chan struct{}
-	watchers    sync.WaitGroup
+	mu              sync.Mutex
+	closed          bool
+	subscribing     bool
+	subscribed      bool
+	subscribeDone   chan struct{}
+	subscribeCancel context.CancelFunc
+	ctx             context.Context
+	cancel          context.CancelFunc
+	out             chan *message.Message
+	done            chan struct{}
+	inFlight        chan struct{}
+	watchers        sync.WaitGroup
 
 	fatalOnce sync.Once
 	fatal     chan error
@@ -201,17 +210,18 @@ var _ message.Subscriber = (*Subscriber)(nil)
 
 // NewSubscriber binds the concrete production pool and canonical event
 // repository. It performs no enrollment and does not allocate identities.
-func NewSubscriber(pool *pgxpool.Pool, repo *eventspostgres.Repository, config SubscriberConfig) (*Subscriber, error) {
-	if pool == nil || repo == nil {
+func NewSubscriber(pool TransactionBeginner, repo *eventspostgres.Repository, config SubscriberConfig) (*Subscriber, error) {
+	if isNilInterface(pool) || repo == nil {
 		return nil, ErrSubscriberNotConfigured
 	}
-	return newSubscriber(pgxPoolBeginner{pool: pool}, repo, config)
+	return newSubscriber(transactionBeginner{pool: pool}, repo, config)
 }
 
 // newSubscriber is kept as a narrow constructor seam for package tests. The
-// exported constructor only accepts the concrete production dependencies.
+// exported constructor accepts only the production transaction capability and
+// concrete canonical event repository.
 func newSubscriber(pool subscriberBeginner, repo subscriberRepository, config SubscriberConfig) (*Subscriber, error) {
-	if pool == nil || repo == nil {
+	if isNilInterface(pool) || repo == nil {
 		return nil, ErrSubscriberNotConfigured
 	}
 	validated, err := config.validate()
@@ -219,6 +229,19 @@ func newSubscriber(pool subscriberBeginner, repo subscriberRepository, config Su
 		return nil, err
 	}
 	return &Subscriber{pool: pool, repo: repo, config: validated, fatal: make(chan error, 1)}, nil
+}
+
+func isNilInterface(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Ptr, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
 }
 
 // Fatal returns the channel on which the first terminal loop, projection, or
@@ -274,24 +297,34 @@ func (s *Subscriber) Subscribe(ctx context.Context, topic string) (<-chan *messa
 		return nil, ErrSubscriberAlreadySubscribed
 	}
 	s.subscribing = true
+	subscribeDone := make(chan struct{})
+	enrollCtx, enrollCancel := context.WithCancel(ctx)
+	s.subscribeDone = subscribeDone
+	s.subscribeCancel = enrollCancel
 	s.mu.Unlock()
-
-	if err := s.verifyEnrollment(ctx); err != nil {
+	defer func() {
+		enrollCancel()
 		s.mu.Lock()
 		s.subscribing = false
+		if s.subscribeDone == subscribeDone {
+			s.subscribeDone = nil
+			s.subscribeCancel = nil
+		}
 		s.mu.Unlock()
+		close(subscribeDone)
+	}()
+
+	if err := s.verifyEnrollment(enrollCtx); err != nil {
 		return nil, err
 	}
 
 	runCtx, cancel := context.WithCancel(ctx)
 	s.mu.Lock()
 	if s.closed {
-		s.subscribing = false
 		s.mu.Unlock()
 		cancel()
 		return nil, ErrSubscriberClosed
 	}
-	s.subscribing = false
 	s.subscribed, s.ctx, s.cancel = true, runCtx, cancel
 	s.out, s.done = make(chan *message.Message, s.config.MaxInFlight), make(chan struct{})
 	s.inFlight = make(chan struct{}, s.config.MaxInFlight)
@@ -538,9 +571,18 @@ func (s *Subscriber) watch(msg *message.Message, handle *deliveryHandle, cancel 
 		if s.ctx.Err() != nil {
 			return
 		}
+		if handle.isCompleted() {
+			return
+		}
 		s.retryDelivery(handle, "handler_nack")
 	case <-timer.C:
 		if s.ctx.Err() != nil {
+			return
+		}
+		// Completion owns the handle mutex through its bounded terminal
+		// transaction. If the acknowledgement deadline fires during that commit,
+		// wait for the outcome and never schedule Retry after success.
+		if handle.isCompleted() {
 			return
 		}
 		s.retryDelivery(handle, "acknowledgement_timeout")
@@ -548,6 +590,14 @@ func (s *Subscriber) watch(msg *message.Message, handle *deliveryHandle, cancel 
 }
 
 func (s *Subscriber) retryDelivery(handle *deliveryHandle, code string) {
+	// Completion and retry are mutually exclusive terminal transitions for one
+	// claim. Recheck while holding the same handle fence used by completion so a
+	// deadline/Ack/Nack race cannot schedule Retry after Complete commits.
+	handle.mu.Lock()
+	defer handle.mu.Unlock()
+	if handle.completed {
+		return
+	}
 	// Ack/Nack cancels the message context in some Watermill routers. Derive
 	// from WithoutCancel so the exact claim fence can still be persisted.
 	parent := context.WithoutCancel(s.ctx)
@@ -623,8 +673,15 @@ func (s *Subscriber) Close() error {
 	}
 	s.mu.Lock()
 	if s.closed {
+		subscribeDone, subscribeCancel := s.subscribeDone, s.subscribeCancel
 		done := s.done
 		s.mu.Unlock()
+		if subscribeCancel != nil {
+			subscribeCancel()
+		}
+		if subscribeDone != nil {
+			<-subscribeDone
+		}
 		if done != nil {
 			<-done
 		}
@@ -632,8 +689,15 @@ func (s *Subscriber) Close() error {
 		return nil
 	}
 	s.closed = true
+	subscribeCancel, subscribeDone := s.subscribeCancel, s.subscribeDone
 	cancel, done := s.cancel, s.done
 	s.mu.Unlock()
+	if subscribeCancel != nil {
+		subscribeCancel()
+	}
+	if subscribeDone != nil {
+		<-subscribeDone
+	}
 	if cancel != nil {
 		cancel()
 	}
@@ -678,7 +742,7 @@ func deliveryHandleFromContext(ctx context.Context) (*deliveryHandle, bool) {
 	return h, ok && h != nil
 }
 
-// CompleteMessage records succeeded terminal state for a claimed subscriber
+// completeMessage records succeeded terminal state for a claimed subscriber
 // message. Completion deliberately owns a short, READ COMMITTED transaction:
 // handler effects and terminal completion are separate commits, so the effect
 // must be idempotent. A future product unit-of-work can provide exact same-tx
@@ -688,14 +752,38 @@ func deliveryHandleFromContext(ctx context.Context) (*deliveryHandle, bool) {
 // The handle is marked completed only after the completion transaction commits.
 // Consequently an early Watermill Ack can race this call and trigger Retry;
 // Complete then returns ErrDeliveryClaimLost rather than claiming success.
-func CompleteMessage(ctx context.Context, msg *message.Message, evidence json.RawMessage) error {
-	h, ok := deliveryHandleFromMessage(msg)
+func completeMessage(ctx context.Context, msg *message.Message, evidence json.RawMessage) error {
+	if msg == nil {
+		return ErrNoDeliveryHandle
+	}
+	if ctx == nil {
+		ctx = msg.Context()
+	}
+	// CompleteOnSuccess supplies the pre-handler context here. Resolve the
+	// handle from that authoritative context first so a handler cannot replace
+	// msg.Context with context.WithoutCancel (or another context) and evade the
+	// completion fence. Direct callers may still rely on the message context.
+	h, ok := deliveryHandleFromContext(ctx)
+	if !ok {
+		h, ok = deliveryHandleFromMessage(msg)
+	}
 	if !ok {
 		return ErrNoDeliveryHandle
 	}
 	s := h.subscriber
 	if s == nil || s.pool == nil || s.repo == nil {
 		return ErrSubscriberNotConfigured
+	}
+	// Completion is a durable operation, so enforce the transport metadata
+	// contract at this completion boundary as well as in middleware. Validate
+	// against the context carrying the authoritative handle when available, so
+	// a direct call cannot bypass a captured canonical topic.
+	metadataCtx := msg.Context()
+	if _, suppliedHandle := deliveryHandleFromContext(ctx); suppliedHandle {
+		metadataCtx = ctx
+	}
+	if err := validateCompletionMetadataWithContext(msg, metadataCtx); err != nil {
+		return err
 	}
 
 	// Serialize completion attempts on a handle. Repeats are no-ops only after
@@ -707,8 +795,12 @@ func CompleteMessage(ctx context.Context, msg *message.Message, evidence json.Ra
 		return nil
 	}
 
-	if ctx == nil {
-		ctx = context.Background()
+	// This check is the completion linearization fence. Once it passes, the
+	// bounded transition intentionally runs from a detached context so an
+	// already-started fenced DB operation may drain after cancellation; a
+	// canceled context never starts a new completion transaction.
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	// Router acknowledgement and handler timeout cancellation must not prevent
 	// persistence of terminal delivery state. The bounded timeout still limits
@@ -746,19 +838,92 @@ func CompleteMessage(ctx context.Context, msg *message.Message, evidence json.Ra
 func CompleteOnSuccess() message.HandlerMiddleware {
 	return func(next message.HandlerFunc) message.HandlerFunc {
 		return func(msg *message.Message) ([]*message.Message, error) {
+			if err := validateCompletionMetadata(msg); err != nil {
+				return nil, err
+			}
+			originalCtx := msg.Context()
+			topic := msg.Metadata[MetadataTopic]
 			produced, err := next(msg)
+			if metadataErr := validateCompletionMetadataWithContext(msg, originalCtx); metadataErr != nil {
+				return produced, metadataErr
+			}
+			if msg.Metadata[MetadataTopic] != topic {
+				return produced, validation("metadata.topic", "handler changed topic", ErrMetadata)
+			}
 			if err != nil {
 				return produced, err
 			}
 			if len(produced) != 0 {
 				return nil, ErrProducedMessagesUnsupported
 			}
-			if err := CompleteMessage(msg.Context(), msg, json.RawMessage(`{"outcome":"succeeded"}`)); err != nil {
+			// Timeout middleware only cancels the message context. A handler that
+			// ignores cancellation can therefore return nil after its deadline;
+			// never turn that late success into a durable Complete/Ack.
+			if err := originalCtx.Err(); err != nil {
+				return nil, err
+			}
+			if err := completeMessage(originalCtx, msg, json.RawMessage(`{"outcome":"succeeded"}`)); err != nil {
 				return nil, err
 			}
 			return nil, nil
 		}
 	}
+}
+
+type completionTopicKey struct{}
+
+// captureCompletionTopic runs outside Watermill's Retry middleware. This
+// keeps the canonical topic in the retry middleware's original context even
+// when a handler mutates message metadata before returning an error or panic.
+func captureCompletionTopic() message.HandlerMiddleware {
+	return func(next message.HandlerFunc) message.HandlerFunc {
+		return func(msg *message.Message) ([]*message.Message, error) {
+			if err := validateCompletionMetadata(msg); err != nil {
+				return nil, err
+			}
+			ctx := msg.Context()
+			if ctx == nil {
+				return nil, context.Canceled
+			}
+			if expected, ok := ctx.Value(completionTopicKey{}).(string); ok && expected != msg.Metadata[MetadataTopic] {
+				return nil, validation("metadata.topic", "must equal canonical topic", ErrMetadata)
+			}
+			msg.SetContext(context.WithValue(ctx, completionTopicKey{}, msg.Metadata[MetadataTopic]))
+			return next(msg)
+		}
+	}
+}
+
+func validateCompletionMetadata(msg *message.Message) error {
+	return validateCompletionMetadataWithContext(msg, nil)
+}
+
+func validateCompletionMetadataWithContext(msg *message.Message, ctx context.Context) error {
+	if msg == nil {
+		return validation("message", "is required", ErrMetadata)
+	}
+	if len(msg.Metadata) != 1 {
+		return validation("metadata", "must contain exactly the topic key", ErrMetadata)
+	}
+	topic, ok := msg.Metadata[MetadataTopic]
+	if !ok {
+		return validation("metadata", "must contain exactly the topic key", ErrMetadata)
+	}
+	if err := validateTopic(topic); err != nil {
+		return validation("metadata.topic", "must be an allowlisted topic", ErrMetadata)
+	}
+	if ctx == nil {
+		ctx = msg.Context()
+	}
+	if ctx != nil {
+		if subscribeTopic := message.SubscribeTopicFromCtx(ctx); subscribeTopic != "" && subscribeTopic != topic {
+			return validation("metadata.topic", "must equal subscribed topic", ErrMetadata)
+		}
+		if expected, ok := ctx.Value(completionTopicKey{}).(string); ok && expected != topic {
+			return validation("metadata.topic", "must equal canonical topic", ErrMetadata)
+		}
+	}
+	return nil
 }
 
 // Keep the production transaction bridge honest if pgx changes its native

@@ -4,10 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/ThreeDotsLabs/watermill/message"
+	"github.com/ThreeDotsLabs/watermill/message/router/middleware"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -15,8 +17,10 @@ import (
 )
 
 type completionFakeTx struct {
-	order     *[]string
-	commitErr error
+	order         *[]string
+	commitErr     error
+	commitStarted chan struct{}
+	commitRelease chan struct{}
 }
 
 func (tx *completionFakeTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -31,6 +35,12 @@ func (tx *completionFakeTx) QueryRow(context.Context, string, ...any) pgx.Row { 
 
 func (tx *completionFakeTx) Commit(context.Context) error {
 	*tx.order = append(*tx.order, "commit")
+	if tx.commitStarted != nil {
+		close(tx.commitStarted)
+	}
+	if tx.commitRelease != nil {
+		<-tx.commitRelease
+	}
 	return tx.commitErr
 }
 
@@ -53,6 +63,7 @@ type completionFakeRepo struct {
 	order       *[]string
 	complete    int
 	completeErr error
+	retry       atomic.Int32
 	evidence    json.RawMessage
 	consumerID  string
 	eventID     string
@@ -74,6 +85,7 @@ func (r *completionFakeRepo) GetEvent(context.Context, eventspostgres.Tx, string
 }
 
 func (r *completionFakeRepo) Retry(context.Context, eventspostgres.Tx, eventspostgres.RetryOptions) error {
+	r.retry.Add(1)
 	return nil
 }
 
@@ -102,6 +114,7 @@ func newCompletionTestSubscriber(order *[]string, commitErr error) (*Subscriber,
 		ClaimedBy:  "worker", ClaimGeneration: 7,
 	}}
 	msg := message.NewMessage(handle.delivery.EventID, nil)
+	msg.Metadata.Set(MetadataTopic, TopicAgent)
 	msg.SetContext(context.WithValue(context.Background(), deliveryHandleKey{}, handle))
 	return subscriber, repo, pool, msg
 }
@@ -138,11 +151,100 @@ func TestCompleteOnSuccessSkipsCompletionOnHandlerError(t *testing.T) {
 	require.Zero(t, repo.complete)
 }
 
+func TestCompleteOnSuccessRejectsLateNilHandlerAfterDeadline(t *testing.T) {
+	var order []string
+	_, repo, _, msg := newCompletionTestSubscriber(&order, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	msg.SetContext(ctx)
+	middleware := CompleteOnSuccess()(func(*message.Message) ([]*message.Message, error) {
+		order = append(order, "handler")
+		return nil, nil
+	})
+
+	produced, err := middleware(msg)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, produced)
+	require.Equal(t, []string{"handler"}, order)
+	require.Zero(t, repo.complete)
+}
+
+func TestCompleteOnSuccessUsesCapturedContextWhenHandlerReplacesIt(t *testing.T) {
+	var order []string
+	_, repo, pool, msg := newCompletionTestSubscriber(&order, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	handle, ok := deliveryHandleFromMessage(msg)
+	require.True(t, ok)
+	msg.SetContext(context.WithValue(ctx, deliveryHandleKey{}, handle))
+	cancel()
+	middleware := CompleteOnSuccess()(func(msg *message.Message) ([]*message.Message, error) {
+		order = append(order, "handler")
+		msg.SetContext(context.WithoutCancel(msg.Context()))
+		return nil, nil
+	})
+
+	produced, err := middleware(msg)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Nil(t, produced)
+	require.Equal(t, []string{"handler"}, order)
+	require.Zero(t, repo.complete)
+	require.Zero(t, pool.beginCall)
+}
+
+func TestCompleteOnSuccessRejectsHandlerMetadataMutation(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(message.Metadata)
+	}{
+		{name: "extra key", mut: func(metadata message.Metadata) { metadata["extra"] = "nope" }},
+		{name: "topic", mut: func(metadata message.Metadata) { metadata[MetadataTopic] = TopicDashboard }},
+		{name: "missing topic", mut: func(metadata message.Metadata) { delete(metadata, MetadataTopic) }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var order []string
+			_, repo, _, msg := newCompletionTestSubscriber(&order, nil)
+			middleware := CompleteOnSuccess()(func(*message.Message) ([]*message.Message, error) {
+				tc.mut(msg.Metadata)
+				return nil, nil
+			})
+			_, err := middleware(msg)
+			require.ErrorIs(t, err, ErrMetadata)
+			require.Zero(t, repo.complete)
+		})
+	}
+}
+
+func TestCompletionTopicCannotChangeAcrossRetry(t *testing.T) {
+	var order []string
+	_, repo, _, msg := newCompletionTestSubscriber(&order, nil)
+	var attempts int
+	retry := middleware.Retry{
+		MaxRetries:          1,
+		InitialInterval:     time.Nanosecond,
+		MaxInterval:         time.Nanosecond,
+		MaxElapsedTime:      time.Second,
+		Multiplier:          1,
+		RandomizationFactor: 0,
+		ResetContextOnRetry: true,
+	}
+	handler := captureCompletionTopic()(retry.Middleware(CompleteOnSuccess()(func(msg *message.Message) ([]*message.Message, error) {
+		attempts++
+		msg.Metadata[MetadataTopic] = TopicDashboard
+		return nil, errors.New("retry after mutation")
+	})))
+
+	_, err := handler(msg)
+	require.ErrorIs(t, err, ErrMetadata)
+	require.Equal(t, 1, attempts, "the mutated message must be rejected before a second effect attempt")
+	require.Zero(t, repo.complete)
+}
+
 func TestCompleteMessageCommitFailureDoesNotMarkHandle(t *testing.T) {
 	var order []string
 	_, repo, pool, msg := newCompletionTestSubscriber(&order, errors.New("commit failed"))
 
-	err := CompleteMessage(context.Background(), msg, json.RawMessage(`{"attempt":1}`))
+	err := completeMessage(context.Background(), msg, json.RawMessage(`{"attempt":1}`))
 	require.Error(t, err)
 	handle, ok := deliveryHandleFromMessage(msg)
 	require.True(t, ok)
@@ -152,19 +254,95 @@ func TestCompleteMessageCommitFailureDoesNotMarkHandle(t *testing.T) {
 }
 
 func TestCompleteMessageRequiresSubscriberHandle(t *testing.T) {
-	err := CompleteMessage(context.Background(), message.NewMessage("message", nil), nil)
+	err := completeMessage(context.Background(), message.NewMessage("message", nil), nil)
 	require.ErrorIs(t, err, ErrNoDeliveryHandle)
+}
+
+func TestCompleteMessageRejectsMetadataBeforeBeginningTransaction(t *testing.T) {
+	cases := []struct {
+		name string
+		mut  func(message.Metadata)
+	}{
+		{name: "extra key", mut: func(metadata message.Metadata) { metadata["extra"] = "nope" }},
+		{name: "missing topic", mut: func(metadata message.Metadata) { delete(metadata, MetadataTopic) }},
+		{name: "changed topic", mut: func(metadata message.Metadata) { metadata[MetadataTopic] = TopicDashboard }},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var order []string
+			_, repo, pool, msg := newCompletionTestSubscriber(&order, nil)
+			msg.SetContext(context.WithValue(msg.Context(), completionTopicKey{}, TopicAgent))
+			tc.mut(msg.Metadata)
+
+			err := completeMessage(context.Background(), msg, nil)
+			require.ErrorIs(t, err, ErrMetadata)
+			require.Zero(t, repo.complete)
+			require.Zero(t, pool.beginCall)
+		})
+	}
+}
+
+func TestCompleteMessageRejectsCancellationBeforeCompletion(t *testing.T) {
+	var order []string
+	_, repo, pool, msg := newCompletionTestSubscriber(&order, nil)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := completeMessage(ctx, msg, nil)
+	require.ErrorIs(t, err, context.Canceled)
+	require.Zero(t, repo.complete)
+	require.Zero(t, pool.beginCall)
 }
 
 func TestCompleteMessageIsIdempotentAfterCommit(t *testing.T) {
 	var order []string
 	_, repo, pool, msg := newCompletionTestSubscriber(&order, nil)
 
-	require.NoError(t, CompleteMessage(context.Background(), msg, json.RawMessage(`{"attempt":1}`)))
-	require.NoError(t, CompleteMessage(context.Background(), msg, json.RawMessage(`{"attempt":2}`)))
+	require.NoError(t, completeMessage(context.Background(), msg, json.RawMessage(`{"attempt":1}`)))
+	require.NoError(t, completeMessage(context.Background(), msg, json.RawMessage(`{"attempt":2}`)))
 	require.Equal(t, 1, repo.complete)
 	require.Equal(t, 1, pool.beginCall)
 	require.Equal(t, []string{"complete", "commit"}, order)
+}
+
+func TestAcknowledgementTimeoutWaitsForCompletionOutcome(t *testing.T) {
+	var order []string
+	subscriber, repo, pool, msg := newCompletionTestSubscriber(&order, nil)
+	pool.tx.commitStarted = make(chan struct{})
+	pool.tx.commitRelease = make(chan struct{})
+	subscriber.config.AckDeadline = 5 * time.Millisecond
+	subscriber.ctx = context.Background()
+	subscriber.inFlight = make(chan struct{}, 1)
+	subscriber.inFlight <- struct{}{}
+	handle, ok := deliveryHandleFromMessage(msg)
+	require.True(t, ok)
+
+	completionDone := make(chan error, 1)
+	go func() { completionDone <- completeMessage(msg.Context(), msg, nil) }()
+	select {
+	case <-pool.tx.commitStarted:
+	case <-time.After(time.Second):
+		t.Fatal("completion transaction did not reach commit")
+	}
+	subscriber.watchers.Add(1)
+	watchDone := make(chan struct{})
+	go func() {
+		subscriber.watch(msg, handle, func() {})
+		close(watchDone)
+	}()
+	select {
+	case <-watchDone:
+		t.Fatal("acknowledgement watcher returned before in-flight completion resolved")
+	case <-time.After(20 * time.Millisecond):
+	}
+	close(pool.tx.commitRelease)
+	require.NoError(t, <-completionDone)
+	select {
+	case <-watchDone:
+	case <-time.After(time.Second):
+		t.Fatal("acknowledgement watcher did not observe committed completion")
+	}
+	require.Zero(t, repo.retry.Load())
 }
 
 type claimValidationTx struct {
@@ -289,6 +467,39 @@ type shutdownTestRepo struct {
 	claimStarted chan struct{}
 	claimRelease <-chan struct{}
 	claimErr     error
+}
+
+type enrollmentShutdownRepo struct {
+	started  chan struct{}
+	canceled chan struct{}
+	release  chan struct{}
+}
+
+func (r *enrollmentShutdownRepo) Claim(context.Context, eventspostgres.Tx, eventspostgres.ClaimOptions) ([]eventspostgres.Delivery, error) {
+	return nil, nil
+}
+
+func (r *enrollmentShutdownRepo) ConsumerByID(ctx context.Context, _ eventspostgres.Tx, _ string) (eventspostgres.Consumer, error) {
+	close(r.started)
+	select {
+	case <-ctx.Done():
+		close(r.canceled)
+	case <-r.canceled:
+	}
+	<-r.release
+	return eventspostgres.Consumer{}, errors.New("enrollment verification released")
+}
+
+func (r *enrollmentShutdownRepo) GetEvent(context.Context, eventspostgres.Tx, string) (eventspostgres.Event, error) {
+	return eventspostgres.Event{}, nil
+}
+
+func (r *enrollmentShutdownRepo) Retry(context.Context, eventspostgres.Tx, eventspostgres.RetryOptions) error {
+	return nil
+}
+
+func (r *enrollmentShutdownRepo) Complete(context.Context, eventspostgres.Tx, string, string, string, int64, eventspostgres.DeliveryOutcome, json.RawMessage) error {
+	return nil
 }
 
 func (r *shutdownTestRepo) Claim(context.Context, eventspostgres.Tx, eventspostgres.ClaimOptions) ([]eventspostgres.Delivery, error) {
@@ -446,6 +657,57 @@ func TestSubscriberCloseSuppressesFatalFromRetryError(t *testing.T) {
 	case err := <-s.Fatal():
 		t.Fatalf("clean Close published Fatal: %v", err)
 	default:
+	}
+}
+
+func TestSubscriberCloseWaitsForEnrollmentVerification(t *testing.T) {
+	repo := &enrollmentShutdownRepo{started: make(chan struct{}), canceled: make(chan struct{}), release: make(chan struct{})}
+	s, _ := newShutdownTestSubscriber(&shutdownTestPool{tx: &shutdownTestTx{}}, repo)
+	subscribeDone := make(chan error, 1)
+	go func() {
+		_, err := s.Subscribe(context.Background(), TopicAgent)
+		subscribeDone <- err
+	}()
+
+	select {
+	case <-repo.started:
+	case <-time.After(time.Second):
+		t.Fatal("enrollment verification did not begin")
+	}
+	closeDone := make(chan struct{})
+	go func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("Close() error = %v", err)
+		}
+		close(closeDone)
+	}()
+	waitForSubscriberClosed(t, s)
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while enrollment verification was still running")
+	default:
+	}
+	select {
+	case <-repo.canceled:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not cancel enrollment verification")
+	}
+	select {
+	case <-closeDone:
+		t.Fatal("Close returned while enrollment verification was still running")
+	default:
+	}
+	close(repo.release)
+	select {
+	case err := <-subscribeDone:
+		require.Error(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe did not observe enrollment cancellation")
+	}
+	select {
+	case <-closeDone:
+	case <-time.After(time.Second):
+		t.Fatal("Close did not wait for enrollment verification completion")
 	}
 }
 
