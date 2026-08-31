@@ -244,6 +244,23 @@ type DeliveryCandidate struct {
 type CandidateInput = DeliveryCandidate
 type DeliveryCandidateInput = DeliveryCandidate
 
+// CandidateGenerationResolution is the native publish binding resolved from
+// one candidate row. GenerationCount is retained so callers can fail closed
+// when malformed history associates a candidate with more than one generation.
+type CandidateGenerationResolution struct {
+	CandidateID       string
+	TargetID          string
+	PlanID            string
+	SnapshotSealID    string
+	Status            string
+	CandidateRevision int64
+	ArtifactDigest    string
+	ProjectID         string
+	Environment       string
+	GenerationCount   int64
+	GenerationID      string
+}
+
 type DeliveryGeneration struct {
 	GenerationID, TargetID, CandidateID, SnapshotSealID, PlanID          string
 	PlanDigest, ArtifactRoot, ArtifactRootDigest, ServingArtifactDigest  string
@@ -378,6 +395,76 @@ func loadRetentionRoot(ctx context.Context, db DBTX, id string) (DeliveryRetenti
 	}
 	r.CreatedAt, r.Evidence = dbTime(row.CreatedAt), append([]byte(nil), row.Evidence...)
 	return r, nil
+}
+
+// RequireGenerationRootTx proves that a rollback target remains retained by
+// the delivery authority. The generation UUID is also the canonical
+// generation-root UUID allocated at activation; only live/retiring roots are
+// eligible, while expired or missing roots fail closed.
+func (r *Repository) RequireGenerationRootTx(ctx context.Context, tx Tx, targetID, generationID string) error {
+	if tx == nil {
+		return ErrInvalid
+	}
+	target, err := textID(targetID, "target id")
+	if err != nil {
+		return err
+	}
+	generation, err := uuidID(generationID, "generation id", false)
+	if err != nil {
+		return err
+	}
+	root, err := depdb.New(tx).LockRetentionRoot(contextOrBackground(ctx), dbUUID(generation))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
+	}
+	if err != nil {
+		return err
+	}
+	if root.TargetID != target || root.GenerationID != generation || root.RootKind != "generation" || root.State != "live" || (root.ExpiresAt.Valid && !root.ExpiresAt.Time.After(time.Now().UTC())) {
+		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
+	}
+	return nil
+}
+
+// RequireRollbackRootTx proves that a pending rollback publication established
+// its own immutable reachability root. The root is keyed by publication ID so
+// replay cannot silently proceed after that protection has been removed or
+// expired.
+func (r *Repository) RequireRollbackRootTx(ctx context.Context, tx Tx, rootID, targetID, generationID, candidateID, sealID string) error {
+	if tx == nil {
+		return ErrInvalid
+	}
+	root, err := uuidID(rootID, "rollback root id", false)
+	if err != nil {
+		return err
+	}
+	target, err := textID(targetID, "target id")
+	if err != nil {
+		return err
+	}
+	generation, err := uuidID(generationID, "generation id", false)
+	if err != nil {
+		return err
+	}
+	candidate, err := uuidID(candidateID, "candidate id", false)
+	if err != nil {
+		return err
+	}
+	seal, err := uuidID(sealID, "snapshot seal id", false)
+	if err != nil {
+		return err
+	}
+	row, err := depdb.New(tx).LockRetentionRoot(contextOrBackground(ctx), dbUUID(root))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
+	}
+	if err != nil {
+		return err
+	}
+	if row.TargetID != target || row.GenerationID != generation || row.CandidateID != candidate || row.SnapshotSealID != seal || row.RootKind != "rollback" || row.State != "live" || (row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now().UTC())) {
+		return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
+	}
+	return nil
 }
 
 type Event struct {
@@ -2629,8 +2716,66 @@ func (r *Repository) Candidate(ctx context.Context, id string) (DeliveryCandidat
 	}
 	return loadCandidate(contextOrBackground(ctx), db, id, CandidateInput{})
 }
+
+// CandidateTx reads immutable candidate evidence through a caller-owned
+// transaction, preserving publication lock ordering and snapshot visibility.
+func (r *Repository) CandidateTx(ctx context.Context, tx Tx, id string) (DeliveryCandidate, error) {
+	if tx == nil {
+		return DeliveryCandidate{}, ErrInvalid
+	}
+	id, err := uuidID(id, "candidate id", false)
+	if err != nil {
+		return DeliveryCandidate{}, err
+	}
+	return loadCandidate(contextOrBackground(ctx), tx, id, CandidateInput{})
+}
 func (r *Repository) LoadCandidate(ctx context.Context, id string) (DeliveryCandidate, error) {
 	return r.Candidate(ctx, id)
+}
+
+// ResolveCandidateGeneration returns the exact immutable generation bound to
+// a candidate. The named sqlc query carries the cardinality check so callers
+// never silently select an arbitrary generation from malformed history.
+func (r *Repository) ResolveCandidateGeneration(ctx context.Context, candidateID string) (CandidateGenerationResolution, error) {
+	db, err := requireDB(r)
+	if err != nil {
+		return CandidateGenerationResolution{}, err
+	}
+	return resolveCandidateGeneration(contextOrBackground(ctx), db, candidateID)
+}
+
+// ResolveCandidateGenerationTx is the transaction-preserving form used by
+// native publication requests while holding the target fence.
+func (r *Repository) ResolveCandidateGenerationTx(ctx context.Context, tx Tx, candidateID string) (CandidateGenerationResolution, error) {
+	if tx == nil {
+		return CandidateGenerationResolution{}, ErrInvalid
+	}
+	return resolveCandidateGeneration(contextOrBackground(ctx), tx, candidateID)
+}
+
+func resolveCandidateGeneration(ctx context.Context, db DBTX, candidateID string) (CandidateGenerationResolution, error) {
+	id, err := uuidID(candidateID, "candidate id", false)
+	if err != nil {
+		return CandidateGenerationResolution{}, err
+	}
+	row, err := depdb.New(db).ResolveCandidateGeneration(ctx, dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CandidateGenerationResolution{}, ErrNotFound
+	}
+	if err != nil {
+		return CandidateGenerationResolution{}, err
+	}
+	result := CandidateGenerationResolution{
+		CandidateID: row.CandidateID, TargetID: row.TargetID, PlanID: row.PlanID,
+		SnapshotSealID: row.SnapshotSealID, Status: row.Status,
+		CandidateRevision: row.CandidateRevision, ArtifactDigest: row.ArtifactDigest,
+		ProjectID: row.ProjectID, Environment: row.Environment,
+		GenerationCount: row.GenerationCount, GenerationID: row.GenerationID,
+	}
+	if result.GenerationCount != 1 || result.GenerationID == "" {
+		return CandidateGenerationResolution{}, fmt.Errorf("%w: candidate must resolve exactly one generation", ErrConflict)
+	}
+	return result, nil
 }
 func (r *Repository) QualifyCandidate(ctx context.Context, candidateID, sealID, qualificationDigest string) (DeliveryCandidate, error) {
 	db, err := requireDB(r)
@@ -3185,6 +3330,19 @@ func (r *Repository) Publication(ctx context.Context, id string) (DeliveryPublic
 		return DeliveryPublication{}, err
 	}
 	return loadPublication(contextOrBackground(ctx), db, id)
+}
+
+// PublicationTx reads immutable publication evidence through a caller-owned
+// transaction. It is used by idempotent native command replay paths.
+func (r *Repository) PublicationTx(ctx context.Context, tx Tx, id string) (DeliveryPublication, error) {
+	if tx == nil {
+		return DeliveryPublication{}, ErrInvalid
+	}
+	id, err := uuidID(id, "publication id", false)
+	if err != nil {
+		return DeliveryPublication{}, err
+	}
+	return loadPublication(contextOrBackground(ctx), tx, id)
 }
 
 // CommittedPublicationTx returns the committed deployment publication for a
@@ -4253,6 +4411,20 @@ func (r *Repository) CreateRetentionRoot(ctx context.Context, root DeliveryReten
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
+	return createRetentionRoot(contextOrBackground(ctx), db, root)
+}
+
+// CreateRetentionRootTx records an immutable live retention root through a
+// caller-owned transaction. It is used to keep a rollback generation
+// reachable in the same commit as its pending publication request.
+func (r *Repository) CreateRetentionRootTx(ctx context.Context, tx Tx, root DeliveryRetentionRoot) (DeliveryRetentionRoot, error) {
+	if tx == nil {
+		return DeliveryRetentionRoot{}, ErrInvalid
+	}
+	return createRetentionRoot(contextOrBackground(ctx), tx, root)
+}
+
+func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoot) (DeliveryRetentionRoot, error) {
 	id, err := uuidID(root.RootID, "root id", true)
 	if err != nil {
 		return DeliveryRetentionRoot{}, err

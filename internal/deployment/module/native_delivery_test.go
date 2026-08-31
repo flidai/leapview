@@ -115,3 +115,59 @@ func TestNativeDeliveryHandlersFailClosedWithoutBuilder(t *testing.T) {
 		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
 	}
 }
+
+func TestPublicationOnlyPortDoesNotSatisfyPlanBuildReadiness(t *testing.T) {
+	publicationPort := NativeDeliveryPublicationFuncs{
+		Publish: func(context.Context, NativeDeliveryPublishRequest) (NativeDeliveryPublication, error) {
+			return NativeDeliveryPublication{}, nil
+		},
+	}
+	m := nativeDeliveryHandlerModule(nil)
+	m.nativeDeliveryPublication = publicationPort
+	body, _ := json.Marshal(deploymentgen.DeliveryPlanRequest{TargetId: "target", SourceDigest: nativeDigest('a'), SourceAttestationDigest: nativeDigest('b')})
+	recorder := httptest.NewRecorder()
+	m.CreateDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", bytes.NewReader(body)), "finance", "plan-key")
+	if recorder.Code != http.StatusServiceUnavailable || !strings.Contains(recorder.Body.String(), "DELIVERY_INPUT_UNAVAILABLE") {
+		t.Fatalf("publication-only plan response = %d %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestNativeDeliveryPublicationHandlersPreferNativePort(t *testing.T) {
+	projectID := projectgraph.ResourceID("finance")
+	candidateID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000201")
+	generationID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000202")
+	publicationID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000203")
+	eventID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000204")
+	auditID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000205")
+	calledPublish, calledRollback := false, false
+	now := time.Now().UTC()
+	base := NativeDeliveryPublication{ID: publicationID, OperationID: publicationID, EventID: eventID, AuditID: auditID, ProjectID: projectID, TargetID: "target", Environment: "prod", PlanID: uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000206"), PlanDigest: nativeDigest('a'), CandidateID: candidateID, GenerationID: generationID, ExpectedTargetRevision: 1, RequestDigest: nativeDigest('b'), ActorID: "operator", Status: "pending", CreatedAt: now}
+	port := NativeDeliveryPublicationFuncs{
+		Publish: func(_ context.Context, request NativeDeliveryPublishRequest) (NativeDeliveryPublication, error) {
+			calledPublish = true
+			if request.ProjectID != projectID || request.CandidateID != candidateID || request.IdempotencyKey != "publish-key" {
+				t.Fatalf("publish request = %#v", request)
+			}
+			return base, nil
+		},
+		Rollback: func(_ context.Context, request NativeDeliveryRollbackRequest) (NativeDeliveryPublication, error) {
+			calledRollback = true
+			if request.ProjectID != projectID || request.GenerationID != generationID || request.IdempotencyKey != "rollback-key" {
+				t.Fatalf("rollback request = %#v", request)
+			}
+			return base, nil
+		},
+	}
+	m := nativeDeliveryHandlerModule(nil)
+	m.nativeDeliveryPublication = port
+	publishRecorder := httptest.NewRecorder()
+	m.PublishDeliveryCandidate(publishRecorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", candidateID.String(), "publish-key")
+	if publishRecorder.Code != http.StatusAccepted || !calledPublish {
+		t.Fatalf("publish response = %d called=%v body=%s", publishRecorder.Code, calledPublish, publishRecorder.Body.String())
+	}
+	rollbackRecorder := httptest.NewRecorder()
+	m.RollbackDeliveryGeneration(rollbackRecorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", generationID.String(), "rollback-key")
+	if rollbackRecorder.Code != http.StatusAccepted || !calledRollback {
+		t.Fatalf("rollback response = %d called=%v body=%s", rollbackRecorder.Code, calledRollback, rollbackRecorder.Body.String())
+	}
+}

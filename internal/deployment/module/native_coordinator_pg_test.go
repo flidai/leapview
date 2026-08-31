@@ -19,6 +19,7 @@ import (
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -157,6 +158,9 @@ type nativePGFixture struct {
 	workflow    *nativePGWorkflowPort
 	operations  *nativePGOperationPort
 	targetID    string
+	candidate   string
+	plan        string
+	seal        string
 	generation  string
 }
 
@@ -254,7 +258,174 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &nativePGFixture{db: db, repo: repo, coordinator: coordinator.(*nativeCoordinator), events: events, audit: audit, workflow: workflow, operations: operations, targetID: targetID, generation: generationID}
+	return &nativePGFixture{db: db, repo: repo, coordinator: coordinator.(*nativeCoordinator), events: events, audit: audit, workflow: workflow, operations: operations, targetID: targetID, candidate: candidateID, plan: planID, seal: sealID, generation: generationID}
+}
+
+func nativePublishRequest(f *nativePGFixture, key string) NativeDeliveryPublishRequest {
+	project, _ := projectgraph.NewResourceID("project_sales")
+	return NativeDeliveryPublishRequest{ProjectID: project, TargetID: f.targetID, Environment: "prod", CandidateID: uuid.MustParse(f.candidate), PrincipalID: "operator", IdempotencyKey: key}
+}
+
+func nativeRollbackRequest(f *nativePGFixture, key string) NativeDeliveryRollbackRequest {
+	project, _ := projectgraph.NewResourceID("project_sales")
+	return NativeDeliveryRollbackRequest{ProjectID: project, TargetID: f.targetID, Environment: "prod", GenerationID: uuid.MustParse(f.generation), PrincipalID: "operator", IdempotencyKey: key}
+}
+
+func isNativeDeliveryConflict(err error) bool {
+	return errors.Is(err, deployment.ErrConflict) || errors.Is(err, deployment.ErrDeliveryConflict)
+}
+
+func TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays(t *testing.T) {
+	f := newNativePGFixture(t)
+	ctx := t.Context()
+	request := nativePublishRequest(f, "publish-native-1")
+	first, err := f.coordinator.PublishCandidate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Status != "pending" || first.ID == uuid.Nil || first.OperationID != first.ID || first.CandidateID != request.CandidateID || first.GenerationID != uuid.MustParse(f.generation) || first.ExpectedTargetRevision != 1 || first.ResultTargetRevision != 0 {
+		t.Fatalf("publish projection = %#v", first)
+	}
+	stored, err := f.repo.Publication(ctx, first.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.State != "pending" || stored.PublicationID != first.ID.String() || stored.TargetID != f.targetID || stored.CandidateID != f.candidate || stored.GenerationID != f.generation || stored.ActorID != request.PrincipalID || stored.RequestDigest != first.RequestDigest {
+		t.Fatalf("stored publication = %#v", stored)
+	}
+
+	var operationType, operationState, operationOwner, operationDigest string
+	var operationOutcome []byte
+	if err := f.db.QueryRow(ctx, `SELECT operation_type,state,owner_id,request_digest,outcome::text FROM platform.operation WHERE operation_id=$1`, first.ID).Scan(&operationType, &operationState, &operationOwner, &operationDigest, &operationOutcome); err != nil {
+		t.Fatal(err)
+	}
+	if operationType != "delivery.publication.create" || operationState != "completed" || operationOwner != request.PrincipalID || operationDigest != first.RequestDigest {
+		t.Fatalf("operation = %q %q %q %q", operationType, operationState, operationOwner, operationDigest)
+	}
+	var operationEvidence nativeMutationOutcome
+	if err := json.Unmarshal(operationOutcome, &operationEvidence); err != nil {
+		t.Fatal(err)
+	}
+	if operationEvidence.PublicationID != first.ID.String() || operationEvidence.EventID != first.EventID.String() || operationEvidence.AuditID != first.AuditID.String() {
+		t.Fatalf("operation outcome = %#v", operationEvidence)
+	}
+
+	var eventScope, aggregateType, aggregateID, eventType, correlationID string
+	var aggregateVersion, schemaVersion int64
+	var eventPayload []byte
+	if err := f.db.QueryRow(ctx, `SELECT scope_id,aggregate_type,aggregate_id,event_type,aggregate_version,schema_version,correlation_id::text,payload::text FROM event.event_log WHERE event_id=$1`, first.EventID).Scan(&eventScope, &aggregateType, &aggregateID, &eventType, &aggregateVersion, &schemaVersion, &correlationID, &eventPayload); err != nil {
+		t.Fatal(err)
+	}
+	if eventScope != f.targetID || aggregateType != "delivery_publication" || aggregateID != first.ID.String() || eventType != "delivery.publication.requested" || aggregateVersion != 1 || schemaVersion != 1 || correlationID != first.EventID.String() {
+		t.Fatalf("event identity = %q %q %q %q v%d schema%d correlation=%q", eventScope, aggregateType, aggregateID, eventType, aggregateVersion, schemaVersion, correlationID)
+	}
+	var expectedPayload map[string]any
+	if err := json.Unmarshal(eventPayload, &expectedPayload); err != nil {
+		t.Fatal(err)
+	}
+	if expectedPayload["publication_id"] != first.ID.String() || expectedPayload["generation_id"] != first.GenerationID.String() || expectedPayload["target_revision"] != float64(first.ExpectedTargetRevision) {
+		t.Fatalf("event payload = %s", eventPayload)
+	}
+
+	var auditEventID, auditScope, auditActor, auditAction, auditKind, auditResource, auditOutcome, auditDigest string
+	var auditMetadata []byte
+	if err := f.db.QueryRow(ctx, `SELECT event_id::text,scope_id,actor_id,action,resource_kind,resource_id,outcome,request_digest,metadata::text FROM audit.audit_event WHERE audit_id=$1`, first.AuditID).Scan(&auditEventID, &auditScope, &auditActor, &auditAction, &auditKind, &auditResource, &auditOutcome, &auditDigest, &auditMetadata); err != nil {
+		t.Fatal(err)
+	}
+	if auditEventID != first.EventID.String() || auditScope != f.targetID || auditActor != request.PrincipalID || auditAction != "delivery.publication.requested" || auditKind != "publication" || auditResource != first.ID.String() || auditOutcome != "success" || auditDigest != first.RequestDigest {
+		t.Fatalf("audit identity = %q %q %q %q %q %q %q %q", auditEventID, auditScope, auditActor, auditAction, auditKind, auditResource, auditOutcome, auditDigest)
+	}
+	var auditPayload map[string]any
+	if err := json.Unmarshal(auditMetadata, &auditPayload); err != nil {
+		t.Fatal(err)
+	}
+	if auditPayload["publication_id"] != first.ID.String() || auditPayload["generation_id"] != first.GenerationID.String() || auditPayload["target_revision"] != float64(first.ExpectedTargetRevision) {
+		t.Fatalf("audit metadata = %s", auditMetadata)
+	}
+
+	replay, err := f.coordinator.PublishCandidate(ctx, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.ID != first.ID || replay.EventID != first.EventID || replay.AuditID != first.AuditID || replay.RequestDigest != first.RequestDigest || replay.Status != first.Status {
+		t.Fatalf("publish replay = %#v (first %#v)", replay, first)
+	}
+	changed := request
+	changed.ProjectID, _ = projectgraph.NewResourceID("other_project")
+	changed.IdempotencyKey = "publish-native-project-conflict"
+	if _, err := f.coordinator.PublishCandidate(ctx, changed); !isNativeDeliveryConflict(err) {
+		t.Fatalf("project isolation error = %v", err)
+	}
+	changed = request
+	changed.TargetID = "other_target"
+	changed.IdempotencyKey = "publish-native-target-conflict"
+	if _, err := f.coordinator.PublishCandidate(ctx, changed); !isNativeDeliveryConflict(err) {
+		t.Fatalf("target isolation error = %v", err)
+	}
+	changed = request
+	changed.IdempotencyKey = request.IdempotencyKey
+	changed.PrincipalID = "different-actor"
+	if _, err := f.coordinator.PublishCandidate(ctx, changed); !isNativeDeliveryConflict(err) {
+		t.Fatalf("same-key different-request error = %v", err)
+	}
+}
+
+func TestNativeCoordinatorPostgresRollbackRequiresRetainedGeneration(t *testing.T) {
+	t.Run("live root succeeds and replays", func(t *testing.T) {
+		f := newNativePGFixture(t)
+		ctx := t.Context()
+		if _, err := f.repo.CreateRetentionRoot(ctx, deploymentpostgres.DeliveryRetentionRoot{RootID: f.generation, TargetID: f.targetID, CandidateID: f.candidate, GenerationID: f.generation, SnapshotSealID: f.seal, RootKind: "generation", State: "live", ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		request := nativeRollbackRequest(f, "rollback-native-1")
+		first, err := f.coordinator.RollbackGeneration(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if first.Status != "pending" || first.ID == uuid.Nil || first.GenerationID != request.GenerationID || first.CandidateID != uuid.MustParse(f.candidate) || first.ExpectedTargetRevision != 1 {
+			t.Fatalf("rollback projection = %#v", first)
+		}
+		var rootTarget, rootCandidate, rootGeneration, rootSeal, rootKind, rootState string
+		var rootExpiresNull bool
+		if err := f.db.QueryRow(ctx, `SELECT target_id,candidate_id::text,generation_id::text,snapshot_seal_id::text,root_kind,state,expires_at IS NULL FROM delivery.delivery_retention_root WHERE root_id=$1`, first.ID).Scan(&rootTarget, &rootCandidate, &rootGeneration, &rootSeal, &rootKind, &rootState, &rootExpiresNull); err != nil {
+			t.Fatal(err)
+		}
+		if rootTarget != f.targetID || rootCandidate != f.candidate || rootGeneration != f.generation || rootSeal != f.seal || rootKind != "rollback" || rootState != "live" || !rootExpiresNull {
+			t.Fatalf("rollback retention root = %q %q %q %q %q %q expires_null=%t", rootTarget, rootCandidate, rootGeneration, rootSeal, rootKind, rootState, rootExpiresNull)
+		}
+		var eventType, operationType string
+		if err := f.db.QueryRow(ctx, `SELECT event_type FROM event.event_log WHERE event_id=$1`, first.EventID).Scan(&eventType); err != nil {
+			t.Fatal(err)
+		}
+		if eventType != "delivery.rollback.requested" {
+			t.Fatalf("rollback event type = %q", eventType)
+		}
+		if err := f.db.QueryRow(ctx, `SELECT operation_type FROM platform.operation WHERE operation_id=$1`, first.ID).Scan(&operationType); err != nil {
+			t.Fatal(err)
+		}
+		if operationType != "delivery.rollback.create" {
+			t.Fatalf("rollback operation type = %q", operationType)
+		}
+		replay, err := f.coordinator.RollbackGeneration(ctx, request)
+		if err != nil || replay.ID != first.ID || replay.EventID != first.EventID || replay.AuditID != first.AuditID {
+			t.Fatalf("rollback replay = %#v, %v", replay, err)
+		}
+	})
+	t.Run("missing root fails closed", func(t *testing.T) {
+		f := newNativePGFixture(t)
+		if _, err := f.coordinator.RollbackGeneration(t.Context(), nativeRollbackRequest(f, "rollback-missing-root")); !isNativeDeliveryConflict(err) {
+			t.Fatalf("missing root error = %v", err)
+		}
+	})
+	t.Run("expired root fails closed", func(t *testing.T) {
+		f := newNativePGFixture(t)
+		if _, err := f.repo.CreateRetentionRoot(t.Context(), deploymentpostgres.DeliveryRetentionRoot{RootID: f.generation, TargetID: f.targetID, CandidateID: f.candidate, GenerationID: f.generation, SnapshotSealID: f.seal, RootKind: "generation", State: "live", ExpiresAt: time.Now().UTC().Add(-time.Hour)}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.coordinator.RollbackGeneration(t.Context(), nativeRollbackRequest(f, "rollback-expired-root")); !isNativeDeliveryConflict(err) {
+			t.Fatalf("expired root error = %v", err)
+		}
+	})
 }
 
 func nativeCreateRequest(f *nativePGFixture, key string) apiadapter.CreateRequest {

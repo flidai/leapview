@@ -197,12 +197,19 @@ func (m *Module) writeDeliveryMutationError(w http.ResponseWriter, r *http.Reque
 }
 
 func (m *Module) deliveryMutationReady(w http.ResponseWriter, r *http.Request) bool {
-	if _, ok := m.principal(r); !ok {
-		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+	if !m.deliveryAuthReady(w, r) {
 		return false
 	}
 	if m == nil || (m.deliveryMutations == nil && m.nativeDeliveryMutations == nil) {
 		m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
+		return false
+	}
+	return true
+}
+
+func (m *Module) deliveryAuthReady(w http.ResponseWriter, r *http.Request) bool {
+	if _, ok := m.principal(r); !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return false
 	}
 	if m.handlerEnvironment() == "" {
@@ -212,14 +219,14 @@ func (m *Module) deliveryMutationReady(w http.ResponseWriter, r *http.Request) b
 	return true
 }
 
-// deliveryPublicationMutationReady is narrower than deliveryMutationReady:
-// native plan/build handlers use the clean-slate port, while publication and
-// rollback remain owned by the existing publication coordinator.
+// deliveryPublicationMutationReady accepts either the clean-slate native
+// publication port or the legacy coordinator. Native callers are preferred by
+// the handlers below and never touch the legacy approval/read surfaces.
 func (m *Module) deliveryPublicationMutationReady(w http.ResponseWriter, r *http.Request) bool {
-	if !m.deliveryMutationReady(w, r) {
+	if !m.deliveryAuthReady(w, r) {
 		return false
 	}
-	if m.deliveryMutations == nil {
+	if m.nativeDeliveryPublication == nil && m.deliveryMutations == nil {
 		m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
 		return false
 	}
@@ -383,6 +390,40 @@ func (m *Module) PublishDeliveryCandidate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	principal, _ := m.principal(r)
+	if m.nativeDeliveryPublication != nil {
+		projectID, err := projectgraph.NewResourceID(project)
+		if err != nil || project != strings.TrimSpace(project) {
+			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: project identity must be canonical", deployment.ErrDeliveryInvalid))
+			return
+		}
+		parsedCandidate, parseErr := uuid.Parse(candidateID)
+		if parseErr != nil || parsedCandidate == uuid.Nil || parsedCandidate.String() != candidateID {
+			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: candidate identity must be a canonical UUID", deployment.ErrDeliveryInvalid))
+			return
+		}
+		nativeRequest := NativeDeliveryPublishRequest{ProjectID: projectID, TargetID: m.instanceID, Environment: m.handlerEnvironment(), CandidateID: parsedCandidate, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey}
+		if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		publication, err := m.nativeDeliveryPublication.PublishCandidate(r.Context(), nativeRequest)
+		if err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := publication.validate(projectID, m.instanceID, m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := completeNativePublishCommand(r.Context(), m.nativeDeliveryPublication, publication); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		response := nativePublicationEvidenceResponse(publication)
+		w.Header().Set("Location", fmt.Sprintf("/api/v1/projects/%s/delivery/publications/%s", project, publication.ID.String()))
+		apitransport.WriteJSON(w, http.StatusAccepted, response)
+		return
+	}
 	publication, err := m.deliveryMutations.PublishCandidate(r.Context(), project, candidateID, principal.ID, idempotencyKey)
 	if err != nil && publication.ID != "" && errors.Is(err, deployment.ErrApprovalRequired) {
 		// Canonical protected publication has already persisted its exact
@@ -648,6 +689,40 @@ func (m *Module) RollbackDeliveryGeneration(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	principal, _ := m.principal(r)
+	if m.nativeDeliveryPublication != nil {
+		projectID, err := projectgraph.NewResourceID(project)
+		if err != nil || project != strings.TrimSpace(project) {
+			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: project identity must be canonical", deployment.ErrDeliveryInvalid))
+			return
+		}
+		parsedGeneration, parseErr := uuid.Parse(generationID)
+		if parseErr != nil || parsedGeneration == uuid.Nil || parsedGeneration.String() != generationID {
+			m.writeDeliveryMutationError(w, r, fmt.Errorf("%w: generation identity must be a canonical UUID", deployment.ErrDeliveryInvalid))
+			return
+		}
+		nativeRequest := NativeDeliveryRollbackRequest{ProjectID: projectID, TargetID: m.instanceID, Environment: m.handlerEnvironment(), GenerationID: parsedGeneration, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey}
+		if err := nativeRequest.validate(m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		publication, err := m.nativeDeliveryPublication.RollbackGeneration(r.Context(), nativeRequest)
+		if err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := publication.validate(projectID, m.instanceID, m.handlerEnvironment()); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		if err := completeNativeRollbackCommand(r.Context(), m.nativeDeliveryPublication, publication); err != nil {
+			m.writeDeliveryMutationError(w, r, err)
+			return
+		}
+		response := nativePublicationEvidenceResponse(publication)
+		w.Header().Set("Location", fmt.Sprintf("/api/v1/projects/%s/delivery/publications/%s", project, publication.ID.String()))
+		apitransport.WriteJSON(w, http.StatusAccepted, response)
+		return
+	}
 	publication, err := m.deliveryMutations.RollbackGeneration(r.Context(), project, generationID, principal.ID, idempotencyKey)
 	if err != nil {
 		m.writeDeliveryMutationError(w, r, err)
@@ -674,6 +749,27 @@ func (m *Module) RollbackDeliveryGeneration(w http.ResponseWriter, r *http.Reque
 
 func publicationResponse(publication deployment.DeliveryPublication) deploymentgen.DeliveryPublicationEvidenceResponse {
 	return deploymentgen.DeliveryPublicationEvidenceResponse{Id: publication.ID, RequestDigest: publication.RequestDigest, TargetId: publication.TargetID, ProjectId: publication.ProjectID.String(), Environment: publication.Environment, PlanId: publication.PlanID, PlanDigest: publication.PlanDigest, CandidateId: publication.CandidateID, GenerationId: publication.GenerationID, ExpectedBaseGenerationId: optionalText(publication.ExpectedBaseGenerationID), ExpectedTargetRevision: publication.ExpectedTargetRevision, ResultTargetRevision: publication.ResultTargetRevision, Status: deploymentgen.DeliveryPublicationStatus(publication.Status), Reason: optionalText(publication.Reason), CreatedAt: isoTime(publication.CreatedAt), CompletedAt: optionalText(isoTime(publication.CompletedAt))}
+}
+
+func nativePublicationEvidenceResponse(publication NativeDeliveryPublication) deploymentgen.DeliveryPublicationEvidenceResponse {
+	return deploymentgen.DeliveryPublicationEvidenceResponse{
+		Id: publication.ID.String(), RequestDigest: publication.RequestDigest, TargetId: publication.TargetID,
+		ProjectId: publication.ProjectID.String(), Environment: publication.Environment,
+		PlanId: publication.PlanID.String(), PlanDigest: publication.PlanDigest,
+		CandidateId: publication.CandidateID.String(), GenerationId: publication.GenerationID.String(),
+		ExpectedBaseGenerationId: nativeOptionalUUID(publication.ExpectedBaseGenerationID),
+		ExpectedTargetRevision:   publication.ExpectedTargetRevision, ResultTargetRevision: publication.ResultTargetRevision,
+		Status: deploymentgen.DeliveryPublicationStatus(publication.Status), CreatedAt: isoTime(publication.CreatedAt),
+		CompletedAt: optionalText(isoTime(publication.CompletedAt)),
+	}
+}
+
+func nativeOptionalUUID(value uuid.UUID) *string {
+	if value == uuid.Nil {
+		return nil
+	}
+	text := value.String()
+	return &text
 }
 
 func isoTime(value interface {

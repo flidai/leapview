@@ -72,6 +72,27 @@ FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 -- name: GetCandidatePlan :one
 SELECT plan_id::text FROM delivery.delivery_candidate WHERE candidate_id=sqlc.arg(candidate_id)::uuid;
 
+-- name: ResolveCandidateGeneration :one
+-- A publish request must bind one and only one immutable generation for the
+-- requested candidate. The aggregate count lets the repository reject an
+-- ambiguous candidate rather than silently choosing the newest generation.
+SELECT c.candidate_id::text AS candidate_id,
+       c.target_id,
+       c.plan_id::text AS plan_id,
+       COALESCE(c.snapshot_seal_id::text,'')::text AS snapshot_seal_id,
+       c.status,
+       c.candidate_revision,
+       c.artifact_digest,
+       t.project_id,
+       t.environment,
+       COUNT(g.generation_id)::bigint AS generation_count,
+       COALESCE(MAX(g.generation_id::text),'')::text AS generation_id
+FROM delivery.delivery_candidate c
+JOIN delivery.delivery_target t ON t.target_id=c.target_id
+LEFT JOIN delivery.delivery_generation g ON g.candidate_id=c.candidate_id
+WHERE c.candidate_id=sqlc.arg(candidate_id)::uuid
+GROUP BY c.candidate_id,c.target_id,c.plan_id,c.snapshot_seal_id,c.status,c.candidate_revision,c.artifact_digest,t.project_id,t.environment;
+
 -- name: InsertBuildAttempt :exec
 INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity)
 VALUES(sqlc.arg(attempt_id)::uuid,sqlc.arg(plan_id)::uuid,sqlc.narg(candidate_id)::uuid,sqlc.arg(owner_id),sqlc.arg(physical_pool_id),sqlc.arg(fencing_epoch),sqlc.arg(request_digest),sqlc.arg(plan_digest),'running',sqlc.arg(namespace),sqlc.arg(lease_expires_at),sqlc.arg(session_identity))
@@ -292,6 +313,7 @@ WHERE publication_id=sqlc.arg(publication_id)::uuid AND state='pending' RETURNIN
 
 -- name: LockRetentionRoot :one
 SELECT target_id,COALESCE(candidate_id::text,'')::text AS candidate_id,COALESCE(generation_id::text,'')::text AS generation_id,COALESCE(snapshot_seal_id::text,'')::text AS snapshot_seal_id,root_kind,state
+       ,expires_at
 FROM delivery.delivery_retention_root WHERE root_id=sqlc.arg(root_id)::uuid FOR UPDATE;
 
 -- name: InsertGenerationRoot :exec

@@ -56,6 +56,7 @@ type Module struct {
 	nativeDeliveryReader      NativeDeliveryReader
 	deliveryMutations         DeliveryMutationPort
 	nativeDeliveryMutations   NativeDeliveryMutationPort
+	nativeDeliveryPublication NativeDeliveryPublicationPort
 	persistence               *Persistence
 }
 
@@ -254,6 +255,10 @@ type Config struct {
 	// separate from DeliveryMutations so the HTTP plan/build handlers cannot
 	// fall back to the legacy DeliveryLifecycle or text-ID contracts.
 	NativeDeliveryMutations NativeDeliveryMutationPort
+	// NativeDeliveryPublication is the clean-slate PostgreSQL publication and
+	// rollback request port. It is intentionally separate from plan/build so
+	// those authorities cannot activate or publish inline.
+	NativeDeliveryPublication NativeDeliveryPublicationPort
 	// DeliveryReader is the durable, read-only plan/build/seal/operator port.
 	// When Database is configured, Build installs the SQLite repository by
 	// default; tests and alternate control stores may provide an implementation.
@@ -351,6 +356,15 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		})
 		if coordinatorErr != nil {
 			return nil, coordinatorErr
+		}
+		// The native coordinator owns pending publish/rollback creation as a
+		// separate authority from plan/build. Keep an explicit caller override
+		// possible, while ensuring production PostgreSQL composition cannot
+		// accidentally fall back to the legacy mutation port.
+		if config.NativeDeliveryPublication == nil {
+			if publicationPort, ok := coordinator.(NativeDeliveryPublicationPort); ok {
+				config.NativeDeliveryPublication = publicationPort
+			}
 		}
 	} else if config.Database != nil {
 		if config.AuditIntentRecorder == nil {
@@ -494,7 +508,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
 		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
 		nativeDeliveryReader: config.NativeDeliveryReader,
-		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations,
+		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
 		persistence: config.Persistence,
 	}
 	if m.bootstrapPolicies == nil {

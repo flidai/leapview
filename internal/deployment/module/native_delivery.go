@@ -21,10 +21,9 @@ import (
 )
 
 // NativeDeliveryMutationPort is the clean-slate PostgreSQL plan/build seam
-// used by the HTTP handlers. Publication and rollback remain owned by the
-// existing publication coordinator (DeliveryMutationPort). Implementations
-// must perform any compiler evidence, candidate admission, physical build,
-// seal, and consequence recording before returning a result.
+// used by the HTTP handlers. Publication and rollback intentionally use the
+// distinct NativeDeliveryPublicationPort below so a plan/build implementation
+// cannot accidentally acquire publication authority.
 type NativeDeliveryMutationPort interface {
 	CreatePlan(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error)
 	BuildPlan(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error)
@@ -37,6 +36,88 @@ type NativeDeliveryMutationPort interface {
 type NativeDeliveryCommandCompleter interface {
 	CompleteNativePlanCommand(context.Context, NativeDeliveryPlan) error
 	CompleteNativeBuildCommand(context.Context, NativeDeliveryBuild) error
+}
+
+// NativeDeliveryPublicationPort owns creation of pending publish and rollback
+// publications. Implementations resolve the candidate/generation and current
+// target fence in the native PostgreSQL authority, then persist the operation,
+// event, audit, and publication atomically. They must not approve or activate
+// a request inline.
+type NativeDeliveryPublicationPort interface {
+	PublishCandidate(context.Context, NativeDeliveryPublishRequest) (NativeDeliveryPublication, error)
+	RollbackGeneration(context.Context, NativeDeliveryRollbackRequest) (NativeDeliveryPublication, error)
+}
+
+// NativeDeliveryPublicationCommandCompleter is implemented by production
+// native publication authorities. The generated command guard calls it after
+// the mutation and it must verify the durable operation, event, and audit
+// consequences before the HTTP command is acknowledged.
+type NativeDeliveryPublicationCommandCompleter interface {
+	CompleteNativePublishCommand(context.Context, NativeDeliveryPublication) error
+	CompleteNativeRollbackCommand(context.Context, NativeDeliveryPublication) error
+}
+
+type NativeDeliveryPublishRequest struct {
+	ProjectID      projectgraph.ResourceID
+	TargetID       string
+	Environment    string
+	CandidateID    uuid.UUID
+	PrincipalID    string
+	IdempotencyKey string
+}
+
+type NativeDeliveryRollbackRequest struct {
+	ProjectID      projectgraph.ResourceID
+	TargetID       string
+	Environment    string
+	GenerationID   uuid.UUID
+	PrincipalID    string
+	IdempotencyKey string
+}
+
+// NativeDeliveryPublication is the canonical native publication evidence
+// projection. UUID identities remain typed here and are stringified only by
+// the generated HTTP response adapter.
+type NativeDeliveryPublication struct {
+	ID                       uuid.UUID
+	OperationID              uuid.UUID
+	EventID                  uuid.UUID
+	AuditID                  uuid.UUID
+	ActorID                  string
+	IdempotencyKey           string
+	RequestDigest            string
+	ProjectID                projectgraph.ResourceID
+	TargetID                 string
+	Environment              string
+	PlanID                   uuid.UUID
+	PlanDigest               string
+	CandidateID              uuid.UUID
+	GenerationID             uuid.UUID
+	ExpectedBaseGenerationID uuid.UUID
+	ExpectedTargetRevision   int64
+	ResultTargetRevision     int64
+	Status                   string
+	CreatedAt                time.Time
+	CompletedAt              time.Time
+}
+
+type NativeDeliveryPublicationFuncs struct {
+	Publish  func(context.Context, NativeDeliveryPublishRequest) (NativeDeliveryPublication, error)
+	Rollback func(context.Context, NativeDeliveryRollbackRequest) (NativeDeliveryPublication, error)
+}
+
+func (f NativeDeliveryPublicationFuncs) PublishCandidate(ctx context.Context, request NativeDeliveryPublishRequest) (NativeDeliveryPublication, error) {
+	if f.Publish == nil {
+		return NativeDeliveryPublication{}, ErrDeliveryInputUnavailable
+	}
+	return f.Publish(ctx, request)
+}
+
+func (f NativeDeliveryPublicationFuncs) RollbackGeneration(ctx context.Context, request NativeDeliveryRollbackRequest) (NativeDeliveryPublication, error) {
+	if f.Rollback == nil {
+		return NativeDeliveryPublication{}, ErrDeliveryInputUnavailable
+	}
+	return f.Rollback(ctx, request)
 }
 
 // NativeDeliveryPlanRequest contains only authoring intent. Plan identity is
@@ -181,6 +262,36 @@ func completeNativeBuildCommand(ctx context.Context, port NativeDeliveryMutation
 	return completer.CompleteNativeBuildCommand(ctx, build)
 }
 
+func completeNativePublishCommand(ctx context.Context, port NativeDeliveryPublicationPort, publication NativeDeliveryPublication) error {
+	operationID, generated := apigencommand.OperationID(ctx)
+	if !generated {
+		return nil
+	}
+	if operationID != deploymentgen.GenCommandOperationPublishDeliveryCandidate().APIGenOperationID() {
+		return fmt.Errorf("%w: active %q is not native candidate publication", apigencommand.ErrOperationMismatch, operationID)
+	}
+	completer, ok := port.(NativeDeliveryPublicationCommandCompleter)
+	if !ok {
+		return ErrDeliveryInputUnavailable
+	}
+	return completer.CompleteNativePublishCommand(ctx, publication)
+}
+
+func completeNativeRollbackCommand(ctx context.Context, port NativeDeliveryPublicationPort, publication NativeDeliveryPublication) error {
+	operationID, generated := apigencommand.OperationID(ctx)
+	if !generated {
+		return nil
+	}
+	if operationID != deploymentgen.GenCommandOperationRollbackDeliveryGeneration().APIGenOperationID() {
+		return fmt.Errorf("%w: active %q is not native generation rollback", apigencommand.ErrOperationMismatch, operationID)
+	}
+	completer, ok := port.(NativeDeliveryPublicationCommandCompleter)
+	if !ok {
+		return ErrDeliveryInputUnavailable
+	}
+	return completer.CompleteNativeRollbackCommand(ctx, publication)
+}
+
 var _ NativeDeliveryMutationPort = NativeDeliveryMutationFuncs{}
 
 func (f NativeDeliveryMutationFuncs) CreatePlan(ctx context.Context, request NativeDeliveryPlanRequest) (NativeDeliveryPlan, error) {
@@ -280,9 +391,82 @@ func (r NativeDeliveryBuildRequest) validate(environment string) error {
 		if value == "" || value != strings.TrimSpace(value) {
 			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
 		}
+		if len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("%w: native delivery %s is invalid", deployment.ErrDeliveryInvalid, label)
+		}
 	}
 	if environment != "" && r.Environment != environment {
 		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
+	}
+	return nil
+}
+
+func (r NativeDeliveryPublishRequest) validate(environment string) error {
+	if err := r.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if r.CandidateID == uuid.Nil || r.CandidateID.String() != strings.TrimSpace(r.CandidateID.String()) {
+		return fmt.Errorf("%w: candidate identity must be a canonical UUID", deployment.ErrDeliveryInvalid)
+	}
+	for label, value := range map[string]string{"target": r.TargetID, "environment": r.Environment, "principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
+		}
+		if len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("%w: native delivery %s is invalid", deployment.ErrDeliveryInvalid, label)
+		}
+	}
+	if environment != "" && r.Environment != environment {
+		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
+	}
+	return nil
+}
+
+func (r NativeDeliveryRollbackRequest) validate(environment string) error {
+	if err := r.ProjectID.Validate(); err != nil {
+		return fmt.Errorf("%w: project identity: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if r.GenerationID == uuid.Nil || r.GenerationID.String() != strings.TrimSpace(r.GenerationID.String()) {
+		return fmt.Errorf("%w: generation identity must be a canonical UUID", deployment.ErrDeliveryInvalid)
+	}
+	for label, value := range map[string]string{"target": r.TargetID, "environment": r.Environment, "principal": r.PrincipalID, "idempotency key": r.IdempotencyKey} {
+		if value == "" || value != strings.TrimSpace(value) {
+			return fmt.Errorf("%w: native delivery %s is required and canonical", deployment.ErrDeliveryInvalid, label)
+		}
+		if len(value) > 512 || strings.ContainsAny(value, "\x00\r\n") {
+			return fmt.Errorf("%w: native delivery %s is invalid", deployment.ErrDeliveryInvalid, label)
+		}
+	}
+	if environment != "" && r.Environment != environment {
+		return fmt.Errorf("%w: environment does not match instance", deployment.ErrDeliveryInvalid)
+	}
+	return nil
+}
+
+func (p NativeDeliveryPublication) validate(project projectgraph.ResourceID, target, environment string) error {
+	if p.ID == uuid.Nil || p.OperationID == uuid.Nil || p.EventID == uuid.Nil || p.AuditID == uuid.Nil || p.PlanID == uuid.Nil || p.CandidateID == uuid.Nil || p.GenerationID == uuid.Nil {
+		return fmt.Errorf("%w: native publication identities are incomplete", deployment.ErrDeliveryInvalid)
+	}
+	if p.ProjectID != project || p.TargetID != target || p.Environment != environment {
+		return fmt.Errorf("%w: native publication scope differs from request", deployment.ErrDeliveryConflict)
+	}
+	if p.ID != p.OperationID || p.ID.String() != strings.TrimSpace(p.ID.String()) || p.OperationID.String() != strings.TrimSpace(p.OperationID.String()) || p.EventID.String() != strings.TrimSpace(p.EventID.String()) || p.AuditID.String() != strings.TrimSpace(p.AuditID.String()) {
+		return fmt.Errorf("%w: native publication identities are not canonical", deployment.ErrDeliveryInvalid)
+	}
+	if p.Status != "pending" {
+		return fmt.Errorf("%w: native publication must remain pending", deployment.ErrDeliveryConflict)
+	}
+	if err := platformdigest.ValidateSHA256Identity(p.PlanDigest); err != nil {
+		return fmt.Errorf("%w: plan digest: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if err := platformdigest.ValidateSHA256Identity(p.RequestDigest); err != nil {
+		return fmt.Errorf("%w: request digest: %v", deployment.ErrDeliveryInvalid, err)
+	}
+	if p.ExpectedTargetRevision <= 0 || p.CreatedAt.IsZero() || !p.CreatedAt.Equal(p.CreatedAt.UTC()) || !p.CompletedAt.IsZero() {
+		return fmt.Errorf("%w: native publication lifecycle evidence is invalid", deployment.ErrDeliveryInvalid)
+	}
+	if p.ExpectedBaseGenerationID != uuid.Nil && p.ExpectedBaseGenerationID.String() != strings.TrimSpace(p.ExpectedBaseGenerationID.String()) {
+		return fmt.Errorf("%w: native base generation identity is not canonical", deployment.ErrDeliveryInvalid)
 	}
 	return nil
 }

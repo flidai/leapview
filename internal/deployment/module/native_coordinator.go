@@ -29,13 +29,26 @@ import (
 // PostgreSQL transaction.  The legacy service/coordinator is deliberately not
 // referenced here.
 type nativeCoordinator struct {
-	repository  *deploymentpostgres.Repository
-	targetID    string
-	instanceEnv string
-	events      NativeDeliveryEventAppender
-	audit       NativeDeliveryAuditAppender
-	workflow    NativeDeliveryWorkflowRecorder
-	operations  NativeOperationAuthority
+	repository      *deploymentpostgres.Repository
+	targetID        string
+	instanceEnv     string
+	events          NativeDeliveryEventAppender
+	audit           NativeDeliveryAuditAppender
+	workflow        NativeDeliveryWorkflowRecorder
+	operations      NativeOperationAuthority
+	eventReader     nativeDeliveryEventReader
+	auditReader     nativeDeliveryAuditReader
+	operationReader nativeOperationLookupReader
+}
+
+type nativeDeliveryEventReader interface {
+	GetDeliveryEvent(context.Context, deploymentpostgres.Tx, NativeDeliveryEventInput) (deploymentpostgres.Event, error)
+}
+type nativeDeliveryAuditReader interface {
+	GetMutationAudit(context.Context, deploymentpostgres.Tx, NativeDeliveryAuditInput) (deploymentpostgres.AuditEvent, error)
+}
+type nativeOperationLookupReader interface {
+	Lookup(context.Context, NativeOperationAcquireInput) (NativeOperationRecord, bool, error)
 }
 
 type nativeCoordinatorCapabilities struct {
@@ -44,6 +57,9 @@ type nativeCoordinatorCapabilities struct {
 	workflow   NativeDeliveryWorkflowRecorder
 	operations NativeOperationAuthority
 }
+
+var _ NativeDeliveryPublicationPort = (*nativeCoordinator)(nil)
+var _ NativeDeliveryPublicationCommandCompleter = (*nativeCoordinator)(nil)
 
 func newNativeCoordinator(repository *deploymentpostgres.Repository, targetID, instanceEnv string, capabilities nativeCoordinatorCapabilities) (deploymenthttp.Coordinator, error) {
 	if repository == nil || !repository.Configured() {
@@ -55,7 +71,11 @@ func newNativeCoordinator(repository *deploymentpostgres.Repository, targetID, i
 	if capabilities.events == nil || capabilities.audit == nil || capabilities.workflow == nil || capabilities.operations == nil {
 		return nil, errors.New("native deployment event, audit, workflow, and operation authorities are required")
 	}
-	return &nativeCoordinator{repository: repository, targetID: targetID, instanceEnv: instanceEnv, events: capabilities.events, audit: capabilities.audit, workflow: capabilities.workflow, operations: capabilities.operations}, nil
+	coordinator := &nativeCoordinator{repository: repository, targetID: targetID, instanceEnv: instanceEnv, events: capabilities.events, audit: capabilities.audit, workflow: capabilities.workflow, operations: capabilities.operations}
+	coordinator.eventReader, _ = capabilities.events.(nativeDeliveryEventReader)
+	coordinator.auditReader, _ = capabilities.audit.(nativeDeliveryAuditReader)
+	coordinator.operationReader, _ = capabilities.operations.(nativeOperationLookupReader)
+	return coordinator, nil
 }
 
 func (c *nativeCoordinator) Create(ctx context.Context, request apiadapter.CreateRequest) (apiadapter.Deployment, error) {
@@ -187,6 +207,285 @@ func (c *nativeCoordinator) Create(ctx context.Context, request apiadapter.Creat
 	}
 	committed = true
 	return mapNativePublication(publication, target.ProjectID, target.Environment, generation.ServingArtifactDigest), nil
+}
+
+// PublishCandidate creates a pending native publication for the sole
+// generation bound to candidateID. It never approves or activates the
+// publication; those are separate authorities and command phases.
+func (c *nativeCoordinator) PublishCandidate(ctx context.Context, request NativeDeliveryPublishRequest) (NativeDeliveryPublication, error) {
+	if c == nil || c.repository == nil || c.operations == nil || c.events == nil || c.audit == nil {
+		return NativeDeliveryPublication{}, ErrDeliveryInputUnavailable
+	}
+	if err := request.validate(c.instanceEnv); err != nil {
+		return NativeDeliveryPublication{}, err
+	}
+	return c.createNativePublication(ctx, request.ProjectID, request.TargetID, request.Environment, request.CandidateID, uuid.Nil, request.PrincipalID, request.IdempotencyKey, false)
+}
+
+// RollbackGeneration creates a pending native rollback publication targeting
+// the explicit existing generation. The current active generation and target
+// revision are captured as the expected CAS fence in the same transaction.
+func (c *nativeCoordinator) RollbackGeneration(ctx context.Context, request NativeDeliveryRollbackRequest) (NativeDeliveryPublication, error) {
+	if c == nil || c.repository == nil || c.operations == nil || c.events == nil || c.audit == nil {
+		return NativeDeliveryPublication{}, ErrDeliveryInputUnavailable
+	}
+	if err := request.validate(c.instanceEnv); err != nil {
+		return NativeDeliveryPublication{}, err
+	}
+	return c.createNativePublication(ctx, request.ProjectID, request.TargetID, request.Environment, uuid.Nil, request.GenerationID, request.PrincipalID, request.IdempotencyKey, true)
+}
+
+func (c *nativeCoordinator) createNativePublication(ctx context.Context, project projectgraph.ResourceID, targetID, environment string, candidateID, generationID uuid.UUID, actor, idempotencyKey string, rollback bool) (NativeDeliveryPublication, error) {
+	if targetID != c.targetID || environment != c.instanceEnv {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: native publication target scope differs from instance", deployment.ErrDeliveryConflict)
+	}
+	requestKind := "publish"
+	operationType := "delivery.publication.create"
+	if rollback {
+		requestKind = "rollback"
+		operationType = "delivery.rollback.create"
+	}
+	requestDigest := nativeOperationDigest(requestKind, project.String(), targetID, environment, candidateID.String(), generationID.String(), actor, idempotencyKey)
+	tx, err := c.repository.Begin(ctx)
+	if err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	operation, err := c.operations.AcquireTx(ctx, tx, NativeOperationAcquireInput{Scope: targetID, OperationType: operationType, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, OwnerID: actor})
+	if err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
+	replay, err := nativeOperationDisposition(operation, NativeOperationAcquireInput{Scope: targetID, OperationType: operationType, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, OwnerID: actor})
+	if err != nil {
+		return NativeDeliveryPublication{}, err
+	}
+	if replay {
+		outcome, decodeErr := decodeNativeOutcome(operation.Operation.Outcome)
+		if decodeErr != nil {
+			return NativeDeliveryPublication{}, decodeErr
+		}
+		publication, readErr := c.repository.PublicationTx(ctx, tx, outcome.PublicationID)
+		if readErr != nil {
+			return NativeDeliveryPublication{}, mapNativeError(readErr)
+		}
+		if publication.TargetID != targetID || publication.ActorID != actor || publication.RequestDigest != requestDigest || (candidateID != uuid.Nil && publication.CandidateID != candidateID.String()) || (generationID != uuid.Nil && publication.GenerationID != generationID.String()) {
+			return NativeDeliveryPublication{}, fmt.Errorf("%w: native publication replay identity differs", deployment.ErrDeliveryConflict)
+		}
+		_, readErr = c.repository.TargetTx(ctx, tx, targetID)
+		if readErr != nil {
+			return NativeDeliveryPublication{}, mapNativeError(readErr)
+		}
+		generation, readErr := c.repository.GenerationTx(ctx, tx, publication.GenerationID)
+		if readErr != nil {
+			return NativeDeliveryPublication{}, mapNativeError(readErr)
+		}
+		if rollback {
+			if readErr = c.repository.RequireRollbackRootTx(ctx, tx, publication.PublicationID, targetID, publication.GenerationID, publication.CandidateID, publication.SnapshotSealID); readErr != nil {
+				return NativeDeliveryPublication{}, mapNativeError(readErr)
+			}
+		}
+		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+		committed = true
+		projection, projectionErr := nativePublicationProjection(publication, project, environment, generation.PlanID, generation.PlanDigest, outcome.EventID, outcome.AuditID)
+		if projectionErr != nil {
+			return NativeDeliveryPublication{}, projectionErr
+		}
+		projection.IdempotencyKey = idempotencyKey
+		return projection, nil
+	}
+	target, err := c.repository.TargetForShareTx(ctx, tx, targetID)
+	if err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
+	if target.ProjectID != project.String() || target.Environment != environment {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: target project/environment scope differs from request", deployment.ErrDeliveryConflict)
+	}
+	var generation deploymentpostgres.DeliveryGeneration
+	var candidate deploymentpostgres.DeliveryCandidate
+	if rollback {
+		generation, err = c.repository.GenerationTx(ctx, tx, generationID.String())
+		if err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+		if err = c.repository.RequireGenerationRootTx(ctx, tx, targetID, generation.GenerationID); err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+		candidate, err = c.repository.CandidateTx(ctx, tx, generation.CandidateID)
+		if err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+		if generation.TargetID != targetID || candidate.TargetID != targetID {
+			// Candidate has no project column; target identity above is the
+			// authoritative project/environment scope.
+			return NativeDeliveryPublication{}, fmt.Errorf("%w: rollback generation scope differs from request", deployment.ErrDeliveryConflict)
+		}
+	} else {
+		resolved, resolveErr := c.repository.ResolveCandidateGenerationTx(ctx, tx, candidateID.String())
+		if resolveErr != nil {
+			return NativeDeliveryPublication{}, mapNativeError(resolveErr)
+		}
+		if resolved.ProjectID != project.String() || resolved.Environment != environment || resolved.TargetID != targetID || resolved.GenerationCount != 1 {
+			return NativeDeliveryPublication{}, fmt.Errorf("%w: candidate/generation scope differs from request", deployment.ErrDeliveryConflict)
+		}
+		if resolved.Status != "qualified" && resolved.Status != "ready" && resolved.Status != "admitted" {
+			return NativeDeliveryPublication{}, fmt.Errorf("%w: candidate is not qualified", deployment.ErrDeliveryConflict)
+		}
+		generation, err = c.repository.GenerationTx(ctx, tx, resolved.GenerationID)
+		if err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+		candidate, err = c.repository.CandidateTx(ctx, tx, resolved.CandidateID)
+		if err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+		if generation.TargetID != targetID || generation.CandidateID != candidateID.String() || candidate.SnapshotSealID != generation.SnapshotSealID || candidate.PlanID != generation.PlanID {
+			return NativeDeliveryPublication{}, fmt.Errorf("%w: candidate/generation identity differs", deployment.ErrDeliveryConflict)
+		}
+	}
+	if generationID != uuid.Nil && generation.GenerationID != generationID.String() {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: rollback generation identity differs", deployment.ErrDeliveryConflict)
+	}
+	// The target row is share-locked above, so this active pointer and revision
+	// remain the expected CAS fence for the pending request.
+	publicationID := operation.Operation.OperationID
+	eventID, err := newNativeUUIDv7()
+	if err != nil {
+		return NativeDeliveryPublication{}, err
+	}
+	auditID, err := newNativeUUIDv7()
+	if err != nil {
+		return NativeDeliveryPublication{}, err
+	}
+	publication, err := c.repository.CreatePublicationTx(ctx, tx, deploymentpostgres.PublicationInput{PublicationID: publicationID, TargetID: targetID, GenerationID: generation.GenerationID, ExpectedBaseGenerationID: target.ActiveGenerationID, CandidateID: generation.CandidateID, SnapshotSealID: generation.SnapshotSealID, ExpectedTargetRevision: target.TargetRevision, ActorID: actor, RequestDigest: requestDigest})
+	if err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
+	if rollback {
+		if _, err := c.repository.CreateRetentionRootTx(ctx, tx, deploymentpostgres.DeliveryRetentionRoot{RootID: publication.PublicationID, TargetID: targetID, CandidateID: generation.CandidateID, GenerationID: generation.GenerationID, SnapshotSealID: generation.SnapshotSealID, RootKind: "rollback", State: "live", Evidence: json.RawMessage(`{"purpose":"pending rollback publication"}`)}); err != nil {
+			return NativeDeliveryPublication{}, mapNativeError(err)
+		}
+	}
+	eventType := "delivery.publication.requested"
+	if rollback {
+		eventType = "delivery.rollback.requested"
+	}
+	if err := c.appendMutationEvidence(ctx, tx, publication, eventType, actor, requestDigest, eventID, auditID, nil); err != nil {
+		return NativeDeliveryPublication{}, err
+	}
+	outcome, _ := json.Marshal(nativeMutationOutcome{PublicationID: publication.PublicationID, EventID: eventID, AuditID: auditID})
+	if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
+	committed = true
+	projection, projectionErr := nativePublicationProjection(publication, project, environment, generation.PlanID, generation.PlanDigest, eventID, auditID)
+	if projectionErr != nil {
+		return NativeDeliveryPublication{}, projectionErr
+	}
+	projection.IdempotencyKey = idempotencyKey
+	return projection, nil
+}
+
+func (c *nativeCoordinator) CompleteNativePublishCommand(ctx context.Context, publication NativeDeliveryPublication) error {
+	return c.completeNativePublicationCommand(ctx, publication, "delivery.publication.requested", "delivery.publication.create")
+}
+
+func (c *nativeCoordinator) CompleteNativeRollbackCommand(ctx context.Context, publication NativeDeliveryPublication) error {
+	return c.completeNativePublicationCommand(ctx, publication, "delivery.rollback.requested", "delivery.rollback.create")
+}
+
+func (c *nativeCoordinator) completeNativePublicationCommand(ctx context.Context, publication NativeDeliveryPublication, eventType, operationType string) error {
+	if c == nil || c.repository == nil || c.eventReader == nil || c.auditReader == nil || c.operationReader == nil {
+		return ErrDeliveryInputUnavailable
+	}
+	if publication.ID == uuid.Nil || publication.OperationID != publication.ID || publication.EventID == uuid.Nil || publication.AuditID == uuid.Nil || publication.IdempotencyKey == "" || publication.RequestDigest == "" {
+		return fmt.Errorf("%w: native publication completion evidence is incomplete", deployment.ErrDeliveryInvalid)
+	}
+	operation, found, err := c.operationReader.Lookup(contextOrBackground(ctx), NativeOperationAcquireInput{Scope: publication.TargetID, OperationType: operationType, IdempotencyKey: publication.IdempotencyKey, RequestDigest: publication.RequestDigest, OwnerID: publication.ActorID})
+	if err != nil {
+		return mapNativeError(err)
+	}
+	if !found || operation.OperationID != publication.ID.String() {
+		return fmt.Errorf("%w: native publication operation evidence is unavailable", deployment.ErrDeliveryConflict)
+	}
+	outcome, err := decodeNativeOutcome(operation.Outcome)
+	if err != nil || outcome.PublicationID != publication.ID.String() || outcome.EventID != publication.EventID.String() || outcome.AuditID != publication.AuditID.String() {
+		return fmt.Errorf("%w: native publication operation outcome differs", deployment.ErrDeliveryConflict)
+	}
+	tx, err := c.repository.Begin(contextOrBackground(ctx))
+	if err != nil {
+		return mapNativeError(err)
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	payload, _ := json.Marshal(map[string]any{"publication_id": publication.ID.String(), "generation_id": publication.GenerationID.String(), "target_revision": publication.ExpectedTargetRevision})
+	event, err := c.eventReader.GetDeliveryEvent(ctx, tx, NativeDeliveryEventInput{EventID: publication.EventID.String(), ScopeID: publication.TargetID, AggregateType: "delivery_publication", AggregateID: publication.ID.String(), EventType: eventType, SchemaVersion: 1, CorrelationID: publication.EventID.String(), Payload: payload})
+	if err != nil || event.EventID != publication.EventID.String() || event.EventType != eventType || event.AggregateID != publication.ID.String() || event.AggregateVersion <= 0 || !sameJSON(event.Payload, payload) {
+		if err == nil {
+			err = fmt.Errorf("%w: native publication event identity differs", deployment.ErrDeliveryConflict)
+		}
+		return err
+	}
+	audit, err := c.auditReader.GetMutationAudit(ctx, tx, NativeDeliveryAuditInput{AuditID: publication.AuditID.String(), DomainEventID: publication.EventID.String(), ScopeID: publication.TargetID, ActorID: publication.ActorID, Action: eventType, ResourceKind: "publication", ResourceID: publication.ID.String(), Outcome: "accepted", RequestDigest: publication.RequestDigest, CorrelationID: publication.EventID.String(), AggregateKey: publication.ID.String(), AggregateSequence: event.AggregateVersion, Metadata: payload})
+	if err != nil || audit.AuditID != publication.AuditID.String() || audit.EventID != publication.EventID.String() || audit.Action != eventType || audit.ResourceID != publication.ID.String() || audit.Outcome != "accepted" || audit.RequestDigest != publication.RequestDigest || !sameJSON(audit.Metadata, payload) {
+		if err == nil {
+			err = fmt.Errorf("%w: native publication audit identity differs", deployment.ErrDeliveryConflict)
+		}
+		return err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return mapNativeError(err)
+	}
+	committed = true
+	return nil
+}
+
+func nativePublicationProjection(publication deploymentpostgres.DeliveryPublication, project projectgraph.ResourceID, environment, planID, planDigest, eventID, auditID string) (NativeDeliveryPublication, error) {
+	publicationID, err := uuid.Parse(publication.PublicationID)
+	if err != nil {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: publication identity: %v", deployment.ErrDeliveryConflict, err)
+	}
+	planUUID, err := uuid.Parse(planID)
+	if err != nil {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: plan identity: %v", deployment.ErrDeliveryConflict, err)
+	}
+	candidateUUID, err := uuid.Parse(publication.CandidateID)
+	if err != nil {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: candidate identity: %v", deployment.ErrDeliveryConflict, err)
+	}
+	generationUUID, err := uuid.Parse(publication.GenerationID)
+	if err != nil {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: generation identity: %v", deployment.ErrDeliveryConflict, err)
+	}
+	eventUUID, err := uuid.Parse(eventID)
+	if err != nil {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: event identity: %v", deployment.ErrDeliveryConflict, err)
+	}
+	auditUUID, err := uuid.Parse(auditID)
+	if err != nil {
+		return NativeDeliveryPublication{}, fmt.Errorf("%w: audit identity: %v", deployment.ErrDeliveryConflict, err)
+	}
+	result := NativeDeliveryPublication{ID: publicationID, OperationID: publicationID, EventID: eventUUID, AuditID: auditUUID, ActorID: publication.ActorID, RequestDigest: publication.RequestDigest, ProjectID: project, TargetID: publication.TargetID, Environment: environment, PlanID: planUUID, PlanDigest: planDigest, CandidateID: candidateUUID, GenerationID: generationUUID, ExpectedTargetRevision: publication.ExpectedTargetRevision, ResultTargetRevision: publication.ResultTargetRevision, Status: publication.State, CreatedAt: publication.CreatedAt, CompletedAt: publication.CommittedAt}
+	if publication.ExpectedBaseGenerationID != "" {
+		result.ExpectedBaseGenerationID, err = uuid.Parse(publication.ExpectedBaseGenerationID)
+		if err != nil {
+			return NativeDeliveryPublication{}, fmt.Errorf("%w: base generation identity: %v", deployment.ErrDeliveryConflict, err)
+		}
+	}
+	return result, nil
 }
 
 func (c *nativeCoordinator) Get(ctx context.Context, scope apiadapter.Scope) (apiadapter.Deployment, error) {
