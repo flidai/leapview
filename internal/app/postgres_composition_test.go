@@ -119,6 +119,8 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 		"NativeFinalizer: nativeRefreshFinalizer",
 		"NewPostgresNativeRefreshExecutor(",
 		"EnableRefreshDispatcher: true",
+		"RefreshTargetRevision: resolveRefreshTargetRevision",
+		"RefreshSourceDigest: resolveRefreshSourceDigest",
 		"CanonicalRefreshExecutor: nativeRefreshExecutor.Execute",
 	} {
 		if !strings.Contains(source, required) {

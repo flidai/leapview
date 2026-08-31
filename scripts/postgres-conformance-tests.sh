@@ -18,10 +18,10 @@ inventory() {
       # A concurrent worktree may retain a tracked deletion in its index;
       # only authored files present on disk can contribute a test package.
       [[ -f "$root/$file" ]] || continue
-      # postgrestest.Start is the shared PostgreSQL harness. Keep the direct
-      # tcpostgres form for legacy tests, but do not match generic
+      # postgrestest.Start/StartTLS are the shared PostgreSQL harnesses. Keep
+      # the direct tcpostgres form for legacy tests, but do not match generic
       # testcontainers usage (for example MinIO-only suites).
-      if grep -Eq 'postgrestest\.Start\(t\)|tcpostgres\.Run\(' "$root/$file"; then
+      if grep -Eq 'postgrestest\.Start(TLS)?\(t\)|tcpostgres\.Run\(' "$root/$file"; then
         dirname "$file"
       fi
     done |

@@ -5,11 +5,18 @@ package postgrestest
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/rsa"
 	"crypto/sha256"
+	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/hex"
+	"encoding/pem"
 	"fmt"
+	"math/big"
 	"net/url"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -76,6 +83,20 @@ func Required() bool {
 // runs, but setting LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED makes all startup
 // failures fatal (fail closed).
 func Start(t *testing.T) *Harness {
+	return start(t, false)
+}
+
+// StartTLS starts the pinned PostgreSQL 18 image with a disposable
+// self-signed certificate. It is intended for production-admission tests,
+// whose configuration must require encrypted PostgreSQL URLs even though the
+// ordinary conformance harness deliberately exercises plaintext connections.
+// sslmode=require is sufficient here because the client does not verify the
+// certificate chain in this isolated test container.
+func StartTLS(t *testing.T) *Harness {
+	return start(t, true)
+}
+
+func start(t *testing.T, tls bool) *Harness {
 	t.Helper()
 	// REQUIRED is the fail-closed lane contract and always wins over a stale
 	// skip flag inherited from an outer task or developer shell.
@@ -88,13 +109,21 @@ func Start(t *testing.T) *Harness {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
 
-	container, err := tcpostgres.Run(ctx, PostgreSQL18Image,
+	containerOptions := []testcontainers.ContainerCustomizer{
 		tcpostgres.WithDatabase("postgres"),
 		tcpostgres.WithUsername("postgres"),
 		tcpostgres.WithPassword(defaultPassword),
 		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(defaultStartupTimeout)),
 		testcontainers.WithLogger(log.TestLogger(t)),
-	)
+	}
+	if tls {
+		caCert, cert, key := tlsCertificateFiles(t)
+		containerOptions = append(containerOptions,
+			tcpostgres.WithSSLCert(caCert, cert, key),
+			testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "ssl=on", "-c", "ssl_ca_file=/tmp/testcontainers-go/postgres/ca_cert.pem", "-c", "ssl_cert_file=/tmp/testcontainers-go/postgres/server.cert", "-c", "ssl_key_file=/tmp/testcontainers-go/postgres/server.key"),
+		)
+	}
+	container, err := tcpostgres.Run(ctx, PostgreSQL18Image, containerOptions...)
 	if err != nil {
 		if Required() {
 			t.Fatalf("required PostgreSQL 18 conformance container: %v", err)
@@ -120,6 +149,50 @@ func Start(t *testing.T) *Harness {
 	h := &Harness{container: container, adminURL: adminURL, admin: admin, roles: make(map[string]Role)}
 	t.Cleanup(func() { admin.Close() })
 	return h
+}
+
+func tlsCertificateFiles(t *testing.T) (caCert, cert, key string) {
+	t.Helper()
+	dir := t.TempDir()
+	caKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate PostgreSQL conformance CA key: %v", err)
+	}
+	caTemplate := &x509.Certificate{SerialNumber: bigSerial(t), Subject: pkix.Name{CommonName: "leapview-conformance-ca"}, IsCA: true, BasicConstraintsValid: true, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature}
+	caDER, err := x509.CreateCertificate(rand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create PostgreSQL conformance CA certificate: %v", err)
+	}
+	serverKey, err := rsa.GenerateKey(rand.Reader, 2048)
+	if err != nil {
+		t.Fatalf("generate PostgreSQL conformance server key: %v", err)
+	}
+	serverTemplate := &x509.Certificate{SerialNumber: bigSerial(t), Subject: pkix.Name{CommonName: "localhost"}, DNSNames: []string{"localhost"}, IPAddresses: nil, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour), KeyUsage: x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}}
+	serverDER, err := x509.CreateCertificate(rand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		t.Fatalf("create PostgreSQL conformance server certificate: %v", err)
+	}
+	caCert, cert, key = filepath.Join(dir, "ca.pem"), filepath.Join(dir, "server.pem"), filepath.Join(dir, "server.key")
+	writeTLSFile(t, caCert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o600)
+	writeTLSFile(t, cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), 0o600)
+	writeTLSFile(t, key, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)}), 0o600)
+	return caCert, cert, key
+}
+
+func bigSerial(t *testing.T) *big.Int {
+	t.Helper()
+	serial, err := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	if err != nil {
+		t.Fatalf("generate PostgreSQL conformance certificate serial: %v", err)
+	}
+	return serial
+}
+
+func writeTLSFile(t *testing.T, path string, data []byte, mode os.FileMode) {
+	t.Helper()
+	if err := os.WriteFile(path, data, mode); err != nil {
+		t.Fatalf("write PostgreSQL conformance TLS file %q: %v", path, err)
+	}
 }
 
 func conformanceSkipped() bool {
