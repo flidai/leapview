@@ -27,6 +27,12 @@ const (
 	// builder projections expose at most this many visual components, keeping
 	// validation and revision hashing proportional to the authored document.
 	maxFilterTargets = 1024
+	// maxAuthoringPages and maxAuthoringVisualComponents mirror the bounded
+	// builder projection. Mutations enforce them before retaining a revision so
+	// a valid command cannot make its own read projection unloadable.
+	maxAuthoringPages            = 128
+	maxAuthoringVisualComponents = 1024
+	maxAuthoringFilterComponents = 1024
 )
 
 func (a AuthorizationAction) Valid() bool {
@@ -117,6 +123,59 @@ type AddPagePayload struct {
 
 func (AddPagePayload) authoringPayload() {}
 func (AddPagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// RenamePagePayload updates the authored title of one page.
+type RenamePagePayload struct {
+	PageID string `json:"pageId"`
+	Title  string `json:"title"`
+}
+
+func (RenamePagePayload) authoringPayload() {}
+func (RenamePagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// DuplicatePagePayload clones one page and all visual definitions referenced
+// by it. The reducer always allocates visual definition IDs; page ID and title
+// are optional convenience overrides for the generated duplicate.
+type DuplicatePagePayload struct {
+	PageID    string `json:"pageId"`
+	NewPageID string `json:"newPageId,omitempty"`
+	Title     string `json:"title,omitempty"`
+}
+
+func (DuplicatePagePayload) authoringPayload() {}
+func (DuplicatePagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// MovePagePayload moves one page to a zero-based position in the authored
+// page order.
+type MovePagePayload struct {
+	PageID string `json:"pageId"`
+	Index  int    `json:"index"`
+}
+
+func (MovePagePayload) authoringPayload() {}
+func (MovePagePayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
+// UpdatePageLayoutPayload replaces one page's grid override. All values are
+// explicit so a browser layout transaction cannot accidentally preserve stale
+// grid settings from a prior revision.
+type UpdatePageLayoutPayload struct {
+	PageID    string `json:"pageId"`
+	Columns   int32  `json:"columns"`
+	RowHeight int32  `json:"rowHeight"`
+	Gap       int32  `json:"gap"`
+	Padding   int32  `json:"padding"`
+}
+
+func (UpdatePageLayoutPayload) authoringPayload() {}
+func (UpdatePageLayoutPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
@@ -506,6 +565,10 @@ type Command struct {
 	Metadata              *MetadataPatch                `json:"metadata,omitempty"`
 	SetVisibility         *SetVisibilityPayload         `json:"setVisibility,omitempty"`
 	AddPage               *AddPagePayload               `json:"addPage,omitempty"`
+	RenamePage            *RenamePagePayload            `json:"renamePage,omitempty"`
+	DuplicatePage         *DuplicatePagePayload         `json:"duplicatePage,omitempty"`
+	MovePage              *MovePagePayload              `json:"movePage,omitempty"`
+	UpdatePageLayout      *UpdatePageLayoutPayload      `json:"updatePageLayout,omitempty"`
 	AddVisual             *AddVisualPayload             `json:"addVisual,omitempty"`
 	SetPlacements         *SetPlacementsPayload         `json:"setPlacements,omitempty"`
 	AssignField           *AssignFieldPayload           `json:"assignField,omitempty"`
@@ -544,6 +607,18 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.AddPage != nil {
 		payloads = append(payloads, c.AddPage)
+	}
+	if c.RenamePage != nil {
+		payloads = append(payloads, c.RenamePage)
+	}
+	if c.DuplicatePage != nil {
+		payloads = append(payloads, c.DuplicatePage)
+	}
+	if c.MovePage != nil {
+		payloads = append(payloads, c.MovePage)
+	}
+	if c.UpdatePageLayout != nil {
+		payloads = append(payloads, c.UpdatePageLayout)
 	}
 	if c.AddVisual != nil {
 		payloads = append(payloads, c.AddVisual)
@@ -661,7 +736,8 @@ func (c Command) IsBuilderIntent() bool {
 		return false
 	}
 	switch payload.(type) {
-	case *SetVisibilityPayload, *AddPagePayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload,
+	case *SetVisibilityPayload, *AddPagePayload, *RenamePagePayload, *DuplicatePagePayload, *MovePagePayload,
+		*UpdatePageLayoutPayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
 		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
@@ -741,6 +817,48 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
 			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *RenamePagePayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: page title cannot be blank", ErrInvalidPayload)
+		}
+	case *DuplicatePagePayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.NewPageID != "" {
+			if err := validateCanonicalObjectID("new page id", value.NewPageID); err != nil {
+				return err
+			}
+		}
+		if value.Title != "" && strings.TrimSpace(value.Title) == "" {
+			return fmt.Errorf("%w: duplicate page title cannot be blank", ErrInvalidPayload)
+		}
+	case *MovePagePayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Index < 0 {
+			return fmt.Errorf("%w: page index must be non-negative", ErrInvalidPayload)
+		}
+	case *UpdatePageLayoutPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if value.Columns <= 0 {
+			return fmt.Errorf("%w: page layout columns must be greater than zero", ErrInvalidPayload)
+		}
+		if value.RowHeight <= 0 {
+			return fmt.Errorf("%w: page layout row height must be greater than zero", ErrInvalidPayload)
+		}
+		if value.Gap < 0 {
+			return fmt.Errorf("%w: page layout gap must be non-negative", ErrInvalidPayload)
+		}
+		if value.Padding < 0 {
+			return fmt.Errorf("%w: page layout padding must be non-negative", ErrInvalidPayload)
 		}
 	case *AddVisualPayload:
 		if strings.TrimSpace(value.PageID) == "" {

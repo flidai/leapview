@@ -361,8 +361,15 @@ func (h Handler) builderCommandRuntime(r *nethttp.Request, supplied, runtime uis
 	if streamID == "" {
 		streamID = clientID
 	}
-	pageID := strings.TrimSpace(requestedPage)
-	if pageID == "" && supplied.PageID != nil {
+	pageID := ""
+	requestedPage = strings.TrimSpace(requestedPage)
+	if requestedPage != "" && builderHasPage(builder, requestedPage) {
+		pageID = requestedPage
+	}
+	if pageID == "" && builder.SelectedPageID != nil && builderHasPage(builder, strings.TrimSpace(*builder.SelectedPageID)) {
+		pageID = strings.TrimSpace(*builder.SelectedPageID)
+	}
+	if pageID == "" && supplied.PageID != nil && builderHasPage(builder, strings.TrimSpace(*supplied.PageID)) {
 		pageID = strings.TrimSpace(*supplied.PageID)
 	}
 	if pageID == "" {
@@ -375,6 +382,19 @@ func (h Handler) builderCommandRuntime(r *nethttp.Request, supplied, runtime uis
 	runtime.DashboardID = optionalRuntimeString(dashboardID)
 	runtime.PageID = optionalRuntimeString(pageID)
 	return runtime
+}
+
+func builderHasPage(builder uisignals.DashboardBuilderSignal, pageID string) bool {
+	pageID = strings.TrimSpace(pageID)
+	if pageID == "" {
+		return false
+	}
+	for _, page := range builder.Pages {
+		if strings.TrimSpace(page.ID) == pageID {
+			return true
+		}
+	}
+	return false
 }
 
 func optionalRuntimeString(value string) *string {
@@ -455,6 +475,7 @@ type dashboardBuilderCommandSignal struct {
 	TargetRevisionNumber      json.RawMessage                   `json:"targetRevisionNumber"`
 	TargetRevisionContentHash string                            `json:"targetRevisionContentHash"`
 	PageID                    string                            `json:"pageId"`
+	NewPageID                 string                            `json:"newPageId"`
 	VisualID                  string                            `json:"visualId"`
 	ComponentID               string                            `json:"componentId"`
 	FieldID                   string                            `json:"fieldId"`
@@ -490,6 +511,10 @@ type dashboardBuilderCommandSignal struct {
 	RowSpan                   int32                             `json:"rowSpan,omitempty"`
 	Col                       int32                             `json:"col,omitempty"`
 	ColSpan                   int32                             `json:"colSpan,omitempty"`
+	Columns                   int32                             `json:"columns,omitempty"`
+	RowHeight                 int32                             `json:"rowHeight,omitempty"`
+	Gap                       int32                             `json:"gap,omitempty"`
+	Padding                   int32                             `json:"padding,omitempty"`
 	Action                    string                            `json:"action"`
 }
 
@@ -556,6 +581,19 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.SetVisibility = &authoring.SetVisibilityPayload{Visibility: visibility}
 	case "add_page":
 		command.AddPage = &authoring.AddPagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
+	case "rename_page":
+		command.RenamePage = &authoring.RenamePagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
+	case "duplicate_page":
+		command.DuplicatePage = &authoring.DuplicatePagePayload{PageID: strings.TrimSpace(s.PageID), NewPageID: strings.TrimSpace(s.NewPageID), Title: strings.TrimSpace(s.Title)}
+	case "move_page":
+		if s.Index == nil {
+			return authoring.Command{}, fmt.Errorf("move page requires index")
+		}
+		command.MovePage = &authoring.MovePagePayload{PageID: strings.TrimSpace(s.PageID), Index: *s.Index}
+	case "update_page_layout":
+		command.UpdatePageLayout = &authoring.UpdatePageLayoutPayload{PageID: strings.TrimSpace(s.PageID), Columns: s.Columns, RowHeight: s.RowHeight, Gap: s.Gap, Padding: s.Padding}
+	case "remove_page":
+		command.RemovePage = &authoring.RemovePagePayload{PageID: strings.TrimSpace(s.PageID)}
 	case "add_visual":
 		command.AddVisual = &authoring.AddVisualPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), ComponentID: strings.TrimSpace(s.ComponentID), Type: strings.TrimSpace(s.Type), Title: strings.TrimSpace(s.Title), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	case "set_placements":

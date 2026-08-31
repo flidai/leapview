@@ -228,6 +228,65 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesPageActions(t *testing.T) {
+	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	tests := []struct {
+		name   string
+		fields map[string]any
+		assert func(*testing.T, authoring.Command)
+	}{
+		{name: "rename", fields: map[string]any{"action": "rename_page", "pageId": "overview", "title": "Revenue"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RenamePage == nil || command.RenamePage.PageID != "overview" || command.RenamePage.Title != "Revenue" {
+				t.Fatalf("rename page = %#v", command.RenamePage)
+			}
+		}},
+		{name: "duplicate", fields: map[string]any{"action": "duplicate_page", "pageId": "overview", "newPageId": "overview-copy", "title": "Copy"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.DuplicatePage == nil || command.DuplicatePage.PageID != "overview" || command.DuplicatePage.NewPageID != "overview-copy" || command.DuplicatePage.Title != "Copy" {
+				t.Fatalf("duplicate page = %#v", command.DuplicatePage)
+			}
+		}},
+		{name: "move", fields: map[string]any{"action": "move_page", "pageId": "overview", "index": 0}, assert: func(t *testing.T, command authoring.Command) {
+			if command.MovePage == nil || command.MovePage.PageID != "overview" || command.MovePage.Index != 0 {
+				t.Fatalf("move page = %#v", command.MovePage)
+			}
+		}},
+		{name: "layout", fields: map[string]any{"action": "update_page_layout", "pageId": "overview", "columns": 8, "rowHeight": 36, "gap": 8, "padding": 4}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdatePageLayout == nil || command.UpdatePageLayout.Columns != 8 || command.UpdatePageLayout.RowHeight != 36 || command.UpdatePageLayout.Gap != 8 || command.UpdatePageLayout.Padding != 4 {
+				t.Fatalf("page layout = %#v", command.UpdatePageLayout)
+			}
+		}},
+		{name: "remove", fields: map[string]any{"action": "remove_page", "pageId": "overview"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RemovePage == nil || command.RemovePage.PageID != "overview" {
+				t.Fatalf("remove page = %#v", command.RemovePage)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			payload := map[string]any{
+				"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
+			}
+			for key, value := range test.fields {
+				payload[key] = value
+			}
+			req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": payload})
+			req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+			req.Header.Set("X-Request-ID", "page-action-"+test.name)
+			recorder := httptest.NewRecorder()
+			handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+			if recorder.Code != nethttp.StatusOK {
+				t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+			}
+			if fake.intentCalls != 1 || fake.executeCalls != 0 {
+				t.Fatalf("dispatch calls = %d/%d", fake.intentCalls, fake.executeCalls)
+			}
+			test.assert(t, fake.executed)
+		})
+	}
+}
+
 func TestDashboardBuilderCommandPreservesRuntimeIdentityPatch(t *testing.T) {
 	page := "overview"
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
@@ -262,6 +321,38 @@ func TestDashboardBuilderCommandPreservesRuntimeIdentityPatch(t *testing.T) {
 		if runtime[key] != want {
 			t.Fatalf("runtime[%q] = %#v, want %q (runtime=%#v)", key, runtime[key], want, runtime)
 		}
+	}
+}
+
+func TestDashboardBuilderCommandFallsBackFromDeletedRequestedPage(t *testing.T) {
+	selected := "overview"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+		Pages: []uisignals.DashboardBuilderPageSignal{{ID: selected}}, SelectedPageID: &selected,
+	}}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
+			"pageId": "deleted-page", "action": "publish",
+		},
+		"runtime": map[string]any{"pageId": "deleted-page"},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "deleted-page-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, recorder.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("patches = %#v", patches)
+	}
+	runtime, ok := patches[0]["runtime"].(map[string]any)
+	if !ok || runtime["pageId"] != selected {
+		t.Fatalf("runtime page = %#v, want %q", patches[0]["runtime"], selected)
 	}
 }
 
