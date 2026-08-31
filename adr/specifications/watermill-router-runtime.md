@@ -45,6 +45,9 @@ canonical tables. It must satisfy all of the following:
   `event_delivery` row, records the attempt and lease, and binds the exact
   worker identity and claim-generation fence. The transaction commits before
   the message is emitted to Watermill and is closed before any handler runs.
+  Its SQL deadline is no longer than the configured recovery margin, so an
+  overlong claim rolls back instead of committing after its useful lease
+  window has already been consumed.
 - Every claimed-state completion or retry transition matches both the worker
   and claim-generation fences. A stale worker, generation, or lease cannot
   complete or retry a delivery. Authorized replay and waiver use their own
@@ -59,6 +62,10 @@ canonical tables. It must satisfy all of the following:
   durable claim transaction. That claim fences the old owner, advances the
   claim generation, and makes no use of an in-memory cursor or Watermill
   offset.
+
+Subscriber shutdown stops new claims and waits for its bounded
+acknowledgement/retry persistence watchers. Unfinished delivery claims are not
+rewritten during shutdown; they remain recoverable through lease expiry.
 
 The subscriber may use polling and a PostgreSQL notification as a wake-up hint,
 but correctness always comes from reconciling `event_log` and
