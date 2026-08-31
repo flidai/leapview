@@ -191,6 +191,20 @@ WHERE consumer_id = sqlc.arg(consumer_id)::uuid
 SELECT lifecycle FROM event.event_consumer
 WHERE consumer_id = sqlc.arg(consumer_id)::uuid FOR SHARE;
 
+-- name: GetConsumerByID :one
+SELECT consumer_id::text, consumer_key, lifecycle, replay_from,
+       COALESCE(frontier_event_id::text, ''::text)::text AS frontier_event_id,
+       frontier_occurred_at, metadata::text, created_at, updated_at
+FROM event.event_consumer
+WHERE consumer_id = sqlc.arg(consumer_id)::uuid
+FOR SHARE;
+
+-- name: ListConsumerAggregates :many
+SELECT aggregate_type
+FROM event.event_consumer_aggregate
+WHERE consumer_id = sqlc.arg(consumer_id)::uuid
+ORDER BY aggregate_type;
+
 -- name: ClaimDeliveries :many
 WITH candidates AS (
     SELECT consumer_id, event_id

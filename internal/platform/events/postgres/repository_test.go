@@ -2,6 +2,7 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"reflect"
 	"strings"
@@ -1076,6 +1077,176 @@ func TestCanonicalConsumerAggregateTypes(t *testing.T) {
 	}
 	if _, err := canonicalAggregateTypes(tooMany); err == nil {
 		t.Fatalf("aggregate filter with %d values unexpectedly succeeded", len(tooMany))
+	}
+}
+
+func TestPostgreSQL18ConsumerByIDReturnsCanonicalEnrollment(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	const consumerID = "01900000-0000-7000-8000-000000000141"
+	const frontierID = "01900000-0000-7000-8000-000000000142"
+
+	enrollTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{
+		ConsumerID:     consumerID,
+		ConsumerKey:    "consumer-by-id",
+		ReplayFrom:     time.Date(2025, 2, 3, 4, 5, 6, 123456000, time.FixedZone("replay-offset", -7*60*60)),
+		Metadata:       []byte(`{"z":1,"a":"value"}`),
+		AggregateTypes: []string{"z-order", "order", "z-order"},
+	}); err != nil {
+		_ = enrollTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enrollTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// ConsumerByID is a read-side lookup, not a registry-fenced mutation. It
+	// must work in a caller-owned stronger-isolation transaction as well.
+	tx, err := db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, `
+		UPDATE event.event_consumer
+		SET lifecycle = 'paused',
+			replay_from = '2025-02-03 04:05:06.123456-07'::timestamptz,
+			frontier_event_id = $2::uuid,
+			frontier_occurred_at = '2025-02-04 05:06:07.654321+09'::timestamptz,
+			metadata = '{"z":1,"a":"value"}'::jsonb,
+			created_at = '2025-01-01 00:00:00.111111-05'::timestamptz,
+			updated_at = '2025-02-05 00:00:00.222222+11'::timestamptz
+		WHERE consumer_id = $1::uuid`, consumerID, frontierID); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := r.ConsumerByID(ctx, tx, consumerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.ConsumerID != consumerID || got.ConsumerKey != "consumer-by-id" || got.Lifecycle != "paused" {
+		t.Fatalf("identity/lifecycle = %#v, want id %q key %q lifecycle paused", got, consumerID, "consumer-by-id")
+	}
+	if got.FrontierEventID != frontierID {
+		t.Fatalf("frontier event id = %q, want %q", got.FrontierEventID, frontierID)
+	}
+	wantReplay := time.Date(2025, 2, 3, 11, 5, 6, 123456000, time.UTC)
+	wantFrontier := time.Date(2025, 2, 3, 20, 6, 7, 654321000, time.UTC)
+	wantCreated := time.Date(2025, 1, 1, 5, 0, 0, 111111000, time.UTC)
+	wantUpdated := time.Date(2025, 2, 4, 13, 0, 0, 222222000, time.UTC)
+	for name, value := range map[string]struct {
+		got, want time.Time
+	}{
+		"replay_from":          {got.ReplayFrom, wantReplay},
+		"frontier_occurred_at": {got.FrontierOccurred, wantFrontier},
+		"created_at":           {got.CreatedAt, wantCreated},
+		"updated_at":           {got.UpdatedAt, wantUpdated},
+	} {
+		if !value.got.Equal(value.want) || value.got.Location() != time.UTC {
+			t.Errorf("%s = %v (%s), want %v (UTC)", name, value.got, value.got.Location(), value.want)
+		}
+	}
+	if want := []string{"order", "z-order"}; !reflect.DeepEqual(got.AggregateTypes, want) {
+		t.Fatalf("aggregate types = %#v, want %#v", got.AggregateTypes, want)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(got.Metadata, &metadata); err != nil {
+		t.Fatalf("metadata is invalid JSON: %v", err)
+	}
+	if !reflect.DeepEqual(metadata, map[string]any{"a": "value", "z": float64(1)}) {
+		t.Fatalf("metadata = %#v, want canonical object", metadata)
+	}
+
+	// The aggregate slice is a copy owned by the returned value, and a second
+	// lookup must not observe caller mutation.
+	got.AggregateTypes[0] = "caller-mutated"
+	again, err := r.ConsumerByID(ctx, tx, consumerID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(again.AggregateTypes, []string{"order", "z-order"}) {
+		t.Fatalf("aggregate types after caller mutation = %#v", again.AggregateTypes)
+	}
+
+	// ConsumerByID neither begins nor commits the caller's transaction.
+	var one int
+	if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
+		t.Fatalf("caller transaction is no longer usable: %v", err)
+	}
+	if one != 1 {
+		t.Fatalf("transaction probe = %d, want 1", one)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestPostgreSQL18ConsumerByIDMissingAndMalformedID(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+
+	t.Run("missing preserves pgx ErrNoRows", func(t *testing.T) {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		_, err = r.ConsumerByID(ctx, tx, "01900000-0000-7000-8000-000000000149")
+		if !errors.Is(err, pgx.ErrNoRows) {
+			t.Fatalf("missing consumer error = %v, want pgx.ErrNoRows classification", err)
+		}
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
+			t.Fatalf("caller transaction is no longer usable: %v", err)
+		}
+	})
+
+	t.Run("malformed rejects before query and preserves transaction", func(t *testing.T) {
+		tx, err := db.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer func() { _ = tx.Rollback(ctx) }()
+		if _, err := r.ConsumerByID(ctx, tx, "not-a-uuid"); err == nil {
+			t.Fatal("malformed consumer id unexpectedly succeeded")
+		}
+		var one int
+		if err := tx.QueryRow(ctx, `SELECT 1`).Scan(&one); err != nil {
+			t.Fatalf("caller transaction is no longer usable: %v", err)
+		}
+	})
+}
+
+func TestPostgreSQL18ConsumerByIDFailsClosedOnEmptyAggregateFilter(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	const consumerID = "01900000-0000-7000-8000-000000000151"
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, tx, ConsumerInput{ConsumerID: consumerID, ConsumerKey: "empty-filter", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"orders"}})
+	if err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := tx.Exec(ctx, `DELETE FROM event.event_consumer_aggregate WHERE consumer_id = $1::uuid`, consumer.ConsumerID); err != nil {
+		_ = tx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if _, err := r.ConsumerByID(ctx, tx, consumer.ConsumerID); err == nil || !strings.Contains(err.Error(), "aggregate filter") {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("empty aggregate filter error = %v, want validation error", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
 	}
 }
 

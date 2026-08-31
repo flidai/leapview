@@ -713,6 +713,61 @@ func (r *Repository) Claim(ctx context.Context, tx Tx, opts ClaimOptions) ([]Del
 	return claimed, nil
 }
 
+// ConsumerByID returns the durable enrollment and its aggregate filter. It is
+// a read-side admission check for runtime capabilities: callers must compare
+// the returned identity, lifecycle, and canonical filter with their explicit
+// configuration before attempting a claim. Unlike the fan-out mutation
+// protocol, this read does not coordinate a registry fence or depend on fresh
+// per-command snapshots, so it is valid in the caller's existing isolation
+// level (and deliberately does not impose the READ COMMITTED guard).
+func (r *Repository) ConsumerByID(ctx context.Context, tx Tx, consumerID string) (Consumer, error) {
+	if err := validateTxContext(ctx, tx); err != nil {
+		return Consumer{}, err
+	}
+	if consumerID != strings.TrimSpace(consumerID) {
+		return Consumer{}, errors.New("consumer id must not contain surrounding whitespace")
+	}
+	if err := validateUUID("consumer id", consumerID); err != nil {
+		return Consumer{}, err
+	}
+	row, err := eventsdb.New(tx).GetConsumerByID(ctx, uuidParam(consumerID))
+	if err != nil {
+		return Consumer{}, fmt.Errorf("get event consumer: %w", err)
+	}
+	aggregates, err := eventsdb.New(tx).ListConsumerAggregates(ctx, uuidParam(consumerID))
+	if err != nil {
+		return Consumer{}, fmt.Errorf("get event consumer aggregate filter: %w", err)
+	}
+	// Aggregate allowlists are policy input, not presentation data. Validate
+	// and canonicalize the rows on read as a defensive boundary in case a
+	// migration or privileged SQL writer ever bypasses the enrollment path.
+	// An empty/corrupt allowlist must fail closed instead of becoming an
+	// accidental all-events consumer.
+	aggregateTypes, err := canonicalAggregateTypes(aggregates)
+	if err != nil {
+		return Consumer{}, fmt.Errorf("validate event consumer aggregate filter: %w", err)
+	}
+	if !row.ReplayFrom.Valid || !row.CreatedAt.Valid || !row.UpdatedAt.Valid {
+		return Consumer{}, errors.New("event consumer has null timestamp")
+	}
+	metadata := json.RawMessage(row.Metadata)
+	if len(metadata) == 0 {
+		metadata = json.RawMessage(`{}`)
+	}
+	consumer := Consumer{
+		ConsumerID: row.ConsumerID, ConsumerKey: row.ConsumerKey, Lifecycle: row.Lifecycle,
+		ReplayFrom: row.ReplayFrom.Time.UTC(), Metadata: metadata, CreatedAt: row.CreatedAt.Time.UTC(),
+		UpdatedAt: row.UpdatedAt.Time.UTC(), AggregateTypes: append([]string(nil), aggregateTypes...),
+	}
+	if row.FrontierEventID != "" {
+		consumer.FrontierEventID = row.FrontierEventID
+	}
+	if row.FrontierOccurredAt.Valid {
+		consumer.FrontierOccurred = row.FrontierOccurredAt.Time.UTC()
+	}
+	return consumer, nil
+}
+
 // Complete records a terminal delivery outcome and verifies ownership of the
 // active claim. A dead letter is intentionally terminal processing state but
 // does not satisfy retention until resolved or waived.
