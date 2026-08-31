@@ -237,17 +237,50 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if len(pipelinePlans) > 0 {
 		pipePlan = pipelinePlans[0]
 	}
-	planDigest, artifactDigest := digest('a'), digest('e')
+	artifactDigest := digest('e')
 	qualificationDigest := digest('3')
 	compiledGraphDigest, compiledConfigDigest, securityDigest := digest('b'), digest('c'), digest('d')
 	if pipePlan.Digest != "" {
-		planDigest, artifactDigest = pipePlan.Digest, pipePlan.ArtifactDigest
+		artifactDigest = pipePlan.ArtifactDigest
 		compiledGraphDigest, compiledConfigDigest, securityDigest = pipePlan.ExecutionDigest, pipePlan.ProvenanceDigest, pipePlan.GovernanceDigest
 	}
 	if _, err := delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_concrete", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: qualificationDigest, Evidence: json.RawMessage(`{"source":"concrete"}`)})
+	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	richPlanInput := deployment.DeliveryPlan{
+		ID: planID, TargetID: targetID, ProjectID: "project_concrete", Environment: "prod",
+		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: artifactDigest, ServingArtifactDigest: artifactDigest,
+		Execution: deployment.DeliveryExecutionInputs{
+			SourceArtifactDigest: artifactDigest, CompilerDigest: compiledGraphDigest, ExecutableDigest: digest('4'), DependencyDigest: digest('5'),
+			ConfigDigest: compiledConfigDigest, BindingDigest: securityDigest, RuntimeDigest: digest('0'), CapabilityDigest: admission.CompatibilityDigest,
+		},
+		Provenance: deployment.DeliveryProvenance{Builder: "refresh-concrete-test"},
+		Governance: deployment.DeliveryGovernance{
+			PolicyDigest: digest('2'), AuthorizationDigest: securityDigest, QualificationDigest: qualificationDigest, ExpiresAt: now.Add(time.Hour),
+		},
+		Evidence: deployment.DeliveryPlanEvidence{
+			ImpactStatement: "refresh fixture impact", PhysicalWorkStatement: "materialize the exact pipeline closure", ReuseStatement: "no physical reuse",
+			Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact refresh qualification", Steps: []deployment.DeliveryQualificationStep{{ID: "compatibility", Kind: "contract", Description: "qualify exact snapshot", Required: true, Blocking: true}}},
+			StalePolicy:   deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryRollbackSafe},
+		},
+		CreatedAt: now,
+	}
+	if pipePlan.Digest != "" {
+		richPlanInput.BaseGenerationID = generationID
+		richPlanInput.BaseTargetRevision = 1
+		richPlanInput.PipelinePlan = &pipePlan
+	}
+	richPlan, err := deployment.NewDeliveryPlan(richPlanInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDocument, err := json.Marshal(richPlan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	planDigest := richPlan.Digest
+	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: qualificationDigest, PlanDocument: planDocument, Evidence: json.RawMessage(`{"source":"concrete"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +321,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	db := concreteModulePostgresDB(t)
 	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
-	basePlan := projectpipelineplan.Plan{ID: "0198f2c0-7c7a-7f00-8a11-000000000101", PipelineID: "pipeline_concrete", ProjectID: "project_concrete", Environment: "prod", SemanticModelID: "semantic_concrete", ServingGenerationID: "0198f2c0-7c7a-7f00-8a11-000000000105", ArtifactDigest: digest('e'), SelectionDigest: digest('f'), MaterializationScope: []string{"model_concrete"}, ModelExecutionOrder: []string{"model_concrete"}, QualificationChecks: []string{"compatibility"}, InvocationSource: "manual"}
+	basePlan := projectpipelineplan.Plan{ID: "pipeline-plan-concrete", PipelineID: "pipeline_concrete", ProjectID: "project_concrete", Environment: "prod", SemanticModelID: "semantic_concrete", ServingGenerationID: "0198f2c0-7c7a-7f00-8a11-000000000105", ArtifactDigest: digest('e'), SelectionDigest: digest('f'), MaterializationScope: []string{"model_concrete"}, ModelExecutionOrder: []string{"model_concrete"}, QualificationChecks: []string{"compatibility"}, InvocationSource: "manual"}
 	plan, err := projectpipelineplan.New(basePlan)
 	if err != nil {
 		t.Fatal(err)
@@ -325,8 +358,12 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	refreshRepo := refreshpostgres.New(db)
 	jobsRepo := jobspostgres.New(db)
 	identity := projectgraph.ServingIdentity{ProjectID: "project_concrete", Environment: "prod", GenerationID: generationID}
-	if plan.ID != deliveryPlan.PlanID || plan.ServingGenerationID != generationID {
-		t.Fatalf("pipeline plan identity does not match delivery evidence: %#v", plan)
+	if plan.ID == deliveryPlan.PlanID || plan.Digest == deliveryPlan.PlanDigest || plan.ServingGenerationID != generationID {
+		t.Fatalf("pipeline and delivery identities were not kept distinct: pipeline=%#v delivery=%#v", plan, deliveryPlan)
+	}
+	richDeliveryPlan, err := deliveryPlan.RichPlan()
+	if err != nil || richDeliveryPlan.PipelinePlan == nil || richDeliveryPlan.PipelinePlan.ID != plan.ID || richDeliveryPlan.PipelinePlan.Digest != plan.Digest {
+		t.Fatalf("embedded pipeline plan was not retained exactly: plan=%#v err=%v", richDeliveryPlan.PipelinePlan, err)
 	}
 	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
 	verifier, err := refreshcomposition.NewPostgresCanonicalVerifierAdapter(delivery, "target_concrete_prod")
@@ -353,14 +390,36 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 		t.Fatal(err)
 	}
 	mismatchedPersistence := &postgresPublicationPersistence{repository: refreshRepo, identityResolver: staticPublicationIdentityResolver(poolID, "catalog-config-mismatch"), canonicalVerifier: verifier, queueLifecycle: queue}
-	if err := mismatchedPersistence.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); !errors.Is(err, ErrPublicationIdentityMismatch) || !errors.Is(err, refreshpostgres.ErrConflict) {
+	if err := mismatchedPersistence.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: resultGenerationID, SnapshotID: 777}); !errors.Is(err, ErrPublicationIdentityMismatch) || !errors.Is(err, refreshpostgres.ErrConflict) {
 		t.Fatalf("canonical completion identity mismatch = %v, want typed conflict", err)
+	}
+	badPayload := claimed
+	badPlanInput := *claimed.PipelinePlan
+	badPlanInput.SelectionDigest = digest('a')
+	badPlanInput.ExecutionDigest = ""
+	badPlanInput.ProvenanceDigest = ""
+	badPlanInput.GovernanceDigest = ""
+	badPlanInput.EvidenceDigest = ""
+	badPlanInput.Digest = ""
+	badPlan, err := projectpipelineplan.New(badPlanInput)
+	if err != nil {
+		t.Fatal(err)
+	}
+	badPayload.PipelinePlan = &badPlan
+	if tx, beginErr := db.Begin(t.Context()); beginErr != nil {
+		t.Fatal(beginErr)
+	} else {
+		_, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, badPayload, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: resultGenerationID, SnapshotID: 777})
+		_ = tx.Rollback(t.Context())
+		if !errors.Is(verifyErr, ErrPublicationIdentityMismatch) || !errors.Is(verifyErr, refreshpostgres.ErrConflict) {
+			t.Fatalf("embedded pipeline digest mismatch = %v, want typed conflict", verifyErr)
+		}
 	}
 	publication, ok := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
 	if !ok {
 		t.Fatal("canonical publication unit missing")
 	}
-	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err != nil {
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: resultGenerationID, SnapshotID: 777}); err != nil {
 		t.Fatal(err)
 	}
 	// A constructed-but-unpublished generation is not canonical evidence.
@@ -371,7 +430,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if tx, err := db.Begin(t.Context()); err != nil {
 		t.Fatal(err)
 	} else {
-		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: uncommittedGenerationID, SnapshotID: 777}); verifyErr == nil {
+		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, claimed, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: uncommittedGenerationID, SnapshotID: 777}); verifyErr == nil {
 			t.Fatal("uncommitted delivery generation unexpectedly verified")
 		}
 		_ = tx.Rollback(t.Context())
@@ -390,7 +449,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if tx, err := db.Begin(t.Context()); err != nil {
 		t.Fatal(err)
 	} else {
-		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); verifyErr == nil {
+		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, claimed, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: resultGenerationID, SnapshotID: 777}); verifyErr == nil {
 			t.Fatal("superseded/non-current delivery generation unexpectedly verified")
 		}
 		_ = tx.Rollback(t.Context())
@@ -398,23 +457,11 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	// Completion is an exact replay once publication, data-version, run-tree,
 	// and queue evidence are committed.  It remains replayable even after a
 	// later deployment advances the active target pointer.
-	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 777}); err != nil {
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: resultGenerationID, SnapshotID: 777}); err != nil {
 		t.Fatalf("canonical completion replay after later activation: %v", err)
 	}
-	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: resultGenerationID, SnapshotID: 778}); !errors.Is(err, refreshpostgres.ErrConflict) {
+	if err := publication.CompleteCanonicalRefresh(t.Context(), claimed, refreshrun.CanonicalRefreshResult{PlanID: deliveryPlan.PlanID, ServingStateID: resultGenerationID, SnapshotID: 778}); !errors.Is(err, refreshpostgres.ErrConflict) {
 		t.Fatalf("snapshot-mismatched canonical replay error = %v, want conflict", err)
-	}
-	badPayload := claimed
-	badPlan := *claimed.PipelinePlan
-	badPlan.Digest = digest('z')
-	badPayload.PipelinePlan = &badPlan
-	if tx, err := db.Begin(t.Context()); err != nil {
-		t.Fatal(err)
-	} else {
-		if _, verifyErr := verifier.VerifyCanonicalRefreshTx(t.Context(), tx, badPayload, refreshrun.CanonicalRefreshResult{PlanID: plan.ID, ServingStateID: uncommittedGenerationID, SnapshotID: 777}); verifyErr == nil {
-			t.Fatal("payload-vs-run digest mismatch unexpectedly verified")
-		}
-		_ = tx.Rollback(t.Context())
 	}
 	finalRun, err := refreshRepo.LookupRun(t.Context(), run.ID)
 	if err != nil || finalRun.Status != refreshrun.RunStatusSucceeded {

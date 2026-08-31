@@ -205,17 +205,29 @@ func (v *PostgresCanonicalVerifierAdapter) VerifyCanonicalRefreshTx(ctx context.
 	if err != nil {
 		return refreshpostgres.PublicationInput{}, err
 	}
-	if evidence.Generation.GenerationID != result.ServingStateID || evidence.Generation.PlanID != result.PlanID || evidence.Generation.PlanDigest != job.PipelinePlan.Digest || evidence.Generation.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
+	if evidence.Generation.GenerationID != result.ServingStateID || evidence.Generation.PlanID != result.PlanID || evidence.Generation.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
 		return refreshpostgres.PublicationInput{}, mismatchError("canonical generation evidence differs from refresh job")
 	}
 	plan, err := v.Deployment.PlanTx(ctx, tx, evidence.Generation.PlanID)
 	if err != nil {
 		return refreshpostgres.PublicationInput{}, unavailableError("load canonical plan: %v", err)
 	}
-	if plan.TargetID != v.TargetID || plan.PlanDigest != job.PipelinePlan.Digest || plan.ArtifactDigest != job.PipelinePlan.ArtifactDigest || job.PipelinePlan.ID != evidence.Generation.PlanID || job.PipelinePlan.ProjectID != job.Identity.ProjectID.String() || job.PipelinePlan.Environment != job.Identity.Environment || job.PipelinePlan.PipelineID != job.PipelineID.String() || job.PipelinePlan.ServingGenerationID != job.Identity.GenerationID {
+	if plan.TargetID != v.TargetID || plan.PlanDigest != evidence.Generation.PlanDigest || plan.ArtifactDigest != job.PipelinePlan.ArtifactDigest {
 		return refreshpostgres.PublicationInput{}, mismatchError("canonical plan evidence differs from refresh job")
 	}
-	if evidence.Seal.DuckLakeSnapshotID != result.SnapshotID || evidence.Seal.PlanDigest != job.PipelinePlan.Digest || evidence.Seal.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
+	richPlan, err := plan.RichPlan()
+	if err != nil {
+		return refreshpostgres.PublicationInput{}, unavailableError("load canonical rich plan: %v", err)
+	}
+	boundPipeline := richPlan.PipelinePlan
+	if richPlan.Digest != plan.PlanDigest || richPlan.BaseGenerationID != job.Identity.GenerationID || boundPipeline == nil ||
+		boundPipeline.Digest != job.PipelinePlan.Digest || boundPipeline.ID != job.PipelinePlan.ID ||
+		boundPipeline.ProjectID != job.Identity.ProjectID.String() || boundPipeline.Environment != job.Identity.Environment ||
+		boundPipeline.PipelineID != job.PipelineID.String() || boundPipeline.SemanticModelID != job.SemanticModelID.String() ||
+		boundPipeline.ServingGenerationID != job.Identity.GenerationID || boundPipeline.ArtifactDigest != job.PipelinePlan.ArtifactDigest {
+		return refreshpostgres.PublicationInput{}, mismatchError("embedded pipeline plan evidence differs from refresh job")
+	}
+	if evidence.Seal.DuckLakeSnapshotID != result.SnapshotID || evidence.Seal.PlanDigest != plan.PlanDigest || evidence.Seal.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
 		return refreshpostgres.PublicationInput{}, mismatchError("canonical snapshot seal evidence differs from refresh job")
 	}
 	if evidence.Publication.ExpectedBaseGenerationID != job.Identity.GenerationID || evidence.Publication.ExpectedTargetRevision != job.TargetRevision || evidence.Publication.ResultTargetRevision != evidence.Publication.ExpectedTargetRevision+1 {
