@@ -84,6 +84,98 @@ The dashboard refresh latency SLI measures only refreshes whose normalized outco
 
 This latency SLI does not define a latency SLO, error budget, percentile, or alert. Its five-minute ratio can be volatile at low volume, and its 30-day ratio is statistically weak when few completed refreshes occur. Prometheus must retain 30 days of source histogram samples for a complete rolling window; after deployment or retention loss, the long-window ratio naturally reflects only available history. The metric covers server-side refresh coordination through terminal target completion, not browser rendering or an end-to-end synthetic journey, and bucket classification cannot expose degradations that remain on the same side of the five-second boundary.
 
+### Query-result cache cutover rollout gates
+
+Serving-generation cutover reuses a stable partition result cache while keeping
+execution flights generation-owned. Qualify a cache rollout with deterministic
+correctness and race gates before interpreting production metrics:
+
+```sh
+task test:cache:rollout
+```
+
+The command requires 100 consecutive passes of the cutover correctness and
+metrics checks and 20 consecutive passes of the focused race checks. The
+selected qualification checks have no conditional skip paths. Any failure,
+race report, stale-store acceptance, sentinel leak, unexpected physical
+execution, or Arrow ownership imbalance fails the rollout. The qualification
+remains opt-in and focused; it does not expand the ordinary pull-request test
+matrix.
+
+The hard correctness and memory gates are:
+
+| Gate | Required threshold |
+| --- | --- |
+| Compatible reuse | 100/100 generation A-to-B-to-C qualifications pass; generation B and reactivated generation C perform zero physical queries for the warmed key |
+| Identity isolation | 100/100 dependency, policy, governed-query, production/candidate, and candidate-ID mutations miss their incompatible entries |
+| Flight ownership | 100/100 same-generation callers coalesce to one owner per key; 100/100 cross-generation cold callers execute one owner per generation and key |
+| Invalidation | 100/100 stores carrying a pre-invalidation token are rejected as stale |
+| Memory | At every qualification checkpoint, entries and retained bytes are at or below the configured runtime and node limits |
+| Arrow ownership | Stable cache-owned Arrow holds equal stable retained entries; consumer leases remain readable after eviction/invalidation and all cache-owned holds release at pool shutdown |
+| Race stability | 20/20 focused race runs complete with no race report, deadlock, leaked flight, or lifecycle assertion failure |
+
+Capture latency evidence on the same otherwise-idle host, Go toolchain, CPU
+count, and power profile for the merge-base baseline and rollout candidate:
+
+```sh
+task bench:cache:cutover:full
+```
+
+The full task records ten 500 ms samples at one logical CPU for the public
+resultcache lifecycle and governed materialize runtime paths. The quick task is
+only a smoke check:
+
+```sh
+task bench:cache:cutover:quick
+```
+
+The first Phase 2 full run establishes and archives the bootstrap baseline,
+because the benchmark harness does not exist on the pre-Phase 2 merge base.
+After that baseline is established, every future cache rollout compares its
+candidate output with the archived baseline or a fresh full run from its merge
+base.
+
+Compare the ordinary Go benchmark output with `benchstat`. A candidate fails
+when a statistically significant latency increase exceeds the threshold below.
+An increase above the threshold without significance must be rerun on the same
+host; it is not treated as a pass until the comparison is conclusive or an
+explicit rollout exception records the evidence and owner.
+
+| Benchmark lane | Maximum candidate regression |
+| --- | ---: |
+| Warm shared-generation hit | 10% |
+| Warm cutover-retained hit | 10% |
+| Dormant scope open, retained lookup, and close | 15% |
+| Overlapping generation open, lookup, and close | 10% |
+| Governed cold plan, execute, and store | 15% |
+| Consumer Arrow lease acquisition after cache invalidation | 10% |
+
+During a controlled canary cutover, retain at least 30 minutes of samples and
+verify all of the following:
+
+- `leapview_query_result_cache_entries` remains equal to
+  `leapview_query_result_cache_arrow_holds`.
+- `leapview_query_result_cache_bytes` never exceeds the configured node byte
+  limit, and retained entries never exceed the configured node entry limit.
+- `leapview_query_result_cache_scopes{state="dormant"}` becomes nonzero during
+  the zero-reference interval, then
+  `leapview_query_result_cache_scope_transitions_total{transition="reactivated"}`
+  increases when the compatible generation opens.
+- `leapview_dashboard_query_cache_hits_total{source="cutover_retained"}`
+  increases after the warmed canary query is served by the reactivated
+  generation.
+- `leapview_cache_invalidations_total{cache="stable_result"}` does not increase
+  during cutover unless the operator intentionally invalidates the partition.
+- The absolute 30-minute stable-result eviction delta is zero:
+  `sum(increase(leapview_cache_evicted_entries_total{cache="stable_result"}[30m])) == 0`.
+  Any positive delta indicates memory pressure or unexpected churn and fails
+  the canary; investigate before rollout rather than diluting the signal with
+  generation-byte store volume.
+
+These are rollout gates, not new cache semantics or alerting rules. Persistent
+production alerts and any threshold adjustment require separately reviewed
+operational evidence.
+
 ## Structured logs
 
 Collect structured application logs from the service output. Preserve timestamp, severity, operation, route, status, duration, principal where safe, project, environment, request/correlation ID, deployment ID, revision digest, and refresh generation when available.
