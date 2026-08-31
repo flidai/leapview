@@ -1126,6 +1126,46 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
   } finally { await page.close() }
 })
 
+test('windowed table keeps requesting the latest chunk during continuous fast scrolling', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
+    })
+    const requestedDuringScroll = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      table.table = {
+        ...table.table,
+        cardinality: { kind: 'exact', value: 1_000 },
+        availableRows: 1_000,
+      }
+      await table.updateComplete
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      let requested = false
+      dashboard.addEventListener('lv-visualization-window-request', () => {
+        requested = true
+      })
+      for (let index = 0; index < 10; index++) {
+        scrollport.scrollTop = (200 + index * 60) * 28
+        scrollport.dispatchEvent(new Event('scroll'))
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      }
+      const duringScroll = requested
+      await new Promise((resolve) => window.setTimeout(resolve, 120))
+      return duringScroll
+    })
+    expect(requestedDuringScroll).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 test('selected sticky table cells preserve the visible row highlight', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
