@@ -1009,6 +1009,42 @@ test('auto layout follows the viewport and does not stack when desktop side pane
   }
 })
 
+test('desktop report tables distribute columns across the available visual width', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
+    })
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      await table.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await table.updateComplete
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      const plane = table.shadowRoot.querySelector('.table-plane') as HTMLElement
+      const header = table.shadowRoot.querySelector('.head') as HTMLElement
+      return {
+        viewportWidth: scrollport.clientWidth,
+        planeWidth: plane.offsetWidth,
+        headerWidth: header.offsetWidth,
+        horizontalOverflow: scrollport.scrollWidth - scrollport.clientWidth,
+      }
+    })
+    expect(result.viewportWidth).toBeGreaterThan(700)
+    expect(Math.abs(result.planeWidth - result.viewportWidth)).toBeLessThanOrEqual(1)
+    expect(Math.abs(result.headerWidth - result.viewportWidth)).toBeLessThanOrEqual(1)
+    expect(result.horizontalOverflow).toBeLessThanOrEqual(4)
+  } finally {
+    await page.close()
+  }
+})
+
 test('mobile report tables expose horizontal scrolling and a visible swipe hint', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
   try {

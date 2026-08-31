@@ -219,6 +219,9 @@ var settings = []Setting{
 	{Name: "LEAPVIEW_TARGET", Field: "Target", Type: TypeString, Category: "client", Scope: "client commands", Description: "Default LeapView API target URL.", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_TOKEN_HASH_KEY", Field: "TokenHashKey", Type: TypeString, Category: "security", Scope: "serve", Description: "Optional dedicated key for deterministic API-token fingerprints; falls back to the CSRF key.", Example: SecretPlaceholder, Secret: true, Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_TRUST_PROXY_HEADERS", Field: "TrustProxyHeaders", Type: TypeBool, Category: "security", Scope: "serve", Description: "Trust client-address headers only when a trusted proxy overwrites them.", Default: "false", Runtime: true, Lifecycle: "supported", EnvExample: "false"},
+	{Name: "LEAPVIEW_UI_QA_SCOPE", Type: TypeString, Default: "all", Category: "development", Scope: "ui-qa", Description: "UI framework QA scope; all runs route and visual coverage, while visual runs only screenshot comparisons.", Lifecycle: "development"},
+	{Name: "LEAPVIEW_UPDATE_VISUAL_BASELINES", Type: TypeBool, Default: "false", Category: "development", Scope: "ui-qa", Description: "Write reviewed UI visual-regression baselines before immediately comparing them again.", Lifecycle: "development"},
+	{Name: "LEAPVIEW_VISUAL_ARTIFACT_DIR", Type: TypeString, Default: ".tmp/qa-ui-framework/visual-artifacts", Category: "development", Scope: "ui-qa", Description: "Directory where UI visual-regression reports and failure artifacts are written.", Lifecycle: "development"},
 	{Name: "LEAPVIEW_WAREHOUSE_DSN", Type: TypeString, Category: "connection", Scope: "example connection", Description: "Example externally supplied warehouse connection credential.", Example: SecretPlaceholder, Secret: true, Lifecycle: "external"},
 }
 

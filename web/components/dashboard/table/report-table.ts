@@ -438,7 +438,7 @@ export class ReportTable extends LitElement {
     .row {
       display: grid;
       grid-template-columns: var(--lv-table-columns);
-      width: var(--lv-table-width, 1080px);
+      width: max(100%, var(--lv-table-width, 1080px));
       min-width: var(--lv-table-width, 1080px);
     }
 
@@ -704,14 +704,14 @@ export class ReportTable extends LitElement {
     .table-plane {
       position: relative;
       isolation: isolate;
-      width: var(--lv-table-width, 1080px);
+      width: max(100%, var(--lv-table-width, 1080px));
       min-width: var(--lv-table-width, 1080px);
     }
 
     .canvas {
       position: relative;
       z-index: 0;
-      width: var(--lv-table-width, 1080px);
+      width: max(100%, var(--lv-table-width, 1080px));
       min-width: var(--lv-table-width, 1080px);
     }
 
@@ -1039,15 +1039,16 @@ export class ReportTable extends LitElement {
     const viewport = this.bodyViewportRef.value
     if (!viewport) return
     this.resizeObserver?.disconnect()
-    this.viewportHeight = viewport.clientHeight
-    this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
-    this.resizeObserver = new ResizeObserver(() => {
-      this.viewportHeight = viewport.clientHeight
+    const syncViewport = () => {
+      const viewportHeight = viewport.clientHeight
+      if (viewportHeight === this.viewportHeight) return
+      this.viewportHeight = viewportHeight
       this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
       this.scheduleEnsureBlocksForScroll()
-    })
+    }
+    syncViewport()
+    this.resizeObserver = new ResizeObserver(syncViewport)
     this.resizeObserver.observe(viewport)
-    this.scheduleEnsureBlocksForScroll()
   }
 
   disconnectedCallback(): void {
@@ -1140,19 +1141,20 @@ export class ReportTable extends LitElement {
   }
 
   private gridTemplateFor(columns: TableColumn[]): string {
-    return this.columnPixelWidths(columns).map((size) => `${size}px`).join(' ')
+    return this.columnPixelWidths(columns).map((size) => `minmax(${size}px, ${size}fr)`).join(' ')
   }
 
   private tableWidthFor(columns: TableColumn[]): number {
     return this.columnPixelWidths(columns).reduce((sum, size) => sum + size, 0)
   }
 
-  private columnLineOffsetsFor(columns: TableColumn[]): number[] {
+  private columnLineOffsetsFor(columns: TableColumn[]): string[] {
     const widths = this.columnPixelWidths(columns)
+    const total = widths.reduce((sum, width) => sum + width, 0)
     let offset = 0
     return widths.slice(0, -1).map((width) => {
       offset += width
-      return offset
+      return `${total > 0 ? (offset / total) * 100 : 0}%`
     })
   }
 
@@ -1212,7 +1214,11 @@ export class ReportTable extends LitElement {
   }
 
   private tanstackTable(rows: TanStackTableRow[]) {
-    const pinnedColumns = this.columns.filter((column) => column.role === 'row_header').map((column) => column.key)
+    // Keep one stable identity column visible while the rest of a wide table
+    // scrolls. Pinning every row-header column can exceed a narrow card's
+    // viewport, causing the browser to clamp several sticky cells onto the
+    // same right edge.
+    const pinnedColumns = this.columnController.pinnedKeys(this.columns, this.columnVisibility)
     const sorting: SortingState = this.table.sort?.key
       ? [{ id: this.table.sort.key, desc: this.table.sort.direction === 'desc' }]
       : []
@@ -1674,7 +1680,7 @@ export class ReportTable extends LitElement {
               ${this.availableRows === 0 && !loading ? html`<div class="empty">Waiting for table data</div>` : html`
                 <div class="canvas" role="rowgroup" style=${`height:${totalHeight}px`}>
                   <div class="grid-lines" aria-hidden="true">
-                    ${columnLineOffsets.map((offset) => html`<span class="grid-line" style=${`left:${offset}px`}></span>`)}
+                    ${columnLineOffsets.map((offset) => html`<span class="grid-line" style=${`left:${offset}`}></span>`)}
                   </div>
                   ${visibleRows.map((slot) => {
                     if (slot.kind === 'skeleton') return this.renderSkeletonSegment(headers, slot.index)

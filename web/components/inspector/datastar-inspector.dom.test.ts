@@ -12,9 +12,9 @@ const root = join(process.cwd(), '.tmp/datastar-inspector-test')
 beforeAll(async () => {
   server = createServer(async (request, response) => {
     const url = new URL(request.url ?? '/', 'http://127.0.0.1')
-    if (url.pathname === '/') {
+    if (url.pathname === '/' || url.pathname === '/lazy') {
       response.setHeader('content-type', 'text/html')
-      response.end(testDocument())
+      response.end(testDocument(url.pathname !== '/lazy'))
       return
     }
     const file = normalize(join(root, url.pathname))
@@ -49,6 +49,7 @@ test('inspector shows live signal state without backend history', async () => {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('datastar-inspector'))
     const state = await page.locator('datastar-inspector').evaluate(async (element: any) => {
+      await element.updateComplete
       const toggleStyle = getComputedStyle(element.shadowRoot.querySelector('.toggle'))
       const launcher = {
         bottom: toggleStyle.bottom,
@@ -57,6 +58,8 @@ test('inspector shows live signal state without backend history', async () => {
         opacity: toggleStyle.opacity,
       }
       element.shadowRoot.querySelector<HTMLButtonElement>('.toggle')!.click()
+      await element.updateComplete
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)))
       await element.updateComplete
       const branch = element.shadowRoot.querySelector<HTMLButtonElement>('[data-signal-branch="/status"]')!
       branch.click()
@@ -80,6 +83,33 @@ test('inspector shows live signal state without backend history', async () => {
     expect(state.historyPanels).toBe(0)
     expect(state.historyChanges).toBe(0)
     expect(state.launcher).toEqual({ bottom: '16px', width: '38px', height: '38px', opacity: '1' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('collapsed inspector subscribes to the signal snapshot only while open', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 650 } })
+  try {
+    await page.addInitScript(() => sessionStorage.clear())
+    await page.goto(`${baseURL}/lazy`)
+    await page.waitForFunction(() => customElements.get('datastar-inspector'))
+    const state = await page.locator('datastar-inspector').evaluate(async (element: any) => {
+      await element.updateComplete
+      const collapsedSnapshots = element.querySelectorAll('[data-json-signals]').length
+      element.shadowRoot.querySelector<HTMLButtonElement>('.toggle')!.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
+      const openSnapshots = element.querySelectorAll('[data-json-signals]').length
+      element.shadowRoot.querySelector<HTMLButtonElement>('[aria-label="Close"]')!.click()
+      await element.updateComplete
+      return {
+        collapsedSnapshots,
+        openSnapshots,
+        closedSnapshots: element.querySelectorAll('[data-json-signals]').length,
+      }
+    })
+    expect(state).toEqual({ collapsedSnapshots: 0, openSnapshots: 1, closedSnapshots: 0 })
   } finally {
     await page.close()
   }
@@ -168,13 +198,13 @@ test('inspector launcher and panel can be dragged and keep their positions', asy
   }
 })
 
-function testDocument(): string {
+function testDocument(includeSignals = true): string {
   return `
     <!doctype html>
     <html>
       <body>
         <datastar-inspector>
-          <pre data-json-signals>{"status":{"loading":false,"progressPercent":50}}</pre>
+          ${includeSignals ? '<pre data-json-signals>{"status":{"loading":false,"progressPercent":50}}</pre>' : ''}
         </datastar-inspector>
         <script type="module" src="/datastar-inspector-under-test.js"></script>
       </body>
