@@ -546,6 +546,7 @@ test('ECharts renders labels inside colored cartesian marks in outlined white', 
   const option = echartsOption(envelope, defaultRendererContext) as any
 
   expect(option.series[0].label.position).toBe('insideRight')
+  expect(option.series[0].barMinHeight).toBe(44)
   expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
   expect(option.grid.bottom).toBe(44)
 
@@ -563,6 +564,17 @@ test('ECharts renders labels inside colored cartesian marks in outlined white', 
   } as any
   const orangeDarkOption = echartsOption(envelope, orangeDarkContext) as any
   expect(orangeDarkOption.series[0].label.color).toBe('#fff')
+
+  envelope.spec.presentation.labelPosition = 'outside'
+  const outsideOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(outsideOption.series[0].label.position).toBe('right')
+  expect(outsideOption.series[0].barMinHeight).toBeUndefined()
+
+  envelope.spec.presentation.labelPosition = 'automatic'
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(hiddenOption.series[0].label.show).toBe(false)
+  expect(hiddenOption.series[0].barMinHeight).toBeUndefined()
 })
 
 test('ECharts translation builds radar indicators and aligned series from typed fields', () => {

@@ -362,17 +362,13 @@ export class DatastarInspector extends LitElement {
 
   override connectedCallback() {
     super.connectedCallback()
-    this.ensureSignalsElement()
     this.loadState()
     window.addEventListener('resize', this.handleViewportResize)
   }
 
   override disconnectedCallback() {
     super.disconnectedCallback()
-    this.observer?.disconnect()
-    if (this.parseFrame !== null) {
-      cancelAnimationFrame(this.parseFrame)
-    }
+    this.stopSignalInspection()
     if (this.flashTimeout) {
       clearTimeout(this.flashTimeout)
     }
@@ -382,7 +378,16 @@ export class DatastarInspector extends LitElement {
   }
 
   override firstUpdated() {
-    this.setupSignalObserver()
+    // An authored signal snapshot (used by the standalone inspector and its
+    // tests) can be observed immediately. In the application we create the
+    // snapshot lazily when the inspector opens so large dashboards do not
+    // continuously stringify and parse their complete signal tree while the
+    // inspector is closed.
+    if (this.querySelector('[data-json-signals]')) {
+      this.setupSignalObserver()
+    } else if (this.expanded) {
+      this.startSignalInspection()
+    }
     this.handleViewportResize()
   }
 
@@ -493,8 +498,30 @@ export class DatastarInspector extends LitElement {
     this.saveState()
     if (this.expanded) {
       this.hasUnseenChanges = false
+      void this.updateComplete.then(() => {
+        this.startSignalInspection()
+        this.handleViewportResize()
+      })
+      return
     }
+    this.stopSignalInspection()
     void this.updateComplete.then(this.handleViewportResize)
+  }
+
+  private startSignalInspection() {
+    this.ensureSignalsElement()
+    requestAnimationFrame(() => this.setupSignalObserver())
+  }
+
+  private stopSignalInspection() {
+    this.observer?.disconnect()
+    this.observer = null
+    if (this.parseFrame !== null) {
+      cancelAnimationFrame(this.parseFrame)
+      this.parseFrame = null
+    }
+    this.signalsElement?.remove()
+    this.signalsElement = null
   }
 
   private handleToggleClick() {
@@ -618,6 +645,7 @@ export class DatastarInspector extends LitElement {
   private close() {
     this.expanded = false
     this.saveState()
+    this.stopSignalInspection()
     void this.updateComplete.then(this.handleViewportResize)
   }
 
