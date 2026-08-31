@@ -53,6 +53,7 @@ type Module struct {
 	sealedRollbackFence       func(context.Context, string) (string, int64, error)
 	requireSealedCoordinator  bool
 	deliveryReader            deployment.DeliveryReader
+	nativeDeliveryReader      NativeDeliveryReader
 	deliveryMutations         DeliveryMutationPort
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	persistence               *Persistence
@@ -257,6 +258,10 @@ type Config struct {
 	// When Database is configured, Build installs the SQLite repository by
 	// default; tests and alternate control stores may provide an implementation.
 	DeliveryReader deployment.DeliveryReader
+	// NativeDeliveryReader is the clean-slate PostgreSQL read port. It is
+	// deliberately distinct from DeliveryReader so production handlers cannot
+	// silently fall back to SQLite-shaped projections.
+	NativeDeliveryReader NativeDeliveryReader
 	// Native source-mutation capabilities are strict transaction-bound ports.
 	// Production PostgreSQL composition must provide all four; no SQLite or
 	// cross-connection fallback is permitted.
@@ -299,6 +304,15 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 		if config.NativeDeliveryEvents == nil || config.NativeDeliveryAudit == nil || config.NativeDeliveryWorkflow == nil || config.NativeOperationAuthority == nil {
 			return nil, errors.New("production native deployment requires delivery event, audit, workflow, and operation authorities")
+		}
+		if config.NativeDeliveryReader == nil {
+			// The validated persistence bundle owns the native reader. Keep this
+			// fallback for callers that pass the complete bundle directly while
+			// still rejecting an incomplete bundle below.
+			config.NativeDeliveryReader = config.Persistence.DeliveryReader
+		}
+		if config.NativeDeliveryReader == nil {
+			return nil, errors.New("production native deployment requires a delivery reader")
 		}
 	}
 	if config.DeliveryCandidateBuilder == nil && config.CanonicalDeliveryAdapter != nil {
@@ -479,7 +493,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sealedRollbackRequest: config.SealedRollbackRequest, sealedActivationMarker: config.SealedActivationMarker,
 		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
 		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
-		deliveryMutations: config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations,
+		nativeDeliveryReader: config.NativeDeliveryReader,
+		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations,
 		persistence: config.Persistence,
 	}
 	if m.bootstrapPolicies == nil {

@@ -311,6 +311,11 @@ type NativeDeliveryReader interface {
 	LoadGeneration(context.Context, string) (deploymentpostgres.DeliveryGeneration, error)
 	Publication(context.Context, string) (deploymentpostgres.DeliveryPublication, error)
 	LoadPublication(context.Context, string) (deploymentpostgres.DeliveryPublication, error)
+	// OperatorSnapshot is the bounded native operator projection. The
+	// PostgreSQL delivery authority owns target identity and active pointers;
+	// richer SQLite-only retention/lease projections intentionally do not cross
+	// this port.
+	OperatorSnapshot(context.Context, string) (deploymentpostgres.DeliveryOperatorSnapshot, error)
 }
 
 // NativeActivationRepository is the fence/CAS activation surface.  Both

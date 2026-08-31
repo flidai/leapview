@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
@@ -137,7 +138,7 @@ func (m *Module) deliveryReadReady(w http.ResponseWriter, r *http.Request, proje
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return false
 	}
-	if m == nil || m.deliveryReader == nil {
+	if m == nil || (m.deliveryReader == nil && m.nativeDeliveryReader == nil) {
 		m.writeDeliveryReadError(w, r, errors.New("delivery reader is unavailable"))
 		return false
 	}
@@ -715,6 +716,18 @@ func (m *Module) GetDeliveryPlanPreview(w http.ResponseWriter, r *http.Request, 
 	if !m.deliveryReadReady(w, r, project) {
 		return
 	}
+	if m.nativeDeliveryReader != nil {
+		plan, err := nativeReadPlan(r.Context(), m.nativeDeliveryReader, planID)
+		if err == nil {
+			err = validateNativeReadScope(m, project, plan)
+		}
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativePlanResponse(plan))
+		return
+	}
 	plan, err := m.deliveryReader.PlanByID(r.Context(), planID)
 	if err != nil || plan.ProjectID.String() != project || (m.handlerEnvironment() != "" && plan.Environment != m.handlerEnvironment()) {
 		if err == nil {
@@ -739,6 +752,38 @@ func (m *Module) GetDeliveryBuildStatus(w http.ResponseWriter, r *http.Request, 
 	if !m.deliveryReadReady(w, r, project) {
 		return
 	}
+	if m.nativeDeliveryReader != nil {
+		attempt, err := m.nativeDeliveryReader.BuildAttempt(r.Context(), buildID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		plan, err := nativeReadPlan(r.Context(), m.nativeDeliveryReader, attempt.PlanID)
+		if err == nil {
+			err = validateNativeReadScope(m, project, plan)
+		}
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		seal := nativepostgres.SnapshotSeal{}
+		if attempt.CandidateID != "" {
+			candidate, candidateErr := m.nativeDeliveryReader.Candidate(r.Context(), attempt.CandidateID)
+			if candidateErr != nil {
+				m.writeDeliveryReadError(w, r, nativeReadError(candidateErr))
+				return
+			}
+			if candidate.SnapshotSealID != "" {
+				seal, candidateErr = m.nativeDeliveryReader.SnapshotSeal(r.Context(), candidate.SnapshotSealID)
+				if candidateErr != nil {
+					m.writeDeliveryReadError(w, r, nativeReadError(candidateErr))
+					return
+				}
+			}
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeBuildResponse(attempt, plan, seal))
+		return
+	}
 	attempt, err := m.deliveryReader.DeliveryBuildAttemptByID(r.Context(), buildID)
 	if err == nil {
 		plan, planErr := m.deliveryReader.PlanByID(r.Context(), attempt.PlanID)
@@ -759,6 +804,28 @@ func (m *Module) GetDeliveryBuildStatus(w http.ResponseWriter, r *http.Request, 
 
 func (m *Module) GetDeliverySealStatus(w http.ResponseWriter, r *http.Request, project, sealID string) {
 	if !m.deliveryReadReady(w, r, project) {
+		return
+	}
+	if m.nativeDeliveryReader != nil {
+		seal, err := m.nativeDeliveryReader.SnapshotSeal(r.Context(), sealID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		attempt, err := m.nativeDeliveryReader.BuildAttempt(r.Context(), seal.AttemptID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		plan, err := nativeReadPlan(r.Context(), m.nativeDeliveryReader, attempt.PlanID)
+		if err == nil {
+			err = validateNativeReadScope(m, project, plan)
+		}
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeSealResponse(seal, plan))
 		return
 	}
 	seal, err := m.deliveryReader.DeliveryCatalogSealByID(r.Context(), sealID)
@@ -784,6 +851,31 @@ func (m *Module) GetDeliveryCandidateStatus(w http.ResponseWriter, r *http.Reque
 	if !m.deliveryReadReady(w, r, project) {
 		return
 	}
+	if m.nativeDeliveryReader != nil {
+		candidate, err := m.nativeDeliveryReader.Candidate(r.Context(), candidateID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		plan, err := nativeReadPlan(r.Context(), m.nativeDeliveryReader, candidate.PlanID)
+		if err == nil {
+			err = validateNativeReadScope(m, project, plan)
+		}
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		seal := nativepostgres.SnapshotSeal{}
+		if candidate.SnapshotSealID != "" {
+			seal, err = m.nativeDeliveryReader.SnapshotSeal(r.Context(), candidate.SnapshotSealID)
+			if err != nil {
+				m.writeDeliveryReadError(w, r, nativeReadError(err))
+				return
+			}
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeCandidateResponse(candidate, plan, seal))
+		return
+	}
 	candidate, err := m.deliveryReader.DeliveryCandidateByID(r.Context(), candidateID)
 	if err != nil || candidate.ProjectID.String() != project || (m.handlerEnvironment() != "" && candidate.Environment != m.handlerEnvironment()) {
 		if err == nil {
@@ -803,6 +895,37 @@ func (m *Module) GetDeliveryGenerationStatus(w http.ResponseWriter, r *http.Requ
 	if !m.deliveryReadReady(w, r, project) {
 		return
 	}
+	if m.nativeDeliveryReader != nil {
+		generation, err := m.nativeDeliveryReader.Generation(r.Context(), generationID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		plan, err := nativeReadPlan(r.Context(), m.nativeDeliveryReader, generation.PlanID)
+		if err == nil {
+			err = validateNativeReadScope(m, project, plan)
+		}
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		seal, err := m.nativeDeliveryReader.SnapshotSeal(r.Context(), generation.SnapshotSealID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		operator, err := m.nativeDeliveryReader.OperatorSnapshot(r.Context(), generation.TargetID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		if operator.ProjectID != project || (m.handlerEnvironment() != "" && operator.Environment != m.handlerEnvironment()) {
+			m.writeDeliveryReadError(w, r, fmt.Errorf("%w: generation target scope differs", deployment.ErrNotFound))
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeGenerationResponse(generation, plan, seal, operator.ActiveGenerationID == generation.GenerationID))
+		return
+	}
 	generation, err := m.deliveryReader.DeliveryGenerationByID(r.Context(), generationID)
 	if err != nil || generation.ProjectID.String() != project || (m.handlerEnvironment() != "" && generation.Environment != m.handlerEnvironment()) {
 		if err == nil {
@@ -819,6 +942,28 @@ func (m *Module) GetDeliveryGenerationStatus(w http.ResponseWriter, r *http.Requ
 
 func (m *Module) GetDeliveryPublicationEvidence(w http.ResponseWriter, r *http.Request, project, publicationID string) {
 	if !m.deliveryReadReady(w, r, project) {
+		return
+	}
+	if m.nativeDeliveryReader != nil {
+		publication, err := m.nativeDeliveryReader.Publication(r.Context(), publicationID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		generation, err := m.nativeDeliveryReader.Generation(r.Context(), publication.GenerationID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		plan, err := nativeReadPlan(r.Context(), m.nativeDeliveryReader, generation.PlanID)
+		if err == nil {
+			err = validateNativeReadScope(m, project, plan)
+		}
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativePublicationResponse(publication, generation, plan))
 		return
 	}
 	publication, err := m.deliveryReader.DeliveryPublicationByID(r.Context(), publicationID)
@@ -840,6 +985,19 @@ func (m *Module) GetDeliveryOperatorSnapshot(w http.ResponseWriter, r *http.Requ
 	}
 	if m.handlerEnvironment() == "" {
 		m.writeDeliveryReadError(w, r, errors.New("instance environment is required for operator status"))
+		return
+	}
+	if m.nativeDeliveryReader != nil {
+		snapshot, err := m.nativeDeliveryReader.OperatorSnapshot(r.Context(), m.instanceID)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, nativeReadError(err))
+			return
+		}
+		if snapshot.ProjectID != project || snapshot.Environment != m.handlerEnvironment() {
+			m.writeDeliveryReadError(w, r, fmt.Errorf("%w: operator target scope differs", deployment.ErrNotFound))
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeOperatorResponse(snapshot))
 		return
 	}
 	snapshot, err := m.deliveryReader.DeliveryOperatorSnapshot(r.Context(), project, m.handlerEnvironment())

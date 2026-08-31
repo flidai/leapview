@@ -83,6 +83,19 @@ type DeliveryTarget struct {
 	UpdatedAt           time.Time
 }
 
+// DeliveryOperatorSnapshot is the bounded native operator projection. The
+// PostgreSQL delivery authority persists target identity and the active
+// generation/publication pointers; SQLite-only lease/retention projections
+// are deliberately not synthesized here.
+type DeliveryOperatorSnapshot struct {
+	ProjectID           string
+	Environment         string
+	TargetID            string
+	TargetRevision      int64
+	ActiveGenerationID  string
+	ActivePublicationID string
+}
+
 type TargetInput struct {
 	TargetID, ProjectID, Environment string
 	TargetRevision                   int64
@@ -862,6 +875,22 @@ func (r *Repository) Target(ctx context.Context, id string) (DeliveryTarget, err
 }
 func (r *Repository) LoadTarget(ctx context.Context, id string) (DeliveryTarget, error) {
 	return r.Target(ctx, id)
+}
+
+// OperatorSnapshot returns the bounded native operator projection for one
+// target. Detail tables owned by other authorities (retention roots, query
+// leases, and garbage-collection state) are intentionally not fabricated.
+func (r *Repository) OperatorSnapshot(ctx context.Context, targetID string) (DeliveryOperatorSnapshot, error) {
+	target, err := r.Target(ctx, targetID)
+	if err != nil {
+		return DeliveryOperatorSnapshot{}, err
+	}
+	return DeliveryOperatorSnapshot{
+		ProjectID: target.ProjectID, Environment: target.Environment,
+		TargetID: target.TargetID, TargetRevision: target.TargetRevision,
+		ActiveGenerationID:  target.ActiveGenerationID,
+		ActivePublicationID: target.ActivePublicationID,
+	}, nil
 }
 
 // ActiveGeneration resolves the generation selected by a target's durable
