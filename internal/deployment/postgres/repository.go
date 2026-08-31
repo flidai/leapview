@@ -161,6 +161,21 @@ type BuildArtifactBindingInput struct {
 	FencingEpoch          int64
 }
 
+// RecoveredBuildArtifactBindingInput is the exact physical-build evidence
+// needed to bind an artifact while recovering an attempt. Unlike the normal
+// binding input, recovery also carries the canonical DuckLake commit marker;
+// this prevents a recovered artifact from being attached to a different
+// attempt, plan, request, pool, or serving generation.
+type RecoveredBuildArtifactBindingInput struct {
+	AttemptID             string
+	ServingArtifactID     string
+	ServingArtifactDigest string
+	ServingStateID        string
+	OwnerID               string
+	FencingEpoch          int64
+	CommitMarker          json.RawMessage
+}
+
 type CommitAttemptInput struct {
 	AttemptID, OwnerID string
 	FencingEpoch       int64
@@ -1426,6 +1441,18 @@ func (r *Repository) BindBuildArtifactTx(ctx context.Context, tx Tx, in BuildArt
 	return bindBuildArtifact(contextOrBackground(ctx), tx, in)
 }
 
+// BindRecoveredBuildArtifactTx records (or exactly replays) a recovered
+// artifact binding through a caller-owned transaction. Recovery may bind only
+// an already-indeterminate attempt and does not require its lease to remain
+// active; a running writer must use the ordinary active-lease path. The
+// transaction is never committed or rolled back by this method.
+func (r *Repository) BindRecoveredBuildArtifactTx(ctx context.Context, tx Tx, in RecoveredBuildArtifactBindingInput) (BuildArtifactBinding, error) {
+	if tx == nil {
+		return BuildArtifactBinding{}, ErrInvalid
+	}
+	return bindRecoveredBuildArtifact(contextOrBackground(ctx), tx, in)
+}
+
 func canonicalBuildArtifactBindingInput(in BuildArtifactBindingInput) (attempt, artifactID, artifactDigest, servingState, owner string, fence int64, err error) {
 	attempt, err = uuidID(in.AttemptID, "attempt id", false)
 	if err != nil {
@@ -1524,6 +1551,89 @@ func bindBuildArtifact(ctx context.Context, db DBTX, in BuildArtifactBindingInpu
 	if !leaseActive {
 		return BuildArtifactBinding{}, ErrLeaseExpired
 	}
+	if err := depdb.New(db).InsertBuildArtifactBinding(ctx, depdb.InsertBuildArtifactBindingParams{
+		AttemptID: dbUUID(attempt), ServingArtifactID: artifactID, ServingArtifactDigest: artifactDigest, ServingStateID: servingState,
+	}); err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	bound, err := loadBuildArtifactBinding(ctx, db, attempt)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	if bound.ServingArtifactID != artifactID || bound.ServingArtifactDigest != artifactDigest || bound.ServingStateID != servingState {
+		return BuildArtifactBinding{}, ErrConflict
+	}
+	return bound, nil
+}
+
+func bindRecoveredBuildArtifact(ctx context.Context, db DBTX, in RecoveredBuildArtifactBindingInput) (BuildArtifactBinding, error) {
+	// Reuse the ordinary binding canonicalization for all bounded identities,
+	// but deliberately keep the recovery path separate so normal binding's
+	// active-lease and running-state rules remain unchanged.
+	attempt, artifactID, artifactDigest, servingState, owner, fence, err := canonicalBuildArtifactBindingInput(BuildArtifactBindingInput{
+		AttemptID: in.AttemptID, ServingArtifactID: in.ServingArtifactID,
+		ServingArtifactDigest: in.ServingArtifactDigest, ServingStateID: in.ServingStateID,
+		OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch,
+	})
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	marker, canonicalMarker, markerErr := decodeCommitMarker(in.CommitMarker, true)
+	if markerErr != nil {
+		return BuildArtifactBinding{}, fmt.Errorf("%w: invalid recovery commit marker: %v", ErrInvalid, markerErr)
+	}
+
+	// Lock the delivery attempt before reading its state or binding. This is
+	// the same delivery-side lock used by ordinary binding and preserves the
+	// delivery -> DuckLake lock order for callers that compose this Tx method
+	// with physical reconciliation.
+	if _, lockErr := depdb.New(db).LockBuildAttempt(ctx, dbUUID(attempt)); errors.Is(lockErr, pgx.ErrNoRows) {
+		return BuildArtifactBinding{}, ErrNotFound
+	} else if lockErr != nil {
+		return BuildArtifactBinding{}, lockErr
+	}
+	at, err := loadAttempt(ctx, db, attempt)
+	if err != nil {
+		return BuildArtifactBinding{}, err
+	}
+	if at.OwnerID != owner || at.FencingEpoch != fence {
+		return BuildArtifactBinding{}, ErrStaleFence
+	}
+	if !markerIdentityMatches(marker, attempt, at.PhysicalPoolID, at.RequestDigest, at.PlanDigest, fence) {
+		return BuildArtifactBinding{}, fmt.Errorf("%w: recovery commit marker identity mismatch", ErrConflict)
+	}
+	if marker.GenerationID != servingState {
+		return BuildArtifactBinding{}, fmt.Errorf("%w: serving state differs from recovery commit marker generation", ErrConflict)
+	}
+	if at.State == AttemptCommitted {
+		_, storedCanonicalMarker, storedMarkerErr := decodeCommitMarker(at.CommitMarker, false)
+		if storedMarkerErr != nil || !bytes.Equal(storedCanonicalMarker, canonicalMarker) {
+			return BuildArtifactBinding{}, fmt.Errorf("%w: committed attempt marker differs from recovery marker", ErrConflict)
+		}
+	}
+
+	existing, existingErr := loadBuildArtifactBinding(ctx, db, attempt)
+	if existingErr == nil {
+		if at.State != AttemptIndeterminate && at.State != AttemptCommitted {
+			return BuildArtifactBinding{}, fmt.Errorf("%w: build attempt is not recoverable", ErrConflict)
+		}
+		if existing.ServingArtifactID != artifactID || existing.ServingArtifactDigest != artifactDigest || existing.ServingStateID != servingState {
+			return BuildArtifactBinding{}, ErrConflict
+		}
+		// Exact replay is limited to the indeterminate recovery state and the
+		// committed state produced by an earlier successful recovery transaction.
+		return existing, nil
+	}
+	if !errors.Is(existingErr, ErrNotFound) {
+		return BuildArtifactBinding{}, existingErr
+	}
+	if at.State != AttemptIndeterminate {
+		return BuildArtifactBinding{}, fmt.Errorf("%w: build attempt is not indeterminate and has no artifact binding", ErrConflict)
+	}
+
+	// Recovery evidence, rather than an active delivery lease, authorizes this
+	// first bind. In particular, an indeterminate attempt may be recovered
+	// after its lease has expired.
 	if err := depdb.New(db).InsertBuildArtifactBinding(ctx, depdb.InsertBuildArtifactBindingParams{
 		AttemptID: dbUUID(attempt), ServingArtifactID: artifactID, ServingArtifactDigest: artifactDigest, ServingStateID: servingState,
 	}); err != nil {

@@ -372,6 +372,189 @@ func TestPostgresBuildArtifactBindingReplayFenceAndTerminalRules(t *testing.T) {
 	}
 }
 
+func recoveredArtifactBindingInput(f completeBuildFixture) RecoveredBuildArtifactBindingInput {
+	return RecoveredBuildArtifactBindingInput{
+		AttemptID: f.AttemptID, ServingArtifactID: f.Seal.ServingArtifactID,
+		ServingArtifactDigest: f.Seal.ServingArtifactDigest, ServingStateID: "generation-test",
+		OwnerID: f.Lease.OwnerID, FencingEpoch: f.Lease.FencingEpoch,
+		CommitMarker: f.Commit.CommitMarker,
+	}
+}
+
+func TestPostgresRecoveredBuildArtifactBindingRules(t *testing.T) {
+	r := New(deliveryTestDB(t))
+	ctx := t.Context()
+
+	// A running attempt cannot bypass the ordinary active-lease binding path.
+	running := newCompleteBuildFixtureWithoutBinding(t, r, "a")
+	tx, err := r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, recoveredArtifactBindingInput(running)); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("running recovered binding error = %v, want conflict", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BuildArtifactBinding(ctx, running.AttemptID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("running recovery created binding: %v", err)
+	}
+	runningBound := newCompleteBuildFixtureWithSuffix(t, r, "7")
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, recoveredArtifactBindingInput(runningBound)); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("running recovered replay error = %v, want conflict", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Recovery does not require the build lease to remain active. Move an
+	// indeterminate attempt's lease into the past before inserting its binding.
+	indeterminate := newCompleteBuildFixtureWithSuffixBindingAndLifetime(t, r, "b", false, 100*time.Millisecond)
+	if wait := time.Until(indeterminate.Lease.ExpiresAt) + 20*time.Millisecond; wait > 0 {
+		time.Sleep(wait)
+	}
+	if _, err := r.MarkAttemptIndeterminate(ctx, TerminateAttemptInput{
+		AttemptID: indeterminate.AttemptID, OwnerID: indeterminate.Lease.OwnerID,
+		FencingEpoch: indeterminate.Lease.FencingEpoch, Evidence: []byte(`{"phase":"unknown"}`),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.BindRecoveredBuildArtifactTx(ctx, tx, recoveredArtifactBindingInput(indeterminate)); err != nil || got.AttemptID != indeterminate.AttemptID {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("expired indeterminate recovered binding = %#v, %v", got, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact replay remains valid once the attempt is committed.
+	terminal := newCompleteBuildFixtureWithSuffix(t, r, "c")
+	if _, err := r.CommitBuildAttempt(ctx, terminal.Commit); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := r.BindRecoveredBuildArtifactTx(ctx, tx, recoveredArtifactBindingInput(terminal)); err != nil || got.AttemptID != terminal.AttemptID {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("terminal exact recovered replay = %#v, %v", got, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	terminalMarkerDrift := recoveredArtifactBindingInput(terminal)
+	terminalMarkerDrift.CommitMarker = []byte(strings.Replace(string(terminalMarkerDrift.CommitMarker), `"project":"project-test"`, `"project":"project-other"`, 1))
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, terminalMarkerDrift); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("committed full-marker drift error = %v, want conflict", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// Marker identity, artifact identity, and owner/fence mismatches are
+	// rejected without creating or changing a binding.
+	mismatch := newCompleteBuildFixtureWithoutBinding(t, r, "d")
+	base := recoveredArtifactBindingInput(mismatch)
+	markerMismatch := base
+	markerMismatch.CommitMarker = testCommitMarker(mismatch.AttemptID, "pool-other", mismatch.RequestDigest, mismatch.PlanDigest)
+	markerMismatch.CommitMarker = []byte(strings.Replace(string(markerMismatch.CommitMarker), `"generation-test"`, `"generation-other"`, 1))
+	markerAttempt := base
+	markerAttempt.CommitMarker = testCommitMarker("0198f2c0-7c7a-7f00-0000-00000000ffffff", "pool-complete", mismatch.RequestDigest, mismatch.PlanDigest)
+	markerPlan := base
+	markerPlan.CommitMarker = testCommitMarker(mismatch.AttemptID, "pool-complete", mismatch.RequestDigest, testDigest('c'))
+	ownerMismatch := base
+	ownerMismatch.OwnerID = "another-builder"
+	fenceMismatch := base
+	fenceMismatch.FencingEpoch++
+	for name, input := range map[string]RecoveredBuildArtifactBindingInput{
+		"marker identity": markerMismatch, "marker attempt": markerAttempt,
+		"marker plan": markerPlan,
+	} {
+		t.Run(name, func(t *testing.T) {
+			tx, err := r.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, input); !errors.Is(err, ErrConflict) {
+				_ = tx.Rollback(ctx)
+				t.Fatalf("error = %v, want conflict", err)
+			}
+			if err := tx.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+	for name, input := range map[string]RecoveredBuildArtifactBindingInput{"owner": ownerMismatch, "fence": fenceMismatch} {
+		t.Run(name, func(t *testing.T) {
+			tx, err := r.Begin(ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, input); !errors.Is(err, ErrStaleFence) {
+				_ = tx.Rollback(ctx)
+				t.Fatalf("error = %v, want stale fence", err)
+			}
+			if err := tx.Rollback(ctx); err != nil {
+				t.Fatal(err)
+			}
+		})
+	}
+
+	// A terminal attempt without a prior binding cannot be repaired by this
+	// seam; rollback leaves the immutable binding absent.
+	missing := newCompleteBuildFixtureWithoutBinding(t, r, "e")
+	if _, err := r.CommitBuildAttempt(ctx, missing.Commit); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, recoveredArtifactBindingInput(missing)); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("terminal missing binding error = %v, want conflict", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BuildArtifactBinding(ctx, missing.AttemptID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("terminal missing binding after rollback = %v", err)
+	}
+
+	// An existing immutable row cannot be replaced by a recovered artifact.
+	immutable := newCompleteBuildFixtureWithSuffix(t, r, "f")
+	conflict := recoveredArtifactBindingInput(immutable)
+	conflict.ServingArtifactDigest = testDigest('d')
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.BindRecoveredBuildArtifactTx(ctx, tx, conflict); !errors.Is(err, ErrConflict) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("immutable exact conflict = %v, want conflict", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgresBuildCompletionRequiresArtifactBindingIdentity(t *testing.T) {
 	ctx := t.Context()
 	r := New(deliveryTestDB(t))
