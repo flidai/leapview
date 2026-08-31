@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/flidai/leapview/internal/app"
 	"github.com/flidai/leapview/internal/app/config"
@@ -73,8 +74,17 @@ func (c *Controller) runScheduledRecoveryQualification(ctx context.Context, buil
 			return err
 		}
 		lifecycle = refreshmodule.NewRecoveryLifecycle(store.SQLDB(), *lifecycle)
+		lifecycle.Clock = scheduledRecoveryClock{now: c.now}
 		return lifecycle.RunOnce(ctx)
 	})
+}
+
+type scheduledRecoveryClock struct {
+	now func() time.Time
+}
+
+func (clock scheduledRecoveryClock) Now() time.Time {
+	return clock.now()
 }
 
 func (c *Controller) managedContainerStateSource(ctx context.Context) (string, error) {
