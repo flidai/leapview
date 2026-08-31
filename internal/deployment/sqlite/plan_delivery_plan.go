@@ -78,10 +78,6 @@ func (r *Repository) CreatePlan(ctx context.Context, input deployment.DeliveryPl
 	}
 	plan.ActorID = actor
 	sourceOwnerID := plan.SourceOwnerID
-	if sourceOwnerID == "" {
-		sourceOwnerID = actor
-	}
-	plan.SourceOwnerID = sourceOwnerID
 	err = deploydb.New(tx).CreateDeliveryPlan(ctx, deploydb.CreateDeliveryPlanParams{
 		ID: plan.ID, TargetID: plan.TargetID, ProjectID: plan.ProjectID.String(), Environment: plan.Environment, ActorID: actor, SourceOwnerID: sourceOwnerID,
 		OperationKind: string(plan.Operation), SourceDigest: plan.SourceDigest, NULLIF: plan.BaseGenerationID,

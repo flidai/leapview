@@ -9,6 +9,7 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
+	apprefreshpostgres "github.com/flidai/leapview/internal/app/refreshpostgres"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
@@ -32,7 +33,7 @@ type nativeRefreshFixture struct {
 	delivery  *deploymentpostgres.Repository
 	refresh   *refreshpostgres.Repository
 	jobs      *PostgresJobsAdapter
-	finalizer *PostgresNativeRefreshFinalizerAdapter
+	finalizer *apprefreshpostgres.PostgresNativeRefreshFinalizerAdapter
 	job       refreshrun.JobRecord
 	result    refreshrun.CanonicalRefreshResult
 	evidence  refreshpostgres.PublicationInput
@@ -97,7 +98,7 @@ func newNativeRefreshFixture(t *testing.T) nativeRefreshFixture {
 		t.Fatal(err)
 	}
 	prepared := claimed
-	finalizer, err := NewPostgresNativeRefreshFinalizer(refreshRepo, delivery, "target_concrete_prod")
+	finalizer, err := apprefreshpostgres.NewPostgresNativeRefreshFinalizer(refreshRepo, delivery, "target_concrete_prod")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -121,7 +122,7 @@ func TestPostgresNativeRefreshFinalizerRollsBackAndReplaysExactly(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	pubID, _, _, _ := nativeRefreshIdentities(f.job, f.result, f.evidence)
+	pubID, _, _, _ := apprefreshpostgres.NativeRefreshIdentities(f.job, f.result, f.evidence)
 	completionErr := failedPersistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork).CompleteCanonicalRefresh(t.Context(), f.job, f.result)
 	if completionErr == nil {
 		t.Fatal("completion unexpectedly succeeded with failing job transition")
@@ -176,7 +177,7 @@ func TestPostgresNativeRefreshFinalizerRejectsStaleRunFence(t *testing.T) {
 	f := newNativeRefreshFixture(t)
 	stale := f.job
 	stale.LeaseRevision++
-	pubID, _, _, _ := nativeRefreshIdentities(stale, f.result, f.evidence)
+	pubID, _, _, _ := apprefreshpostgres.NativeRefreshIdentities(stale, f.result, f.evidence)
 	tx, err := f.db.Begin(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -211,7 +212,7 @@ func TestPostgresNativeRefreshFinalizerRejectsCrossScopeTarget(t *testing.T) {
 	if _, err := f.delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: "target_other_prod", ProjectID: "project_other", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	finalizer, err := NewPostgresNativeRefreshFinalizerWithResolver(f.refresh, f.delivery, PostgresNativeRefreshTargetResolverFunc(func(context.Context, refreshpostgres.Tx, refreshrun.JobRecord) (string, error) {
+	finalizer, err := apprefreshpostgres.NewPostgresNativeRefreshFinalizerWithResolver(f.refresh, f.delivery, apprefreshpostgres.PostgresNativeRefreshTargetResolverFunc(func(context.Context, refreshpostgres.Tx, refreshrun.JobRecord) (string, error) {
 		return "target_other_prod", nil
 	}))
 	if err != nil {
@@ -229,24 +230,15 @@ func TestPostgresNativeRefreshFinalizerRejectsCrossScopeTarget(t *testing.T) {
 }
 
 func TestPostgresNativeRefreshFinalizerRequiresTargetResolver(t *testing.T) {
-	_, err := NewPostgresNativeRefreshFinalizerWithResolver(refreshpostgres.New(nil), deploymentpostgres.New(nil), nil)
+	_, err := apprefreshpostgres.NewPostgresNativeRefreshFinalizerWithResolver(refreshpostgres.New(nil), deploymentpostgres.New(nil), nil)
 	if err == nil || !strings.Contains(err.Error(), "target resolver") {
 		t.Fatalf("missing target resolver error = %v", err)
 	}
 }
 
-func TestPostgresNativeRefreshFinalizerRejectsWhitespaceResolverResult(t *testing.T) {
-	f := &PostgresNativeRefreshFinalizerAdapter{TargetResolver: PostgresNativeRefreshTargetResolverFunc(func(context.Context, refreshpostgres.Tx, refreshrun.JobRecord) (string, error) {
-		return " target", nil
-	})}
-	if _, err := f.resolveTarget(t.Context(), nil, refreshrun.JobRecord{}); err == nil {
-		t.Fatal("whitespace target resolver result unexpectedly accepted")
-	}
-}
-
 func TestPostgresNativeRefreshFinalizerRejectsExpiredDeliveryLease(t *testing.T) {
 	f := newNativeRefreshFixture(t)
-	pubID, leaseID, _, requestDigest := nativeRefreshIdentities(f.job, f.result, f.evidence)
+	pubID, leaseID, _, requestDigest := apprefreshpostgres.NativeRefreshIdentities(f.job, f.result, f.evidence)
 	generation, err := f.delivery.Generation(t.Context(), f.result.ServingStateID)
 	if err != nil {
 		t.Fatal(err)

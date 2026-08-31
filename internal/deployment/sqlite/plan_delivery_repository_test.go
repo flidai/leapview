@@ -52,7 +52,7 @@ func openDeliveryRepository(t *testing.T) (*platform.Store, *Repository) {
 
 func insertDeliveryPool(t *testing.T, store *platform.Store, id string) {
 	t.Helper()
-	_, err := store.SQLDB().ExecContext(context.Background(), `INSERT INTO physical_pools (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,isolation_boundary,retention_authority,retention_policy_json) VALUES (?,?, 's3://delivery', 'repo-test', 's3', 'names-v1', 'repo-test', 'gc', '{}')`, id, id)
+	_, err := store.SQLDB().ExecContext(context.Background(), `INSERT INTO physical_pools (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,encryption_domain,isolation_boundary,retention_authority,retention_policy_json) VALUES (?,?, 's3://delivery', 'repo-test', 's3', 'names-v1', 'repo-test', 'repo-test', 'gc', '{}')`, id, id)
 	if err != nil {
 		t.Fatal(err)
 	}

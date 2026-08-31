@@ -60,6 +60,24 @@ func deliveryTestPlan(t *testing.T) DeliveryPlan {
 	return plan
 }
 
+func TestNewDeliveryPlanDefaultsSourceOwnerBeforeDigest(t *testing.T) {
+	plan := deliveryTestPlan(t)
+	if plan.SourceOwnerID != plan.Provenance.Builder {
+		t.Fatalf("source owner = %q, want provenance builder %q", plan.SourceOwnerID, plan.Provenance.Builder)
+	}
+
+	replay := plan
+	replay.SourceOwnerID = ""
+	replay.Digest = ""
+	replay, err := NewDeliveryPlan(replay)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.SourceOwnerID != plan.SourceOwnerID || replay.Digest != plan.Digest {
+		t.Fatalf("defaulted replay identity = owner %q digest %q, want owner %q digest %q", replay.SourceOwnerID, replay.Digest, plan.SourceOwnerID, plan.Digest)
+	}
+}
+
 func deliveryTestGateEvidence(t *testing.T, plan DeliveryPlan, outcome release.GateOutcome) *release.GateEvidence {
 	t.Helper()
 	raw := release.GateEvidence{Version: 1, CandidateID: "candidate-1", SourceDigest: plan.SourceDigest, BindingGeneration: deliveryTestDigest('c'), RuntimeVersion: "runtime-1", DuckDBVersion: "duckdb-1", Outcome: outcome, EvaluatedAt: time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC), Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 2, MaxMillis: 100}}

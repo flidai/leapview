@@ -62,6 +62,19 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 	}
 	plan.Status = DeliveryPlanPlanned
 	plan.CreatedAt = plan.CreatedAt.UTC()
+	// Source ownership participates in the canonical plan digest and is
+	// required by every durable repository. Resolve the documented legacy
+	// default before any digest is computed; a constructor result must never
+	// need an identity-changing persistence mutation.
+	if plan.SourceOwnerID == "" {
+		plan.SourceOwnerID = plan.ActorID
+		if plan.SourceOwnerID == "" {
+			plan.SourceOwnerID = plan.Provenance.Builder
+		}
+		if plan.SourceOwnerID == "" {
+			plan.SourceOwnerID = "delivery"
+		}
+	}
 	for i := range plan.Execution.DataInputs {
 		plan.Execution.DataInputs[i] = plan.Execution.DataInputs[i].canonical()
 	}

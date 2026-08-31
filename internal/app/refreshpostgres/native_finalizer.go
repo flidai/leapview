@@ -1,4 +1,4 @@
-package module
+package refreshpostgres
 
 import (
 	"context"
@@ -136,7 +136,7 @@ func (f *PostgresNativeRefreshFinalizerAdapter) FinalizeCanonicalRefreshTx(ctx c
 	if err != nil {
 		return err
 	}
-	publicationID, leaseID, correlationID, requestDigest := nativeRefreshIdentities(job, result, evidence)
+	publicationID, leaseID, correlationID, requestDigest := NativeRefreshIdentities(job, result, evidence)
 	// This first check intentionally locks the refresh run row before any
 	// native row is created. A worker takeover cannot race publication admission.
 	// A committed native row is durable outcome evidence, however, and may be
@@ -279,7 +279,9 @@ func (f *PostgresNativeRefreshFinalizerAdapter) leaseForPublication(ctx context.
 	return lease, nil
 }
 
-func nativeRefreshIdentities(job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, evidence refreshpostgres.PublicationInput) (publicationID, leaseID, correlationID, requestDigest string) {
+// NativeRefreshIdentities derives the exact durable publication, lease,
+// correlation, and request identities used for a canonical refresh replay.
+func NativeRefreshIdentities(job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, evidence refreshpostgres.PublicationInput) (publicationID, leaseID, correlationID, requestDigest string) {
 	seed := strings.Join([]string{
 		job.RunID, job.Identity.ProjectID.String(), job.Identity.Environment, job.Identity.GenerationID,
 		result.PlanID, result.NativeGenerationID, fmt.Sprintf("%d", result.SnapshotID),
@@ -291,5 +293,3 @@ func nativeRefreshIdentities(job refreshrun.JobRecord, result refreshrun.Canonic
 	requestDigest = deployment.CanonicalDeliveryDigest([]byte("leapview/native-refresh/request\x00" + seed))
 	return publicationID, leaseID, correlationID, requestDigest
 }
-
-var _ PostgresNativeRefreshFinalizer = (*PostgresNativeRefreshFinalizerAdapter)(nil)

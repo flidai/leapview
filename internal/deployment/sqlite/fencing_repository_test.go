@@ -17,7 +17,7 @@ import (
 func fencingPool(t *testing.T, store *platform.Store) string {
 	t.Helper()
 	pool := "sha256:" + strings.Repeat("a", 64)
-	_, err := store.SQLDB().ExecContext(context.Background(), `INSERT INTO physical_pools (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,isolation_boundary,retention_authority,retention_policy_json) VALUES (?,?,?,?,?,?,?,?,?)`, pool, pool, "s3://fence", "fence", "s3", "names-v1", "fence", "fence", `{}`)
+	_, err := store.SQLDB().ExecContext(context.Background(), `INSERT INTO physical_pools (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,encryption_domain,isolation_boundary,retention_authority,retention_policy_json) VALUES (?,?,?,?,?,?,?,?,?,?)`, pool, pool, "s3://fence", "fence", "s3", "names-v1", "fence", "fence", "fence", `{}`)
 	if err != nil {
 		t.Fatalf("insert fencing pool: %v", err)
 	}

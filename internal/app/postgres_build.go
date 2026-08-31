@@ -19,10 +19,8 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	"github.com/flidai/leapview/internal/analytics/catalogartifact"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/gates"
-	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
@@ -277,7 +275,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	nativeRefreshFinalizer, err := refreshmodule.NewPostgresNativeRefreshFinalizer(graph.Refresh, graph.DeploymentRepository, instanceID)
+	nativeRefreshFinalizer, err := apprefreshpostgres.NewPostgresNativeRefreshFinalizer(graph.Refresh, graph.DeploymentRepository, instanceID)
 	if err != nil {
 		return fail(err)
 	}
@@ -568,14 +566,14 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(fmt.Errorf("build native delivery plan coordinator: %w", err))
 	}
-	physicalFactory := appdeploymentpostgres.NativePhysicalBuildEnvironmentFactoryFunc(func(openCtx context.Context, marker catalogartifact.CommitMarker) (appdeploymentpostgres.NativePhysicalBuildEnvironment, error) {
+	physicalFactory := appdeploymentpostgres.NativePhysicalBuildEnvironmentFactoryFunc(func(openCtx context.Context, marker analyticsmodule.CommitMarker) (appdeploymentpostgres.NativePhysicalBuildEnvironment, error) {
 		duckLakeConfig, catalogID, err := resolveDuckLakeConfig(openCtx)
 		if err != nil {
 			return nil, err
 		}
 		return appdeploymentpostgres.DuckLakePhysicalBuildEnvironmentFactory{
 			Config: duckLakeConfig, CatalogID: catalogID,
-			MaterializerFactory: func(environment *ducklake.Environment) (analyticsmaterialization.Executor, error) {
+			MaterializerFactory: func(environment *ducklake.Environment) (analyticsmodule.MaterializationExecutor, error) {
 				return analytics.ProjectMaterializerForEnvironment(environment)
 			},
 		}.Open(openCtx, marker)
