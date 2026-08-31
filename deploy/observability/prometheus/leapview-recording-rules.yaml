@@ -209,3 +209,41 @@ groups:
       - record: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
         expr: |
           1 - leapview:dashboard_refresh_reliability:error_budget_consumption_30d
+
+  - name: leapview-dashboard-refresh-latency
+    rules:
+      - record: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
+        expr: |
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[5m])
+            )
+            /
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+            )
+          )
+          and on (job, instance)
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+            ) > 0
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:timely_completed_ratio_30d'
+        expr: |
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[30d])
+            )
+            /
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+            )
+          )
+          and on (job, instance)
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+            ) > 0
+          )
