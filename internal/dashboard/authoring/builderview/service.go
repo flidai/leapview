@@ -648,7 +648,11 @@ func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {
 		for _, role := range authoring.CanonicalVisualRoles(entry.Type) {
 			roles = append(roles, uisignals.DashboardBuilderFieldRoleSignal(role))
 		}
-		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles})
+		limits := make([]uisignals.DashboardBuilderVisualRoleLimitSignal, 0, len(authoring.CanonicalVisualRoleLimits(entry.Type)))
+		for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
+			limits = append(limits, uisignals.DashboardBuilderVisualRoleLimitSignal{Role: uisignals.DashboardBuilderFieldRoleSignal(limit.Role), Maximum: limit.Maximum})
+		}
+		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles, RoleLimits: limits})
 	}
 	return result
 }
@@ -877,7 +881,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 			if strings.TrimSpace(dimension.Name) != "" {
 				fieldID = dimension.Name
 			}
-			if projected, ok := fieldSignal(fieldID, display(dimension.Label, fieldID), "dimension", dimension.Type, dimension.Description); ok {
+			if projected, ok := fieldSignal(fieldID, display(dimension.Label, fieldID), "dimension", uisignals.DashboardBuilderFieldRoleSignalDimension, dimension.Type, dimension.Description); ok {
 				fields = append(fields, projected)
 			}
 		}
@@ -888,7 +892,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 					fieldID = dimension.Field
 				}
 				if !containsField(fields, fieldID) {
-					if projected, ok := fieldSignal(fieldID, display(dimension.Label, id), "dimension", dimension.Type, dimension.Description); ok {
+					if projected, ok := fieldSignal(fieldID, display(dimension.Label, id), "dimension", uisignals.DashboardBuilderFieldRoleSignalDetail, dimension.Type, dimension.Description); ok {
 						fields = append(fields, projected)
 					}
 				}
@@ -899,7 +903,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 				continue
 			}
 			fieldID := id
-			if projected, ok := fieldSignal(fieldID, display(metric.Label, id), "metric", "number", metric.Description); ok {
+			if projected, ok := fieldSignal(fieldID, display(metric.Label, id), "metric", uisignals.DashboardBuilderFieldRoleSignalMetric, "number", metric.Description); ok {
 				fields = append(fields, projected)
 			}
 		}
@@ -924,7 +928,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 	return uisignals.DashboardBuilderSemanticModelSignal{ID: modelID, Title: display(model.Title, model.Name), Datasets: result}, nil
 }
 
-func fieldSignal(id, label, kind, dataType, description string) (uisignals.DashboardBuilderFieldSignal, bool) {
+func fieldSignal(id, label, kind string, role uisignals.DashboardBuilderFieldRoleSignal, dataType, description string) (uisignals.DashboardBuilderFieldSignal, bool) {
 	id = safeFieldID(id)
 	if id == "" {
 		return uisignals.DashboardBuilderFieldSignal{}, false
@@ -932,7 +936,7 @@ func fieldSignal(id, label, kind, dataType, description string) (uisignals.Dashb
 	if !safeLabel(label) {
 		label = id
 	}
-	field := uisignals.DashboardBuilderFieldSignal{ID: id, Label: display(label, id), Kind: kind, DataType: safeDataType(dataType)}
+	field := uisignals.DashboardBuilderFieldSignal{ID: id, Label: display(label, id), Kind: kind, Roles: []uisignals.DashboardBuilderFieldRoleSignal{role}, DataType: safeDataType(dataType)}
 	if strings.TrimSpace(description) != "" && safeLabel(description) {
 		field.Description = &description
 	}

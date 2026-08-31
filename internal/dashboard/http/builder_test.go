@@ -686,6 +686,54 @@ func TestDashboardBuilderPreviewBindsExactDraftRevisionAndPage(t *testing.T) {
 	}
 }
 
+func TestDashboardBuilderPreviewStaleShellRendersHTMLRecovery(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("e", 64)
+	fake := &builderAuthoringFake{compileErr: authoring.ErrStaleRevision}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, nethttp.StatusConflict, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("content type = %q, want HTML", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Draft changed",
+		"older draft revision",
+		"did not open a newer revision automatically",
+		"Back to builder",
+		`href="/dashboards/revenue/edit?draft=draft-7&amp;page=details"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stale preview recovery missing %q: %s", want, body)
+		}
+	}
+	if fake.compileCalls != 1 || fake.previewCalls != 0 {
+		t.Fatalf("stale preview calls compile=%d preview=%d, want compile=1 preview=0", fake.compileCalls, fake.previewCalls)
+	}
+}
+
+func TestDashboardBuilderPreviewStaleSignalKeepsPlainConflictError(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("f", 64)
+	fake := &builderAuthoringFake{previewErr: authoring.ErrStaleRevision}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?_signals=1&draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, nethttp.StatusConflict, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/plain") {
+		t.Fatalf("content type = %q, want plain text", got)
+	}
+	if strings.Contains(rec.Body.String(), "Draft changed") || !strings.Contains(rec.Body.String(), "dashboard builder revision is stale") {
+		t.Fatalf("signal stale error = %q, want plain conflict error", rec.Body.String())
+	}
+}
+
 func TestDashboardBuilderPreviewRejectsMissingOrStaleExactInputs(t *testing.T) {
 	hash := "sha256:" + strings.Repeat("d", 64)
 	tests := []struct {

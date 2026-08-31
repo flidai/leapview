@@ -421,6 +421,10 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 			DraftID: request.DraftID, ExpectedRevision: request.ExpectedRevision,
 		})
 		if compileErr != nil {
+			if errors.Is(compileErr, authoring.ErrStaleRevision) {
+				h.writeDashboardBuilderPreviewRevisionChanged(w, r, dashboardID, request)
+				return
+			}
 			writeBuilderError(w, r, compileErr)
 			return
 		}
@@ -465,6 +469,29 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	if err := pagestream.PatchResponse(w, r, pagestream.SignalPatch(signals)); err != nil {
 		nethttp.Error(w, "dashboard draft preview unavailable", nethttp.StatusInternalServerError)
+	}
+}
+
+// writeDashboardBuilderPreviewRevisionChanged keeps the exact-revision
+// conflict status while replacing the otherwise opaque plain-text response
+// with a branded browser recovery page. The link deliberately carries the
+// requested draft and page so the builder can restore the user's context;
+// callers still have to choose a fresh exact revision there.
+func (h Handler) writeDashboardBuilderPreviewRevisionChanged(w nethttp.ResponseWriter, r *nethttp.Request, dashboardID string, request preview.PreviewRequest) {
+	backValues := url.Values{}
+	backValues.Set("draft", string(request.DraftID))
+	backValues.Set("page", request.PageID)
+	backHref := dashboardBuilderBasePath(dashboardID) + "/edit?" + backValues.Encode()
+	var providers []webpage.Provider
+	if h.Layout != nil {
+		providers = []webpage.Provider{h.Layout(r)}
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(nethttp.StatusConflict)
+	if err := ui.DashboardDraftPreviewRevisionChangedPage(backHref, providers...).Render(w); err != nil {
+		// The response status/body have already been started. There is no safe
+		// way to replace them with net/http.Error at this point.
+		return
 	}
 }
 

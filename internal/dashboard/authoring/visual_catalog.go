@@ -19,6 +19,14 @@ type VisualCatalogEntry struct {
 	ReferenceHref string
 }
 
+// VisualRoleLimit is a builder-facing cardinality constraint from the
+// canonical visualization contract. Missing roles are intentionally
+// unbounded; the compiler remains the final authority.
+type VisualRoleLimit struct {
+	Role    string
+	Maximum int32
+}
+
 // VisualFormatChoice is one closed enum value accepted by a format option.
 type VisualFormatChoice struct {
 	Value string
@@ -84,6 +92,34 @@ func CanonicalVisualRoles(visualType document.DashboardVisualType) []string {
 		return []string{"detail"}
 	default:
 		return []string{"dimension", "metric"}
+	}
+}
+
+// CanonicalVisualRoleLimits exposes only closed, renderer-enforced maxima so
+// the builder never advertises a field assignment that strict compilation
+// must reject.
+func CanonicalVisualRoleLimits(visualType document.DashboardVisualType) []VisualRoleLimit {
+	dimension := func(maximum int32) VisualRoleLimit { return VisualRoleLimit{Role: "dimension", Maximum: maximum} }
+	metric := func(maximum int32) VisualRoleLimit { return VisualRoleLimit{Role: "metric", Maximum: maximum} }
+	switch visualType {
+	case document.DashboardVisualTypePie, document.DashboardVisualTypeDonut, document.DashboardVisualTypeFunnel,
+		document.DashboardVisualTypeWaterfall:
+		return []VisualRoleLimit{dimension(1), metric(1)}
+	case document.DashboardVisualTypeHeatmap, document.DashboardVisualTypeGraph, document.DashboardVisualTypeSankey:
+		return []VisualRoleLimit{dimension(2), metric(1)}
+	case document.DashboardVisualTypeGauge, document.DashboardVisualTypeRadar:
+		return []VisualRoleLimit{dimension(1), metric(1)}
+	case document.DashboardVisualTypeKpi, document.DashboardVisualTypeHistogram, document.DashboardVisualTypeBoxplot:
+		return []VisualRoleLimit{metric(1)}
+	case document.DashboardVisualTypeCandlestick:
+		return []VisualRoleLimit{dimension(1), metric(4)}
+	case document.DashboardVisualTypeTreemap, document.DashboardVisualTypeTree, document.DashboardVisualTypeSunburst:
+		return []VisualRoleLimit{metric(1)}
+	case document.DashboardVisualTypeLine, document.DashboardVisualTypeArea, document.DashboardVisualTypeBar,
+		document.DashboardVisualTypeColumn, document.DashboardVisualTypeCombo:
+		return []VisualRoleLimit{dimension(1)}
+	default:
+		return []VisualRoleLimit{}
 	}
 }
 

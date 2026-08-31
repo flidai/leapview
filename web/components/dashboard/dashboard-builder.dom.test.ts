@@ -975,6 +975,75 @@ test('dashboard builder filters fields and drops a metric into its well', async 
   }
 })
 
+test('dashboard builder blocks record-only and full-role field assignments before command dispatch', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        builder: {
+          semanticModel: {
+            id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [
+              { id: 'purchase_date', label: 'Purchase date', kind: 'dimension', roles: ['dimension'], dataType: 'Date' },
+              { id: 'category', label: 'Category', kind: 'dimension', roles: ['dimension'], dataType: 'String' },
+              { id: 'orders.purchase_month', label: 'Purchase month', kind: 'dimension', roles: ['detail'], dataType: 'String' },
+              { id: 'order_count', label: 'Orders', kind: 'metric', roles: ['metric'], dataType: 'Number' },
+            ] }],
+          },
+          visualCatalog: element.builder.visualCatalog.map((entry: any) => entry.type === 'donut'
+            ? { ...entry, roleLimits: [{ role: 'dimension', maximum: 1 }, { role: 'metric', maximum: 1 }] }
+            : { ...entry, roleLimits: entry.roleLimits ?? [] }),
+          pages: element.builder.pages.map((pageSignal: any) => pageSignal.id !== 'overview' ? pageSignal : {
+            ...pageSignal,
+            visuals: [{
+              ...pageSignal.visuals[0], type: 'donut',
+              slots: [
+                { id: 'category', label: 'Purchase date', kind: 'dimension', fieldId: 'purchase_date', required: true },
+                { id: 'value', label: 'Orders', kind: 'metric', fieldId: 'order_count', required: true },
+              ],
+            }],
+          }),
+          selectedPageId: 'overview', selectedVisualId: 'sales-chart',
+        },
+      })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const rows = Array.from(root.querySelectorAll<HTMLElement>('.data-pane .field'))
+      const row = (label: string) => rows.find((candidate) => candidate.querySelector('.field-label')?.textContent?.trim() === label)!
+      const commands: unknown[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      row('Category').click()
+      row('Purchase month').click()
+      await element.updateComplete
+      return {
+        commands,
+        used: ['Purchase date', 'Orders'].map((label) => ({ label, tag: row(label).tagName, used: row(label).getAttribute('data-used') })),
+        blocked: ['Category', 'Purchase month'].map((label) => ({
+          label,
+          tag: row(label).tagName,
+          role: row(label).getAttribute('role'),
+          name: row(label).getAttribute('aria-label'),
+          context: row(label).querySelector('.field-context')?.textContent?.trim(),
+        })),
+      }
+    })
+    expect(state.commands).toEqual([])
+    expect(state.used).toEqual([
+      { label: 'Purchase date', tag: 'BUTTON', used: 'true' },
+      { label: 'Orders', tag: 'BUTTON', used: 'true' },
+    ])
+    expect(state.blocked[0]).toMatchObject({ label: 'Category', tag: 'DIV', role: 'note' })
+    expect(state.blocked[0].name).toContain('X-axis is full')
+    expect(state.blocked[0].context).toContain('X-axis is full')
+    expect(state.blocked[1]).toMatchObject({ label: 'Purchase month', tag: 'DIV', role: 'note' })
+    expect(state.blocked[1].name).toContain('Not compatible with the selected donut visual')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder creates smart governed visuals from fields on an empty canvas', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1298,16 +1367,24 @@ test('dashboard builder keeps an accessible responsive surface and exposes loadi
       const buttonLabels = Array.from(root.querySelectorAll('button')).map((button) => button.getAttribute('aria-label') || button.textContent?.trim())
       const responsiveDisplay = getComputedStyle(root.querySelector('.body') as HTMLElement).display
       const hasSearchLabel = Boolean(root.querySelector('label input[aria-label], label .sr-only'))
+      const nestedMainCount = root.querySelectorAll('main').length
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({ builder: undefined, status: { loading: true, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 0 } })
       await element.updateComplete
       const loadingState = root.querySelector('.state') as HTMLElement | null
-      return { display: responsiveDisplay, hasSearchLabel, buttonLabels, loading: loadingState?.textContent?.trim() }
+      return {
+        display: responsiveDisplay,
+        hasSearchLabel,
+        buttonLabels,
+        loading: loadingState?.textContent?.trim(),
+        nestedMainCount,
+      }
     })
     expect(state.display).toBe('block')
     expect(state.hasSearchLabel).toBe(true)
     expect(state.buttonLabels).toContain('Publish')
     expect(state.loading).toContain('Loading dashboard builder')
+    expect(state.nestedMainCount).toBe(0)
   } finally {
     await page.close()
   }
@@ -1342,9 +1419,10 @@ test('dashboard builder stacks visual tiles within the mobile canvas viewport', 
       const canvasBox = canvas.getBoundingClientRect()
       const visuals = Array.from(root.querySelectorAll('.visual')).map((node) => {
         const box = (node as HTMLElement).getBoundingClientRect()
+        const contentBox = (node.querySelector('.grid-stack-item-content') as HTMLElement).getBoundingClientRect()
         const tile = node as HTMLElement
         const style = getComputedStyle(tile)
-        return { title: tile.querySelector('.visual-drag-header')?.textContent?.trim(), left: box.left, right: box.right, top: box.top, bottom: box.bottom, height: box.height, type: tile.getAttribute('data-visual-type'), position: style.position, order: style.order, topOffset: style.top, leftOffset: style.left, authoredTop: tile.style.top }
+        return { title: tile.querySelector('.visual-drag-header')?.textContent?.trim(), left: box.left, right: box.right, top: box.top, bottom: box.bottom, width: box.width, height: box.height, contentWidth: contentBox.width, contentHeight: contentBox.height, type: tile.getAttribute('data-visual-type'), position: style.position, order: style.order, topOffset: style.top, leftOffset: style.left, authoredTop: tile.style.top }
       })
       return {
         canvasWidth: canvasBox.width,
@@ -1379,6 +1457,8 @@ test('dashboard builder stacks visual tiles within the mobile canvas viewport', 
       expect(visual.left).toBeGreaterThanOrEqual(-1)
       expect(visual.right).toBeLessThanOrEqual(state.canvasWidth + 1)
       expect(visual.bottom).toBeGreaterThan(visual.top)
+      expect(visual.contentWidth).toBeCloseTo(visual.width, 0)
+      expect(visual.contentHeight).toBeCloseTo(visual.height, 0)
     }
     expect(flow[1].authoredTop).not.toBe('0px')
     expect(flow[2].authoredTop).not.toBe('0px')
