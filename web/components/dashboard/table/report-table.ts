@@ -80,17 +80,17 @@ function defaultColumnSize(column: TableColumn): number {
   const configuredWidth = Number(column.width)
   if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth
   const widths: Record<string, number> = {
-    order_id: 240,
+    order_id: 160,
     purchase_date: 126,
-    status: 128,
+    status: 106,
     state: 78,
     category: 210,
-    revenue: 130,
+    revenue: 114,
     review_score: 104,
     delivery_days: 108,
   }
   if (widths[column.key]) return widths[column.key]
-  if (column.align === 'right') return 120
+  if (column.align === 'right') return 114
   return 140
 }
 
@@ -523,9 +523,8 @@ export class ReportTable extends LitElement {
       inset-block: 0;
       left: 100%;
       z-index: calc(var(--zIndex-default) + 1);
-      width: 10px;
-      border-left: 1px solid var(--lv-line-default);
-      background: inherit;
+      width: 1px;
+      background: var(--lv-line-default);
       pointer-events: none;
     }
 
@@ -602,6 +601,14 @@ export class ReportTable extends LitElement {
       letter-spacing: 0;
       text-align: left;
       text-transform: uppercase;
+    }
+
+    button.header-button > span:first-child {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     button.header-button:hover,
@@ -1196,7 +1203,7 @@ export class ReportTable extends LitElement {
       id: column.key,
       accessorKey: column.key,
       header: column.label,
-      cell: (info: any) => formatCell(info.getValue(), column),
+      cell: (info: any) => formatCell(info.getValue(), column, this.table.type !== 'table'),
       size: defaultColumnSize(column),
       minSize: this.minColumnSize(column),
       enableResizing: true,
@@ -1561,7 +1568,6 @@ export class ReportTable extends LitElement {
             <div
               class=${this.cellClass(column, cellKey, row, cell.column)}
               role="cell"
-              title=${String(row[cell.column.id] ?? '')}
               style=${this.cellStyle(row, column, cell.column)}
             >
               <button
@@ -1880,7 +1886,7 @@ export class ReportTable extends LitElement {
     return this.loadedRows.map(({ row }) => {
       const next: TableRow = {}
       for (const column of this.columns) {
-        next[column.key] = formatCell(row[column.key], column)
+        next[column.key] = formatCell(row[column.key], column, this.table.type !== 'table')
       }
       return next
     })

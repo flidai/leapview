@@ -15,6 +15,10 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
       gap: var(--base-size-16);
     }
 
+    .showcase-section + .showcase-section {
+      margin-top: var(--base-size-48);
+    }
+
     .section-heading {
       display: grid;
       gap: var(--base-size-4);
@@ -49,7 +53,8 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
     }
 
     .table-grid {
-      grid-template-columns: repeat(2, minmax(0, 1fr));
+      align-items: start;
+      grid-template-columns: minmax(22rem, 0.7fr) minmax(0, 1.3fr);
     }
 
     .chart {
@@ -78,12 +83,32 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
       height: 26rem;
     }
 
-    .table-card.featured {
-      grid-column: 1 / -1;
+    .table-card.compact .visual-frame {
+      height: 22rem;
     }
 
-    .table-card.featured .visual-frame {
-      height: 30rem;
+    .table-card.centered {
+      order: 1;
+      width: min(100%, 46rem);
+      justify-self: center;
+    }
+
+    .table-card.narrow {
+      width: min(100%, 33rem);
+    }
+
+    .table-card.narrow .visual-frame {
+      height: 22rem;
+    }
+
+    .table-card.compact.centered {
+      width: min(100%, 42.5625rem);
+    }
+
+    .table-card.wide {
+      grid-column: 1 / -1;
+      order: 2;
+      width: 100%;
     }
 
     .visual-frame {
@@ -145,13 +170,13 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
       outline-offset: var(--focus-outline-offset);
     }
 
-    @media (width < 48rem) {
+    @media (width < 64rem) {
       .table-grid {
         grid-template-columns: minmax(0, 1fr);
       }
 
-      .table-card.featured {
-        grid-column: auto;
+      .table-card.centered {
+        width: 100%;
       }
     }
   `
@@ -179,7 +204,15 @@ class SiteVisualShowcase extends DatastarLit(LitElement) {
           <p>Virtualized table, matrix, and pivot payloads from the same generated visual catalog.</p>
         </div>
         <div class="table-grid">
-          ${tables.map(({ document, visual }, index) => visualShowcaseCard(document, visual, `table-card ${index === 0 ? 'featured' : ''}`))}
+          ${tables.map(({ document, visual }) => visualShowcaseCard(
+            document,
+            visual,
+            visual.spec.kind === 'matrix'
+              ? 'table-card compact wide'
+              : visual.spec.kind === 'pivot'
+                ? 'table-card compact centered'
+                : 'table-card centered narrow',
+          ))}
         </div>
       </section>
     `

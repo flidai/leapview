@@ -104,6 +104,7 @@ export function baseOption(envelope: VisualizationEnvelope, context: RendererCon
     dataset: dataset ? { id: `dataset:${dataset.id}`, source: selectedDatasetSource(envelope, dataset) } : undefined,
     tooltip: {
       trigger: tooltipTrigger(envelope),
+      confine: true,
       backgroundColor: context.colors.surface,
       borderColor: context.colors.grid,
       textStyle: { color: context.colors.foreground, fontFamily: context.fontFamily },

@@ -1,12 +1,16 @@
 import type { TableColumn, TableRow } from './types'
 import { formatValue } from '../visualization/format'
 
-export function formatCell(value: unknown, column: TableColumn): string {
+export function formatCell(value: unknown, column: TableColumn, nullMetricAsZero = false): string {
 	if (column.visualizationFormat) {
 		// TanStack represents null pivot cells with an empty/display placeholder
 		// while creating the cell context. Normalize only those known placeholders;
 		// numeric strings still fail the typed visualization contract.
-		if (value === null || value === undefined || value === '' || value === '-' || value === '—') return '—'
+		if (value === null || value === undefined || value === '' || value === '-' || value === '—') {
+			return nullMetricAsZero && column.role === 'metric'
+				? formatValue('en-US', column.visualizationFormat, 0)
+				: '—'
+		}
 		try {
 			return formatValue('en-US', column.visualizationFormat, value)
 		} catch (error) {
@@ -19,7 +23,10 @@ export function formatCell(value: unknown, column: TableColumn): string {
 			throw new Error(`table column ${JSON.stringify(column.key)} cannot format ${valueKind}: ${message}`)
 		}
 	}
-  if (value === null || value === undefined || value === '') return '-'
+  if (value === null || value === undefined || value === '') {
+    if (nullMetricAsZero && column.role === 'metric') value = 0
+    else return '-'
+  }
   const format = column.format || inferredFormat(column)
   if (format === 'currency' && Number.isFinite(Number(value))) {
     return `R$ ${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`

@@ -13,7 +13,7 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     envelope,
     spec.node.dataset,
     spec.presentation.labelPolicy,
-    (params) => String((params as { data?: { name?: unknown } }).data?.name ?? ''),
+    (params) => String((params as { data?: { name?: unknown; displayName?: unknown } }).data?.displayName ?? (params as { data?: { name?: unknown } }).data?.name ?? ''),
     context,
   )
   if (spec.mark === 'sankey' || spec.mark === 'graph') {
@@ -21,38 +21,70 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     const sourceIndex = spec.source ? columns.indexOf(spec.source.field) : -1
     const targetIndex = spec.target ? columns.indexOf(spec.target.field) : -1
     const valueIndex = spec.value ? columns.indexOf(spec.value.field) : -1
-    const links = (dataset?.rows ?? []).map((row, rowIndex) => ({
-      source: String(row[sourceIndex]), target: String(row[targetIndex]), value: valueIndex >= 0 ? row[valueIndex] : undefined,
-      __lv_dataset: dataset?.id ?? 'primary', __lv_row_index: rowIndex,
-    }))
-    const names = [...new Set(links.flatMap((link) => [link.source, link.target]))]
+    const links = (dataset?.rows ?? []).flatMap((row, rowIndex) => {
+      const sourceLabel = sourceIndex >= 0 ? String(row[sourceIndex] ?? '').trim() : ''
+      const targetLabel = targetIndex >= 0 ? String(row[targetIndex] ?? '').trim() : ''
+      const value = valueIndex >= 0 ? Number(row[valueIndex]) : 1
+      if (!sourceLabel || !targetLabel || !Number.isFinite(value) || value <= 0) return []
+      return [{
+        source: spec.mark === 'sankey' ? `source:${sourceLabel}` : sourceLabel,
+        target: spec.mark === 'sankey' ? `target:${targetLabel}` : targetLabel,
+        sourceLabel, targetLabel, value,
+        __lv_dataset: dataset?.id ?? 'primary', __lv_row_index: rowIndex,
+      }]
+    })
+    const graphCircular = spec.mark === 'graph' && spec.presentation.layout === 'circular'
+    const nodes = spec.mark === 'sankey'
+      ? [...new Map(links.flatMap((link) => [[link.source, link.sourceLabel], [link.target, link.targetLabel]])).entries()].map(([name, displayName]) => ({ name, displayName }))
+      : graphCircular
+        ? [...new Set(links.flatMap((link) => [link.source, link.target]))].map((name) => ({ name }))
+        : layeredGraphNodes(links)
     const series: EChartsTranslation = {
-      id: `series:hierarchy:${spec.mark}`, type: spec.mark, data: names.map((name) => ({ name })), links,
+      id: `series:hierarchy:${spec.mark}`, type: spec.mark, data: nodes, links,
       lineStyle: spec.mark === 'sankey'
-        ? { color: 'gradient', opacity: 0.45, curveness: spec.presentation.curveness }
-        : { curveness: spec.presentation.curveness },
+        ? { color: 'gradient', opacity: 0.45, ...(spec.presentation.curveness === undefined ? {} : { curveness: spec.presentation.curveness }) }
+        : spec.presentation.curveness === undefined ? {} : { curveness: spec.presentation.curveness },
       ...labels,
-      tooltip: { formatter: (params: { data?: { source?: unknown; target?: unknown; value?: unknown } }) => {
+      tooltip: { formatter: (params: { data?: { source?: unknown; target?: unknown; sourceLabel?: unknown; targetLabel?: unknown; value?: unknown } }) => {
         const link = params.data
         if (!link || link.source === undefined || link.target === undefined) return ''
         const value = formatField(envelope, spec.value, link.value, context)
-        return `${escapeHTML(String(link.source))} → ${escapeHTML(String(link.target))}: ${escapeHTML(value)}`
+        return `${escapeHTML(String(link.sourceLabel ?? link.source))} → ${escapeHTML(String(link.targetLabel ?? link.target))}: ${escapeHTML(value)}`
       } },
     }
     if (spec.mark === 'graph') {
       series.roam = spec.presentation.roam
-      series.layout = spec.presentation.layout === 'circular' ? 'circular' : 'force'
+      series.layout = graphCircular ? 'circular' : 'none'
+      series.left = graphCircular ? '8%' : '30%'
+      series.right = graphCircular ? '8%' : '30%'
+      series.top = graphCircular ? '8%' : '12%'
+      series.bottom = graphCircular ? '8%' : '12%'
+      series.symbolSize = 16
+      series.label = { ...(series.label ?? {}), position: 'right', distance: 8, fontSize: 13 }
+      series.itemStyle = { borderColor: context.colors.surface, borderWidth: 2 }
+      series.lineStyle = { ...(series.lineStyle ?? {}), color: context.colors.muted, opacity: 0.7, width: 1.5 }
+      if (graphCircular) {
+        series.center = ['50%', '52%']
+        series.zoom = 0.76
+        series.labelLayout = { moveOverlap: 'shiftY' }
+      }
+      if (spec.presentation.focus === 'adjacency') series.emphasis = { focus: 'adjacency' }
     } else {
       series.orient = spec.presentation.orientation
-      series.nodeGap = spec.presentation.nodeGap
-      series.left = '3%'
-      series.right = '21%'
+      if (spec.presentation.nodeGap !== undefined) series.nodeGap = spec.presentation.nodeGap
+      series.left = spec.presentation.orientation === 'horizontal' ? '4%' : '3%'
+      series.right = spec.presentation.orientation === 'horizontal' ? '30%' : '21%'
       series.top = '8%'
       series.bottom = '8%'
       series.nodeWidth = 18
+      series.label = { ...(series.label ?? {}), width: 96 }
       series.itemStyle = { borderColor: context.colors.surface, borderWidth: 1 }
     }
-    return { legend: legend(spec.presentation.legend, context), series: [series] }
+    return {
+      legend: legend(spec.presentation.legend, context),
+      graphic: links.length === 0 ? [{ type: 'text', left: 'center', top: 'middle', silent: true, style: { text: 'No flow data', fill: context.colors.muted, fontFamily: context.fontFamily, textAlign: 'center' } }] : undefined,
+      series: [series],
+    }
   }
   const roots = hierarchyData(envelope)
   const data = spec.mark === 'tree' && roots.length > 1 && dataset
@@ -81,14 +113,30 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
   if (spec.mark === 'treemap') {
     common.breadcrumb = { show: spec.presentation.breadcrumb }
     common.leafDepth = spec.presentation.initialDepth
+    common.label = {
+      ...(common.label ?? {}),
+      color: '#fff',
+      textBorderColor: 'rgba(0, 0, 0, 0.55)',
+      textBorderWidth: 2,
+    }
   }
   if (spec.mark === 'sunburst') {
     common.nodeClick = spec.presentation.roam ? 'rootToNode' : false
+    common.radius = ['10%', '92%']
     common.label = {
       ...(common.label ?? {}),
+      position: 'inside',
+      rotate: 'radial',
+      width: 68,
+      overflow: 'truncate',
+      ellipsis: '...',
+      fontSize: 10,
+      fontWeight: 600,
+      lineHeight: 13,
       textBorderColor: context.colors.surface,
       textBorderWidth: 2,
     }
+    common.labelLayout = { hideOverlap: false }
   }
   return { legend: legend(spec.presentation.legend, context), series: [common] }
 }
@@ -129,3 +177,24 @@ export function hierarchyTooltipValue(envelope: VisualizationEnvelope, node: Hie
 }
 
 function escapeSegment(value: string): string { return value.replaceAll('\u001f', '\u001f\u001f') }
+
+function layeredGraphNodes(links: readonly { source: string; target: string }[]) {
+  const sources = [...new Set(links.map((link) => link.source))]
+  const targets = [...new Set(links.map((link) => link.target))]
+  const sourceSet = new Set(sources)
+  const targetSet = new Set(targets)
+  const sourceOnly = sources.filter((name) => !targetSet.has(name))
+  const targetOnly = targets.filter((name) => !sourceSet.has(name))
+  const shared = sources.filter((name) => targetSet.has(name))
+  const column = (names: readonly string[], x: number, position: 'left' | 'right' | 'top', align: 'left' | 'right' | 'center') => names.map((name, index) => ({
+    name,
+    x,
+    y: names.length === 1 ? 50 : (index / (names.length - 1)) * 100,
+    label: { position, align },
+  }))
+  return [
+    ...column(sourceOnly, 0, 'left', 'right'),
+    ...column(shared, 50, 'top', 'center'),
+    ...column(targetOnly, 100, 'right', 'left'),
+  ]
+}

@@ -20,7 +20,13 @@ test('report table column sizing preserves configured minimums', () => {
   const controller = new ReportTableColumnController(() => ({ order_id: 80, revenue: 180 }))
   expect(controller.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(160)
   expect(controller.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(180)
+  expect(controller.pixelWidth({ key: 'orders', label: 'Orders', align: 'right' })).toBe(114)
   expect(controller.tableWidth([{ key: 'order_id', label: 'Order ID' }, { key: 'revenue', label: 'Revenue' }])).toBe(340)
+
+  const defaults = new ReportTableColumnController(() => ({}))
+  expect(defaults.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(160)
+  expect(defaults.pixelWidth({ key: 'status', label: 'Status' })).toBe(106)
+  expect(defaults.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(114)
 })
 
 test('report table selection controller derives labels and actions', () => {
