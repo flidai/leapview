@@ -76,7 +76,12 @@ func TestAuthoringPrincipalRotationLockOrdersRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer probeConn.Release()
+	probeConnReleased := false
+	defer func() {
+		if !probeConnReleased {
+			probeConn.Release()
+		}
+	}()
 	for _, conn := range []*pgxpool.Conn{rotateConn, disableConn} {
 		if _, err := conn.Exec(ctx, "SET application_name = 'access-rotation-lock-order'"); err != nil {
 			t.Fatal(err)
@@ -137,6 +142,10 @@ func TestAuthoringPrincipalRotationLockOrdersRevocation(t *testing.T) {
 	if err := probeTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The probe transaction is complete; release its connection before the
+	// repository assertions below need to acquire another pool connection.
+	probeConn.Release()
+	probeConnReleased = true
 
 	if err := gateTx.Commit(ctx); err != nil {
 		t.Fatal(err)

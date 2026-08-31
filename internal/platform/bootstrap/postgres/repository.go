@@ -273,7 +273,11 @@ func instanceID(ctx context.Context, db DBTX) (string, error) {
 		return "", fmt.Errorf("generate instance identity: %w", err)
 	}
 	candidate := "lvinst_" + base64.RawURLEncoding.EncodeToString(entropy[:])
-	if err := ensureInstanceID(ctx, db, candidate); err != nil {
+	// InstanceID generates a best-effort candidate. A concurrent caller may
+	// win the singleton insert with a different candidate; ON CONFLICT DO
+	// NOTHING lets this caller converge on that canonical row below. Keep the
+	// strict conflict behavior in EnsureInstanceID for caller-supplied IDs.
+	if _, err := bootstrapdb.New(db).InsertInstanceIdentity(ctx, candidate); err != nil {
 		return "", err
 	}
 	row, err = bootstrapdb.New(db).GetInstanceIdentity(ctx)
