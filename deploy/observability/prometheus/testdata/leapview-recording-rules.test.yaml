@@ -20,6 +20,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
             value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_1h",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_1h",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
         eval_time: 10m
         exp_samples:
@@ -40,6 +50,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
             value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
         eval_time: 10m
         exp_samples:
@@ -200,6 +220,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
             value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_1h",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_1h",instance="app:8080",job="leapview"}'
+            value: 20
       - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
         eval_time: 10m
         exp_samples:
@@ -220,6 +250,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.8
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 20
       - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
         eval_time: 10m
         exp_samples:
@@ -334,6 +374,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
             value: 15
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_1h",instance="app:8080",job="leapview"}'
+            value: 72
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_1h",instance="app:8080",job="leapview"}'
+            value: 36
       - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
         eval_time: 10m
         exp_samples:
@@ -354,6 +404,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 50
       - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
         eval_time: 10m
         exp_samples:
@@ -386,6 +446,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
             value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_1h",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_1h",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
         eval_time: 10m
         exp_samples:
@@ -400,6 +470,12 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_1h'
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
@@ -422,6 +498,12 @@ tests:
       - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
         eval_time: 10m
         exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_1h'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_1h'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
         eval_time: 10m
         exp_samples: []
@@ -432,6 +514,12 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:burn_rate_1h'
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'

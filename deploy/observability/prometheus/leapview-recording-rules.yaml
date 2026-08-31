@@ -19,6 +19,24 @@ groups:
           or
           (leapview:dashboard_refresh_reliability:eligible_events_5m * 0)
 
+      - record: 'leapview:dashboard_refresh_reliability:eligible_events_1h'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[1h])
+          )
+          or
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="canceled"}[1h]) * 0
+          )
+
+      - record: 'leapview:dashboard_refresh_reliability:bad_events_1h'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome=~"partial|error|other"}[1h])
+          )
+          or
+          (leapview:dashboard_refresh_reliability:eligible_events_1h * 0)
+
       - record: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
         expr: |
           sum by (job, instance) (
@@ -80,6 +98,34 @@ groups:
       - record: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
         expr: |
           (leapview:dashboard_refresh_reliability:ratio_30d * 0) + 0.99
+
+      - record: 'leapview:dashboard_refresh_reliability:burn_rate_5m'
+        expr: |
+          (
+            leapview:dashboard_refresh_reliability:bad_events_5m * 100
+          )
+          /
+          (
+            leapview:dashboard_refresh_reliability:eligible_events_5m
+            *
+            (100 - (leapview:dashboard_refresh_reliability:objective_ratio_30d * 100))
+          )
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:eligible_events_5m > 0)
+
+      - record: 'leapview:dashboard_refresh_reliability:burn_rate_1h'
+        expr: |
+          (
+            leapview:dashboard_refresh_reliability:bad_events_1h * 100
+          )
+          /
+          (
+            leapview:dashboard_refresh_reliability:eligible_events_1h
+            *
+            (100 - (leapview:dashboard_refresh_reliability:objective_ratio_30d * 100))
+          )
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:eligible_events_1h > 0)
 
       - record: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
         expr: |
