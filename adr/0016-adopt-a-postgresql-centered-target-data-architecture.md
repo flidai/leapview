@@ -575,6 +575,16 @@ event write.
 The target is framework-first above the PostgreSQL authority, but framework
 tables and defaults do not redefine LeapView's durable contracts.
 
+| Concern | Target owner | Framework role |
+| --- | --- | --- |
+| source mutation, aggregate version, canonical event envelope, and immutable product history | capability-owned PostgreSQL schema | Watermill publisher presents the committed event; it does not create a second history row |
+| delivery claim, attempt, acknowledgement, poison state, replay root, and retention floor | canonical event-delivery schema | Watermill subscriber and router drive the existing fenced transitions through a LeapView adapter |
+| handler orchestration, retry middleware, correlation propagation, and handler metrics | Watermill router | LeapView supplies bounded policy and idempotent domain handlers |
+| compliance audit | append-only audit schema and audit writer | outside Watermill unless an explicit asynchronous export consumer is enrolled |
+| lineage and cache projections | lineage and cache capability schemas | idempotent Watermill consumers may update them; their durable state is not message transport state |
+| long-running commands and scheduled work | River for admitted job kinds, otherwise the capability-owned runner | never executed as a Watermill message handler |
+| browser signal delivery | Pagestream and the instance-local SSE fan-out | outside Watermill; durable events only wake or reconcile application state |
+
 [Watermill](https://watermill.io/docs/) is the standard application-level
 message router, handler, middleware, acknowledgement, and redelivery boundary.
 Domain code consumes typed LeapView events through Watermill rather than a
@@ -594,6 +604,22 @@ therefore uses either a proven adapter over the canonical LeapView tables or a
 small Watermill `Publisher`/`Subscriber` implementation over those tables; it
 does not create a second Watermill-owned event authority.
 
+LeapView migrations own every transport table, index, role grant, and rollback.
+Watermill publisher `AutoInitializeSchema` and subscriber `InitializeSchema` are
+always disabled, including tests outside the framework qualification fixture.
+The SQL adapter's documented runtime initialization is therefore not a
+production DDL path. Topics are a small allow-listed set of capability event
+families rather than caller-controlled table names. Consumer-group names are
+stable migration-owned identities, never per-process UUIDs.
+
+The message UUID is the canonical domain event UUID. Its versioned envelope
+contains only event identity, scope, aggregate identity and version, event type
+and schema version, occurrence and correlation identities, and a bounded
+privacy-reviewed payload. Watermill's integer transport offset, when an
+adapter needs one, is scan mechanics only. It is neither exposed as domain
+identity nor used as business ordering. Aggregate version is the only default
+ordering contract.
+
 Watermill publication may participate in a caller-owned PostgreSQL transaction
 only when source mutation and the canonical event row still commit atomically.
 Watermill acknowledgement occurs only after the handler's idempotent domain
@@ -605,6 +631,40 @@ the acceptance contract for the adapter. If the adapter requires dual writes,
 generic offsets as a second checkpoint, unbounded translation state, or weaker
 fencing, it fails confirmation and the purpose-built PostgreSQL event adapter
 remains behind Watermill's router interfaces.
+
+The transactional flows are:
+
+1. A command locks its aggregate/version authority, writes the mutation and
+   canonical event envelope, creates the delivery rows required by the fenced
+   consumer registry, and commits them through the caller-owned pgx
+   transaction. The Watermill publisher adapter uses that transaction; no
+   framework-owned row is committed separately.
+2. A subscriber claims one consumer-specific delivery with its ownership
+   fence, reconstructs the Watermill message from the canonical event, and
+   invokes the router. The handler commits its idempotent effect and terminal
+   delivery transition before returning success and allowing `Ack`.
+3. Handler error, process loss, or an expired acknowledgement deadline leaves
+   or returns the delivery to a replayable state. Bounded attempts eventually
+   enter visible poison state; pruning remains blocked until resolution or an
+   audited waiver.
+
+Poll interval, resend interval, acknowledgement deadline, batch size, claim
+lease, and retry backoff are explicit bounded configuration with production
+metrics. An acknowledgement deadline of zero is prohibited for the PostgreSQL
+subscriber because an unacknowledged message can block progress. Watermill
+handlers must keep their transaction short; long work persists a job request
+and acknowledges only that admission transaction. Router retry/correlation
+behavior uses the documented
+[middleware](https://watermill.io/docs/middlewares/), and publisher,
+subscriber, handler, ack/nack, failure, and latency signals use Watermill's
+[Prometheus metrics integration](https://watermill.io/advanced/metrics/) plus
+LeapView's delivery backlog, fence, poison, and retention-floor metrics.
+
+Watermill's [Forwarder](https://watermill.io/advanced/forwarder/) is deferred.
+It becomes relevant only when a concrete external broker or cross-service
+boundary requires forwarding the canonical PostgreSQL outbox. Introducing it
+before that need would add another subscriber and operational path without
+changing local correctness; it never replaces the canonical event write.
 
 [River](https://github.com/riverqueue/river) is the target worker runtime for
 generic command jobs whose domain completion can be expressed through River's
