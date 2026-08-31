@@ -460,6 +460,30 @@ func (r *Repository) Get(ctx context.Context, scope, idempotencyKey string) (Ope
 	return op, err
 }
 
+// GetTxForUpdate returns the durable operation while holding its row lock in
+// the caller-owned transaction. Cross-domain recovery uses this read boundary
+// to preserve the operation -> target lease -> attempt lock order shared with
+// heartbeat renewal; it never commits or rolls back tx.
+func (r *Repository) GetTxForUpdate(ctx context.Context, tx Tx, scope, idempotencyKey string) (Operation, error) {
+	if r == nil || tx == nil {
+		return Operation{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if scope != strings.TrimSpace(scope) || idempotencyKey != strings.TrimSpace(idempotencyKey) || scope == "" || len(scope) > 255 || idempotencyKey == "" || len(idempotencyKey) > 512 {
+		return Operation{}, ErrInvalid
+	}
+	stored, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: scope, IdempotencyKey: idempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Operation{}, ErrNotFound
+	}
+	if err != nil {
+		return Operation{}, err
+	}
+	return operationFromForUpdateRow(stored)
+}
+
 func normalizeInput(in *AcquireInput) (string, error) {
 	if in.OperationType == "" {
 		in.OperationType = "idempotency"

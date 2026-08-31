@@ -265,6 +265,21 @@ func prepareNativeBuildRecoveryTx(
 	input NativeBuildRecoveryPreparationInput,
 	preRead nativeBuildRecoveryPreRead,
 ) (NativeBuildRecoveryPreparationResult, error) {
+	lockedOperation, err := lockNativeBuildOperationTx(ctx, tx, operations, input.Operation, deploymentmodule.NativeOperationStateIndeterminate)
+	if err != nil {
+		return NativeBuildRecoveryPreparationResult{}, err
+	}
+	if !sameTerminationEvidence(lockedOperation.AttemptEvidence, preRead.Evidence) {
+		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: locked recovery operation evidence differs", deploymentnative.ErrConflict)
+	}
+	lockedLease, err := lockNativeBuildLeaseTx(ctx, tx, repository, preRead.Lease, "active", "released")
+	if err != nil {
+		return NativeBuildRecoveryPreparationResult{}, err
+	}
+	if !lockedLease.ExpiresAt.Equal(lockedOperation.LeaseExpiresAt) {
+		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: recovery operation and target lease deadlines differ", deploymentnative.ErrConflict)
+	}
+	preRead.Lease = lockedLease
 	if err := validateNativeBuildRecoveryPreRead(input, preRead); err != nil {
 		return NativeBuildRecoveryPreparationResult{}, err
 	}

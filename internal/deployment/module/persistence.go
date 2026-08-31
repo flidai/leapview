@@ -247,6 +247,10 @@ type NativeOperationAuthority interface {
 type NativeBuildOperationAuthority interface {
 	NativeOperationAuthority
 	Lookup(context.Context, NativeOperationAcquireInput) (NativeOperationRecord, bool, error)
+	// LockOperationTx retains the exact operation row lock in the caller-owned
+	// transaction without changing state. Multi-ledger build paths use it to
+	// preserve operation -> target lease -> attempt lock ordering.
+	LockOperationTx(context.Context, NativeOperationTx, NativeOperationAcquireInput) (NativeOperationRecord, bool, error)
 	BeginAttemptTx(context.Context, NativeOperationTx, NativeOperationBeginAttemptInput) (NativeOperationAttempt, error)
 	ReconcileAttemptTx(context.Context, NativeOperationTx, NativeOperationReconcileAttemptInput) (NativeOperationReconcileAttemptResult, error)
 	RenewLeaseTx(context.Context, NativeOperationTx, NativeOperationLease, time.Duration) (NativeOperationLease, error)

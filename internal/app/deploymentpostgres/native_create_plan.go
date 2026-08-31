@@ -6,6 +6,7 @@ package deploymentpostgres
 // DuckLake writer is opened, and no physical work is started here.
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -864,7 +865,15 @@ func nativePlanRequestDigest(request deploymentmodule.NativeDeliveryPlanRequest)
 
 func sameNativeJSON(left, right []byte) bool {
 	var a, b any
-	if json.Unmarshal(left, &a) != nil || json.Unmarshal(right, &b) != nil {
+	leftDecoder := json.NewDecoder(bytes.NewReader(left))
+	leftDecoder.UseNumber()
+	rightDecoder := json.NewDecoder(bytes.NewReader(right))
+	rightDecoder.UseNumber()
+	if leftDecoder.Decode(&a) != nil || rightDecoder.Decode(&b) != nil {
+		return false
+	}
+	var trailing any
+	if !errors.Is(leftDecoder.Decode(&trailing), io.EOF) || !errors.Is(rightDecoder.Decode(&trailing), io.EOF) {
 		return false
 	}
 	leftCanonical, leftErr := json.Marshal(a)

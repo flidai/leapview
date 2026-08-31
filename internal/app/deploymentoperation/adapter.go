@@ -3,10 +3,13 @@
 package deploymentoperation
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"reflect"
 	"strings"
 	"time"
 
@@ -42,6 +45,30 @@ func (a *Adapter) Lookup(ctx context.Context, input deploymentmodule.NativeOpera
 	}
 	if stored.Scope != input.Scope || stored.OperationType != input.OperationType || stored.IdempotencyKey != input.IdempotencyKey || stored.RequestDigest != input.RequestDigest {
 		return deploymentmodule.NativeOperationRecord{}, false, fmt.Errorf("%w: operation identity differs", deploymentmodule.ErrNativeOperationConflict)
+	}
+	record, err := projectOperationRecord(stored)
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, false, err
+	}
+	return record, true, nil
+}
+
+// LockOperationTx performs the exact lookup while retaining the platform
+// operation row lock in the caller's transaction. It is intentionally a
+// narrow recovery seam rather than part of the general mutation authority.
+func (a *Adapter) LockOperationTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, input deploymentmodule.NativeOperationAcquireInput) (deploymentmodule.NativeOperationRecord, bool, error) {
+	if a == nil || a.operations == nil || tx == nil {
+		return deploymentmodule.NativeOperationRecord{}, false, fmt.Errorf("%w: deployment operation lock authority is not configured", deploymentpostgres.ErrInvalid)
+	}
+	stored, err := a.operations.GetTxForUpdate(ctx, tx, input.Scope, input.IdempotencyKey)
+	if errors.Is(err, operationpostgres.ErrNotFound) {
+		return deploymentmodule.NativeOperationRecord{}, false, nil
+	}
+	if err != nil {
+		return deploymentmodule.NativeOperationRecord{}, false, mapError(err)
+	}
+	if stored.Scope != input.Scope || stored.OperationType != input.OperationType || stored.IdempotencyKey != input.IdempotencyKey || stored.RequestDigest != input.RequestDigest || stored.OwnerID != input.OwnerID {
+		return deploymentmodule.NativeOperationRecord{}, false, fmt.Errorf("%w: locked operation identity differs", deploymentmodule.ErrNativeOperationConflict)
 	}
 	record, err := projectOperationRecord(stored)
 	if err != nil {
@@ -435,13 +462,31 @@ func validateReconcileAttemptResult(record deploymentmodule.NativeOperationRecor
 	if record.State != input.State {
 		return fmt.Errorf("%w: operation authority returned a mismatched reconciliation state", deploymentmodule.ErrNativeOperationConflict)
 	}
-	if len(record.ResolutionEvidence) == 0 || string(record.ResolutionEvidence) != string(evidence) {
+	storedEvidence, err := canonicalObjectJSON(record.ResolutionEvidence, true)
+	if err != nil || len(storedEvidence) == 0 || !sameOperationJSON(storedEvidence, evidence) {
 		return fmt.Errorf("%w: operation authority returned mismatched reconciliation evidence", deploymentmodule.ErrNativeOperationConflict)
 	}
-	if string(record.Outcome) != string(outcome) {
+	storedOutcome, err := canonicalObjectJSON(record.Outcome, false)
+	if err != nil || !sameOperationJSON(storedOutcome, outcome) {
 		return fmt.Errorf("%w: operation authority returned mismatched reconciliation outcome", deploymentmodule.ErrNativeOperationConflict)
 	}
 	return nil
+}
+
+func sameOperationJSON(left, right []byte) bool {
+	var leftValue, rightValue any
+	leftDecoder := json.NewDecoder(bytes.NewReader(left))
+	leftDecoder.UseNumber()
+	rightDecoder := json.NewDecoder(bytes.NewReader(right))
+	rightDecoder.UseNumber()
+	if leftDecoder.Decode(&leftValue) != nil || rightDecoder.Decode(&rightValue) != nil {
+		return false
+	}
+	var trailing any
+	if !errors.Is(leftDecoder.Decode(&trailing), io.EOF) || !errors.Is(rightDecoder.Decode(&trailing), io.EOF) {
+		return false
+	}
+	return reflect.DeepEqual(leftValue, rightValue)
 }
 
 // RenewLeaseTx extends an operation lease through the caller-owned

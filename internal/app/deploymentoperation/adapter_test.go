@@ -74,6 +74,23 @@ func TestNormalizeReconcileAttemptInputValidation(t *testing.T) {
 	}
 }
 
+func TestSameOperationJSONIgnoresNestedObjectKeyOrder(t *testing.T) {
+	left := []byte(`{"evidence":{"attempt":"a1","marker":{"generation":"g1","snapshot":42}},"version":1}`)
+	right := []byte(`{"version":1,"evidence":{"marker":{"snapshot":42,"generation":"g1"},"attempt":"a1"}}`)
+	if !sameOperationJSON(left, right) {
+		t.Fatal("semantically identical nested operation JSON compared unequal")
+	}
+	if sameOperationJSON([]byte(`{"values":[1,2]}`), []byte(`{"values":[2,1]}`)) {
+		t.Fatal("operation JSON comparison ignored array order")
+	}
+	if sameOperationJSON([]byte(`{"snapshot":9007199254740992}`), []byte(`{"snapshot":9007199254740993}`)) {
+		t.Fatal("operation JSON comparison rounded distinct int64 values")
+	}
+	if sameOperationJSON([]byte(`{"snapshot":42} trailing`), []byte(`{"snapshot":42}`)) {
+		t.Fatal("operation JSON comparison accepted trailing input")
+	}
+}
+
 func TestOperationAdapterUsesCallerTransactionAndReplay(t *testing.T) {
 	h := postgrestest.Start(t)
 	database := h.NewDatabase(t, "deployment_operation_adapter")

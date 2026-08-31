@@ -27,6 +27,18 @@ func TestNativeCreatePlanBuildFailsClosed(t *testing.T) {
 	}
 }
 
+func TestSameNativeJSONPreservesLargeIntegerIdentity(t *testing.T) {
+	if !sameNativeJSON([]byte(`{"nested":{"snapshot":42,"attempt":"a1"},"version":1}`), []byte(`{"version":1,"nested":{"attempt":"a1","snapshot":42}}`)) {
+		t.Fatal("semantically identical native JSON compared unequal")
+	}
+	if sameNativeJSON([]byte(`{"snapshot":9007199254740992}`), []byte(`{"snapshot":9007199254740993}`)) {
+		t.Fatal("native JSON comparison rounded distinct int64 values")
+	}
+	if sameNativeJSON([]byte(`{"snapshot":42} trailing`), []byte(`{"snapshot":42}`)) {
+		t.Fatal("native JSON comparison accepted trailing input")
+	}
+}
+
 func TestNativeCreatePlanOperationDispositionRequiresUUIDv7AndExactLease(t *testing.T) {
 	op := "0198f2c0-7c7a-7f00-8a11-000000000101"
 	owner := "0198f2c0-7c7a-7f00-8a11-000000000100"

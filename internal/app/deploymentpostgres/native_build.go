@@ -476,6 +476,13 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, c.settleNativeBuildFailure(ctx, bound.Lease, attemptAdmission, err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
+	// Completion must use the attempt-bound, heartbeat-renewed operation fence,
+	// not the pre-admission reservation projection.
+	reservation.Lease = bound.Lease
+	reservation.Operation.AttemptID = bound.Lease.AttemptID
+	reservation.Operation.AttemptIdentity = bound.Lease.AttemptIdentity
+	reservation.Operation.FencingGeneration = bound.Lease.FencingGeneration
+	reservation.Operation.LeaseExpiresAt = bound.Lease.LeaseExpiresAt
 	built, err := c.completeNativeBuild(ctx, normalized, requestDigest, reservation, plan.DeliveryPlan, assembled, effective, attemptAdmission, sealID, generationID)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, c.settleNativeBuildFailure(ctx, bound.Lease, attemptAdmission, err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
@@ -610,7 +617,25 @@ func (c *NativeBuildCoordinator) settleNativeBuildFailure(ctx context.Context, o
 			_ = tx.Rollback(context.Background())
 		}
 	}()
-	terminationInput := AttemptTerminationInput{AttemptID: admission.Attempt.AttemptID, OwnerID: admission.Attempt.OwnerID, FencingEpoch: admission.Attempt.FencingEpoch, Evidence: evidenceJSON}
+	lockedOperation, err := lockNativeBuildSettlementOperationTx(cleanupCtx, tx, c.operations, operationLease, admission.Attempt.RequestDigest)
+	if err != nil {
+		return errors.Join(buildErr, err)
+	}
+	lockedLease, err := lockNativeBuildLeaseTx(cleanupCtx, tx, c.repository, admission.Lease, "active", "released")
+	if err != nil {
+		return errors.Join(buildErr, err)
+	}
+	if !lockedLease.ExpiresAt.Equal(lockedOperation.LeaseExpiresAt) {
+		return errors.Join(buildErr, fmt.Errorf("%w: settlement operation and target lease deadlines differ", deploymentdomain.ErrDeliveryConflict))
+	}
+	terminationEvidence := json.RawMessage(evidenceJSON)
+	if classification == NativePhysicalFailureIndeterminate && lockedOperation.State == deploymentmodule.NativeOperationStateIndeterminate {
+		// Expiry takeover owns the operation's uncertainty evidence. Preserve it
+		// across both attempt ledgers so a later marker-based recovery has one
+		// exact canonical evidence identity rather than an unrecoverable split.
+		terminationEvidence = append(json.RawMessage(nil), lockedOperation.AttemptEvidence...)
+	}
+	terminationInput := AttemptTerminationInput{AttemptID: admission.Attempt.AttemptID, OwnerID: admission.Attempt.OwnerID, FencingEpoch: admission.Attempt.FencingEpoch, Evidence: terminationEvidence}
 	if classification == NativePhysicalFailureDeterministic {
 		_, err = c.attemptTermination.AbortAttemptTx(cleanupCtx, tx, terminationInput)
 	} else {
@@ -741,6 +766,20 @@ func (c *NativeBuildCoordinator) completeNativeBuild(ctx context.Context, reques
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	lockedOperation, err := lockNativeBuildOperationTx(ctx, tx, c.operations, reservation.Operation, deploymentmodule.NativeOperationStatePending)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	if len(lockedOperation.AttemptEvidence) != 0 {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: pending completion operation carries attempt evidence", deploymentdomain.ErrDeliveryConflict)
+	}
+	lockedLease, err := lockNativeBuildLeaseTx(ctx, tx, c.repository, admission.Lease, "active")
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	if !lockedLease.ExpiresAt.Equal(reservation.Lease.LeaseExpiresAt) {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: completion operation and target lease deadlines differ", deploymentdomain.ErrDeliveryConflict)
+	}
 	generation, err := c.generationAdmission.CompleteBuildAndAdmitTx(ctx, tx, assembled)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -764,11 +803,11 @@ func (c *NativeBuildCoordinator) completeNativeBuild(ctx context.Context, reques
 	if event.EventID != eventID || event.ScopeID != request.TargetID || event.AggregateType != "delivery_build" || event.AggregateID != reservation.Operation.OperationID || event.EventType != "delivery.build.sealed" || event.SchemaVersion != 1 || event.CorrelationID != reservation.Operation.OperationID || event.AggregateVersion <= 0 || event.OccurredAt.IsZero() || !sameNativeJSON(event.Payload, payload) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build event identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
-	audit, err := c.audit.AppendMutationAudit(ctx, tx, deploymentmodule.NativeDeliveryAuditInput{AuditID: auditID, DomainEventID: eventID, ScopeID: request.TargetID, ActorID: request.PrincipalID, Action: "delivery.build.sealed", ResourceKind: "build", ResourceID: reservation.Operation.OperationID, Outcome: "sealed", Operation: "build", RequestDigest: requestDigest, CorrelationID: reservation.Operation.OperationID, AggregateKey: event.AggregateID, AggregateSequence: event.AggregateVersion, Metadata: payload})
+	audit, err := c.audit.AppendMutationAudit(ctx, tx, deploymentmodule.NativeDeliveryAuditInput{AuditID: auditID, DomainEventID: eventID, ScopeID: request.TargetID, ActorID: request.PrincipalID, Action: "delivery.build.sealed", ResourceKind: "build", ResourceID: reservation.Operation.OperationID, Outcome: "accepted", Operation: "build", RequestDigest: requestDigest, CorrelationID: reservation.Operation.OperationID, AggregateKey: event.AggregateID, AggregateSequence: event.AggregateVersion, Metadata: payload})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	if audit.AuditID != auditID || audit.EventID != eventID || audit.ScopeID != request.TargetID || audit.ActorID != request.PrincipalID || audit.Action != "delivery.build.sealed" || audit.ResourceKind != "build" || audit.ResourceID != reservation.Operation.OperationID || audit.Outcome != "sealed" || audit.RequestDigest != requestDigest || audit.OccurredAt.IsZero() || !sameNativeJSON(audit.Metadata, payload) {
+	if audit.AuditID != auditID || audit.EventID != eventID || audit.ScopeID != request.TargetID || audit.ActorID != request.PrincipalID || audit.Action != "delivery.build.sealed" || audit.ResourceKind != "build" || audit.ResourceID != reservation.Operation.OperationID || audit.Outcome != "accepted" || audit.RequestDigest != requestDigest || audit.OccurredAt.IsZero() || !sameNativeJSON(audit.Metadata, payload) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build audit identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
 	if c.workflow != nil {
@@ -945,11 +984,11 @@ func (c *NativeBuildCoordinator) replayBuild(ctx context.Context, request deploy
 	if event.EventID != outcome.EventID || event.ScopeID != request.TargetID || event.AggregateType != "delivery_build" || event.AggregateID != outcome.OperationID || event.EventType != "delivery.build.sealed" || event.SchemaVersion != 1 || event.CorrelationID != outcome.OperationID || event.AggregateVersion <= 0 || event.OccurredAt.IsZero() || !sameNativeJSON(event.Payload, payload) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: replay event identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
-	audit, err := c.auditReader.GetMutationAudit(ctx, tx, deploymentmodule.NativeDeliveryAuditInput{AuditID: outcome.AuditID, DomainEventID: outcome.EventID, ScopeID: request.TargetID, ActorID: request.PrincipalID, Action: "delivery.build.sealed", ResourceKind: "build", ResourceID: outcome.OperationID, Outcome: "sealed", Operation: "build", RequestDigest: requestDigest, CorrelationID: outcome.OperationID, AggregateKey: event.AggregateID, AggregateSequence: event.AggregateVersion, Metadata: payload})
+	audit, err := c.auditReader.GetMutationAudit(ctx, tx, deploymentmodule.NativeDeliveryAuditInput{AuditID: outcome.AuditID, DomainEventID: outcome.EventID, ScopeID: request.TargetID, ActorID: request.PrincipalID, Action: "delivery.build.sealed", ResourceKind: "build", ResourceID: outcome.OperationID, Outcome: "accepted", Operation: "build", RequestDigest: requestDigest, CorrelationID: outcome.OperationID, AggregateKey: event.AggregateID, AggregateSequence: event.AggregateVersion, Metadata: payload})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	if audit.AuditID != outcome.AuditID || audit.EventID != outcome.EventID || audit.ScopeID != request.TargetID || audit.ActorID != request.PrincipalID || audit.Action != "delivery.build.sealed" || audit.ResourceKind != "build" || audit.ResourceID != outcome.OperationID || audit.Outcome != "sealed" || audit.RequestDigest != requestDigest || audit.OccurredAt.IsZero() || !sameNativeJSON(audit.Metadata, payload) {
+	if audit.AuditID != outcome.AuditID || audit.EventID != outcome.EventID || audit.ScopeID != request.TargetID || audit.ActorID != request.PrincipalID || audit.Action != "delivery.build.sealed" || audit.ResourceKind != "build" || audit.ResourceID != outcome.OperationID || audit.Outcome != "accepted" || audit.RequestDigest != requestDigest || audit.OccurredAt.IsZero() || !sameNativeJSON(audit.Metadata, payload) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: replay audit identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
 	if lease.LeaseID != outcome.LeaseID || lease.TargetID != request.TargetID || lease.OwnerID != request.PrincipalID || lease.State != "released" || lease.FencingEpoch != attempt.FencingEpoch || lease.ExpiresAt.IsZero() || lease.AcquiredAt.IsZero() || lease.ReleasedAt.IsZero() {

@@ -3419,6 +3419,28 @@ func (r *Repository) LeaseTx(ctx context.Context, tx Tx, id string) (DeliveryLea
 	}
 	return loadLeaseSimple(contextOrBackground(ctx), tx, id)
 }
+
+// LockLeaseTx acquires the same lease-row lock used by build completion and
+// returns its exact current value. Callers that will also lock a build attempt
+// use this boundary first so fresh completion and recovery share the canonical
+// lease -> attempt -> DuckLake lock order.
+func (r *Repository) LockLeaseTx(ctx context.Context, tx Tx, id string) (DeliveryLease, error) {
+	if tx == nil {
+		return DeliveryLease{}, ErrInvalid
+	}
+	id, err := uuidID(id, "lease id", false)
+	if err != nil {
+		return DeliveryLease{}, err
+	}
+	ctx = contextOrBackground(ctx)
+	if _, err := depdb.New(tx).LockLease(ctx, dbUUID(id)); errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryLease{}, ErrNotFound
+	} else if err != nil {
+		return DeliveryLease{}, err
+	}
+	return loadLeaseSimple(ctx, tx, id)
+}
+
 func loadLeaseSimple(ctx context.Context, db DBTX, id string) (DeliveryLease, error) {
 	var l DeliveryLease
 	row, err := depdb.New(db).GetLease(ctx, dbUUID(id))

@@ -217,11 +217,21 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
 
+	// Establish target lease -> delivery attempt -> DuckLake attempt ordering.
+	// Build orchestrators acquire the operation row before entering this
+	// capability, matching heartbeat, settlement, and recovery. CompleteBuildTx
+	// locks the same lease again later, which is re-entrant on this transaction.
+	lease, err := a.delivery.LockLeaseTx(ctx, tx, normalized.Fence.LeaseID)
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if lease.LeaseID != normalized.Fence.LeaseID || lease.TargetID != normalized.Fence.TargetID || lease.OwnerID != normalized.Fence.OwnerID || lease.FencingEpoch != normalized.Fence.FencingEpoch || lease.State != "active" && lease.State != "released" {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission lease fence differs", deploymentnative.ErrConflict)
+	}
+
 	// Every cross-ledger attempt transition locks the delivery attempt before
-	// the DuckLake attempt. Recovery and normal completion therefore cannot
-	// form a delivery<->DuckLake lock cycle when they race. The artifact bind
-	// provides that first delivery lock and remains atomic with every later
-	// mutation in this caller-owned transaction.
+	// the DuckLake attempt. The artifact bind provides that delivery lock and
+	// remains atomic with every later mutation in this caller-owned transaction.
 	artifactBinding, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
 		AttemptID: normalized.Commit.AttemptID, ServingArtifactID: normalized.Seal.ServingArtifactID,
 		ServingArtifactDigest: normalized.Seal.ServingArtifactDigest, ServingStateID: normalized.Generation.GenerationID,

@@ -235,6 +235,9 @@ func nativeBuildAssertSettlement(t *testing.T, f nativeHeartbeatFixture, admissi
 	if err != nil || duckAttempt.State != duckState || len(duckAttempt.TerminationEvidence) == 0 {
 		t.Fatalf("DuckLake attempt settlement = %+v err=%v, want %s", duckAttempt, err, duckState)
 	}
+	if operationState == deploymentmodule.NativeOperationStateIndeterminate && (!sameTerminationEvidence(operation.AttemptEvidence, attempt.TerminationEvidence) || !sameTerminationEvidence(operation.AttemptEvidence, duckAttempt.TerminationEvidence)) {
+		t.Fatal("indeterminate operation and attempt ledgers retained different recovery evidence")
+	}
 	candidate, err := f.Delivery.Candidate(t.Context(), admission.Attempt.CandidateID)
 	if err != nil || candidate.Status != candidateState {
 		t.Fatalf("candidate settlement = %+v err=%v, want %s", candidate, err, candidateState)
