@@ -26,7 +26,6 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
-	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -93,15 +92,15 @@ type runtimeServices struct {
 }
 
 type dashboardAppearanceReader interface {
-	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardappearance.Record, error)
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardmodule.AppearanceRecord, error)
 }
 
-func dashboardAppearanceResolver(reader projectmodule.ProjectDefinitionReader, store dashboardAppearanceReader) func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error) {
-	return func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardappearance.Value, error) {
-		appearance := dashboardappearance.Default()
+func dashboardAppearanceResolver(reader projectmodule.ProjectDefinitionReader, store dashboardAppearanceReader) func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+	return func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+		appearance := dashboardmodule.DefaultAppearance()
 		project, _, err := reader.ProjectDefinitionSnapshot(ctx)
 		if err != nil {
-			return dashboardappearance.Value{}, err
+			return dashboardmodule.Appearance{}, err
 		}
 		if source, ok := project.DashboardSources[dashboardID.String()]; ok && source.Document.Spec.Appearance != nil {
 			if source.Document.Spec.Appearance.Icon != nil {
@@ -113,12 +112,12 @@ func dashboardAppearanceResolver(reader projectmodule.ProjectDefinitionReader, s
 		}
 		overrides, err := store.ListProject(ctx, projectID)
 		if err != nil {
-			return dashboardappearance.Value{}, err
+			return dashboardmodule.Appearance{}, err
 		}
 		if record, ok := overrides[dashboardID]; ok {
-			return dashboardappearance.Resolve(record.Value), nil
+			return dashboardmodule.ResolveAppearance(record.Value), nil
 		}
-		return dashboardappearance.Resolve(appearance), nil
+		return dashboardmodule.ResolveAppearance(appearance), nil
 	}
 }
 
@@ -1122,7 +1121,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.dashboardModule == nil {
 		agentUICommands := routes.agentModule.UICommandBindings()
-		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error)
+		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error)
 		if database != nil && runtime.runtimeHostModule != nil {
 			resolveDashboardAppearance = dashboardAppearanceResolver(
 				projectmodule.NewActiveProjectDefinitionReader(runtime.runtimeHostModule.Provider()),
