@@ -34,6 +34,25 @@ func TestRegistryIncludesSupportedConnectionKinds(t *testing.T) {
 	}
 }
 
+func TestSourceDataIdentityCapabilitiesFailClosedExceptManagedContent(t *testing.T) {
+	managed, ok := LookupConnection("managed")
+	if !ok || managed.SourceDataIdentityCapability != SourceDataIdentityContentRevision {
+		t.Fatalf("managed source identity capability = %#v, want content revision", managed)
+	}
+	for _, kind := range []string{"http", "s3", "r2", "gcs", "azure_blob", "postgres", "mysql", "sqlite", "ducklake", "quack"} {
+		spec, ok := LookupConnection(kind)
+		if !ok || spec.SourceDataIdentityCapability != SourceDataIdentityUnavailable {
+			t.Fatalf("connector %q source identity capability = %#v, want unavailable", kind, spec)
+		}
+	}
+	for _, name := range FormatNames() {
+		format, ok := LookupFormat(name)
+		if !ok || format.SourceDataIdentityCapability != SourceDataIdentityUnavailable {
+			t.Fatalf("format %q source identity capability = %#v, want unavailable", name, format)
+		}
+	}
+}
+
 func TestConnectionActivationModesAreExplicit(t *testing.T) {
 	expected := map[string]ActivationMode{
 		"managed": ManagedActivation,

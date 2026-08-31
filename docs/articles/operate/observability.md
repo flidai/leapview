@@ -22,6 +22,54 @@ LeapView exposes Prometheus metrics behind `LEAPVIEW_METRICS_BEARER_TOKEN`. Prod
 
 Monitor at least process resource use, request rate and latency, error status, read/write executor saturation, queue depth and timeouts, refresh activity, storage capacity, and managed upload failures. Alert on sustained conditions and user-visible symptoms rather than every transient supersession.
 
+### Baseline health alerts
+
+The repository-owned rule file at `deploy/observability/prometheus/leapview-alerts.yaml` provides portable alerts for an unavailable scrape target, sustained application 5xx responses, fatal process-owned DuckDB health, and recovery qualification freshness. The rules assume that Prometheus assigns LeapView targets the stable scrape label `job="leapview"`; `instance` must identify the bounded scrape target. Alert identity is limited to those scrape labels plus the static `service` and `severity` labels. Operation, publication state, occurrence, schedule, artifact, target, request or trace identities, principals, projects, and resource identifiers are aggregated away and never become alert labels.
+
+Validate the syntax, PromQL behavior, firing delay, labels, and annotations with the pinned Prometheus toolchain:
+
+```sh
+task observability:alerts:check
+```
+
+The task downloads the official Prometheus archive for the supported Linux or macOS architecture, verifies its pinned SHA-256 digest, caches `promtool` under `.tmp/tools`, then runs `promtool check rules` and the healthy and firing rule fixtures.
+
+Copy or mount the rule files into the Prometheus deployment and reference them from the Prometheus configuration:
+
+```yaml
+rule_files:
+  - /etc/prometheus/rules/leapview-alerts.yaml
+  - /etc/prometheus/rules/leapview-recording-rules.yaml
+```
+
+Reload Prometheus only after validation succeeds. The target-unavailable rule relies on Prometheus's standard `up` metric and therefore requires the target to remain present in Prometheus service discovery; a target omitted from the scrape configuration cannot alert. The 5xx rule uses `leapview_http_requests_total`, aggregates method, route, and status dimensions down to `job` and `instance`, and requires a positive five-minute error rate continuously for ten minutes. `leapview_duckdb_fatal_health` is present only when LeapView owns a process-local DuckDB environment.
+
+Recovery alerts use current-state ledger projections. `leapview_recovery_qualification_scrape_error` clears after a successful ledger collection. `leapview_recovery_qualification_overdue` is recalculated from each active schedule's staleness policy and current occurrences, so ordinary missing or due work does not alert before its policy deadline. `leapview_recovery_qualification_evidence{state="failed"}` represents unresolved publication failures, remains retryable with persisted backoff, and clears after publication succeeds. The retained terminal-history gauge `leapview_recovery_qualification_failed` is deliberately not used for alerting because a later successful qualification does not remove old failures. Hold windows of five, ten, and fifteen minutes respectively absorb transient collection, reconciliation, and publication retry conditions.
+
+Every alert links to [Operational troubleshooting](/docs/guides/operate/troubleshooting); recovery alerts link directly to the [recovery qualification response](/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire). Configure routing and receivers in the operator-owned Alertmanager deployment.
+
+### Dashboard refresh reliability SLI and SLO
+
+The repository-owned recording rules at `deploy/observability/prometheus/leapview-recording-rules.yaml` derive dashboard refresh reliability only from `leapview_dashboard_refresh_duration_seconds_count`. A finished refresh is eligible unless its outcome is `canceled`. `complete` is good; `partial`, `error`, and the bounded fallback `other` are bad. Cancellations are excluded because refresh supersession and stream closure are expected lifecycle behavior rather than evidence of failed dashboard work.
+
+`leapview:dashboard_refresh_reliability:ratio_5m` records the five-minute good-to-eligible ratio. `leapview:dashboard_refresh_reliability:ratio_30d` records the rolling 30-day ratio. Both aggregate command and outcome dimensions to the stable `job` and `instance` scrape labels. Validate the rules, counter-reset behavior, empty-traffic handling, aggregation, and label contract with the existing pinned toolchain:
+
+```sh
+task observability:sli:check
+```
+
+Four companion recordings make the ratio's underlying traffic volume explicit. `leapview:dashboard_refresh_reliability:eligible_events_5m` and `leapview:dashboard_refresh_reliability:eligible_events_30d` include every outcome except `canceled`. `leapview:dashboard_refresh_reliability:bad_events_5m` and `leapview:dashboard_refresh_reliability:bad_events_30d` include `partial`, `error`, and `other`. They use `increase` over the source histogram counter, aggregate to the same `job` and `instance` labels, and handle counter resets. For a nonzero eligible volume, the reliability ratio is equivalent to one minus bad events divided by eligible events over the same window.
+
+Prometheus must retain at least 30 days of source samples for a complete rolling window. Until that history has accumulated after initial deployment or retention loss, the 30-day ratio and event volumes reflect only the available portion of the window. `increase` may return fractional estimates at range boundaries, so event volumes are operational context rather than accounting totals. Canceled-only traffic records zero eligible and bad events while still emitting no reliability ratio. Completely missing source metrics emit neither volume nor ratio; missing or idle traffic is never reported as perfect reliability. Sparse traffic can make the five-minute ratio volatile and the 30-day ratio statistically weak, so operators should inspect the eligible event recording before interpreting either series.
+
+The repository-owned dashboard refresh reliability objective is 99% over a rolling 30-day window. The LeapView engineering/operations owner owns this initial target. It is a realistic baseline for detecting meaningful degradation while production behavior is still being established, without requiring an immature system to meet a stricter objective before sufficient operational history exists. Revisit the target after production reliability data establishes normal dashboard refresh behavior.
+
+`leapview:dashboard_refresh_reliability:objective_ratio_30d` records the `0.99` objective wherever the 30-day reliability ratio is evaluable. `leapview:dashboard_refresh_reliability:error_budget_consumption_30d` divides the observed bad-event fraction by the approved 1% bad-event allowance. A value below `1` is within budget, `1` is exhausted, and a value above `1` is overdrawn. `leapview:dashboard_refresh_reliability:error_budget_remaining_30d` records one minus consumption, so a negative value remains visible after exhaustion rather than being clamped. All three recordings retain only `job` and `instance`.
+
+The objective and budget recordings are absent when eligible traffic is zero or missing, including canceled-only traffic; absence must not be interpreted as compliance. Low traffic remains mathematically valid but statistically weak, so evaluate budget state together with `eligible_events_30d`. Prometheus cannot distinguish a complete 30-day history from a partial window after deployment or retention loss, and the budget recordings naturally reflect only the samples available. They inherit the SLI's `increase` estimation behavior and are not accounting totals.
+
+This SLO measures only completed dashboard refresh work. It does not measure refreshes still in flight, HTTP or SSE transport continuity, authentication, static assets, direct API queries, or an end-to-end synthetic journey. It defines no burn-rate alert, paging policy, or Alertmanager routing.
+
 ## Structured logs
 
 Collect structured application logs from the service output. Preserve timestamp, severity, operation, route, status, duration, principal where safe, project, environment, request/correlation ID, deployment ID, revision digest, and refresh generation when available.

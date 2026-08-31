@@ -3,6 +3,7 @@ package observability
 import (
 	"strings"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -12,6 +13,12 @@ type Telemetry struct {
 	refreshInFlight      *prometheus.GaugeVec
 	refreshCancellations *prometheus.CounterVec
 	cacheOutcomes        *prometheus.CounterVec
+	cacheAdmissions      *prometheus.CounterVec
+	cacheMisses          *prometheus.CounterVec
+	cacheHits            *prometheus.CounterVec
+	cacheLookupDuration  *prometheus.HistogramVec
+	cacheRequestDuration *prometheus.HistogramVec
+	cacheStores          *prometheus.CounterVec
 	targetOutcomes       *prometheus.CounterVec
 	frameRows            *prometheus.HistogramVec
 	frameBytes           *prometheus.HistogramVec
@@ -51,6 +58,32 @@ func New(registerer prometheus.Registerer) *Telemetry {
 		cacheOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "leapview_dashboard_cache_outcomes_total",
 			Help: "Dashboard query cache outcomes.",
+		}, []string{"outcome"}),
+		cacheAdmissions: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_dashboard_query_cache_admissions_total",
+			Help: "Dashboard query cache admission decisions by fixed reason.",
+		}, []string{"decision", "reason"}),
+		cacheMisses: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_dashboard_query_cache_misses_total",
+			Help: "Logical dashboard query cache misses by evidence-backed reason.",
+		}, []string{"reason"}),
+		cacheHits: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_dashboard_query_cache_hits_total",
+			Help: "Dashboard query cache hits by fixed retention source.",
+		}, []string{"source"}),
+		cacheLookupDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "leapview_dashboard_query_cache_lookup_duration_seconds",
+			Help:    "Logical dashboard query cache lookup duration in seconds.",
+			Buckets: []float64{0.00001, 0.000025, 0.00005, 0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025},
+		}, []string{"outcome"}),
+		cacheRequestDuration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "leapview_dashboard_query_cache_request_duration_seconds",
+			Help:    "Cache-eligible dashboard query duration through its final cache outcome.",
+			Buckets: []float64{0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10},
+		}, []string{"outcome"}),
+		cacheStores: prometheus.NewCounterVec(prometheus.CounterOpts{
+			Name: "leapview_dashboard_query_cache_stores_total",
+			Help: "Dashboard query result cache store outcomes.",
 		}, []string{"outcome"}),
 		targetOutcomes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "leapview_dashboard_target_outcomes_total",
@@ -113,6 +146,12 @@ func New(registerer prometheus.Registerer) *Telemetry {
 			telemetry.refreshInFlight,
 			telemetry.refreshCancellations,
 			telemetry.cacheOutcomes,
+			telemetry.cacheAdmissions,
+			telemetry.cacheMisses,
+			telemetry.cacheHits,
+			telemetry.cacheLookupDuration,
+			telemetry.cacheRequestDuration,
+			telemetry.cacheStores,
 			telemetry.targetOutcomes,
 			telemetry.frameRows,
 			telemetry.frameBytes,
@@ -184,6 +223,36 @@ func (t *Telemetry) DashboardRefreshFinished(commandValue, outcomeValue string, 
 func (t *Telemetry) DashboardCacheObserved(outcome string) {
 	if t != nil {
 		t.cacheOutcomes.WithLabelValues(cacheLabel(outcome)).Inc()
+	}
+}
+
+func (t *Telemetry) DashboardCacheObservationObserved(observation dataquery.CacheObservation) {
+	if t == nil {
+		return
+	}
+	durationSeconds := observation.Duration.Seconds()
+	if durationSeconds < 0 {
+		durationSeconds = 0
+	}
+	switch observation.Phase {
+	case dataquery.CacheObservationAdmission:
+		t.cacheAdmissions.WithLabelValues(cacheAdmissionDecisionLabel(observation.Decision), cacheAdmissionReasonLabel(observation.AdmissionReason)).Inc()
+	case dataquery.CacheObservationLookup:
+		outcome := "error"
+		if observation.HitSource != "" {
+			outcome = "hit"
+		} else if observation.MissReason != "" {
+			outcome = "miss"
+			t.cacheMisses.WithLabelValues(cacheMissReasonLabel(observation.MissReason)).Inc()
+		}
+		t.cacheLookupDuration.WithLabelValues(outcome).Observe(durationSeconds)
+	case dataquery.CacheObservationFinal:
+		if observation.HitSource != "" {
+			t.cacheHits.WithLabelValues(cacheHitSourceLabel(observation.HitSource)).Inc()
+		}
+		t.cacheRequestDuration.WithLabelValues(cacheObservationOutcomeLabel(observation.Outcome)).Observe(durationSeconds)
+	case dataquery.CacheObservationStore:
+		t.cacheStores.WithLabelValues(cacheStoreOutcomeLabel(observation.StoreOutcome)).Inc()
 	}
 }
 
@@ -300,6 +369,71 @@ func cacheLabel(value string) string {
 	switch normalizedLabel(value) {
 	case "hit", "miss", "coalesced", "disabled", "error":
 		return normalizedLabel(value)
+	default:
+		return "other"
+	}
+}
+
+func cacheAdmissionDecisionLabel(value dataquery.CacheAdmissionDecision) string {
+	switch value {
+	case dataquery.CacheAdmissionEligible, dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionRejected:
+		return string(value)
+	default:
+		return "other"
+	}
+}
+
+func cacheAdmissionReasonLabel(value dataquery.CacheAdmissionReason) string {
+	switch value {
+	case dataquery.CacheAdmissionReasonEligible,
+		dataquery.CacheAdmissionReasonQueryNotCacheable,
+		dataquery.CacheAdmissionReasonPlanningFailed,
+		dataquery.CacheAdmissionReasonCanceled,
+		dataquery.CacheAdmissionReasonDependencyUnavailable,
+		dataquery.CacheAdmissionReasonDependencyInvalid,
+		dataquery.CacheAdmissionReasonPolicyInvalid,
+		dataquery.CacheAdmissionReasonPartitionInvalid:
+		return string(value)
+	default:
+		return "other"
+	}
+}
+
+func cacheMissReasonLabel(value dataquery.CacheLookupMissReason) string {
+	switch value {
+	case dataquery.CacheLookupMissColdStart,
+		dataquery.CacheLookupMissAbsentEntry,
+		dataquery.CacheLookupMissQueryMismatch,
+		dataquery.CacheLookupMissInvalidated,
+		dataquery.CacheLookupMissEvicted:
+		return string(value)
+	default:
+		return "other"
+	}
+}
+
+func cacheHitSourceLabel(value dataquery.CacheHitSource) string {
+	switch value {
+	case dataquery.CacheHitCurrentGeneration, dataquery.CacheHitSharedGeneration, dataquery.CacheHitCutoverRetained:
+		return string(value)
+	default:
+		return "other"
+	}
+}
+
+func cacheObservationOutcomeLabel(value dataquery.CacheObservationOutcome) string {
+	switch value {
+	case dataquery.CacheObservationHit, dataquery.CacheObservationMiss, dataquery.CacheObservationCoalesced, dataquery.CacheObservationError:
+		return string(value)
+	default:
+		return "other"
+	}
+}
+
+func cacheStoreOutcomeLabel(value dataquery.CacheStoreOutcome) string {
+	switch value {
+	case dataquery.CacheStoreStored, dataquery.CacheStoreOversized, dataquery.CacheStoreStale, dataquery.CacheStoreClosed:
+		return string(value)
 	default:
 		return "other"
 	}

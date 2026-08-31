@@ -29,6 +29,18 @@ FROM recovery_qualification_schedules
 WHERE enabled = 1 AND closed_at IS NULL AND next_run_at <= ?
 ORDER BY next_run_at, schedule_id;
 
+-- name: GetRecoveryQualificationEnqueueCursor :one
+SELECT last_schedule_id, last_schedule_revision_id
+FROM recovery_qualification_enqueue_cursor
+WHERE singleton_id = 1;
+
+-- name: UpdateRecoveryQualificationEnqueueCursor :execrows
+UPDATE recovery_qualification_enqueue_cursor
+SET last_schedule_id = sqlc.arg(last_schedule_id),
+    last_schedule_revision_id = sqlc.arg(last_schedule_revision_id),
+    updated_at = sqlc.arg(updated_at)
+WHERE singleton_id = 1;
+
 -- name: AdvanceRecoveryQualificationSchedule :execrows
 UPDATE recovery_qualification_schedules
 SET next_run_at = sqlc.arg(next_run_at), updated_at = sqlc.arg(updated_at)

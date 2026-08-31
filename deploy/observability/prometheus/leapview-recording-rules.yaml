@@ -1,0 +1,101 @@
+groups:
+  - name: leapview-dashboard-refresh-reliability
+    rules:
+      - record: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m])
+          )
+          or
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="canceled"}[5m]) * 0
+          )
+
+      - record: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome=~"partial|error|other"}[5m])
+          )
+          or
+          (leapview:dashboard_refresh_reliability:eligible_events_5m * 0)
+
+      - record: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d])
+          )
+          or
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="canceled"}[30d]) * 0
+          )
+
+      - record: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome=~"partial|error|other"}[30d])
+          )
+          or
+          (leapview:dashboard_refresh_reliability:eligible_events_30d * 0)
+
+      - record: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        expr: |
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+              or
+              (rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m]) * 0)
+            )
+            /
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m])
+            )
+          )
+          and on (job, instance)
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[5m])
+            ) > 0
+          )
+
+      - record: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        expr: |
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+              or
+              (rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d]) * 0)
+            )
+            /
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d])
+            )
+          )
+          and on (job, instance)
+          (
+            sum by (job, instance) (
+              rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome!="canceled"}[30d])
+            ) > 0
+          )
+
+      - record: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        expr: |
+          (leapview:dashboard_refresh_reliability:ratio_30d * 0) + 0.99
+
+      - record: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        expr: |
+          (
+            (
+              leapview:dashboard_refresh_reliability:bad_events_30d
+              /
+              leapview:dashboard_refresh_reliability:eligible_events_30d
+            )
+            * 100
+            /
+            (100 - (leapview:dashboard_refresh_reliability:objective_ratio_30d * 100))
+          )
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:eligible_events_30d > 0)
+
+      - record: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        expr: |
+          1 - leapview:dashboard_refresh_reliability:error_budget_consumption_30d

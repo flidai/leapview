@@ -173,7 +173,7 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
 			DashboardID: dashboardID, PageID: targetPage.ID, ModelID: request.ModelID,
 			Filters: preparation.Filters, Plan: plan,
-			EventObserved: h.RefreshEventObserved, CacheObserved: h.CacheObserved,
+			EventObserved: h.RefreshEventObserved, CacheObserved: h.CacheObserved, CacheObservationObserved: h.CacheObservationObserved,
 		})
 	})
 	if err != nil && !errors.Is(err, dashboardstream.ErrStalePreparation) {

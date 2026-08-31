@@ -53,6 +53,9 @@ jobs:
         with:
           browser: "false"
 
+      - name: Validate Prometheus rules and fixtures
+        run: task observability:check
+
       - name: Prepare generated and embedded assets
         run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare
 

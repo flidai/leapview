@@ -233,6 +233,39 @@ func TestResultIdentityPackageIsAnAnalyticsContract(t *testing.T) {
 	}
 }
 
+func TestSourceDataIdentityPackageIsAnEngineIndependentAnalyticsContract(t *testing.T) {
+	const path = "internal/analytics/sourcedataidentity"
+	rule, ok := ClassifyPackage(path)
+	if !ok {
+		t.Fatalf("%s is not classified", path)
+	}
+	if rule.Capability != "analytics" || rule.Layer != LayerContract {
+		t.Fatalf("%s classification = %#v, want analytics contract-layer", path, rule)
+	}
+	if !IsPublicContractImport("analytics", path) {
+		t.Fatalf("%s is not published as an analytics contract", path)
+	}
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir != path {
+			continue
+		}
+		for _, imported := range file.imports {
+			for _, forbidden := range []string{
+				modulePath + "/internal/analytics/connectors",
+				modulePath + "/internal/analytics/materialize",
+				modulePath + "/internal/analytics/model",
+				modulePath + "/internal/analytics/resultcache",
+				modulePath + "/internal/deployment",
+				modulePath + "/internal/release",
+			} {
+				if imported == forbidden || strings.HasPrefix(imported, forbidden+"/") {
+					t.Errorf("%s imports forbidden implementation dependency %s", file.path, imported)
+				}
+			}
+		}
+	}
+}
+
 func TestEnterpriseAuthoringForbiddenImportsAreRejected(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -2942,6 +2975,14 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 			}
 		}
 	}
+	for _, want := range []string{
+		"name: Validate Prometheus rules and fixtures",
+		"run: task observability:check",
+	} {
+		if !strings.Contains(goPackagesCI, want) {
+			t.Fatalf("PR Go package validation missing observability check %q", want)
+		}
+	}
 	for _, forbidden := range []string{
 		"push:",
 		"Build and qualify the production image remotely",
@@ -2983,6 +3024,24 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	}
 	if strings.Contains(mergeText, "group: merge-validation-${{ github.repository }}") {
 		t.Fatal("merge validation concurrency must not cancel distinct merge-queue candidates")
+	}
+	goPackagesMerge := workflowJobBlock(t, mergeText, "go-packages-validation")
+	for _, want := range []string{
+		"name: Validate Prometheus rules and fixtures",
+		"run: task observability:check",
+	} {
+		if !strings.Contains(goPackagesMerge, want) {
+			t.Fatalf("merge-queue Go package validation missing observability check %q", want)
+		}
+	}
+	for _, want := range []string{
+		"observability:check:",
+		"task: observability:alerts:check",
+		"task: observability:sli:check",
+	} {
+		if !strings.Contains(string(taskfile), want) {
+			t.Fatalf("Taskfile missing aggregate observability check %q", want)
+		}
 	}
 	artifactText := string(artifactWorkflow)
 	for _, want := range []string{
@@ -4003,10 +4062,17 @@ func TestArrowResponseContractDeclaresCursorTrailer(t *testing.T) {
 	contract := string(body)
 	for _, fragment := range []string{
 		`@extension("x-leapview-response-trailers", #["X-Next-Cursor"])`,
+		`@header contentType: "application/vnd.apache.arrow.stream";`,
+		`@header("X-Query-ID") queryId: string;`,
+		`@header("X-Serving-Snapshot") servingSnapshot: string;`,
+		`@header("X-LeapView-Arrow-Contract") arrowContract: "native-v1";`,
 		`@header("Trailer") trailers: "X-Next-Cursor";`,
+		`@header cacheControl: "no-store";`,
+		`model GatewayTimeout`,
+		`alias RowsetErrors = CommonErrors | GatewayTimeout;`,
 	} {
 		if !strings.Contains(contract, fragment) {
-			t.Errorf("Arrow response contract missing trailer declaration %q", fragment)
+			t.Errorf("Arrow response contract missing native-v1 declaration %q", fragment)
 		}
 	}
 	if strings.Contains(contract, `@header("X-Next-Cursor")`) {
@@ -4017,10 +4083,28 @@ func TestArrowResponseContractDeclaresCursorTrailer(t *testing.T) {
 	if got := strings.Count(string(operations), `@extension("x-leapview-response-trailers", #["X-Next-Cursor"])`); got != 3 {
 		t.Errorf("Arrow operation trailer declarations = %d, want 3", got)
 	}
+	if got := strings.Count(string(operations), `RowsetErrors;`); got != 3 {
+		t.Errorf("Arrow operation timeout error declarations = %d, want 3", got)
+	}
 	openAPI, err := os.ReadFile(filepath.Join(root, "docs", "api", "openapi.yaml"))
 	require.NoError(t, err)
 	if got := strings.Count(string(openAPI), "x-leapview-response-trailers:"); got != 3 {
 		t.Errorf("generated OpenAPI trailer declarations = %d, want 3", got)
+	}
+	for _, operationID := range []string{"queryDashboardVisualData", "previewSemanticDataset", "querySemanticModel"} {
+		section := string(openAPI)
+		start := strings.Index(section, "operationId: "+operationID)
+		if start < 0 {
+			t.Errorf("generated OpenAPI is missing operation %q", operationID)
+			continue
+		}
+		section = section[start:]
+		if end := strings.Index(section, "\n  /api/"); end >= 0 {
+			section = section[:end]
+		}
+		if !strings.Contains(section, "        '504':") {
+			t.Errorf("generated OpenAPI operation %q is missing the Arrow timeout response", operationID)
+		}
 	}
 }
 

@@ -282,14 +282,36 @@ tasks:
     cmds:
       - go test ./pkg/arrowresult -run '^$' -bench '^BenchmarkArrow(CaptureCopy|IPCExistingDashboardString|IPCNativeReference)$/(narrow|wide|dictionary)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
       - go test ./internal/analytics/arrowdecode -run '^$' -bench '^BenchmarkArrowDecodeRows$/(narrow|wide|dictionary)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/analytics/resultcache -run '^$' -bench '^BenchmarkWarmArrowCacheLookupLease$/(narrow|wide)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
       - go test ./internal/dashboard/arrowbench -run '^$' -bench '^BenchmarkDashboard(RowShaping|StringProjection)$/(narrow|wide)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/dashboard/runtime -run '^$' -bench '^BenchmarkDashboardWarmShapingStages$/(kpi|wide_chart|table_window_narrow|table_window_wide)/(rows_1|rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/dashboard/http -run '^TestDashboard(Baseline|Warm)' -bench '^BenchmarkDashboardBaseline(EndToEnd|Stages)$/(detail_narrow|detail_wide|matrix|pivot)/(rows_50|rows_1000)$' -benchmem -benchtime=100ms -count=3 -cpu=1
+      - go test ./internal/dashboard/http -run '^TestDashboardWarm' -bench '^BenchmarkDashboardWarmCacheConcurrency$/(kpi|chart_bundle|wide_chart|table_window_arrow)/(users_1|users_20)$' -benchmem -benchtime=1x -count=3 -cpu=1
+      - go test ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardWarmSerializationStages$' -benchmem -benchtime=100ms -count=3 -cpu=1
 
   bench:arrow:full:
     desc: Run all Arrow evidence workloads with comparison-grade sample counts
     cmds:
       - go test ./pkg/arrowresult -run '^$' -bench '^BenchmarkArrow(CaptureCopy|IPCExistingDashboardString|IPCNativeReference)$' -benchmem -benchtime=500ms -count=10 -cpu=1
       - go test ./internal/analytics/arrowdecode -run '^$' -bench '^BenchmarkArrowDecodeRows$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/analytics/resultcache -run '^$' -bench '^BenchmarkWarmArrowCacheLookupLease$' -benchmem -benchtime=500ms -count=10 -cpu=1
       - go test ./internal/dashboard/arrowbench -run '^$' -bench '^BenchmarkDashboard(RowShaping|StringProjection)$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/dashboard/runtime -run '^$' -bench '^BenchmarkDashboardWarmShapingStages$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/dashboard/http -run '^TestDashboard(Baseline|Warm)' -bench '^BenchmarkDashboardBaseline' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test ./internal/dashboard/http -run '^TestDashboardWarm' -bench '^BenchmarkDashboardWarmCacheConcurrency$' -benchmem -benchtime=250ms -count=10 -cpu=1
+      - go test ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardWarmSerializationStages$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
+  test:arrow:direct-streaming-experiment:
+    desc: Run the isolated FAI-543 governed native-v1 prototype contracts
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^(TestDashboardNativeArrowContract|TestDashboardDirectArrowExperiment)' -count=1
+      - go test -tags=fai543experiment ./internal/dashboard/queryauthz -run '^(TestDashboardNativeArrowContract|TestDirectArrowExperiment)' -count=1
+      - go test ./internal/dashboard/semanticapi -run '^(TestSemanticArrowSink|TestWriteSemanticArrowResponse)' -count=1
+
+  bench:arrow:direct-streaming-experiment:
+    desc: Compare current api_direct with the isolated FAI-543 governed native-v1 prototype
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
@@ -866,6 +888,24 @@ tasks:
     desc: Run the fast pull-request contract on the current machine
     cmds:
       - task: ci:pr
+
+  observability:check:
+    desc: Validate all repository-owned Prometheus rules and fixtures
+    cmds:
+      - task: observability:alerts:check
+      - task: observability:sli:check
+
+  observability:alerts:check:
+    desc: Validate repository-owned Prometheus alert rules and fixtures
+    cmds:
+      - ./scripts/promtool.sh check rules deploy/observability/prometheus/leapview-alerts.yaml
+      - ./scripts/promtool.sh test rules deploy/observability/prometheus/testdata/leapview-alerts.test.yaml
+
+  observability:sli:check:
+    desc: Validate repository-owned Prometheus SLI recording rules and fixtures
+    cmds:
+      - ./scripts/promtool.sh check rules deploy/observability/prometheus/leapview-recording-rules.yaml
+      - ./scripts/promtool.sh test rules deploy/observability/prometheus/testdata/leapview-recording-rules.test.yaml
 
   image:qualify:production:
     desc: Qualify an immutable LeapView production image

@@ -43,15 +43,16 @@ type schemaRef struct {
 }
 
 type profile struct {
-	Key                  string   `json:"key"`
-	ActivationMode       string   `json:"activationMode"`
-	LocationCapabilities []string `json:"locationCapabilities"`
-	ApprovedExtensions   []string `json:"approvedExtensions"`
-	SecretType           string   `json:"secretType"`
-	SupportStatus        string   `json:"supportStatus"`
-	AdapterKey           string   `json:"adapterKey"`
-	SchemaName           string
-	AllowPublicAccess    bool
+	Key                          string   `json:"key"`
+	ActivationMode               string   `json:"activationMode"`
+	LocationCapabilities         []string `json:"locationCapabilities"`
+	ApprovedExtensions           []string `json:"approvedExtensions"`
+	SecretType                   string   `json:"secretType"`
+	SupportStatus                string   `json:"supportStatus"`
+	AdapterKey                   string   `json:"adapterKey"`
+	SourceDataIdentityCapability string   `json:"sourceDataIdentityCapability"`
+	SchemaName                   string
+	AllowPublicAccess            bool
 }
 
 func main() {
@@ -125,8 +126,11 @@ func buildProfiles(doc document) ([]profile, error) {
 		if err := json.Unmarshal(value, &item); err != nil {
 			return nil, fmt.Errorf("decode connector profile %s: %w", name, err)
 		}
-		if item.Key == "" || item.AdapterKey == "" || item.ActivationMode == "" || item.SecretType == "" || item.SupportStatus == "" {
+		if item.Key == "" || item.AdapterKey == "" || item.ActivationMode == "" || item.SecretType == "" || item.SupportStatus == "" || item.SourceDataIdentityCapability == "" {
 			return nil, fmt.Errorf("connector profile %s is missing required metadata", name)
+		}
+		if !validSourceDataIdentityCapability(item.SourceDataIdentityCapability) {
+			return nil, fmt.Errorf("connector profile %s has unsupported source data identity capability %q", name, item.SourceDataIdentityCapability)
 		}
 		item.SchemaName = name
 		// Public access is a structural capability: only connector variants
@@ -174,16 +178,17 @@ func writeRegistry(output string, profiles []profile) error {
 }
 
 type pathFormatOption struct {
-	Format            string
-	Model             string
-	Extensions        []string
-	ScanKind          string
-	ScanFunction      string
-	RequiredExtension string
-	SourceSecretType  string
-	TableLike         bool
-	AllowsOptions     bool
-	Defaults          map[string]any
+	Format                       string
+	Model                        string
+	Extensions                   []string
+	ScanKind                     string
+	ScanFunction                 string
+	RequiredExtension            string
+	SourceSecretType             string
+	SourceDataIdentityCapability string
+	TableLike                    bool
+	AllowsOptions                bool
+	Defaults                     map[string]any
 }
 
 func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
@@ -242,27 +247,31 @@ func derivePathFormatOptions(doc document) ([]pathFormatOption, error) {
 			return nil, fmt.Errorf("format %q model %q is missing x-leapview-format metadata", format, profileRef)
 		}
 		var profile struct {
-			Name              string         `json:"name"`
-			Extensions        []string       `json:"extensions"`
-			ScanKind          string         `json:"scanKind"`
-			ScanFunction      string         `json:"scanFunction"`
-			RequiredExtension string         `json:"requiredExtension"`
-			SourceSecretType  string         `json:"sourceSecretType"`
-			TableLike         bool           `json:"tableLike"`
-			AllowsOptions     *bool          `json:"allowsOptions"`
-			Defaults          map[string]any `json:"defaults"`
+			Name                         string         `json:"name"`
+			Extensions                   []string       `json:"extensions"`
+			ScanKind                     string         `json:"scanKind"`
+			ScanFunction                 string         `json:"scanFunction"`
+			RequiredExtension            string         `json:"requiredExtension"`
+			SourceSecretType             string         `json:"sourceSecretType"`
+			SourceDataIdentityCapability string         `json:"sourceDataIdentityCapability"`
+			TableLike                    bool           `json:"tableLike"`
+			AllowsOptions                *bool          `json:"allowsOptions"`
+			Defaults                     map[string]any `json:"defaults"`
 		}
 		if err := json.Unmarshal(rawProfile, &profile); err != nil {
 			return nil, fmt.Errorf("decode format %q metadata: %w", format, err)
 		}
-		if profile.Name != format || profile.ScanKind == "" || profile.Defaults == nil {
+		if profile.Name != format || profile.ScanKind == "" || profile.Defaults == nil || profile.SourceDataIdentityCapability == "" {
 			return nil, fmt.Errorf("format %q metadata is incomplete", format)
+		}
+		if !validSourceDataIdentityCapability(profile.SourceDataIdentityCapability) {
+			return nil, fmt.Errorf("format %q has unsupported source data identity capability %q", format, profile.SourceDataIdentityCapability)
 		}
 		allowsOptions := true
 		if profile.AllowsOptions != nil {
 			allowsOptions = *profile.AllowsOptions
 		}
-		pairs = append(pairs, pathFormatOption{Format: format, Model: profileRef, Extensions: profile.Extensions, ScanKind: profile.ScanKind, ScanFunction: profile.ScanFunction, RequiredExtension: profile.RequiredExtension, SourceSecretType: profile.SourceSecretType, TableLike: profile.TableLike, AllowsOptions: allowsOptions, Defaults: profile.Defaults})
+		pairs = append(pairs, pathFormatOption{Format: format, Model: profileRef, Extensions: profile.Extensions, ScanKind: profile.ScanKind, ScanFunction: profile.ScanFunction, RequiredExtension: profile.RequiredExtension, SourceSecretType: profile.SourceSecretType, SourceDataIdentityCapability: profile.SourceDataIdentityCapability, TableLike: profile.TableLike, AllowsOptions: allowsOptions, Defaults: profile.Defaults})
 	}
 	for name, property := range defaults.Properties {
 		if _, ok := formats[name]; !ok {
@@ -338,7 +347,7 @@ func writePathOptionsGo(path string, pairs []pathFormatOption) error {
 	}
 	b.WriteString("}\n\n")
 	b.WriteString("// FormatProfile is generated from x-leapview-format metadata.\n")
-	b.WriteString("type FormatProfile struct { Name string; Extensions []string; ScanKind string; ScanFunction string; RequiredExtension string; SourceSecretType string; TableLike bool; AllowsOptions bool }\n\n")
+	b.WriteString("type FormatProfile struct { Name string; Extensions []string; ScanKind string; ScanFunction string; RequiredExtension string; SourceSecretType string; SourceDataIdentityCapability SourceDataIdentityCapability; TableLike bool; AllowsOptions bool }\n\n")
 	b.WriteString("var FormatRegistry = []FormatProfile{\n")
 	for _, pair := range pairs {
 		b.WriteString("{Name: ")
@@ -358,6 +367,8 @@ func writePathOptionsGo(path string, pairs []pathFormatOption) error {
 		b.WriteString(strconv.Quote(pair.RequiredExtension))
 		b.WriteString(", SourceSecretType: ")
 		b.WriteString(strconv.Quote(pair.SourceSecretType))
+		b.WriteString(", SourceDataIdentityCapability: SourceDataIdentityCapability(")
+		b.WriteString(strconv.Quote(pair.SourceDataIdentityCapability) + ")")
 		b.WriteString(", TableLike: ")
 		b.WriteString(strconv.FormatBool(pair.TableLike))
 		b.WriteString(", AllowsOptions: ")
@@ -402,7 +413,7 @@ func writeConnectorReference(path string, profiles []profile, pairs []pathFormat
 	b.WriteString("# Data-resource connector capabilities\n\n")
 	b.WriteString("This reference is generated from the reviewed TypeSpec connector profiles and runtime registry checks. It describes authored capabilities only; target endpoints and credentials remain target-owned.\n\n")
 	b.WriteString("## Connectors\n\n")
-	b.WriteString("| Key | Activation | Locations | Public access | Approved extensions | Secret type | Support | Adapter |\n| --- | --- | --- | --- | --- | --- | --- | --- |\n")
+	b.WriteString("| Key | Activation | Locations | Source data identity | Public access | Approved extensions | Secret type | Support | Adapter |\n| --- | --- | --- | --- | --- | --- | --- | --- | --- |\n")
 	for _, item := range profiles {
 		b.WriteString("| `")
 		b.WriteString(item.Key)
@@ -410,6 +421,8 @@ func writeConnectorReference(path string, profiles []profile, pairs []pathFormat
 		b.WriteString(item.ActivationMode)
 		b.WriteString("` | `")
 		b.WriteString(strings.Join(item.LocationCapabilities, "`, `"))
+		b.WriteString("` | `")
+		b.WriteString(item.SourceDataIdentityCapability)
 		b.WriteString("` | `")
 		b.WriteString(strconv.FormatBool(item.AllowPublicAccess))
 		b.WriteString("` | `")
@@ -428,7 +441,7 @@ func writeConnectorReference(path string, profiles []profile, pairs []pathFormat
 	}
 	b.WriteString("\n## Path format options\n\n")
 	b.WriteString("Path Sources retain the scalar ADR shape (`format` plus sibling `options`) where a format supports reader options. Optionless formats are emitted without an options model; unknown or cross-format option fields are rejected.\n\n")
-	b.WriteString("| Format | Option model |\n| --- | --- |\n")
+	b.WriteString("| Format | Option model | Source data identity |\n| --- | --- | --- |\n")
 	for _, pair := range pairs {
 		b.WriteString("| `")
 		b.WriteString(pair.Format)
@@ -440,7 +453,9 @@ func writeConnectorReference(path string, profiles []profile, pairs []pathFormat
 			b.WriteString(pair.Model)
 			b.WriteString("`")
 		}
-		b.WriteString(" |\n")
+		b.WriteString(" | `")
+		b.WriteString(pair.SourceDataIdentityCapability)
+		b.WriteString("` |\n")
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
@@ -474,6 +489,9 @@ func checkRuntimeProfile(item profile) error {
 	}
 	if item.AllowPublicAccess != runtime.AllowPublicAccess {
 		return fmt.Errorf("connector %q public access capability %v differs from runtime %v", item.Key, item.AllowPublicAccess, runtime.AllowPublicAccess)
+	}
+	if item.SourceDataIdentityCapability != string(runtime.SourceDataIdentityCapability) {
+		return fmt.Errorf("connector %q source data identity capability %q differs from runtime %q", item.Key, item.SourceDataIdentityCapability, runtime.SourceDataIdentityCapability)
 	}
 	return nil
 }
@@ -513,8 +531,13 @@ func emit(profiles []profile) string {
 	b.WriteString("\tConnectorSupportStable ConnectorSupportStatus = \"stable\"\n")
 	b.WriteString("\tConnectorSupportExperimental ConnectorSupportStatus = \"experimental\"\n")
 	b.WriteString(")\n\n")
+	b.WriteString("type SourceDataIdentityCapability string\n\n")
+	b.WriteString("const (\n")
+	b.WriteString("\tSourceDataIdentityUnavailable SourceDataIdentityCapability = \"unavailable\"\n")
+	b.WriteString("\tSourceDataIdentityContentRevision SourceDataIdentityCapability = \"content_revision\"\n")
+	b.WriteString(")\n\n")
 	b.WriteString("type ConnectorProfile struct {\n")
-	b.WriteString("\tKey string\n\tSchemaName string\n\tActivationMode ConnectorActivationMode\n\tLocationCapabilities []string\n\tApprovedExtensions []string\n\tSecretType string\n\tSupportStatus ConnectorSupportStatus\n\tAdapterKey string\n\tAllowPublicAccess bool\n")
+	b.WriteString("\tKey string\n\tSchemaName string\n\tActivationMode ConnectorActivationMode\n\tLocationCapabilities []string\n\tApprovedExtensions []string\n\tSecretType string\n\tSupportStatus ConnectorSupportStatus\n\tAdapterKey string\n\tSourceDataIdentityCapability SourceDataIdentityCapability\n\tAllowPublicAccess bool\n")
 	b.WriteString("}\n\n")
 	b.WriteString("var ConnectorRegistry = []ConnectorProfile{\n")
 	for _, item := range profiles {
@@ -534,6 +557,8 @@ func emit(profiles []profile) string {
 		b.WriteString(strconv.Quote(item.SupportStatus))
 		b.WriteString("), AdapterKey: ")
 		b.WriteString(strconv.Quote(item.AdapterKey))
+		b.WriteString(", SourceDataIdentityCapability: SourceDataIdentityCapability(")
+		b.WriteString(strconv.Quote(item.SourceDataIdentityCapability) + ")")
 		b.WriteString(", AllowPublicAccess: ")
 		b.WriteString(strconv.FormatBool(item.AllowPublicAccess))
 		b.WriteString("},\n")
@@ -542,6 +567,15 @@ func emit(profiles []profile) string {
 	b.WriteString("func LookupConnector(key string) (ConnectorProfile, bool) {\n")
 	b.WriteString("\tfor _, profile := range ConnectorRegistry {\n\t\tif profile.Key == key { return profile, true }\n\t}\n\treturn ConnectorProfile{}, false\n}\n")
 	return b.String()
+}
+
+func validSourceDataIdentityCapability(value string) bool {
+	switch value {
+	case "unavailable", "content_revision":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeStrings(b *strings.Builder, values []string) {

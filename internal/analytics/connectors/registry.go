@@ -25,6 +25,15 @@ const (
 
 type ActivationMode string
 
+// SourceDataIdentityCapability describes the authoritative source-content
+// equivalence evidence a connector can supply for result reuse.
+type SourceDataIdentityCapability = projectcontracts.SourceDataIdentityCapability
+
+const (
+	SourceDataIdentityUnavailable     = projectcontracts.SourceDataIdentityUnavailable
+	SourceDataIdentityContentRevision = projectcontracts.SourceDataIdentityContentRevision
+)
+
 const (
 	// ManagedActivation resolves immutable data revisions through managed-data
 	// bindings rather than through a secret-backed connection.
@@ -38,14 +47,15 @@ const (
 )
 
 type Format struct {
-	Name              string
-	Extensions        []string
-	ScanKind          string
-	ScanFunction      string
-	RequiredExtension string
-	AllowsOptions     bool
-	SourceSecretType  string
-	TableLike         bool
+	Name                         string
+	Extensions                   []string
+	ScanKind                     string
+	ScanFunction                 string
+	RequiredExtension            string
+	AllowsOptions                bool
+	SourceSecretType             string
+	SourceDataIdentityCapability SourceDataIdentityCapability
+	TableLike                    bool
 }
 
 type ConnectionSpec struct {
@@ -64,8 +74,12 @@ type ConnectionSpec struct {
 	// AllowPublicAccess indicates that the portable `access: public` policy
 	// can be lowered to a target binding with no credential snapshot.
 	AllowPublicAccess bool
-	AttachKind        string
-	ObjectRelation    string
+	// SourceDataIdentityCapability states which authoritative source-content
+	// equivalence evidence the connector can project. Unavailable connectors
+	// must never synthesize an identity from configuration or runtime state.
+	SourceDataIdentityCapability SourceDataIdentityCapability
+	AttachKind                   string
+	ObjectRelation               string
 }
 
 var connections = map[string]ConnectionSpec{
@@ -138,14 +152,12 @@ func LookupFormat(name string) (Format, bool) {
 			continue
 		}
 		return Format{
-			Name:              profile.Name,
-			Extensions:        append([]string(nil), profile.Extensions...),
-			ScanKind:          profile.ScanKind,
-			ScanFunction:      profile.ScanFunction,
-			RequiredExtension: profile.RequiredExtension,
-			AllowsOptions:     profile.AllowsOptions,
-			SourceSecretType:  profile.SourceSecretType,
-			TableLike:         profile.TableLike,
+			Name: profile.Name, Extensions: append([]string(nil), profile.Extensions...),
+			ScanKind: profile.ScanKind, ScanFunction: profile.ScanFunction,
+			RequiredExtension: profile.RequiredExtension, AllowsOptions: profile.AllowsOptions,
+			SourceSecretType:             profile.SourceSecretType,
+			SourceDataIdentityCapability: profile.SourceDataIdentityCapability,
+			TableLike:                    profile.TableLike,
 		}, true
 	}
 	return Format{}, false
@@ -176,6 +188,7 @@ func LookupConnection(kind string) (ConnectionSpec, bool) {
 	// object terminology for the same capability.
 	spec.AllowsObjectSource = generatedContains(profile.LocationCapabilities, KindObject) || generatedContains(profile.LocationCapabilities, "relation")
 	spec.AllowPublicAccess = profile.AllowPublicAccess
+	spec.SourceDataIdentityCapability = profile.SourceDataIdentityCapability
 	return spec, ok
 }
 

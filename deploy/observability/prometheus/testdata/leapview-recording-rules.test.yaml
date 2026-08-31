@@ -1,0 +1,445 @@
+rule_files:
+  - ../leapview-recording-rules.yaml
+
+evaluation_interval: 1m
+
+tests:
+  - name: successful refreshes produce perfect reliability
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+10x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: 1
+
+  - name: nonzero failures within the objective consume part of the budget
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+199x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="error"}'
+        values: '0+1x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 0.5
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: 0.5
+
+  - name: exact objective threshold exhausts the budget
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+99x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="error"}'
+        values: '0+1x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: 0
+
+  - name: low-volume partial history remains explicit
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+1x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 5
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: 1
+
+  - name: one low-volume failure visibly overdraws the budget
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+9x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="error"}'
+        values: '0+1x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -9
+
+  - name: partial failures aggregate commands and prohibited labels
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete",route="/dashboards/{dashboard}",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0+4x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="navigate",outcome="complete",route="/updates",request_id="req-other",trace_id="trace-other",user_id="user-other",project_id="project-other",resource_id="resource-other"}'
+        values: '0+4x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="partial",route="/updates",request_id="req-partial",trace_id="trace-partial",user_id="user-partial",project_id="project-partial",resource_id="resource-partial"}'
+        values: '0+2x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 0.8
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.8
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -19
+
+  - name: error and unknown outcomes are bad refreshes
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="select",outcome="complete"}'
+        values: '0+8x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="select",outcome="error"}'
+        values: '0+1x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="other",outcome="other"}'
+        values: '0+1x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 0.8
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.8
+
+  - name: canceled refreshes are excluded from eligibility
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+5x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
+        values: '0+100x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 25
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 1
+
+  - name: counter resets preserve reliability
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0 4 8 12 16 20 24 0 4 8 12'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="error"}'
+        values: '0 4 8 12 16 20 24 0 4 8 12'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 30
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 15
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 72
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 36
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_5m",instance="app:8080",job="leapview"}'
+            value: 0.5
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.5
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -49
+
+  - name: cancellation-only traffic produces zero volume and no ratio
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
+        values: '0+10x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:eligible_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_reliability:bad_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples: []
+
+  - name: missing traffic is not perfect reliability
+    interval: 1m
+    input_series: []
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:eligible_events_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:bad_events_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_reliability:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples: []

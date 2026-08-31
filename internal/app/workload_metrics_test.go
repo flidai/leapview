@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -126,6 +127,36 @@ func TestWorkloadMetricsReusesInteractivePhysicalQueryAdmission(t *testing.T) {
 	}
 }
 
+func TestDashboardNativeArrowContractPreservesAdmissionBoundary(t *testing.T) {
+	controller, err := workload.New(workload.Config{MaxRunning: 1, Classes: map[workload.Class]workload.Policy{
+		workload.Interactive: {MaximumRunning: 1},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(controller.Close)
+	inner := &arrowContractAdmissionMetrics{}
+	metrics := dashboardmodule.WithAdmission(inner, controller)
+	executor, ok := metrics.(arrowquery.Executor)
+	if !ok {
+		t.Fatal("admission decorator did not preserve native Arrow execution")
+	}
+	request := workloadTestQuery()
+	request.Operation = dataquery.OperationDashboardRows
+	if _, err := executor.ExecuteDataQueryArrow(t.Context(), request, nil); err != nil {
+		t.Fatal(err)
+	}
+	if inner.calls != 1 || inner.class != workload.Interactive || inner.principalID != "system:query" {
+		t.Fatalf("admitted native execution = calls=%d class=%q principal=%q", inner.calls, inner.class, inner.principalID)
+	}
+	if inner.operation != dataquery.OperationDashboardRows {
+		t.Fatalf("admission operation = %q", inner.operation)
+	}
+	if stats := controller.Stats(); stats.Running != 0 || stats.Queued != 0 {
+		t.Fatalf("native Arrow admission permit leaked: %#v", stats)
+	}
+}
+
 func workloadTestQuery() dataquery.Query {
 	request := dataquery.SemanticRows("sales", "orders", []dataquery.Field{{Field: "orders.id"}}, nil, nil, nil, 0, 1, false)
 	request.ProjectID = "project:sales"
@@ -148,6 +179,28 @@ type nestedAdmissionMetrics struct {
 	fakeMetrics
 	controller *workload.Controller
 }
+
+type arrowContractAdmissionMetrics struct {
+	fakeMetrics
+	calls       int
+	class       workload.Class
+	principalID string
+	operation   string
+}
+
+func (m *arrowContractAdmissionMetrics) ExecuteDataQueryArrow(ctx context.Context, request dataquery.Query, _ arrowquery.Sink) (dataquery.Result, error) {
+	m.calls++
+	m.class, m.principalID, _ = workload.Current(ctx)
+	if active, ok := workload.CurrentRequest(ctx); ok {
+		m.operation = active.Operation
+	}
+	if _, ok := workload.FromContext(ctx); !ok {
+		return dataquery.Result{}, errors.New("admitter missing from native Arrow context")
+	}
+	return dataquery.Result{ExecutionState: dataquery.ExecutionSucceeded}, nil
+}
+
+var _ arrowquery.Executor = (*arrowContractAdmissionMetrics)(nil)
 
 func (m nestedAdmissionMetrics) ExecuteDataQuery(ctx context.Context, _ dataquery.Query) (dataquery.Result, error) {
 	lease, err := m.controller.Acquire(ctx, workload.Request{

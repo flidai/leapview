@@ -218,7 +218,13 @@ func (repository *Repository) EnqueueDue(ctx context.Context, now time.Time, lim
 	if err != nil {
 		return nil, err
 	}
-	result := make([]recovery.Occurrence, 0, min(limit, len(rows)))
+	type dueScheduleCursor struct {
+		row           platformdb.ListDueRecoveryQualificationSchedulesRow
+		schedule      refreshschedule.Schedule
+		plannedAt     time.Time
+		previousRunAt string
+	}
+	cursors := make([]dueScheduleCursor, 0, len(rows))
 	for _, row := range rows {
 		plannedAt, err := recoveryParseTime(row.NextRunAt)
 		if err != nil {
@@ -228,39 +234,94 @@ func (repository *Repository) EnqueueDue(ctx context.Context, now time.Time, lim
 		if err != nil {
 			return nil, err
 		}
-		previousRunAt := row.NextRunAt
-		for !plannedAt.After(now) && len(result) < limit {
+		cursors = append(cursors, dueScheduleCursor{
+			row: row, schedule: parsed, plannedAt: plannedAt, previousRunAt: row.NextRunAt,
+		})
+	}
+	sort.Slice(cursors, func(left, right int) bool {
+		if cursors[left].row.ScheduleID != cursors[right].row.ScheduleID {
+			return cursors[left].row.ScheduleID < cursors[right].row.ScheduleID
+		}
+		return cursors[left].row.ScheduleRevisionID < cursors[right].row.ScheduleRevisionID
+	})
+	fairnessCursor, err := queries.GetRecoveryQualificationEnqueueCursor(ctx)
+	if err != nil {
+		return nil, err
+	}
+	start := sort.Search(len(cursors), func(index int) bool {
+		if cursors[index].row.ScheduleID != fairnessCursor.LastScheduleID {
+			return cursors[index].row.ScheduleID > fairnessCursor.LastScheduleID
+		}
+		return cursors[index].row.ScheduleRevisionID > fairnessCursor.LastScheduleRevisionID
+	})
+	if start == len(cursors) {
+		start = 0
+	}
+	if start > 0 {
+		rotated := make([]dueScheduleCursor, 0, len(cursors))
+		rotated = append(rotated, cursors[start:]...)
+		rotated = append(rotated, cursors[:start]...)
+		cursors = rotated
+	}
+	result := make([]recovery.Occurrence, 0, min(limit, len(rows)))
+	lastScheduleID := ""
+	lastScheduleRevisionID := ""
+	for len(result) < limit {
+		enqueued := false
+		for index := range cursors {
+			if len(result) >= limit {
+				break
+			}
+			cursor := &cursors[index]
+			if cursor.plannedAt.After(now) {
+				continue
+			}
 			input := recovery.EnqueueInput{
-				ScheduleID: row.ScheduleID, ScheduleRevision: row.ScheduleRevisionID,
-				Scenario: row.Scenario, Operation: row.Operation,
-				PolicyVersion: row.PolicyVersion, PolicySHA256: row.PolicySha256, TargetScope: row.TargetScope,
-				ArtifactIdentity: row.ArtifactIdentity, PlannedAt: plannedAt,
-				StaleAfter: time.Duration(row.StaleAfterSeconds) * time.Second,
+				ScheduleID: cursor.row.ScheduleID, ScheduleRevision: cursor.row.ScheduleRevisionID,
+				Scenario: cursor.row.Scenario, Operation: cursor.row.Operation,
+				PolicyVersion: cursor.row.PolicyVersion, PolicySHA256: cursor.row.PolicySha256, TargetScope: cursor.row.TargetScope,
+				ArtifactIdentity: cursor.row.ArtifactIdentity, PlannedAt: cursor.plannedAt,
+				StaleAfter: time.Duration(cursor.row.StaleAfterSeconds) * time.Second,
 			}
 			occurrence, _, err := enqueueRecoveryOccurrence(ctx, queries, input, now)
 			if err != nil {
 				return nil, err
 			}
-			next := parsed.Next(plannedAt)
+			next := cursor.schedule.Next(cursor.plannedAt)
 			if next.IsZero() {
-				return nil, fmt.Errorf("recovery qualification schedule %q has no next occurrence", row.ScheduleID)
+				return nil, fmt.Errorf("recovery qualification schedule %q has no next occurrence", cursor.row.ScheduleID)
 			}
+			nextRunAt := recoveryFormatTime(next)
 			advanced, err := queries.AdvanceRecoveryQualificationSchedule(ctx, platformdb.AdvanceRecoveryQualificationScheduleParams{
-				NextRunAt: recoveryFormatTime(next), UpdatedAt: recoveryFormatTime(now),
-				ScheduleRevisionID: row.ScheduleRevisionID, PreviousRunAt: previousRunAt,
+				NextRunAt: nextRunAt, UpdatedAt: recoveryFormatTime(now),
+				ScheduleRevisionID: cursor.row.ScheduleRevisionID, PreviousRunAt: cursor.previousRunAt,
 			})
 			if err != nil {
 				return nil, err
 			}
 			if advanced != 1 {
-				return nil, fmt.Errorf("recovery qualification schedule %q changed while enqueueing", row.ScheduleID)
+				return nil, fmt.Errorf("recovery qualification schedule %q changed while enqueueing", cursor.row.ScheduleID)
 			}
 			result = append(result, occurrence)
-			plannedAt = next
-			previousRunAt = recoveryFormatTime(next)
+			lastScheduleID = cursor.row.ScheduleID
+			lastScheduleRevisionID = cursor.row.ScheduleRevisionID
+			cursor.plannedAt = next
+			cursor.previousRunAt = nextRunAt
+			enqueued = true
 		}
-		if len(result) >= limit {
+		if !enqueued {
 			break
+		}
+	}
+	if len(result) > 0 {
+		updated, err := queries.UpdateRecoveryQualificationEnqueueCursor(ctx, platformdb.UpdateRecoveryQualificationEnqueueCursorParams{
+			LastScheduleID: lastScheduleID, LastScheduleRevisionID: lastScheduleRevisionID, UpdatedAt: recoveryFormatTime(now),
+		})
+		if err != nil {
+			return nil, err
+		}
+		if updated != 1 {
+			return nil, fmt.Errorf("recovery qualification enqueue fairness cursor is unavailable")
 		}
 	}
 	if err := tx.Commit(); err != nil {

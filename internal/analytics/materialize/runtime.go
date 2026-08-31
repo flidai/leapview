@@ -32,7 +32,11 @@ type RuntimeConfig struct {
 	// acquire cross-generation reuse semantics.
 	QueryResultCache   *resultcache.Scope
 	ImmutableByteCache *resultcache.Scope
-	ResultLimits       dataquery.ResultLimits
+	// ExecutionScope owns mutable query, bundle, Arrow, and immutable-byte
+	// flights for one runtime generation. It must never be shared through the
+	// stable result partition scope.
+	ExecutionScope *resultcache.ExecutionScope
+	ResultLimits   dataquery.ResultLimits
 	// DependencyEvidence is immutable activation evidence used to derive an
 	// exact dependency identity from each validated query plan. When it is
 	// absent or incomplete, result reuse fails closed while execution remains
@@ -94,7 +98,7 @@ func (r *Runtime) StoreImmutableBytes(key string, value []byte) bool {
 	return r.queryCache.storeBytes(key, value) == resultcache.StoreStored
 }
 
-func (r *Runtime) CoalesceImmutableBytes(ctx context.Context, key string, execute func() error) (bool, error) {
+func (r *Runtime) CoalesceImmutableBytes(ctx context.Context, key string, execute func(context.Context) error) (bool, error) {
 	return r.queryCache.coalesceBytes(ctx, key, execute)
 }
 
@@ -130,13 +134,13 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	// compilation and validation failures that occur before a query cache is
 	// constructed, as well as failures after construction.
 	defer func() {
-		if retErr == nil || !cacheOwned {
+		if retErr == nil {
 			return
 		}
 		var cleanupErr error
 		if cache != nil {
 			cleanupErr = cache.close()
-		} else {
+		} else if cacheOwned {
 			var resultErr, byteErr error
 			if config.QueryResultCache != nil {
 				resultErr = config.QueryResultCache.Close()
@@ -186,7 +190,11 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	} else if config.QueryResultCache == nil || config.ImmutableByteCache == nil {
 		return nil, fmt.Errorf("query result and immutable byte cache scopes are both required")
 	} else {
-		cache = newQueryResultCacheWithScopes(config.QueryResultCache, config.ImmutableByteCache)
+		execution, executionOwned := config.ExecutionScope, false
+		if execution == nil {
+			execution, executionOwned = resultcache.NewExecutionScope(), true
+		}
+		cache = newQueryResultCacheWithExecutionScope(config.QueryResultCache, config.ImmutableByteCache, execution, executionOwned)
 	}
 	if config.QueryResultCache != nil && config.OwnQueryCache {
 		cache.ownScope()
@@ -740,6 +748,47 @@ func observeQueryCacheOutcome(ctx context.Context, result dataquery.Result, err 
 		outcome = dataquery.CacheError
 	}
 	dataquery.ObserveCacheOutcome(ctx, outcome)
+}
+
+type cacheObservationContextKey struct{}
+
+type cacheObservationControl struct {
+	started           time.Time
+	suppressAdmission bool
+	suppressLookup    bool
+}
+
+func cacheObservationStarted(ctx context.Context, fallback time.Time) time.Time {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	if !control.started.IsZero() {
+		return control.started
+	}
+	return fallback
+}
+
+func withCacheObservationStarted(ctx context.Context, started time.Time) context.Context {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	control.started = started
+	return context.WithValue(ctx, cacheObservationContextKey{}, control)
+}
+
+func withCacheObservationSuppression(ctx context.Context, admission, lookup bool) context.Context {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	control.suppressAdmission = control.suppressAdmission || admission
+	control.suppressLookup = control.suppressLookup || lookup
+	return context.WithValue(ctx, cacheObservationContextKey{}, control)
+}
+
+func observeQueryCacheAdmission(ctx context.Context, decision dataquery.CacheAdmissionDecision, reason dataquery.CacheAdmissionReason) {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	if control.suppressAdmission {
+		return
+	}
+	dataquery.ObserveCache(ctx, dataquery.CacheObservation{
+		Phase:           dataquery.CacheObservationAdmission,
+		Decision:        decision,
+		AdmissionReason: reason,
+	})
 }
 
 // dashboardQueryResultCacheable is deliberately explicit. API, CLI, agent,

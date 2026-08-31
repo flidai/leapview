@@ -150,7 +150,7 @@ func (h Handler) FilterCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
 			DashboardID: dashboardID, PageID: pageID, ModelID: request.ModelID,
 			Filters: preparation.Filters, Plan: plan,
-			EventObserved: h.RefreshEventObserved, CacheObserved: h.CacheObserved,
+			EventObserved: h.RefreshEventObserved, CacheObserved: h.CacheObserved, CacheObservationObserved: h.CacheObservationObserved,
 		})
 	})
 	if refreshErr != nil {
