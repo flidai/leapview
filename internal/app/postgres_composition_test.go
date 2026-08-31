@@ -108,7 +108,7 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 	}
 }
 
-func TestPostgresBuildComposesNativeRefreshFinalization(t *testing.T) {
+func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T) {
 	contents, err := os.ReadFile("postgres_build.go")
 	if err != nil {
 		t.Fatal(err)
@@ -117,6 +117,9 @@ func TestPostgresBuildComposesNativeRefreshFinalization(t *testing.T) {
 	for _, required := range []string{
 		"NewPostgresNativeRefreshFinalizer(",
 		"NativeFinalizer: nativeRefreshFinalizer",
+		"NewPostgresNativeRefreshExecutor(",
+		"EnableRefreshDispatcher: true",
+		"CanonicalRefreshExecutor: nativeRefreshExecutor.Execute",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("PostgreSQL composition is missing %q", required)
