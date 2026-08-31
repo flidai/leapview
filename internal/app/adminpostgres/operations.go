@@ -1,8 +1,8 @@
-// Package adminpostgres adapts the production Admin maintenance command to
-// the native PostgreSQL control-plane authority. Other administrative
-// operations remain delegated to the legacy offline implementation until
-// their native owners are available, except storage cleanup, which fails
-// closed until a native physical cleanup owner is composed.
+// Package adminpostgres adapts production Admin commands to native PostgreSQL
+// control-plane authorities. Operations without a native owner remain
+// delegated to the legacy offline implementation until they are migrated,
+// except storage cleanup, which fails closed until a native physical cleanup
+// owner is composed.
 package adminpostgres
 
 import (
@@ -14,6 +14,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	appadminoffline "github.com/flidai/leapview/internal/app/adminoffline"
@@ -21,7 +22,10 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/app/postgresmaintenance"
 	dashboardusage "github.com/flidai/leapview/internal/dashboard/usage"
+	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
+	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	"github.com/jackc/pgx/v5"
 )
 
 const (
@@ -60,14 +64,42 @@ type MaintenancePool interface {
 	Close()
 }
 
+// AccessPool is the native control-plane surface needed by initialization.
+// It deliberately carries only the pgx methods, transaction opener, baseline
+// reader, and lifecycle close operation; it cannot migrate the schema.
+type AccessPool interface {
+	accesspostgres.DBTX
+	postgresbaseline.RevisionReader
+	Begin(context.Context) (pgx.Tx, error)
+	Close()
+}
+
+// AccessInitializer is the audited, transactional Access bootstrap owned by
+// the access PostgreSQL capability.
+type AccessInitializer interface {
+	Initialized(context.Context) (bool, error)
+	InitializeInstance(context.Context, access.InstanceInitializationInput, func(access.InitialInstanceCredentials) error) (access.InitialInstanceCredentials, error)
+}
+
+// Bootstrap is the native platform authority used to check the initialization
+// marker and permanently bind the instance environment.
+type Bootstrap interface {
+	InstanceEnvironment(context.Context) (string, error)
+	BindInstanceEnvironment(context.Context, string) error
+}
+
 // Dependencies are injectable seams for the production adapter. The zero
 // value uses the real config loader, native PostgreSQL opener, baseline
 // verifier, and Native constructor.
 type Dependencies struct {
 	LoadConfig      func() (config.Config, error)
 	OpenMaintenance func(context.Context, platformpostgres.Config) (MaintenancePool, error)
+	OpenAccess      func(context.Context, platformpostgres.Config) (AccessPool, error)
 	VerifyBaseline  func(context.Context, postgresbaseline.RevisionReader) error
 	NewNative       func(postgresmaintenance.NativeDB) (Native, error)
+	NewAccess       func(AccessPool, []byte) (AccessInitializer, error)
+	NewBootstrap    func(AccessPool) Bootstrap
+	AcquireLock     func(string) (adminoffline.Lock, error)
 	Now             func() time.Time
 }
 
@@ -89,12 +121,32 @@ func (d Dependencies) withDefaults() Dependencies {
 			return platformpostgres.Open(ctx, cfg)
 		}
 	}
+	if d.OpenAccess == nil {
+		d.OpenAccess = func(ctx context.Context, cfg platformpostgres.Config) (AccessPool, error) {
+			return platformpostgres.OpenControl(ctx, cfg)
+		}
+	}
 	if d.VerifyBaseline == nil {
 		d.VerifyBaseline = postgresbaseline.Verify
 	}
 	if d.NewNative == nil {
 		d.NewNative = func(db postgresmaintenance.NativeDB) (Native, error) {
 			return postgresmaintenance.NewNative(db)
+		}
+	}
+	if d.NewAccess == nil {
+		d.NewAccess = func(pool AccessPool, key []byte) (AccessInitializer, error) {
+			return accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: key})
+		}
+	}
+	if d.NewBootstrap == nil {
+		d.NewBootstrap = func(pool AccessPool) Bootstrap {
+			return platformbootstrap.New(pool)
+		}
+	}
+	if d.AcquireLock == nil {
+		d.AcquireLock = func(home string) (adminoffline.Lock, error) {
+			return instancelock.Acquire(home)
 		}
 	}
 	if d.Now == nil {
@@ -111,15 +163,15 @@ func New(dependencies Dependencies) Operations {
 
 // StorageCleanup keeps the legacy SQLite/catalog-file cleanup adapter out of
 // production Admin. A native physical cleanup owner is not composed yet, so
-// production requests fail closed with a stable error. Non-production
-// environments retain the existing offline behavior.
+// production requests fail closed with a stable error. Non-production and
+// isolated evaluation environments retain the existing offline behavior.
 func (o Operations) StorageCleanup(ctx context.Context, request adminoffline.StorageCleanupRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
 	}
-	if cfg.Production {
+	if cfg.Production && !cfg.EvaluationMode {
 		return ErrNativeStorageCleanupUnavailable
 	}
 	return o.Operations.StorageCleanup(ctx, request, out)
@@ -127,7 +179,8 @@ func (o Operations) StorageCleanup(ctx context.Context, request adminoffline.Sto
 
 // Maintenance executes native PostgreSQL retention in production. Preview is
 // the default and always rolls back; --apply invokes the committing runner.
-// Non-production targets delegate to the legacy SQLite-backed service.
+// Non-production and isolated evaluation targets delegate to the legacy
+// SQLite-backed service.
 func (o Operations) Maintenance(ctx context.Context, request adminoffline.MaintenanceRequest, out io.Writer) error {
 	if err := validateRetentionDays(request); err != nil {
 		return err
@@ -137,7 +190,7 @@ func (o Operations) Maintenance(ctx context.Context, request adminoffline.Mainte
 	if err != nil {
 		return err
 	}
-	if !cfg.Production {
+	if !cfg.Production || cfg.EvaluationMode {
 		return o.Operations.Maintenance(ctx, request, out)
 	}
 	if out == nil {

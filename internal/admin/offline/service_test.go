@@ -60,8 +60,10 @@ func (state *fakeState) Initialized(context.Context) (bool, error) {
 }
 
 type memoryRecovery struct {
-	contents []byte
-	removed  int
+	contents    []byte
+	removed     int
+	removeErr   error
+	removeErrAt int
 }
 
 func (recovery *memoryRecovery) Read() ([]byte, error) {
@@ -78,6 +80,9 @@ func (recovery *memoryRecovery) Write(contents []byte) error {
 
 func (recovery *memoryRecovery) Remove() error {
 	recovery.removed++
+	if recovery.removeErr != nil && (recovery.removeErrAt == 0 || recovery.removed == recovery.removeErrAt) {
+		return recovery.removeErr
+	}
 	if recovery.contents == nil {
 		return os.ErrNotExist
 	}
@@ -89,6 +94,7 @@ type fakeInitializer struct {
 	calls  int
 	input  InitializationInput
 	result InitialCredentials
+	err    error
 }
 
 func (initializer *fakeInitializer) Initialize(
@@ -101,7 +107,7 @@ func (initializer *fakeInitializer) Initialize(
 	if err := prepare(initializer.result); err != nil {
 		return InitialCredentials{}, err
 	}
-	return initializer.result, nil
+	return initializer.result, initializer.err
 }
 
 type fakeRetention struct {
@@ -247,6 +253,29 @@ func TestInitializeReplaysPreparedCredentialsWithoutMutatingAccess(t *testing.T)
 	}
 	if initializer.calls != 0 || !bytes.Equal(out.Bytes(), contents) {
 		t.Fatalf("initializer calls=%d output=%q", initializer.calls, out.String())
+	}
+}
+
+func TestInitializeReportsCredentialCleanupFailureAfterMutationFailure(t *testing.T) {
+	mutationErr := errors.New("commit failed")
+	cleanupErr := errors.New("remove denied")
+	recovery := &memoryRecovery{removeErr: cleanupErr, removeErrAt: 2}
+	service := New(Config{Production: true, BootstrapEmail: "owner@example.com", Environment: "prod"}, Dependencies{
+		Locker:   &fakeLocker{},
+		State:    &fakeState{environment: "prod", existing: true},
+		Recovery: recovery,
+		Initializer: &fakeInitializer{result: InitialCredentials{
+			Email: "owner@example.com", TemporaryPassword: "temporary", PublisherToken: "publisher",
+			PublisherTokenExpiresAt: "2026-07-30T07:00:00Z",
+		}, err: mutationErr},
+	})
+
+	err := service.Initialize(context.Background(), InitializeRequest{Format: "json"}, io.Discard)
+	if !errors.Is(err, mutationErr) || !errors.Is(err, cleanupErr) {
+		t.Fatalf("initialization cleanup error = %v, want mutation and cleanup errors", err)
+	}
+	if recovery.removed != 2 || len(recovery.contents) == 0 {
+		t.Fatalf("failed cleanup evidence removed=%d contents=%q", recovery.removed, recovery.contents)
 	}
 }
 

@@ -140,6 +140,9 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	if err != nil || markerTime.Before(time.Now().UTC().Add(-time.Minute)) {
 		t.Fatalf("database initialization marker = %q (%v)", marker, err)
 	}
+	if initialized, err := repo.Initialized(t.Context()); err != nil || !initialized {
+		t.Fatalf("repository initialization marker lookup = %t (%v)", initialized, err)
+	}
 	if _, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{Email: "second@example.com", Environment: "production", Now: time.Now()}, nil); !errors.Is(err, access.ErrInstanceAlreadyInitialized) {
 		t.Fatalf("second initialization error = %v", err)
 	}

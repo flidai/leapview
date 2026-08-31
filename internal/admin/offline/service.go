@@ -68,7 +68,9 @@ func (service *Service) Initialize(ctx context.Context, request InitializeReques
 		return service.deps.Recovery.Write(encoded)
 	})
 	if err != nil {
-		_ = service.deps.Recovery.Remove()
+		if removeErr := service.deps.Recovery.Remove(); removeErr != nil && !os.IsNotExist(removeErr) {
+			return errors.Join(err, fmt.Errorf("remove failed initialization credentials: %w", removeErr))
+		}
 		return err
 	}
 	return writeAll(out, encoded)
