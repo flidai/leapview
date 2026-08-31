@@ -68,6 +68,7 @@ type CandidateEvent = deployment.CandidateEvent
 type CandidateConnectionRequest = deployment.CandidateConnectionRequest
 type CandidateConnectionEvidence = deployment.CandidateConnectionEvidence
 type CandidateConnectionLeases = deployment.CandidateConnectionLeases
+type CandidateConnectionEvidenceResolver = deployment.CandidateConnectionEvidenceResolver
 type CandidateRuntimeRequest = deployment.CandidateRuntimeRequest
 type CandidateGenerationRuntime = deployment.CandidateGenerationRuntime
 type CandidateConnectionRequirement = deployment.CandidateConnectionRequirement

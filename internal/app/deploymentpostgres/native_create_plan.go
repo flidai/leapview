@@ -2,8 +2,9 @@ package deploymentpostgres
 
 // Native CreatePlan is the application-owned orchestration boundary for the
 // clean PostgreSQL delivery authority. Planning intentionally stops at
-// immutable compiler evidence: no serving artifact is materialized, no
-// DuckLake writer is opened, and no physical work is started here.
+// immutable compiler and durable non-secret binding evidence: no serving
+// artifact is materialized, no credential pool or DuckLake writer is opened,
+// and no physical work is started here.
 
 import (
 	"bytes"
@@ -44,6 +45,11 @@ type NativeReleaseArtifactInspector interface {
 	InspectCandidateArtifacts(context.Context, release.CandidateArtifactRequest) (release.CandidateArtifactSet, error)
 }
 
+// NativeDeliveryPolicyResolver selects target-owned governance for the exact
+// operation being planned. Protected code and policy changes may require an
+// approval even when an already-authorized restatement does not.
+type NativeDeliveryPolicyResolver func(deployment.DeliveryOperationKind) (runtimefactory.CandidateDeliveryPolicy, error)
+
 type nativeDeliveryEventReader interface {
 	GetDeliveryEvent(context.Context, deploymentnative.Tx, deploymentmodule.NativeDeliveryEventInput) (deploymentnative.Event, error)
 }
@@ -60,15 +66,17 @@ type nativeOperationLookup interface {
 // command. Events, audit, operations, and the plan repository all receive the
 // exact same caller-owned PostgreSQL transaction.
 type NativeCreatePlanConfig struct {
-	Repository *deploymentnative.Repository
-	Sources    project.CandidateSourceAttestationReader
-	Artifacts  NativeReleaseArtifactInspector
+	Repository      *deploymentnative.Repository
+	Sources         project.CandidateSourceAttestationReader
+	Artifacts       NativeReleaseArtifactInspector
+	BindingEvidence deployment.CandidateConnectionEvidenceResolver
 
 	// ArtifactInspector is an expressive alias retained for composition code
 	// that names the read-only phase explicitly. Artifacts takes precedence.
 	ArtifactInspector NativeReleaseArtifactInspector
 	RuntimeVersion    string
 	Policy            runtimefactory.CandidateDeliveryPolicy
+	PolicyResolver    NativeDeliveryPolicyResolver
 	Clock             func() time.Time
 
 	Events     deploymentmodule.NativeDeliveryEventAppender
@@ -97,8 +105,10 @@ type NativeCreatePlanCoordinator struct {
 	repository      *deploymentnative.Repository
 	sources         project.CandidateSourceAttestationReader
 	artifacts       NativeReleaseArtifactInspector
+	bindingEvidence deployment.CandidateConnectionEvidenceResolver
 	runtimeVersion  string
 	policy          runtimefactory.CandidateDeliveryPolicy
+	policyResolver  NativeDeliveryPolicyResolver
 	clock           func() time.Time
 	events          deploymentmodule.NativeDeliveryEventAppender
 	eventReader     nativeDeliveryEventReader
@@ -151,8 +161,8 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 		clock = func() time.Time { return time.Now().UTC() }
 	}
 	return &NativeCreatePlanCoordinator{
-		repository: config.Repository, sources: config.Sources, artifacts: inspector,
-		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, clock: clock,
+		repository: config.Repository, sources: config.Sources, artifacts: inspector, bindingEvidence: config.BindingEvidence,
+		runtimeVersion: strings.TrimSpace(config.RuntimeVersion), policy: config.Policy, policyResolver: config.PolicyResolver, clock: clock,
 		events: config.Events, eventReader: eventReader, audit: config.Audit, auditReader: auditReader, workflow: config.Workflow,
 		operations: config.Operations, operationLookup: operationLookup, workflowFactory: config.WorkflowFactory,
 	}, nil
@@ -249,6 +259,12 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	if err := validateNativePlanInspection(request, source, inspected, inspectID); err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
 	}
+	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, c.bindingEvidence, nativeCandidateConnectionRequest(
+		inspectID, request.PrincipalID, request.TargetID, inspected,
+	))
+	if err != nil {
+		return deploymentmodule.NativeDeliveryPlan{}, err
+	}
 
 	tx, err := c.repository.Begin(ctx)
 	if err != nil {
@@ -329,7 +345,14 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 		Operation: deployment.DeliveryOperationKind(request.Operation), CandidateKey: operationID,
 		Candidate: candidate, Source: source,
 	}
-	planRequest, err := runtimefactory.CandidatePlanRequestWithPolicyAndReuse(input, inspected, c.runtimeVersion, c.policy, now, reuse)
+	policy := c.policy
+	if c.policyResolver != nil {
+		policy, err = c.policyResolver(input.Operation)
+		if err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("resolve native delivery policy: %w", err)
+		}
+	}
+	planRequest, err := runtimefactory.CandidatePlanRequestWithPolicyAndReuse(input, inspected, c.runtimeVersion, policy, now, reuse)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, fmt.Errorf("compute canonical delivery plan: %w", err)
 	}
@@ -342,6 +365,9 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	planRequest.Persist = true
 	planRequest.TargetID, planRequest.ProjectID, planRequest.Environment = request.TargetID, request.ProjectID.String(), request.Environment
 	planRequest.CreatedAt = now
+	// BindingDigest is the exact validated provider/binding evidence selected
+	// during planning, not merely the authored connector requirement shape.
+	planRequest.Execution.BindingDigest = bindingDigest
 	rich, err := richPlanFromRequest(planRequest, sourceOwner, operationID, target.ActiveGenerationID, target.TargetRevision)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err

@@ -71,6 +71,8 @@ type NativeBuildConfig struct {
 	Sources             project.CandidateSourceAttestationReader
 	Artifacts           NativeBuildArtifactPhases
 	ArtifactRecovery    release.CandidateArtifactRecovery
+	BindingEvidence     deploymentdomain.CandidateConnectionEvidenceResolver
+	Connections         deploymentdomain.CandidateConnectionLeaser
 	Contract            NativeBuildContractResolver
 	ContractAuthority   *NativeBuildContractAuthority
 	PhysicalPoolID      string
@@ -108,6 +110,8 @@ type NativeBuildCoordinator struct {
 	sources                             project.CandidateSourceAttestationReader
 	artifacts                           NativeBuildArtifactPhases
 	artifactRecovery                    release.CandidateArtifactRecovery
+	bindingEvidence                     deploymentdomain.CandidateConnectionEvidenceResolver
+	connections                         deploymentdomain.CandidateConnectionLeaser
 	contract                            NativeBuildContractResolver
 	physicalPoolID, compatibilityDigest string
 	operations                          deploymentmodule.NativeBuildOperationAuthority
@@ -224,7 +228,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		return nil, fmt.Errorf("native build session identity: %w", err)
 	}
 	return &NativeBuildCoordinator{
-		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, contract: contract,
+		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
 		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
@@ -369,6 +373,16 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if effective.Generation.ArtifactDigest != plan.ArtifactDigest {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: candidate serving artifact differs from planned artifact", deploymentdomain.ErrDeliveryConflict)
 	}
+	bindingRequest := nativeCandidateConnectionRequest(
+		candidateID, normalized.PrincipalID, normalized.TargetID, effective,
+	)
+	bindingDigest, err := resolveNativeCandidateBindingDigest(ctx, c.bindingEvidence, bindingRequest)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	if bindingDigest != plan.Execution.BindingDigest {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: candidate connection evidence differs from planned binding identity", deploymentdomain.ErrDeliveryConflict)
+	}
 
 	attemptID, err := nativeBuildConsequenceID(opID, "attempt")
 	if err != nil {
@@ -465,13 +479,17 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 		return deploymentmodule.NativeDeliveryBuild{}, settle(err, NativePhysicalFailureDeterministic, NativePhysicalBuildPhaseValidation, nil)
 	}
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: nativeMaterializationRequest(effective, normalized, generationID, candidateID, attemptAdmission.Attempt.Namespace, plan.DeliveryPlan)}
-	physical, err := BuildNativePhysical(buildCtx, physicalInput, c.physicalFactory)
+	physical, err := buildNativePhysicalWithCandidateBindings(buildCtx, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if err != nil {
 		classification, phase := NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseMaterialize
 		if failure, ok := NativePhysicalBuildFailureOf(err); ok {
 			classification, phase = failure.Classification, failure.Phase
 		}
-		return deploymentmodule.NativeDeliveryBuild{}, settle(err, classification, phase, nil)
+		var physicalEvidence *NativePhysicalBuildEvidence
+		if physical.SnapshotID > 0 {
+			physicalEvidence = &physical
+		}
+		return deploymentmodule.NativeDeliveryBuild{}, settle(err, classification, phase, physicalEvidence)
 	}
 	sources, models, err := nativeQualificationInputs(effective, physical.SourceObservations)
 	if err != nil {

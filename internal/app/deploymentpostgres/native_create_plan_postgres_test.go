@@ -17,6 +17,7 @@ import (
 	deploymentaudit "github.com/flidai/leapview/internal/app/deploymentaudit"
 	deploymentevents "github.com/flidai/leapview/internal/app/deploymentevents"
 	deploymentoperation "github.com/flidai/leapview/internal/app/deploymentoperation"
+	"github.com/flidai/leapview/internal/app/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -185,9 +186,22 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshot, artifacts := nativePlanPostgresFixture(t, createPlanTestDigest('a'), createPlanTestDigest('b'))
+	artifacts.Generation.Connections = []release.CandidateConnectionRequirement{{ConnectionID: projectgraph.ResourceID("warehouse"), ConnectorKind: "postgres"}}
 	source := &nativePlanSourceReader{snap: snapshot}
 	inspector := &nativePlanArtifactInspector{set: artifacts}
 	coord := nativePlanCoordinator(t, db, source, inspector)
+	bindingEvidence := []deployment.CandidateConnectionEvidence{{BindingID: "binding_warehouse", ConnectionID: projectgraph.ResourceID("warehouse"), ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3", EndpointConfigHash: createPlanTestDigest('7')}}
+	bindingLeases := &nativeConnectionLeases{evidence: bindingEvidence}
+	bindingLeaser := &nativeConnectionLeaser{leases: bindingLeases}
+	coord.bindingEvidence = bindingLeaser
+	policyCalls := 0
+	coord.policyResolver = func(operation deployment.DeliveryOperationKind) (runtimefactory.CandidateDeliveryPolicy, error) {
+		policyCalls++
+		if operation != deployment.DeliveryOperationCodeChange {
+			t.Fatalf("policy operation = %q, want code change", operation)
+		}
+		return runtimefactory.CandidateDeliveryPolicy{RequiresApproval: true}, nil
+	}
 	request := nativePlanRequest()
 	first, err := coord.CreatePlan(t.Context(), request)
 	if err != nil {
@@ -209,8 +223,8 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 		t.Fatalf("completion accepted missing operation outcome: %v", err)
 	}
 	coord.operationLookup = originalLookup
-	if source.count() != 1 || inspector.count() != 1 {
-		t.Fatalf("initial source/artifact reads = %d/%d, want 1/1", source.count(), inspector.count())
+	if source.count() != 1 || inspector.count() != 1 || policyCalls != 1 || bindingLeaser.resolveCalls != 1 || bindingLeaser.calls != 0 || bindingLeases.closeCalls != 0 {
+		t.Fatalf("initial source/artifact/policy/resolve/acquire/close reads = %d/%d/%d/%d/%d/%d, want 1/1/1/1/0/0", source.count(), inspector.count(), policyCalls, bindingLeaser.resolveCalls, bindingLeaser.calls, bindingLeases.closeCalls)
 	}
 	second, err := coord.CreatePlan(t.Context(), request)
 	if err != nil {
@@ -219,8 +233,8 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("replay projection differs:\nfirst=%+v\nsecond=%+v", first, second)
 	}
-	if source.count() != 1 || inspector.count() != 1 {
-		t.Fatalf("replay performed source/artifact reads = %d/%d, want unchanged 1/1", source.count(), inspector.count())
+	if source.count() != 1 || inspector.count() != 1 || policyCalls != 1 || bindingLeaser.resolveCalls != 1 || bindingLeaser.calls != 0 || bindingLeases.closeCalls != 0 {
+		t.Fatalf("replay performed source/artifact/policy/resolve/acquire/close reads = %d/%d/%d/%d/%d/%d, want unchanged 1/1/1/1/0/0", source.count(), inspector.count(), policyCalls, bindingLeaser.resolveCalls, bindingLeaser.calls, bindingLeases.closeCalls)
 	}
 	conflict := request
 	conflict.SourceAttestationDigest = createPlanTestDigest('d')
@@ -273,6 +287,16 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 	}
 	if persistedRich.SourceDigest != request.SourceDigest || persistedRich.ServingArtifactDigest != plannedServingDigest {
 		t.Fatalf("persisted source/serving identities = %q/%q, want %q/%q", persistedRich.SourceDigest, persistedRich.ServingArtifactDigest, request.SourceDigest, plannedServingDigest)
+	}
+	if !persistedRich.Governance.RequiresApproval {
+		t.Fatal("persisted plan dropped operation-sensitive approval policy")
+	}
+	wantBindingDigest, err := deployment.BindingFingerprint(bindingEvidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if persistedRich.Execution.BindingDigest != wantBindingDigest {
+		t.Fatalf("persisted binding digest = %q, want exact lease evidence %q", persistedRich.Execution.BindingDigest, wantBindingDigest)
 	}
 }
 
