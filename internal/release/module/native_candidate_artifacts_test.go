@@ -335,6 +335,130 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 	}
 }
 
+type nativeRecoveryFixtureValue struct {
+	request release.CandidateArtifactRecoveryRequest
+	store   *platformobjectstore.MemoryStore
+	body    []byte
+}
+
+func nativeRecoveryFixture(t *testing.T) nativeRecoveryFixtureValue {
+	t.Helper()
+	fixture := nativeInspectFixture(t)
+	compiled, err := projectartifact.Decode(fixture.artifact)
+	if err != nil {
+		t.Fatal(err)
+	}
+	files := make(map[string][]byte, len(fixture.refs))
+	for _, ref := range fixture.refs {
+		files[ref.Path] = fixture.objects[ref.ObjectKey]
+	}
+	plan, err := projectcompiler.PlanProjectFilesAgainstGraph(files, fixture.request.Source.ProjectFile, compiled.Graph())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var body bytes.Buffer
+	_, digest, err := projectbundle.PackCompiledProject(compiled, plan, &body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	metadata := platformobjectstore.ObjectMetadata{StorageSecurityDomain: "runtime", Digest: digest, SizeBytes: int64(body.Len()), ContentType: nativeServingArtifactContentType, MetadataDigest: nativeServingArtifactMetadataDigest()}
+	if _, err := store.PutImmutable(t.Context(), nativeServingArtifactKey(digest), bytes.NewReader(body.Bytes()), metadata); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := projectgraph.NewServingIdentity(fixture.request.Scope.ProjectID, fixture.request.Scope.Environment, fixture.request.GenerationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return nativeRecoveryFixtureValue{
+		request: release.CandidateArtifactRecoveryRequest{
+			CandidateID: fixture.request.CandidateID, ServingIdentity: identity, SourceDigest: fixture.request.ArtifactDigest,
+			Artifact: release.CandidateArtifactIdentity{ServingArtifactID: nativeServingArtifactID(digest), ServingArtifactDigest: digest, ServingStateID: identity.GenerationID},
+		},
+		store: store, body: body.Bytes(),
+	}
+}
+
+func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing.T) {
+	fixture := nativeRecoveryFixture(t)
+	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev"}
+	set, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if set.Artifact.SourceDigest != fixture.request.SourceDigest || set.Artifact.ContentDigest != fixture.request.Artifact.ServingArtifactDigest || set.Artifact.ProjectDigest != set.Compiler.Artifact.Digest() || set.Artifact.CompilerVersion != projectartifact.CompilerVersion || set.Artifact.SchemaVersion != projectartifact.Version {
+		t.Fatalf("recovered artifact provenance = %#v", set.Artifact)
+	}
+	if set.Generation.Identity != fixture.request.ServingIdentity || set.Generation.ServingArtifactID != fixture.request.Artifact.ServingArtifactID || set.Generation.ArtifactDigest != fixture.request.Artifact.ServingArtifactDigest || set.Generation.DataMode != release.GenerationDataRefreshSources {
+		t.Fatalf("recovered generation = %#v", set.Generation)
+	}
+	if set.Generation.NativeArtifact.Locator != nativeServingArtifactKey(fixture.request.Artifact.ServingArtifactDigest) || set.Generation.NativeArtifact.SizeBytes != int64(len(fixture.body)) || set.Generation.BundleManifestJSON == "" || set.Generation.AccessPolicyJSON == "" || set.Generation.DashboardPublicationsJSON == "" || set.Generation.DashboardAppearancesJSON == "" {
+		t.Fatalf("recovered serving evidence = %#v", set.Generation)
+	}
+	if set.Compiler.Graph.Validate() != nil || set.Compiler.Graph.ProjectID() != fixture.request.ServingIdentity.ProjectID || set.Compiler.Manifest.ID != fixture.request.ServingIdentity.ProjectID.String() || set.Compiler.Plan.Project != fixture.request.ServingIdentity.ProjectID.String() {
+		t.Fatalf("recovered compiler evidence = %#v", set.Compiler)
+	}
+}
+
+func TestNativeCandidateRecoverRejectsMissingBodyAndForgedMetadata(t *testing.T) {
+	fixture := nativeRecoveryFixture(t)
+	service := &nativeCandidateArtifactPhases{artifacts: &nativeForgedArtifactStore{ImmutableStore: fixture.store, nilBody: true}, storageDomain: "runtime", environment: "dev"}
+	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("nil body error = %v", err)
+	}
+	for name, mutate := range map[string]func(*platformobjectstore.ObjectInfo){
+		"domain":          func(info *platformobjectstore.ObjectInfo) { info.StorageSecurityDomain = "other" },
+		"digest":          func(info *platformobjectstore.ObjectInfo) { info.Digest = testNativeDigest("other") },
+		"size":            func(info *platformobjectstore.ObjectInfo) { info.SizeBytes++ },
+		"content type":    func(info *platformobjectstore.ObjectInfo) { info.ContentType = "application/octet-stream" },
+		"metadata digest": func(info *platformobjectstore.ObjectInfo) { info.MetadataDigest = testNativeDigest("other") },
+		"key":             func(info *platformobjectstore.ObjectInfo) { info.Key = "serving-artifacts/other.tar.gz" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			service.artifacts = &nativeForgedArtifactStore{ImmutableStore: fixture.store, mutate: mutate}
+			if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+				t.Fatalf("forged metadata error = %v", err)
+			}
+		})
+	}
+}
+
+func TestNativeCandidateRecoverRejectsIdentityAndBundleMismatches(t *testing.T) {
+	fixture := nativeRecoveryFixture(t)
+	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev"}
+	for name, mutate := range map[string]func(*release.CandidateArtifactRecoveryRequest){
+		"candidate": func(request *release.CandidateArtifactRecoveryRequest) { request.CandidateID = " candidate" },
+		"serving project": func(request *release.CandidateArtifactRecoveryRequest) {
+			request.ServingIdentity.ProjectID = "project:other"
+		},
+		"serving environment": func(request *release.CandidateArtifactRecoveryRequest) { request.ServingIdentity.Environment = "prod" },
+		"serving generation": func(request *release.CandidateArtifactRecoveryRequest) {
+			request.ServingIdentity.GenerationID = uuid.NewString()
+		},
+		"artifact digest": func(request *release.CandidateArtifactRecoveryRequest) {
+			request.Artifact.ServingArtifactDigest = testNativeDigest("other")
+		},
+		"artifact state": func(request *release.CandidateArtifactRecoveryRequest) {
+			request.Artifact.ServingStateID = "018f0e4e-6f2a-7abc-8def-0123456789ac"
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			request := fixture.request
+			mutate(&request)
+			if _, err := service.RecoverCandidateArtifacts(t.Context(), request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+				t.Fatalf("identity error = %v", err)
+			}
+		})
+	}
+	service.artifacts = &nativeForgedArtifactStore{ImmutableStore: fixture.store, body: []byte("not-a-bundle")}
+	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
+		t.Fatalf("corrupt bundle error = %v", err)
+	}
+}
+
 func TestNativeCandidateMaterializeAndHydrateRequireExactGenerationID(t *testing.T) {
 	fixture := nativeInspectFixture(t)
 	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
@@ -594,6 +718,7 @@ type nativeForgedArtifactStore struct {
 	mutate  func(*platformobjectstore.ObjectInfo)
 	openErr error
 	body    []byte
+	nilBody bool
 }
 
 type nativeAmbiguousReplayStore struct {
@@ -622,6 +747,10 @@ func (s *nativeForgedArtifactStore) Open(ctx context.Context, key string) (platf
 	if err == nil && s.body != nil {
 		_ = object.Body.Close()
 		object.Body = io.NopCloser(bytes.NewReader(s.body))
+	}
+	if err == nil && s.nilBody {
+		_ = object.Body.Close()
+		object.Body = nil
 	}
 	return object, err
 }

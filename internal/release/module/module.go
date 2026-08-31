@@ -47,10 +47,12 @@ type candidateArtifactPhases interface {
 	InspectCandidateArtifacts(context.Context, release.CandidateArtifactRequest) (release.CandidateArtifactSet, error)
 	MaterializeCandidateArtifacts(context.Context, release.CandidateArtifactRequest, release.CandidateArtifactSet) (release.CandidateArtifactSet, error)
 	HydrateCandidateArtifacts(context.Context, release.CandidateArtifactRequest, release.CandidateArtifactSet, release.CandidateArtifactIdentity) (release.CandidateArtifactSet, error)
+	RecoverCandidateArtifacts(context.Context, release.CandidateArtifactRecoveryRequest) (release.CandidateArtifactSet, error)
 }
 
 var (
 	_ release.CandidateArtifactPreparer = (*Module)(nil)
+	_ release.CandidateArtifactRecovery = (*Module)(nil)
 	_ candidateArtifactPhases           = (*Module)(nil)
 )
 
@@ -422,6 +424,19 @@ func (m *Module) HydrateCandidateArtifacts(
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
 	}
 	return m.nativeCandidatePhases.HydrateCandidateArtifacts(ctx, request, inspected, identity)
+}
+
+// RecoverCandidateArtifacts exposes the value-only native serving-artifact
+// recovery phase. It deliberately has no legacy/filesystem fallback because
+// recovered physical builds may only be reconstructed from immutable bundles.
+func (m *Module) RecoverCandidateArtifacts(
+	ctx context.Context,
+	request release.CandidateArtifactRecoveryRequest,
+) (release.CandidateArtifactSet, error) {
+	if m == nil || m.nativeCandidatePhases == nil {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	return m.nativeCandidatePhases.RecoverCandidateArtifacts(ctx, request)
 }
 
 func (m *Module) RetainCandidateProvenance(

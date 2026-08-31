@@ -122,6 +122,18 @@ type CandidateArtifactIdentity struct {
 	ServingStateID        string
 }
 
+// CandidateArtifactRecoveryRequest identifies one immutable serving artifact
+// that is being reloaded after a native physical-build outcome was lost. It
+// carries no source snapshot or target/base selector: recovery is value-only
+// and must use the exact serving identity and content-addressed artifact
+// identity supplied by the caller.
+type CandidateArtifactRecoveryRequest struct {
+	CandidateID     string
+	ServingIdentity projectgraph.ServingIdentity
+	SourceDigest    string
+	Artifact        CandidateArtifactIdentity
+}
+
 type CandidateArtifactSet struct {
 	Artifact ProjectArtifactProvenance
 	// Extensions is target-side, non-secret evidence for exact extension
@@ -199,6 +211,14 @@ type CandidateArtifactPreparer interface {
 		string,
 		int64,
 	) (Provenance, error)
+}
+
+// CandidateArtifactRecovery is the value-only native recovery surface. It is
+// intentionally separate from CandidateArtifactPreparer so legacy/source
+// preparation implementations are not granted a recovery capability they
+// cannot safely provide.
+type CandidateArtifactRecovery interface {
+	RecoverCandidateArtifacts(context.Context, CandidateArtifactRecoveryRequest) (CandidateArtifactSet, error)
 }
 
 type PublishCandidateInput struct {

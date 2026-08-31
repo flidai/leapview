@@ -50,6 +50,7 @@ const (
 	maxNativeInspectArtifactBytes    int64 = 64 << 20
 	maxNativeInspectSourceBytes      int64 = 64 << 20
 	maxNativeInspectSourceFiles            = 10_000
+	maxNativeRecoveryIDBytes               = 255
 	nativeServingArtifactContentType       = projectbundle.BundleContentType
 	nativeServingArtifactPrefix            = "serving-artifacts/"
 	nativeServingArtifactSuffix            = ".tar.gz"
@@ -517,6 +518,157 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
 	return result, nil
+}
+
+// RecoverCandidateArtifacts reloads one immutable serving bundle for native
+// physical-build recovery. It intentionally has no source reader, serving
+// state writer, provenance reader, or materialization dependency: the bundle
+// and its provider metadata are the sole recovery inputs.
+func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRecoveryRequest) (release.CandidateArtifactSet, error) {
+	if service == nil || service.artifacts == nil || service.storageDomain == "" {
+		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
+	}
+	if !validNativeStorageDomain(service.storageDomain) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native candidate artifact storage security domain is invalid"))
+	}
+	if err := validateNativeRecoveryRequest(request, service.environment); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+
+	digest := request.Artifact.ServingArtifactDigest
+	key := nativeServingArtifactKey(digest)
+	object, err := service.artifacts.Open(ctx, key)
+	if err != nil {
+		return release.CandidateArtifactSet{}, nativeCandidateObjectError(err)
+	}
+	if object.Body == nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact object body is nil"))
+	}
+	defer object.Body.Close()
+	if object.Info.SizeBytes <= 0 || object.Info.SizeBytes > projectbundle.MaxBundleBytes {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact object size is invalid"))
+	}
+	expectedMetadata := platformobjectstore.ObjectMetadata{
+		StorageSecurityDomain: service.storageDomain,
+		Digest:                digest,
+		SizeBytes:             object.Info.SizeBytes,
+		ContentType:           nativeServingArtifactContentType,
+		MetadataDigest:        nativeServingArtifactMetadataDigest(),
+	}
+	if err := validateNativeServingArtifactInfo(object.Info, key, expectedMetadata); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+
+	validation, compiled, err := projectbundle.ValidateArtifactReader(object.Body, object.Info.SizeBytes)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if validation.Digest != digest || validation.ProjectID != request.ServingIdentity.ProjectID.String() || validation.ProjectDigest != compiled.ProjectDigest || compiled.ProjectID != request.ServingIdentity.ProjectID || compiled.Graph.ProjectID() != request.ServingIdentity.ProjectID {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact content identity mismatch"))
+	}
+	if err := validateNativeBundleManifestJSON(validation.ManifestJSON); err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+
+	canonicalProject, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if canonicalProject.ProjectID() != request.ServingIdentity.ProjectID || canonicalProject.Digest() != compiled.ProjectDigest {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered project identity mismatch"))
+	}
+	var repacked bytes.Buffer
+	repackedManifest, repackedDigest, err := projectbundle.PackCompiledProject(canonicalProject, compiled.Plan, &repacked)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	repackedManifestJSON, err := nativeBundleManifestJSON(repackedManifest)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if repackedDigest != digest || int64(repacked.Len()) != object.Info.SizeBytes || repackedManifestJSON != validation.ManifestJSON {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact canonical bytes do not match bound object"))
+	}
+
+	activations, err := canonicalProject.ConnectionActivations()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	requirements, _, authored, err := candidateConnectionRequirements(activations)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+
+	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	authorizationFingerprint, err := authorizationSnapshot.Digest()
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	dataRevision, err := release.CandidateSourcesDataRevision(request.SourceDigest, nil)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	accessPolicyJSON, publicationsJSON, appearancesJSON, err := nativeServingDocuments(canonicalProject)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	relationContext, err := candidateRelationContexts(nil, canonicalProject, candidateActivationBindings(activations))
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	relationExecution, err := canonicalProject.RelationExecutionDigestsByContext(relationContext)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+
+	return release.CandidateArtifactSet{
+		Artifact: release.ProjectArtifactProvenance{
+			SourceDigest: request.SourceDigest, ProjectDigest: canonicalProject.Digest(), ContentDigest: digest,
+			CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: canonicalProject.Version(),
+		},
+		AuthorizationFingerprint: authorizationFingerprint,
+		Generation: release.CandidateGenerationArtifact{
+			Identity: request.ServingIdentity, ServingArtifactID: request.Artifact.ServingArtifactID,
+			ArtifactDigest: digest, BundleManifestJSON: validation.ManifestJSON,
+			NativeArtifact:   nativeArtifactObjectEvidence(object.Info),
+			AccessPolicyJSON: accessPolicyJSON, DashboardPublicationsJSON: publicationsJSON, DashboardAppearancesJSON: appearancesJSON,
+			DataRevision: dataRevision, DataMode: release.GenerationDataRefreshSources,
+			Deterministic: compiled.Plan.Deterministic, Connections: requirements, AuthoredConnections: authored,
+			Restrictions: candidateRestrictions(authorizationSnapshot),
+		},
+		Compiler: release.CandidateCompilerEvidence{
+			Graph: canonicalProject.Graph(), Manifest: canonicalProject.Manifest(), Plan: compiled.Plan, Artifact: canonicalProject,
+			RelationExecution: relationExecution,
+		},
+	}, nil
+}
+
+func validateNativeRecoveryRequest(request release.CandidateArtifactRecoveryRequest, environment servingstate.Environment) error {
+	if request.CandidateID == "" || request.CandidateID != strings.TrimSpace(request.CandidateID) || len(request.CandidateID) > maxNativeRecoveryIDBytes || strings.ContainsAny(request.CandidateID, "\x00\r\n") {
+		return errors.New("native recovered candidate ID is invalid")
+	}
+	if err := request.ServingIdentity.Validate(); err != nil {
+		return fmt.Errorf("native recovered serving identity: %w", err)
+	}
+	if request.ServingIdentity.Environment != string(environment) {
+		return errors.New("native recovered serving identity environment does not match module")
+	}
+	if _, err := validateNativeGenerationID(request.ServingIdentity.GenerationID, true); err != nil {
+		return err
+	}
+	if request.SourceDigest == "" || request.SourceDigest != strings.TrimSpace(request.SourceDigest) || platformdigest.ValidateSHA256Identity(request.SourceDigest) != nil {
+		return errors.New("native recovered source digest is invalid")
+	}
+	if err := validateNativeArtifactIdentity(request.Artifact); err != nil {
+		return err
+	}
+	if request.Artifact.ServingStateID != request.ServingIdentity.GenerationID {
+		return errors.New("native recovered serving artifact state identity differs from serving identity")
+	}
+	return nil
 }
 
 func sameNativeJSON(left, right any) bool {
