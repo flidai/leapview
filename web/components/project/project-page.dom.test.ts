@@ -242,6 +242,56 @@ test('connections list and asset detail render without workspace terminology', a
   }
 })
 
+test('model details move overview metadata into a responsive side rail', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  try {
+    await page.goto(`${baseURL}/?root=model-field-drawer`)
+    await page.waitForFunction(() => customElements.get('lv-project-asset-page'))
+    const desktop = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const layout = root.querySelector('.details-layout') as HTMLElement
+      const main = root.querySelector('.details-main') as HTMLElement
+      const rail = root.querySelector('.details-sidebar') as HTMLElement
+      const mainBounds = main.getBoundingClientRect()
+      const railBounds = rail.getBoundingClientRect()
+      return {
+        columns: getComputedStyle(layout).gridTemplateColumns,
+        mainRight: mainBounds.right,
+        railLeft: railBounds.left,
+        railLabel: rail.getAttribute('aria-label'),
+        railHeading: rail.querySelector('h2')?.textContent?.trim(),
+      }
+    })
+    expect(desktop.columns.split(' ')).toHaveLength(2)
+    expect(desktop.mainRight).toBeLessThanOrEqual(desktop.railLeft)
+    expect(desktop.railLabel).toBe('Asset overview')
+    expect(desktop.railHeading).toBe('Overview')
+
+    await page.setViewportSize({ width: 720, height: 800 })
+    const narrow = await page.locator('lv-project-asset-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const layout = root.querySelector('.details-layout') as HTMLElement
+      const main = root.querySelector('.details-main') as HTMLElement
+      const rail = root.querySelector('.details-sidebar') as HTMLElement
+      const mainBounds = main.getBoundingClientRect()
+      const railBounds = rail.getBoundingClientRect()
+      return {
+        columns: getComputedStyle(layout).gridTemplateColumns,
+        mainTop: mainBounds.top,
+        mainBottom: mainBounds.bottom,
+        railTop: railBounds.top,
+      }
+    })
+    expect(narrow.columns.split(' ')).toHaveLength(1)
+    expect(narrow.mainTop).toBeLessThan(narrow.railTop)
+    expect(narrow.mainBottom).toBeLessThanOrEqual(narrow.railTop)
+  } finally {
+    await page.close()
+  }
+})
+
 test('asset Definition tab renders an outline and highlighted Transform SQL', async () => {
   const page = await browser.newPage()
   try {

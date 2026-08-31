@@ -728,13 +728,32 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private renderDetails(page: ResourceAssetPageSignal) {
+    const overview = page.details?.overview ?? []
+    const sections = page.details?.sections ?? []
+    const hasOverview = overview.some((fact) => fact.value?.trim())
+    const hasPrimaryContent = sections.length > 0 || Boolean(page.dashboardAppearance)
+    const showOverviewRail = hasOverview && hasPrimaryContent
     return html`
       <section class="details" id="details" aria-label="Asset details">
         ${page.details?.semanticModelGraph ? renderSemanticModelGraph(page.details.semanticModelGraph, page) : nothing}
         <div class="details-content">
-		  ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
-          ${renderFacts('Overview', page.details?.overview ?? [], true)}
-          ${(page.details?.sections ?? []).map(renderDetailSection)}
+          ${showOverviewRail
+            ? html`
+                <div class="details-layout">
+                  <div class="details-main">
+                    ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
+                    ${sections.map(renderDetailSection)}
+                  </div>
+                  <aside class="details-sidebar" aria-label="Asset overview">
+                    ${renderFacts('Overview', overview, true)}
+                  </aside>
+                </div>
+              `
+            : html`
+                ${page.dashboardAppearance ? html`<lv-dashboard-appearance-editor .appearance=${page.dashboardAppearance} .label=${page.title} .assetID=${page.assetId}></lv-dashboard-appearance-editor>` : nothing}
+                ${renderFacts('Overview', overview, true)}
+                ${sections.map(renderDetailSection)}
+              `}
         </div>
       </section>
     `
@@ -1535,6 +1554,48 @@ const projectStyles = css`
     padding: var(--base-size-16);
   }
 
+  .details-layout {
+    display: grid;
+    min-width: 0;
+    grid-template-columns: minmax(0, 1fr) minmax(14rem, 18rem);
+    align-items: start;
+    gap: var(--base-size-32);
+  }
+
+  .details-main {
+    display: grid;
+    min-width: 0;
+    align-content: start;
+    gap: var(--base-size-24);
+  }
+
+  .details-sidebar {
+    min-width: 0;
+    border-left: var(--lv-border-muted);
+    padding-left: var(--base-size-24);
+  }
+
+  .details-sidebar .detail-section {
+    border-bottom: 0;
+    padding-bottom: 0;
+  }
+
+  .details-sidebar .facts.overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--base-size-16);
+  }
+
+  .details-sidebar .facts .wide {
+    grid-column: auto;
+  }
+
+  .details-sidebar .facts p,
+  .details-sidebar .facts code {
+    overflow-wrap: anywhere;
+    text-overflow: clip;
+    white-space: normal;
+  }
+
   .drawer-page {
     min-height: 100svh;
   }
@@ -1691,6 +1752,24 @@ const projectStyles = css`
     grid-template-columns: minmax(7rem, .42fr) minmax(0, 1fr);
     align-items: start;
     gap: var(--base-size-16);
+  }
+
+  @media (max-width: 60rem) {
+    .details-layout {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--base-size-24);
+    }
+
+    .details-sidebar {
+      border-top: var(--lv-border-muted);
+      border-left: 0;
+      padding-top: var(--base-size-20);
+      padding-left: 0;
+    }
+
+    .details-sidebar .facts.overview {
+      grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr));
+    }
   }
 
   .source-drawer-body .facts .wide {
