@@ -2897,6 +2897,13 @@
       "x-lifecycle": "internal",
       "x-scope": "PostgreSQL conformance gate"
     },
+    "LEAPVIEW_POSTGRES_CONFORMANCE_SKIP": {
+      "description": "Skip PostgreSQL-backed packages in ordinary Go test lanes; the dedicated fail-closed conformance lane overrides this flag.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "PostgreSQL conformance routing"
+    },
     "LEAPVIEW_POSTGRES_CONTROL_ACQUIRE_TIMEOUT": {
       "default": "5s",
       "description": "Maximum time to wait when acquiring a control-plane PostgreSQL connection.",
