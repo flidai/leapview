@@ -80,10 +80,13 @@ check_scalar() {
   local expected="$6"
   local actual
 
-  # Keep psql diagnostics out of the log so a failed probe cannot echo a
-  # connection URL or password supplied by the caller.
-  if ! actual="$(runtime_psql "$role" "$password" "$database" "$statement" 2>/dev/null)"; then
+  # psql does not echo PGPASSWORD, but defensively redact the supplied value
+  # before returning a diagnostic. Keeping the server error visible is
+  # important when a fresh CI topology fails before the privilege checks.
+  if ! actual="$(runtime_psql "$role" "$password" "$database" "$statement" 2>&1)"; then
+    actual="${actual//"$password"/[redacted]}"
     echo "PostgreSQL isolation check failed: $label query" >&2
+    printf '%s\n' "$actual" >&2
     return 1
   fi
   if [[ "$actual" != "$expected" ]]; then
