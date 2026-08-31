@@ -512,7 +512,6 @@ sql:
   - engine: "sqlite"
     queries:
       - "internal/dashboard/publication/sqlite/queries"
-      - "internal/dashboard/session/sqlite/queries"
       - "internal/dashboard/usage/sqlite/queries"
       - "internal/dashboard/authoring/sqlite/queries"
     schema: "internal/platform/migrations"

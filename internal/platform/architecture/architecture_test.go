@@ -2187,7 +2187,6 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 	generatedOnly := map[string]bool{
 		"internal/agent/sqlite":                 true,
 		"internal/dashboard/publication/sqlite": true,
-		"internal/dashboard/session/sqlite":     true,
 		"internal/deployment/sqlite":            true,
 		"internal/manageddata/sqlite":           true,
 		"internal/servingstate/sqlite":          true,
@@ -2345,7 +2344,6 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/platform/http/cursorsigning/sqlite/queries/cursor_signing.sql",
 		"internal/deployment/sqlite/queries/deployment.sql",
 		"internal/dashboard/publication/sqlite/queries/publication.sql",
-		"internal/dashboard/session/sqlite/queries/session.sql",
 		"internal/manageddata/sqlite/queries/managed_data.sql",
 		"internal/refresh/sqlite/runqueries/materialization.sql",
 		"internal/platform/jobs/sqlite/queries/async_job.sql",

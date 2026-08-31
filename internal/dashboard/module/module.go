@@ -28,7 +28,6 @@ import (
 	semanticapi "github.com/flidai/leapview/internal/dashboard/semanticapi"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
 	sessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
-	dashboardsessionsqlite "github.com/flidai/leapview/internal/dashboard/session/sqlite"
 	dashboardstream "github.com/flidai/leapview/internal/dashboard/stream"
 	dashboardui "github.com/flidai/leapview/internal/dashboard/ui"
 	dashboardsignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
@@ -77,7 +76,9 @@ type Config struct {
 	NativePersistence *NativePersistence
 	// SessionStore, UsageRecorder/UsageReader, and AppearanceStore are the
 	// product-owned persistence seams. Native production composition supplies
-	// PostgreSQL implementations; SQLite fallback is opt-in for legacy tests.
+	// PostgreSQL implementations. Sessions use the concurrency-safe in-process
+	// MemoryStore when no native store is supplied; usage, appearance, and
+	// publication retain explicit SQLite fallbacks for legacy tests.
 	SessionStore             dashboardsession.Store
 	AppearanceStore          dashboardappearance.Store
 	LegacySQLite             bool
@@ -367,9 +368,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sessionStore = config.NativePersistence.session
 		usageRecorder, usageReader = config.NativePersistence.usage, config.NativePersistence.usage
 		appearanceStore = config.NativePersistence.appearance
-	}
-	if sessionStore == nil && config.Database != nil {
-		sessionStore = dashboardsessionsqlite.NewStore(config.Database)
 	}
 	if sessionStore == nil {
 		sessionStore = dashboardsession.NewMemoryStore()

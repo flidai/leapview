@@ -215,6 +215,21 @@ func TestBuildNativeDashboardUsesValidatedBundleWithoutSQLite(t *testing.T) {
 	}
 }
 
+func TestBuildLegacyDatabaseUsesMemoryDashboardSessions(t *testing.T) {
+	audit := access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return nil
+	})
+	module, err := dashboardmodule.Build(t.Context(), dashboardmodule.Config{
+		Database: &sql.DB{}, LegacySQLite: true, AuditIntentRecorder: audit,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := module.HTTP().SessionStore.(*dashboardsession.MemoryStore); !ok {
+		t.Fatalf("legacy dashboard database selected session store %T, want *session.MemoryStore", module.HTTP().SessionStore)
+	}
+}
+
 // TestBuildNativeDashboardMutationUsesNativeAudit exercises the composed
 // module through its transport-neutral mutation adapter. A real PostgreSQL
 // authority is required here because a native repository must execute its
