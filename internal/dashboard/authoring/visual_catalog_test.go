@@ -37,6 +37,11 @@ func TestCanonicalVisualCatalogMatchesExecutableVisualReference(t *testing.T) {
 		if len(CanonicalVisualRoles(entry.Type)) == 0 {
 			t.Fatalf("catalog type %q has no field roles", entry.Type)
 		}
+		for _, limit := range CanonicalVisualRoleLimits(entry.Type) {
+			if limit.Maximum <= 0 {
+				t.Fatalf("catalog type %q has invalid role limit %#v", entry.Type, limit)
+			}
+		}
 	}
 }
 

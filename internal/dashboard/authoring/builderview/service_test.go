@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -147,6 +148,7 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 	}
 	var fieldID string
 	var physicalField bool
+	var semanticRoles, physicalRoles []uisignals.DashboardBuilderFieldRoleSignal
 	for _, dataset := range semantic.Datasets {
 		if dataset.ID != "orders" {
 			continue
@@ -154,9 +156,11 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 		for _, field := range dataset.Fields {
 			if field.ID == "status" && field.Kind == "dimension" {
 				fieldID = field.ID
+				semanticRoles = field.Roles
 			}
 			if field.ID == "orders.status" && field.Kind == "dimension" {
 				physicalField = true
+				physicalRoles = field.Roles
 			}
 		}
 	}
@@ -165,6 +169,12 @@ func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
 	}
 	if !physicalField {
 		t.Fatal("projected dataset lost its physical table field for detail/table use")
+	}
+	if !reflect.DeepEqual(semanticRoles, []uisignals.DashboardBuilderFieldRoleSignal{uisignals.DashboardBuilderFieldRoleSignalDimension}) {
+		t.Fatalf("semantic dimension roles = %#v", semanticRoles)
+	}
+	if !reflect.DeepEqual(physicalRoles, []uisignals.DashboardBuilderFieldRoleSignal{uisignals.DashboardBuilderFieldRoleSignalDetail}) {
+		t.Fatalf("physical dimension roles = %#v", physicalRoles)
 	}
 
 	// Start with an aggregate visual that has no dimensions, then feed the

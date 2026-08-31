@@ -122,6 +122,7 @@ model DashboardBuilderFieldSignal {
   `id`: string;
   `label`: string;
   `kind`: "dimension" | "metric";
+  `roles`: DashboardBuilderFieldRoleSignal[];
   `dataType`: string;
   `description`?: string;
 }
@@ -169,6 +170,12 @@ model DashboardBuilderVisualTypeSignal {
   `group`: string;
   `referenceHref`: string;
   `roles`: DashboardBuilderFieldRoleSignal[];
+  `roleLimits`: DashboardBuilderVisualRoleLimitSignal[];
+}
+
+model DashboardBuilderVisualRoleLimitSignal {
+  `role`: DashboardBuilderFieldRoleSignal;
+  `maximum`: int32;
 }
 
 enum DashboardBuilderFieldRoleSignal {

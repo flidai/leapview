@@ -2205,6 +2205,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         min-height: 8rem;
       }
 
+      .canvas .visual > .grid-stack-item-content,
+      .canvas .filter-component > .grid-stack-item-content {
+        position: relative;
+        inset: auto !important;
+        width: 100%;
+        height: 100%;
+      }
+
       .toolbar-actions {
         width: 100%;
         overflow-x: auto;
@@ -2699,7 +2707,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderFieldBrowser(builder: DashboardBuilderSignal, visual: DashboardBuilderVisualSignal | undefined) {
     const catalog = this.filteredCatalog(this.semanticCatalog(builder.semanticModel.datasets ?? []))
     const visibleCatalog = this.fieldFilter === 'all' ? catalog : catalog.filter((item) => item.group === this.fieldFilter)
-    const supported = visibleCatalog.filter((item) => visual ? this.fieldCompatibleWithVisual(item.field, visual) : this.fieldDataTypeSupported(item.field))
+    const supported = visibleCatalog.filter((item) => visual
+      ? Boolean(this.fieldUsedIn(item.field, visual) || this.fieldCompatibleWithVisual(item.field, visual))
+      : this.fieldDataTypeSupported(item.field))
     const unsupported = visibleCatalog.filter((item) => !supported.includes(item))
     const groups: Array<Exclude<BuilderFieldFilter, 'all'>> = ['metric', 'dimension', 'time']
     const collapsed = this.collapsedPanes.data
@@ -2886,15 +2896,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const editable = Boolean(this.builder?.capabilities.canEdit && compatible && (visual || this.builder?.capabilities.canAddVisual))
     const roleLabel = this.fieldGroupLabel(item.group, true)
     const dataType = field.dataType.toLowerCase() === 'unknown' ? '' : field.dataType
+    const targetRole = visual ? this.roleForField(field, visual) : undefined
+    const roleFull = Boolean(visual && targetRole && this.fieldDataTypeSupported(field) && this.fieldSupportsRole(field, targetRole) && !this.roleHasCapacity(visual, targetRole))
     const action = !visual
       ? `Click or drag to create a ${this.visualLabel(this.recommendedVisualForField(field))} visual.`
       : !compatible
-        ? `Not compatible with the selected ${visualType} visual.`
+        ? roleFull
+          ? `${this.fieldWellLabel(visual!, targetRole!)} is full. Remove its current field before adding another.`
+          : `Not compatible with the selected ${visualType} visual.`
         : usedIn
           ? `Used in ${usedIn}. Drag to a compatible field well.`
           : `Click to add to ${this.fieldWellLabel(visual, this.roleForField(field, visual))}, or drag to a field well.`
     const accessibleName = [field.label, roleLabel, dataType, datasetContext, action].filter(Boolean).join('. ')
-    const context = compatible ? datasetContext : `${datasetContext} · Not compatible with ${visualType || 'this visual'}`
+    const context = compatible
+      ? datasetContext
+      : `${datasetContext} · ${roleFull ? `${this.fieldWellLabel(visual!, targetRole!)} is full` : `Not compatible with ${visualType || 'this visual'}`}`
 
     if (!compatible) {
       return html`
@@ -2917,11 +2933,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderCanvas(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined) {
     if (!page) {
-      return html`<main class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span>${builder.capabilities.canAddPage ? html`<div><button @click=${this.addPage} aria-label="Add page">Add page</button></div>` : nothing}</div></div></main>`
+      return html`<section class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span>${builder.capabilities.canAddPage ? html`<div><button @click=${this.addPage} aria-label="Add page">Add page</button></div>` : nothing}</div></div></section>`
     }
     const width = Math.max(12, page.grid.columns || 12)
     return html`
-      <main class="canvas-pane" aria-label="Dashboard canvas">
+      <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
           ${builder.preview.error ? html`<p class="preview-error" role="alert">${builder.preview.error}</p>` : nothing}
           <p id="dashboard-builder-grid-help" class="sr-only">Focus a canvas component. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
@@ -2933,7 +2949,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
           <div class="sr-only" aria-live="polite">${this.gridInteractionMessage}</div>
         </div>
-      </main>
+      </section>
     `
   }
 
@@ -3208,7 +3224,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const slots = visual.slots.filter((slot) => this.slotRole(slot) === role)
     const label = this.fieldWellLabel(visual, role)
     const draggedField = this.draggedFieldFromBuilder(this.builder)
-    const fieldDrop = draggedField ? (this.fieldCompatibleWithRole(draggedField, role) ? 'compatible' : 'incompatible') : ''
+    const fieldDrop = draggedField ? (this.fieldCompatibleWithRole(draggedField, role) && this.roleHasCapacity(visual, role) ? 'compatible' : 'incompatible') : ''
     return html`
       <section class="field-well">
         <div class="field-well-label"><span>${label}</span><span>${slots.length}</span></div>
@@ -3513,10 +3529,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private fieldCompatibleWithVisual(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal): boolean {
     if (!this.fieldDataTypeSupported(field)) return false
-    const type = this.visualTypeForRender(visual)
-    if (type === 'table') return field.kind === 'dimension'
-    if (type === 'kpi') return field.kind === 'metric'
-    return field.kind === 'dimension' || field.kind === 'metric'
+    const role = this.roleForField(field, visual)
+    const entry = this.visualCatalogEntry(this.visualTypeForRender(visual))
+    return Boolean(entry?.roles.includes(role) && this.fieldCompatibleWithRole(field, role) && this.roleHasCapacity(visual, role))
   }
 
   private fieldDataTypeSupported(field: DashboardBuilderFieldSignal): boolean {
@@ -3526,8 +3541,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private fieldCompatibleWithRole(field: DashboardBuilderFieldSignal, role: BuilderFieldRole): boolean {
     if (!this.fieldDataTypeSupported(field)) return false
+    if (field.roles?.length) return field.roles.includes(role)
     if (role === 'detail') return field.kind === 'dimension'
     return field.kind === role
+  }
+
+  private fieldSupportsRole(field: DashboardBuilderFieldSignal, role: BuilderFieldRole): boolean {
+    if (field.roles?.length) return field.roles.includes(role)
+    if (role === 'detail') return field.kind === 'dimension'
+    return field.kind === role
+  }
+
+  private roleHasCapacity(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole): boolean {
+    const limit = this.visualCatalogEntry(this.visualTypeForRender(visual))?.roleLimits?.find((candidate) => candidate.role === role)
+    if (!limit) return true
+    return visual.slots.filter((slot) => this.slotRole(slot) === role).length < limit.maximum
   }
 
   private roleForField(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal): BuilderFieldRole {
@@ -3838,12 +3866,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.createVisualFromField(field)
       return
     }
-    if (!this.fieldCompatibleWithVisual(field, visual)) return
     const usedIn = this.fieldUsedIn(field, visual)
     if (usedIn) {
       this.gridInteractionMessage = `${field.label} is already used in ${usedIn}.`
       return
     }
+    if (!this.fieldCompatibleWithVisual(field, visual)) return
     const role = this.roleForField(field, visual)
     this.gridInteractionMessage = `Adding ${field.label} to ${this.fieldWellLabel(visual, role)}.`
     this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role })
@@ -3868,7 +3896,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const visual = page ? this.selectedVisual(page, builder) : undefined
     const field = this.draggedField(event, builder)
     this.clearDraggedField()
-    if (!page || !visual || !field || !this.fieldCompatibleWithRole(field, role)) return
+    if (!page || !visual || !field || !this.fieldCompatibleWithRole(field, role) || !this.roleHasCapacity(visual, role)) return
     this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role })
   }
 

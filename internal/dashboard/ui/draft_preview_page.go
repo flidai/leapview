@@ -10,6 +10,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 
 	g "maragu.dev/gomponents"
+	c "maragu.dev/gomponents/components"
 	h "maragu.dev/gomponents/html"
 )
 
@@ -47,6 +48,45 @@ func DashboardDraftPreviewPage(title, dashboardID, pageID, revisionLabel, backHr
 				g.Attr("aria-label", "Draft dashboard preview"),
 			),
 		),
+	})
+}
+
+// DashboardDraftPreviewRevisionChangedPage renders a static recovery page for
+// an exact-revision preview link that no longer points at the current draft.
+// It intentionally does not open a stream or retry against the latest
+// revision: the caller must return to the builder and choose the new exact
+// revision explicitly.
+func DashboardDraftPreviewRevisionChangedPage(backHref string, providers ...webpage.Provider) g.Node {
+	layout := webpage.Resolve(firstProvider(providers), webpage.Context{
+		Active: "dashboards", PageTitle: "Preview unavailable", Compact: true,
+	})
+	productName := strings.TrimSpace(layout.Presentation.ProductName)
+	if productName == "" {
+		productName = "LeapView"
+	}
+	faviconPath := strings.TrimSpace(layout.Presentation.FaviconPath)
+	if faviconPath == "" {
+		faviconPath = "/static/favicon.svg"
+	}
+	return c.HTML5(c.HTML5Props{
+		Title: "Draft preview unavailable · " + productName, Language: "en",
+		Head: g.Group{
+			h.Link(h.Rel("icon"), h.Href(layout.Assets.URL(faviconPath)), h.Type("image/svg+xml")),
+			h.Link(h.Rel("stylesheet"), h.Href(layout.Assets.URL("/static/app.css"))),
+		},
+		Body: g.Group{
+			h.Main(h.Class("min-h-svh bg-app text-fg-default flex items-center justify-center p-6"),
+				h.Section(h.Class("w-full max-w-lg rounded-xl border border-border-default bg-canvas-default p-6 shadow-lg"),
+					h.P(h.Class("text-sm font-medium text-fg-muted"), g.Text(productName)),
+					h.H1(h.Class("mt-3 text-xl font-semibold"), g.Text("Draft changed")),
+					h.P(h.Class("mt-3 text-sm text-fg-muted"), g.Text("This exact preview link points to an older draft revision. The draft changed in the builder, so LeapView did not open a newer revision automatically.")),
+					h.P(h.Class("mt-3 text-sm text-fg-muted"), g.Text("Return to builder to continue with the latest draft.")),
+					h.Div(h.Class("mt-6"),
+						h.A(h.Class("inline-flex items-center rounded-md border border-border-default px-3 py-2 text-sm font-medium hover:bg-canvas-subtle"), h.Href(backHref), g.Text("Back to builder")),
+					),
+				),
+			),
+		},
 	})
 }
 
