@@ -102,4 +102,3 @@ DashboardDirectArrowPrototype/detail_narrow/rows_999/lane   34.661k ± 0%   2.49
 DashboardDirectArrowPrototype/detail_wide/rows_50/lane       8.880k ± 0%   3.189k ± 0%  -64.09% (p=0.000 n=10)
 DashboardDirectArrowPrototype/detail_wide/rows_999/lane     110.28k ± 0%   12.32k ± 0%  -88.83% (p=0.000 n=10)
 geomean                                                      17.32k        3.025k       -82.53%
-

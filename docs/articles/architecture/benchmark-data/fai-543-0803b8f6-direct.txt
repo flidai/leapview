@@ -96,4 +96,3 @@ BenchmarkDashboardDirectArrowPrototype/detail_wide/rows_999/candidate_governed_n
 BenchmarkDashboardDirectArrowPrototype/detail_wide/rows_999/candidate_governed_native   	     138	   4467445 ns/op	         0 cache-outcomes/op	        32.00 columns/op	         4.461 p50-ms/request	         5.855 p95-ms/request	         6.402 p99-ms/request	         1.000 physical-queries/op	    268816 response-bytes/op	       999.0 rows/op	 3097312 B/op	   12323 allocs/op
 PASS
 ok  	github.com/flidai/leapview/internal/dashboard/http	64.046s
-

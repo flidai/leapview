@@ -517,10 +517,10 @@ prototype code commit `0803b8f6b3055e6dca1a9ee85afe4895e76a0fc4`:
 
 The unedited Go benchmark stdout, including every sample's `b.N`, is preserved
 in `docs/articles/architecture/benchmark-data/fai-543-0803b8f6-direct.txt`
-(SHA-256 `0b237e6657b7e82209746e960d95159cf1c174dd640a629231f749fb51582eb6`).
+(SHA-256 `69266dfbbfa38d8ea006cbe7f1d17eda3a3c8a14a5537b043f1aa1acc805bf8c`).
 The paired `benchstat` output is preserved in
 `docs/articles/architecture/benchmark-data/fai-543-0803b8f6-benchstat.txt`
-(SHA-256 `608c4ff2361af04e33ba119a6bdb39183b1734d520b04fadcda0f99db718183f`).
+(SHA-256 `7863c6ce88a804054f2514494bf35aa64153bcd547d4c97b06cc8080f42779e7`).
 Both artifacts record their commands, inputs, versions, and sample policy.
 
 The primary comparison metrics are statistically significant in every
