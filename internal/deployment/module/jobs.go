@@ -42,11 +42,12 @@ type DeploymentCoordinator interface {
 // consumer-defined port; schedule reconciliation is an explicit downstream
 // notification rather than repository reach-through.
 type JobConfig struct {
-	Coordinator DeploymentCoordinator
-	Authorize   func(context.Context, string, string, string) error
-	Reconcile   func(context.Context) error
-	Events      jobs.EventAppender
-	Logger      *slog.Logger
+	Coordinator         DeploymentCoordinator
+	Authorize           func(context.Context, string, string, string) error
+	Reconcile           func(context.Context) error
+	ReconcileActivation func(context.Context, apiadapter.Deployment) error
+	Events              jobs.EventAppender
+	Logger              *slog.Logger
 }
 
 func (m *Module) JobHandlers() []jobs.Handler {
@@ -222,6 +223,11 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 			Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
 			Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
 		})
+	}
+	if err == nil && m.jobs.ReconcileActivation != nil {
+		if reconcileErr := m.jobs.ReconcileActivation(ctx, row); reconcileErr != nil {
+			err = reconcileErr
+		}
 	}
 	if err == nil && m.jobs.Reconcile != nil {
 		if reconcileErr := m.jobs.Reconcile(ctx); reconcileErr != nil {

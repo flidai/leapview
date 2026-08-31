@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -88,5 +89,43 @@ func TestBootstrapActivationJobRevalidatesPolicyAndSkipsApproval(t *testing.T) {
 	}
 	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); err == nil || coordinator.activated {
 		t.Fatalf("invalidated bootstrap policy activation err=%v activated=%t", err, coordinator.activated)
+	}
+}
+
+func TestActivationJobRequiresPostCommitReconciliation(t *testing.T) {
+	row := apiadapter.Deployment{ID: "deployment_1", Project: "project_demo", Environment: "prod", GenerationID: "0198f2c0-7c7a-7f00-8a11-000000001111", Status: apiadapter.StatusActive}
+	coordinator := &activationCoordinatorStub{row: row}
+	reconcileErr := errors.New("runtime cutover unavailable")
+	reconciled := 0
+	module := &Module{jobs: JobConfig{
+		Coordinator: coordinator,
+		ReconcileActivation: func(_ context.Context, activated apiadapter.Deployment) error {
+			reconciled++
+			if activated != row {
+				t.Fatalf("reconciled deployment = %#v, want %#v", activated, row)
+			}
+			return reconcileErr
+		},
+	}}
+	payload, err := json.Marshal(ActivateJob{Project: row.Project, Deployment: row.ID, Actor: "publisher", IdempotencyKey: "activate-1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); !errors.Is(err, reconcileErr) {
+		t.Fatalf("activation reconciliation error = %v, want %v", err, reconcileErr)
+	}
+	if !coordinator.activated || reconciled != 1 {
+		t.Fatalf("activated=%t reconciled=%d", coordinator.activated, reconciled)
+	}
+
+	module.jobs.ReconcileActivation = func(context.Context, apiadapter.Deployment) error {
+		reconciled++
+		return nil
+	}
+	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); err != nil {
+		t.Fatal(err)
+	}
+	if reconciled != 2 {
+		t.Fatalf("successful replay reconciliation calls = %d, want 2", reconciled)
 	}
 }

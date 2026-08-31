@@ -28,6 +28,7 @@ import (
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
+	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -1246,18 +1247,53 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			},
 		}
 		priorAfterActivated := config.AfterActivated
-		config.AfterActivated = func(ctx context.Context, activated deployment.Deployment) {
-			if priorAfterActivated != nil {
-				priorAfterActivated(ctx, activated)
+		if config.Persistence != nil {
+			// Native activation commits the durable PostgreSQL pointer first. The
+			// job is not complete until the exact sealed generation is attached
+			// and the dashboard projections are reconciled. A failure is retried;
+			// coordinator replay makes the control transition idempotent.
+			config.Jobs.ReconcileActivation = func(ctx context.Context, row apiadapter.Deployment) error {
+				projectID, err := projectgraph.NewResourceID(row.Project)
+				if err != nil || strings.TrimSpace(row.GenerationID) == "" {
+					return errors.New("native activation returned an invalid serving identity")
+				}
+				activated := deployment.Deployment{
+					ID: row.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: row.Environment, GenerationID: row.GenerationID},
+					ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest,
+					Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
+					ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
+				}
+				if runtime.runtimeHostModule == nil {
+					return errors.New("native activation runtime host is unavailable")
+				}
+				if err := runtime.runtimeHostModule.ReconcileSealed(ctx, servingstate.ID(row.GenerationID)); err != nil {
+					return fmt.Errorf("reconcile native activated runtime: %w", err)
+				}
+				if priorAfterActivated != nil {
+					priorAfterActivated(ctx, activated)
+				}
+				if runtime.dashboardPublicationReconciler == nil {
+					return errors.New("native dashboard publication reconciler is unavailable")
+				}
+				if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
+					return fmt.Errorf("reconcile native dashboard publications: %w", err)
+				}
+				return nil
 			}
-			var reconcileErr error
-			if runtime.dashboardPublicationReconciler != nil {
-				reconcileErr = runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated)
-			} else {
-				reconcileErr = reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated)
-			}
-			if err := reconcileErr; err != nil {
-				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+		} else {
+			config.AfterActivated = func(ctx context.Context, activated deployment.Deployment) {
+				if priorAfterActivated != nil {
+					priorAfterActivated(ctx, activated)
+				}
+				var reconcileErr error
+				if runtime.dashboardPublicationReconciler != nil {
+					reconcileErr = runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated)
+				} else {
+					reconcileErr = reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated)
+				}
+				if err := reconcileErr; err != nil {
+					logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+				}
 			}
 		}
 		var err error
