@@ -3306,7 +3306,7 @@ func TestPostgreSQLConformanceCIUsesSourceInventoryAndNoGlobalNameSkip(t *testin
 			t.Fatalf("PostgreSQL inventory package %q is not a Go package", packagePath)
 		}
 	}
-	filteredCmd := exec.Command("bash", "-c", `set -o pipefail; go list ./... | grep -v '/internal/app$' | grep -Fvx -f <(bash scripts/postgres-conformance-tests.sh list)`)
+	filteredCmd := exec.Command("bash", "-c", `set -eu; inventory_file="$(mktemp)"; trap 'rm -f "$inventory_file"' EXIT; bash scripts/postgres-conformance-tests.sh list >"$inventory_file"; all_packages="$(go list ./...)"; printf '%s\n' "$all_packages" | grep -v '/internal/app$' | grep -Fvx -f "$inventory_file"`)
 	filteredCmd.Dir = root
 	filteredOutput, err := filteredCmd.Output()
 	if err != nil {

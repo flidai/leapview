@@ -1160,13 +1160,16 @@ tasks:
       # harness user cannot silently run in both lanes. App tests use the same
       # skip flag in their stable shards below.
       - |
-        set -euo pipefail
+        set -eu
         export LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1
-        postgres_packages="$(bash scripts/postgres-conformance-tests.sh list)"
-        test -n "$postgres_packages"
-        go list ./... |
+        inventory_file="$(mktemp)"
+        trap 'rm -f "$inventory_file"' EXIT
+        bash scripts/postgres-conformance-tests.sh list >"$inventory_file"
+        test -s "$inventory_file"
+        all_packages="$(go list ./...)"
+        printf '%s\n' "$all_packages" |
           grep -v '/internal/app$' |
-          grep -Fvx -f <(printf '%s\n' "$postgres_packages") |
+          grep -Fvx -f "$inventory_file" |
           xargs -r go test -p 2
 
   test:cache:qualification:
