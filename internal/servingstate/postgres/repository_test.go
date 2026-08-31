@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -28,7 +29,7 @@ func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *pgxpool.Pool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `CREATE SCHEMA IF NOT EXISTS delivery; CREATE TABLE delivery.delivery_target(target_id text PRIMARY KEY,project_id text NOT NULL,environment text NOT NULL,target_revision bigint NOT NULL DEFAULT 1); CREATE TABLE delivery.delivery_snapshot_seal(seal_id uuid PRIMARY KEY,ducklake_snapshot_id bigint NOT NULL); CREATE TABLE delivery.delivery_generation(generation_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),serving_artifact_digest text NOT NULL,compiled_graph_digest text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()); CREATE TABLE delivery.delivery_active_pointer(target_id text PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),publication_id uuid NOT NULL); CREATE TABLE delivery.delivery_publication(publication_id uuid PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation,target_id text NOT NULL,state text NOT NULL,actor_id text NOT NULL,committed_at timestamptz); CREATE TABLE delivery.delivery_retention_root(root_id uuid PRIMARY KEY,target_id text NOT NULL,generation_id uuid,snapshot_seal_id uuid,root_kind text NOT NULL,state text NOT NULL,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),retired_at timestamptz,expired_at timestamptz);`); err != nil {
+	if _, err := tx.Exec(t.Context(), `CREATE SCHEMA IF NOT EXISTS delivery; CREATE TABLE delivery.delivery_target(target_id text PRIMARY KEY,project_id text NOT NULL,environment text NOT NULL,target_revision bigint NOT NULL DEFAULT 1); CREATE TABLE delivery.delivery_snapshot_seal(seal_id uuid PRIMARY KEY,ducklake_snapshot_id bigint NOT NULL,physical_pool_id text,catalog_id text,catalog_database text,catalog_uuid text); CREATE TABLE delivery.delivery_candidate(candidate_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid REFERENCES delivery.delivery_snapshot_seal(seal_id)); CREATE TABLE delivery.delivery_generation(generation_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),serving_artifact_digest text NOT NULL,compiled_graph_digest text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()); CREATE TABLE delivery.delivery_active_pointer(target_id text PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),publication_id uuid NOT NULL); CREATE TABLE delivery.delivery_publication(publication_id uuid PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation,target_id text NOT NULL,state text NOT NULL,actor_id text NOT NULL,committed_at timestamptz); CREATE TABLE delivery.delivery_retention_root(root_id uuid PRIMARY KEY,target_id text NOT NULL,generation_id uuid,snapshot_seal_id uuid,candidate_id uuid,root_kind text NOT NULL,state text NOT NULL,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),retired_at timestamptz,expired_at timestamptz);`); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -67,9 +68,13 @@ func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *pgxpool.Pool) {
 }
 
 func seedGeneration(t *testing.T, admin *pgxpool.Pool, generation, target, publication, attempt, seal, digest, graphDigest string, snapshot int64) {
+	seedGenerationEnvironment(t, admin, generation, target, publication, attempt, seal, digest, graphDigest, snapshot, "prod")
+}
+
+func seedGenerationEnvironment(t *testing.T, admin *pgxpool.Pool, generation, target, publication, attempt, seal, digest, graphDigest string, snapshot int64, environment string) {
 	t.Helper()
 	ctx := t.Context()
-	_, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_target(target_id,project_id,environment) VALUES($1,'project_demo','prod')`, target)
+	_, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_target(target_id,project_id,environment) VALUES($1,'project_demo',$2)`, target, environment)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,6 +97,100 @@ func seedGeneration(t *testing.T, admin *pgxpool.Pool, generation, target, publi
 	_, err = admin.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,generation_id,target_id,state,actor_id,committed_at) VALUES($1::uuid,$2::uuid,$3,'committed','test',clock_timestamp())`, publication, generation, target)
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestRetentionInventoryScopesRootsLeasesAndSnapshotEvidence(t *testing.T) {
+	admin, runtime, _ := servingDB(t)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	graphDigest := testGraph(t).Digest()
+	generation := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	seal := "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	target := "target_inventory"
+	seedGenerationEnvironment(t, admin, generation, target, "cccccccc-cccc-cccc-cccc-cccccccccccc", "dddddddd-dddd-dddd-dddd-dddddddddddd", seal, digest, graphDigest, 41, "prod")
+	if _, err := admin.Exec(ctx, `UPDATE delivery.delivery_snapshot_seal SET physical_pool_id='pool_inventory', catalog_id='catalog_inventory', catalog_database='db_inventory', catalog_uuid='catalog-uuid-inventory' WHERE seal_id=$1::uuid`, seal); err != nil {
+		t.Fatal(err)
+	}
+	// A candidate root has no generation or direct seal pointer. The observer
+	// must resolve its snapshot through delivery_candidate.snapshot_seal_id.
+	candidate := "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee"
+	candidateSeal := "ffffffff-ffff-ffff-ffff-ffffffffffff"
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_snapshot_seal(seal_id,ducklake_snapshot_id,physical_pool_id,catalog_id,catalog_database,catalog_uuid) VALUES($1::uuid,42,'pool_candidate','catalog_candidate','db_candidate','catalog-uuid-candidate')`, candidateSeal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,snapshot_seal_id) VALUES($1::uuid,$2,$3::uuid)`, candidate, target, candidateSeal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,root_kind,state) VALUES('11111111-1111-1111-1111-111111111111',$1,$2::uuid,'candidate','live')`, target, candidate); err != nil {
+		t.Fatal(err)
+	}
+	// Add another same-scope root so ordering is observable independently of
+	// insertion order.
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_retention_root(root_id,target_id,generation_id,snapshot_seal_id,root_kind,state) VALUES('00000000-0000-0000-0000-000000000001',$1,$2::uuid,$3::uuid,'rollback','retiring')`, target, generation, seal); err != nil {
+		t.Fatal(err)
+	}
+	// Lease rows are inserted with known IDs to make the deterministic order
+	// assertion independent of UUID generation. Their states are intentionally
+	// active, expired, and released; all remain visible to the observer.
+	for _, id := range []string{"lease-active", "lease-expired", "lease-released"} {
+		if _, err := admin.Exec(ctx, `INSERT INTO serving_state.reader_lease(lease_id,generation_id,ducklake_snapshot_id,owner_id,expires_at) VALUES($1,$2::uuid,41,$3,clock_timestamp()+interval '10 minutes')`, id, generation, id); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := admin.Exec(ctx, `ALTER TABLE serving_state.reader_lease DISABLE TRIGGER reader_lease_mutation; UPDATE serving_state.reader_lease SET acquired_at=clock_timestamp()-interval '2 minutes',expires_at=clock_timestamp()-interval '1 minute' WHERE lease_id='lease-expired'; ALTER TABLE serving_state.reader_lease ENABLE TRIGGER reader_lease_mutation`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE serving_state.reader_lease SET released_at=clock_timestamp() WHERE lease_id='lease-released'`); err != nil {
+		t.Fatal(err)
+	}
+	// A target in another environment must not appear when querying the prod
+	// target scope (and the same target with the wrong environment is empty).
+	otherGeneration := "22222222-2222-2222-2222-222222222222"
+	seedGenerationEnvironment(t, admin, otherGeneration, "target_inventory_other", "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", "55555555-5555-5555-5555-555555555555", digest, graphDigest, 43, "staging")
+
+	r := New(runtime)
+	first, err := r.RetentionInventory(ctx, target, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := r.RetentionInventory(ctx, target, "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(first, second) {
+		t.Fatalf("retention inventory is not stable across reads:\nfirst=%#v\nsecond=%#v", first, second)
+	}
+	if len(first.Roots) != 3 || len(first.ReaderLeases) != 3 {
+		t.Fatalf("inventory cardinality roots=%d leases=%d, want 3/3", len(first.Roots), len(first.ReaderLeases))
+	}
+	if first.Roots[0].Kind != "candidate" || first.Roots[0].Snapshot == nil || first.Roots[0].Snapshot.SnapshotID != 42 || first.Roots[0].Snapshot.PhysicalPoolID != "pool_candidate" || first.Roots[0].Snapshot.CatalogID != "catalog_candidate" {
+		t.Fatalf("candidate root snapshot evidence = %#v", first.Roots[0])
+	}
+	if first.Roots[1].Kind != "generation" || first.Roots[1].State != "live" || first.Roots[1].Snapshot == nil || first.Roots[1].Snapshot.SnapshotID != 41 || first.Roots[1].Snapshot.PhysicalPoolID != "pool_inventory" || first.Roots[1].Snapshot.CatalogID != "catalog_inventory" {
+		t.Fatalf("active generation root = %#v", first.Roots[1])
+	}
+	if first.Roots[2].Kind != "rollback" || first.Roots[2].State != "retiring" {
+		t.Fatalf("root ordering/state = %#v", first.Roots)
+	}
+	for i, want := range []struct{ id, state string }{{"lease-active", "active"}, {"lease-expired", "expired"}, {"lease-released", "released"}} {
+		if first.ReaderLeases[i].LeaseID != want.id || first.ReaderLeases[i].State != want.state || first.ReaderLeases[i].Snapshot.SnapshotID != 41 || first.ReaderLeases[i].Snapshot.CatalogID != "catalog_inventory" {
+			t.Fatalf("lease[%d] = %#v, want id/state=%s/%s and sealed catalog", i, first.ReaderLeases[i], want.id, want.state)
+		}
+	}
+	empty, err := r.RetentionInventory(ctx, target, "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Roots) != 0 || len(empty.ReaderLeases) != 0 {
+		t.Fatalf("wrong-environment inventory leaked rows: %#v", empty)
+	}
+	other, err := r.RetentionInventory(ctx, "target_inventory_other", "staging")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(other.Roots) != 1 || other.Roots[0].TargetID != "target_inventory_other" || other.Roots[0].Snapshot == nil || other.Roots[0].Snapshot.SnapshotID != 43 {
+		t.Fatalf("cross-target inventory = %#v", other)
 	}
 }
 

@@ -2,6 +2,71 @@
 -- Delivery remains the lifecycle/active-selection authority; these statements
 -- only insert/read bundle projections and maintain reader leases.
 
+-- Retention inventory is an observation-only view of delivery-owned roots and
+-- serving-state reader leases. Both queries require the exact target and
+-- environment so evidence from another deployment scope cannot leak into an
+-- inventory. Snapshot IDs are resolved from delivery snapshot seals rather
+-- than inferred from mutable lease fields.
+
+-- name: ListRetentionRoots :many
+SELECT r.root_id::text,
+       r.target_id,
+       t.environment,
+       r.root_kind,
+       r.state,
+       COALESCE(r.candidate_id::text, '')::text AS candidate_id,
+       COALESCE(r.generation_id::text, '')::text AS generation_id,
+       COALESCE(s.seal_id::text, '')::text AS snapshot_seal_id,
+       s.ducklake_snapshot_id AS ducklake_snapshot_id,
+       COALESCE(s.physical_pool_id, '') AS physical_pool_id,
+       COALESCE(s.catalog_id, '') AS catalog_id,
+       COALESCE(s.catalog_database, '') AS catalog_database,
+       COALESCE(s.catalog_uuid, '') AS catalog_uuid,
+       r.expires_at,
+       r.created_at,
+       r.retired_at,
+       r.expired_at
+FROM delivery.delivery_retention_root r
+JOIN delivery.delivery_target t ON t.target_id = r.target_id
+LEFT JOIN delivery.delivery_generation g
+       ON g.generation_id = r.generation_id
+      AND g.target_id = r.target_id
+LEFT JOIN delivery.delivery_candidate c
+       ON c.candidate_id = r.candidate_id
+      AND c.target_id = r.target_id
+LEFT JOIN delivery.delivery_snapshot_seal s
+       ON s.seal_id = COALESCE(r.snapshot_seal_id, g.snapshot_seal_id, c.snapshot_seal_id)
+WHERE r.target_id = $1
+  AND t.environment = $2
+ORDER BY r.root_kind, r.root_id;
+
+-- name: ListReaderLeaseInventory :many
+SELECT l.lease_id,
+       l.generation_id::text,
+       t.environment,
+       s.seal_id::text AS snapshot_seal_id,
+       s.ducklake_snapshot_id,
+       s.physical_pool_id,
+       s.catalog_id,
+       s.catalog_database,
+       s.catalog_uuid,
+       l.owner_id,
+       l.acquired_at,
+       l.expires_at,
+       l.released_at,
+       CASE
+           WHEN l.released_at IS NOT NULL THEN 'released'
+           WHEN l.expires_at <= statement_timestamp() THEN 'expired'
+           ELSE 'active'
+       END AS lease_state
+FROM serving_state.reader_lease l
+JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
+JOIN delivery.delivery_target t ON t.target_id = g.target_id
+JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
+WHERE g.target_id = $1
+  AND t.environment = $2
+ORDER BY l.lease_id;
+
 -- name: GetBundle :one
 SELECT b.generation_id::text, b.project_id, b.environment, b.artifact_id,
        b.artifact_digest, b.compiled_graph_digest, b.artifact_format,
