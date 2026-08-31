@@ -3,6 +3,7 @@ package jobs
 import (
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"log/slog"
 	"strings"
@@ -114,6 +115,27 @@ func TestRunnerFailsUnknownJobKindExplicitly(t *testing.T) {
 	runner.executeClaimed(t.Context(), Job{ID: "job-1", Kind: "unknown"})
 	if repository.failed != "job-1" || !strings.Contains(string(repository.problem), "unsupported async job kind") {
 		t.Fatalf("failed=%q problem=%s", repository.failed, repository.problem)
+	}
+}
+
+func TestRunnerDurablyRequeuesExplicitRetryableFailure(t *testing.T) {
+	repository := &retryRecordingRunnerRepository{}
+	runner, err := NewRunner(RunnerConfig{
+		Repository: repository, Admission: testAdmission{}, Classes: []string{"control"},
+		Handlers: []Handler{HandlerFunc{JobKind: "retryable", Run: func(context.Context, Job) error {
+			return Retryable(errors.New("runtime reconciliation unavailable"), 2*time.Second)
+		}}},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.executeClaimed(t.Context(), Job{ID: "job-retry", Kind: "retryable", LeaseOwner: "owner", LeaseGeneration: 7})
+	if repository.retried != "job-retry" || repository.delay != 2*time.Second || repository.failed != "" {
+		t.Fatalf("retried=%q delay=%s failed=%q", repository.retried, repository.delay, repository.failed)
+	}
+	if !strings.Contains(string(repository.problem), "runtime reconciliation unavailable") {
+		t.Fatalf("retry problem = %s", repository.problem)
 	}
 }
 
@@ -329,6 +351,19 @@ type recordingRunnerRepository struct {
 	failed    string
 	cancelled string
 	problem   []byte
+}
+
+type retryRecordingRunnerRepository struct {
+	recordingRunnerRepository
+	retried string
+	delay   time.Duration
+}
+
+func (r *retryRecordingRunnerRepository) Retry(_ context.Context, id string, _ Fence, delay time.Duration, problem []byte) error {
+	r.retried = id
+	r.delay = delay
+	r.problem = append([]byte(nil), problem...)
+	return nil
 }
 
 type leaseRecordingRunnerRepository struct {

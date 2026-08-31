@@ -16,6 +16,37 @@ var (
 	ErrUnknownKind = errors.New("async job kind is not registered")
 )
 
+// RetryError asks a durable runner to requeue the current fenced attempt
+// after Delay. It is reserved for transient failures after the handler has
+// established that replay is safe; ordinary errors remain terminal.
+type RetryError struct {
+	Err   error
+	Delay time.Duration
+}
+
+func (e *RetryError) Error() string {
+	if e == nil || e.Err == nil {
+		return "async job retry requested"
+	}
+	return e.Err.Error()
+}
+
+func (e *RetryError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// Retryable marks err for durable replay. A nil error remains nil so callers
+// can wrap return values without changing successful behavior.
+func Retryable(err error, delay time.Duration) error {
+	if err == nil {
+		return nil
+	}
+	return &RetryError{Err: err, Delay: delay}
+}
+
 // Status describes the durable lifecycle state of a job.
 type Status string
 

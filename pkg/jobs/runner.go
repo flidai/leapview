@@ -326,6 +326,17 @@ func (r *Runner) executeClaimedWithTimeout(parent context.Context, job Job, leas
 		return
 	}
 	problem := r.failureEncoder(err)
+	var retry *RetryError
+	if errors.As(err, &retry) {
+		if repository, ok := r.repository.(interface {
+			Retry(context.Context, string, Fence, time.Duration, []byte) error
+		}); ok {
+			if retryErr := repository.Retry(context.WithoutCancel(ctx), job.ID, job.Fence(), retry.Delay, problem); retryErr != nil {
+				r.logger.ErrorContext(ctx, "job retry persistence failed", "kind", job.Kind, "resource", job.ResourceID, "error", retryErr)
+			}
+			return
+		}
+	}
 	_ = r.repository.Fail(context.WithoutCancel(ctx), job.ID, job.Fence(), problem)
 	r.logger.ErrorContext(ctx, "job failed", "kind", job.Kind, "resource", job.ResourceID, "error", err)
 }
