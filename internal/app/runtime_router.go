@@ -91,6 +91,36 @@ type runtimeServices struct {
 	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
 }
 
+type dashboardAppearanceReader interface {
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardmodule.AppearanceRecord, error)
+}
+
+func dashboardAppearanceResolver(reader projectmodule.ProjectDefinitionReader, store dashboardAppearanceReader) func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+	return func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+		appearance := dashboardmodule.DefaultAppearance()
+		project, _, err := reader.ProjectDefinitionSnapshot(ctx)
+		if err != nil {
+			return dashboardmodule.Appearance{}, err
+		}
+		if source, ok := project.DashboardSources[dashboardID.String()]; ok && source.Document.Spec.Appearance != nil {
+			if source.Document.Spec.Appearance.Icon != nil {
+				appearance.Icon = strings.TrimSpace(*source.Document.Spec.Appearance.Icon)
+			}
+			if source.Document.Spec.Appearance.Color != nil {
+				appearance.Color = strings.TrimSpace(string(*source.Document.Spec.Appearance.Color))
+			}
+		}
+		overrides, err := store.ListProject(ctx, projectID)
+		if err != nil {
+			return dashboardmodule.Appearance{}, err
+		}
+		if record, ok := overrides[dashboardID]; ok {
+			return dashboardmodule.ResolveAppearance(record.Value), nil
+		}
+		return dashboardmodule.ResolveAppearance(appearance), nil
+	}
+}
+
 // resolveProjectID returns the exact project bound to the active serving
 // lease. A fresh installation has no project until its first activation, so
 // every project-dependent surface must resolve this at operation time rather
@@ -1091,16 +1121,24 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.dashboardModule == nil {
 		agentUICommands := routes.agentModule.UICommandBindings()
+		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error)
+		if database != nil && runtime.runtimeHostModule != nil {
+			resolveDashboardAppearance = dashboardAppearanceResolver(
+				projectmodule.NewActiveProjectDefinitionReader(runtime.runtimeHostModule.Provider()),
+				dashboardmodule.NewAppearanceStore(database),
+			)
+		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:            database,
 			Authoring:           routes.dashboardAuthoring,
 			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{
-				Metrics:          runtime.metrics,
-				ProjectID:        runtime.projectID,
-				ResolveProjectID: runtime.resolveProjectID,
-				Admission:        workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
+				Metrics:                    runtime.metrics,
+				ProjectID:                  runtime.projectID,
+				ResolveProjectID:           runtime.resolveProjectID,
+				ResolveDashboardAppearance: resolveDashboardAppearance,
+				Admission:                  workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
