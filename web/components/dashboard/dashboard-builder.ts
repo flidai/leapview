@@ -3492,12 +3492,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     for (const dataset of datasets) {
       const datasetFields = new Map<string, DashboardBuilderFieldSignal>()
       for (const field of dataset.fields) {
-        const labelKey = `${field.kind}:${field.label.trim().toLocaleLowerCase()}`
+        const rolesKey = [...(field.roles ?? [])].sort().join(',')
+        const labelKey = `${field.kind}:${rolesKey}:${field.label.trim().toLocaleLowerCase()}`
         const existing = datasetFields.get(labelKey)
         if (!existing || this.fieldCatalogScore(field) > this.fieldCatalogScore(existing)) datasetFields.set(labelKey, field)
       }
       for (const field of datasetFields.values()) {
-        const key = `${field.kind}:${field.id}`
+        const rolesKey = [...(field.roles ?? [])].sort().join(',')
+        const datasetKey = field.roles?.includes('detail') ? (field.datasetId ?? dataset.id) : ''
+        const key = `${field.kind}:${rolesKey}:${field.id}:${datasetKey}`
         const existing = catalog.get(key)
         if (existing) {
           if (!existing.datasets.some((item) => item.id === dataset.id)) existing.datasets.push({ id: dataset.id, title: this.businessGroupTitle(dataset) })
@@ -3563,12 +3566,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private catalogFieldKey(item: BuilderCatalogField): string {
-    return `${item.field.kind}:${item.field.id}`
+    return `${item.field.kind}:${[...(item.field.roles ?? [])].sort().join(',')}:${item.field.id}:${item.field.datasetId ?? ''}`
   }
 
   private fieldUsedIn(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal): string {
     const labels = visual.slots
-      .filter((slot) => slot.fieldId === field.id)
+      .filter((slot) => this.fieldMatchesSlot(field, slot, visual))
       .map((slot) => this.fieldWellLabel(visual, this.slotRole(slot)))
     return Array.from(new Set(labels)).join(', ')
   }
@@ -3587,7 +3590,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!this.fieldDataTypeSupported(field)) return false
     const role = this.roleForField(field, visual)
     const entry = this.visualCatalogEntry(this.visualTypeForRender(visual))
-    return Boolean(entry?.roles.includes(role) && this.fieldCompatibleWithRole(field, role) && this.roleHasCapacity(visual, role))
+    return Boolean(entry?.roles.includes(role) && this.fieldCompatibleWithRole(field, role) && this.fieldMatchesVisualDataset(field, visual, role) && this.roleHasCapacity(visual, role))
+  }
+
+  private fieldMatchesVisualDataset(field: DashboardBuilderFieldSignal, visual: DashboardBuilderVisualSignal, role: BuilderFieldRole): boolean {
+    if (role !== 'detail' || !visual.datasetId) return true
+    return !field.datasetId || field.datasetId === visual.datasetId
+  }
+
+  private fieldMatchesSlot(field: DashboardBuilderFieldSignal, slot: DashboardBuilderVisualSlotSignal, visual: DashboardBuilderVisualSignal): boolean {
+    if (this.slotRole(slot) !== 'detail') return slot.fieldId === field.id
+    if (!field.roles?.includes('detail')) return false
+    if (visual.datasetId && field.datasetId && visual.datasetId !== field.datasetId) return false
+    const fieldID = field.id.includes('.') ? field.id.slice(field.id.indexOf('.') + 1) : field.id
+    return slot.fieldId === field.id || slot.fieldId === fieldID
   }
 
   private fieldDataTypeSupported(field: DashboardBuilderFieldSignal): boolean {
