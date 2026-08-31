@@ -41,6 +41,10 @@ func TestScheduledRecoveryQualificationRejectsDisabledBootstrap(t *testing.T) {
 }
 
 func TestReleasedHostRecoveryCompositionExecutesDueTransitionOwnersWithValidatedEvidence(t *testing.T) {
+	wallNow := time.Now().UTC()
+	// Run after the next 03:00 UTC schedule boundary so one overdue occurrence
+	// per owner is due and wall-clock backup evidence predates ledger completion.
+	now := time.Date(wallNow.Year(), wallNow.Month(), wallNow.Day()+1, 4, 5, 0, 0, time.UTC)
 	basePolicy, err := compatibility.EmbeddedPolicy()
 	if err != nil {
 		t.Fatal(err)
@@ -105,7 +109,7 @@ func TestReleasedHostRecoveryCompositionExecutesDueTransitionOwnersWithValidated
 	}
 	policyDigest := fmt.Sprintf("%x", sha256.Sum256(policyDocument))
 	evidencePath := filepath.Join(root, "owner-transition-evidence.json")
-	if err := writeScheduledTransitionEvidence(evidencePath, predecessor, identity, policy.PolicyVersion, policyDigest); err != nil {
+	if err := writeScheduledTransitionEvidence(evidencePath, predecessor, identity, policy.PolicyVersion, policyDigest, now.Add(-time.Minute)); err != nil {
 		t.Fatal(err)
 	}
 	identityDocument, err := json.Marshal(build)
@@ -149,7 +153,7 @@ esac
 	if err := os.WriteFile(filepath.Join(root, deploymentEnvName), []byte(deploymentEnvironment), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	controller, err := New(Options{Root: root, DockerBin: dockerPath})
+	controller, err := New(Options{Root: root, DockerBin: dockerPath, Now: func() time.Time { return now }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -187,7 +191,7 @@ esac
 		UPDATE recovery_qualification_schedules
 		SET next_run_at = ?
 		WHERE closed_at IS NULL
-	`, time.Now().UTC().Add(-25*time.Hour).Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+	`, now.Add(-25*time.Hour).Format("2006-01-02T15:04:05.000000000Z")); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {
@@ -258,14 +262,14 @@ func writeScheduledQualificationBundle(root string, policy []byte) error {
 	return nil
 }
 
-func writeScheduledTransitionEvidence(path string, predecessor, candidate compatibility.ReleaseIdentity, policyVersion, policyDigest string) error {
+func writeScheduledTransitionEvidence(path string, predecessor, candidate compatibility.ReleaseIdentity, policyVersion, policyDigest string, recoveryPointAt time.Time) error {
 	state := compatibility.TransitionQualificationState{
 		InstanceID: "lvinst_scheduled_transition", Environment: "qualification", CanonicalOrigin: "https://qualification.example",
 		PrincipalID: "principal_qualification", PrincipalKind: "user", PrincipalEmail: "qualification@example.com", PrincipalName: "Qualification",
 	}
 	evidence := compatibility.TransitionQualificationEvidence{
 		SchemaVersion: 1, PolicyVersion: policyVersion, PolicySHA256: policyDigest,
-		RecoveryPointAt: time.Now().UTC().Add(-time.Minute), Predecessor: predecessor, Candidate: candidate,
+		RecoveryPointAt: recoveryPointAt, Predecessor: predecessor, Candidate: candidate,
 		StateBeforeUpgrade: strings.Repeat("d", 64), StateAfterUpgrade: strings.Repeat("d", 64), StateAfterRollback: strings.Repeat("d", 64),
 		InventoryBefore: state, InventoryAfterUpgrade: state, InventoryAfterRollback: state,
 		UpgradeResult: "success", RollbackResult: "success", PreservationVerified: true,

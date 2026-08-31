@@ -42,23 +42,11 @@ export class VisualizationHost extends LitElement {
       height: 100%;
       min-height: 0;
       gap: var(--base-size-4);
-      padding: var(--base-size-12) var(--base-size-16) var(--base-size-12) var(--base-size-20);
+      padding: var(--base-size-12) var(--base-size-16);
       overflow: hidden;
       background: var(--lv-chart-surface);
       container-type: inline-size;
     }
-    .lv-kpi-card::before {
-      content: '';
-      position: absolute;
-      inset-block: 0;
-      inset-inline-start: 0;
-      width: var(--base-size-4);
-      background: var(--lv-line-muted);
-    }
-    .lv-kpi-card[data-tone='success']::before { background: var(--lv-fg-success); }
-    .lv-kpi-card[data-tone='warning']::before { background: var(--lv-fg-warning); }
-    .lv-kpi-card[data-tone='danger']::before { background: var(--lv-fg-danger); }
-    .lv-kpi-card[data-tone='ink']::before { background: var(--lv-data-1); }
     .lv-visualization-label {
       overflow: hidden;
       color: var(--lv-fg-muted);
@@ -174,7 +162,7 @@ export class VisualizationHost extends LitElement {
     }
     .lv-kpi-card[data-layout='stacked'] {
       gap: var(--base-size-4);
-      padding: var(--base-size-8) var(--base-size-12) var(--base-size-8) var(--base-size-16);
+      padding: var(--base-size-8) var(--base-size-12);
     }
     .lv-kpi-card[data-layout='stacked'] .lv-visualization-kpi {
       font-size: clamp(var(--text-title-size-small), 10cqi, var(--text-title-size-medium));

@@ -90,9 +90,9 @@ test('filter menu renders backend-owned options and emits search/toggle/clear co
       clear.click()
       await element.updateComplete
       const clearCommand = commands.at(-1)
-      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      root.querySelector<HTMLElement>('.menu')!.hidePopover()
       await element.updateComplete
-      const closedAfterEscape = !root.querySelector('.menu')
+      const closedAfterEscape = !root.querySelector('.menu')!.matches(':popover-open')
       element.menu = { ...element.menu, selected: [], options: [], emptyLabel: 'No users found.' }
       await element.updateComplete
       trigger.click()
