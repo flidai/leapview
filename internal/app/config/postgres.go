@@ -7,6 +7,7 @@ import (
 	"strconv"
 	"strings"
 
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
@@ -355,6 +356,13 @@ func (c Config) ValidatePostgresProduction() error {
 	}
 	if err := ducklakeMaintenance.Validate(); err != nil {
 		return fmt.Errorf("invalid PostgreSQL DuckLake maintenance configuration: %w", err)
+	}
+	physicalPoolID := strings.TrimSpace(c.DeliveryPhysicalPoolID)
+	if physicalPoolID == "" || physicalPoolID != c.DeliveryPhysicalPoolID || len(physicalPoolID) > 255 {
+		return errors.New("production serve requires a canonical LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID")
+	}
+	if err := platformdigest.ValidateSHA256Identity(c.DeliveryPhysicalPoolCompatibilityDigest); err != nil {
+		return fmt.Errorf("production serve requires LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST: %w", err)
 	}
 	return nil
 }

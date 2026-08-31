@@ -186,17 +186,19 @@ func TestValidatePostgresProductionRequiresTwoDatabasesAndDistinctRoles(t *testi
 
 func TestValidatePostgresProductionRequiresDistinctMaintenanceCredentials(t *testing.T) {
 	base := Config{
-		Production:                     true,
-		PostgresRequireTLS:             true,
-		PostgresControlURL:             "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL:     "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:            "postgres://ducklake:secret@db/ducklake?sslmode=require",
-		PostgresDuckLakeMaintenanceURL: "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require",
-		PostgresControlRuntimeRole:     "runtime_role",
-		PostgresControlMigratorRole:    "migrator_role",
-		PostgresControlMaintenanceRole: "maintenance_role",
-		PostgresDuckLakeRuntimeRole:    "ducklake_role",
+		Production:                              true,
+		PostgresRequireTLS:                      true,
+		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=require",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=require",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=require",
+		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require",
+		PostgresControlRuntimeRole:              "runtime_role",
+		PostgresControlMigratorRole:             "migrator_role",
+		PostgresControlMaintenanceRole:          "maintenance_role",
+		PostgresDuckLakeRuntimeRole:             "ducklake_role",
+		DeliveryPhysicalPoolID:                  "pool-prod",
+		DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
 	}
 	if err := base.ValidatePostgresProduction(); err != nil {
 		t.Fatalf("valid maintenance credentials rejected: %v", err)
@@ -209,6 +211,35 @@ func TestValidatePostgresProductionRequiresDistinctMaintenanceCredentials(t *tes
 	base.PostgresControlMaintenanceURL = base.PostgresControlURL
 	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "maintenance URL") {
 		t.Fatalf("maintenance/runtime URL reuse accepted: %v", err)
+	}
+}
+
+func TestValidatePostgresProductionRequiresDeliveryPoolContract(t *testing.T) {
+	base := Config{
+		Production:                              true,
+		PostgresRequireTLS:                      true,
+		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=require",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=require",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=require",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=require",
+		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require",
+		PostgresControlRuntimeRole:              "runtime_role",
+		PostgresControlMigratorRole:             "migrator_role",
+		PostgresControlMaintenanceRole:          "maintenance_role",
+		PostgresDuckLakeRuntimeRole:             "ducklake_role",
+		DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID") {
+		t.Fatalf("missing delivery physical pool accepted: %v", err)
+	}
+	base.DeliveryPhysicalPoolID = "pool-prod"
+	base.DeliveryPhysicalPoolCompatibilityDigest = "not-a-digest"
+	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST") {
+		t.Fatalf("invalid delivery pool compatibility digest accepted: %v", err)
+	}
+	base.DeliveryPhysicalPoolCompatibilityDigest = "sha256:" + strings.Repeat("b", 64)
+	if err := base.ValidatePostgresProduction(); err != nil {
+		t.Fatalf("valid delivery pool contract rejected: %v", err)
 	}
 }
 

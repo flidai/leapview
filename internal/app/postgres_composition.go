@@ -11,12 +11,6 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
-// errPostgresProductionCompositionIncomplete is intentionally stable so the
-// serve command can fail closed while the remaining target-architecture
-// prerequisites are being connected. A production process must never fall
-// back to the legacy SQLite authority after PostgreSQL bootstrap is requested.
-var errPostgresProductionCompositionIncomplete = errors.New("production PostgreSQL control-plane adapters are not yet wired; refusing SQLite runtime")
-
 // postgresControlPlaneLifecycle owns the runtime, required maintenance, and
 // optional readonly pools after the one-shot migrator pool has applied the
 // baseline. The migrator is closed immediately after commit and is therefore

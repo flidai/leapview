@@ -120,11 +120,9 @@ func composeNativeProjectSource(
 	}, nil
 }
 
-// buildPostgresProductionTarget assembles the native graph and HTTP surface
-// behind the production admission gate. The gate calls this only after
-// canonical delivery and retention prerequisites are connected. The retained
-// PostgreSQL lifecycle is an application component, so pool shutdown follows
-// worker/runtime-host shutdown on the reverse component path.
+// buildPostgresProductionTarget assembles the native graph and HTTP surface.
+// The retained PostgreSQL lifecycle is an application component, so pool
+// shutdown follows worker/runtime-host shutdown on the reverse component path.
 func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*Application, error) {
 	cfg.Production = true
 	bootstrap, err := openPostgresControlPlane(ctx, cfg)

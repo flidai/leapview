@@ -137,3 +137,21 @@ func TestReadyzUsesStableRuntimeKeyWhenReady(t *testing.T) {
 		t.Fatalf("response exposed project identity: %s", response.Body.String())
 	}
 }
+
+func TestReadyzAllowsFreshTargetWithoutRequiredDeployment(t *testing.T) {
+	response := httptest.NewRecorder()
+	newHealth(healthConfig{
+		Platform:                func(context.Context) error { return nil },
+		ActiveProjectID:         func(context.Context) (projectgraph.ResourceID, error) { return "", nil },
+		RuntimeReady:            func(context.Context) error { return errors.New("must not run without an active project") },
+		RequireActiveDeployment: false,
+	}).Readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
+	}
+	want := `{"checks":{"platformStore":"ok","runtime":"no_active_deployments"},"status":"ready"}` + "\n"
+	if got := response.Body.String(); got != want {
+		t.Fatalf("body = %q, want %q", got, want)
+	}
+}

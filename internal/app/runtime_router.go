@@ -2042,11 +2042,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if runtime.runtimeHostModule == nil {
 				return "", errors.New("runtime host is missing")
 			}
-			projectID := runtime.runtimeHostModule.ProjectID()
-			if err := projectID.Validate(); err != nil {
-				return "", err
-			}
-			return projectID, nil
+			// An empty project is the normal fresh-target state. health.runtimeReady
+			// classifies it as no_active_deployments and applies the configured
+			// readiness policy; the adapter must not turn it into an opaque failure.
+			return runtime.runtimeHostModule.ProjectID(), nil
 		},
 		RuntimeReady: func(ctx context.Context) error {
 			if runtime.runtimeHostModule == nil {

@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/flidai/leapview/internal/app/config"
 )
@@ -22,21 +21,10 @@ func Build(ctx context.Context, cfg config.Config) (*Application, error) {
 }
 
 // BuildProduction is the production entrypoint used by the serve command.
-// It applies and validates the PostgreSQL control-plane baseline before
-// readiness, then refuses to construct the legacy SQLite-backed application
-// graph until every capability authority has a PostgreSQL adapter. Keeping
-// this gate separate from Build preserves embedded SQLite fixtures used by
+// It constructs only the native PostgreSQL application graph. Keeping this
+// entrypoint separate from Build preserves embedded SQLite fixtures used by
 // development and unit tests without making them a production fallback.
 func BuildProduction(ctx context.Context, cfg config.Config) (*Application, error) {
 	cfg.Production = true
-	bootstrap, err := openPostgresControlPlane(ctx, cfg)
-	if err != nil {
-		return nil, err
-	}
-	if err := bootstrap.Start(ctx); err != nil {
-		_ = bootstrap.Stop(context.Background())
-		return nil, err
-	}
-	_ = bootstrap.Stop(context.Background())
-	return nil, fmt.Errorf("%w: next wiring: connect canonical plan/build/seal delivery and native retention before admitting the assembled PostgreSQL target graph", errPostgresProductionCompositionIncomplete)
+	return buildPostgresProductionTarget(ctx, cfg)
 }

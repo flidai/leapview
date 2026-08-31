@@ -2231,7 +2231,7 @@
       "x-scope": "serve"
     },
     "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST": {
-      "description": "Exact immutable compatibility tuple digest for the configured delivery pool admission; required when a pool has multiple admitted tuples.",
+      "description": "Exact immutable compatibility tuple digest required for the configured delivery pool admission.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve,admin"

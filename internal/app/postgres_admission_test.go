@@ -2,7 +2,8 @@ package app
 
 import (
 	"context"
-	"errors"
+	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
@@ -16,12 +17,10 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 )
 
-// TestPostgres18ProductionAdmissionProvesNativeGraphBeforeSentinel exercises
-// the real production bootstrap against PostgreSQL 18. BuildProduction must
-// still stop at the intentional composition sentinel. The same admitted
-// baseline must nevertheless support the native authority graph with exact,
-// identity-preserving pools.
-func TestPostgres18ProductionAdmissionProvesNativeGraphBeforeSentinel(t *testing.T) {
+// TestPostgres18ProductionAdmission exercises the public production entrypoint
+// against PostgreSQL 18 and proves that a fresh, unclaimed target is
+// administrable without fabricating an active project or generation.
+func TestPostgres18ProductionAdmission(t *testing.T) {
 	h := postgrestest.StartTLS(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "admission-migrator", Login: true})
@@ -83,33 +82,25 @@ func TestPostgres18ProductionAdmissionProvesNativeGraphBeforeSentinel(t *testing
 	cfg.DeliveryPhysicalPoolID = "sha256:" + strings.Repeat("b", 64)
 	cfg.DeliveryPhysicalPoolCompatibilityDigest = "sha256:" + strings.Repeat("a", 64)
 
-	// The direct target builder exercises the complete native graph while the
-	// public production gate remains in place. A fresh install has no claim or
-	// delivery target yet, so startup must still succeed without fabricating an
-	// active project or generation.
-	target, targetErr := buildPostgresProductionTarget(t.Context(), cfg)
+	target, targetErr := BuildProduction(t.Context(), cfg)
 	if targetErr != nil {
-		t.Fatalf("full PostgreSQL target composition on fresh unclaimed state: %v", targetErr)
+		t.Fatalf("build production application on fresh unclaimed state: %v", targetErr)
 	}
 	if target == nil {
-		t.Fatal("full PostgreSQL target composition returned a nil application without an error")
+		t.Fatal("production application is nil")
 	}
 	if err := target.Start(t.Context()); err != nil {
-		t.Fatalf("start directly composed PostgreSQL target on fresh unclaimed state: %v", err)
+		t.Fatalf("start production application on fresh unclaimed state: %v", err)
+	}
+	request := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	request.Host = "localhost"
+	response := httptest.NewRecorder()
+	target.Handler().ServeHTTP(response, request)
+	if response.Code != http.StatusOK {
+		t.Fatalf("fresh production readiness status = %d, want %d; body=%s", response.Code, http.StatusOK, response.Body.String())
 	}
 	if err := target.Shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown directly composed PostgreSQL target: %v", err)
-	}
-
-	// BuildProduction performs the exact process admission work and then
-	// refuses to expose the incomplete target graph. The sentinel is part of
-	// the contract until canonical delivery/retention are fully connected.
-	_, err := BuildProduction(t.Context(), cfg)
-	if err == nil || !errors.Is(err, errPostgresProductionCompositionIncomplete) {
-		t.Fatalf("BuildProduction error = %v, want intentional PostgreSQL composition sentinel", err)
-	}
-	if !strings.Contains(err.Error(), "canonical plan/build/seal delivery") || !strings.Contains(err.Error(), "native retention") {
-		t.Fatalf("BuildProduction sentinel diagnostic = %v, want remaining target prerequisites", err)
+		t.Fatalf("shutdown production application: %v", err)
 	}
 
 	// Re-open the admitted pools to inspect ownership and graph identity. The
