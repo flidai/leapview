@@ -204,6 +204,110 @@ func TestAssembleNativeGenerationAdmissionInputRejectsIdentityDrift(t *testing.T
 	}
 }
 
+func recoveredNativeSealAssemblerInput(t *testing.T) NativeRecoveredSealEvidenceAssemblerInput {
+	t.Helper()
+	input := validNativeSealAssemblerInput(t)
+	input.AttemptAdmission.Attempt.State = deploymentnative.AttemptIndeterminate
+	input.AttemptAdmission.DuckLakeAttempt.State = ducklakepostgres.AttemptIndeterminate
+	input.AttemptAdmission.Lease.State = "released"
+	input.AttemptAdmission.Lease.ReleasedAt = input.AttemptAdmission.Lease.ExpiresAt.Add(time.Minute)
+	now := input.AttemptAdmission.Lease.AcquiredAt
+	input.AttemptAdmission.Attempt.SessionIdentity = input.AttemptAdmission.DuckLakeAttempt.SessionIdentity
+	input.AttemptAdmission.Attempt.CreatedAt = now
+	input.AttemptAdmission.Attempt.UpdatedAt = now
+	input.AttemptAdmission.Attempt.FinishedAt = now.Add(time.Second)
+	input.AttemptAdmission.DuckLakeAttempt.CreatedAt = now
+	input.AttemptAdmission.DuckLakeAttempt.UpdatedAt = now
+	input.AttemptAdmission.DuckLakeAttempt.TerminalAt = now.Add(time.Second)
+	evidence := json.RawMessage(`{"reason":"recovered"}`)
+	input.AttemptAdmission.Attempt.TerminationEvidence = append(json.RawMessage(nil), evidence...)
+	input.AttemptAdmission.DuckLakeAttempt.TerminationEvidence = append(json.RawMessage(nil), evidence...)
+	return NativeRecoveredSealEvidenceAssemblerInput(input)
+}
+
+func TestAssembleRecoveredNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T) {
+	input := recoveredNativeSealAssemblerInput(t)
+	got, err := AssembleRecoveredNativeGenerationAdmissionInput(input)
+	if err != nil {
+		t.Fatalf("assemble recovered: %v", err)
+	}
+	if got.Generation.GenerationID != input.GenerationID || got.Commit.AttemptID != input.Build.AttemptID || got.Seal.ClosureDigest != input.Build.Closure.ClosureDigest {
+		t.Fatalf("assembled recovered identity = %#v", got)
+	}
+	// The normalized admission value intentionally carries only the fence;
+	// the later atomic transaction will reconcile both indeterminate ledgers.
+	if got.Fence.LeaseID != input.AttemptAdmission.Lease.LeaseID || got.Fence.FencingEpoch != input.AttemptAdmission.Attempt.FencingEpoch {
+		t.Fatalf("assembled recovery fence = %#v", got.Fence)
+	}
+}
+
+func TestAssembleRecoveredNativeGenerationAdmissionInputRejectsFreshStates(t *testing.T) {
+	tests := []struct {
+		name   string
+		mutate func(*NativeRecoveredSealEvidenceAssemblerInput)
+	}{
+		{"active lease", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Lease.State = "active"
+		}},
+		{"expired lease", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Lease.State = "expired"
+		}},
+		{"other lease state", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Lease.State = "pending"
+		}},
+		{"running delivery attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Attempt.State = deploymentnative.AttemptRunning
+		}},
+		{"terminal delivery attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Attempt.State = deploymentnative.AttemptCommitted
+		}},
+		{"running DuckLake attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.DuckLakeAttempt.State = ducklakepostgres.AttemptRunning
+		}},
+		{"terminal DuckLake attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.DuckLakeAttempt.State = ducklakepostgres.AttemptCommitted
+		}},
+		{"missing release timestamp", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Lease.ReleasedAt = time.Time{}
+		}},
+		{"artifact binding attempt drift", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Artifact.AttemptID = "0198f2c0-7c7a-7f00-8a11-000000009999"
+		}},
+		{"attempt expiry drift", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Attempt.LeaseExpiresAt = in.AttemptAdmission.Attempt.LeaseExpiresAt.Add(time.Second)
+		}},
+		{"termination evidence drift", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.DuckLakeAttempt.TerminationEvidence = json.RawMessage(`{"reason":"different"}`)
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			input := recoveredNativeSealAssemblerInput(t)
+			test.mutate(&input)
+			if _, err := AssembleRecoveredNativeGenerationAdmissionInput(input); err == nil {
+				t.Fatal("recovery assembler unexpectedly accepted invalid precondition")
+			} else if !errors.Is(err, deploymentnative.ErrConflict) && !errors.Is(err, deploymentnative.ErrInvalid) {
+				t.Fatalf("error = %v, want native conflict/invalid", err)
+			}
+		})
+	}
+}
+
+func TestAssembleRecoveredNativeGenerationAdmissionInputAllowsUnboundArtifactReplay(t *testing.T) {
+	input := recoveredNativeSealAssemblerInput(t)
+	input.AttemptAdmission.Artifact.BoundAt = time.Time{}
+	if _, err := AssembleRecoveredNativeGenerationAdmissionInput(input); err != nil {
+		t.Fatalf("recovery assembler rejected value-only artifact identity before binding: %v", err)
+	}
+}
+
+func TestAssembleNativeGenerationAdmissionInputRemainsStrictForRecoveryEvidence(t *testing.T) {
+	input := recoveredNativeSealAssemblerInput(t)
+	if _, err := AssembleNativeGenerationAdmissionInput(NativeSealEvidenceAssemblerInput(input)); err == nil {
+		t.Fatal("fresh assembler accepted indeterminate attempts and released lease")
+	}
+}
+
 func TestCanonicalNumericCatalogVersion(t *testing.T) {
 	for _, test := range []struct {
 		value string

@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -71,15 +72,68 @@ type NativeSealEvidenceAssemblerInput struct {
 type NativeSealAssemblerInput = NativeSealEvidenceAssemblerInput
 type NativePhysicalSealAssemblyInput = NativeSealEvidenceAssemblerInput
 
+// NativeRecoveredSealEvidenceAssemblerInput is the value-only input for a
+// recovery hand-off.  It intentionally has the same immutable evidence shape
+// as NativeSealEvidenceAssemblerInput, but is a distinct named type and must
+// be passed to one of the recovery-specific assembler functions below.  This
+// makes it difficult for recovery callers to accidentally select the
+// fresh-build assembler (which requires a live lease and running attempts).
+//
+// The artifact identity in this value is the recovered CandidateArtifactSet's
+// Generation identity and NativeArtifact metadata, together with the exact
+// value-only binding identity in AttemptAdmission.Artifact.  The recovery
+// assembler cross-checks those values before constructing the admission input;
+// the later recovery transaction may persist a first binding when none exists.
+type NativeRecoveredSealEvidenceAssemblerInput NativeSealEvidenceAssemblerInput
+
+// NativeRecoveredSealAssemblerInput and NativeRecoveredPhysicalSealAssemblyInput
+// are concise aliases for callers that name the operation by its recovery or
+// physical-seal role.
+type NativeRecoveredSealAssemblerInput = NativeRecoveredSealEvidenceAssemblerInput
+type NativeRecoveredPhysicalSealAssemblyInput = NativeRecoveredSealEvidenceAssemblerInput
+
 // AssembleNativeGenerationAdmissionInput validates and assembles a complete
 // GenerationAdmissionInput from exact native build evidence.  The returned
 // value has already passed the same normalization used by CompleteBuildAndAdmit.
 func AssembleNativeGenerationAdmissionInput(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	assembled, err := assembleNativeSealEvidence(input)
+	assembled, err := assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
 	if err != nil {
 		return GenerationAdmissionInput{}, err
 	}
 	return assembled, nil
+}
+
+// AssembleRecoveredNativeGenerationAdmissionInput validates and assembles a
+// complete GenerationAdmissionInput from an indeterminate native build.  It
+// is deliberately separate from AssembleNativeGenerationAdmissionInput:
+// recovery accepts only an exact released target lease and indeterminate
+// delivery/DuckLake attempts, while fresh execution continues to require an
+// active lease and running attempts.
+func AssembleRecoveredNativeGenerationAdmissionInput(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
+	assembled, err := assembleNativeSealEvidenceWithPolicy(NativeSealEvidenceAssemblerInput(input), nativeSealAssemblerRecovery)
+	if err != nil {
+		return GenerationAdmissionInput{}, err
+	}
+	return assembled, nil
+}
+
+// AssembleNativeRecoveredGenerationAdmissionInput is a descriptive alias for
+// AssembleRecoveredNativeGenerationAdmissionInput.
+func AssembleNativeRecoveredGenerationAdmissionInput(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
+	return AssembleRecoveredNativeGenerationAdmissionInput(input)
+}
+
+// AssembleNativeGenerationAdmissionInputForRecovery is a compatibility alias
+// for callers that keep the recovery qualifier at the end of the operation
+// name.
+func AssembleNativeGenerationAdmissionInputForRecovery(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
+	return AssembleRecoveredNativeGenerationAdmissionInput(input)
+}
+
+// AssembleRecoveredNativeGenerationAdmission is a concise alias for
+// AssembleRecoveredNativeGenerationAdmissionInput.
+func AssembleRecoveredNativeGenerationAdmission(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
+	return AssembleRecoveredNativeGenerationAdmissionInput(input)
 }
 
 // AssembleNativeGenerationAdmission is a descriptive alias for
@@ -99,7 +153,7 @@ func AssembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (Generat
 // projection.  It shares all cross-identity checks with the full admission
 // assembler and therefore cannot be used to bypass generation validation.
 func AssembleNativeSnapshotSealEvidence(input NativeSealEvidenceAssemblerInput) (SnapshotSealEvidence, error) {
-	assembled, err := assembleNativeSealEvidence(input)
+	assembled, err := assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
 	if err != nil {
 		return SnapshotSealEvidence{}, err
 	}
@@ -115,7 +169,18 @@ func (NativeSealEvidenceAssembler) Assemble(input NativeSealEvidenceAssemblerInp
 }
 
 func assembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
-	if err := validateNativeSealAssemblerInput(input); err != nil {
+	return assembleNativeSealEvidenceWithPolicy(input, nativeSealAssemblerFresh)
+}
+
+type nativeSealAssemblerPolicy uint8
+
+const (
+	nativeSealAssemblerFresh nativeSealAssemblerPolicy = iota
+	nativeSealAssemblerRecovery
+)
+
+func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput, policy nativeSealAssemblerPolicy) (GenerationAdmissionInput, error) {
+	if err := validateNativeSealAssemblerInputWithPolicy(input, policy); err != nil {
 		return GenerationAdmissionInput{}, err
 	}
 
@@ -214,6 +279,13 @@ func assembleNativeSealEvidence(input NativeSealEvidenceAssemblerInput) (Generat
 }
 
 func validateNativeSealAssemblerInput(input NativeSealEvidenceAssemblerInput) error {
+	return validateNativeSealAssemblerInputWithPolicy(input, nativeSealAssemblerFresh)
+}
+
+func validateNativeSealAssemblerInputWithPolicy(input NativeSealEvidenceAssemblerInput, policy nativeSealAssemblerPolicy) error {
+	if policy != nativeSealAssemblerFresh && policy != nativeSealAssemblerRecovery {
+		return fmt.Errorf("%w: native seal assembler policy is invalid", deploymentnative.ErrInvalid)
+	}
 	if input.PoolContract == nil {
 		return fmt.Errorf("%w: admitted physical-pool contract is required", deploymentnative.ErrInvalid)
 	}
@@ -276,7 +348,7 @@ func validateNativeSealAssemblerInput(input NativeSealEvidenceAssemblerInput) er
 	if err := validateNativeCatalogValues(input); err != nil {
 		return err
 	}
-	return validateNativeCandidateValues(input)
+	return validateNativeCandidateValuesWithPolicy(input, policy)
 }
 
 func validateNativeBuildValues(input NativeSealEvidenceAssemblerInput) error {
@@ -370,6 +442,10 @@ func validateNativeCatalogValues(input NativeSealEvidenceAssemblerInput) error {
 }
 
 func validateNativeCandidateValues(input NativeSealEvidenceAssemblerInput) error {
+	return validateNativeCandidateValuesWithPolicy(input, nativeSealAssemblerFresh)
+}
+
+func validateNativeCandidateValuesWithPolicy(input NativeSealEvidenceAssemblerInput, policy nativeSealAssemblerPolicy) error {
 	identity := input.Artifacts.Generation.Identity
 	if err := identity.Validate(); err != nil {
 		return fmt.Errorf("%w: candidate serving identity: %v", deploymentnative.ErrInvalid, err)
@@ -386,12 +462,49 @@ func validateNativeCandidateValues(input NativeSealEvidenceAssemblerInput) error
 	if input.AttemptAdmission.Attempt.PlanID != input.Plan.ID || input.AttemptAdmission.Attempt.PlanDigest != input.Plan.Digest || input.AttemptAdmission.Attempt.CandidateID == "" {
 		return conflict("admitted attempt and delivery plan identities differ")
 	}
-	if input.AttemptAdmission.Lease.TargetID != input.Plan.TargetID || input.AttemptAdmission.Lease.OwnerID != input.AttemptAdmission.Attempt.OwnerID || input.AttemptAdmission.Lease.FencingEpoch != input.AttemptAdmission.Attempt.FencingEpoch || input.AttemptAdmission.Lease.State != "active" || input.AttemptAdmission.Lease.LeaseID == "" {
+	lease := input.AttemptAdmission.Lease
+	attempt := input.AttemptAdmission.Attempt
+	duckAttempt := input.AttemptAdmission.DuckLakeAttempt
+	if lease.TargetID != input.Plan.TargetID || lease.OwnerID != attempt.OwnerID || lease.FencingEpoch != attempt.FencingEpoch || lease.LeaseID == "" {
 		return conflict("admitted lease fence differs from attempt")
 	}
-	duckAttempt := input.AttemptAdmission.DuckLakeAttempt
-	if duckAttempt.State != ducklakepostgres.AttemptRunning || duckAttempt.AttemptID != input.AttemptAdmission.Attempt.AttemptID || duckAttempt.RequestDigest != input.AttemptAdmission.Attempt.RequestDigest || duckAttempt.PlanDigest != input.Plan.Digest || duckAttempt.PhysicalPoolID != input.PoolContract.Pool.ID.String() || duckAttempt.CatalogID != input.Build.CatalogID || duckAttempt.OwnerID != input.AttemptAdmission.Attempt.OwnerID || duckAttempt.FencingEpoch != input.AttemptAdmission.Attempt.FencingEpoch {
+	if policy == nativeSealAssemblerFresh {
+		if lease.State != "active" {
+			return conflict("admitted lease is not active")
+		}
+		if attempt.State != deploymentnative.AttemptRunning || duckAttempt.State != ducklakepostgres.AttemptRunning {
+			return conflict("admitted attempts are not running")
+		}
+	} else {
+		// Recovery is fenced by both ledgers being indeterminate and by the
+		// exact target lease having already been released.  In particular,
+		// expired, active, or any other lease state cannot authorize this
+		// value-only hand-off.
+		if err := validateRecoveredReleasedLease(lease); err != nil {
+			return err
+		}
+		if attempt.State != deploymentnative.AttemptIndeterminate || duckAttempt.State != ducklakepostgres.AttemptIndeterminate {
+			return conflict("recovery requires indeterminate delivery and DuckLake attempts")
+		}
+		if input.AttemptAdmission.Artifact.AttemptID != attempt.AttemptID {
+			return conflict("recovered artifact binding differs from indeterminate attempt")
+		}
+		if !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) || !duckAttempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+			return conflict("recovered attempt lease evidence differs from released target lease")
+		}
+		if err := validateRecoveredAttemptTermination(attempt, duckAttempt); err != nil {
+			return err
+		}
+	}
+	expectedDuckState := ducklakepostgres.AttemptRunning
+	if policy == nativeSealAssemblerRecovery {
+		expectedDuckState = ducklakepostgres.AttemptIndeterminate
+	}
+	if duckAttempt.State != expectedDuckState || duckAttempt.AttemptID != attempt.AttemptID || duckAttempt.RequestDigest != attempt.RequestDigest || duckAttempt.PlanDigest != input.Plan.Digest || duckAttempt.PhysicalPoolID != input.PoolContract.Pool.ID.String() || duckAttempt.CatalogID != input.Build.CatalogID || duckAttempt.OwnerID != attempt.OwnerID || duckAttempt.FencingEpoch != attempt.FencingEpoch {
 		return conflict("DuckLake attempt admission differs from native build")
+	}
+	if policy == nativeSealAssemblerRecovery && input.Qualification.Digest == "" {
+		return fmt.Errorf("%w: recovered qualification digest is required", deploymentnative.ErrInvalid)
 	}
 	if err := validateDigest(input.Artifacts.Artifact.ProjectDigest, "project digest"); err != nil {
 		return err
@@ -415,6 +528,46 @@ func validateNativeCandidateValues(input NativeSealEvidenceAssemblerInput) error
 		return conflict("candidate authorization fingerprint differs from delivery plan")
 	}
 	if err := validateNativeArtifactObject(input.Artifacts.Generation.NativeArtifact, input.Artifacts.Generation.ArtifactDigest); err != nil {
+		return err
+	}
+	return nil
+}
+
+func validateRecoveredReleasedLease(lease deploymentnative.DeliveryLease) error {
+	if lease.State != "released" || lease.LeaseID == "" || lease.TargetID == "" || lease.OwnerID == "" || lease.FencingEpoch <= 0 {
+		return conflict("recovery requires the exact released target lease")
+	}
+	for label, value := range map[string]time.Time{
+		"lease acquired": lease.AcquiredAt,
+		"lease expiry":   lease.ExpiresAt,
+		"lease released": lease.ReleasedAt,
+	} {
+		if value.IsZero() || value.Location() != time.UTC || !value.Equal(value.UTC()) {
+			return fmt.Errorf("%w: recovered %s timestamp is invalid", deploymentnative.ErrInvalid, label)
+		}
+	}
+	if !lease.ExpiresAt.After(lease.AcquiredAt) || !lease.ReleasedAt.After(lease.AcquiredAt) {
+		return fmt.Errorf("%w: recovered lease timestamps are not chronological", deploymentnative.ErrInvalid)
+	}
+	return nil
+}
+
+func validateRecoveredAttemptTermination(delivery deploymentnative.DeliveryBuildAttempt, ducklake ducklakepostgres.AttemptEvidence) error {
+	termination := AttemptTerminationInput{
+		AttemptID: delivery.AttemptID, OwnerID: delivery.OwnerID,
+		FencingEpoch: delivery.FencingEpoch, Evidence: delivery.TerminationEvidence,
+	}
+	normalized, evidence, err := normalizeAttemptTerminationInput(termination)
+	if err != nil {
+		return fmt.Errorf("%w: recovered attempt termination evidence is invalid: %v", deploymentnative.ErrConflict, err)
+	}
+	if err := verifyDeliveryTermination(delivery, normalized, evidence, deploymentnative.AttemptIndeterminate); err != nil {
+		return err
+	}
+	if err := verifyDuckLakeTermination(ducklake, normalized, evidence, ducklakepostgres.AttemptIndeterminate); err != nil {
+		return err
+	}
+	if err := verifyTerminationLedgerAgreement(delivery, ducklake, evidence); err != nil {
 		return err
 	}
 	return nil
