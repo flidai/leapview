@@ -1578,21 +1578,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding-top: var(--base-size-8);
     }
 
-    .retained-field-list {
-      display: flex;
-      flex-wrap: wrap;
-      gap: var(--base-size-4);
-    }
-
-    .retained-field {
-      border: var(--lv-border-muted);
-      border-radius: 999px;
-      padding: var(--base-size-2) var(--base-size-8);
-      color: var(--lv-fg-muted);
-      background: var(--lv-bg-panel);
-      font: var(--lv-type-caption);
-    }
-
     .interaction-targets {
       display: grid;
       gap: var(--base-size-8);
@@ -3165,8 +3150,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderFieldWells(visual: DashboardBuilderVisualSignal) {
     const entry = this.visualCatalogEntry(this.visualTypeForRender(visual))
     const roles = (entry?.roles ?? ['dimension', 'metric']).filter((role): role is BuilderFieldRole => role === 'dimension' || role === 'metric' || role === 'detail')
-    const supportedRoles = new Set<BuilderFieldRole>(roles)
-    const retained = visual.slots.filter((slot) => !supportedRoles.has(this.slotRole(slot)))
     const requirements = this.visualRequirementMessages(visual)
     const previewIssue = this.visualPreviewErrorMessage(visual)
     const ready = requirements.length === 0 && !previewIssue
@@ -3175,12 +3158,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="property-heading"><span class="property-label">Fields</span></div>
         ${ready ? nothing : html`<div class="visual-requirements" role="status"><span>${requirements.length > 0 ? this.visualRequirementSummary(requirements) : previewIssue}</span></div>`}
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
-        ${retained.length > 0 ? html`
-          <details class="builder-disclosure retained-fields">
-            <summary>${retained.length} ${retained.length === 1 ? 'field' : 'fields'} retained for switching back</summary>
-            <div class="builder-disclosure-content retained-field-list" role="note">${retained.map((slot) => html`<span class="retained-field" title=${`${this.fieldWellLabel(visual, this.slotRole(slot))} field`}>${this.fieldLabel(slot.fieldId ?? '', slot.label)}</span>`)}</div>
-          </details>
-        ` : nothing}
       </section>
     `
   }
@@ -3956,12 +3933,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canEdit || !page || this.commandPending) return
-    if (this.visualTypeForRender(visual) === type) {
+    const currentType = this.visualTypeForRender(visual)
+    const acceptedRoles = new Set(this.visualCatalogEntry(type, builder)?.roles ?? [])
+    const legacyQueryMismatch = visual.slots.some((slot) => !acceptedRoles.has(this.slotRole(slot)))
+      || (visual.previewError ?? '').toLowerCase().includes('incompatible with')
+    if (currentType === type && !legacyQueryMismatch) {
       this.visualActionMessage = `${visual.title} is already a ${this.visualLabel(type, builder)} visual.`
       return
     }
-    this.visualActionMessage = `Changing ${visual.title} to a ${this.visualLabel(type, builder)} visual.`
-    this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
+    this.visualActionMessage = currentType === type
+      ? `Repairing ${visual.title} as a ${this.visualLabel(type, builder)} visual.`
+      : `Changing ${visual.title} to a ${this.visualLabel(type, builder)} visual.`
+    if (currentType !== type) this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
     this.emitCommand('set_visual_type', { pageId: page.id, visualId: visual.id, type })
   }
 

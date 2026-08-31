@@ -325,7 +325,7 @@ test('dashboard builder changes the selected visual type without creating a visu
   }
 })
 
-test('dashboard builder explains incompatible switches and retains fields for switching back', async () => {
+test('dashboard builder reselects a legacy mismatched type to repair its query family', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -334,7 +334,41 @@ test('dashboard builder explains incompatible switches and retains fields for sw
       await element.updateComplete
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       const source = element.builder.pages[0].visuals[0]
-      const slots = [
+      mergePatch({ builder: {
+        pages: [{ ...element.builder.pages[0], visuals: [{
+          ...source,
+          type: 'donut',
+          previewError: 'visual type "donut" is incompatible with records query',
+          slots: [{ id: 'detail-0', label: 'Revenue', kind: 'detail', fieldId: 'revenue', required: false }],
+        }] }, element.builder.pages[1]],
+        selectedPageId: 'overview',
+        selectedVisualId: source.id,
+      } })
+      await element.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      element.shadowRoot.querySelector<HTMLButtonElement>('button[data-visual-picker-type="donut"]')?.click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { command, message: element.shadowRoot.querySelector('.pane-header [role="status"]')?.textContent?.trim() }
+    })
+    expect(state.command).toMatchObject({ action: 'set_visual_type', pageId: 'overview', visualId: 'sales-chart', type: 'donut' })
+    expect(state.message).toContain('Repairing')
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder explains incomplete target visuals without hidden retained fields', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const source = element.builder.pages[0].visuals[0]
+      const sourceSlots = [
         { id: 'dimension-0', label: 'Status', kind: 'dimension', fieldId: 'orders.status', required: true },
         { id: 'metric-0', label: 'Total', kind: 'metric', fieldId: 'orders.total', required: true },
       ]
@@ -346,7 +380,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
           : entry.type === 'bar'
             ? { ...entry, roles: ['dimension', 'metric'], roleLimits: [{ role: 'dimension', minimum: 0, maximum: 2 }, { role: 'metric', minimum: 1, maximum: 0 }] }
             : { ...entry, roleLimits: entry.roleLimits ?? [] }),
-        pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'map', slots }] }, element.builder.pages[1]],
+        pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'map', slots: [] }] }, element.builder.pages[1]],
         selectedPageId: 'overview', selectedVisualId: 'sales-chart',
         preview: { ...element.builder.preview, active: false, error: 'visual "sales-chart": map visual requires exactly two dimensions' },
       }, builderVisuals: {
@@ -361,9 +395,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
       const root = element.shadowRoot
       const switched = {
         requirement: root.querySelector('.visual-requirements')?.textContent?.replace(/\s+/g, ' ').trim(),
-        retained: Array.from(root.querySelectorAll('.retained-field')).map((node: any) => node.textContent?.trim()),
-        retainedSummary: root.querySelector('.retained-fields summary')?.textContent?.replace(/\s+/g, ' ').trim(),
-        retainedOpen: (root.querySelector('.retained-fields') as HTMLDetailsElement | null)?.open,
+        retained: root.querySelectorAll('.retained-field, .retained-fields').length,
         canvas: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
         banner: root.querySelector('.preview-error')?.textContent?.trim(),
         previewHosts: root.querySelectorAll('.visual-preview lv-visualization-host').length,
@@ -376,7 +408,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
         disabledTypes: root.querySelectorAll('.visual-picker-button:disabled').length,
       }
       mergePatch({ builder: {
-        pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'bar', slots }] }, element.builder.pages[1]],
+        pages: [{ ...element.builder.pages[0], visuals: [{ ...source, type: 'bar', slots: sourceSlots }] }, element.builder.pages[1]],
         preview: { ...element.builder.preview, active: true, error: '' },
       } })
       await element.updateComplete
@@ -390,9 +422,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
       }
     })
     expect(state.switched.requirement).toBe('Needs 2 coordinate columns.')
-    expect(state.switched.retained).toEqual(['Status', 'Total'])
-    expect(state.switched.retainedSummary).toBe('2 fields retained for switching back')
-    expect(state.switched.retainedOpen).toBe(false)
+    expect(state.switched.retained).toBe(0)
     expect(state.switched.canvas).toContain('Add 2 coordinate columns')
     expect(state.switched.banner).toBeUndefined()
     expect(state.switched.previewHosts).toBe(0)
