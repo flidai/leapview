@@ -107,24 +107,33 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     .count { display: inline-grid; min-width: var(--base-size-24); height: var(--base-size-24); box-sizing: border-box; place-items: center; border-radius: var(--lv-radius-full); padding: 0 var(--base-size-8); color: var(--lv-fg-muted); background: var(--lv-bg-control); font: var(--lv-type-caption); }
     .permission-picker { position: relative; flex: none; }
     .permission-trigger { display: inline-flex; align-items: center; gap: var(--base-size-8); }
+    .permission-trigger:hover, .permission-trigger:focus-visible, .permission-trigger[aria-expanded="true"] { border-color: var(--lv-border-accent); outline: 0; }
     .permission-trigger svg, .permission-remove svg, .permission-search svg { width: var(--base-size-16); height: var(--base-size-16); }
     .permission-backdrop { display: none; }
-    .permission-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(var(--overlay-width-medium), calc(100vw - var(--base-size-32))); max-height: min(30rem, var(--permission-menu-max-height, calc(100svh - var(--base-size-64)))); box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); }
-    .permission-menu-header { display: grid; gap: var(--base-size-8); padding: var(--base-size-12); border-bottom: var(--lv-border-muted); }
+    .permission-menu { position: absolute; z-index: var(--z-index-dropdown); top: calc(100% + var(--base-size-6)); right: 0; display: grid; width: min(28rem, calc(100vw - var(--base-size-32))); max-height: min(32rem, var(--permission-menu-max-height, calc(100svh - var(--base-size-64)))); box-sizing: border-box; grid-template-rows: auto minmax(0, 1fr); overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-large); background: var(--lv-bg-overlay); box-shadow: var(--lv-shadow-floating-lg); }
+    .permission-menu-header { display: grid; gap: var(--base-size-12); padding: var(--base-size-16); border-bottom: var(--lv-border-muted); }
     .permission-menu-title { display: flex; align-items: center; justify-content: space-between; gap: var(--base-size-8); }
+    .permission-menu-heading { display: flex; min-width: 0; flex-wrap: wrap; align-items: center; gap: var(--base-size-8); }
+    .permission-menu-count { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .permission-menu-close { display: none; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
     .permission-search { position: relative; display: grid; align-items: center; }
     .permission-search svg { position: absolute; left: var(--base-size-12); z-index: 1; color: var(--lv-fg-muted); pointer-events: none; }
-    .permission-search input { width: 100%; padding-left: var(--base-size-40); }
-    .permission-list { display: grid; min-height: 0; align-content: start; overflow-y: auto; overscroll-behavior: contain; padding: var(--base-size-4); scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
-    .permission-category { padding: var(--base-size-8) var(--base-size-8) var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
-    .permission-option { display: grid; min-width: 0; grid-template-columns: var(--base-size-20) minmax(0, 1fr); align-items: start; gap: var(--base-size-8); border-radius: var(--lv-radius-small); padding: var(--base-size-8); cursor: pointer; }
+    .permission-search input { width: 100%; min-height: var(--control-xlarge-size, var(--base-size-40)); padding-left: var(--base-size-40); font: var(--lv-type-body); }
+    .permission-search input:focus-visible { border-color: var(--lv-border-accent); outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+    .permission-list { display: grid; min-height: 0; align-content: start; overflow-y: auto; overscroll-behavior: contain; scrollbar-color: var(--lv-scrollbar-thumb) transparent; scrollbar-width: thin; }
+    .permission-group + .permission-group { border-top: var(--lv-border-muted); }
+    .permission-category { display: flex; min-height: var(--base-size-32); box-sizing: border-box; align-items: center; justify-content: space-between; gap: var(--base-size-8); padding: var(--base-size-8) var(--base-size-12) var(--base-size-4); color: var(--lv-fg-muted); font: var(--lv-type-caption); font-weight: var(--base-text-weight-semibold); }
+    .permission-category-count { font-weight: var(--base-text-weight-normal); font-variant-numeric: tabular-nums; }
+    .permission-option { display: grid; min-width: 0; min-height: var(--base-size-48); box-sizing: border-box; grid-template-columns: var(--base-size-20) minmax(0, 1fr); align-items: start; gap: var(--base-size-8); padding: var(--base-size-8) var(--base-size-12); cursor: pointer; }
     .permission-option:hover { background: var(--lv-bg-control-hover); }
+    .permission-option[data-selected="true"] { background: var(--lv-bg-accent-muted, var(--lv-bg-control-hover)); }
+    .permission-option:focus-within { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
     .permission-option input[type="checkbox"] { width: var(--base-size-16); height: var(--base-size-16); min-height: 0; margin: var(--base-size-2) 0 0; padding: 0; accent-color: var(--lv-bg-accent); }
     .selected-permissions { display: grid; overflow: hidden; border: var(--lv-border-muted); border-radius: var(--lv-radius-large); }
-    .selected-permission { display: grid; min-height: var(--base-size-48); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-8) var(--base-size-12); border-bottom: var(--lv-border-muted); }
+    .selected-permission { display: grid; min-height: var(--base-size-64); grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-12); padding: var(--base-size-12) var(--base-size-16); border-bottom: var(--lv-border-muted); }
     .selected-permission:last-child { border-bottom: 0; }
     .permission-remove { display: grid; width: var(--control-small-size); min-height: var(--control-small-size); place-items: center; padding: 0; color: var(--lv-fg-muted); background: transparent; }
+    .permission-remove:hover, .permission-remove:focus-visible { color: var(--lv-fg-danger); border-color: var(--lv-fg-danger); outline: 0; }
     .permission-empty { display: grid; min-height: var(--base-size-48); place-items: center start; padding: var(--base-size-8) var(--base-size-12); color: var(--lv-fg-muted); font: var(--lv-type-caption); }
     .theme-picker { position: relative; display: inline-block; max-width: 100%; justify-self: end; }
     .theme-trigger { display: inline-grid; width: auto; max-width: 100%; min-height: var(--control-medium-size); grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: var(--base-size-8); padding-inline: var(--base-size-8); text-align: left; }
@@ -389,11 +398,15 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
   private renderTokens(tokens: PersonalSettingsSignal['tokens']) {
     const selected = tokens.capabilities.filter((capability) => this.tokenCapabilities.includes(capability.value))
     const categories = groupTokenCapabilities(this.filteredTokenCapabilities(tokens.capabilities))
+    const categoryStats = new Map(groupTokenCapabilities(tokens.capabilities).map(([category, capabilities]) => [category, {
+      selected: capabilities.filter((capability) => this.tokenCapabilities.includes(capability.value)).length,
+      total: capabilities.length,
+    }]))
     const canCreate = Boolean(this.tokenName.trim() && !this.tokenCreatePending)
     return html`
       <section aria-label="API tokens">
         <div class="card token-card">
-          <div class="row"><div class="settings-field"><h3>Create a personal API token</h3><span class="settings-description">Choose only the project and permissions your script needs.</span></div></div>
+          <div class="row"><div class="settings-field"><h3>Create a personal API token</h3><span class="settings-description">Create a token for this project with only the permissions your script needs.</span></div></div>
           <div class="row">
             <form class="token-form" @submit=${this.createToken}>
               <div class="token-form-grid">
@@ -415,28 +428,43 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                     <span class="settings-description">Choose the minimal permissions necessary for your needs.</span>
                   </div>
                   <div class="permission-picker">
-                    <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} @click=${this.togglePermissionMenu}>
+                    <button class="permission-trigger" type="button" aria-haspopup="dialog" aria-controls="token-permission-menu" aria-expanded=${String(this.tokenPermissionMenuOpen)} @click=${this.togglePermissionMenu} @keydown=${this.handlePermissionTriggerKeydown}>
                       ${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span>Add permissions</span>
                     </button>
                     ${this.tokenPermissionMenuOpen ? html`
                       <div class="permission-backdrop" aria-hidden="true" @click=${() => this.closePermissionMenu(true)}></div>
-                      <div id="token-permission-menu" class="permission-menu" role="dialog" aria-label="Add token permissions">
+                      <div id="token-permission-menu" class="permission-menu" role="dialog" aria-labelledby="token-permission-menu-title">
                         <div class="permission-menu-header">
-                          <div class="permission-menu-title"><span class="settings-label">Select permissions</span><button class="permission-menu-close" type="button" aria-label="Close permission picker" @click=${() => this.closePermissionMenu(true)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button></div>
+                          <div class="permission-menu-title">
+                            <div class="permission-menu-heading">
+                              <span class="settings-label" id="token-permission-menu-title">Select token permissions</span>
+                              <span class="permission-menu-count" aria-live="polite">${this.tokenCapabilities.length} selected</span>
+                            </div>
+                            <button class="permission-menu-close" type="button" aria-label="Close permission picker" @click=${() => this.closePermissionMenu(true)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
+                          </div>
                           <label class="permission-search">
                             ${lucideIcon(Search, { size: 16, strokeWidth: 2 })}
                             <input type="search" aria-label="Search permissions" placeholder="Search permissions" .value=${this.tokenPermissionSearch} @input=${this.onTokenPermissionSearch}>
                           </label>
                         </div>
                         <div class="permission-list">
-                          ${categories.length ? categories.map(([category, capabilities]) => html`
-                            <div class="permission-category">${category}</div>
-                            ${capabilities.map((capability) => html`
-                              <label class="permission-option">
-                                <input aria-label=${capability.label} type="checkbox" value=${capability.value} .checked=${this.tokenCapabilities.includes(capability.value)} @change=${() => this.toggleTokenCapability(capability.value)}>
-                                <span class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description">${capability.description}</span></span>
-                              </label>
-                            `)}
+                          ${categories.length ? categories.map(([category, capabilities], categoryIndex) => html`
+                            <div class="permission-group" role="group" aria-labelledby=${`token-permission-category-${categoryIndex}`}>
+                              <div class="permission-category" id=${`token-permission-category-${categoryIndex}`}>
+                                <span>${category}</span>
+                                <span class="permission-category-count">${categoryStats.get(category)?.selected ?? 0} / ${categoryStats.get(category)?.total ?? capabilities.length}</span>
+                              </div>
+                              ${capabilities.map((capability) => {
+                                const selected = this.tokenCapabilities.includes(capability.value)
+                                const descriptionID = `token-permission-description-${capability.value}`
+                                return html`
+                                  <label class="permission-option" data-selected=${String(selected)}>
+                                    <input aria-label=${capability.label} aria-describedby=${descriptionID} type="checkbox" value=${capability.value} .checked=${selected} @change=${() => this.toggleTokenCapability(capability.value)}>
+                                    <span class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description" id=${descriptionID}>${capability.description}</span></span>
+                                  </label>
+                                `
+                              })}
+                            </div>
                           `) : html`<div class="permission-empty">No permissions match your search.</div>`}
                         </div>
                       </div>
@@ -449,7 +477,7 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
                       <div class="settings-field"><span class="settings-label">${capability.label}</span><span class="settings-description">${capability.description}</span></div>
                       <button class="permission-remove" type="button" aria-label="Remove ${capability.label}" @click=${() => this.removeTokenCapability(capability.value)}>${lucideIcon(X, { size: 16, strokeWidth: 2 })}</button>
                     </div>
-                  `) : html`<div class="permission-empty">No capabilities selected; the token follows current access dynamically.</div>`}
+                  `) : html`<div class="permission-empty">No explicit permissions selected. The token will dynamically follow your current access.</div>`}
                 </div>
               </div>
               <div class="actions"><button class="primary" type="submit" ?disabled=${!canCreate}>${this.tokenCreatePending ? 'Creating…' : 'Create token'}</button></div>
@@ -637,15 +665,23 @@ class LeapViewPersonalSettings extends DatastarLit(LitElement) {
     return capabilities.filter((capability) => `${capability.label} ${capability.description} ${capability.category} ${capability.value}`.toLocaleLowerCase().includes(query))
   }
   private togglePermissionMenu = (): void => {
-    this.tokenPermissionMenuOpen = !this.tokenPermissionMenuOpen
-    if (this.tokenPermissionMenuOpen) {
-      this.closeAvatarMenu()
-      this.closeThemeMenu()
-      void this.updateComplete.then(() => {
-        this.fitPermissionMenu()
-        this.renderRoot.querySelector<HTMLInputElement>('.permission-search input')?.focus()
-      })
-    }
+    if (this.tokenPermissionMenuOpen) this.closePermissionMenu()
+    else this.openPermissionMenu()
+  }
+  private handlePermissionTriggerKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+    event.preventDefault()
+    this.openPermissionMenu()
+  }
+  private openPermissionMenu(): void {
+    if (this.tokenPermissionMenuOpen) return
+    this.tokenPermissionMenuOpen = true
+    this.closeAvatarMenu()
+    this.closeThemeMenu()
+    void this.updateComplete.then(() => {
+      this.fitPermissionMenu()
+      this.renderRoot.querySelector<HTMLInputElement>('.permission-search input')?.focus()
+    })
   }
   private fitPermissionMenu = (): void => {
     if (!this.tokenPermissionMenuOpen || window.matchMedia('(max-width: 40rem)').matches) return

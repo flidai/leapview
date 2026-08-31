@@ -317,27 +317,44 @@ test('personal API tokens use capability selectors', async () => {
       name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const add = root.querySelector('.permission-trigger') as HTMLButtonElement
-      add.click()
+      add.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       await personal.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
       const menu = root.querySelector('.permission-menu') as HTMLElement
       const permissionList = root.querySelector('.permission-list') as HTMLElement
+      const menuTitle = root.querySelector('.permission-menu-title .settings-label') as HTMLElement
+      const search = root.querySelector('.permission-search input') as HTMLInputElement
       const menuRect = menu.getBoundingClientRect()
       const menuLayout = {
         bottom: Math.round(menuRect.bottom),
         viewportHeight: innerHeight,
         listScrollable: permissionList.scrollHeight > permissionList.clientHeight,
         listOverflowY: getComputedStyle(permissionList).overflowY,
+        width: Math.round(menuRect.width),
+        searchHeight: Math.round(search.getBoundingClientRect().height),
+        optionRowsLargeEnough: Array.from(root.querySelectorAll<HTMLElement>('.permission-option')).every((option) => option.getBoundingClientRect().height >= 48),
       }
-      const search = root.querySelector('.permission-search input') as HTMLInputElement
       const searchFocused = root.activeElement === search
+      const menuHeader = {
+        title: menuTitle.textContent?.trim(),
+        labelledByTitle: menu.getAttribute('aria-labelledby') === menuTitle.id,
+        selectedCount: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
+        categorySummaries: Array.from(root.querySelectorAll('.permission-category')).map((category) => category.textContent?.replace(/\s+/g, ' ').trim()),
+      }
       search.value = 'read resource'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
       const readPermission = root.querySelector('input[type="checkbox"][value="RESOURCE_READ"]') as HTMLInputElement
+      const readDescription = root.querySelector('.permission-option .settings-description') as HTMLElement
+      const readDescribedBy = readPermission.getAttribute('aria-describedby') === readDescription.id
       readPermission.click()
       await personal.updateComplete
+      const selectedMenuState = {
+        count: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
+        selected: root.querySelector('.permission-option')?.getAttribute('data-selected'),
+        categorySummary: root.querySelector('.permission-category')?.textContent?.replace(/\s+/g, ' ').trim(),
+      }
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await personal.updateComplete
       await Promise.resolve()
@@ -377,7 +394,10 @@ test('personal API tokens use capability selectors', async () => {
       return {
         initial,
         menuLayout,
+        menuHeader,
         filteredPermissions,
+        readDescribedBy,
+        selectedMenuState,
         selectedPermissions,
         menuClosed: !root.querySelector('.permission-menu'),
         searchFocused,
@@ -418,7 +438,18 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
     expect(state.menuLayout.listOverflowY).toBe('auto')
+    expect(state.menuLayout.width).toBeGreaterThanOrEqual(400)
+    expect(state.menuLayout.searchHeight).toBeGreaterThanOrEqual(40)
+    expect(state.menuLayout.optionRowsLargeEnough).toBe(true)
+    expect(state.menuHeader).toEqual({
+      title: 'Select token permissions',
+      labelledByTitle: true,
+      selectedCount: '0 selected',
+      categorySummaries: ['Administration 0 / 1', 'Resource 0 / 6'],
+    })
     expect(state.filteredPermissions).toEqual(['Read resource'])
+    expect(state.readDescribedBy).toBe(true)
+    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Resource 1 / 6' })
     expect(state.selectedPermissions).toEqual(['Read resource'])
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
