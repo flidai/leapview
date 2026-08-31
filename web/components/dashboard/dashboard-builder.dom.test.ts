@@ -362,9 +362,17 @@ test('dashboard builder explains incompatible switches and retains fields for sw
       const switched = {
         requirement: root.querySelector('.visual-requirements')?.textContent?.replace(/\s+/g, ' ').trim(),
         retained: Array.from(root.querySelectorAll('.retained-field')).map((node: any) => node.textContent?.trim()),
+        retainedSummary: root.querySelector('.retained-fields summary')?.textContent?.replace(/\s+/g, ' ').trim(),
+        retainedOpen: (root.querySelector('.retained-fields') as HTMLDetailsElement | null)?.open,
         canvas: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
         banner: root.querySelector('.preview-error')?.textContent?.trim(),
         previewHosts: root.querySelectorAll('.visual-preview lv-visualization-host').length,
+        headerDetailsHidden: (root.querySelector('.visual-builder .pane-header-details') as HTMLElement | null)?.hidden,
+        pickerReference: root.querySelector('.visual-reference-link')?.textContent?.trim(),
+        interactionDisclosure: {
+          tag: root.querySelector('.interaction-editor')?.tagName,
+          open: (root.querySelector('.interaction-editor') as HTMLDetailsElement | null)?.open,
+        },
         disabledTypes: root.querySelectorAll('.visual-picker-button:disabled').length,
       }
       mergePatch({ builder: {
@@ -381,13 +389,18 @@ test('dashboard builder explains incompatible switches and retains fields for sw
         },
       }
     })
-    expect(state.switched.requirement).toContain('Add 2 coordinate columns to preview')
+    expect(state.switched.requirement).toBe('Needs 2 coordinate columns.')
     expect(state.switched.retained).toEqual(['Status', 'Total'])
+    expect(state.switched.retainedSummary).toBe('2 fields retained for switching back')
+    expect(state.switched.retainedOpen).toBe(false)
     expect(state.switched.canvas).toContain('Add 2 coordinate columns')
     expect(state.switched.banner).toBeUndefined()
     expect(state.switched.previewHosts).toBe(0)
+    expect(state.switched.headerDetailsHidden).toBe(true)
+    expect(state.switched.pickerReference).toBe('Reference')
+    expect(state.switched.interactionDisclosure).toEqual({ tag: 'DETAILS', open: false })
     expect(state.switched.disabledTypes).toBe(0)
-    expect(state.restored.requirement).toBe('Data requirements met.')
+    expect(state.restored.requirement).toBeUndefined()
     expect(state.restored.wells).toEqual(['Status', 'Total'])
     expect(state.restored.retained).toBe(0)
   } finally {
@@ -1105,8 +1118,8 @@ test('dashboard builder blocks record-only and full-role field assignments befor
       { label: 'Orders', tag: 'BUTTON', used: 'true' },
     ])
     expect(state.blocked[0]).toMatchObject({ label: 'Category', tag: 'DIV', role: 'note' })
-    expect(state.blocked[0].name).toContain('X-axis is full')
-    expect(state.blocked[0].context).toContain('X-axis is full')
+    expect(state.blocked[0].name).toContain('Category is full')
+    expect(state.blocked[0].context).toContain('Category is full')
     expect(state.blocked[1]).toMatchObject({ label: 'Purchase month', tag: 'DIV', role: 'note' })
     expect(state.blocked[1].name).toContain('Not compatible with the selected donut visual')
   } finally {
