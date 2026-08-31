@@ -367,7 +367,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
         canvas: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
         banner: root.querySelector('.preview-error')?.textContent?.trim(),
         previewHosts: root.querySelectorAll('.visual-preview lv-visualization-host').length,
-        headerDetailsHidden: (root.querySelector('.visual-builder .pane-header-details') as HTMLElement | null)?.hidden,
+        headerHelper: root.querySelector('.visual-builder .pane-header-details')?.textContent?.replace(/\s+/g, ' ').trim(),
         pickerReference: root.querySelector('.visual-reference-link')?.textContent?.trim(),
         interactionDisclosure: {
           tag: root.querySelector('.interaction-editor')?.tagName,
@@ -396,7 +396,7 @@ test('dashboard builder explains incompatible switches and retains fields for sw
     expect(state.switched.canvas).toContain('Add 2 coordinate columns')
     expect(state.switched.banner).toBeUndefined()
     expect(state.switched.previewHosts).toBe(0)
-    expect(state.switched.headerDetailsHidden).toBe(true)
+    expect(state.switched.headerHelper).toBeUndefined()
     expect(state.switched.pickerReference).toBe('Reference')
     expect(state.switched.interactionDisclosure).toEqual({ tag: 'DETAILS', open: false })
     expect(state.switched.disabledTypes).toBe(0)
@@ -423,6 +423,8 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
       const selectedAfter = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id') ?? ''
       const headingAfter = root.querySelector('.visual-builder .pane-title')?.textContent?.trim()
       const fieldWellsAfter = root.querySelectorAll('.field-wells').length
+      const helperAfter = root.querySelector('.visual-builder .pane-header-details')?.textContent?.replace(/\s+/g, ' ').trim()
+      const placeholderAfter = root.querySelectorAll('.visual-builder .format-placeholder').length
       const addButtonAfter = root.querySelector('button[data-builder-action="add-visual"]')
       const column = root.querySelector('button[data-visual-type="column"]') as HTMLButtonElement | null
       let command: Record<string, unknown> | undefined
@@ -434,6 +436,8 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
         selectedAfter,
         headingAfter,
         fieldWellsAfter,
+        helperAfter,
+        placeholderAfter,
         addButtonBefore: Boolean(addButtonBefore),
         addButtonAfter: Boolean(addButtonAfter),
         columnLabel: column?.getAttribute('aria-label'),
@@ -444,6 +448,8 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
     expect(state.selectedAfter).toBe('')
     expect(state.headingAfter).toBe('Add a visual')
     expect(state.fieldWellsAfter).toBe(0)
+    expect(state.helperAfter).toBeUndefined()
+    expect(state.placeholderAfter).toBe(0)
     expect(state.addButtonBefore).toBe(false)
     expect(state.addButtonAfter).toBe(false)
     expect(state.columnLabel).toBe('Add Column chart visual')
@@ -669,6 +675,7 @@ test('dashboard builder keeps the independent Data pane usable across dock break
           visual: { left: visual.left, top: visual.top, right: visual.right, bottom: visual.bottom },
           data: { left: data.left, top: data.top, right: data.right, bottom: data.bottom },
           searchVisible: search.width > 0 && search.height > 0,
+          semanticHelper: root.querySelector('.data-pane .pane-hint')?.textContent?.trim(),
           horizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
         }
       })
@@ -679,6 +686,7 @@ test('dashboard builder keeps the independent Data pane usable across dock break
     expect(stackedRight.data.left).toBeCloseTo(stackedRight.visual.left, 0)
     expect(stackedRight.data.top).toBeGreaterThanOrEqual(stackedRight.visual.bottom - 1)
     expect(stackedRight.searchVisible).toBe(true)
+    expect(stackedRight.semanticHelper).toBeUndefined()
     expect(stackedRight.horizontalOverflow).toBe(false)
 
     const belowCanvas = await measure(900)

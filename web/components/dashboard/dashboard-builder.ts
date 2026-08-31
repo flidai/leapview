@@ -2776,7 +2776,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             ${this.renderPaneToggle('data', 'Data pane', 'builder-data-content')}
           </div>
           <div class="pane-header-details" ?hidden=${collapsed}>
-            <p class="pane-hint">${builder.semanticModel.title} semantic model</p>
             <label>
               <span class="sr-only">Search fields</span>
               <input class="search" type="search" aria-label="Search fields" placeholder="Search measures and dimensions" .value=${this.fieldQuery} @input=${this.onFieldQuery} />
@@ -3097,9 +3096,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             </div>
             ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
-          <div class="pane-header-details" ?hidden=${collapsed || Boolean(visual)}>
-            <p class="pane-hint">${formattingPage ? 'Configure this page in dashboard code.' : page ? 'Choose a visual type to add it to this page.' : 'Add a page to start building.'}</p>
-          </div>
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
         <div id="builder-visuals-content" class="pane-content" ?hidden=${collapsed}>
@@ -3110,7 +3106,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${this.inspectorTab === 'build'
             ? html`<div class="inspector-panel" role="tabpanel" aria-label="Build visual">
                 ${this.renderVisualPicker(builder, page, visual)}
-                ${visual ? html`${this.renderFieldWells(visual)}${this.renderInteractionEditor(builder, page, visual)}` : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
+                ${visual ? html`${this.renderFieldWells(visual)}${this.renderInteractionEditor(builder, page, visual)}` : nothing}
               </div>`
             : html`<div class="inspector-panel" role="tabpanel" aria-label=${visual ? 'Format visual' : 'Format page'}>
                 ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
