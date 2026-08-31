@@ -42,6 +42,95 @@ func TestBundlePipelineCancellationBoundariesReleaseArrowOwnership(t *testing.T)
 	}
 }
 
+func TestBundlePlanningCancellationEmitsCanceledAdmission(t *testing.T) {
+	runtime := bundleCacheRuntime(t, &bundleCountingDatabase{})
+	defer runtime.CloseView()
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		observations = append(observations, observation)
+	})
+	ctx, cancel := context.WithCancel(ctx)
+	ctx = withBundleStageObserver(ctx, func(stage bundleStage) {
+		if stage == bundleStagePlan {
+			cancel()
+		}
+	})
+
+	_, err := runtime.ExecuteDataQueryBundle(ctx, bundleCacheRequests())
+	require.ErrorIs(t, err, context.Canceled)
+	require.Equal(t, len(bundleCacheRequests()), countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission &&
+			observation.Decision == dataquery.CacheAdmissionRejected &&
+			observation.AdmissionReason == dataquery.CacheAdmissionReasonCanceled
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission && observation.AdmissionReason == dataquery.CacheAdmissionReasonPlanningFailed
+	}))
+}
+
+func TestBundlePlanningCancellationDuringPlannerCallEmitsCanceledAdmission(t *testing.T) {
+	runtime := bundleCacheRuntime(t, &bundleCountingDatabase{})
+	defer runtime.CloseView()
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		observations = append(observations, observation)
+	})
+	ctx, cancel := context.WithCancel(ctx)
+	planningStarted := make(chan struct{})
+	releasePlanning := make(chan struct{})
+	defer func() {
+		select {
+		case <-releasePlanning:
+		default:
+			close(releasePlanning)
+		}
+	}()
+	ctx = withBundleStageObserver(ctx, func(stage bundleStage) {
+		if stage == bundleStagePlanCall {
+			close(planningStarted)
+			<-releasePlanning
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := runtime.ExecuteDataQueryBundle(ctx, bundleCacheRequests())
+		done <- err
+	}()
+	select {
+	case <-planningStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timed out waiting for bundle planner call")
+	}
+	cancel()
+	close(releasePlanning)
+	require.ErrorIs(t, <-done, context.Canceled)
+	require.Equal(t, len(bundleCacheRequests()), countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission &&
+			observation.Decision == dataquery.CacheAdmissionRejected &&
+			observation.AdmissionReason == dataquery.CacheAdmissionReasonCanceled
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission && observation.AdmissionReason == dataquery.CacheAdmissionReasonPlanningFailed
+	}))
+}
+
+func TestCachePlanningAdmissionReasonDistinguishesCancellation(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		err  error
+		want dataquery.CacheAdmissionReason
+	}{
+		{name: "canceled", err: context.Canceled, want: dataquery.CacheAdmissionReasonCanceled},
+		{name: "deadline", err: context.DeadlineExceeded, want: dataquery.CacheAdmissionReasonCanceled},
+		{name: "planner", err: errors.New("planner failed"), want: dataquery.CacheAdmissionReasonPlanningFailed},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			require.Equal(t, test.want, cachePlanningAdmissionReason(test.err))
+		})
+	}
+}
+
 func TestBundlePipelineTransformFailureIsBranchAttributedAndReleasesArrowOwnership(t *testing.T) {
 	database := &bundleCountingDatabase{}
 	runtime := bundleCacheRuntime(t, database)

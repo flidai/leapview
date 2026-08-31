@@ -3,6 +3,7 @@ package materialize
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,7 @@ type bundleStage string
 const (
 	bundleStageGovern           bundleStage = "govern_validate"
 	bundleStagePlan             bundleStage = "plan"
+	bundleStagePlanCall         bundleStage = "plan_call"
 	bundleStageCache            bundleStage = "cache_resolve"
 	bundleStageExecute          bundleStage = "admit_execute"
 	bundleStageSplitStoreDecode bundleStage = "arrow_split_store_decode"
@@ -31,10 +33,14 @@ func withBundleStageObserver(ctx context.Context, observer func(bundleStage)) co
 	return context.WithValue(ctx, bundleStageObserverContextKey{}, observer)
 }
 
-func enterBundleStage(ctx context.Context, stage bundleStage) error {
+func observeBundleStage(ctx context.Context, stage bundleStage) {
 	if observer, ok := ctx.Value(bundleStageObserverContextKey{}).(func(bundleStage)); ok && observer != nil {
 		observer(stage)
 	}
+}
+
+func enterBundleStage(ctx context.Context, stage bundleStage) error {
+	observeBundleStage(ctx, stage)
 	return ctx.Err()
 }
 
@@ -45,9 +51,15 @@ type governedBundle struct {
 }
 
 type bundleCacheSlot struct {
-	key        string
-	generation uint64
-	reusable   bool
+	address          queryCacheAddress
+	reusable         bool
+	decision         dataquery.CacheAdmissionDecision
+	admissionReason  dataquery.CacheAdmissionReason
+	lookup           resultcache.LookupObservation
+	lookupDuration   time.Duration
+	started          time.Time
+	decisionObserved bool
+	lookupObserved   bool
 }
 
 type bundleFlightSlot struct {
@@ -95,11 +107,13 @@ func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataque
 	if err != nil {
 		return dataquery.BundleResult{}, err
 	}
+	cacheStarted := cacheObservationStarted(ctx, time.Now())
 	preplanned, err := r.planGovernedBundle(ctx, governed)
 	if err != nil {
+		observeBundlePlanningFailure(ctx, governed, err, cacheStarted)
 		return dataquery.BundleResult{}, err
 	}
-	resolved, err := r.resolveBundleCache(ctx, governed, preplanned.plan)
+	resolved, err := r.resolveBundleCache(ctx, governed, preplanned.plan, cacheStarted)
 	if err != nil {
 		return dataquery.BundleResult{}, err
 	}
@@ -110,6 +124,7 @@ func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataque
 	if len(resolved.misses) != len(governed.branches) {
 		planned, err = r.planBundle(ctx, resolved)
 		if err != nil {
+			observeBundleFinal(ctx, resolved, dataquery.CacheObservationError)
 			return dataquery.BundleResult{}, err
 		}
 	} else {
@@ -120,6 +135,7 @@ func (r *Runtime) ExecuteDataQueryBundle(ctx context.Context, requests []dataque
 	}
 	execution, shared, err := r.executePlannedBundle(ctx, planned)
 	if err != nil {
+		observeBundleFinal(ctx, planned.resolved, dataquery.CacheObservationError)
 		return finishBundle(ctx, planned.resolved, err)
 	}
 	return finishExecutedBundle(ctx, planned, execution, shared)
@@ -159,7 +175,7 @@ func (r *Runtime) governAndValidateBundle(ctx context.Context, requests []dataqu
 	return out, nil
 }
 
-func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundle, plan semanticquery.BundlePlan) (resolvedBundle, error) {
+func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundle, plan semanticquery.BundlePlan, cacheStarted time.Time) (resolvedBundle, error) {
 	if err := enterBundleStage(ctx, bundleStageCache); err != nil {
 		return resolvedBundle{}, err
 	}
@@ -171,27 +187,50 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 	for _, branch := range governed.branches {
 		projection, ok := projections[branch.ID]
 		if !ok {
-			out.slots[branch.ID] = bundleCacheSlot{}
+			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: dataquery.CacheAdmissionReasonDependencyUnavailable, started: cacheStarted}
 			out.misses = append(out.misses, branch)
 			continue
 		}
 		dependency, reusable := r.dependencyForProjection(projection)
-		if !reusable || !queryCacheIdentityAvailable(branch.Query, r.resultPartition, dependency) {
-			out.slots[branch.ID] = bundleCacheSlot{}
+		if !reusable {
+			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: dataquery.CacheAdmissionReasonDependencyUnavailable, started: cacheStarted}
 			out.misses = append(out.misses, branch)
 			continue
 		}
-		cached, key, generation, hit, err := r.queryCache.lookupArrow(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL)
+		reason := queryCacheIdentityReason(branch.Query, r.resultPartition, dependency)
+		if reason != dataquery.CacheAdmissionReasonEligible {
+			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: reason, started: cacheStarted}
+			out.misses = append(out.misses, branch)
+			continue
+		}
+		started := time.Now()
+		cached, address, hit, lookup, err := r.queryCache.lookupArrow(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL)
+		duration := time.Since(started)
 		if err != nil {
+			observePendingBundleCacheError(ctx, out)
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionEligible, reason)
+			observeTypedCacheLookup(ctx, lookup, duration)
+			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(cacheStarted))
 			return resolvedBundle{}, &dataquery.BundleBranchError{ID: branch.ID, Err: err}
 		}
 		if hit {
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionEligible, reason)
+			observeTypedCacheLookup(ctx, lookup, duration)
+			observeTypedCacheFinalWithSource(ctx, dataquery.CacheObservationHit, lookup.HitSource, time.Since(cacheStarted))
 			dataquery.ObserveCacheOutcome(ctx, dataquery.CacheHit)
 			out.result.Results[branch.ID] = cached
 			continue
 		}
-		out.slots[branch.ID] = bundleCacheSlot{key: key, generation: generation, reusable: true}
+		observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionEligible, reason)
+		observeTypedCacheLookup(ctx, lookup, duration)
+		out.slots[branch.ID] = bundleCacheSlot{
+			address: address, reusable: true, decision: dataquery.CacheAdmissionEligible, admissionReason: reason,
+			lookup: lookup, lookupDuration: duration, started: cacheStarted, decisionObserved: true, lookupObserved: true,
+		}
 		out.misses = append(out.misses, branch)
+	}
+	if len(out.misses) > 1 {
+		observeBundleCacheDecisions(ctx, out)
 	}
 	return out, nil
 }
@@ -204,12 +243,63 @@ func (r *Runtime) dependencyForProjection(projection semanticquery.DependencyPro
 	return dependency, err == nil
 }
 
+func observeBundleCacheDecision(ctx context.Context, slot bundleCacheSlot) {
+	if !slot.decisionObserved {
+		observeQueryCacheAdmission(ctx, slot.decision, slot.admissionReason)
+	}
+	if slot.reusable && !slot.lookupObserved {
+		observeTypedCacheLookup(ctx, slot.lookup, slot.lookupDuration)
+	}
+}
+
+func observeBundleCacheDecisions(ctx context.Context, resolved resolvedBundle) {
+	for _, branch := range resolved.misses {
+		observeBundleCacheDecision(ctx, resolved.slots[branch.ID])
+	}
+}
+
+func observePendingBundleCacheError(ctx context.Context, resolved resolvedBundle) {
+	observeBundleCacheDecisions(ctx, resolved)
+	observeBundleFinal(ctx, resolved, dataquery.CacheObservationError)
+}
+
+func cachePlanningAdmissionReason(err error) dataquery.CacheAdmissionReason {
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return dataquery.CacheAdmissionReasonCanceled
+	}
+	return dataquery.CacheAdmissionReasonPlanningFailed
+}
+
+func observeBundlePlanningFailure(ctx context.Context, governed governedBundle, err error, started time.Time) {
+	reason := cachePlanningAdmissionReason(err)
+	for range governed.branches {
+		observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionRejected, reason)
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(started))
+	}
+}
+
+func observeBundleFinal(ctx context.Context, resolved resolvedBundle, outcome dataquery.CacheObservationOutcome) {
+	for _, branch := range resolved.misses {
+		duration := time.Duration(0)
+		if started := resolved.slots[branch.ID].started; !started.IsZero() {
+			duration = time.Since(started)
+		}
+		observeTypedCacheFinal(ctx, outcome, duration)
+	}
+}
+
 func (r *Runtime) executeDegenerateBundle(ctx context.Context, resolved resolvedBundle) (dataquery.BundleResult, error) {
 	if len(resolved.misses) == 0 {
 		return finishBundle(ctx, resolved, nil)
 	}
 	branch := resolved.misses[0]
-	branchResult, err := r.ExecuteDataQuery(dataquery.WithGovernanceApplied(ctx), branch.Query)
+	branchCtx := dataquery.WithGovernanceApplied(ctx)
+	slot := resolved.slots[branch.ID]
+	if !slot.started.IsZero() {
+		branchCtx = withCacheObservationStarted(branchCtx, slot.started)
+	}
+	branchCtx = withCacheObservationSuppression(branchCtx, slot.decisionObserved, slot.lookupObserved)
+	branchResult, err := r.ExecuteDataQuery(branchCtx, branch.Query)
 	if err != nil {
 		_ = applyBundleTransforms(resolved, err)
 		return dataquery.BundleResult{}, &dataquery.BundleBranchError{ID: branch.ID, Err: err}
@@ -224,7 +314,7 @@ func (r *Runtime) executeDegenerateBundle(ctx context.Context, resolved resolved
 }
 
 func (r *Runtime) planBundle(ctx context.Context, resolved resolvedBundle) (plannedBundle, error) {
-	planned, err := r.compileBundle(resolved.misses)
+	planned, err := r.compileBundle(ctx, resolved.misses)
 	if err != nil {
 		return plannedBundle{}, err
 	}
@@ -235,10 +325,10 @@ func (r *Runtime) planGovernedBundle(ctx context.Context, governed governedBundl
 	if err := enterBundleStage(ctx, bundleStagePlan); err != nil {
 		return plannedBundle{}, err
 	}
-	return r.compileBundle(governed.branches)
+	return r.compileBundle(ctx, governed.branches)
 }
 
-func (r *Runtime) compileBundle(branches []dataquery.BundleRequest) (plannedBundle, error) {
+func (r *Runtime) compileBundle(ctx context.Context, branches []dataquery.BundleRequest) (plannedBundle, error) {
 	semanticRequests := make([]semanticquery.BundleRequest, len(branches))
 	for index, branch := range branches {
 		request := branch.Query
@@ -249,8 +339,12 @@ func (r *Runtime) compileBundle(branches []dataquery.BundleRequest) (plannedBund
 	if err != nil {
 		return plannedBundle{}, err
 	}
+	observeBundleStage(ctx, bundleStagePlanCall)
 	plan, err := planner.PlanBundle(semanticRequests)
 	planningMS := elapsedStageMS(started)
+	if contextErr := ctx.Err(); contextErr != nil {
+		return plannedBundle{}, contextErr
+	}
 	if err != nil {
 		return plannedBundle{}, &dataquery.BundleIncompatibleError{Err: err}
 	}
@@ -266,7 +360,7 @@ func bindResolvedBundle(planned plannedBundle, resolved resolvedBundle) (planned
 			planned.flightKey = ""
 			return planned, nil
 		}
-		identity = append(identity, bundleFlightSlot{ID: branch.ID, Key: slot.key, Generation: slot.generation})
+		identity = append(identity, bundleFlightSlot{ID: branch.ID, Key: slot.address.key, Generation: slot.address.generation})
 	}
 	encoded, err := json.Marshal(identity)
 	if err != nil {
@@ -405,7 +499,9 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 		if !slot.reusable {
 			continue
 		}
-		r.queryCache.scope.StoreArrow(slot.key, resultcache.Token(slot.generation), branches[request.ID], resultcache.Metadata{})
+		started := time.Now()
+		outcome := r.queryCache.scope.StoreArrowObserved(slot.address.key, slot.address.family, resultcache.Token(slot.address.generation), branches[request.ID], resultcache.Metadata{})
+		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(outcome), Duration: time.Since(started)})
 	}
 	r.queryCache.syncStats()
 	return execution, nil
@@ -421,6 +517,11 @@ func finishExecutedBundle(ctx context.Context, planned plannedBundle, execution 
 			branchResult.CacheOutcome = dataquery.CacheCoalesced
 		}
 		dataquery.ObserveCacheOutcome(ctx, branchResult.CacheOutcome)
+		duration := time.Duration(0)
+		if started := resolved.slots[branch.ID].started; !started.IsZero() {
+			duration = time.Since(started)
+		}
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationOutcome(branchResult.CacheOutcome), duration)
 		resolved.result.Results[branch.ID] = branchResult
 	}
 	return finishBundle(ctx, resolved, nil)

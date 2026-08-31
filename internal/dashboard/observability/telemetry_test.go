@@ -1,8 +1,11 @@
 package observability
 
 import (
+	"strings"
 	"testing"
+	"time"
 
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -90,6 +93,77 @@ func TestTelemetryUsesBoundedLabelsAndRecordsRefreshLifecycle(t *testing.T) {
 	}
 	if got := stageLabel("targetCriticalPath"); got != "target_critical_path" {
 		t.Fatalf("target critical path stage label = %q, want target_critical_path", got)
+	}
+}
+
+func TestCacheValidityTelemetryCoversFixedReasonsWithoutIdentityLabels(t *testing.T) {
+	registry := prometheus.NewRegistry()
+	telemetry := New(registry)
+	for _, test := range []struct {
+		decision dataquery.CacheAdmissionDecision
+		reason   dataquery.CacheAdmissionReason
+	}{
+		{dataquery.CacheAdmissionEligible, dataquery.CacheAdmissionReasonEligible},
+		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonQueryNotCacheable},
+		{dataquery.CacheAdmissionRejected, dataquery.CacheAdmissionReasonPlanningFailed},
+		{dataquery.CacheAdmissionRejected, dataquery.CacheAdmissionReasonCanceled},
+		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonDependencyUnavailable},
+		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonDependencyInvalid},
+		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonPolicyInvalid},
+		{dataquery.CacheAdmissionBypassed, dataquery.CacheAdmissionReasonPartitionInvalid},
+	} {
+		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationAdmission, Decision: test.decision, AdmissionReason: test.reason})
+	}
+	for _, reason := range []dataquery.CacheLookupMissReason{
+		dataquery.CacheLookupMissColdStart, dataquery.CacheLookupMissAbsentEntry, dataquery.CacheLookupMissQueryMismatch,
+		dataquery.CacheLookupMissInvalidated, dataquery.CacheLookupMissEvicted,
+	} {
+		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationLookup, MissReason: reason, Duration: time.Microsecond})
+	}
+	for _, source := range []dataquery.CacheHitSource{
+		dataquery.CacheHitCurrentGeneration, dataquery.CacheHitSharedGeneration, dataquery.CacheHitCutoverRetained,
+	} {
+		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationLookup, HitSource: source, Duration: time.Microsecond})
+		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationFinal, Outcome: dataquery.CacheObservationHit, HitSource: source, Duration: time.Millisecond})
+	}
+	for _, outcome := range []dataquery.CacheObservationOutcome{
+		dataquery.CacheObservationHit, dataquery.CacheObservationMiss, dataquery.CacheObservationCoalesced, dataquery.CacheObservationError,
+	} {
+		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationFinal, Outcome: outcome, Duration: time.Millisecond})
+	}
+	for _, outcome := range []dataquery.CacheStoreOutcome{
+		dataquery.CacheStoreStored, dataquery.CacheStoreOversized, dataquery.CacheStoreStale, dataquery.CacheStoreClosed,
+	} {
+		telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: outcome})
+	}
+	secret := "principal-query-project-model-secret"
+	telemetry.DashboardCacheObservationObserved(dataquery.CacheObservation{
+		Phase: dataquery.CacheObservationAdmission, Decision: dataquery.CacheAdmissionDecision(secret), AdmissionReason: dataquery.CacheAdmissionReason(secret),
+	})
+
+	families, err := registry.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantSeries := map[string]int{
+		"leapview_dashboard_query_cache_admissions_total": 9,
+		"leapview_dashboard_query_cache_misses_total":     5,
+		"leapview_dashboard_query_cache_hits_total":       3,
+		"leapview_dashboard_query_cache_stores_total":     4,
+	}
+	for _, family := range families {
+		if strings.Contains(family.String(), secret) {
+			t.Fatalf("cache metrics exposed identity/query data in %s", family.GetName())
+		}
+		if want, ok := wantSeries[family.GetName()]; ok {
+			if got := len(family.Metric); got != want {
+				t.Fatalf("%s series = %d, want %d", family.GetName(), got, want)
+			}
+			delete(wantSeries, family.GetName())
+		}
+	}
+	if len(wantSeries) != 0 {
+		t.Fatalf("missing cache metric families: %#v", wantSeries)
 	}
 }
 

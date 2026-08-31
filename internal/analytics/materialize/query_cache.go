@@ -2,11 +2,13 @@ package materialize
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
@@ -41,17 +43,37 @@ type arrowQueryExecution struct {
 	summary  dataquery.Result
 }
 
-func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
-	key, generation, err := c.cacheKey(request, partition, dependency)
+type queryCacheAddress struct {
+	key        string
+	family     resultcache.QueryFamily
+	generation uint64
+}
+
+func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+	if observationStarted.IsZero() {
+		observationStarted = time.Now()
+	}
+	address, err := c.cacheAddress(request, partition, dependency)
 	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
 	}
-	if cached, ok, err := c.getArrow(ctx, request, key, diagnosticsSQL); err != nil || ok {
+	lookupStarted := time.Now()
+	cached, ok, lookup, err := c.getArrowObserved(ctx, request, address, diagnosticsSQL)
+	if err != nil || ok {
+		observeTypedCacheLookup(ctx, lookup, time.Since(lookupStarted))
+		if err != nil {
+			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		} else {
+			observeTypedCacheFinalWithSource(ctx, dataquery.CacheObservationHit, lookup.HitSource, time.Since(observationStarted))
+		}
 		return cached, err
 	}
+	firstLookupDuration := time.Since(lookupStarted)
+	observeTypedCacheLookup(ctx, lookup, firstLookupDuration)
 	var ownerSummary dataquery.Result
-	flight, status, err := c.execution.CoalesceArrow(ctx, fmt.Sprintf("arrow-query:%d:%s", generation, key), func(flightCtx context.Context) (resultcache.ArrowFlightValue, error) {
-		if entry, _, ok, lookupErr := c.scope.LookupArrow(key); lookupErr != nil {
+	flight, status, err := c.execution.CoalesceArrow(ctx, fmt.Sprintf("arrow-query:%d:%s", address.generation, address.key), func(flightCtx context.Context) (resultcache.ArrowFlightValue, error) {
+		if entry, _, ok, observed, lookupErr := c.scope.LookupArrowObserved(address.key, address.family); lookupErr != nil {
 			return resultcache.ArrowFlightValue{}, lookupErr
 		} else if ok {
 			base, acquireErr := entry.Data().Acquire()
@@ -60,7 +82,7 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 			if acquireErr != nil {
 				return resultcache.ArrowFlightValue{}, acquireErr
 			}
-			return resultcache.ArrowFlightValue{Data: base, Metadata: metadata, Cached: true}, nil
+			return resultcache.ArrowFlightValue{Data: base, Metadata: metadata, Cached: true, HitSource: observed.HitSource}, nil
 		}
 		execution, executeErr := execute(flightCtx)
 		ownerSummary = execution.summary
@@ -85,11 +107,14 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 		// cache or its coalesced value.
 		cacheMetadata := execution.metadata
 		cacheMetadata.SQL = ""
-		c.scope.StoreArrow(key, resultcache.Token(generation), execution.data, cacheMetadata)
+		storeStarted := time.Now()
+		storeOutcome := c.scope.StoreArrowObserved(address.key, address.family, resultcache.Token(address.generation), execution.data, cacheMetadata)
+		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(storeOutcome), Duration: time.Since(storeStarted)})
 		c.syncStats()
 		return resultcache.ArrowFlightValue{Data: base, Metadata: cacheMetadata}, nil
 	})
 	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
 	}
 	defer flight.Release()
@@ -102,6 +127,7 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 	if flight.Cached() || !status.Owner {
 		if budget, found := dataquery.ResultBudgetFromContext(ctx); found {
 			if err := budget.ConsumeSize(int(flight.Data().Rows()), flight.Data().Bytes()); err != nil {
+				observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 				return dataquery.Result{}, err
 			}
 		}
@@ -110,32 +136,44 @@ func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Q
 	metadata.SQL = diagnosticsSQL
 	result, err := decodeArrowQueryResult(request, flight.Data(), metadata, ownerSummary)
 	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
 	}
 	result.CacheOutcome = outcome
+	typedOutcome := dataquery.CacheObservationOutcome(outcome)
+	if flight.Cached() {
+		observeTypedCacheFinalWithSource(ctx, typedOutcome, flight.HitSource(), time.Since(observationStarted))
+	} else {
+		observeTypedCacheFinal(ctx, typedOutcome, time.Since(observationStarted))
+	}
 	return result, nil
 }
 
 func (c *queryResultCache) getArrow(ctx context.Context, request dataquery.Query, key, diagnosticsSQL string) (dataquery.Result, bool, error) {
-	entry, _, ok, err := c.scope.LookupArrow(key)
+	result, hit, _, err := c.getArrowObserved(ctx, request, queryCacheAddress{key: key}, diagnosticsSQL)
+	return result, hit, err
+}
+
+func (c *queryResultCache) getArrowObserved(ctx context.Context, request dataquery.Query, address queryCacheAddress, diagnosticsSQL string) (dataquery.Result, bool, resultcache.LookupObservation, error) {
+	entry, _, ok, observation, err := c.scope.LookupArrowObserved(address.key, address.family)
 	if err != nil || !ok {
-		return dataquery.Result{}, false, err
+		return dataquery.Result{}, false, observation, err
 	}
 	defer entry.Release()
 	if budget, found := dataquery.ResultBudgetFromContext(ctx); found {
 		if err := budget.ConsumeSize(int(entry.Data().Rows()), entry.Data().Bytes()); err != nil {
-			return dataquery.Result{}, false, err
+			return dataquery.Result{}, false, observation, err
 		}
 	}
 	metadata := entry.Metadata()
 	metadata.SQL = diagnosticsSQL
 	result, err := decodeArrowQueryResult(request, entry.Data(), metadata, dataquery.Result{CacheOutcome: dataquery.CacheHit})
 	if err != nil {
-		return dataquery.Result{}, false, err
+		return dataquery.Result{}, false, observation, err
 	}
 	result.CacheOutcome = dataquery.CacheHit
 	c.syncStats()
-	return result, true, nil
+	return result, true, observation, nil
 }
 
 func newQueryResultCache(capacity int) *queryResultCache {
@@ -216,18 +254,23 @@ func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execut
 	return shared, err
 }
 
-func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string) (dataquery.Result, string, uint64, bool, error) {
-	key, generation, err := c.cacheKey(request, partition, dependency)
+func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
+	address, err := c.cacheAddress(request, partition, dependency)
 	if err != nil {
-		return dataquery.Result{}, "", 0, false, err
+		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
 	}
-	result, hit, err := c.getArrow(ctx, request, key, diagnosticsSQL)
-	return result, key, generation, hit, err
+	result, hit, observation, err := c.getArrowObserved(ctx, request, address, diagnosticsSQL)
+	return result, address, hit, observation, err
 }
 
 func (c *queryResultCache) cacheKey(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) (string, uint64, error) {
+	address, err := c.cacheAddress(request, partition, dependency)
+	return address.key, address.generation, err
+}
+
+func (c *queryResultCache) cacheAddress(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) (queryCacheAddress, error) {
 	if !queryCacheIdentityAvailable(request, partition, dependency) {
-		return "", 0, fmt.Errorf("complete query result cache identity is required")
+		return queryCacheAddress{}, fmt.Errorf("complete query result cache identity is required")
 	}
 	spatialTileGenerationVersion := 0
 	if request.SpatialTile != nil || request.SpatialTileBudget != nil {
@@ -236,7 +279,7 @@ func (c *queryResultCache) cacheKey(request dataquery.Query, partition resultide
 		spatialTileGenerationVersion = 5
 	}
 	partitionCanonical := partition.Canonical()
-	keyBytes, err := json.Marshal(queryResultCacheKey{
+	key := queryResultCacheKey{
 		Version:                    resultidentity.CacheKeyFormatVersion,
 		Partition:                  json.RawMessage(partitionCanonical),
 		DependencyDigest:           dependency.Digest(),
@@ -251,36 +294,58 @@ func (c *queryResultCache) cacheKey(request dataquery.Query, partition resultide
 			SpatialTileBudget:            request.SpatialTileBudget,
 			SpatialTileGenerationVersion: spatialTileGenerationVersion, SpatialMetadata: request.SpatialMetadata,
 		},
+	}
+	keyBytes, err := json.Marshal(key)
+	if err != nil {
+		return queryCacheAddress{}, fmt.Errorf("encode governed query cache key: %w", err)
+	}
+	familyBytes, err := json.Marshal(queryResultCacheFamily{
+		Version:                    key.Version,
+		Partition:                  key.Partition,
+		DependencyDigest:           key.DependencyDigest,
+		EffectivePolicyFingerprint: key.EffectivePolicyFingerprint,
 	})
 	if err != nil {
-		return "", 0, fmt.Errorf("encode governed query cache key: %w", err)
+		return queryCacheAddress{}, fmt.Errorf("encode governed query cache family: %w", err)
 	}
+	family := sha256.Sum256(familyBytes)
 	generation := uint64(c.scope.Generation())
 	c.mu.Lock()
 	c.generation = generation
 	c.mu.Unlock()
-	return string(keyBytes), generation, nil
+	return queryCacheAddress{key: string(keyBytes), family: resultcache.QueryFamily(family), generation: generation}, nil
 }
 
 func queryCacheIdentityAvailable(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) bool {
-	if partition.Version() != resultidentity.PartitionVersion || dependency.Version() != resultidentity.DependencyVersion {
-		return false
+	return queryCacheIdentityReason(request, partition, dependency) == dataquery.CacheAdmissionReasonEligible
+}
+
+func queryCacheIdentityReason(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency) dataquery.CacheAdmissionReason {
+	if partition.Version() != resultidentity.PartitionVersion {
+		return dataquery.CacheAdmissionReasonPartitionInvalid
 	}
-	if platformdigest.ValidateSHA256Identity(dependency.Digest()) != nil ||
-		platformdigest.ValidateSHA256Identity(request.EffectivePolicyFingerprint) != nil {
-		return false
+	if dependency.Version() != resultidentity.DependencyVersion || platformdigest.ValidateSHA256Identity(dependency.Digest()) != nil {
+		return dataquery.CacheAdmissionReasonDependencyInvalid
+	}
+	if platformdigest.ValidateSHA256Identity(request.EffectivePolicyFingerprint) != nil {
+		return dataquery.CacheAdmissionReasonPolicyInvalid
 	}
 	if partition.ProjectID() != request.ProjectID && request.ProjectID != "" {
-		return false
+		return dataquery.CacheAdmissionReasonPartitionInvalid
 	}
 	switch partition.Kind() {
 	case resultidentity.PartitionProduction:
-		return request.CandidateID == ""
+		if request.CandidateID != "" {
+			return dataquery.CacheAdmissionReasonPartitionInvalid
+		}
 	case resultidentity.PartitionCandidate:
-		return request.CandidateID == partition.CandidateID()
+		if request.CandidateID != partition.CandidateID() {
+			return dataquery.CacheAdmissionReasonPartitionInvalid
+		}
 	default:
-		return false
+		return dataquery.CacheAdmissionReasonPartitionInvalid
 	}
+	return dataquery.CacheAdmissionReasonEligible
 }
 
 type queryResultCacheKey struct {
@@ -289,6 +354,34 @@ type queryResultCacheKey struct {
 	DependencyDigest           string                `json:"dependencyDigest"`
 	EffectivePolicyFingerprint string                `json:"effectivePolicyFingerprint"`
 	Query                      governedQueryCacheKey `json:"query"`
+}
+
+type queryResultCacheFamily struct {
+	Version                    int             `json:"version"`
+	Partition                  json.RawMessage `json:"partition"`
+	DependencyDigest           string          `json:"dependencyDigest"`
+	EffectivePolicyFingerprint string          `json:"effectivePolicyFingerprint"`
+}
+
+func observeTypedCacheLookup(ctx context.Context, observation resultcache.LookupObservation, duration time.Duration) {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	if control.suppressLookup {
+		return
+	}
+	dataquery.ObserveCache(ctx, dataquery.CacheObservation{
+		Phase:      dataquery.CacheObservationLookup,
+		MissReason: dataquery.CacheLookupMissReason(observation.MissReason),
+		HitSource:  dataquery.CacheHitSource(observation.HitSource),
+		Duration:   duration,
+	})
+}
+
+func observeTypedCacheFinal(ctx context.Context, outcome dataquery.CacheObservationOutcome, duration time.Duration) {
+	dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationFinal, Outcome: outcome, Duration: duration})
+}
+
+func observeTypedCacheFinalWithSource(ctx context.Context, outcome dataquery.CacheObservationOutcome, source resultcache.HitSource, duration time.Duration) {
+	dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationFinal, Outcome: outcome, HitSource: dataquery.CacheHitSource(source), Duration: duration})
 }
 
 type governedQueryCacheKey struct {

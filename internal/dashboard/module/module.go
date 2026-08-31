@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/api"
 	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -144,6 +145,7 @@ type DashboardTelemetry interface {
 	DashboardRefreshEventObserved(string, string)
 	VisualizationFrameObserved(kind string, rows, cardinality, encodedBytes int)
 	DashboardCacheObserved(string)
+	DashboardCacheObservationObserved(dataquery.CacheObservation)
 	SpatialTileObserved(outcome, cache, precision string, queryMS, encodingMS int64, encodedBytes, features int, fallback bool)
 }
 
@@ -218,6 +220,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		CacheObserved: func(outcome string) {
 			if telemetry != nil {
 				telemetry.DashboardCacheObserved(outcome)
+			}
+		},
+		CacheObservationObserved: func(observation dataquery.CacheObservation) {
+			if telemetry != nil {
+				telemetry.DashboardCacheObservationObserved(observation)
 			}
 		},
 		SessionStore:       sessionStore,
