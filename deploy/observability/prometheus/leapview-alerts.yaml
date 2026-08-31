@@ -10,7 +10,7 @@ groups:
         annotations:
           summary: "LeapView target {{ $labels.instance }} is unavailable"
           description: "Prometheus has been unable to scrape the LeapView target for more than 2 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#target-unavailable-alert-fires"
 
       - alert: LeapViewSustainedHTTP5xx
         expr: |
@@ -24,7 +24,7 @@ groups:
         annotations:
           summary: "LeapView target {{ $labels.instance }} is returning sustained 5xx responses"
           description: "LeapView has continuously observed 5xx responses on {{ $labels.instance }} for more than 10 minutes."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#sustained-http-5xx-alert-fires"
 
       - alert: LeapViewDuckDBFatalHealth
         expr: max by (job, instance) (leapview_duckdb_fatal_health{job="leapview"}) > 0
@@ -35,7 +35,7 @@ groups:
         annotations:
           summary: "LeapView DuckDB runtime on {{ $labels.instance }} is fatally unhealthy"
           description: "The process-owned DuckDB runtime on {{ $labels.instance }} reports a fatal cleanup-safety failure."
-          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#duckdb-fatal-health-alert-fires"
 
       - alert: LeapViewRecoveryQualificationLedgerScrapeFailure
         expr: max by (job, instance) (leapview_recovery_qualification_scrape_error{job="leapview"}) > 0
@@ -69,3 +69,33 @@ groups:
           summary: "LeapView recovery evidence publication on {{ $labels.instance }} is failing"
           description: "At least one recovery qualification on {{ $labels.instance }} has remained in failed evidence publication state for more than 15 minutes."
           runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
+
+      - alert: LeapViewDashboardRefreshFastBurn
+        expr: |
+          (leapview:dashboard_refresh_reliability:burn_rate_5m >= 14.4)
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:burn_rate_1h >= 14.4)
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:eligible_events_1h >= 10)
+        labels:
+          service: leapview
+          severity: critical
+        annotations:
+          summary: "LeapView dashboard refresh reliability on {{ $labels.instance }} is burning error budget rapidly"
+          description: "Dashboard refresh failures on {{ $labels.instance }} meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 eligible refreshes in the 1-hour window."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-fast-burn-alert-fires"
+
+      - alert: LeapViewDashboardRefreshSlowBurn
+        expr: |
+          (leapview:dashboard_refresh_reliability:burn_rate_30m >= 6)
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:burn_rate_6h >= 6)
+          and on (job, instance)
+          (leapview:dashboard_refresh_reliability:eligible_events_6h >= 60)
+        labels:
+          service: leapview
+          severity: warning
+        annotations:
+          summary: "LeapView dashboard refresh reliability on {{ $labels.instance }} is steadily consuming error budget"
+          description: "Dashboard refresh failures on {{ $labels.instance }} meet or exceed the 6x burn-rate threshold over both 30 minutes and 6 hours, with at least 60 eligible refreshes in the 6-hour window."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-slow-burn-alert-fires"

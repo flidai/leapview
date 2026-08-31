@@ -317,27 +317,44 @@ test('personal API tokens use capability selectors', async () => {
       name.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const add = root.querySelector('.permission-trigger') as HTMLButtonElement
-      add.click()
+      add.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowDown', bubbles: true, composed: true }))
       await personal.updateComplete
       await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()))
       const menu = root.querySelector('.permission-menu') as HTMLElement
       const permissionList = root.querySelector('.permission-list') as HTMLElement
+      const menuTitle = root.querySelector('.permission-menu-title .settings-label') as HTMLElement
+      const search = root.querySelector('.permission-search input') as HTMLInputElement
       const menuRect = menu.getBoundingClientRect()
       const menuLayout = {
         bottom: Math.round(menuRect.bottom),
         viewportHeight: innerHeight,
         listScrollable: permissionList.scrollHeight > permissionList.clientHeight,
         listOverflowY: getComputedStyle(permissionList).overflowY,
+        width: Math.round(menuRect.width),
+        searchHeight: Math.round(search.getBoundingClientRect().height),
+        optionRowsLargeEnough: Array.from(root.querySelectorAll<HTMLElement>('.permission-option')).every((option) => option.getBoundingClientRect().height >= 48),
       }
-      const search = root.querySelector('.permission-search input') as HTMLInputElement
       const searchFocused = root.activeElement === search
+      const menuHeader = {
+        title: menuTitle.textContent?.trim(),
+        labelledByTitle: menu.getAttribute('aria-labelledby') === menuTitle.id,
+        selectedCount: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
+        categorySummaries: Array.from(root.querySelectorAll('.permission-category')).map((category) => category.textContent?.replace(/\s+/g, ' ').trim()),
+      }
       search.value = 'read resource'
       search.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
       await personal.updateComplete
       const filteredPermissions = Array.from(root.querySelectorAll('.permission-option .settings-label')).map((label) => label.textContent?.trim())
-      const readPermission = root.querySelector('input[type="checkbox"][value="RESOURCE_READ"]') as HTMLInputElement
+      const readPermission = root.querySelector('input[type="checkbox"][value="resource-content"]') as HTMLInputElement
+      const readDescription = root.querySelector('.permission-option .settings-description') as HTMLElement
+      const readDescribedBy = readPermission.getAttribute('aria-describedby') === readDescription.id
       readPermission.click()
       await personal.updateComplete
+      const selectedMenuState = {
+        count: root.querySelector('.permission-menu-count')?.textContent?.replace(/\s+/g, ' ').trim(),
+        selected: root.querySelector('.permission-option')?.getAttribute('data-selected'),
+        categorySummary: root.querySelector('.permission-category')?.textContent?.replace(/\s+/g, ' ').trim(),
+      }
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
       await personal.updateComplete
       await Promise.resolve()
@@ -377,7 +394,10 @@ test('personal API tokens use capability selectors', async () => {
       return {
         initial,
         menuLayout,
+        menuHeader,
         filteredPermissions,
+        readDescribedBy,
+        selectedMenuState,
         selectedPermissions,
         menuClosed: !root.querySelector('.permission-menu'),
         searchFocused,
@@ -418,13 +438,24 @@ test('personal API tokens use capability selectors', async () => {
     expect(state.menuLayout.bottom).toBeLessThanOrEqual(state.menuLayout.viewportHeight - 16)
     expect(state.menuLayout.listScrollable).toBe(true)
     expect(state.menuLayout.listOverflowY).toBe('auto')
-    expect(state.filteredPermissions).toEqual(['Read resource'])
-    expect(state.selectedPermissions).toEqual(['Read resource'])
+    expect(state.menuLayout.width).toBeGreaterThanOrEqual(400)
+    expect(state.menuLayout.searchHeight).toBeGreaterThanOrEqual(40)
+    expect(state.menuLayout.optionRowsLargeEnough).toBe(true)
+    expect(state.menuHeader).toEqual({
+      title: 'Select token permissions',
+      labelledByTitle: true,
+      selectedCount: '0 selected',
+      categorySummaries: ['Administration 0 / 1', 'Resource 0 / 4'],
+    })
+    expect(state.filteredPermissions).toEqual(['Resource access'])
+    expect(state.readDescribedBy).toBe(true)
+    expect(state.selectedMenuState).toEqual({ count: '1 selected', selected: 'true', categorySummary: 'Resource 1 / 4' })
+    expect(state.selectedPermissions).toEqual(['Resource access'])
     expect(state.menuClosed).toBe(true)
     expect(state.searchFocused).toBe(true)
     expect(state.triggerFocused).toBe(true)
     expect(state.command).toMatchObject({
-      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_READ'], expiresAt: '',
+      action: 'create', name: 'Sales automation', capabilities: ['RESOURCE_USE', 'RESOURCE_READ'], expiresAt: '',
     })
     expect(state.pending).toEqual({ name: 'Sales automation', selectedPermissions: 1, buttonText: 'Creating…' })
     expect(state.failed).toEqual({
@@ -441,6 +472,95 @@ test('personal API tokens use capability selectors', async () => {
     expect(mobile.right).toBeLessThanOrEqual(mobile.viewportWidth - 16)
     expect(mobile.bottom).toBeLessThanOrEqual(mobile.viewportHeight - 16)
     expect(mobile.closed).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('personal API token permissions expose enforceable access levels', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 800 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-personal-settings'))
+    const state = await page.evaluate(async () => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        kind: 'admin', title: 'API tokens', active: 'api-tokens', headerTitle: 'API tokens', headerDetail: 'Manage personal API and CLI credentials.',
+      }, personalSettings: {
+        active: 'api-tokens',
+        profile: { id: 'principal-1', email: 'jacob@example.com', displayName: 'Jacob Nielsen', theme: 'system', identitySource: 'local', canEditDisplayName: true, hasLocalPassword: true },
+        security: { localPasswordEnabled: true, sessions: [], authoringSessions: [] },
+        tokens: { items: [], capabilities: [
+          { value: 'PROJECT_ADMIN', label: 'Project administration', description: 'Manage project-level access and settings.', category: 'Administration' },
+          { value: 'RESOURCE_USE', label: 'Use resource', description: 'Open and use the project resource.', category: 'Resource' },
+          { value: 'RESOURCE_READ', label: 'Read resource', description: 'View the resource and its governed data.', category: 'Resource' },
+          { value: 'RESOURCE_EDIT', label: 'Edit resource', description: 'Create and update the resource.', category: 'Resource' },
+          { value: 'RESOURCE_MANAGE', label: 'Manage resource', description: 'Delete and administer the resource.', category: 'Resource' },
+          { value: 'RESOURCE_SHARE', label: 'Share resource', description: 'Share the resource with other principals.', category: 'Resource' },
+          { value: 'RESOURCE_PUBLISH', label: 'Publish resource', description: 'Publish the resource to serving.', category: 'Resource' },
+        ] },
+      } })
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      const admin = document.querySelector('lv-admin-page') as any
+      await admin.updateComplete
+      const personal = admin.shadowRoot.querySelector('lv-personal-settings') as any
+      await personal.updateComplete
+      const root = personal.shadowRoot as ShadowRoot
+      ;(root.querySelector('.permission-trigger') as HTMLButtonElement).click()
+      await personal.updateComplete
+      ;(root.querySelector('input[type="checkbox"][value="project-administration"]') as HTMLInputElement).click()
+      await personal.updateComplete
+      ;(root.querySelector('input[type="checkbox"][value="resource-content"]') as HTMLInputElement).click()
+      await personal.updateComplete
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+      await personal.updateComplete
+
+      const administrationAccess = root.querySelector('.permission-access-trigger[data-permission="project-administration"]') as HTMLButtonElement
+      const initialAdministrationAccess = administrationAccess.textContent?.replace(/\s+/g, ' ').trim()
+      administrationAccess.click()
+      await personal.updateComplete
+      const administrationAccessOptions = Array.from(root.querySelectorAll('.permission-access-option')).map((option) => option.textContent?.trim())
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Read and write'))?.click()
+      await personal.updateComplete
+
+      const resourceAccess = root.querySelector('.permission-access-trigger[data-permission="resource-content"]') as HTMLButtonElement
+      const initialResourceAccess = resourceAccess.textContent?.replace(/\s+/g, ' ').trim()
+      resourceAccess.click()
+      await personal.updateComplete
+      const resourceAccessOptions = Array.from(root.querySelectorAll('.permission-access-option')).map((option) => option.textContent?.trim())
+      ;(Array.from(root.querySelectorAll<HTMLButtonElement>('.permission-access-option')).find((option) => option.textContent?.trim() === 'Read and write'))?.click()
+      await personal.updateComplete
+
+      ;(root.querySelector('#token-name') as HTMLInputElement).value = 'Content automation'
+      ;(root.querySelector('#token-name') as HTMLInputElement).dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      let command: any = null
+      personal.addEventListener('lv-personal-token-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      ;(root.querySelector('.token-form') as HTMLFormElement).dispatchEvent(new SubmitEvent('submit', { bubbles: true, composed: true, cancelable: true }))
+      await personal.updateComplete
+      return {
+        initialAdministrationAccess,
+        administrationAccessOptions,
+        selectedAdministrationAccess: administrationAccess.textContent?.replace(/\s+/g, ' ').trim(),
+        initialResourceAccess,
+        resourceAccessOptions,
+        selectedResourceAccess: resourceAccess.textContent?.replace(/\s+/g, ' ').trim(),
+        selectedPermissions: Array.from(root.querySelectorAll('.selected-permission .settings-label')).map((label) => label.textContent?.trim()),
+        fixedAccessControls: root.querySelectorAll('.permission-access-fixed').length,
+        command,
+      }
+    })
+
+    expect(state.initialAdministrationAccess).toBe('Access: Read-only')
+    expect(state.administrationAccessOptions).toEqual(['Read-only', 'Read and write'])
+    expect(state.selectedAdministrationAccess).toBe('Access: Read and write')
+    expect(state.initialResourceAccess).toBe('Access: Read-only')
+    expect(state.resourceAccessOptions).toEqual(['Read-only', 'Read and write'])
+    expect(state.selectedResourceAccess).toBe('Access: Read and write')
+    expect(state.selectedPermissions).toEqual(['Project administration', 'Resource access'])
+    expect(state.fixedAccessControls).toBe(0)
+    expect(state.command).toMatchObject({
+      action: 'create', name: 'Content automation', capabilities: ['PROJECT_ADMIN', 'RESOURCE_USE', 'RESOURCE_READ', 'RESOURCE_EDIT'], expiresAt: '',
+    })
   } finally {
     await page.close()
   }

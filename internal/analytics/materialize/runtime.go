@@ -756,6 +756,47 @@ func observeQueryCacheOutcome(ctx context.Context, result dataquery.Result, err 
 	dataquery.ObserveCacheOutcome(ctx, outcome)
 }
 
+type cacheObservationContextKey struct{}
+
+type cacheObservationControl struct {
+	started           time.Time
+	suppressAdmission bool
+	suppressLookup    bool
+}
+
+func cacheObservationStarted(ctx context.Context, fallback time.Time) time.Time {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	if !control.started.IsZero() {
+		return control.started
+	}
+	return fallback
+}
+
+func withCacheObservationStarted(ctx context.Context, started time.Time) context.Context {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	control.started = started
+	return context.WithValue(ctx, cacheObservationContextKey{}, control)
+}
+
+func withCacheObservationSuppression(ctx context.Context, admission, lookup bool) context.Context {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	control.suppressAdmission = control.suppressAdmission || admission
+	control.suppressLookup = control.suppressLookup || lookup
+	return context.WithValue(ctx, cacheObservationContextKey{}, control)
+}
+
+func observeQueryCacheAdmission(ctx context.Context, decision dataquery.CacheAdmissionDecision, reason dataquery.CacheAdmissionReason) {
+	control, _ := ctx.Value(cacheObservationContextKey{}).(cacheObservationControl)
+	if control.suppressAdmission {
+		return
+	}
+	dataquery.ObserveCache(ctx, dataquery.CacheObservation{
+		Phase:           dataquery.CacheObservationAdmission,
+		Decision:        decision,
+		AdmissionReason: reason,
+	})
+}
+
 // dashboardQueryResultCacheable is deliberately explicit. API, CLI, agent,
 // preview, and unclassified calls must not populate the dashboard result cache
 // even if they happen to use an equivalent physical query shape.

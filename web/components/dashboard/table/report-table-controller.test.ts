@@ -20,7 +20,26 @@ test('report table column sizing preserves configured minimums', () => {
   const controller = new ReportTableColumnController(() => ({ order_id: 80, revenue: 180 }))
   expect(controller.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(160)
   expect(controller.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(180)
+  expect(controller.pixelWidth({ key: 'orders', label: 'Orders', align: 'right' })).toBe(114)
   expect(controller.tableWidth([{ key: 'order_id', label: 'Order ID' }, { key: 'revenue', label: 'Revenue' }])).toBe(340)
+
+  const defaults = new ReportTableColumnController(() => ({}))
+  expect(defaults.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(160)
+  expect(defaults.pixelWidth({ key: 'status', label: 'Status' })).toBe(106)
+  expect(defaults.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(114)
+})
+
+test('report tables pin only the leading visible identity column', () => {
+  const controller = new ReportTableColumnController(() => ({}))
+  const columns = [
+    { key: 'order_id', label: 'Order ID', role: 'row_header' as const },
+    { key: 'purchase_date', label: 'Purchase date', role: 'row_header' as const },
+    { key: 'status', label: 'Status', role: 'row_header' as const },
+    { key: 'delivery_days', label: 'Delivery days', role: 'metric' as const },
+  ]
+  expect(controller.pinnedKeys(columns, {})).toEqual(['order_id'])
+  expect(controller.pinnedKeys(columns, { order_id: false })).toEqual(['purchase_date'])
+  expect(controller.pinnedKeys(columns, { order_id: false, purchase_date: false, status: false })).toEqual([])
 })
 
 test('report table selection controller derives labels and actions', () => {

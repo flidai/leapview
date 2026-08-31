@@ -2387,10 +2387,79 @@ test('visual showcase renders every supported visual type', async () => {
       cards: element.shadowRoot?.querySelectorAll('.table-card').length,
       tables: element.shadowRoot?.querySelectorAll('.table-card lv-visualization-host').length,
       titles: Array.from(element.shadowRoot?.querySelectorAll('.table-card lv-visualization-host') ?? []).map((host: any) => host.envelope?.spec?.title),
+      aggregateValues: Array.from(element.shadowRoot?.querySelectorAll('.table-card lv-visualization-host') ?? [])
+        .filter((host: any) => host.envelope?.spec?.kind !== 'table')
+        .flatMap((host) => Array.from(host.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelectorAll('[role="cell"]') ?? []).map((cell) => cell.textContent?.trim())),
     }))
     expect(tables.cards).toBe(3)
     expect(tables.tables).toBe(3)
     expect(tables.titles).toContain('Orders')
+    expect(tables.aggregateValues.some((value) => value === '—' || value === '-')).toBe(false)
+    expect(tables.aggregateValues).toContain('0')
+    expect(tables.aggregateValues).toContain('R$0.00')
+    const tableLayout = await page.locator('lv-site-visual-showcase').evaluate((element) => {
+      const root = element.shadowRoot
+      const chartGrid = root?.querySelector('.chart-grid')?.getBoundingClientRect()
+      const tableSection = root?.querySelector('[aria-labelledby="table-showcase-heading"]')
+      const tableHeading = tableSection?.querySelector('.section-heading')?.getBoundingClientRect()
+      const tableGrid = root?.querySelector('.table-grid')?.getBoundingClientRect()
+      const cards = Array.from(root?.querySelectorAll('.table-card') ?? []).map((card) => {
+        const host = card.querySelector('lv-visualization-host') as any
+        const rect = card.getBoundingClientRect()
+        const table = host?.shadowRoot?.querySelector('lv-report-table')
+        const scrollport = table?.shadowRoot?.querySelector<HTMLElement>('.table-scrollport')
+        const canvas = table?.shadowRoot?.querySelector<HTMLElement>('.canvas')
+        return {
+          kind: host?.envelope?.spec?.kind,
+          left: rect.left,
+          top: rect.top,
+          width: rect.width,
+          height: rect.height,
+          overflow: (scrollport?.scrollWidth ?? 0) - (scrollport?.clientWidth ?? 0),
+          dataGap: (scrollport?.clientWidth ?? 0) - (canvas?.getBoundingClientRect().width ?? 0),
+          classes: card.className,
+        }
+      })
+      const compactCards = Array.from(root?.querySelectorAll('.table-card.compact') ?? [])
+      const matrixCard = Array.from(root?.querySelectorAll('.table-card') ?? []).find((card) => (card.querySelector('lv-visualization-host') as any)?.envelope?.spec?.kind === 'matrix')
+      const matrixTable = matrixCard?.querySelector('lv-visualization-host')?.shadowRoot?.querySelector('lv-report-table')
+      const matrixScrollport = matrixTable?.shadowRoot?.querySelector<HTMLElement>('.table-scrollport')
+      const compactDataGaps = compactCards.map((card) => {
+        const host = card.querySelector('lv-visualization-host')
+        const table = host?.shadowRoot?.querySelector('lv-report-table')
+        const scrollport = table?.shadowRoot?.querySelector('.table-scrollport')?.getBoundingClientRect()
+        const canvas = table?.shadowRoot?.querySelector('.canvas')?.getBoundingClientRect()
+        return (scrollport?.bottom ?? 0) - (canvas?.bottom ?? 0)
+      })
+      return {
+        sectionGap: (tableHeading?.top ?? 0) - (chartGrid?.bottom ?? 0),
+        cards,
+        gridWidth: tableGrid?.width ?? 0,
+        gridCenter: (tableGrid?.left ?? 0) + (tableGrid?.width ?? 0) / 2,
+        compactCards: compactCards.length,
+        compactDataGaps,
+        matrixOverflow: (matrixScrollport?.scrollWidth ?? 0) - (matrixScrollport?.clientWidth ?? 0),
+      }
+    })
+    expect(tableLayout.sectionGap).toBeGreaterThanOrEqual(48)
+    const regular = tableLayout.cards.find((card) => card.kind === 'table')!
+    const matrix = tableLayout.cards.find((card) => card.kind === 'matrix')!
+    const pivot = tableLayout.cards.find((card) => card.kind === 'pivot')!
+    expect(Math.abs(regular.top - pivot.top)).toBeLessThanOrEqual(1)
+    expect(regular.left + regular.width).toBeLessThanOrEqual(pivot.left + 1)
+    expect(regular.width).toBeLessThan(pivot.width)
+    expect(Math.abs(regular.height - pivot.height)).toBeLessThanOrEqual(1)
+    expect(matrix.width).toBeGreaterThanOrEqual(tableLayout.gridWidth - 1)
+    expect(matrix.top).toBeGreaterThan(pivot.top + pivot.height)
+    expect(tableLayout.cards.every((card) => card.overflow <= 1)).toBe(true)
+    expect(pivot.dataGap).toBeLessThanOrEqual(1)
+    expect(regular.classes).toContain('centered')
+    expect(regular.classes).toContain('narrow')
+    expect(matrix.classes).toContain('wide')
+    expect(pivot.classes).toContain('centered')
+    expect(tableLayout.matrixOverflow).toBeLessThanOrEqual(1)
+    expect(tableLayout.compactCards).toBe(2)
+    expect(tableLayout.compactDataGaps.every((gap) => gap <= 8)).toBe(true)
     const catalog = await page.locator('lv-site-visual-showcase').evaluate((element) =>
       Array.from(element.shadowRoot?.querySelectorAll('article') ?? []).map((card) => {
         const host = card.querySelector('lv-visualization-host') as any
@@ -2567,33 +2636,59 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
     })
 
     for (const theme of ['light', 'dark'] as const) {
-      await page.evaluate((mode) => document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode } })), theme)
-      await page.waitForFunction((mode) => document.documentElement.getAttribute('data-color-mode') === mode, theme)
-      await page.waitForTimeout(250)
+      await page.evaluate((mode) => new Promise<void>((resolve) => {
+        document.addEventListener('leapview-theme-applied', () => requestAnimationFrame(() => resolve()), { once: true })
+        document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode } }))
+      }), theme)
+      await page.waitForFunction((mode) => {
+        const root = document.querySelector('lv-site-visual-showcase')?.shadowRoot
+        const hosts = Array.from(root?.querySelectorAll('lv-visualization-host') ?? [])
+        return document.documentElement.getAttribute('data-color-mode') === mode
+          && hosts.length === 26
+          && hosts.every((host: any) => host.shadowRoot?.querySelector('.renderer')?.getAttribute('aria-busy') === 'false')
+      }, theme)
 
       const metrics = await page.locator('lv-site-visual-showcase').evaluate((element) =>
         Array.from(element.shadowRoot?.querySelectorAll('article') ?? []).map((card) => {
           const host = card.querySelector('lv-visualization-host') as HTMLElement & {
-            envelope?: { visualID?: string; spec?: { kind?: string } }
+            envelope?: {
+              visualID?: string
+              spec?: { kind?: string; mark?: string; y?: Array<{ dataset: string; field: string }> }
+              dataState?: { kind?: string; datasets?: Array<{ id: string; columns: string[]; rows: unknown[][] }> }
+            }
             shadowRoot: ShadowRoot
           }
           const renderer = host.shadowRoot?.querySelector<HTMLElement>('.renderer')
           const canvases = Array.from(host.shadowRoot?.querySelectorAll<HTMLCanvasElement>('canvas') ?? [])
           const table = renderer?.querySelector<HTMLElement>('lv-report-table')
           const bounds = renderer?.getBoundingClientRect()
+          const expectsColoredMarks = (() => {
+            const envelope = host.envelope
+            if (envelope?.spec?.mark !== 'boxplot' || envelope.dataState?.kind !== 'inline') return true
+            const fields = envelope.spec.y ?? []
+            const dataset = envelope.dataState.datasets?.find((candidate) => candidate.id === fields[0]?.dataset)
+            const indices = fields.map((field) => dataset?.columns.indexOf(field.field) ?? -1)
+            return Boolean(dataset?.rows.some((row) => indices.every((index) => {
+              const value = row[index]
+              return index >= 0 && value !== null && value !== undefined && value !== '' && Number.isFinite(Number(value))
+            })))
+          })()
           let sampledPixels = 0
           let coloredPixels = 0
           for (const canvas of canvases) {
+            if (sampledPixels > 10 && coloredPixels > 0) break
             const context = canvas.getContext('2d', { willReadFrequently: true })
             if (context && canvas.width > 0 && canvas.height > 0) {
               const pixels = context.getImageData(0, 0, canvas.width, canvas.height).data
-              const stride = Math.max(1, Math.floor((canvas.width * canvas.height) / 4096)) * 4
-              for (let index = 0; index < pixels.length; index += stride) {
+              for (let index = 0; index < pixels.length; index += 4) {
                 if (pixels[index + 3]! < 32) continue
                 sampledPixels++
                 const maximum = Math.max(pixels[index]!, pixels[index + 1]!, pixels[index + 2]!)
                 const minimum = Math.min(pixels[index]!, pixels[index + 1]!, pixels[index + 2]!)
-                if (maximum - minimum >= 24) coloredPixels++
+                if (maximum - minimum >= 24) {
+                  coloredPixels++
+                }
+                if (sampledPixels > 10 && coloredPixels > 0) break
               }
             }
           }
@@ -2607,6 +2702,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
             canvasHeight: Math.max(0, ...canvases.map((canvas) => canvas.height)),
             sampledPixels,
             coloredPixels,
+            expectsColoredMarks,
             mapFrame: host.shadowRoot?.querySelectorAll('.maplibregl-map .maplibregl-canvas').length ?? 0,
             tableText: table?.shadowRoot?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
             rendererText: renderer?.textContent?.replace(/\s+/g, ' ').trim().length ?? 0,
@@ -2630,7 +2726,7 @@ test('visual showcase remains visibly rendered in light and dark themes', async 
             expect(metric.mapFrame, `${theme}/${metric.visualID} MapLibre frame`).toBe(1)
           } else {
             expect(metric.sampledPixels, `${theme}/${metric.visualID} painted pixels`).toBeGreaterThan(10)
-            if (metric.visualID !== 'status_delivery_flow') {
+            if (metric.expectsColoredMarks) {
               expect(metric.coloredPixels, `${theme}/${metric.visualID} visible data marks`).toBeGreaterThan(0)
             }
           }

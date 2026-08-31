@@ -1,0 +1,40 @@
+FAI-544 control allocation profile summary; wide 32-column x 999-row real-DuckDB HTTP workload; 3s; GOMAXPROCS=1; commit ea59be318617d4e4a07b6421d671355ae8628b46.
+
+File: fai-544-http.test
+Build ID: dde68ad087fd17de9db213be9407cb73f7571f48
+Type: alloc_space
+Time: 2026-08-31 07:58:35 UTC
+Showing nodes accounting for 2403.24MB, 92.95% of 2585.48MB total
+Dropped 336 nodes (cum <= 12.93MB)
+Showing top 30 nodes out of 81
+      flat  flat%   sum%        cum   cum%
+  616.95MB 23.86% 23.86%   616.95MB 23.86%  github.com/flidai/leapview/internal/dashboard/runtime.reportRowsFromDataQuery
+  615.45MB 23.80% 47.67%   658.45MB 25.47%  github.com/flidai/leapview/internal/dashboard/runtime.tableRowsFromAnalytics
+  320.17MB 12.38% 60.05%   483.27MB 18.69%  github.com/flidai/leapview/internal/analytics/arrowdecode.DecodeRows.func1 (inline)
+  255.17MB  9.87% 69.92%   255.17MB  9.87%  io.ReadAll
+  204.67MB  7.92% 77.83%   204.67MB  7.92%  github.com/apache/arrow-go/v18/arrow/memory.(*GoAllocator).Allocate
+  137.10MB  5.30% 83.14%   137.10MB  5.30%  bytes.growSlice
+   64.60MB  2.50% 85.64%    71.10MB  2.75%  github.com/flidai/leapview/internal/dashboard/http.dashboardVisualizationRowset
+   58.03MB  2.24% 87.88%    58.03MB  2.24%  github.com/flidai/leapview/internal/dashboard/visualization/runtime.row (inline)
+   42.50MB  1.64% 89.52%    42.50MB  1.64%  math/big.nat.make (inline)
+      40MB  1.55% 91.07%       40MB  1.55%  github.com/apache/arrow-go/v18/arrow/decimal128.toBigIntPositive (inline)
+      33MB  1.28% 92.35%       43MB  1.66%  github.com/flidai/leapview/internal/dashboard/runtime.normalizeDBValue
+    6.50MB  0.25% 92.60%    17.50MB  0.68%  math/big.(*Float).Text (inline)
+    3.58MB  0.14% 92.74%    78.19MB  3.02%  github.com/flidai/leapview/internal/dashboard/visualization/runtime.WindowEnvelopeFromDefinition
+    2.02MB 0.078% 92.82%   485.29MB 18.77%  github.com/flidai/leapview/internal/analytics/arrowdecode.DecodeRows
+    1.01MB 0.039% 92.85%   486.30MB 18.81%  github.com/flidai/leapview/internal/analytics/materialize.decodeArrowQueryResult
+       1MB 0.039% 92.89%   307.90MB 11.91%  github.com/flidai/leapview/internal/dashboard/http.encodeDashboardTableArrow
+    0.50MB 0.019% 92.91%    16.03MB  0.62%  github.com/flidai/leapview/internal/analytics/query.(*Planner).PlanRows
+    0.50MB 0.019% 92.93%    60.38MB  2.34%  github.com/flidai/leapview/internal/dashboard/http.(*dashboardDirectArrowQualificationDatabase).QueryArrow.func1
+    0.50MB 0.019% 92.95%    42.35MB  1.64%  github.com/apache/arrow-go/v18/arrow/array.concat
+         0     0% 92.95%   135.59MB  5.24%  bytes.(*Buffer).Write
+         0     0% 92.95%   137.10MB  5.30%  bytes.(*Buffer).grow
+         0     0% 92.95%    60.38MB  2.34%  database/sql.(*Conn).Raw
+         0     0% 92.95%   165.31MB  6.39%  github.com/apache/arrow-go/v18/arrow/array.(*BinaryBuilder).Append
+         0     0% 92.95%    41.62MB  1.61%  github.com/apache/arrow-go/v18/arrow/array.(*BinaryBuilder).Reserve
+         0     0% 92.95%    41.62MB  1.61%  github.com/apache/arrow-go/v18/arrow/array.(*BinaryBuilder).Resize
+         0     0% 92.95%   165.31MB  6.39%  github.com/apache/arrow-go/v18/arrow/array.(*StringBuilder).Append (inline)
+         0     0% 92.95%   123.70MB  4.78%  github.com/apache/arrow-go/v18/arrow/array.(*bufferBuilder).Append
+         0     0% 92.95%   162.31MB  6.28%  github.com/apache/arrow-go/v18/arrow/array.(*bufferBuilder).resize
+         0     0% 92.95%    41.62MB  1.61%  github.com/apache/arrow-go/v18/arrow/array.(*builder).reserve (inline)
+         0     0% 92.95%    42.35MB  1.64%  github.com/apache/arrow-go/v18/arrow/array.Concatenate

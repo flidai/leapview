@@ -44,6 +44,7 @@ test('ECharts label policy truncates by grapheme and preserves selected and thre
   envelope.spec.presentation.labelPolicy = { ...policy, density: 'hidden' }
   envelope.dataState.datasets[0].rows[0][0] = 'São Paulo 😀 zone'
   const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(hiddenOption.tooltip.confine).toBe(true)
   expect(hiddenOption.tooltip.formatter({ value: envelope.dataState.datasets[0].rows[0] })).toContain('São Paulo 😀 zone')
   expect(hiddenOption.aria.description).toContain('label: São Paulo 😀 zone')
 })
@@ -429,6 +430,11 @@ test('ECharts translation applies combo marks and axes to multi-measure series',
   ])
   expect(option.series[0].areaStyle).toEqual({})
   expect(option.yAxis).toHaveLength(2)
+  expect(option.series.map((series: any) => series.itemStyle.color)).toEqual([
+    defaultRendererContext.colors.data[0],
+    defaultRendererContext.colors.data[1],
+  ])
+  expect(option.grid.bottom).toBe(44)
 })
 
 test('ECharts normalizes stacks and preserves series order and color identity across filters', () => {
@@ -531,6 +537,44 @@ test('ECharts translation emits one multi-value financial series', () => {
   expect(option.series[0].data).toEqual([{
     name: 'Jan', value: [1, 2, 0, 3], __lv_dataset: 'primary', __lv_row_index: 0,
   }])
+})
+
+test('ECharts renders labels inside colored cartesian marks in outlined white', () => {
+  const envelope = cartesianFixture('bar') as any
+  envelope.spec.presentation.dataZoom = false
+  delete envelope.spec.presentation.labelPosition
+  const option = echartsOption(envelope, defaultRendererContext) as any
+
+  expect(option.series[0].label.position).toBe('insideRight')
+  expect(option.series[0].barMinHeight).toBe(44)
+  expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
+  expect(option.grid.bottom).toBe(44)
+
+  const darkContext = {
+    ...defaultRendererContext,
+    theme: 'dark',
+    colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', surface: '#0d1117', data: ['#1f6feb'] },
+  } as any
+  const darkOption = echartsOption(envelope, darkContext) as any
+  expect(darkOption.series[0].label.color).toBe('#fff')
+
+  const orangeDarkContext = {
+    ...darkContext,
+    colors: { ...darkContext.colors, data: ['#eb670f'] },
+  } as any
+  const orangeDarkOption = echartsOption(envelope, orangeDarkContext) as any
+  expect(orangeDarkOption.series[0].label.color).toBe('#fff')
+
+  envelope.spec.presentation.labelPosition = 'outside'
+  const outsideOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(outsideOption.series[0].label.position).toBe('right')
+  expect(outsideOption.series[0].barMinHeight).toBeUndefined()
+
+  envelope.spec.presentation.labelPosition = 'automatic'
+  envelope.spec.presentation.labelPolicy.density = 'hidden'
+  const hiddenOption = echartsOption(envelope, defaultRendererContext) as any
+  expect(hiddenOption.series[0].label.show).toBe(false)
+  expect(hiddenOption.series[0].barMinHeight).toBeUndefined()
 })
 
 test('ECharts translation builds radar indicators and aligned series from typed fields', () => {
@@ -708,6 +752,7 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   expect(context.option.series[0].data).toBeUndefined()
   expect(context.option.series[0].encode).toBeUndefined()
   expect(context.option.dataZoom).toBeUndefined()
+
 })
 
 test('ECharts first-frame readiness resolves on the first valid rendered frame and removes its listener', async () => {
@@ -810,8 +855,33 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(heatmap.visualMap.precision).toBeUndefined()
   expect(heatmap.visualMap.outOfRange).toBeUndefined()
   const boxplot = echartsOption(cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']), defaultRendererContext) as any
-  expect(boxplot.series[0]).toMatchObject({ id: 'series:primary:boxplot', type: 'boxplot', encode: { x: 'label', y: ['min', 'q1', 'median', 'q3', 'max'] } })
-  expect(boxplot.series[0].itemStyle).toEqual({ color: 'transparent', borderColor: defaultRendererContext.colors.data[0], borderWidth: 2 })
+  expect(boxplot.xAxis.data).toEqual(['A'])
+  expect(boxplot.series[0]).toMatchObject({ id: 'series:primary:boxplot', type: 'boxplot', data: [{ name: 'A', value: [1, 2, 3, 4, 5], __lv_dataset: 'primary', __lv_row_index: 0 }] })
+  expect(boxplot.legend).toBeUndefined()
+  expect(boxplot.grid.bottom).toBe(76)
+  expect(boxplot.xAxis.axisLabel).toMatchObject({ interval: 0, rotate: 0 })
+  expect(boxplot.series[0].itemStyle).toEqual({ color: 'rgba(0, 110, 219, 0.24)', borderColor: defaultRendererContext.colors.data[0], borderWidth: 2 })
+  expect(boxplot.series[0].emphasis.itemStyle.color).toBe('rgba(0, 110, 219, 0.4)')
+
+  const orderedBoxplot = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
+  orderedBoxplot.spec.presentation.dataZoom = false
+  orderedBoxplot.dataState.datasets[0].rows = [
+    ['Later', 10, 11, 12, 13, 14],
+    ['Earlier', 1, 2, 3, 4, 5],
+    ['Middle', 5, 6, 7, 8, 9],
+    ['Latest', 15, 16, 17, 18, 19],
+    ['Earliest', 0, 1, 2, 3, 4],
+  ]
+  const orderedOption = echartsOption(orderedBoxplot, defaultRendererContext) as any
+  expect(orderedOption.xAxis.data).toEqual(['Earliest', 'Earlier', 'Middle', 'Later', 'Latest'])
+  expect(orderedOption.xAxis.axisLabel).toMatchObject({ interval: 0, rotate: 24 })
+  expect(orderedOption.grid.bottom).toBe(44)
+
+  const incompleteBoxplot = cartesianFixture('boxplot', ['label', 'min', 'q1', 'median', 'q3', 'max']) as any
+  incompleteBoxplot.dataState.datasets[0].rows[0][3] = ''
+  const incompleteOption = echartsOption(incompleteBoxplot, defaultRendererContext) as any
+  expect(incompleteOption.series[0].data).toEqual([])
+  expect(incompleteOption.graphic[0].style.text).toBe('No complete distribution data')
 })
 
 test('ECharts honors proportional presentation and hierarchy/network layout', () => {
@@ -819,15 +889,42 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
   expect(donut.series[0]).toMatchObject({ id: 'series:primary:donut', type: 'pie', radius: ['54%', '76%'], roseType: 'radius' })
   expect(donut.graphic[0].style.text).toBe('Orders')
   const funnel = echartsOption(proportionalFixture('funnel'), defaultRendererContext) as any
-  expect(funnel.series[0]).toMatchObject({ id: 'series:primary:funnel', type: 'funnel', funnelAlign: 'left', sort: 'ascending', orient: 'vertical' })
+  expect(funnel.series[0]).toMatchObject({ id: 'series:primary:funnel', type: 'funnel', funnelAlign: 'left', sort: 'ascending', orient: 'vertical', left: '6%', right: '44%' })
 
   const graph = echartsOption(networkFixture('graph'), defaultRendererContext) as any
-  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true })
+  expect(graph.series[0]).toMatchObject({ id: 'series:hierarchy:graph', type: 'graph', layout: 'circular', roam: true, left: '8%', right: '8%', top: '8%', bottom: '8%', symbolSize: 16, center: ['50%', '52%'], zoom: 0.76, label: { position: 'right', distance: 8, fontSize: 13 }, labelLayout: { moveOverlap: 'shiftY' }, itemStyle: { borderColor: defaultRendererContext.colors.surface, borderWidth: 2 }, emphasis: { focus: 'adjacency' } })
+  expect(graph.series[0]).not.toHaveProperty('force')
   expect(graph.series[0].links[0]).toMatchObject({ source: 'A', target: 'B', __lv_dataset: 'primary', __lv_row_index: 0 })
-  const sankey = echartsOption(networkFixture('sankey'), defaultRendererContext) as any
-  expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'vertical', nodeGap: 18 })
+  const layeredGraphEnvelope = networkFixture('graph') as any
+  layeredGraphEnvelope.spec.presentation.layout = 'standard'
+  const layeredGraph = echartsOption(layeredGraphEnvelope, defaultRendererContext) as any
+  expect(layeredGraph.series[0]).toMatchObject({ layout: 'none', left: '30%', right: '30%', top: '12%', bottom: '12%' })
+  expect(layeredGraph.series[0].data).toEqual([
+    { name: 'A', x: 0, y: 50, label: { position: 'left', align: 'right' } },
+    { name: 'B', x: 100, y: 50, label: { position: 'right', align: 'left' } },
+  ])
+  const sankeyEnvelope = networkFixture('sankey') as any
+  sankeyEnvelope.spec.presentation.orientation = 'horizontal'
+  sankeyEnvelope.dataState.datasets[0].rows = [['Same', 'Same', 4], ['', 'Target', 2], ['Source', 'Target', 0]]
+  const sankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
+  expect(sankey.series[0]).toMatchObject({ id: 'series:hierarchy:sankey', type: 'sankey', orient: 'horizontal', nodeGap: 18 })
   expect(sankey.series[0].lineStyle).toMatchObject({ color: 'gradient', opacity: 0.45 })
-  expect(sankey.series[0]).toMatchObject({ left: '3%', right: '21%', top: '8%', bottom: '8%' })
+  expect(sankey.series[0]).toMatchObject({ left: '4%', right: '30%', top: '8%', bottom: '8%', label: { width: 96 } })
+  expect(sankey.series[0].links).toEqual([{ source: 'source:Same', target: 'target:Same', sourceLabel: 'Same', targetLabel: 'Same', value: 4, __lv_dataset: 'primary', __lv_row_index: 0 }])
+  expect(sankey.series[0].data).toEqual([{ name: 'source:Same', displayName: 'Same' }, { name: 'target:Same', displayName: 'Same' }])
+  expect(sankey.series[0].label.formatter({ data: sankey.series[0].data[0] })).toBe('Same')
+  expect(sankey.series[0].tooltip.formatter({ data: sankey.series[0].links[0] })).toBe('Same → Same: 4')
+
+  delete sankeyEnvelope.spec.presentation.nodeGap
+  delete sankeyEnvelope.spec.presentation.curveness
+  const defaultLayoutSankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
+  expect(defaultLayoutSankey.series[0]).not.toHaveProperty('nodeGap')
+  expect(defaultLayoutSankey.series[0].lineStyle).not.toHaveProperty('curveness')
+
+  sankeyEnvelope.dataState.datasets[0].rows = [['', 'Target', 2]]
+  const emptySankey = echartsOption(sankeyEnvelope, defaultRendererContext) as any
+  expect(emptySankey.series[0].links).toEqual([])
+  expect(emptySankey.graphic[0].style.text).toBe('No flow data')
 
   for (const mark of ['treemap', 'sunburst'] as const) {
     const envelope = hierarchyFixture(mark)
@@ -835,10 +932,22 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
     expect(option.series[0].id).toBe(`series:hierarchy:${mark}`)
     expect(option.series[0].data[0].children[0].name).toBe('child')
     if (mark === 'sunburst') {
+      expect(option.series[0].radius).toEqual(['10%', '92%'])
       expect(option.series[0].label).toMatchObject({
+        position: 'inside',
+        rotate: 'radial',
+        width: 68,
+        overflow: 'truncate',
+        ellipsis: '...',
+        fontSize: 10,
+        fontWeight: 600,
+        lineHeight: 13,
         textBorderColor: defaultRendererContext.colors.surface,
         textBorderWidth: 2,
       })
+      expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
+    } else {
+      expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
     }
   }
 })

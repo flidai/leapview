@@ -1,0 +1,127 @@
+FAI-544 paired benchstat comparison for the single-request qualification matrix.
+Source: fai-544-ea59be31-qualification.txt
+Method: lane names were normalized only so benchstat could compare control and candidate samples with identical benchmark identities.
+Confidence: benchstat median, 95% interval, alpha 0.05; 10 samples per lane.
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │         sec/op          │    sec/op     vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                8.545m ±  3%   2.055m ± 21%  -75.95% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4             12.791m ± 13%   3.424m ±  3%  -73.24% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                 41.639m ±  4%   5.537m ± 13%  -86.70% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4               59.365m ±  5%   7.910m ±  4%  -86.68% (p=0.000 n=10)
+geomean                                                                         22.80m         4.190m        -81.62%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt      │
+                                                                   │       columns/op        │ columns/op  vs base                 │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                  8.000 ± 0%   8.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4                8.000 ± 0%   8.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                    32.00 ± 0%   32.00 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                  32.00 ± 0%   32.00 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                           16.00        16.00       +0.00%
+¹ all samples are equal
+
+                                                                   │ /tmp/fai544-control.txt │           /tmp/fai544-candidate.txt            │
+                                                                   │ connection-hold-sec/op  │ connection-hold-sec/op  vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                1.710m ±  8%             1.681m ± 21%        ~ (p=0.739 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4              2.878m ± 10%             2.809m ±  4%        ~ (p=0.315 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                  3.768m ±  8%             4.707m ± 13%  +24.94% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                6.163m ±  4%             6.377m ±  4%   +3.47% (p=0.019 n=10)
+geomean                                                                         3.270m                   3.450m         +5.52%
+
+                                                                   │ /tmp/fai544-control.txt │           /tmp/fai544-candidate.txt            │
+                                                                   │ connection-wait-sec/op  │ connection-wait-sec/op  vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                2.055µ ± 10%             1.364µ ± 18%  -33.63% (p=0.001 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4              5.186µ ±  4%             3.093µ ± 10%  -40.35% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                  2.396µ ± 22%             1.806µ ± 17%  -24.61% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                4.195µ ± 18%             3.897µ ±  9%        ~ (p=0.165 n=10)
+geomean                                                                         3.217µ                   2.334µ        -27.44%
+
+                                                                   │ /tmp/fai544-control.txt │         /tmp/fai544-candidate.txt          │
+                                                                   │    duckdb-batches/op    │ duckdb-batches/op  vs base                 │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                  1.000 ± 0%          1.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4                1.000 ± 0%          1.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                    1.000 ± 0%          1.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                  1.000 ± 0%          1.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                           1.000               1.000       +0.00%
+¹ all samples are equal
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │      gc-cycles/op       │ gc-cycles/op  vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                503.35m ± 1%   68.76m ± 22%  -86.34% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4               989.9m ± 1%   133.6m ±  5%  -86.50% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                  2143.0m ± 2%   301.5m ±  4%  -85.93% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                3211.0m ± 3%   500.0m ±  1%  -84.43% (p=0.000 n=10)
+geomean                                                                           1.361        192.9m        -85.82%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt      │
+                                                                   │       gomaxprocs        │ gomaxprocs  vs base                 │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                  1.000 ± 0%   1.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4                4.000 ± 0%   4.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                    1.000 ± 0%   1.000 ± 0%       ~ (p=1.000 n=10) ¹
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                  4.000 ± 0%   4.000 ± 0%       ~ (p=1.000 n=10) ¹
+geomean                                                                           2.000        2.000       +0.00%
+¹ all samples are equal
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │      ipc-bytes/op       │ ipc-bytes/op  vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                92.16Ki ± 0%   70.30Ki ± 0%  -23.72% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4              92.16Ki ± 0%   70.30Ki ± 0%  -23.72% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                  368.9Ki ± 0%   294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                368.9Ki ± 0%   294.3Ki ± 0%  -20.23% (p=0.000 n=10)
+geomean                                                                         184.4Ki        143.8Ki       -21.99%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │       p50-sec/op        │  p50-sec/op   vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                9.183m ±  3%   1.858m ± 21%  -79.77% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4             13.338m ± 19%   3.396m ±  3%  -74.54% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                 40.053m ±  4%   5.304m ±  9%  -86.76% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4               60.047m ±  4%   8.011m ±  4%  -86.66% (p=0.000 n=10)
+geomean                                                                         23.30m         4.046m        -82.63%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │       p95-sec/op        │  p95-sec/op   vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                11.700m ± 6%   3.579m ± 27%  -69.41% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4              15.538m ± 6%   4.453m ±  5%  -71.34% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                  44.971m ± 5%   8.174m ± 37%  -81.82% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                67.548m ± 6%   9.957m ±  4%  -85.26% (p=0.000 n=10)
+geomean                                                                          27.26m        6.001m        -77.99%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │       p99-sec/op        │  p99-sec/op   vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http               14.911m ± 15%   5.058m ± 15%  -66.08% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4             17.585m ±  9%   5.103m ±  4%  -70.98% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                 46.446m ±  7%   9.698m ± 51%  -79.12% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                68.12m ±  7%   10.92m ±  3%  -83.97% (p=0.000 n=10)
+geomean                                                                         30.18m         7.231m        -76.04%
+
+                                                                   │ /tmp/fai544-control.txt │         /tmp/fai544-candidate.txt         │
+                                                                   │    process-rss-bytes    │ process-rss-bytes  vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                105.8Mi ± 2%        114.6Mi ± 3%   +8.37% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4              115.6Mi ± 2%        121.5Mi ± 1%   +5.04% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                  129.1Mi ± 2%        142.7Mi ± 5%  +10.53% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                135.2Mi ± 3%        159.9Mi ± 1%  +18.31% (p=0.000 n=10)
+geomean                                                                         120.9Mi             133.5Mi       +10.46%
+
+                                                                   │ /tmp/fai544-control.txt │       /tmp/fai544-candidate.txt       │
+                                                                   │       requests/s        │  requests/s   vs base                 │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                 117.0 ±  3%    487.1 ± 18%  +316.15% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4               78.18 ± 15%   292.10 ±  3%  +273.62% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                   24.02 ±  4%   180.60 ± 12%  +651.87% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4                 16.84 ±  5%   126.45 ±  4%  +650.67% (p=0.000 n=10)
+geomean                                                                          43.87          238.8        +444.28%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt       │
+                                                                   │          B/op           │     B/op      vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http               2808.0Ki ± 0%   350.8Ki ± 0%  -87.51% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4             2849.2Ki ± 0%   352.0Ki ± 0%  -87.65% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                 18.283Mi ± 0%   1.785Mi ± 0%  -90.24% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4               18.297Mi ± 0%   1.788Mi ± 0%  -90.23% (p=0.000 n=10)
+geomean                                                                         7.108Mi        801.7Ki       -88.98%
+
+                                                                   │ /tmp/fai544-control.txt │      /tmp/fai544-candidate.txt      │
+                                                                   │        allocs/op        │  allocs/op   vs base                │
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http                35165.0 ± 0%    826.0 ± 0%  -97.65% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_narrow_rows_999/lane_http-4              35211.0 ± 0%    830.0 ± 0%  -97.64% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http                 117.130k ± 0%   2.205k ± 0%  -98.12% (p=0.000 n=10)
+DashboardDirectArrowQualification/real_wide_rows_999/lane_http-4               117.160k ± 0%   2.218k ± 0%  -98.11% (p=0.000 n=10)
+geomean                                                                          64.20k        1.353k       -97.89%

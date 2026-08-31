@@ -1009,6 +1009,42 @@ test('auto layout follows the viewport and does not stack when desktop side pane
   }
 })
 
+test('desktop report tables distribute columns across the available visual width', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
+    })
+    const result = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      await table.updateComplete
+      await new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+      await table.updateComplete
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      const plane = table.shadowRoot.querySelector('.table-plane') as HTMLElement
+      const header = table.shadowRoot.querySelector('.head') as HTMLElement
+      return {
+        viewportWidth: scrollport.clientWidth,
+        planeWidth: plane.offsetWidth,
+        headerWidth: header.offsetWidth,
+        horizontalOverflow: scrollport.scrollWidth - scrollport.clientWidth,
+      }
+    })
+    expect(result.viewportWidth).toBeGreaterThan(700)
+    expect(Math.abs(result.planeWidth - result.viewportWidth)).toBeLessThanOrEqual(1)
+    expect(Math.abs(result.headerWidth - result.viewportWidth)).toBeLessThanOrEqual(1)
+    expect(result.horizontalOverflow).toBeLessThanOrEqual(4)
+  } finally {
+    await page.close()
+  }
+})
+
 test('mobile report tables expose horizontal scrolling and a visible swipe hint', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
   try {
@@ -1090,6 +1126,46 @@ test('windowed table keeps a bounded DOM and requests unloaded chunks while scro
   } finally { await page.close() }
 })
 
+test('windowed table keeps requesting the latest chunk during continuous fast scrolling', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => {
+      const dashboard = document.querySelector('lv-dashboard-page') as any
+      const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      return Boolean(tableHost?.shadowRoot?.querySelector('lv-report-table')?.shadowRoot?.querySelector('.table-scrollport'))
+    })
+    const requestedDuringScroll = await page.locator('lv-dashboard-page').evaluate(async (dashboard: any) => {
+      const hosts = Array.from(dashboard.shadowRoot.querySelectorAll('lv-visualization-host')) as any[]
+      const tableHost = hosts.find((host) => host.envelope?.visualID === 'orders')
+      const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
+      table.table = {
+        ...table.table,
+        cardinality: { kind: 'exact', value: 1_000 },
+        availableRows: 1_000,
+      }
+      await table.updateComplete
+      const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
+      let requested = false
+      dashboard.addEventListener('lv-visualization-window-request', () => {
+        requested = true
+      })
+      for (let index = 0; index < 10; index++) {
+        scrollport.scrollTop = (200 + index * 60) * 28
+        scrollport.dispatchEvent(new Event('scroll'))
+        await new Promise((resolve) => window.setTimeout(resolve, 20))
+      }
+      const duringScroll = requested
+      await new Promise((resolve) => window.setTimeout(resolve, 120))
+      return duringScroll
+    })
+    expect(requestedDuringScroll).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 test('selected sticky table cells preserve the visible row highlight', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1122,6 +1198,7 @@ test('selected sticky table cells preserve the visible row highlight', async () 
       const unselected = table.shadowRoot.querySelector('.row[aria-selected="false"]') as HTMLElement
       const selectedColor = getComputedStyle(selected).backgroundColor
       const pinnedColor = getComputedStyle(pinned).backgroundColor
+      const pinnedHeader = table.shadowRoot.querySelector('.header-cell.pinned-left-edge') as HTMLElement
       selected.classList.add('hovered')
       return {
         selected: selectedColor,
@@ -1129,6 +1206,9 @@ test('selected sticky table cells preserve the visible row highlight', async () 
         hovered: getComputedStyle(selected).backgroundColor,
         pinnedHovered: getComputedStyle(pinned).backgroundColor,
         unselected: getComputedStyle(unselected).backgroundColor,
+        dividerWidth: getComputedStyle(pinnedHeader, '::after').width,
+        nativeCellTitles: table.shadowRoot.querySelectorAll('.cell[title]').length,
+        accessibleCellLabels: table.shadowRoot.querySelectorAll('.cell-action[aria-label]').length,
       }
     })
     expect(colors.selected).toBe('rgb(221, 244, 255)')
@@ -1136,6 +1216,9 @@ test('selected sticky table cells preserve the visible row highlight', async () 
     expect(colors.hovered).toBe(colors.selected)
     expect(colors.pinnedHovered).toBe(colors.selected)
     expect(colors.pinned).not.toBe(colors.unselected)
+    expect(colors.dividerWidth).toBe('1px')
+    expect(colors.nativeCellTitles).toBe(0)
+    expect(colors.accessibleCellLabels).toBeGreaterThan(0)
   } finally {
     await page.close()
   }
@@ -3006,6 +3089,88 @@ test('static dropdown selections emit a typed filter mutation', async () => {
   }
 })
 
+test('searchable multi-select dropdowns filter options, preserve multiple values, and clear to All', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-filter-leaf'))
+    const state = await page.evaluate(async () => {
+      const leaf = document.createElement('lv-filter-leaf') as any
+      leaf.definition = {
+        id: 'state', label: 'State', field: 'orders.state', valueKind: 'string',
+        predicates: [{ kind: 'set', operators: ['in'] }],
+        options: { kind: 'static', limit: 3, values: [
+          { value: { kind: 'string', value: 'SP' }, label: 'Sao Paulo' },
+          { value: { kind: 'string', value: 'RJ' }, label: 'Rio de Janeiro' },
+          { value: { kind: 'string', value: 'MG' }, label: 'Minas Gerais' },
+        ] },
+        format: {},
+      }
+      leaf.binding = {
+        key: 'fb_state', id: 'state', filter: 'state', scope: 'page', pageID: 'overview',
+        default: { kind: 'unfiltered' }, selectionMode: 'multiple', maxSelectedValues: 0,
+        readerEditable: true, paneVisible: true, paneOrder: 0, paneLabel: 'State',
+        targets: [], optionDependencies: [],
+      }
+      leaf.presentation = {
+        style: 'dropdown', search: true, selectAll: true,
+        showCounts: false, showSummary: true, compact: false,
+      }
+      const mutations: any[] = []
+      leaf.addEventListener('lv-filter-mutate', (event: CustomEvent) => {
+        mutations.push(event.detail)
+        leaf.expression = event.detail.expression
+      })
+      document.body.append(leaf)
+      await leaf.updateComplete
+      const root = leaf.shadowRoot as ShadowRoot
+      const trigger = root.querySelector<HTMLButtonElement>('.dropdown-trigger')!
+      trigger.click()
+      await leaf.updateComplete
+      const popover = root.querySelector<HTMLElement>('.dropdown-popover')!
+      const search = root.querySelector<HTMLInputElement>('.dropdown-search input')!
+      search.value = 'rio'
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+      await leaf.updateComplete
+      const filtered = Array.from(root.querySelectorAll('.dropdown-option-label')).map((item) => item.textContent?.trim())
+      root.querySelector<HTMLInputElement>('input[aria-label="Rio de Janeiro"]')!.click()
+      await leaf.updateComplete
+      search.value = ''
+      search.dispatchEvent(new Event('input', { bubbles: true }))
+      await leaf.updateComplete
+      root.querySelector<HTMLInputElement>('input[aria-label="Sao Paulo"]')!.click()
+      await leaf.updateComplete
+      const selectedSummary = root.querySelector('.dropdown-value')?.textContent?.trim()
+      root.querySelector<HTMLInputElement>('input[aria-label="All State"]')!.click()
+      await leaf.updateComplete
+      return {
+        expanded: trigger.getAttribute('aria-expanded'),
+        popupRole: popover.getAttribute('role'),
+        popupOpen: popover.matches(':popover-open'),
+        popupPosition: getComputedStyle(popover).position,
+        filtered,
+        selectedSummary,
+        mutations: mutations.map(item => item.expression),
+        clearedSummary: root.querySelector('.dropdown-value')?.textContent?.trim(),
+      }
+    })
+    expect(state.expanded).toBe('true')
+    expect(state.popupRole).toBe('dialog')
+    expect(state.popupOpen).toBe(true)
+    expect(state.popupPosition).toBe('fixed')
+    expect(state.filtered).toEqual(['All', 'Rio de Janeiro'])
+    expect(state.selectedSummary).toBe('2 selected')
+    expect(state.mutations).toEqual([
+      { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'RJ' }] },
+      { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'RJ' }, { kind: 'string', value: 'SP' }] },
+      { kind: 'unfiltered' },
+    ])
+    expect(state.clearedSummary).toBe('All')
+  } finally {
+    await page.close()
+  }
+})
+
 test('clearing a static dropdown visibly returns it to All', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -3103,19 +3268,19 @@ test('closed dynamic dropdowns defer dependency refresh until they are focused a
       leaf.addEventListener('lv-filter-options-needed', (event: CustomEvent) => seen.push(event.detail))
       document.body.append(leaf)
       await leaf.updateComplete
-      const retained = Array.from(leaf.shadowRoot.querySelectorAll('option')).map((option: HTMLOptionElement) => ({
+      const retained = Array.from(leaf.shadowRoot.querySelectorAll('.dropdown-option')).map((option: HTMLLabelElement) => ({
         label: option.textContent?.trim(),
-        selected: option.selected,
+        selected: option.querySelector<HTMLInputElement>('input')?.checked,
       }))
-      leaf.shadowRoot.querySelector('select').focus()
+      leaf.shadowRoot.querySelector<HTMLButtonElement>('.dropdown-trigger').click()
       await leaf.updateComplete
       const afterOpen = seen.length
-      leaf.shadowRoot.querySelector('select').blur()
+      leaf.shadowRoot.querySelector<HTMLElement>('.dropdown-popover').hidePopover()
       leaf.optionContext = 'context-two'
       await leaf.updateComplete
       const afterDependencyChange = seen.length
-      const whileDeferred = Array.from(leaf.shadowRoot.querySelectorAll('option')).map((option: HTMLOptionElement) => option.textContent?.trim())
-      leaf.shadowRoot.querySelector('select').focus()
+      const whileDeferred = Array.from(leaf.shadowRoot.querySelectorAll('.dropdown-option')).map((option: HTMLLabelElement) => option.textContent?.trim())
+      leaf.shadowRoot.querySelector<HTMLButtonElement>('.dropdown-trigger').click()
       await leaf.updateComplete
       return { retained, afterOpen, afterDependencyChange, whileDeferred, afterRefocus: seen.length }
     })

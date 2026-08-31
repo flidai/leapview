@@ -67,6 +67,30 @@ test('TanStack adapter leaves row interaction disabled when the IR declares none
   expect(tableSignal(envelope).interaction).toBeUndefined()
 })
 
+test('TanStack adapter preserves sparse window block identities', () => {
+  const envelope = {
+    schemaVersion: 9, visualID: 'orders', rendererID: 'tanstack', specRevision: 'sha256:test', dataRevision: 3,
+    spec: {
+      kind: 'table', title: 'Orders', datasets: [{ id: 'primary', fields: [{ id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' }] }],
+      dataBudget: { maxRows: 1000, requiredCompleteness: 'partial' }, accessibility: { title: 'Orders', description: 'Orders' }, interactions: [],
+      columns: [{ field: { dataset: 'primary', field: 'order_id' }, label: 'Order', formatting: [] }], presentation: { rowHeight: 28, striped: true, showHeader: true },
+    },
+    dataState: {
+      kind: 'windowed', specRevision: 'sha256:test', dataRevision: 3, generation: 1,
+      schema: { id: 'primary', fields: [{ id: 'order_id', role: 'identity', dataType: 'string', nullable: false, label: 'Order' }] },
+      cardinality: { kind: 'lower_bound', count: 600 }, availableRows: 1000, rowCap: 1000, chunkSize: 50, resetVersion: 2,
+      sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }],
+      blocks: { c: { id: 'c', start: 450, rows: [['o451']], requestSeq: 8, resetVersion: 2, sort: [{ field: { dataset: 'primary', field: 'order_id' }, direction: 'ascending' }] } },
+    },
+    selection: [], status: { kind: 'ready' }, diagnostics: [],
+  } as VisualizationEnvelope
+
+  const table = tableSignal(envelope)
+  expect(table.blocks.c).toMatchObject({ start: 450, requestSeq: 8, rows: [{ order_id: 'o451' }] })
+  expect(table.blocks.a).toMatchObject({ start: 0, requestSeq: 0, rows: [] })
+  expect(table.blocks.b).toMatchObject({ start: 50, requestSeq: 0, rows: [] })
+})
+
 test('TanStack matrix adapter renders dynamic window schema columns with compiled formatting', () => {
   const envelope = {
     schemaVersion: 9, visualID: 'matrix', rendererID: 'tanstack', specRevision: 'sha256:matrix', dataRevision: 2,

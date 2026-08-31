@@ -80,17 +80,17 @@ function defaultColumnSize(column: TableColumn): number {
   const configuredWidth = Number(column.width)
   if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth
   const widths: Record<string, number> = {
-    order_id: 240,
+    order_id: 160,
     purchase_date: 126,
-    status: 128,
+    status: 106,
     state: 78,
     category: 210,
-    revenue: 130,
+    revenue: 114,
     review_score: 104,
     delivery_days: 108,
   }
   if (widths[column.key]) return widths[column.key]
-  if (column.align === 'right') return 120
+  if (column.align === 'right') return 114
   return 140
 }
 
@@ -438,7 +438,7 @@ export class ReportTable extends LitElement {
     .row {
       display: grid;
       grid-template-columns: var(--lv-table-columns);
-      width: var(--lv-table-width, 1080px);
+      width: max(100%, var(--lv-table-width, 1080px));
       min-width: var(--lv-table-width, 1080px);
     }
 
@@ -523,9 +523,8 @@ export class ReportTable extends LitElement {
       inset-block: 0;
       left: 100%;
       z-index: calc(var(--zIndex-default) + 1);
-      width: 10px;
-      border-left: 1px solid var(--lv-line-default);
-      background: inherit;
+      width: 1px;
+      background: var(--lv-line-default);
       pointer-events: none;
     }
 
@@ -602,6 +601,14 @@ export class ReportTable extends LitElement {
       letter-spacing: 0;
       text-align: left;
       text-transform: uppercase;
+    }
+
+    button.header-button > span:first-child {
+      flex: 1 1 auto;
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
     }
 
     button.header-button:hover,
@@ -697,14 +704,14 @@ export class ReportTable extends LitElement {
     .table-plane {
       position: relative;
       isolation: isolate;
-      width: var(--lv-table-width, 1080px);
+      width: max(100%, var(--lv-table-width, 1080px));
       min-width: var(--lv-table-width, 1080px);
     }
 
     .canvas {
       position: relative;
       z-index: 0;
-      width: var(--lv-table-width, 1080px);
+      width: max(100%, var(--lv-table-width, 1080px));
       min-width: var(--lv-table-width, 1080px);
     }
 
@@ -1032,15 +1039,16 @@ export class ReportTable extends LitElement {
     const viewport = this.bodyViewportRef.value
     if (!viewport) return
     this.resizeObserver?.disconnect()
-    this.viewportHeight = viewport.clientHeight
-    this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
-    this.resizeObserver = new ResizeObserver(() => {
-      this.viewportHeight = viewport.clientHeight
+    const syncViewport = () => {
+      const viewportHeight = viewport.clientHeight
+      if (viewportHeight === this.viewportHeight) return
+      this.viewportHeight = viewportHeight
       this.virtualizationController.setViewport(this.viewportTop, this.viewportHeight)
       this.scheduleEnsureBlocksForScroll()
-    })
+    }
+    syncViewport()
+    this.resizeObserver = new ResizeObserver(syncViewport)
     this.resizeObserver.observe(viewport)
-    this.scheduleEnsureBlocksForScroll()
   }
 
   disconnectedCallback(): void {
@@ -1133,19 +1141,20 @@ export class ReportTable extends LitElement {
   }
 
   private gridTemplateFor(columns: TableColumn[]): string {
-    return this.columnPixelWidths(columns).map((size) => `${size}px`).join(' ')
+    return this.columnPixelWidths(columns).map((size) => `minmax(${size}px, ${size}fr)`).join(' ')
   }
 
   private tableWidthFor(columns: TableColumn[]): number {
     return this.columnPixelWidths(columns).reduce((sum, size) => sum + size, 0)
   }
 
-  private columnLineOffsetsFor(columns: TableColumn[]): number[] {
+  private columnLineOffsetsFor(columns: TableColumn[]): string[] {
     const widths = this.columnPixelWidths(columns)
+    const total = widths.reduce((sum, width) => sum + width, 0)
     let offset = 0
     return widths.slice(0, -1).map((width) => {
       offset += width
-      return offset
+      return `${total > 0 ? (offset / total) * 100 : 0}%`
     })
   }
 
@@ -1196,7 +1205,7 @@ export class ReportTable extends LitElement {
       id: column.key,
       accessorKey: column.key,
       header: column.label,
-      cell: (info: any) => formatCell(info.getValue(), column),
+      cell: (info: any) => formatCell(info.getValue(), column, this.table.type !== 'table'),
       size: defaultColumnSize(column),
       minSize: this.minColumnSize(column),
       enableResizing: true,
@@ -1205,7 +1214,11 @@ export class ReportTable extends LitElement {
   }
 
   private tanstackTable(rows: TanStackTableRow[]) {
-    const pinnedColumns = this.columns.filter((column) => column.role === 'row_header').map((column) => column.key)
+    // Keep one stable identity column visible while the rest of a wide table
+    // scrolls. Pinning every row-header column can exceed a narrow card's
+    // viewport, causing the browser to clamp several sticky cells onto the
+    // same right edge.
+    const pinnedColumns = this.columnController.pinnedKeys(this.columns, this.columnVisibility)
     const sorting: SortingState = this.table.sort?.key
       ? [{ id: this.table.sort.key, desc: this.table.sort.direction === 'desc' }]
       : []
@@ -1561,7 +1574,6 @@ export class ReportTable extends LitElement {
             <div
               class=${this.cellClass(column, cellKey, row, cell.column)}
               role="cell"
-              title=${String(row[cell.column.id] ?? '')}
               style=${this.cellStyle(row, column, cell.column)}
             >
               <button
@@ -1668,7 +1680,7 @@ export class ReportTable extends LitElement {
               ${this.availableRows === 0 && !loading ? html`<div class="empty">Waiting for table data</div>` : html`
                 <div class="canvas" role="rowgroup" style=${`height:${totalHeight}px`}>
                   <div class="grid-lines" aria-hidden="true">
-                    ${columnLineOffsets.map((offset) => html`<span class="grid-line" style=${`left:${offset}px`}></span>`)}
+                    ${columnLineOffsets.map((offset) => html`<span class="grid-line" style=${`left:${offset}`}></span>`)}
                   </div>
                   ${visibleRows.map((slot) => {
                     if (slot.kind === 'skeleton') return this.renderSkeletonSegment(headers, slot.index)
@@ -1724,10 +1736,12 @@ export class ReportTable extends LitElement {
   }
 
   private scheduleJumpBlock(start: number): void {
-    if (this.jumpTimer && this.pendingJumpStart === start) return
     this.pendingJumpStart = start
     this.requestUpdate()
-    this.clearJumpTimer()
+    // Keep one bounded trailing request alive while fast scrolling updates the
+    // destination. Restarting the timer for every crossed chunk can postpone
+    // loading indefinitely until scrolling stops.
+    if (this.jumpTimer) return
     this.jumpTimer = window.setTimeout(() => {
       this.jumpTimer = 0
       this.emitBlock('all', this.pendingJumpStart, this.table.sort, this.table.resetVersion)
@@ -1880,7 +1894,7 @@ export class ReportTable extends LitElement {
     return this.loadedRows.map(({ row }) => {
       const next: TableRow = {}
       for (const column of this.columns) {
-        next[column.key] = formatCell(row[column.key], column)
+        next[column.key] = formatCell(row[column.key], column, this.table.type !== 'table')
       }
       return next
     })

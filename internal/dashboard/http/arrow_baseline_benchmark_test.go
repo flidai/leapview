@@ -365,11 +365,12 @@ func dashboardBaselineJSONRows(t *testing.T, document map[string]any) [][]any {
 }
 
 type dashboardBaselineFixture struct {
-	service  *dashboardruntime.Service
-	core     *materializeruntime.Runtime
-	database *dashboardBaselineDatabase
-	governor dashboardBaselineGovernor
-	handler  Handler
+	service         *dashboardruntime.Service
+	core            *materializeruntime.Runtime
+	database        *dashboardBaselineDatabase
+	governor        dashboardBaselineGovernor
+	handler         Handler
+	decorateContext func(context.Context) context.Context
 }
 
 func newDashboardBaselineFixture(tb testing.TB, rows int) *dashboardBaselineFixture {
@@ -469,6 +470,10 @@ func (f *dashboardBaselineFixture) serve(tb testing.TB, visual string, rows int,
 		observation.physicalQueries += value.Count
 		observation.results = append(observation.results, value.Result)
 	})
+	ctx = dataquery.WithGovernor(ctx, f.governor)
+	if f.decorateContext != nil {
+		ctx = f.decorateContext(ctx)
+	}
 	request = request.WithContext(ctx)
 	recorder := httptest.NewRecorder()
 	f.handler.QueryDashboardVisualData(recorder, request)
@@ -552,10 +557,18 @@ type dashboardBaselineObservation struct {
 
 type dashboardBaselineGovernor struct {
 	policyFingerprint string
+	calls             *atomic.Int64
+	observe           func(context.Context, dataquery.Query)
 }
 
-func (g dashboardBaselineGovernor) GovernDataQuery(_ context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+func (g dashboardBaselineGovernor) GovernDataQuery(ctx context.Context, request dataquery.Query) (dataquery.Query, dataquery.ResultTransformer, error) {
+	if g.calls != nil {
+		g.calls.Add(1)
+	}
 	request.EffectivePolicyFingerprint = g.policyFingerprint
+	if g.observe != nil {
+		g.observe(ctx, request)
+	}
 	return request, nil, nil
 }
 
@@ -580,9 +593,10 @@ func (o dashboardBaselineObservation) cacheMisses() int {
 }
 
 type dashboardBaselineFactory struct {
-	database           *dashboardBaselineDatabase
+	database           materializeruntime.Database
 	dependencyEvidence resultidentity.Evidence
 	resultPartition    resultidentity.Partition
+	resultLimits       dataquery.ResultLimits
 	core               *materializeruntime.Runtime
 }
 
@@ -592,7 +606,7 @@ func (f *dashboardBaselineFactory) OpenDashboardProjectDataRuntimes(ctx context.
 	core, err := materializeruntime.NewRuntimeView(ctx, materializeruntime.RuntimeConfig{
 		ModelID: dashboardBaselineModelID.String(), Model: model, Database: f.database,
 		Sources: dashboardBaselineSources{}, SnapshotOnly: true, ResultPartition: f.resultPartition,
-		DependencyEvidence: f.dependencyEvidence,
+		DependencyEvidence: f.dependencyEvidence, ResultLimits: f.resultLimits,
 	})
 	if err != nil {
 		return nil, err
@@ -654,6 +668,7 @@ type dashboardBaselinePhysicalSnapshot struct {
 type dashboardBaselineDatabase struct {
 	rows             int
 	evidenceMetadata bool
+	observePlan      func(semanticquery.Plan)
 	queries          atomic.Int64
 	mu               sync.Mutex
 	physical         dashboardBaselinePhysicalSnapshot
@@ -661,6 +676,9 @@ type dashboardBaselineDatabase struct {
 
 func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanticquery.Plan, sink arrowquery.Sink) error {
 	d.queries.Add(1)
+	if d.observePlan != nil {
+		d.observePlan(plan)
+	}
 	countOnly := strings.Contains(strings.ToUpper(plan.SQL), "COUNT(")
 	rowCount := d.rows
 	if countOnly {
@@ -742,6 +760,9 @@ func (d *dashboardBaselineDatabase) QueryArrow(ctx context.Context, plan semanti
 		d.mu.Lock()
 		d.physical = dashboardBaselinePhysicalSnapshot{types: types, nulls: totalNulls}
 		d.mu.Unlock()
+	}
+	if err := arrowquery.ConsumeSchemaBudget(ctx, schema); err != nil {
+		return err
 	}
 	if err := sink.WriteSchema(schema); err != nil {
 		return err
@@ -926,10 +947,16 @@ func dashboardBaselineModel() *semanticmodel.Model {
 		}},
 		Datasets:   map[string]semanticmodel.SemanticDatasetSpec{dashboardBaselineDatasetID: {Model: dashboardBaselineDatasetID}},
 		Dimensions: semanticDimensions,
-		Metrics: map[string]semanticmodel.Metric{"value_metric": {
-			Name: "value_metric", Type: "aggregate", Dataset: dashboardBaselineDatasetID, Aggregation: "sum",
-			Input: &semanticmodel.MetricInput{Field: "orders.field_06"}, Empty: "zero",
-		}},
+		Metrics: map[string]semanticmodel.Metric{
+			"value_metric": {
+				Name: "value_metric", Type: "aggregate", Dataset: dashboardBaselineDatasetID, Aggregation: "sum",
+				Input: &semanticmodel.MetricInput{Field: "orders.field_06"}, Empty: "zero",
+			},
+			"value_metric_b": {
+				Name: "value_metric_b", Type: "aggregate", Dataset: dashboardBaselineDatasetID, Aggregation: "sum",
+				Input: &semanticmodel.MetricInput{Field: "orders.field_15"}, Empty: "zero",
+			},
+		},
 	}
 	dashboardWarmCacheExtendModel(model)
 	return model

@@ -24,7 +24,26 @@ try {
 async function main(): Promise<void> {
   try {
     const baseURL = await resolveBaseURL()
-    await run(['bun', 'run', 'qa:datastar-lit-routes'], { LEAPVIEW_BASE_URL: baseURL })
+    const qaScope = Bun.env.LEAPVIEW_UI_QA_SCOPE?.trim() || 'all'
+    if (qaScope !== 'all' && qaScope !== 'visual') {
+      throw new Error(`Unsupported LEAPVIEW_UI_QA_SCOPE=${JSON.stringify(qaScope)}; expected "all" or "visual"`)
+    }
+    if (qaScope === 'all') {
+      await run(['bun', 'run', 'qa:datastar-lit-routes'], { LEAPVIEW_BASE_URL: baseURL })
+    }
+    const visualCommand = [
+      'bun',
+      'x',
+      'playwright',
+      'test',
+      '--config',
+      'scripts/playwright.visual.config.ts',
+    ]
+    const visualEnv = { LEAPVIEW_BASE_URL: baseURL }
+    if (Bun.env.LEAPVIEW_UPDATE_VISUAL_BASELINES === '1') {
+      await run([...visualCommand, '--update-snapshots'], visualEnv)
+    }
+    await run(visualCommand, visualEnv)
   } finally {
     await cleanup()
   }

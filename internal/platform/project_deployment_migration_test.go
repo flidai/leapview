@@ -43,7 +43,7 @@ func TestManagedDataMigrationCreatesProjectDeploymentsWithoutLegacyRollouts(t *t
 
 // TestDeliveryMigrationChainIsContiguousAndRestartSafe keeps the embedded
 // Goose chain's current tail explicit. A fresh install and a second Open both
-// apply/verify every migration through 094; a missing or duplicated sequence
+// apply/verify every migration through 095; a missing or duplicated sequence
 // entry would either fail the numeric assertion or leave one of the tail
 // columns absent after restart.
 func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
@@ -67,7 +67,7 @@ func TestDeliveryMigrationChainIsContiguousAndRestartSafe(t *testing.T) {
 
 // TestDeliveryMigrationUpgradeFrom072 exercises the real upgrade path rather
 // than only a fresh install: seed a database through the last pre-delivery
-// migration, then let Open apply 073..094 in one restart-safe upgrade.
+// migration, then let Open apply 073..095 in one restart-safe upgrade.
 func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 	ctx := context.Background()
 	path := filepath.Join(t.TempDir(), "delivery-upgrade.db")
@@ -100,7 +100,7 @@ func TestDeliveryMigrationUpgradeFrom072(t *testing.T) {
 
 // TestDashboardPublicationRelayMigrationUpgradeFromPredecessor proves the
 // narrow FAI-596 forward migration removes only the legacy relay after the
-// migration-093 predecessor. The publication history and stream registry
+// migration-094 predecessor. The publication history and stream registry
 // tables/indexes remain available for the SQLite compatibility path.
 func TestDashboardPublicationRelayMigrationUpgradeFromPredecessor(t *testing.T) {
 	ctx := context.Background()
@@ -116,9 +116,9 @@ func TestDashboardPublicationRelayMigrationUpgradeFromPredecessor(t *testing.T) 
 		legacy.Close()
 		t.Fatalf("set migration dialect: %v", err)
 	}
-	if err := goose.UpToContext(ctx, legacy, "migrations", 93); err != nil {
+	if err := goose.UpToContext(ctx, legacy, "migrations", 94); err != nil {
 		legacy.Close()
-		t.Fatalf("seed migration-093 predecessor: %v", err)
+		t.Fatalf("seed migration-094 predecessor: %v", err)
 	}
 	seedDashboardPublicationRelayPredecessor(t, ctx, legacy)
 	assertDashboardPublicationRelayPresent(t, ctx, legacy)
@@ -128,7 +128,7 @@ func TestDashboardPublicationRelayMigrationUpgradeFromPredecessor(t *testing.T) 
 
 	store, err := Open(ctx, path)
 	if err != nil {
-		t.Fatalf("upgrade migration-093 predecessor: %v", err)
+		t.Fatalf("upgrade migration-094 predecessor: %v", err)
 	}
 	assertDashboardPublicationRelayRemoved(t, ctx, store)
 	assertDashboardPublicationRows(t, ctx, store)
@@ -245,6 +245,15 @@ func TestRecoveryQualificationLedgerMigrationUpDownAndLegacyUpgrade(t *testing.T
 	} {
 		assertSQLTableCount(t, ctx, legacy, table, 1)
 	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 0)
+	if err := goose.UpToContext(ctx, legacy, "migrations", 94); err != nil {
+		t.Fatalf("upgrade recovery ledger fairness state: %v", err)
+	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 1)
+	if err := goose.DownToContext(ctx, legacy, "migrations", 93); err != nil {
+		t.Fatalf("downgrade recovery ledger fairness state: %v", err)
+	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 0)
 	if err := goose.DownToContext(ctx, legacy, "migrations", 92); err != nil {
 		t.Fatalf("downgrade recovery ledger migration: %v", err)
 	}
@@ -254,9 +263,10 @@ func TestRecoveryQualificationLedgerMigrationUpDownAndLegacyUpgrade(t *testing.T
 	} {
 		assertSQLTableCount(t, ctx, legacy, table, 0)
 	}
-	if err := goose.UpToContext(ctx, legacy, "migrations", 93); err != nil {
+	if err := goose.UpToContext(ctx, legacy, "migrations", 94); err != nil {
 		t.Fatalf("reapply recovery ledger migration: %v", err)
 	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 1)
 }
 
 func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store) {
@@ -265,19 +275,19 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied = 1`).Scan(&latest); err != nil {
 		t.Fatalf("inspect applied Goose migrations: %v", err)
 	}
-	if latest != 94 {
-		t.Fatalf("latest applied migration = %d, want 94", latest)
+	if latest != 95 {
+		t.Fatalf("latest applied migration = %d, want 95", latest)
 	}
 	rows, err := store.SQLDB().QueryContext(ctx, `
 		SELECT version_id
 		FROM goose_db_version
-		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 94
+		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 95
 		ORDER BY version_id`)
 	if err != nil {
 		t.Fatalf("inspect applied delivery migration sequence: %v", err)
 	}
 	defer rows.Close()
-	for want := int64(73); want <= 94; want++ {
+	for want := int64(73); want <= 95; want++ {
 		if !rows.Next() {
 			t.Fatalf("applied delivery migration sequence ended before %d", want)
 		}
@@ -323,6 +333,7 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	for _, table := range []string{
 		"recovery_qualification_schedules", "recovery_qualification_occurrences",
 		"recovery_qualification_attempts", "recovery_qualification_evidence_attempts",
+		"recovery_qualification_enqueue_cursor",
 	} {
 		assertTableCount(t, ctx, store, table, 1)
 	}

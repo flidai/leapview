@@ -34,8 +34,9 @@ type WorkRequest struct {
 	Plan        command.RefreshPlan
 	Before      func(context.Context) error
 	// Observers may be invoked concurrently by independent consumer jobs.
-	EventObserved EventPublisher
-	CacheObserved dataquery.CacheOutcomeObserver
+	EventObserved            EventPublisher
+	CacheObserved            dataquery.CacheOutcomeObserver
+	CacheObservationObserved dataquery.CacheObserver
 }
 
 // TargetWork owns refresh delivery only. The consumer executor owns query
@@ -55,6 +56,7 @@ func TargetWork(metrics TargetMetrics, request WorkRequest) RefreshWork {
 				request.CacheObserved(outcome)
 			}
 		})
+		ctx = dataquery.WithCacheObserver(ctx, request.CacheObservationObserved)
 		if request.Before != nil {
 			if err := request.Before(ctx); err != nil {
 				publishRefreshError(ctx, observedPublish, err)

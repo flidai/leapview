@@ -174,7 +174,7 @@ relay backed by
 - remove or rewrite only the cross-replica relay test
   [`TestPublicationBrokerRelaysEventsAcrossReplicas`](../../internal/app/dashboard_publications_test.go);
 - apply forward Goose
-  [migration 094](../../internal/platform/migrations/094_dashboard_publication_stream_relay_removal.sql),
+  [migration 095](../../internal/platform/migrations/095_dashboard_publication_stream_relay_removal.sql),
   which drops only `dashboard_publication_stream_events` and its
   `dashboard_publication_stream_events_stream_idx` index without rewriting
   migration 040. Fresh-install, reopen, predecessor-upgrade, and

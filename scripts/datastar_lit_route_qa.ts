@@ -570,15 +570,16 @@ async function verifyFilterShowcase(): Promise<void> {
         label: 'state dropdown',
         bindingID: 'state',
         mutate: async () => {
-          const dropdown = page.getByRole('combobox', { name: 'State', exact: true })
-          await dropdown.focus()
+          const dropdown = page.getByRole('button', { name: /^State:/ })
+          await dropdown.click()
           await page.waitForFunction(() => {
             const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
             const slicer = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-slicer') ?? [])
               .find((candidate: any) => candidate.binding?.id === 'state') as any
             return (slicer?.options?.items?.length ?? 0) > 0
           }, undefined, { timeout: 30_000 })
-          await dropdown.selectOption({ index: 1 })
+          const options = page.getByRole('dialog', { name: 'State filter options', exact: true })
+          await options.getByRole('checkbox').nth(1).check()
         },
         expressionKind: 'set',
       },

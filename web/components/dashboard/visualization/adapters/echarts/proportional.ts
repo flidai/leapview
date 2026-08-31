@@ -54,6 +54,10 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   if (radius !== undefined) series.radius = radius
   if (spec.mark === 'funnel') {
     series.orient = presentation.orientation
+    if (outside && presentation.orientation === 'vertical') {
+      series.left = '6%'
+      series.right = '44%'
+    }
     if (presentation.align !== undefined) series.funnelAlign = presentation.align
     series.sort = presentation.sort === 'ascending' ? 'ascending' : presentation.sort === 'descending' ? 'descending' : 'none'
   }

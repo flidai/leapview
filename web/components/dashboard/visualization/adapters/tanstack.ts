@@ -185,15 +185,14 @@ function block(start: number, rows: unknown[][], fields: VisualizationField[], r
 }
 
 function tableBlocks(envelope: VisualizationEnvelope, state: Extract<VisualizationEnvelope['dataState'], { kind: 'windowed' }>, fields: VisualizationField[]): TableSignal['blocks'] {
-  const values = Object.values(state.blocks).sort((left, right) => left.start - right.start)
   const fallbackSort = tableSort(state.sort[0], fields[0]?.id)
-  const at = (index: number, start: number): TableBlock => {
-    const value = values[index]
+  const at = (id: 'a' | 'b' | 'c', start: number): TableBlock => {
+    const value = state.blocks[id]
     if (!value) return block(start, [], fields, 0, state.resetVersion, fallbackSort)
     const projection = projectVisualizationHighlights(envelope, state.schema.id, fields.map((field) => field.id), value.rows)
     return block(value.start, value.rows, fields, value.requestSeq, value.resetVersion, tableSort(value.sort[0], fallbackSort.key), projection.matchedRows)
   }
-  return { a: at(0, 0), b: at(1, state.chunkSize), c: at(2, state.chunkSize * 2) }
+  return { a: at('a', 0), b: at('b', state.chunkSize), c: at('c', state.chunkSize * 2) }
 }
 
 function inlineBlocks(envelope: VisualizationEnvelope, state: Extract<VisualizationEnvelope['dataState'], { kind: 'inline' }>, fields: VisualizationField[], sort: TableSort): TableSignal['blocks'] {

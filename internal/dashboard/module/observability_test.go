@@ -2,6 +2,8 @@ package module
 
 import (
 	"testing"
+
+	"github.com/flidai/leapview/internal/analytics/dataquery"
 )
 
 type testDashboardTelemetry struct{}
@@ -11,6 +13,7 @@ func (testDashboardTelemetry) DashboardRefreshFinished(string, string, int, map[
 func (testDashboardTelemetry) DashboardRefreshEventObserved(string, string)                     {}
 func (testDashboardTelemetry) VisualizationFrameObserved(string, int, int, int)                 {}
 func (testDashboardTelemetry) DashboardCacheObserved(string)                                    {}
+func (testDashboardTelemetry) DashboardCacheObservationObserved(dataquery.CacheObservation)     {}
 func (testDashboardTelemetry) SpatialTileObserved(string, string, string, int64, int64, int, int, bool) {
 }
 
@@ -33,5 +36,8 @@ func TestBuildWiresProgressiveObservers(t *testing.T) {
 	}
 	if handler.Broker != module.publicBroker {
 		t.Fatal("dashboard handler and module use different local brokers")
+	}
+	if handler.CacheObservationObserved == nil {
+		t.Fatal("typed dashboard cache observer is not configured")
 	}
 }

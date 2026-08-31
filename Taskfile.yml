@@ -363,6 +363,45 @@ tasks:
       - go test ./internal/dashboard/http -run '^TestDashboardWarm' -bench '^BenchmarkDashboardWarmCacheConcurrency$' -benchmem -benchtime=250ms -count=10 -cpu=1
       - go test ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardWarmSerializationStages$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
+  test:arrow:direct-streaming-experiment:
+    desc: Run the isolated FAI-543 governed native-v1 prototype contracts
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^(TestDashboardNativeArrowContract|TestDashboardDirectArrowExperiment)' -count=1
+      - go test -tags=fai543experiment ./internal/dashboard/queryauthz -run '^(TestDashboardNativeArrowContract|TestDirectArrowExperiment)' -count=1
+      - go test ./internal/dashboard/semanticapi -run '^(TestSemanticArrowSink|TestWriteSemanticArrowResponse)' -count=1
+
+  bench:arrow:direct-streaming-experiment:
+    desc: Compare current api_direct with the isolated FAI-543 governed native-v1 prototype
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
+  test:arrow:direct-streaming-qualification:
+    desc: Run the isolated FAI-544 real-DuckDB and HTTP qualification contracts
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^TestDashboardDirectArrowQualification' -count=1
+
+  bench:arrow:direct-streaming-qualification:quick:
+    desc: Run a bounded local sample of the FAI-544 qualification workloads
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualification$' -benchmem -benchtime=100ms -count=1 -cpu=1
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualificationConcurrency$' -benchmem -benchtime=100ms -count=1 -cpu=1
+
+  bench:arrow:direct-streaming-qualification:
+    desc: Run comparison-grade FAI-544 real-DuckDB and HTTP qualification workloads
+    cmds:
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualification$' -benchmem -benchtime=1s -count=10 -cpu=1,4
+      - go test -tags='fai543experiment duckdb_arrow' ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowQualificationConcurrency$' -benchmem -benchtime=1s -count=10 -cpu=1,4
+
+  bench:cache:cutover:quick:
+    desc: Smoke-test cache cutover latency and retention benchmarks
+    cmds:
+      - go test -p 1 -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize -run '^$' -bench '^BenchmarkCacheCutover' -benchmem -benchtime=100ms -count=3 -cpu=1
+
+  bench:cache:cutover:full:
+    desc: Capture comparison-grade cache cutover benchmark evidence
+    cmds:
+      - go test -p 1 -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize -run '^$' -bench '^BenchmarkCacheCutover' -benchmem -benchtime=500ms -count=10 -cpu=1
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:
@@ -377,6 +416,14 @@ tasks:
     cmds:
       - bun test scripts/qa_ui_framework_config.test.ts
       - bun scripts/qa_ui_framework.ts
+
+  qa:ui-framework:visual:update:
+    desc: Review and refresh the UI framework visual-regression baselines
+    deps:
+      - node:deps
+    cmds:
+      - bun test scripts/qa_ui_framework_config.test.ts
+      - LEAPVIEW_UI_QA_SCOPE=visual LEAPVIEW_UPDATE_VISUAL_BASELINES=1 bun scripts/qa_ui_framework.ts
 
   qa:movielens-performance:
     desc: Run the local/nightly dashboard performance runner with the MovieLens scenario (not part of CI)
@@ -1112,6 +1159,17 @@ tasks:
       # Keep the ordinary package lane focused on unit tests instead of
       # starting the same pinned containers a second time.
       - go list ./... | grep -v '/internal/app$' | xargs go test -p 2 -skip '^(TestPostgreSQL18|TestBaselinePostgreSQL18$)'
+
+  test:cache:qualification:
+    desc: Race-qualify stable cache cutover, generation execution, and bounded cache observers
+    cmds:
+      - go test -race -tags=duckdb_arrow -p 1 ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -count=1
+
+  test:cache:rollout:
+    desc: Enforce repeated correctness, metrics, and race-stability cache cutover gates
+    cmds:
+      - go test -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -run 'CutoverQualification|CacheCutoverRolloutMetrics|CacheCutoverReuseMetric' -count=100
+      - go test -race -tags=duckdb_arrow -p 1 ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -run 'CutoverQualification|CacheCutoverRolloutMetrics|CacheCutoverReuseMetric' -count=20
 
   test:go:app:0:
     cmds:

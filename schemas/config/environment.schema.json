@@ -3436,6 +3436,28 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_UI_QA_SCOPE": {
+      "default": "all",
+      "description": "UI framework QA scope; all runs route and visual coverage, while visual runs only screenshot comparisons.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "ui-qa"
+    },
+    "LEAPVIEW_UPDATE_VISUAL_BASELINES": {
+      "default": "false",
+      "description": "Write reviewed UI visual-regression baselines before immediately comparing them again.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "ui-qa"
+    },
+    "LEAPVIEW_VISUAL_ARTIFACT_DIR": {
+      "default": ".tmp/qa-ui-framework/visual-artifacts",
+      "description": "Directory where UI visual-regression reports and failure artifacts are written.",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "ui-qa"
+    },
     "LEAPVIEW_WAREHOUSE_DSN": {
       "description": "Example externally supplied warehouse connection credential.",
       "type": "string",

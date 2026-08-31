@@ -179,7 +179,7 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 			plan, _ := preparation.Plan.(command.RefreshPlan)
 			return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
 				DashboardID: dashboardID, PageID: activePage.ID, ModelID: request.ModelID,
-				Filters: preparation.Filters, Plan: plan, EventObserved: h.RefreshEventObserved, CacheObserved: h.CacheObserved,
+				Filters: preparation.Filters, Plan: plan, EventObserved: h.RefreshEventObserved, CacheObserved: h.CacheObserved, CacheObservationObserved: h.CacheObservationObserved,
 			})
 		})
 	})
@@ -189,13 +189,14 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	}, func(preparation dashboardstream.RefreshPreparation) dashboardstream.RefreshWork {
 		plan, _ := preparation.Plan.(command.RefreshPlan)
 		return dashboardstream.TargetWork(metrics, dashboardstream.WorkRequest{
-			DashboardID:   dashboardID,
-			PageID:        activePage.ID,
-			ModelID:       request.ModelID,
-			Filters:       preparation.Filters,
-			Plan:          plan,
-			EventObserved: h.RefreshEventObserved,
-			CacheObserved: h.CacheObserved,
+			DashboardID:              dashboardID,
+			PageID:                   activePage.ID,
+			ModelID:                  request.ModelID,
+			Filters:                  preparation.Filters,
+			Plan:                     plan,
+			EventObserved:            h.RefreshEventObserved,
+			CacheObserved:            h.CacheObserved,
+			CacheObservationObserved: h.CacheObservationObserved,
 		})
 	})
 	if err != nil {

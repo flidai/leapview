@@ -23,9 +23,16 @@ const canonicalProject = projectgraph.ResourceID("project:sales")
 
 type canonicalMetrics struct {
 	queryruntime.Metrics
-	model      *semanticmodel.Model
-	result     dataquery.Result
-	arrowError error
+	model        *semanticmodel.Model
+	result       dataquery.Result
+	arrowError   error
+	arrowCapture *canonicalArrowCapture
+}
+
+type canonicalArrowCapture struct {
+	calls   int
+	request dataquery.Query
+	schema  func(dataquery.Query) *arrow.Schema
 }
 
 func (m canonicalMetrics) Catalog() catalog.Catalog {
@@ -47,9 +54,17 @@ func (m canonicalMetrics) Planner(id string) (consumer.Planner, bool) {
 func (m canonicalMetrics) ExecuteDataQuery(context.Context, dataquery.Query) (dataquery.Result, error) {
 	return m.result, nil
 }
-func (m canonicalMetrics) ExecuteDataQueryArrow(_ context.Context, _ dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
+func (m canonicalMetrics) ExecuteDataQueryArrow(_ context.Context, request dataquery.Query, sink arrowquery.Sink) (dataquery.Result, error) {
+	var schema *arrow.Schema
+	if m.arrowCapture != nil {
+		m.arrowCapture.calls++
+		m.arrowCapture.request = request
+		if m.arrowCapture.schema != nil {
+			schema = m.arrowCapture.schema(request)
+		}
+	}
 	if sink != nil {
-		if err := sink.WriteSchema((*arrow.Schema)(nil)); err != nil {
+		if err := sink.WriteSchema(schema); err != nil {
 			return dataquery.Result{}, err
 		}
 	}
@@ -149,6 +164,8 @@ func canonicalMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.Authoriz
 		switch value := option.(type) {
 		case error:
 			underlying.arrowError = value
+		case *canonicalArrowCapture:
+			underlying.arrowCapture = value
 		case string:
 			if stringIndex == 0 {
 				principalID = value
