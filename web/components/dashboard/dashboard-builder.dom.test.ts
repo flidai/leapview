@@ -1199,11 +1199,11 @@ test('dashboard builder keeps table columns within the bound records dataset', a
       await element.updateComplete
       const root = element.shadowRoot
       const rows = Array.from(root.querySelectorAll<HTMLElement>('.data-pane .field'))
-      const row = (label: string, context: string, group?: string) => rows.find((candidate) => candidate.querySelector('.field-label')?.textContent?.trim() === label && (candidate.querySelector('.field-context')?.textContent ?? '').trim().startsWith(context) && (!group || candidate.closest('.field-section')?.getAttribute('data-field-group') === group))!
+      const row = (label: string, datasetID: string, group?: string) => rows.find((candidate) => candidate.querySelector('.field-label')?.textContent?.trim() === label && candidate.closest('[data-dataset-id]')?.getAttribute('data-dataset-id') === datasetID && (!group || candidate.closest('.field-list')?.getAttribute('data-field-group') === group))!
       const metricRevenue = rows.find((candidate) => candidate.getAttribute('aria-label')?.startsWith('Revenue. Measure.'))!
-      const physicalRevenue = rows.find((candidate) => candidate.getAttribute('aria-label')?.startsWith('Revenue. Dimension.') && (candidate.querySelector('.field-context')?.textContent ?? '').trim().startsWith('Sales orders'))!
-      const ordersCustomer = row('Customer ID', 'Sales orders', 'dimension')
-      const customersCustomer = row('Customer ID', 'Sales customers')
+      const physicalRevenue = rows.find((candidate) => candidate.getAttribute('aria-label')?.startsWith('Revenue. Dimension.') && candidate.closest('[data-dataset-id]')?.getAttribute('data-dataset-id') === 'sales_orders')!
+      const ordersCustomer = row('Customer ID', 'sales_orders', 'dimension')
+      const customersCustomer = row('Customer ID', 'sales_customers')
       const commands: unknown[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
       customersCustomer.click()
@@ -1307,7 +1307,7 @@ test('dashboard builder highlights compatible visual and field-well drop targets
   }
 })
 
-test('dashboard builder presents a role-first field catalog with business context and used state', async () => {
+test('dashboard builder presents an entity-first field catalog with role filters and record columns', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1328,6 +1328,7 @@ test('dashboard builder presents a role-first field catalog with business contex
                   { id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'String', description: 'Order status' },
                   { id: 'orders.total', label: 'Total', kind: 'metric', dataType: 'Decimal', description: 'Order total' },
                   { id: 'orders.ordered_at', label: 'Ordered at', kind: 'dimension', dataType: 'DateTime', description: 'Order timestamp' },
+                  { id: 'orders.id', label: 'Order ID', kind: 'dimension', roles: ['detail'], dataType: 'String', description: 'Record identifier' },
                   { id: 'orders.payload', label: 'Payload', kind: 'dimension', dataType: 'Opaque', description: 'Raw payload' },
                 ],
               },
@@ -1345,12 +1346,14 @@ test('dashboard builder presents a role-first field catalog with business contex
       })
       await element.updateComplete
       const root = element.shadowRoot
-      const sections = Array.from(root.querySelectorAll('.data-pane .field-section')).map((section) => ({
-        group: section.getAttribute('data-field-group'),
-        title: section.querySelector('.field-section-title')?.textContent?.trim(),
-        fields: Array.from(section.querySelectorAll('.field')).map((field) => ({
+      const entities = Array.from(root.querySelectorAll('.data-pane .field-entity')).map((entity) => ({
+        id: entity.getAttribute('data-dataset-id'),
+        title: entity.querySelector('.field-entity-title')?.textContent?.trim(),
+        count: entity.querySelector('.field-entity-count')?.textContent?.trim(),
+        groups: Array.from(entity.querySelectorAll('.field-list')).map((list) => list.getAttribute('data-field-group')),
+        fields: Array.from(entity.querySelectorAll('.field')).map((field) => ({
           label: field.querySelector('.field-label')?.textContent?.trim(),
-          context: field.querySelector('.field-context')?.textContent?.trim(),
+          hasContext: Boolean(field.querySelector('.field-context')),
           used: field.getAttribute('data-used'),
           usedMarker: Boolean(field.querySelector('.field-used')),
           scalarTypeLabels: field.querySelectorAll('.field-type').length,
@@ -1361,14 +1364,22 @@ test('dashboard builder presents a role-first field catalog with business contex
         role: button.getAttribute('data-field-filter'),
         pressed: button.getAttribute('aria-pressed'),
       }))
-      const status = sections.flatMap((section) => section.fields).find((field) => field.label === 'Status')
-      const typeLabelCount = sections.flatMap((section) => section.fields).reduce((count, field) => count + field.scalarTypeLabels, 0)
+      const status = entities.flatMap((entity) => entity.fields).find((field) => field.label === 'Status')
+      const typeLabelCount = entities.flatMap((entity) => entity.fields).reduce((count, field) => count + field.scalarTypeLabels, 0)
+      const recordFields = root.querySelector('.data-pane details.record-fields') as HTMLDetailsElement | null
+      const recordSummary = recordFields?.querySelector('summary')?.textContent?.trim()
+      const recordFieldLabels = Array.from(root.querySelectorAll('.data-pane .record-fields .field-label')).map((field) => field.textContent?.trim())
+      const recordContextCount = root.querySelectorAll('.data-pane .record-fields .field-context').length
+      const recordBadgeCount = root.querySelectorAll('.data-pane .record-fields .field-used').length
 
       const timeFilter = filter.querySelector('button[data-field-filter="time"]') as HTMLButtonElement
       timeFilter.click()
       await element.updateComplete
-      const timeOnlySections = Array.from(root.querySelectorAll('.data-pane .field-section')).map((section) => section.getAttribute('data-field-group'))
-      const timeOnlyFields = Array.from(root.querySelectorAll('.data-pane .field-section .field .field-label')).map((field) => field.textContent?.trim())
+      const timeOnlyEntities = Array.from(root.querySelectorAll('.data-pane .field-entity')).map((entity) => ({
+        id: entity.getAttribute('data-dataset-id'),
+        groups: Array.from(entity.querySelectorAll('.field-list')).map((list) => list.getAttribute('data-field-group')),
+      }))
+      const timeOnlyFields = Array.from(root.querySelectorAll('.data-pane .field-entity .field .field-label')).map((field) => field.textContent?.trim())
 
       // A table visual deliberately makes measures incompatible. The catalog
       // keeps those rows in a native, collapsed disclosure rather than
@@ -1386,7 +1397,7 @@ test('dashboard builder presents a role-first field catalog with business contex
       const unsupportedSummary = unsupported?.querySelector('summary')?.textContent?.trim()
       const unsupportedFieldLabels = Array.from(root.querySelectorAll('.data-pane .unsupported-fields .field-label')).map((field) => field.textContent?.trim())
 
-      return { sections, filters, unsupportedOpen: unsupported?.hasAttribute('open') ?? null, unsupportedSummary, unsupportedFieldLabels, status, typeLabelCount, timeOnlySections, timeOnlyFields }
+      return { entities, filters, recordOpen: recordFields?.hasAttribute('open') ?? null, recordSummary, recordFieldLabels, recordContextCount, recordBadgeCount, unsupportedOpen: unsupported?.hasAttribute('open') ?? null, unsupportedSummary, unsupportedFieldLabels, status, typeLabelCount, timeOnlyEntities, timeOnlyFields }
     })
     expect(state.filters).toEqual([
       { role: 'all', pressed: 'true' },
@@ -1394,20 +1405,22 @@ test('dashboard builder presents a role-first field catalog with business contex
       { role: 'dimension', pressed: 'false' },
       { role: 'time', pressed: 'false' },
     ])
-    expect(state.sections.map((section) => ({ group: section.group, title: section.title }))).toEqual([
-      { group: 'metric', title: 'Measures' },
-      { group: 'dimension', title: 'Dimensions' },
-      { group: 'time', title: 'Time' },
+    expect(state.entities.map((entity) => ({ id: entity.id, title: entity.title, count: entity.count, groups: entity.groups }))).toEqual([
+      { id: 'orders', title: 'Orders', count: '3', groups: ['metric', 'dimension', 'time'] },
     ])
-    expect(state.sections.flatMap((section) => section.fields.map((field) => field.context))).toContain('Orders')
-    expect(state.sections.flatMap((section) => section.fields).filter((field) => field.label === 'Status')).toHaveLength(1)
-    expect(state.status).toEqual({ label: 'Status', context: 'Orders', used: 'true', usedMarker: true, scalarTypeLabels: 0 })
+    expect(state.entities.flatMap((entity) => entity.fields).every((field) => !field.hasContext)).toBe(true)
+    expect(state.entities.flatMap((entity) => entity.fields).filter((field) => field.label === 'Status')).toHaveLength(1)
+    expect(state.status).toEqual({ label: 'Status', hasContext: false, used: 'true', usedMarker: true, scalarTypeLabels: 0 })
     expect(state.typeLabelCount).toBe(0)
+    expect(state.recordOpen).toBe(false)
+    expect(state.recordSummary).toMatch(/Record columns1/)
+    expect(state.recordFieldLabels).toEqual(['Order ID'])
+    expect(state.recordContextCount).toBe(0)
+    expect(state.recordBadgeCount).toBe(0)
     expect(state.unsupportedOpen).toBe(false)
-    expect(state.unsupportedSummary).toMatch(/not supported/i)
-    expect(state.unsupportedSummary).toMatch(/2/)
+    expect(state.unsupportedSummary).toMatch(/Unavailable for this visual2/)
     expect(state.unsupportedFieldLabels).toEqual(['Total', 'Payload'])
-    expect(state.timeOnlySections).toEqual(['time'])
+    expect(state.timeOnlyEntities).toEqual([{ id: 'orders', groups: ['time'] }])
     expect(state.timeOnlyFields).toEqual(['Ordered at'])
   } finally {
     await page.close()

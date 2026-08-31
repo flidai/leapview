@@ -66,6 +66,12 @@ type BuilderCatalogField = {
   group: Exclude<BuilderFieldFilter, 'all'>
 }
 
+type BuilderCatalogEntity = {
+  id: string
+  title: string
+  fields: BuilderCatalogField[]
+}
+
 type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visualId?: string }
 
 type DashboardBuilderVisualWithInteraction = DashboardBuilderVisualWithPreview & { interaction?: DashboardBuilderInteractionSignal }
@@ -904,31 +910,47 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: var(--base-size-8) var(--base-size-12) var(--base-size-16);
     }
 
-    .field-section + .field-section,
-    .unsupported-fields {
-      margin-top: var(--base-size-16);
+    .field-entity + .field-entity,
+    .catalog-disclosure {
+      margin-top: var(--base-size-8);
     }
 
-    .field-section-header {
+    .field-entity {
+      border-bottom: var(--lv-border-muted);
+      padding-bottom: var(--base-size-8);
+    }
+
+    .field-entity summary,
+    .catalog-disclosure > summary {
       display: flex;
+      min-height: var(--control-small-size);
       align-items: center;
       justify-content: space-between;
       gap: var(--base-size-8);
-      margin: 0 0 var(--base-size-4);
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
+      cursor: pointer;
     }
 
-    .field-section-title {
-      margin: 0;
+    .field-entity-title,
+    .catalog-disclosure-title {
+      min-width: 0;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .field-entity-count,
+    .catalog-disclosure-count {
+      flex: 0 0 auto;
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
-      font-weight: var(--base-text-weight-semibold);
-      letter-spacing: 0.04em;
-      text-transform: uppercase;
     }
 
-    .field-section-count {
-      font-weight: var(--base-text-weight-normal);
-      letter-spacing: normal;
+    .field-entity > .field-list,
+    .catalog-entity > .field-list {
+      margin-top: var(--base-size-4);
     }
 
     .field-list {
@@ -1024,21 +1046,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       white-space: nowrap;
     }
 
-    .unsupported-fields {
+    .catalog-disclosure {
       border-top: var(--lv-border-muted);
       padding-top: var(--base-size-8);
     }
 
-    .unsupported-fields summary {
-      min-height: var(--control-small-size);
+    .catalog-disclosure > summary {
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+    }
+
+    .catalog-disclosure-body {
+      margin-top: var(--base-size-4);
+    }
+
+    .catalog-entity + .catalog-entity {
+      margin-top: var(--base-size-8);
+    }
+
+    .catalog-entity-title {
+      margin: 0 0 var(--base-size-2);
       color: var(--lv-fg-muted);
       font: var(--lv-type-caption);
       font-weight: var(--base-text-weight-semibold);
-      cursor: pointer;
-    }
-
-    .unsupported-fields .field-list {
-      margin-top: var(--base-size-4);
     }
 
     .field-browser {
@@ -2742,12 +2772,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderFieldBrowser(builder: DashboardBuilderSignal, visual: DashboardBuilderVisualSignal | undefined) {
-    const catalog = this.filteredCatalog(this.semanticCatalog(builder.semanticModel.datasets ?? []))
+    const datasets = builder.semanticModel.datasets ?? []
+    const catalog = this.filteredCatalog(this.semanticCatalog(datasets))
     const visibleCatalog = this.fieldFilter === 'all' ? catalog : catalog.filter((item) => item.group === this.fieldFilter)
     const supported = visibleCatalog.filter((item) => visual
       ? Boolean(this.fieldUsedIn(item.field, visual) || this.fieldCompatibleWithVisual(item.field, visual))
       : this.fieldDataTypeSupported(item.field))
     const unsupported = visibleCatalog.filter((item) => !supported.includes(item))
+    const recordColumns = unsupported.filter((item) => item.field.roles?.includes('detail'))
+    const unavailable = unsupported.filter((item) => !recordColumns.includes(item))
     const groups: Array<Exclude<BuilderFieldFilter, 'all'>> = ['metric', 'dimension', 'time']
     const collapsed = this.collapsedPanes.data
     return html`
@@ -2780,15 +2813,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             ${visibleCatalog.length === 0
               ? html`<div class="empty-fields"><p class="pane-hint">No fields match this search.</p>${this.fieldQuery ? html`<button type="button" @click=${this.clearFieldQuery}>Clear search</button>` : nothing}</div>`
               : html`
-                ${groups.map((group) => this.renderCatalogGroup(group, supported.filter((item) => item.group === group), visual))}
-                ${unsupported.length > 0 ? html`
-                  <details class="unsupported-fields" ?open=${Boolean(this.fieldQuery)}>
-                    <summary>Other fields not supported by this visual (${unsupported.length})</summary>
-                    <div class="field-list">
-                      ${repeat(unsupported, (item) => this.catalogFieldKey(item), (item) => this.renderCatalogField(item, visual, false))}
-                    </div>
-                  </details>
-                ` : nothing}
+                ${this.renderCatalogEntities(supported, datasets, visual)}
+                ${this.renderCatalogDisclosure('record-fields', 'Record columns', recordColumns, datasets, visual, false)}
+                ${this.renderCatalogDisclosure('unsupported-fields', 'Unavailable for this visual', unavailable, datasets, visual, true)}
               `}
           </div>
         </div>
@@ -2908,23 +2935,49 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     `
   }
 
-  private renderCatalogGroup(group: Exclude<BuilderFieldFilter, 'all'>, fields: BuilderCatalogField[], visual: DashboardBuilderVisualSignal | undefined) {
+  private renderCatalogEntities(fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[], visual: DashboardBuilderVisualSignal | undefined) {
+    return this.catalogEntities(fields, datasets).map((entity) => html`
+      <details class="field-entity" data-dataset-id=${entity.id} open>
+        <summary>
+          <span class="field-entity-title">${entity.title}</span>
+          <span class="field-entity-count">${entity.fields.length}</span>
+        </summary>
+        ${this.renderCatalogRoleLists(entity.fields, visual, true)}
+      </details>
+    `)
+  }
+
+  private renderCatalogDisclosure(className: string, title: string, fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[], visual: DashboardBuilderVisualSignal | undefined, showCompatibilityContext: boolean) {
     if (fields.length === 0) return nothing
-    const headingID = `builder-data-${group}-heading`
     return html`
-      <section class="field-section" data-field-group=${group} aria-labelledby=${headingID}>
-        <div class="field-section-header">
-          <h3 id=${headingID} class="field-section-title">${this.fieldGroupLabel(group)}</h3>
-          <span class="field-section-count">${fields.length}</span>
+      <details class="catalog-disclosure ${className}" ?open=${Boolean(this.fieldQuery)}>
+        <summary><span class="catalog-disclosure-title">${title}</span><span class="catalog-disclosure-count">${fields.length}</span></summary>
+        <div class="catalog-disclosure-body">
+          ${this.catalogEntities(fields, datasets).map((entity) => html`
+            <section class="catalog-entity" data-dataset-id=${entity.id} aria-label=${entity.title}>
+              <h3 class="catalog-entity-title">${entity.title}</h3>
+              ${this.renderCatalogRoleLists(entity.fields, visual, false, showCompatibilityContext)}
+            </section>
+          `)}
         </div>
-        <div class="field-list">
-          ${repeat(fields, (item) => this.catalogFieldKey(item), (item) => this.renderCatalogField(item, visual, true))}
-        </div>
-      </section>
+      </details>
     `
   }
 
-  private renderCatalogField(item: BuilderCatalogField, visual: DashboardBuilderVisualSignal | undefined, compatible: boolean) {
+  private renderCatalogRoleLists(fields: BuilderCatalogField[], visual: DashboardBuilderVisualSignal | undefined, compatible: boolean, showCompatibilityContext = true) {
+    const groups: Array<Exclude<BuilderFieldFilter, 'all'>> = ['metric', 'dimension', 'time']
+    return groups.map((group) => {
+      const groupedFields = fields.filter((item) => item.group === group)
+      if (groupedFields.length === 0) return nothing
+      return html`
+        <div class="field-list" data-field-group=${group} aria-label=${this.fieldGroupLabel(group)}>
+          ${repeat(groupedFields, (item) => this.catalogFieldKey(item), (item) => this.renderCatalogField(item, visual, compatible, false, showCompatibilityContext))}
+        </div>
+      `
+    })
+  }
+
+  private renderCatalogField(item: BuilderCatalogField, visual: DashboardBuilderVisualSignal | undefined, compatible: boolean, showDatasetContext = true, showCompatibilityContext = true) {
     const field = item.field
     const visualType = visual ? this.visualTypeForRender(visual) : ''
     const datasetContext = item.datasets[0]?.title ?? ''
@@ -2944,16 +2997,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ? `Used in ${usedIn}. Drag to a compatible field well.`
           : `Click to add to ${this.fieldWellLabel(visual, this.roleForField(field, visual))}, or drag to a field well.`
     const accessibleName = [field.label, roleLabel, dataType, datasetContext, action].filter(Boolean).join('. ')
+    const compatibilityContext = roleFull ? `${this.fieldWellLabel(visual!, targetRole!)} is full` : `Not compatible with ${visualType || 'this visual'}`
     const context = compatible
-      ? datasetContext
-      : `${datasetContext} · ${roleFull ? `${this.fieldWellLabel(visual!, targetRole!)} is full` : `Not compatible with ${visualType || 'this visual'}`}`
+      ? (showDatasetContext ? datasetContext : '')
+      : [showDatasetContext ? datasetContext : '', showCompatibilityContext ? compatibilityContext : ''].filter(Boolean).join(' · ')
 
     if (!compatible) {
       return html`
         <div class="field field-unsupported" role="note" aria-label=${accessibleName}>
           <span class="field-role-icon" aria-hidden="true">${this.renderFieldRoleIcon(item.group)}</span>
-          <span class="field-copy"><span class="field-label">${field.label}</span><span class="field-context">${context}</span></span>
-          <span class="field-used">Unsupported</span>
+          <span class="field-copy"><span class="field-label">${field.label}</span>${context ? html`<span class="field-context">${context}</span>` : nothing}</span>
+          ${showCompatibilityContext ? html`<span class="field-used">Unsupported</span>` : nothing}
         </div>
       `
     }
@@ -2961,7 +3015,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <button class="field" type="button" data-used=${usedIn ? 'true' : 'false'} data-dragging=${this.draggedFieldID === field.id ? 'true' : 'false'} draggable=${editable ? 'true' : 'false'} ?disabled=${!editable} title=${field.description || action} aria-label=${accessibleName} @click=${() => this.addField(field)} @dragstart=${(event: DragEvent) => this.dragField(event, field)} @dragend=${this.clearDraggedField}>
         <span class="field-role-icon" aria-hidden="true">${this.renderFieldRoleIcon(item.group)}</span>
-        <span class="field-copy"><span class="field-label">${field.label}</span><span class="field-context">${datasetContext}</span></span>
+        <span class="field-copy"><span class="field-label">${field.label}</span>${context ? html`<span class="field-context">${context}</span>` : nothing}</span>
         ${usedIn ? html`<span class="field-used">✓ ${usedIn}</span>` : nothing}
       </button>
     `
@@ -3505,6 +3559,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       const groupOrder = { metric: 0, dimension: 1, time: 2 }
       const byGroup = groupOrder[left.group] - groupOrder[right.group]
       return byGroup || left.field.label.localeCompare(right.field.label)
+    })
+  }
+
+  private catalogEntities(fields: BuilderCatalogField[], datasets: DashboardBuilderDatasetSignal[]): BuilderCatalogEntity[] {
+    const datasetOrder = new Map(datasets.map((dataset, index) => [dataset.id, index]))
+    const entities = new Map<string, BuilderCatalogEntity>()
+    for (const item of fields) {
+      const dataset = item.datasets.find((candidate) => candidate.id === item.field.datasetId) ?? item.datasets[0]
+      const id = dataset?.id ?? 'semantic-model'
+      const title = dataset?.title ?? this.builder?.semanticModel.title ?? 'Semantic model'
+      const entity = entities.get(id)
+      if (entity) entity.fields.push(item)
+      else entities.set(id, { id, title, fields: [item] })
+    }
+    return Array.from(entities.values()).sort((left, right) => {
+      const leftOrder = datasetOrder.get(left.id) ?? Number.MAX_SAFE_INTEGER
+      const rightOrder = datasetOrder.get(right.id) ?? Number.MAX_SAFE_INTEGER
+      return leftOrder - rightOrder || left.title.localeCompare(right.title)
     })
   }
 
