@@ -313,6 +313,16 @@ tasks:
     cmds:
       - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
+  bench:cache:cutover:quick:
+    desc: Smoke-test cache cutover latency and retention benchmarks
+    cmds:
+      - go test -p 1 -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize -run '^$' -bench '^BenchmarkCacheCutover' -benchmem -benchtime=100ms -count=3 -cpu=1
+
+  bench:cache:cutover:full:
+    desc: Capture comparison-grade cache cutover benchmark evidence
+    cmds:
+      - go test -p 1 -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize -run '^$' -bench '^BenchmarkCacheCutover' -benchmem -benchtime=500ms -count=10 -cpu=1
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:
@@ -959,6 +969,12 @@ tasks:
     desc: Race-qualify stable cache cutover, generation execution, and bounded cache observers
     cmds:
       - go test -race -tags=duckdb_arrow -p 1 ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -count=1
+
+  test:cache:rollout:
+    desc: Enforce repeated correctness, metrics, and race-stability cache cutover gates
+    cmds:
+      - go test -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -run 'CutoverQualification|CacheCutoverRolloutMetrics|CacheCutoverReuseMetric' -count=100
+      - go test -race -tags=duckdb_arrow -p 1 ./internal/analytics/resultcache ./internal/analytics/materialize ./internal/analytics/module ./internal/dashboard/observability -run 'CutoverQualification|CacheCutoverRolloutMetrics|CacheCutoverReuseMetric' -count=20
 
   test:go:app:0:
     cmds:

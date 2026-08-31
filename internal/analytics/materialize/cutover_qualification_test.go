@@ -18,10 +18,12 @@ import (
 )
 
 func TestRuntimeCacheCutoverQualification(t *testing.T) {
+	const runtimeEntries = 16
+	const runtimeBytes = int64(4 << 20)
 	const nodeEntries = 32
 	const nodeBytes = int64(8 << 20)
 	pool, err := resultcache.New(resultcache.Limits{
-		RuntimeEntries: 16, RuntimeBytes: 4 << 20, NodeEntries: nodeEntries, NodeBytes: nodeBytes,
+		RuntimeEntries: runtimeEntries, RuntimeBytes: runtimeBytes, NodeEntries: nodeEntries, NodeBytes: nodeBytes,
 	})
 	require.NoError(t, err)
 	production := materializeTestPartition(t, resultidentity.PartitionProduction, "")
@@ -97,7 +99,7 @@ func TestRuntimeCacheCutoverQualification(t *testing.T) {
 			require.Equal(t, test.value, cutoverQualificationValue(t, hit))
 			require.Equal(t, int32(1), database.queries.Load())
 			require.NoError(t, runtime.Close())
-			assertCutoverQualificationAccounting(t, pool, nodeEntries, nodeBytes)
+			assertCutoverQualificationAccounting(t, pool, runtimeEntries, runtimeBytes, nodeEntries, nodeBytes)
 		})
 	}
 
@@ -115,7 +117,7 @@ func TestRuntimeCacheCutoverQualification(t *testing.T) {
 	require.Equal(t, int32(2), externalDatabase.queries.Load())
 	require.NoError(t, external.Close())
 	require.NoError(t, generationC.Close())
-	assertCutoverQualificationAccounting(t, pool, nodeEntries, nodeBytes)
+	assertCutoverQualificationAccounting(t, pool, runtimeEntries, runtimeBytes, nodeEntries, nodeBytes)
 	require.NoError(t, pool.Close())
 }
 
@@ -325,7 +327,14 @@ func assertCutoverQualificationLease(t testing.TB, lease *resultcache.EntryLease
 	require.Equal(t, want, rows[0]["id"])
 }
 
-func assertCutoverQualificationAccounting(t testing.TB, pool *resultcache.Pool, nodeEntries int, nodeBytes int64) {
+func assertCutoverQualificationAccounting(
+	t testing.TB,
+	pool *resultcache.Pool,
+	runtimeEntries int,
+	runtimeBytes int64,
+	nodeEntries int,
+	nodeBytes int64,
+) {
 	t.Helper()
 	stats := pool.Stats()
 	require.LessOrEqual(t, stats.Entries, nodeEntries)
@@ -333,4 +342,8 @@ func assertCutoverQualificationAccounting(t testing.TB, pool *resultcache.Pool, 
 	require.LessOrEqual(t, stats.Stable.Entries, nodeEntries)
 	require.LessOrEqual(t, stats.Stable.Bytes, nodeBytes)
 	require.Equal(t, stats.Stable.Entries, stats.Stable.ArrowHolds)
+	for name, scope := range stats.Scopes {
+		require.LessOrEqual(t, scope.Entries, runtimeEntries, "scope %q entries exceed runtime limit", name)
+		require.LessOrEqual(t, scope.Bytes, runtimeBytes, "scope %q bytes exceed runtime limit", name)
+	}
 }
