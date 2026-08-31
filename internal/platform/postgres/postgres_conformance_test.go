@@ -3,11 +3,13 @@ package postgres
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -225,6 +227,153 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 		}
 	})
 
+	t.Run("serializable retry on 40001", func(t *testing.T) {
+		name := schema + ".postgres_conformance_serialization"
+		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
+			t.Fatal(err)
+		}
+		defer p.Exec(context.Background(), "DROP TABLE IF EXISTS "+name)
+		if _, err := p.Exec(ctx, "CREATE TABLE "+name+" (id integer primary key, value integer not null)"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := p.Exec(ctx, "INSERT INTO "+name+" VALUES (1, 0)"); err != nil {
+			t.Fatal(err)
+		}
+
+		// Read the row in a serializable transaction before the retry attempt's
+		// snapshot. The first retry attempt reads the same row, then this
+		// transaction commits an update; the attempt's subsequent update must
+		// fail with serialization_failure (40001).
+		blocker, err := p.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer blocker.Release()
+		blockerTx, err := blocker.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer blockerTx.Rollback(context.Background())
+		var blockerValue int
+		if err := blockerTx.QueryRow(ctx, "SELECT value FROM "+name+" WHERE id = 1").Scan(&blockerValue); err != nil {
+			t.Fatal(err)
+		}
+
+		const maxAttempts = 2
+		var attempts int
+		var retryObserved bool
+		for attempts = 1; attempts <= maxAttempts; attempts++ {
+			tx, err := p.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+			if err != nil {
+				t.Fatalf("begin serializable attempt %d: %v", attempts, err)
+			}
+			var current int
+			if err := tx.QueryRow(ctx, "SELECT value FROM "+name+" WHERE id = 1").Scan(&current); err != nil {
+				_ = tx.Rollback(context.Background())
+				t.Fatalf("read serializable attempt %d: %v", attempts, err)
+			}
+			if attempts == 1 {
+				if _, err := blockerTx.Exec(ctx, "UPDATE "+name+" SET value = value + 1 WHERE id = 1"); err != nil {
+					_ = tx.Rollback(context.Background())
+					t.Fatalf("blocker update: %v", err)
+				}
+				if err := blockerTx.Commit(ctx); err != nil {
+					_ = tx.Rollback(context.Background())
+					t.Fatalf("blocker commit: %v", err)
+				}
+			}
+			_, execErr := tx.Exec(ctx, "UPDATE "+name+" SET value = value + 1 WHERE id = 1")
+			if execErr == nil {
+				execErr = tx.Commit(ctx)
+			} else {
+				_ = tx.Rollback(context.Background())
+			}
+			if execErr == nil {
+				break
+			}
+			if !IsTransactionRetryable(execErr) {
+				var pgErr *pgconn.PgError
+				if errors.As(execErr, &pgErr) {
+					t.Fatalf("serializable attempt %d error = %v (SQLSTATE %s), want retryable 40001", attempts, execErr, pgErr.Code)
+				}
+				t.Fatalf("serializable attempt %d error = %v, want retryable 40001", attempts, execErr)
+			}
+			var pgErr *pgconn.PgError
+			if !errors.As(execErr, &pgErr) || pgErr.Code != SQLStateSerializationFailure {
+				t.Fatalf("serializable retry error = %v, want serialization_failure (40001)", execErr)
+			}
+			retryObserved = true
+		}
+		if !retryObserved || attempts != 2 {
+			t.Fatalf("serializable attempts=%d retryObserved=%t, want one 40001 followed by a bounded retry", attempts, retryObserved)
+		}
+		var value int
+		if err := p.QueryRow(ctx, "SELECT value FROM "+name+" WHERE id = 1").Scan(&value); err != nil {
+			t.Fatal(err)
+		}
+		if value != 2 {
+			t.Fatalf("serializable retry value = %d, want 2 committed increments", value)
+		}
+	})
+
+	t.Run("idle transaction timeout replaces connection", func(t *testing.T) {
+		// Keep this probe to one connection so a successful acquire after the
+		// server terminates the idle session necessarily observes pool replacement.
+		idleCfg := p.PoolConfig()
+		idleCfg.MinConns = 1
+		idleCfg.MaxConns = 1
+		idleCfg.IdleTransactionTimeout = 500 * time.Millisecond
+		idlePool, err := Open(ctx, idleCfg)
+		if err != nil {
+			t.Fatalf("open idle-timeout probe pool: %v", err)
+		}
+		defer idlePool.Close()
+		conn, err := idlePool.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		backendPID := conn.Conn().PgConn().PID()
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			conn.Release()
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "SELECT 1"); err != nil {
+			_ = tx.Rollback(context.Background())
+			conn.Release()
+			t.Fatalf("initial idle transaction query: %v", err)
+		}
+		// No statements are issued while sleeping; this leaves the backend idle
+		// in its open transaction long enough for PostgreSQL to terminate it.
+		time.Sleep(2 * idleCfg.IdleTransactionTimeout)
+		_, timeoutErr := tx.Exec(ctx, "SELECT 1")
+		if timeoutErr == nil {
+			conn.Release()
+			t.Fatal("idle transaction remained usable after configured timeout")
+		}
+		t.Logf("idle transaction timeout error: %v", timeoutErr)
+		if !isIdleTransactionTermination(timeoutErr) {
+			conn.Release()
+			t.Fatalf("idle transaction timeout error = %v, want SQLSTATE 25P03 or PostgreSQL connection termination", timeoutErr)
+		}
+		conn.Release()
+		replacementCtx, replacementCancel := context.WithTimeout(ctx, 5*time.Second)
+		defer replacementCancel()
+		replacement, err := idlePool.Acquire(replacementCtx)
+		if err != nil {
+			t.Fatalf("acquire replacement after idle transaction timeout: %v", err)
+		}
+		defer replacement.Release()
+		replacementPID := replacement.Conn().PgConn().PID()
+		if replacementPID == backendPID {
+			t.Fatalf("idle-timeout connection PID %d was reused, want pool replacement", backendPID)
+		}
+		var one int
+		if err := replacement.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil || one != 1 {
+			t.Fatalf("replacement connection query result=%d err=%v", one, err)
+		}
+	})
+
 	t.Run("deadlock SQLSTATE", func(t *testing.T) {
 		name := schema + ".postgres_conformance_deadlock"
 		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
@@ -285,7 +434,10 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 			select {
 			case got := <-results:
 				var pgErr *pgconn.PgError
-				if errors.As(got.err, &pgErr) && pgErr.Code == "40P01" {
+				if errors.As(got.err, &pgErr) && pgErr.Code == SQLStateDeadlockDetected {
+					if !IsTransactionRetryable(got.err) {
+						t.Fatalf("deadlock error = %v was not classified as transaction-retryable", got.err)
+					}
 					deadlock = true
 				}
 			case <-time.After(10 * time.Second):
@@ -296,4 +448,34 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 			t.Fatal("two-transaction cycle did not produce PostgreSQL deadlock_detected (40P01)")
 		}
 	})
+}
+
+// PostgreSQL may deliver idle_in_transaction_session_timeout as SQLSTATE
+// 25P03, or close the socket before pgx receives the server's FATAL frame.
+// Accept both documented forms while rejecting unrelated query failures.
+func isIdleTransactionTermination(err error) bool {
+	if err == nil {
+		return false
+	}
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return pgErr.Code == "25P03"
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"idle-in-transaction",
+		"idle in transaction",
+		"terminating connection",
+		"server closed the connection",
+		"connection reset",
+		"connection is closed",
+		"closed network connection",
+		"broken pipe",
+		"unexpected eof",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }

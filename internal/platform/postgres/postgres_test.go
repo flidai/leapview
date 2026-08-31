@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -194,5 +195,32 @@ func TestConfigurePoolReadOnlyIntentEnablesReadOnlySession(t *testing.T) {
 	}
 	if got := parsed.ConnConfig.RuntimeParams["default_transaction_read_only"]; got != "on" {
 		t.Fatalf("default_transaction_read_only = %q, want on", got)
+	}
+}
+
+func TestIsTransactionRetryableClassifiesWrappedPostgreSQLErrors(t *testing.T) {
+	tests := []struct {
+		name string
+		code string
+		want bool
+	}{
+		{name: "serialization failure", code: SQLStateSerializationFailure, want: true},
+		{name: "deadlock detected", code: SQLStateDeadlockDetected, want: true},
+		{name: "unique violation", code: "23505", want: false},
+		{name: "lock timeout", code: "55P03", want: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := fmt.Errorf("transaction failed: %w", &pgconn.PgError{Code: test.code})
+			if got := IsTransactionRetryable(err); got != test.want {
+				t.Fatalf("IsTransactionRetryable(%q) = %t, want %t", test.code, got, test.want)
+			}
+		})
+	}
+	if IsTransactionRetryable(nil) {
+		t.Fatal("IsTransactionRetryable(nil) = true, want false")
+	}
+	if IsTransactionRetryable(errors.New("40001 serialization failure")) {
+		t.Fatal("message-only SQLSTATE text was classified as retryable")
 	}
 }
