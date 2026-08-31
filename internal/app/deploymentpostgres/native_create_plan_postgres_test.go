@@ -21,6 +21,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/platform/events/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -130,6 +131,10 @@ func nativePlanPostgresDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposi
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("apply operation schema: %v", err)
 	}
+	if err := platformbootstrappostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("apply platform bootstrap schema: %v", err)
+	}
 	if err := deploymentnative.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("apply deployment schema: %v", err)
@@ -178,6 +183,50 @@ func nativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlanSou
 
 func nativePlanRequest() deploymentmodule.NativeDeliveryPlanRequest {
 	return deploymentmodule.NativeDeliveryPlanRequest{ProjectID: projectgraph.ResourceID("project_native_plan"), TargetID: "target_native_plan", Environment: "prod", PrincipalID: "principal-native", SourceOwnerID: "owner-native", Operation: string(deployment.DeliveryOperationCodeChange), SourceDigest: createPlanTestDigest('a'), SourceAttestationDigest: createPlanTestDigest('b'), IdempotencyKey: "native-plan-key"}
+}
+
+func TestNativeCreatePlanPostgresAtomicallyBootstrapsFreshTargetAndClaim(t *testing.T) {
+	db, repo := nativePlanPostgresDB(t)
+	snapshot, artifacts := nativePlanPostgresFixture(t, createPlanTestDigest('a'), createPlanTestDigest('b'))
+	coord := nativePlanCoordinator(t, db, &nativePlanSourceReader{snap: snapshot}, &nativePlanArtifactInspector{set: artifacts})
+	request := nativePlanRequest()
+
+	created, err := coord.CreatePlan(t.Context(), request)
+	if err != nil {
+		t.Fatalf("create first native plan: %v", err)
+	}
+	if created.TargetID != request.TargetID || created.ProjectID != request.ProjectID || created.BaseTargetRevision != 1 || created.BaseGenerationID != uuid.Nil {
+		t.Fatalf("fresh plan target projection = %#v", created)
+	}
+	target, err := repo.Target(t.Context(), request.TargetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.TargetID != request.TargetID || target.ProjectID != request.ProjectID.String() || target.Environment != request.Environment || target.TargetRevision != 1 || target.ActiveGenerationID != "" || target.ActivePublicationID != "" {
+		t.Fatalf("fresh target = %#v", target)
+	}
+	claim, err := repo.GetProjectClaim(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if claim.ProjectID != request.ProjectID || string(claim.Environment) != request.Environment || claim.ClaimedBy != request.PrincipalID || claim.ClaimedAt.IsZero() {
+		t.Fatalf("fresh project claim = %#v", claim)
+	}
+	stored, err := repo.Plan(t.Context(), created.ID.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.TargetID != target.TargetID || stored.PlanRevision != 1 {
+		t.Fatalf("fresh target plan = %#v", stored)
+	}
+
+	replayed, err := coord.CreatePlan(t.Context(), request)
+	if err != nil {
+		t.Fatalf("replay first native plan: %v", err)
+	}
+	if !reflect.DeepEqual(created, replayed) {
+		t.Fatalf("fresh target replay differs:\ncreated=%#v\nreplayed=%#v", created, replayed)
+	}
 }
 
 func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {

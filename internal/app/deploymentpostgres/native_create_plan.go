@@ -28,6 +28,7 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
@@ -231,11 +232,18 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 	// snapshot of the target fence. The target is locked and compared again
 	// below before any consequence is written.
 	preflightTarget, err := c.repository.Target(ctx, request.TargetID)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
-	}
-	if err := validateNativePlanTarget(preflightTarget, request); err != nil {
-		return deploymentmodule.NativeDeliveryPlan{}, err
+	freshTarget := errors.Is(err, deploymentnative.ErrNotFound)
+	if freshTarget {
+		preflightTarget = deploymentnative.DeliveryTarget{
+			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
+		}
+	} else {
+		if err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
+		if err := validateNativePlanTarget(preflightTarget, request); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
 	}
 	source, err := c.sources.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: request.ProjectID, OwnerID: sourceOwner}, request.SourceDigest, request.SourceAttestationDigest)
 	if err != nil {
@@ -316,6 +324,18 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 		return projection, nil
 	}
 
+	if freshTarget {
+		if _, err := c.repository.ClaimProjectTx(ctx, tx, deployment.ProjectClaimInput{
+			ProjectID: request.ProjectID, Environment: servingstate.Environment(request.Environment), ClaimedBy: request.PrincipalID, ClaimedAt: now,
+		}); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
+		if _, err := c.repository.CreateTargetTx(ctx, tx, deploymentnative.TargetInput{
+			TargetID: request.TargetID, ProjectID: request.ProjectID.String(), Environment: request.Environment, TargetRevision: 1,
+		}); err != nil {
+			return deploymentmodule.NativeDeliveryPlan{}, err
+		}
+	}
 	target, err := c.repository.TargetForShareTx(ctx, tx, request.TargetID)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryPlan{}, err
