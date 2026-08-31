@@ -21,9 +21,9 @@ func TestDurableGCPoolIDsReadsPhysicalPoolAdmissions(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 		INSERT INTO physical_pools (
 			id, identity_digest, storage_location, storage_namespace,
-			storage_implementation, object_naming_contract, isolation_boundary,
+			storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 			retention_authority, retention_policy_json
-		) VALUES (?, ?, 'file:///tmp', 'delivery', 'local', 'uuidv7:v1', 'instance', 'instance', '{}')`, poolID, poolID); err != nil {
+		) VALUES (?, ?, 'file:///tmp', 'delivery', 'local', 'uuidv7:v1', 'instance', 'instance', 'instance', '{}')`, poolID, poolID); err != nil {
 		t.Fatalf("insert physical pool: %v", err)
 	}
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
