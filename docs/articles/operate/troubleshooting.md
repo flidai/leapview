@@ -20,6 +20,30 @@ If the process is absent or `/healthz` fails, inspect process exit and startup l
 
 Compare direct local checks with reverse-proxy checks. A healthy local service with a failing public endpoint points to TLS, routing, host allowlist, firewall, or proxy configuration.
 
+## Target unavailable alert fires
+
+`LeapViewTargetUnavailable` means Prometheus has reported `up{job="leapview"} == 0` for the affected `instance` for more than two minutes. Confirm the target is still present in service discovery, inspect Prometheus's current scrape error and last successful scrape, and compare the protected metrics endpoint with direct `/healthz` and `/readyz` checks from an approved network path. Do not print or copy the metrics bearer token into incident notes or commands.
+
+Preserve the alert start time, target labels, image digest, recent process exit or startup evidence, health responses, and bounded scraper, TLS, proxy, DNS, and network diagnostics. A failed scrape can originate at the process, listener, authentication, certificate, name-resolution, network-policy, proxy, or scraper-configuration boundary; a healthy local process with a failed remote scrape narrows the failure away from application liveness.
+
+Restore the intended discovered target, credentials, certificate chain, or network path through the normal deployment and monitoring workflow. If the process is absent or irrecoverably unhealthy, preserve its evidence before replacing it through the approved service lifecycle; do not remove the target from discovery or disable the alert to create a healthy signal. Recovery requires `up` to return `1` for consecutive scrapes, the alert to resolve on the next rule evaluation, and liveness and readiness to be assessed independently before returning traffic.
+
+## Sustained HTTP 5xx alert fires
+
+`LeapViewSustainedHTTP5xx` means LeapView has observed a positive five-minute rate of application-generated HTTP 5xx responses continuously for more than ten minutes on the affected `instance`. Confirm the aggregate alert expression, then use the bounded source metric to identify method, route, and status patterns. Compare an affected request with `/healthz` and `/readyz`; a ready process can still have a failing route or dependency, while a proxy-generated response that never reaches LeapView will not appear in this application metric.
+
+Collect the alert start time, affected route and status classes, request and correlation IDs, validated upstream trace IDs when present, image and deployment digests, active serving-state identity, dependency health, executor saturation, queue depth, and credential-scrubbed application errors. Distinguish route-specific validation or dependency failures from process-wide runtime, storage, network, or active-deployment failures. Keep principals, projects, resources, query values, authorization, cookies, and bodies out of alert annotations and unrestricted incident records.
+
+Correct the failing configuration, dependency, capacity condition, data state, or deployment through its normal owner workflow. A reviewed rollback or instance replacement is appropriate only when the incident is correlated with that change and active-state evidence has been preserved; do not reclassify 5xx responses, change the threshold, or suppress the alert as mitigation. Recovery requires the five-minute 5xx rate to return to zero, representative affected requests to succeed, and the alert to resolve after the next evaluation without immediate recurrence.
+
+## DuckDB fatal health alert fires
+
+`LeapViewDuckDBFatalHealth` means a process-owned DuckDB environment has reported a fatal analytical cleanup-safety failure for more than one minute. Confirm `leapview_duckdb_fatal_health{job="leapview"} > 0` for the affected `instance` and inspect readiness and the first credential-scrubbed fatal error. This signal is absent when LeapView does not own a process-local DuckDB environment and is distinct from an ordinary failed query or transient cleanup retry.
+
+Preserve the alert onset, image and deployment digests, active serving state and managed revision identities, fatal and cleanup outcomes, connection and lease state, disk and memory pressure, recent refresh activity, and the first relevant runtime error. Likely boundaries include process-owned DuckDB connection lifecycle, secret-scope cleanup, interrupted refresh work, analytical storage, and host resource exhaustion. Do not capture raw queries, credentials, signed URLs, catalog contents, or sensitive result data in unrestricted evidence.
+
+Stop admitting affected analytical work through the normal traffic-management path and follow the approved service or release recovery procedure. Fatal health is sticky for the affected DuckDB environment, so do not attempt to clear it by editing catalogs, deleting analytical files, forcing lease cleanup, or repeatedly restarting without diagnosis. Recovery requires replacement with a validated environment, `leapview_duckdb_fatal_health` to report zero, readiness to pass, one bounded representative analytical request to succeed, and the alert to resolve without another fatal transition.
+
 ## Authentication fails
 
 For browser auth, confirm exact public issuer and callback URLs, secure cookies, allowed hosts, clock synchronization, provider client credentials, and proxy scheme/host preservation. Test with a fresh private browser session to separate provider failure from a stale cookie.
