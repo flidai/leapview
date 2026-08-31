@@ -1547,18 +1547,25 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	}
 	visual := value.Spec.Visuals[visualID]
 	if visual.Type == patch.Type {
-		return nil
+		expected := defaultCanonicalVisual(string(patch.Type), visualTitle(visual, visualID))
+		if canonicalVisualQueryFamily(visual.Query) == canonicalVisualQueryFamily(expected.Query) {
+			return nil
+		}
 	}
 	oldPresentationType := visualPresentationType(visual.Presentation)
 	visual.Type = patch.Type
 	newDefault := defaultCanonicalVisual(string(patch.Type), visualTitle(visual, visualID))
-	// A visual-type change is an exploration operation, not a data-editing
-	// operation. Keep the authored query for every target type so an
-	// incompatible intermediate visual can report its missing requirements and
-	// switching back restores the original data bindings. The target compiler
-	// remains authoritative about whether those bindings can render the chosen
-	// visual type.
-	newDefault.Query = visual.Query
+	// A type switch is one atomic canonical edit: its query must belong to the
+	// target visual family immediately. The application boundary supplies only
+	// exact governed equivalents from the previous query; missing roles remain
+	// empty so the widget can explain what it still needs. Undo restores the
+	// exact previous revision instead of hiding incompatible fields here.
+	bindings := patch.ResolvedBindings
+	if bindings == nil {
+		fallback := canonicalVisualSwitchBindings(visual.Query)
+		bindings = &fallback
+	}
+	newDefault.Query = canonicalVisualSwitchQuery(newDefault.Query, patch.Type, bindings)
 	configureTargetPresentationBindings(&newDefault)
 	if oldPresentationType == visualPresentationType(newDefault.Presentation) {
 		if oldCartesian, oldOK := visual.Presentation.Value.(*document.CartesianDashboardPresentation); oldOK {
@@ -1592,6 +1599,165 @@ func setCanonicalVisualType(value *document.DashboardDocument, patch SetVisualTy
 	newDefault.Interactions = visual.Interactions
 	value.Spec.Visuals[visualID] = newDefault
 	return nil
+}
+
+func canonicalVisualQueryFamily(query document.DashboardQuery) string {
+	switch query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		return "aggregate"
+	case *document.RecordsDashboardQuery:
+		return "records"
+	case *document.PivotDashboardQuery:
+		return "pivot"
+	case *document.HistogramDashboardQuery:
+		return "histogram"
+	case *document.DistributionDashboardQuery:
+		return "distribution"
+	default:
+		return ""
+	}
+}
+
+func canonicalVisualSwitchBindings(query document.DashboardQuery) VisualTypeFieldBindings {
+	bindings := VisualTypeFieldBindings{}
+	appendDimension := func(selection document.DashboardDimensionSelection) {
+		id, _ := canonicalDimensionSelection(selection)
+		bindings.Dimensions = append(bindings.Dimensions, id)
+	}
+	appendMetric := func(selection document.DashboardMetricSelection) {
+		id, _ := canonicalMetricSelection(selection)
+		if id != "pending_metric" {
+			bindings.Metrics = append(bindings.Metrics, id)
+		}
+	}
+	switch value := query.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		for _, selection := range value.Dimensions {
+			appendDimension(selection)
+		}
+		for _, selection := range value.Metrics {
+			appendMetric(selection)
+		}
+	case *document.PivotDashboardQuery:
+		for _, selection := range value.Rows {
+			appendDimension(selection)
+		}
+		for _, selection := range value.Columns {
+			appendDimension(selection)
+		}
+		for _, selection := range value.Metrics {
+			appendMetric(selection)
+		}
+	case *document.HistogramDashboardQuery:
+		appendMetric(value.Field)
+	case *document.DistributionDashboardQuery:
+		appendMetric(value.Field)
+		if value.Group != nil {
+			appendDimension(*value.Group)
+		}
+	case *document.RecordsDashboardQuery:
+		bindings.Dataset = value.Dataset
+		for _, selection := range value.Fields {
+			id, _ := canonicalRecordSelection(selection)
+			bindings.Details = append(bindings.Details, id)
+		}
+	}
+	return bindings
+}
+
+func canonicalVisualSwitchQuery(target document.DashboardQuery, visualType document.DashboardVisualType, bindings *VisualTypeFieldBindings) document.DashboardQuery {
+	if bindings == nil {
+		return target
+	}
+	dimensions := boundedVisualSwitchFields(bindings.Dimensions, visualType, FieldRoleDimension)
+	metrics := boundedVisualSwitchFields(bindings.Metrics, visualType, FieldRoleMetric)
+	details := boundedVisualSwitchFields(bindings.Details, visualType, FieldRoleDetail)
+	switch query := target.Value.(type) {
+	case *document.AggregateDashboardQuery:
+		query.Dimensions = visualSwitchDimensionSelections(dimensions)
+		query.Metrics = visualSwitchMetricSelections(metrics)
+	case *document.RecordsDashboardQuery:
+		if dataset := strings.TrimSpace(bindings.Dataset); dataset != "" {
+			query.Dataset = dataset
+		}
+		query.Fields = visualSwitchRecordSelections(details)
+	case *document.PivotDashboardQuery:
+		query.Rows = nil
+		query.Columns = nil
+		if len(dimensions) > 0 {
+			query.Rows = visualSwitchDimensionSelections(dimensions[:1])
+		}
+		if len(dimensions) > 1 {
+			query.Columns = visualSwitchDimensionSelections(dimensions[1:2])
+		}
+		if len(dimensions) > 2 {
+			query.Rows = append(query.Rows, visualSwitchDimensionSelections(dimensions[2:])...)
+		}
+		query.Metrics = visualSwitchMetricSelections(metrics)
+	case *document.HistogramDashboardQuery:
+		if len(metrics) > 0 {
+			query.Field = visualSwitchMetricSelections(metrics[:1])[0]
+		}
+	case *document.DistributionDashboardQuery:
+		if len(metrics) > 0 {
+			query.Field = visualSwitchMetricSelections(metrics[:1])[0]
+		}
+	}
+	return target
+}
+
+func boundedVisualSwitchFields(fields []string, visualType document.DashboardVisualType, role FieldRole) []string {
+	maximum := int32(0)
+	for _, limit := range CanonicalVisualRoleLimits(visualType) {
+		if limit.Role == string(role) {
+			maximum = limit.Maximum
+			break
+		}
+	}
+	result := make([]string, 0, len(fields))
+	seen := make(map[string]struct{}, len(fields))
+	for _, value := range fields {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if _, exists := seen[value]; exists {
+			continue
+		}
+		seen[value] = struct{}{}
+		result = append(result, value)
+		if maximum > 0 && int32(len(result)) >= maximum {
+			break
+		}
+	}
+	return result
+}
+
+func visualSwitchDimensionSelections(fields []string) []document.DashboardDimensionSelection {
+	result := make([]document.DashboardDimensionSelection, 0, len(fields))
+	for _, value := range fields {
+		field := value
+		result = append(result, document.DashboardDimensionSelection{String: &field})
+	}
+	return result
+}
+
+func visualSwitchMetricSelections(fields []string) []document.DashboardMetricSelection {
+	result := make([]document.DashboardMetricSelection, 0, len(fields))
+	for _, value := range fields {
+		field := value
+		result = append(result, document.DashboardMetricSelection{String: &field})
+	}
+	return result
+}
+
+func visualSwitchRecordSelections(fields []string) []document.DashboardRecordFieldSelection {
+	result := make([]document.DashboardRecordFieldSelection, 0, len(fields))
+	for _, value := range fields {
+		field := value
+		result = append(result, document.DashboardRecordFieldSelection{String: &field})
+	}
+	return result
 }
 
 func configureTargetPresentationBindings(visual *document.DashboardVisual) {

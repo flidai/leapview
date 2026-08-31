@@ -257,6 +257,23 @@ type SetVisualTypePayload struct {
 	PageID   string                       `json:"pageId"`
 	VisualID string                       `json:"visualId"`
 	Type     document.DashboardVisualType `json:"type"`
+
+	// ResolvedBindings is populated only by the governed application boundary.
+	// It carries exact semantic/physical equivalents of the current query so
+	// the reducer can atomically author a query that belongs to the target
+	// visual family. Builder clients cannot supply or retain these bindings.
+	ResolvedBindings *VisualTypeFieldBindings `json:"-"`
+}
+
+// VisualTypeFieldBindings is the application-resolved, transport-invisible
+// bridge between query families during a visual type switch. Dimensions and
+// Metrics are semantic member IDs. Dataset and Details are the canonical
+// records-query dataset and its unqualified fields.
+type VisualTypeFieldBindings struct {
+	Dimensions []string
+	Metrics    []string
+	Dataset    string
+	Details    []string
 }
 
 func (SetVisualTypePayload) authoringPayload() {}

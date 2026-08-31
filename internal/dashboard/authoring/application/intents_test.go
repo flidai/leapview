@@ -1,12 +1,66 @@
 package application
 
 import (
+	"reflect"
 	"testing"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/document"
 )
+
+func TestResolveVisualTypeFieldBindingsMapsOnlyExactGovernedEquivalents(t *testing.T) {
+	model := &semanticmodel.Model{
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"category": {Bindings: map[string]semanticmodel.DimensionBinding{"sales_orders": {Field: "sales_orders.category"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue":     {Dataset: "sales_orders", Input: &semanticmodel.MetricInput{Field: "sales_orders.revenue"}},
+			"order_count": {Dataset: "sales_orders", Input: &semanticmodel.MetricInput{Field: "sales_orders.order_id"}},
+		},
+	}
+	revenue, orderID, customerID := "revenue", "order_id", "customer_id"
+	visual := document.DashboardVisual{Query: document.DashboardQuery{Value: &document.RecordsDashboardQuery{
+		Type: "records", Dataset: "sales_orders",
+		Fields: []document.DashboardRecordFieldSelection{{String: &revenue}, {String: &orderID}, {String: &customerID}},
+	}}}
+
+	got := resolveVisualTypeFieldBindings(model, visual)
+	want := authoring.VisualTypeFieldBindings{
+		Metrics: []string{"revenue"}, Dataset: "sales_orders", Details: []string{"revenue", "order_id", "customer_id"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolved bindings = %#v, want %#v", got, want)
+	}
+}
+
+func TestResolveVisualTypeFieldBindingsMapsSemanticQueryBackToOneDataset(t *testing.T) {
+	model := &semanticmodel.Model{
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"category": {Bindings: map[string]semanticmodel.DimensionBinding{"sales_orders": {Field: "sales_orders.category"}}},
+			"state":    {Bindings: map[string]semanticmodel.DimensionBinding{"sales_orders": {Field: "sales_customers.state"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"revenue":     {Dataset: "sales_orders", Input: &semanticmodel.MetricInput{Field: "sales_orders.revenue"}},
+			"order_count": {Dataset: "sales_orders", Input: &semanticmodel.MetricInput{Field: "sales_orders.order_id"}},
+		},
+	}
+	category, state, revenue, orders := "category", "state", "revenue", "order_count"
+	visual := document.DashboardVisual{Query: document.DashboardQuery{Value: &document.AggregateDashboardQuery{
+		Type:       "aggregate",
+		Dimensions: []document.DashboardDimensionSelection{{String: &category}, {String: &state}},
+		Metrics:    []document.DashboardMetricSelection{{String: &revenue}, {String: &orders}},
+	}}}
+
+	got := resolveVisualTypeFieldBindings(model, visual)
+	want := authoring.VisualTypeFieldBindings{
+		Dimensions: []string{"category", "state"}, Metrics: []string{"revenue", "order_count"},
+		Dataset: "sales_orders", Details: []string{"category", "revenue"},
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("resolved bindings = %#v, want %#v", got, want)
+	}
+}
 
 func TestRecordDetailFieldIDForValidationQualifiesAgainstRecordsDataset(t *testing.T) {
 	field := "customer_id"
