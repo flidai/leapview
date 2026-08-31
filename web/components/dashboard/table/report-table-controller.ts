@@ -120,6 +120,11 @@ export class ReportTableColumnController {
     return columns.map((column) => this.pixelWidth(column))
   }
 
+  pinnedKeys(columns: TableColumn[], visibility: Record<string, boolean>): string[] {
+    const leadingIdentity = columns.find((column) => column.role === 'row_header' && visibility[column.key] !== false)
+    return leadingIdentity ? [leadingIdentity.key] : []
+  }
+
   tableWidth(columns: TableColumn[]): number {
     return this.pixelWidths(columns).reduce((sum, size) => sum + size, 0)
   }
