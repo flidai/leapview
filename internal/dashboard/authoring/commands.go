@@ -536,6 +536,22 @@ func (SetInteractionPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// SetInteractionTargetPayload is the deliberately narrow builder intent for
+// changing one source interaction edge. The reducer resolves both IDs against
+// the same page, so transports never submit an authored interaction union.
+// Each ID may be either a page component ID or a visual definition ID.
+type SetInteractionTargetPayload struct {
+	PageID         string `json:"pageId"`
+	VisualID       string `json:"visualId"`
+	TargetVisualID string `json:"targetVisualId"`
+	Effect         string `json:"effect"`
+}
+
+func (SetInteractionTargetPayload) authoringPayload() {}
+func (SetInteractionTargetPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // Publish and Archive affect authoring lifecycle only; they do not deploy or
 // activate serving state.
 type PublishPayload struct{}
@@ -593,6 +609,7 @@ type Command struct {
 	AddFilterComponent    *AddFilterComponentPayload    `json:"addFilterComponent,omitempty"`
 	RemoveFilterComponent *RemoveFilterComponentPayload `json:"removeFilterComponent,omitempty"`
 	SetInteraction        *SetInteractionPayload        `json:"setInteraction,omitempty"`
+	SetInteractionTarget  *SetInteractionTargetPayload  `json:"setInteractionTarget,omitempty"`
 	Publish               *PublishPayload               `json:"publish,omitempty"`
 	Archive               *ArchivePayload               `json:"archive,omitempty"`
 }
@@ -692,6 +709,9 @@ func (c Command) payloads() []authoringPayload {
 	if c.SetInteraction != nil {
 		payloads = append(payloads, c.SetInteraction)
 	}
+	if c.SetInteractionTarget != nil {
+		payloads = append(payloads, c.SetInteractionTarget)
+	}
 	if c.Publish != nil {
 		payloads = append(payloads, c.Publish)
 	}
@@ -740,7 +760,8 @@ func (c Command) IsBuilderIntent() bool {
 		*UpdatePageLayoutPayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
-		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload:
+		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload,
+		*SetInteractionTargetPayload:
 		return true
 	default:
 		return false
@@ -1195,6 +1216,21 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if !value.Clear && value.Interaction == nil {
 			return fmt.Errorf("%w: set interaction requires interaction or clear", ErrInvalidPayload)
+		}
+	case *SetInteractionTargetPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("visual id", value.VisualID); err != nil {
+			return err
+		}
+		if err := validateCanonicalObjectID("target visual id", value.TargetVisualID); err != nil {
+			return err
+		}
+		switch strings.TrimSpace(value.Effect) {
+		case "filter", "highlight", "none":
+		default:
+			return fmt.Errorf("%w: unsupported interaction target effect %q", ErrInvalidPayload, value.Effect)
 		}
 	case *PublishPayload, *ArchivePayload:
 	default:

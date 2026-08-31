@@ -412,6 +412,8 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 	projectID := project.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
 	actorID := h.currentActor(r)
+	draftID := strings.TrimSpace(r.URL.Query().Get("draft"))
+	pageID := strings.TrimSpace(r.URL.Query().Get("page"))
 	revision, err := revisionFromQuery(r.URL.Query())
 	if projectErr != nil || err != nil || projectID == "" || dashboardID == "" || actorID == "" || h.Authoring == nil {
 		if projectErr != nil {
@@ -423,10 +425,18 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
+	if err := authoring.DraftID(draftID).Validate(); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if pageID == "" {
+		writeBuilderError(w, r, fmt.Errorf("%w: preview page id is required", authoring.ErrInvalidPayload))
+		return
+	}
 	result, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
 		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
-		DraftID:          authoring.DraftID(strings.TrimSpace(r.URL.Query().Get("draft"))),
-		ExpectedRevision: revision, PageID: strings.TrimSpace(r.URL.Query().Get("page")),
+		DraftID:          authoring.DraftID(draftID),
+		ExpectedRevision: revision, PageID: pageID,
 	})
 	if err != nil {
 		writeBuilderError(w, r, err)
@@ -477,6 +487,7 @@ type dashboardBuilderCommandSignal struct {
 	PageID                    string                            `json:"pageId"`
 	NewPageID                 string                            `json:"newPageId"`
 	VisualID                  string                            `json:"visualId"`
+	TargetVisualID            string                            `json:"targetVisualId"`
 	ComponentID               string                            `json:"componentId"`
 	FieldID                   string                            `json:"fieldId"`
 	FilterID                  string                            `json:"filterId"`
@@ -516,6 +527,7 @@ type dashboardBuilderCommandSignal struct {
 	Gap                       int32                             `json:"gap,omitempty"`
 	Padding                   int32                             `json:"padding,omitempty"`
 	Action                    string                            `json:"action"`
+	Effect                    string                            `json:"effect"`
 }
 
 type dashboardBuilderPlacementSignal struct {
@@ -646,6 +658,8 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.RemoveField = &authoring.RemoveFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role))}
 	case "move_field":
 		command.MoveField = &authoring.MoveFieldPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), FieldID: strings.TrimSpace(s.FieldID), Role: authoring.FieldRole(strings.TrimSpace(s.Role)), TargetRole: authoring.FieldRole(strings.TrimSpace(s.TargetRole)), Direction: strings.TrimSpace(s.Direction), Index: s.Index}
+	case "set_interaction_target":
+		command.SetInteractionTarget = &authoring.SetInteractionTargetPayload{PageID: strings.TrimSpace(s.PageID), VisualID: strings.TrimSpace(s.VisualID), TargetVisualID: strings.TrimSpace(s.TargetVisualID), Effect: strings.TrimSpace(s.Effect)}
 	default:
 		return authoring.Command{}, fmt.Errorf("unsupported dashboard builder action %q", s.Action)
 	}
@@ -676,15 +690,15 @@ func parseRevisionNumber(raw json.RawMessage) (uint64, error) {
 func revisionFromQuery(values url.Values) (authoring.RevisionToken, error) {
 	number, err := parseRevisionNumber(json.RawMessage(strconv.Quote(values.Get("revisionNumber"))))
 	if err != nil {
-		return authoring.RevisionToken{}, err
+		return authoring.RevisionToken{}, fmt.Errorf("%w: %v", authoring.ErrInvalidPayload, err)
 	}
 	id, hash := strings.TrimSpace(values.Get("revisionId")), strings.TrimSpace(values.Get("revisionContentHash"))
 	if id == "" || hash == "" {
-		return authoring.RevisionToken{}, fmt.Errorf("complete preview revision is required")
+		return authoring.RevisionToken{}, fmt.Errorf("%w: complete preview revision is required", authoring.ErrInvalidPayload)
 	}
 	token := authoring.RevisionToken{RevisionID: authoring.RevisionID(id), Number: number, ContentHash: hash}
 	if err := token.ValidateComplete(); err != nil {
-		return authoring.RevisionToken{}, err
+		return authoring.RevisionToken{}, fmt.Errorf("%w: %v", authoring.ErrInvalidPayload, err)
 	}
 	return token, nil
 }

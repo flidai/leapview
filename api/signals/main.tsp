@@ -205,6 +205,42 @@ model DashboardBuilderVisualSignal {
   `placement`: DashboardPagePlacement;
   `slots`: DashboardBuilderVisualSlotSignal[];
   `filters`: string[];
+  /**
+   * Bounded authored interaction metadata for the builder inspector. The
+   * projection is intentionally optional: unsupported or malformed authored
+   * interactions are represented only when the server can classify them
+   * without exposing the authored union to the browser.
+   */
+  `interaction`?: DashboardBuilderInteractionSignal;
+}
+
+/**
+ * Read-only interaction projection used by the visual builder. `mappings`
+ * preserve the exact authored selection mapping (or a server-inferred default
+ * for an unconfigured visual); target arrays contain visual definition IDs.
+ */
+model DashboardBuilderInteractionSignal {
+  `configured`: boolean;
+  `editable`: boolean;
+  `message`?: string;
+  `mode`?: "single" | "multiple";
+  `toggle`: boolean;
+  @maxItems(64)
+  `mappings`: DashboardBuilderInteractionMappingSignal[];
+  @maxItems(1024)
+  `targets`: string[];
+  @maxItems(1024)
+  `highlightTargets`: string[];
+  @maxItems(1024)
+  `noneTargets`: string[];
+}
+
+model DashboardBuilderInteractionMappingSignal {
+  `field`: string;
+  `value`: string;
+  `dataset`?: string;
+  `grain`?: string;
+  `label`?: string;
 }
 
 model DashboardBuilderVisualSlotSignal {

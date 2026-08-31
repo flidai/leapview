@@ -9,6 +9,7 @@ import type {
   DashboardBuilderFilterComponentSignal,
   DashboardBuilderFilterSignal,
   DashboardBuilderFormatOptionSignal,
+  DashboardBuilderInteractionSignal,
   DashboardBuilderPageSignal,
   DashboardBuilderSignal,
   DashboardBuilderDatasetSignal,
@@ -54,6 +55,7 @@ type BuilderFieldFilter = 'all' | 'metric' | 'dimension' | 'time'
 type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
 type BuilderFilterScope = 'report' | 'page' | 'visual' | 'custom'
 type BuilderPane = 'filters' | 'visuals' | 'data'
+type BuilderInteractionEffect = 'filter' | 'highlight' | 'none'
 
 const builderPaneStorageKey = 'leapview-dashboard-builder-collapsed-panes'
 const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false }
@@ -65,6 +67,8 @@ type BuilderCatalogField = {
 }
 
 type DashboardBuilderVisualWithPreview = DashboardBuilderVisualSignal & { visualId?: string }
+
+type DashboardBuilderVisualWithInteraction = DashboardBuilderVisualWithPreview & { interaction?: DashboardBuilderInteractionSignal }
 
 type GridPlacement = {
   componentId: string
@@ -128,9 +132,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private undoStack: BuilderRevisionReference[] = []
   @state() private redoStack: BuilderRevisionReference[] = []
   @state() private visualTypeOverrides: Record<string, BuilderVisualType> = {}
+  @state() private interactionEffectOverrides: Record<string, BuilderInteractionEffect> = {}
   @state() private terminalFailure: BrowserCommandFailure | null = null
   @state() private collapsedPanes: Record<BuilderPane, boolean> = { ...defaultCollapsedPanes }
   private commandPending = false
+  private activeCommandAction = ''
+  private interactionOverridesRevision = ''
   private pendingHistorySnapshot: BuilderHistorySnapshot | null = null
   private copiedVisual: BuilderClipboard | null = null
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
@@ -1523,6 +1530,89 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       gap: var(--base-size-12);
     }
 
+    .interaction-editor {
+      padding-top: var(--base-size-12);
+      border-top: var(--lv-border-muted);
+    }
+
+    .interaction-targets {
+      display: grid;
+      gap: var(--base-size-8);
+      margin: 0;
+      padding: 0;
+      border: 0;
+    }
+
+    .interaction-targets > legend {
+      margin-bottom: var(--base-size-6);
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-semibold);
+    }
+
+    .interaction-target {
+      display: grid;
+      gap: var(--base-size-6);
+    }
+
+    .interaction-target-title {
+      overflow: hidden;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .interaction-effects {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: var(--base-size-4);
+    }
+
+    .interaction-effect {
+      display: grid;
+      place-items: center;
+      min-height: var(--control-small-size);
+      box-sizing: border-box;
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-small, var(--lv-radius-default));
+      color: var(--lv-fg-muted);
+      background: var(--lv-bg-panel);
+      font: var(--lv-type-caption);
+      cursor: pointer;
+    }
+
+    .interaction-effect:has(input:focus-visible) {
+      outline: 2px solid var(--lv-fg-accent);
+      outline-offset: 1px;
+    }
+
+    .interaction-effect[data-effect='filter'][data-selected='true'] {
+      border-color: var(--lv-data-2);
+      color: var(--lv-data-2);
+      background: var(--lv-data-2-muted);
+    }
+
+    .interaction-effect[data-effect='highlight'][data-selected='true'] {
+      border-color: var(--lv-data-3);
+      color: var(--lv-data-3);
+      background: var(--lv-data-3-muted);
+    }
+
+    .interaction-effect[data-effect='none'][data-selected='true'] {
+      border-color: var(--lv-line-emphasis);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel-muted);
+    }
+
+    .interaction-effect input {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      opacity: 0;
+      pointer-events: none;
+    }
+
     .field-well {
       display: grid;
       gap: var(--base-size-6);
@@ -2137,6 +2227,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       save: 'required',
     })
     this.reconcileVisualTypeOverrides(builder)
+    this.reconcileInteractionEffectOverrides(builder)
     this.selectPendingAddedPage(builder)
     this.reconcilePendingRemovedPage(builder)
     this.selectPendingAddedVisual(builder)
@@ -2429,6 +2520,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderToolbar(builder: DashboardBuilderSignal) {
     const saveState = builder.save.state
+    const blockingDiagnostics = builder.diagnostics.filter((item) => item.severity === 'error')
+    const publishing = this.commandPending && this.activeCommandAction === 'publish'
+    const publishDisabled = this.commandPending || !builder.hasUnpublishedChanges || blockingDiagnostics.length > 0
+    const publishLabel = publishing ? 'Publishing…' : builder.hasUnpublishedChanges ? 'Publish' : 'Published'
+    const publishTitle = blockingDiagnostics.length > 0
+      ? `Fix ${blockingDiagnostics.length} validation ${blockingDiagnostics.length === 1 ? 'error' : 'errors'} before publishing`
+      : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || Boolean(this.forkHref)
     return html`
       <header class="toolbar">
@@ -2436,14 +2534,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="title-wrap">
           <h1 class="title">${builder.title}</h1>
           <div class="meta" data-state=${builder.hasUnpublishedChanges || saveState === 'dirty' ? 'dirty' : saveState} aria-label="Dashboard draft status" aria-live="polite" title=${`${builder.origin.label} · Revision ${builder.revision.number} · ${builder.revision.id}`}>
-            <span>${this.titleCase(builder.visibility)} ${this.titleCase(builder.lifecycle)} · Revision ${builder.revision.number} · ${this.saveLabel(builder)}</span>
+            <span>${this.titleCase(builder.visibility)} ${this.titleCase(builder.lifecycle)} · Revision ${builder.revision.number} · ${publishing ? 'Publishing…' : this.commandPending ? 'Saving…' : this.saveLabel(builder)}</span>
           </div>
         </div>
         <div class="toolbar-actions" aria-label="Builder actions">
           <button type="button" class="icon-action" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>${lucideIcon(Undo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Undo</span></button>
           <button type="button" class="icon-action" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>${lucideIcon(Redo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Redo</span></button>
-          ${(builder.preview.href || this.previewHref) && builder.capabilities.canPreview
-            ? html`<a class="button" href=${builder.preview.href || this.previewHref}>Preview</a>`
+          ${builder.preview.href && builder.capabilities.canPreview
+            ? html`<a class="button" data-builder-action="preview" href=${builder.preview.href}>Preview</a>`
             : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
           ${hasMoreActions ? html`
             <details class="more-actions">
@@ -2456,7 +2554,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                   : nothing}
               </div>
             </details>` : nothing}
-          ${builder.capabilities.canPublish ? html`<button class="primary" @click=${this.publish}>Publish</button>` : nothing}
+          ${builder.capabilities.canPublish ? html`<button type="button" class="primary" data-builder-action="publish" title=${publishTitle} ?disabled=${publishDisabled} @click=${this.publish}>${publishLabel}</button>` : nothing}
         </div>
       </header>
     `
@@ -2493,6 +2591,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!this.commandPending) return
     if (detail?.type === 'finished') {
       this.commandPending = false
+      this.activeCommandAction = ''
       this.pendingHistorySnapshot = null
       this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
       this.requestUpdate()
@@ -2501,12 +2600,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const commandFailure = browserCommandFailure(event, 'Dashboard builder action')
     if (!commandFailure) return
     this.commandPending = false
+    this.activeCommandAction = ''
     if (this.pendingHistorySnapshot) {
       this.undoStack = this.pendingHistorySnapshot.undo
       this.redoStack = this.pendingHistorySnapshot.redo
       this.pendingHistorySnapshot = null
     }
     this.visualTypeOverrides = {}
+    this.interactionEffectOverrides = {}
+    this.interactionOverridesRevision = ''
     this.pendingAddPage = null
     if (this.pendingRemovePage) {
       this.localPageID = this.pendingRemovePage.pageID
@@ -2936,14 +3038,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ${this.inspectorTab === 'build'
             ? html`<div class="inspector-panel" role="tabpanel" aria-label="Build visual">
                 ${this.renderVisualPicker(builder, page, visual)}
-                ${visual ? this.renderFieldWells(visual) : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
+                ${visual ? html`${this.renderFieldWells(visual)}${this.renderInteractionEditor(builder, page, visual)}` : html`<div class="format-placeholder">Select a visual to see its field wells. New visuals are placed on the current page and selected after the saved revision arrives.</div>`}
               </div>`
             : html`<div class="inspector-panel" role="tabpanel" aria-label=${visual ? 'Format visual' : 'Format page'}>
                 ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
               </div>`}
           <div class="properties-body">
-            <details class="secondary-details">
-              <summary>Diagnostics &amp; source evidence</summary>
+            <details class="secondary-details" ?open=${builder.diagnostics.some((item) => item.severity === 'error')}>
+              <summary>${builder.diagnostics.some((item) => item.severity === 'error') ? `Fix ${builder.diagnostics.filter((item) => item.severity === 'error').length} validation ${builder.diagnostics.filter((item) => item.severity === 'error').length === 1 ? 'error' : 'errors'}` : 'Diagnostics & source evidence'}</summary>
               <div class="secondary-details-content">${this.renderDiagnostics(builder.diagnostics)}${this.renderEvidence(builder)}</div>
             </details>
           </div>
@@ -3000,6 +3102,106 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="field-wells">${roles.map((role) => this.renderFieldWell(visual, role))}</div>
       </section>
     `
+  }
+
+  private renderInteractionEditor(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal) {
+    if (!page) return nothing
+    const source = visual as DashboardBuilderVisualWithInteraction
+    const interaction = source.interaction
+    const sourceDefinitionID = this.visualSignalID(visual)
+    const targets = page.visuals.filter((candidate, index, values) => {
+      const definitionID = this.visualSignalID(candidate)
+      return definitionID !== sourceDefinitionID && values.findIndex((item) => this.visualSignalID(item) === definitionID) === index
+    })
+    const helpID = `interaction-help-${visual.id}`
+    const editable = Boolean(builder.capabilities.canEdit && interaction?.editable && interaction.mappings.length > 0 && !this.commandPending)
+    return html`
+      <section class="property-group interaction-editor" aria-label="Visual interactions">
+        <span class="property-label">Interactions</span>
+        <p id=${helpID} class="pane-hint">When users select data in this visual, choose what happens to each visual on this page.</p>
+        ${!interaction
+          ? html`<p class="pane-hint">Interaction settings are unavailable until this visual has a valid preview.</p>`
+          : !interaction.editable
+            ? html`<p class="pane-hint" role="status">${interaction.message || 'This interaction is configured in dashboard code and cannot be edited here.'}</p>`
+            : targets.length === 0
+              ? html`<p class="pane-hint">Add another visual to configure an interaction.</p>`
+              : html`
+                <fieldset class="interaction-targets" aria-describedby=${helpID}>
+                  <legend>Target visuals</legend>
+                  ${targets.map((target) => this.renderInteractionTarget(page, visual, target, interaction, editable))}
+                </fieldset>
+              `}
+      </section>
+    `
+  }
+
+  private renderInteractionTarget(page: DashboardBuilderPageSignal, source: DashboardBuilderVisualSignal, target: DashboardBuilderVisualSignal, interaction: DashboardBuilderInteractionSignal, editable: boolean) {
+    const effect = this.interactionEffect(source, target, interaction)
+    const effects: BuilderInteractionEffect[] = ['filter', 'highlight', 'none']
+    const description: Record<BuilderInteractionEffect, string> = {
+      filter: `Filter ${target.title} to the selected data`,
+      highlight: `Highlight the selected data in ${target.title} while retaining its comparison`,
+      none: `Leave ${target.title} unchanged`,
+    }
+    return html`
+      <div class="interaction-target" data-interaction-target=${this.visualSignalID(target)}>
+        <span class="interaction-target-title" title=${target.title}>${target.title}</span>
+        <div class="interaction-effects" role="radiogroup" aria-label=${`Effect on ${target.title}`}>
+          ${effects.map((candidate) => {
+            const supported = this.interactionEffectSupported(candidate, target, interaction) || candidate === effect
+            return html`
+              <label class="interaction-effect" data-effect=${candidate} data-selected=${candidate === effect} title=${description[candidate]}>
+                <input
+                  type="radio"
+                  name=${`interaction-${source.id}-${target.id}`}
+                  value=${candidate}
+                  .checked=${candidate === effect}
+                  ?disabled=${!editable || !supported}
+                  aria-label=${`${this.titleCase(candidate)} ${target.title}`}
+                  @change=${() => this.setInteractionTarget(page, source, target, candidate)}
+                />
+                <span>${this.titleCase(candidate)}</span>
+              </label>
+            `
+          })}
+        </div>
+      </div>
+    `
+  }
+
+  private interactionEffect(source: DashboardBuilderVisualSignal, target: DashboardBuilderVisualSignal, interaction: DashboardBuilderInteractionSignal): BuilderInteractionEffect {
+    const override = this.interactionEffectOverrides[this.interactionOverrideKey(source, target)]
+    if (override) return override
+    const targetID = this.visualSignalID(target)
+    if (interaction.targets.includes(targetID)) return 'filter'
+    if (interaction.highlightTargets.includes(targetID)) return 'highlight'
+    return 'none'
+  }
+
+  private interactionEffectSupported(effect: BuilderInteractionEffect, target: DashboardBuilderVisualSignal, interaction: DashboardBuilderInteractionSignal): boolean {
+    if (effect !== 'highlight') return true
+    const fields = new Set(target.slots.map((slot) => slot.fieldId).filter((field): field is string => Boolean(field)))
+    return interaction.mappings.every((mapping) => fields.has(mapping.value))
+  }
+
+  private interactionOverrideKey(source: DashboardBuilderVisualSignal, target: DashboardBuilderVisualSignal): string {
+    return `${this.visualSignalID(source)}\u0000${this.visualSignalID(target)}`
+  }
+
+  private setInteractionTarget(page: DashboardBuilderPageSignal, source: DashboardBuilderVisualSignal, target: DashboardBuilderVisualSignal, effect: BuilderInteractionEffect): void {
+    const builder = this.builder
+    const interaction = (source as DashboardBuilderVisualWithInteraction).interaction
+    if (!builder?.capabilities.canEdit || !interaction?.editable || interaction.mappings.length === 0 || this.commandPending) return
+    const key = this.interactionOverrideKey(source, target)
+    this.interactionEffectOverrides = { ...this.interactionEffectOverrides, [key]: effect }
+    this.interactionOverridesRevision = this.revisionKey(builder)
+    this.visualActionMessage = `${this.titleCase(effect)} interaction for ${target.title} is saving.`
+    this.emitCommand('set_interaction_target', {
+      pageId: page.id,
+      visualId: source.id,
+      targetVisualId: target.id,
+      effect,
+    })
   }
 
   private renderFieldWell(visual: DashboardBuilderVisualSignal, role: BuilderFieldRole) {
@@ -3373,7 +3575,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!builder?.capabilities.canShare) return
     this.emitCommand('set_visibility', { visibility: builder.visibility === 'organization' ? 'private' : 'organization' })
   }
-  private publish = (): void => this.emitCommand('publish')
+  private publish = (): void => {
+    const builder = this.builder
+    if (!builder?.capabilities.canPublish || !builder.hasUnpublishedChanges || builder.diagnostics.some((item) => item.severity === 'error') || this.commandPending) return
+    this.emitCommand('publish')
+  }
 
   private addPage = (): void => {
     const builder = this.builder
@@ -3614,6 +3820,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return visual !== undefined && visual.type.toLowerCase() !== type
     })) as Record<string, BuilderVisualType>
     if (Object.keys(next).length !== Object.keys(this.visualTypeOverrides).length) this.visualTypeOverrides = next
+  }
+
+  private reconcileInteractionEffectOverrides(builder: DashboardBuilderSignal | null): void {
+    if (!builder || Object.keys(this.interactionEffectOverrides).length === 0) return
+    if (this.interactionOverridesRevision && this.interactionOverridesRevision === this.revisionKey(builder)) return
+    this.interactionEffectOverrides = {}
+    this.interactionOverridesRevision = ''
   }
 
   private addField(field: DashboardBuilderFieldSignal): void {
@@ -4132,6 +4345,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       }
     }
     this.commandPending = true
+    this.activeCommandAction = action
     this.setGridEditingEnabled(false)
     this.terminalFailure = null
     this.requestUpdate()

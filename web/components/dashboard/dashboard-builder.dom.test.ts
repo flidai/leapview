@@ -1800,6 +1800,98 @@ test('dashboard builder clears pending filter commands and surfaces transport fa
   }
 })
 
+test('dashboard builder authors one visual interaction target at a time', async () => {
+  const page = await browser.newPage({ viewport: { width: 1440, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const visual = (id: string, visualId: string, title: string, fields: string[], placement: Record<string, number>) => ({
+        id, visualId, title, titleVisible: true, type: 'bar', legendVisible: true, axisVisible: true, dataLabelsVisible: false, formatOptions: [], placement,
+        slots: fields.map((fieldId, index) => ({ id: `slot-${index}`, label: fieldId, kind: index === 0 ? 'dimension' : 'metric', fieldId, required: true })), filters: [],
+      })
+      const source = {
+        ...visual('source-component', 'source-visual', 'Sales by status', ['orders.status', 'orders.total'], { col: 1, row: 1, colSpan: 4, rowSpan: 4 }),
+        interaction: { configured: true, editable: true, mode: 'single', toggle: true, mappings: [{ field: 'orders.status', value: 'orders.status' }], targets: ['filter-visual'], highlightTargets: ['highlight-visual'], noneTargets: [] },
+      }
+      mergePatch({ builder: { selectedVisualId: 'source-component', pages: [{ id: 'overview', title: 'Overview', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [
+        source,
+        visual('filter-component', 'filter-visual', 'Filtered revenue', ['orders.total'], { col: 5, row: 1, colSpan: 4, rowSpan: 4 }),
+        visual('filter-component-copy', 'filter-visual', 'Filtered revenue copy', ['orders.total'], { col: 9, row: 1, colSpan: 4, rowSpan: 4 }),
+        visual('highlight-component', 'highlight-visual', 'Revenue comparison', ['orders.status', 'orders.total'], { col: 1, row: 5, colSpan: 4, rowSpan: 4 }),
+      ], filterComponents: [] }] } })
+      await element.updateComplete
+      const rows = Array.from(root.querySelectorAll<HTMLElement>('[data-interaction-target]')).map((row) => ({
+        id: row.dataset.interactionTarget,
+        title: row.querySelector('.interaction-target-title')?.textContent?.trim(),
+        checked: row.querySelector<HTMLInputElement>('input:checked')?.value,
+        options: Array.from(row.querySelectorAll<HTMLInputElement>('input')).map((input) => ({ value: input.value, disabled: input.disabled })),
+      }))
+      root.querySelector<HTMLInputElement>('[data-interaction-target="highlight-visual"] input[value="none"]')?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return { rows, commands, sectionLabel: root.querySelector('.interaction-editor')?.getAttribute('aria-label') }
+    })
+    expect(state.sectionLabel).toBe('Visual interactions')
+    expect(state.rows).toHaveLength(2)
+    expect(state.rows.map((row) => ({ id: row.id, checked: row.checked }))).toEqual([
+      { id: 'filter-visual', checked: 'filter' },
+      { id: 'highlight-visual', checked: 'highlight' },
+    ])
+    expect(state.rows[0].options.find((option) => option.value === 'highlight')?.disabled).toBe(true)
+    expect(state.rows[1].options.every((option) => !option.disabled)).toBe(true)
+    expect(state.commands.at(-1)).toMatchObject({ action: 'set_interaction_target', pageId: 'overview', visualId: 'source-component', targetVisualId: 'highlight-component', effect: 'none' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder gates publishing on exact draft state and visible validation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
+      const publish = root.querySelector<HTMLButtonElement>('[data-builder-action="publish"]')!
+      const initial = { disabled: publish.disabled, label: publish.textContent?.trim(), preview: root.querySelector<HTMLAnchorElement>('[data-builder-action="preview"]')?.getAttribute('href') }
+      publish.click()
+      await element.updateComplete
+      const publishing = { disabled: publish.disabled, label: publish.textContent?.trim() }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { hasUnpublishedChanges: false, lifecycle: 'published', save: { state: 'saved', message: 'Saved' } } })
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      const published = { disabled: publish.disabled, label: publish.textContent?.trim() }
+      mergePatch({ builder: { hasUnpublishedChanges: true, diagnostics: [{ severity: 'error', code: 'INVALID_VISUAL', message: 'Choose a supported field.' }], preview: { href: '' } } })
+      await element.updateComplete
+      const details = root.querySelector<HTMLDetailsElement>('.secondary-details')!
+      const blocked = { disabled: publish.disabled, title: publish.title, detailsOpen: details.open, summary: details.querySelector('summary')?.textContent?.trim(), previewLink: Boolean(root.querySelector('[data-builder-action="preview"]')) }
+      return { initial, publishing, published, blocked, commands }
+    })
+    expect(state.initial.disabled).toBe(false)
+    expect(state.initial.label).toBe('Publish')
+    expect(state.initial.preview).toContain('revisionNumber=7')
+    expect(state.publishing).toEqual({ disabled: true, label: 'Publishing…' })
+    expect(state.published).toEqual({ disabled: true, label: 'Published' })
+    expect(state.blocked.disabled).toBe(true)
+    expect(state.blocked.title).toContain('Fix 1 validation error')
+    expect(state.blocked.detailsOpen).toBe(true)
+    expect(state.blocked.summary).toBe('Fix 1 validation error')
+    expect(state.blocked.previewLink).toBe(false)
+    expect(state.commands.at(-1)).toMatchObject({ action: 'publish', revisionId: 'rev-7', revisionNumber: '7' })
+  } finally {
+    await page.close()
+  }
+})
+
 function testDocument(): string {
   const visualCatalog = [
     ['line', 'Line chart', 'Cartesian'], ['area', 'Area chart', 'Cartesian'], ['bar', 'Bar chart', 'Cartesian'], ['column', 'Column chart', 'Cartesian'], ['pie', 'Pie chart', 'Part to whole'], ['donut', 'Donut chart', 'Part to whole'], ['scatter', 'Scatter chart', 'Distribution'], ['funnel', 'Funnel chart', 'Part to whole'],

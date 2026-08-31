@@ -689,6 +689,8 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.RemoveFilterComponent = value
 	case *SetInteractionPayload:
 		command.SetInteraction = value
+	case *SetInteractionTargetPayload:
+		command.SetInteractionTarget = value
 	default:
 		panic("unsupported canonical reducer test payload")
 	}
