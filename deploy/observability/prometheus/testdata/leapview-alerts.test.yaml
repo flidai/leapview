@@ -63,7 +63,7 @@ tests:
             exp_annotations:
               summary: "LeapView target app:8080 is unavailable"
               description: "Prometheus has been unable to scrape the LeapView target for more than 2 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#target-unavailable-alert-fires"
       - eval_time: 5m
         alertname: LeapViewTargetUnavailable
         exp_alerts: []
@@ -97,7 +97,7 @@ tests:
             exp_annotations:
               summary: "LeapView target app:8080 is returning sustained 5xx responses"
               description: "LeapView has continuously observed 5xx responses on app:8080 for more than 10 minutes."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#sustained-http-5xx-alert-fires"
       - eval_time: 21m
         alertname: LeapViewSustainedHTTP5xx
         exp_alerts: []
@@ -119,7 +119,7 @@ tests:
             exp_annotations:
               summary: "LeapView DuckDB runtime on app:8080 is fatally unhealthy"
               description: "The process-owned DuckDB runtime on app:8080 reports a fatal cleanup-safety failure."
-              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting"
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#duckdb-fatal-health-alert-fires"
       - eval_time: 5m
         alertname: LeapViewDuckDBFatalHealth
         exp_alerts: []
