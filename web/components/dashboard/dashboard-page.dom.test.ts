@@ -1651,7 +1651,7 @@ test('dashboard agent drawer carries page context and explicit visual references
     expect(opened.drawerWidth).toBeGreaterThanOrEqual(360)
     expect(opened.drawerWidth).toBeLessThanOrEqual(520)
 
-    const groupedSearch = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agentReferenceSearch: {
         query: 'orders', requestId: 1,
@@ -1661,6 +1661,8 @@ test('dashboard agent drawer carries page context and explicit visual references
 		  { reference: { kind: 'metric', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales model', hierarchy: ['Sales', 'Olist'], href: '/metric', locations: [], context: [] },
         ],
       } })
+    })
+    const groupedSearch = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
       await drawer.updateComplete
@@ -1683,9 +1685,11 @@ test('dashboard agent drawer carries page context and explicit visual references
 	expect(groupedSearch.accessible).not.toContain('Finance orders Finance › Executive Sales › Overview Visual')
 	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales › Olist Metric')
 
-    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agentContext: { referenceLimit: 1 } })
+    })
+    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
     })
 
