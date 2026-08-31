@@ -446,21 +446,15 @@ func (r *Runtime) Stop(ctx context.Context) error {
 
 func (r *Runtime) run(ctx context.Context) error {
 	defer close(r.runDone)
-	// Verify and enroll every canonical subscriber before invoking Router.Run.
-	// This keeps Watermill's handlersWg and startup watcher entirely out of the
-	// enrollment-failure path.
-	for _, subscriber := range r.prepared {
-		if err := subscriber.prepare(ctx); err != nil {
-			return errors.Join(err, r.shutdown(false))
-		}
-	}
-	r.mu.Lock()
-	if r.closeAsked {
-		r.mu.Unlock()
-		return r.shutdown(false)
-	}
-	r.mu.Unlock()
+	runtimeCtx, cancelRuntime := context.WithCancel(ctx)
+	defer cancelRuntime()
 
+	// Monitor subscriber failures before enrollment preflight begins. The first
+	// subscriber starts its claim loop as soon as it has verified enrollment;
+	// a later subscriber may still be blocked doing the same verification. A
+	// fatal from the first subscriber must therefore cancel that later preflight
+	// and prevent Router readiness, rather than sitting buffered until after all
+	// registrations have prepared.
 	monitorCtx, stopMonitor := context.WithCancel(context.Background())
 	var monitorWG sync.WaitGroup
 	for _, subscriber := range r.subscribers {
@@ -471,6 +465,7 @@ func (r *Runtime) run(ctx context.Context) error {
 			case err := <-subscriber.Fatal():
 				if !isCleanRuntimeContextError(err, ctx) {
 					r.publishFatal(err)
+					cancelRuntime()
 				}
 			case <-monitorCtx.Done():
 				// Subscriber.setFatal publishes before canceling its run context.
@@ -480,12 +475,35 @@ func (r *Runtime) run(ctx context.Context) error {
 				case err := <-subscriber.Fatal():
 					if !isCleanRuntimeContextError(err, ctx) {
 						r.publishFatal(err)
+						cancelRuntime()
 					}
 				default:
 				}
 			}
 		}(subscriber)
 	}
+	defer func() {
+		stopMonitor()
+		monitorWG.Wait()
+	}()
+
+	// Verify and enroll every canonical subscriber before invoking Router.Run.
+	// This keeps Watermill's handlersWg and startup watcher entirely out of the
+	// enrollment-failure path.
+	for _, subscriber := range r.prepared {
+		if err := subscriber.prepare(runtimeCtx); err != nil {
+			if fatalErr := r.fatalError(); fatalErr != nil {
+				err = fatalErr
+			}
+			return errors.Join(err, r.shutdown(false))
+		}
+	}
+	r.mu.Lock()
+	if r.closeAsked {
+		r.mu.Unlock()
+		return r.shutdown(false)
+	}
+	r.mu.Unlock()
 
 	runResult := make(chan error, 1)
 	go func() {
@@ -494,7 +512,7 @@ func (r *Runtime) run(ctx context.Context) error {
 				runResult <- fmt.Errorf("watermill router panic: %v", recovered)
 			}
 		}()
-		runResult <- r.router.Run(ctx)
+		runResult <- r.router.Run(runtimeCtx)
 	}()
 	var result error
 	select {
@@ -528,8 +546,6 @@ func (r *Runtime) run(ctx context.Context) error {
 			r.publishFatal(result)
 		}
 	}
-	stopMonitor()
-	monitorWG.Wait()
 	r.mu.Lock()
 	closeErr := r.closeErr
 	fatalErr := r.fatalErr

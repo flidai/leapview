@@ -239,7 +239,7 @@ WHERE consumer_id = sqlc.arg(consumer_id)::uuid AND event_id = sqlc.arg(event_id
 -- name: ReplayDelivery :execresult
 UPDATE event.event_delivery
 SET status = 'pending', available_at = clock_timestamp(), claimed_by = NULL,
-    claimed_until = NULL, terminal_at = NULL
+    claimed_until = NULL, terminal_at = NULL, evidence = sqlc.arg(evidence)::jsonb
 WHERE consumer_id = sqlc.arg(consumer_id)::uuid AND event_id = sqlc.arg(event_id)::uuid
   AND status IN ('succeeded', 'dead_letter', 'waived');
 

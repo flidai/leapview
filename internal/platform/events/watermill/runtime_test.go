@@ -297,6 +297,40 @@ func TestRuntimeStartupFailureClosesEverySubscriber(t *testing.T) {
 	require.NoError(t, runtime.Stop(context.Background()))
 }
 
+func TestRuntimeSubscriberFatalDuringPreflightPreventsReadiness(t *testing.T) {
+	fatal := errors.New("first subscriber claim failed")
+	first := newRuntimeTestSubscriber(runtimeRepo{claimErr: fatal})
+	blockingRepo := &runtimeBlockingEnrollmentRepo{entered: make(chan struct{})}
+	second := newRuntimeTestSubscriber(blockingRepo)
+	runtime, err := NewRuntime(runtimeTestConfig(),
+		HandlerRegistration{Name: "first", Topic: TopicAgent, Subscriber: first, Handler: func(*message.Message) error { return nil }},
+		HandlerRegistration{Name: "second", Topic: TopicAgent, Subscriber: second, Handler: func(*message.Message) error { return nil }},
+	)
+	require.NoError(t, err)
+
+	startDone := make(chan error, 1)
+	go func() { startDone <- runtime.Start(context.Background()) }()
+	select {
+	case <-blockingRepo.entered:
+	case <-time.After(time.Second):
+		t.Fatal("runtime did not enter the second enrollment preflight")
+	}
+	select {
+	case startErr := <-startDone:
+		require.ErrorIs(t, startErr, fatal)
+	case <-time.After(time.Second):
+		t.Fatal("subscriber fatal did not cancel enrollment preflight")
+	}
+	require.False(t, runtime.router.IsRunning())
+	select {
+	case got := <-runtime.Fatal():
+		require.ErrorIs(t, got, fatal)
+	case <-time.After(time.Second):
+		t.Fatal("pre-readiness subscriber fatal was not published")
+	}
+	require.NoError(t, runtime.Stop(context.Background()))
+}
+
 func TestRuntimeStopDuringEnrollmentPreflightDoesNotStartRouter(t *testing.T) {
 	repo := &runtimeBlockingEnrollmentRepo{entered: make(chan struct{})}
 	subscriber := newRuntimeTestSubscriber(repo)

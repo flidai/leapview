@@ -769,7 +769,7 @@ func TestPostgreSQL18ClaimFencingRetryPauseAndRetire(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := r.Replay(ctx, replayTx, consumer.ConsumerID, eventID); err != nil {
+	if err := r.Replay(ctx, replayTx, ReplayOptions{ConsumerID: consumer.ConsumerID, EventID: eventID, Evidence: []byte(`{"reason":"operator-replay"}`)}); err != nil {
 		_ = replayTx.Rollback(ctx)
 		t.Fatal(err)
 	}
@@ -860,6 +860,156 @@ func TestPostgreSQL18ClaimFencingRetryPauseAndRetire(t *testing.T) {
 	}
 	if lifecycle != "retired" {
 		t.Fatalf("consumer lifecycle = %q, want retired", lifecycle)
+	}
+}
+
+func TestPostgreSQL18ReplayEvidenceAndRetireFence(t *testing.T) {
+	db := eventTestDB(t)
+	ctx := t.Context()
+	r := New()
+	const eventID = "01900000-0000-7000-8000-000000000201"
+
+	appendTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.AppendEvent(ctx, appendTx, EventInput{
+		EventID: eventID, ScopeID: "scope", AggregateType: "replay-fence", AggregateID: "1",
+		EventType: "item", SchemaVersion: 1, Payload: []byte(`{"ok":true}`),
+	}); err != nil {
+		_ = appendTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := appendTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	enrollTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{
+		ConsumerKey: "replay-fence", ReplayFrom: time.Unix(0, 0), AggregateTypes: []string{"replay-fence"},
+	})
+	if err != nil {
+		_ = enrollTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enrollTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	backfillTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backfill, err := r.Backfill(ctx, backfillTx, consumer.ConsumerID, 10)
+	if err != nil {
+		_ = backfillTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := backfillTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !backfill.Done {
+		t.Fatal("backfill did not enable consumer")
+	}
+
+	// Move the delivery to a terminal state so Replay has an eligible row.
+	claimTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimed, err := r.Claim(ctx, claimTx, ClaimOptions{ConsumerID: consumer.ConsumerID, WorkerID: "replay-fence-worker", Limit: 1, Lease: time.Minute})
+	if err != nil || len(claimed) != 1 {
+		_ = claimTx.Rollback(ctx)
+		t.Fatalf("claim = %#v, %v", claimed, err)
+	}
+	if err := r.Complete(ctx, claimTx, consumer.ConsumerID, eventID, "replay-fence-worker", claimed[0].ClaimGeneration, DeliverySucceeded, []byte(`{"initial":true}`)); err != nil {
+		_ = claimTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := claimTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	invalidReplayTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.Replay(ctx, invalidReplayTx, ReplayOptions{ConsumerID: consumer.ConsumerID, EventID: eventID, Evidence: []byte(`{}`)}); err == nil {
+		_ = invalidReplayTx.Rollback(ctx)
+		t.Fatal("replay accepted empty operator evidence")
+	}
+	if err := invalidReplayTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	replayTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayEvidence := []byte(`{"reason":"operator-request","ticket":"FAI-593"}`)
+	if err := r.Replay(ctx, replayTx, ReplayOptions{ConsumerID: consumer.ConsumerID, EventID: eventID, Evidence: replayEvidence}); err != nil {
+		_ = replayTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	var status, evidence string
+	if err := replayTx.QueryRow(ctx, `SELECT status, evidence::text FROM event.event_delivery WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, eventID).Scan(&status, &evidence); err != nil {
+		_ = replayTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if status != "pending" {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("replay status in transaction = %q, want pending", status)
+	}
+	var gotEvidence map[string]any
+	if err := json.Unmarshal([]byte(evidence), &gotEvidence); err != nil {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("replay evidence is invalid JSON: %v", err)
+	}
+	if gotEvidence["reason"] != "operator-request" || gotEvidence["ticket"] != "FAI-593" {
+		_ = replayTx.Rollback(ctx)
+		t.Fatalf("replay evidence = %#v", gotEvidence)
+	}
+
+	// Replay holds the registry lock until commit. Retirement must wait for
+	// that lock, then observe the pending row and refuse to retire it.
+	retireTx, err := db.Begin(ctx)
+	if err != nil {
+		_ = replayTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	retireDone := make(chan error, 1)
+	go func() {
+		retireDone <- r.RetireConsumer(ctx, retireTx, RetireOptions{ConsumerID: consumer.ConsumerID})
+	}()
+	select {
+	case gotErr := <-retireDone:
+		_ = replayTx.Rollback(ctx)
+		_ = retireTx.Rollback(ctx)
+		t.Fatalf("retirement completed before replay commit: %v", gotErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := replayTx.Commit(ctx); err != nil {
+		_ = retireTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := <-retireDone; err == nil {
+		_ = retireTx.Rollback(ctx)
+		t.Fatal("retirement succeeded despite replayed pending delivery")
+	}
+	if err := retireTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var lifecycle, deliveryStatus string
+	if err := db.QueryRow(ctx, `SELECT c.lifecycle, d.status, d.evidence::text FROM event.event_consumer c JOIN event.event_delivery d USING (consumer_id) WHERE c.consumer_id = $1::uuid AND d.event_id = $2::uuid`, consumer.ConsumerID, eventID).Scan(&lifecycle, &deliveryStatus, &evidence); err != nil {
+		t.Fatal(err)
+	}
+	if lifecycle != "enabled" {
+		t.Fatalf("consumer lifecycle after replay/retire race = %q, want enabled", lifecycle)
+	}
+	if deliveryStatus != "pending" {
+		t.Fatalf("delivery status after replay/retire race = %q, want pending", deliveryStatus)
 	}
 }
 

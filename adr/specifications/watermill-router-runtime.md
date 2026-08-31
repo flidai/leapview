@@ -94,19 +94,21 @@ retry window. Watermill's Timeout cancels the message context; the completion
 boundary also rejects a handler that ignores cancellation and returns a late
 nil result, so a deadline-expired effect cannot become `Complete`/`Ack`.
 
-The runtime is an application lifecycle component. Startup pre-subscribes every
-canonical Subscriber and verifies its persisted enrollment before invoking
-`Router.Run`; an enrollment failure therefore never starts Watermill's handler
-wait-group or startup watcher. An internal prepared-subscriber adapter passes
-those already-verified channels to the Router while registrations remain
-canonical `*Subscriber` values. Subscriber and Router failures are forwarded
-through the process fatal channel. Shutdown first closes canonical subscribers
-and the Router, then waits for the runtime execution tracker (including
-`Complete`) before returning. `RouterConfig.CloseTimeout` is an alert/soft
-bound: if it expires while a user handler is still running, safe component
-`Stop` continues waiting for execution ownership. User handlers are required
-to honor their context so this final drain can complete before PostgreSQL pool
-teardown.
+The runtime is an application lifecycle component. Fatal monitoring starts
+before startup pre-subscribes every canonical Subscriber and verifies its
+persisted enrollment. A subscriber failure during a later subscriber's
+enrollment therefore cancels preflight and cannot be reported as Router
+readiness. Only successful preflight invokes `Router.Run`; an enrollment
+failure never starts Watermill's handler wait-group or startup watcher. An
+internal prepared-subscriber adapter passes those already-verified channels to
+the Router while registrations remain canonical `*Subscriber` values.
+Subscriber and Router failures are forwarded through the process fatal
+channel. Shutdown first closes canonical subscribers and the Router, then waits
+for the runtime execution tracker (including `Complete`) before returning.
+`RouterConfig.CloseTimeout` is an alert/soft bound: if it expires while a user
+handler is still running, safe component `Stop` continues waiting for execution
+ownership. User handlers are required to honor their context so this final
+drain can complete before PostgreSQL pool teardown.
 
 Registrations accept only the canonical PostgreSQL-backed Subscriber and
 Watermill's no-publisher consumer handler type. A concrete registration,
@@ -139,10 +141,16 @@ invalid. No zero-value deadline may silently disable these protections.
 
 At-least-once delivery is expected. Bounded attempts that cannot succeed enter
 a visible dead-letter terminal state in `event_delivery`; that state remains
-retention-blocking until an authorized resolution or audited waiver. Replay is
-by canonical event identity and a persisted replay root, with the same fences
-and fresh claims. Pruning `event_log` or `event_delivery` is forbidden while
-any applicable delivery, replay root, or unresolved dead letter remains.
+retention-blocking until an authorized resolution or audited waiver. An exact
+single-delivery replay is by canonical consumer and event identity, requires
+non-empty operator evidence, and takes the fan-out registry plus consumer
+lifecycle fences before changing a terminal row to `pending`. That pending row
+is the exact replay's retention authority until a fresh claim resolves it;
+creating a second range root for the same row would add redundant lifecycle
+state. Enrollment or any future range replay instead uses a persisted replay
+root until its bounded backfill completes. Pruning `event_log` or
+`event_delivery` is forbidden while any applicable delivery, range replay root,
+or unresolved dead letter remains.
 
 Handlers keep transactions short. Work that may exceed the handler deadline is
 admitted as a River job and acknowledged only after that admission transaction

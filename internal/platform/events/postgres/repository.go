@@ -198,6 +198,15 @@ type RetryOptions struct {
 	Evidence        json.RawMessage
 }
 
+// ReplayOptions controls an explicit single-delivery replay. Evidence is
+// mandatory, must be a non-empty JSON object, and is persisted with the
+// delivery transition for auditability.
+type ReplayOptions struct {
+	ConsumerID string
+	EventID    string
+	Evidence   json.RawMessage
+}
+
 // AppendEvent allocates an aggregate version, writes the event, and fans it
 // out to the consumers visible after the registry key-share fence.  The
 // registry fence and consumer scan intentionally are separate SQL commands:
@@ -818,10 +827,17 @@ func (r *Repository) Complete(ctx context.Context, tx Tx, consumerID, eventID, w
 
 // Replay marks a terminal delivery pending again by event identity. It is
 // useful for explicit poison resolution and is intentionally consumer-scoped.
-func (r *Repository) Replay(ctx context.Context, tx Tx, consumerID, eventID string) error {
+// The fan-out registry and consumer lifecycle locks serialize this transition
+// with retirement, so a replay can never leave a pending row on a retired
+// consumer.
+func (r *Repository) Replay(ctx context.Context, tx Tx, opts ReplayOptions) error {
 	if err := validateTxContext(ctx, tx); err != nil {
 		return err
 	}
+	if err := requireReadCommitted(ctx, tx); err != nil {
+		return err
+	}
+	consumerID, eventID := opts.ConsumerID, opts.EventID
 	if consumerID != strings.TrimSpace(consumerID) || eventID != strings.TrimSpace(eventID) {
 		return errors.New("delivery identities must not contain surrounding whitespace")
 	}
@@ -831,7 +847,28 @@ func (r *Repository) Replay(ctx context.Context, tx Tx, consumerID, eventID stri
 	if err := validateUUID("event id", eventID); err != nil {
 		return err
 	}
-	ct, err := eventsdb.New(tx).ReplayDelivery(ctx, eventsdb.ReplayDeliveryParams{ConsumerID: uuidParam(consumerID), EventID: uuidParam(eventID)})
+	evidence, err := canonicalObject(opts.Evidence, 32768)
+	if err != nil {
+		return fmt.Errorf("replay evidence: %w", err)
+	}
+	if _, err := nonEmptyObject(evidence); err != nil {
+		return fmt.Errorf("replay evidence: %w", err)
+	}
+	registry, err := eventsdb.New(tx).LockFanoutRegistryForUpdate(ctx)
+	if err != nil {
+		return fmt.Errorf("acquire replay fence: %w", err)
+	}
+	if !registry {
+		return errors.New("event fan-out registry row is invalid")
+	}
+	lifecycle, err := eventsdb.New(tx).GetConsumerLifecycleForUpdate(ctx, uuidParam(consumerID))
+	if err != nil {
+		return fmt.Errorf("lock event consumer for replay: %w", err)
+	}
+	if lifecycle != "enabled" && lifecycle != "paused" {
+		return fmt.Errorf("consumer lifecycle %q cannot replay deliveries", lifecycle)
+	}
+	ct, err := eventsdb.New(tx).ReplayDelivery(ctx, eventsdb.ReplayDeliveryParams{ConsumerID: uuidParam(consumerID), EventID: uuidParam(eventID), Evidence: evidence})
 	if err != nil {
 		return fmt.Errorf("replay event delivery: %w", err)
 	}
