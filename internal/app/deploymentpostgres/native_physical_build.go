@@ -20,6 +20,7 @@ import (
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -243,6 +244,21 @@ func (e *duckLakePhysicalBuildEnvironment) MaterializeWithObservations(ctx conte
 	return snapshotID, nil, nil
 }
 
+// MaterializeWithObservationWriter preserves the exact source-session and
+// DuckLake transaction ordering required by native physical builds. There is
+// intentionally no compatibility fallback: a configured writer requires the
+// pre-commit capture extension.
+func (e *duckLakePhysicalBuildEnvironment) MaterializeWithObservationWriter(ctx context.Context, request analyticsmaterialization.Request, writer analyticsmaterialization.ObservationWriter) (int64, []analyticsmaterialize.SourceObservation, error) {
+	if e == nil || e.environment == nil || e.materializer == nil {
+		return 0, nil, fmt.Errorf("%w: native physical build environment is not initialized", deploymentnative.ErrInvalid)
+	}
+	executor, ok := e.materializer.(analyticsmaterialization.ObservationWriterExecutor)
+	if !ok {
+		return 0, nil, fmt.Errorf("%w: native physical build materializer does not support pre-commit source observation capture", deploymentnative.ErrInvalid)
+	}
+	return executor.MaterializeWithObservationWriter(ctx, request, writer)
+}
+
 func (e *duckLakePhysicalBuildEnvironment) SnapshotSealEvidence(ctx context.Context, snapshotID int64) (ducklake.PostgresSnapshotSealEvidence, error) {
 	if e == nil || e.environment == nil {
 		return ducklake.PostgresSnapshotSealEvidence{}, fmt.Errorf("%w: native physical build environment is not initialized", deploymentnative.ErrInvalid)
@@ -273,6 +289,13 @@ type NativePhysicalBuildInput struct {
 	Request    analyticsmaterialization.Request
 	CatalogID  string
 	ObjectRoot string
+	// CaptureClock supplies the authoritative UTC timestamp for observation
+	// persistence. Lower-level adapters may leave it nil to use wall time.
+	CaptureClock func() time.Time
+	// ObservationWriter is invoked inside the DuckLake CommitTransaction
+	// callback. It is optional for lower-level test adapters; the production
+	// native coordinator supplies it and fails closed when unavailable.
+	ObservationWriter ducklakepostgres.SourceObservationWriter
 }
 
 // NativePhysicalBuildEvidence is value-only evidence returned after one
@@ -324,6 +347,9 @@ func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, fa
 			fmt.Errorf("%w: native physical build environment factory is not configured", deploymentnative.ErrInvalid),
 		)
 	}
+	if normalized.ObservationWriter != nil && nativeBuildAuthorityNil(normalized.ObservationWriter) {
+		return NativePhysicalBuildEvidence{}, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, fmt.Errorf("%w: source observation writer is typed nil", deploymentnative.ErrInvalid))
+	}
 
 	environment, openErr := factory.Open(ctx, normalized.Marker)
 	if openErr != nil {
@@ -365,7 +391,55 @@ func BuildNativePhysical(ctx context.Context, input NativePhysicalBuildInput, fa
 	var observations []analyticsmaterialize.SourceObservation
 	var snapshotID int64
 	var materializeErr error
-	if executor, ok := environment.(analyticsmaterialization.ObservationExecutor); ok {
+	if normalized.ObservationWriter != nil {
+		executor, ok := environment.(interface {
+			MaterializeWithObservationWriter(context.Context, analyticsmaterialization.Request, analyticsmaterialization.ObservationWriter) (int64, []analyticsmaterialize.SourceObservation, error)
+		})
+		if !ok {
+			return NativePhysicalBuildEvidence{}, nativePhysicalBuildIndeterminateFailure(
+				NativePhysicalBuildPhaseMaterialize,
+				fmt.Errorf("%w: native physical build environment does not support pre-commit source observation capture", deploymentnative.ErrInvalid),
+			)
+		}
+		captureClock := normalized.CaptureClock
+		if captureClock == nil {
+			captureClock = func() time.Time { return time.Now().UTC() }
+		}
+		// DuckLake may retry its transaction callback. Sample once so every
+		// callback writes the exact same immutable attempt identity; differing
+		// observations still conflict through the envelope digest.
+		capturedAt := captureClock().UTC()
+		var callbackEnvelope []byte
+		snapshotID, observations, materializeErr = executor.MaterializeWithObservationWriter(ctx, normalized.Request, func(writerCtx context.Context, captured []analyticsmaterialize.SourceObservation) error {
+			capture, captureErr := ducklakepostgres.NewSourceObservationCapture(normalized.Attempt.AttemptID, normalized.Marker, captured, capturedAt)
+			if captureErr != nil {
+				return captureErr
+			}
+			persisted, writeErr := normalized.ObservationWriter.RecordSourceObservationCapture(writerCtx, capture)
+			if writeErr != nil {
+				return writeErr
+			}
+			if persisted.AttemptID != capture.AttemptID || persisted.ContentDigest != capture.ContentDigest || !bytes.Equal(persisted.CommitMarker, capture.CommitMarker) || !bytes.Equal(persisted.ObservationEnvelope, capture.ObservationEnvelope) || !persisted.CapturedAt.Equal(capture.CapturedAt) {
+				return fmt.Errorf("%w: persisted source observation capture differs from callback evidence", deploymentnative.ErrConflict)
+			}
+			if callbackEnvelope != nil && !bytes.Equal(callbackEnvelope, capture.ObservationEnvelope) {
+				return fmt.Errorf("%w: source observations changed across materialization callback retries", deploymentnative.ErrConflict)
+			}
+			callbackEnvelope = append(callbackEnvelope[:0], capture.ObservationEnvelope...)
+			return nil
+		})
+		if materializeErr == nil {
+			returnedEnvelope, envelopeErr := ducklakepostgres.CanonicalSourceObservationEnvelope(observations)
+			switch {
+			case envelopeErr != nil:
+				materializeErr = envelopeErr
+			case callbackEnvelope == nil:
+				materializeErr = fmt.Errorf("%w: materializer did not invoke source observation capture", deploymentnative.ErrConflict)
+			case !bytes.Equal(returnedEnvelope, callbackEnvelope):
+				materializeErr = fmt.Errorf("%w: materializer returned source observations different from persisted callback evidence", deploymentnative.ErrConflict)
+			}
+		}
+	} else if executor, ok := environment.(analyticsmaterialization.ObservationExecutor); ok {
 		snapshotID, observations, materializeErr = executor.MaterializeWithObservations(ctx, normalized.Request)
 	} else {
 		snapshotID, materializeErr = environment.Materialize(ctx, normalized.Request)

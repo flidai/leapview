@@ -366,6 +366,12 @@ func (r *Runtime) SourceObservations() []SourceObservation {
 	for i, item := range r.sourceObservations {
 		result[i] = item
 		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
+		for column := range result[i].Schema {
+			if result[i].Schema[column].Nullable != nil {
+				nullable := *result[i].Schema[column].Nullable
+				result[i].Schema[column].Nullable = &nullable
+			}
+		}
 	}
 	return result
 }

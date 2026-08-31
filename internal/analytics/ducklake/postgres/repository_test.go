@@ -492,8 +492,17 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 		t.Fatalf("runtime repository path: %v", err)
 	}
 	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000099"
-	if _, err := runtime.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: digest('b'), PlanDigest: digest('c'), PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-worker", FencingEpoch: 1, SessionIdentity: "role-test", LeaseExpiresAt: time.Now().UTC().Add(time.Minute)}); err != nil {
+	requestDigest, planDigest := digest('b'), digest('c')
+	if _, err := runtime.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-worker", FencingEpoch: 1, SessionIdentity: "role-test", LeaseExpiresAt: time.Now().UTC().Add(time.Minute)}); err != nil {
 		t.Fatalf("runtime begin attempt: %v", err)
+	}
+	marker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-role-test", GenerationID: "generation-role-test", AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest, Project: "project-role-test", Environment: "prod", PhysicalPoolID: poolID}
+	capture, err := NewSourceObservationCapture(attemptID, marker, nil, time.Now().UTC())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtime.RecordSourceObservationCapture(t.Context(), capture); err != nil {
+		t.Fatalf("runtime source observation insert: %v", err)
 	}
 	if _, err := runtime.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "runtime-worker", FencingEpoch: 1, Evidence: json.RawMessage(`{"reason":"role-test"}`)}); err != nil {
 		t.Fatalf("runtime terminate attempt: %v", err)
@@ -517,6 +526,9 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	readonly := New(readonlyDB)
 	if _, err := readonly.LoadCatalog(t.Context(), poolID); err != nil {
 		t.Fatalf("readonly catalog select: %v", err)
+	}
+	if _, err := readonly.LoadSourceObservationCapture(t.Context(), attemptID); err != nil {
+		t.Fatalf("readonly source observation select: %v", err)
 	}
 	if _, err := readonlyDB.Exec(t.Context(), `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,compatibility_digest,catalog_schema_version) VALUES ('readonly-pool','ducklake','readonly-catalog','0198f2c0-7c7a-7f00-8a11-000000000010','lake',$1,'ducklake-v1')`, digest('d')); err == nil {
 		t.Fatal("readonly catalog insert unexpectedly succeeded")

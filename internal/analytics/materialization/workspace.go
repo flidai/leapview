@@ -51,3 +51,19 @@ type SourceObservationProvider interface {
 type ObservationExecutor interface {
 	MaterializeWithObservations(context.Context, Request) (int64, []materialize.SourceObservation, error)
 }
+
+// ObservationWriter is invoked by a materializer inside its DuckLake commit
+// transaction, immediately after model tables are materialized and while the
+// prepared source session remains live. Returning an error aborts that
+// transaction. The external transaction handle never crosses this capability
+// boundary. The writer may durably record control-plane evidence even if the
+// later DuckLake commit fails; callers must resolve the commit marker and must
+// never treat observation capture itself as proof of an external commit.
+type ObservationWriter func(context.Context, []materialize.SourceObservation) error
+
+// ObservationWriterExecutor is the native physical-build extension. Unlike
+// ObservationExecutor, it guarantees that observation persistence occurs
+// before the external DuckLake commit is acknowledged.
+type ObservationWriterExecutor interface {
+	MaterializeWithObservationWriter(context.Context, Request, ObservationWriter) (int64, []materialize.SourceObservation, error)
+}

@@ -59,6 +59,43 @@ CREATE TABLE IF NOT EXISTS ducklake.attempt_evidence (
     CHECK (state IN ('running', 'committed') OR termination_evidence IS NOT NULL)
 );
 
+-- Source observations are captured by the exact native DuckLake writer while
+-- its prepared source session is still live.  The attempt key makes the
+-- capture replay-safe; marker and envelope bytes are canonical identities,
+-- not mutable diagnostic payloads.
+CREATE TABLE IF NOT EXISTS ducklake.source_observation_capture (
+    attempt_id            uuid PRIMARY KEY REFERENCES ducklake.attempt_evidence(attempt_id) ON DELETE RESTRICT,
+    commit_marker         jsonb NOT NULL,
+    observation_envelope  jsonb NOT NULL,
+    content_digest        text NOT NULL,
+    captured_at           timestamptz NOT NULL,
+    created_at            timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (jsonb_typeof(commit_marker) = 'object' AND octet_length(commit_marker::text) <= 4096),
+    CHECK (jsonb_typeof(observation_envelope) = 'object' AND octet_length(observation_envelope::text) <= 8388608),
+    CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$')
+);
+
+CREATE OR REPLACE FUNCTION ducklake.guard_source_observation_capture_immutable() RETURNS trigger
+LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        RAISE EXCEPTION 'source observation captures are immutable';
+    END IF;
+    IF NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
+       OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
+       OR NEW.observation_envelope IS DISTINCT FROM OLD.observation_envelope
+       OR NEW.content_digest IS DISTINCT FROM OLD.content_digest
+       OR NEW.captured_at IS DISTINCT FROM OLD.captured_at
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN
+        RAISE EXCEPTION 'source observation capture identity is immutable';
+    END IF;
+    RETURN NEW;
+END; $$;
+DROP TRIGGER IF EXISTS source_observation_capture_immutable ON ducklake.source_observation_capture;
+CREATE TRIGGER source_observation_capture_immutable
+BEFORE UPDATE OR DELETE ON ducklake.source_observation_capture
+FOR EACH ROW EXECUTE FUNCTION ducklake.guard_source_observation_capture_immutable();
+
 -- A generation binding is immutable evidence.  Serving selects this exact
 -- pool/catalog/snapshot tuple; it never selects a catalog by path or recency.
 CREATE TABLE IF NOT EXISTS ducklake.generation_binding (
@@ -1303,6 +1340,7 @@ BEGIN
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
             || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
             || 'ducklake.snapshot_orphan TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.source_observation_capture TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_runtime';
     END IF;
@@ -1314,7 +1352,8 @@ BEGIN
             || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
             || 'ducklake.snapshot_orphan, ducklake.snapshot_reader_drain, '
             || 'ducklake.catalog_runtime_compatibility, ducklake.migration_fence, '
-            || 'ducklake.catalog_migration, ducklake.snapshot_requalification '
+            || 'ducklake.catalog_migration, ducklake.snapshot_requalification, '
+            || 'ducklake.source_observation_capture '
             || 'TO leapview_control_readonly';
     END IF;
     -- The upgrade coordinator is a control-database capability.  It is

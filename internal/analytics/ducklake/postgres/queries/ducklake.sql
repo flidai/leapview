@@ -45,6 +45,16 @@ FROM ducklake.snapshot_retention WHERE physical_pool_id=sqlc.arg(physical_pool_i
 SELECT state,request_digest,plan_digest,physical_pool_id,catalog_id,fencing_epoch,snapshot_id,CAST(COALESCE(commit_marker::text,'') AS text) AS commit_marker
 FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id) FOR UPDATE;
 
+-- name: InsertSourceObservationCapture :exec
+INSERT INTO ducklake.source_observation_capture
+ (attempt_id,commit_marker,observation_envelope,content_digest,captured_at)
+ VALUES (sqlc.arg(attempt_id),sqlc.arg(commit_marker)::jsonb,sqlc.arg(observation_envelope)::jsonb,sqlc.arg(content_digest),sqlc.arg(captured_at))
+ ON CONFLICT (attempt_id) DO NOTHING;
+
+-- name: GetSourceObservationCapture :one
+SELECT attempt_id::text,commit_marker,observation_envelope,content_digest,captured_at,created_at
+FROM ducklake.source_observation_capture WHERE attempt_id=sqlc.arg(attempt_id);
+
 -- name: InsertGenerationBinding :exec
 INSERT INTO ducklake.generation_binding
 (delivery_id,generation_id,attempt_id,physical_pool_id,catalog_id,snapshot_id,relation_manifest_digest,compatibility_digest,serving_artifact_digest,request_digest,plan_digest,fencing_epoch)

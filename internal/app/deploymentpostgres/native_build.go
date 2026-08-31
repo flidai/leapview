@@ -18,6 +18,7 @@ import (
 	"time"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -80,6 +81,7 @@ type NativeBuildConfig struct {
 	AttemptTermination   AttemptTermination
 	GenerationAdmission  GenerationAdmission
 	PhysicalFactory      NativePhysicalBuildEnvironmentFactory
+	ObservationWriter    ducklakepostgres.SourceObservationWriter
 	QualificationFactory NativeQualificationEnvironmentFactory
 	RuntimeVersion       string
 	Bounds               gates.Bounds
@@ -109,6 +111,7 @@ type NativeBuildCoordinator struct {
 	attemptTermination                  AttemptTermination
 	generationAdmission                 GenerationAdmission
 	physicalFactory                     NativePhysicalBuildEnvironmentFactory
+	observationWriter                   ducklakepostgres.SourceObservationWriter
 	qualificationFactory                NativeQualificationEnvironmentFactory
 	runtimeVersion, sessionIdentity     string
 	bounds                              gates.Bounds
@@ -138,6 +141,9 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	}
 	if nativeBuildAuthorityNil(config.Sources) || nativeBuildAuthorityNil(config.Operations) || nativeBuildAuthorityNil(config.Heartbeat) || nativeBuildAuthorityNil(config.AttemptAdmission) || nativeBuildAuthorityNil(config.AttemptTermination) || nativeBuildAuthorityNil(config.GenerationAdmission) || nativeBuildAuthorityNil(config.PhysicalFactory) || nativeBuildAuthorityNil(config.QualificationFactory) {
 		return nil, errors.New("native build source, operation, admission, and execution authorities are required")
+	}
+	if nativeBuildAuthorityNil(config.ObservationWriter) {
+		return nil, errors.New("native build source observation writer is required")
 	}
 	artifacts := config.Artifacts
 	if nativeBuildAuthorityNil(artifacts) {
@@ -207,7 +213,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		repository: config.Repository, sources: config.Sources, artifacts: artifacts, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
-		physicalFactory: config.PhysicalFactory, qualificationFactory: config.QualificationFactory,
+		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, qualificationFactory: config.QualificationFactory,
 		runtimeVersion: config.RuntimeVersion, sessionIdentity: session, bounds: config.Bounds,
 		leaseDuration: leaseDuration, clock: clock, events: config.Events, eventReader: eventReader, audit: config.Audit,
 		auditReader: auditReader, workflow: config.Workflow,
@@ -228,7 +234,7 @@ func NewNativeBuild(config NativeBuildConfig) (*NativeBuildCoordinator, error) {
 }
 
 func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest) (_ deploymentmodule.NativeDeliveryBuild, resultErr error) {
-	if c == nil || c.repository == nil || c.sources == nil || c.artifacts == nil || c.contract == nil || c.operations == nil || c.heartbeat == nil || c.attemptAdmission == nil || c.attemptTermination == nil || c.generationAdmission == nil || c.physicalFactory == nil || c.qualificationFactory == nil || c.events == nil || c.audit == nil {
+	if c == nil || c.repository == nil || c.sources == nil || c.artifacts == nil || c.contract == nil || c.operations == nil || c.heartbeat == nil || c.attemptAdmission == nil || c.attemptTermination == nil || c.generationAdmission == nil || c.physicalFactory == nil || nativeBuildAuthorityNil(c.observationWriter) || c.qualificationFactory == nil || c.events == nil || c.audit == nil {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	ctx = contextOrBackground(ctx)
@@ -442,7 +448,7 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, settle(err, NativePhysicalFailureDeterministic, NativePhysicalBuildPhaseValidation, nil)
 	}
-	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, Request: nativeMaterializationRequest(effective, normalized, generationID, candidateID, attemptAdmission.Attempt.Namespace, plan.DeliveryPlan)}
+	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: nativeMaterializationRequest(effective, normalized, generationID, candidateID, attemptAdmission.Attempt.Namespace, plan.DeliveryPlan)}
 	physical, err := BuildNativePhysical(buildCtx, physicalInput, c.physicalFactory)
 	if err != nil {
 		classification, phase := NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseMaterialize

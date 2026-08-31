@@ -27,8 +27,59 @@ type duckDBProjectMaterializer struct {
 	sourceObservations []analyticsmaterialize.SourceObservation
 }
 
+// MaterializeWithObservationWriter captures source evidence and invokes its
+// writer in the DuckLake CommitTransaction callback before the external
+// commit is acknowledged. The writer is per invocation; no observations are
+// retained in shared materializer state until the commit succeeds.
+func (e *duckDBProjectMaterializer) MaterializeWithObservationWriter(ctx context.Context, request analyticsmaterialization.Request, writer analyticsmaterialization.ObservationWriter) (snapshotID int64, observations []analyticsmaterialize.SourceObservation, err error) {
+	if e == nil || e.environment == nil {
+		return 0, nil, fmt.Errorf("analytical runtime environment is unavailable")
+	}
+	if writer == nil {
+		return 0, nil, fmt.Errorf("source observation writer is required")
+	}
+	run := e.beginMaterializationRun()
+	runtime, err := analyticsduckdb.OpenProjectMaterializeRuntime(ctx, analyticsduckdb.ProjectRuntimeConfig{
+		Models: request.Models, ModelTables: request.ModelTables, Database: e.environment,
+		CredentialResolver: e.credentials,
+		ConnectionResolver: e.connectionResolver(request),
+		ServingStateID:     request.Identity.GenerationID, ProjectID: request.Identity.ProjectID,
+		CandidateID:       request.CandidateID,
+		Environment:       string(servingstate.NormalizeEnvironment(request.Environment)),
+		RelationNamespace: request.RelationNamespace,
+		TargetType:        request.TargetType, TargetID: request.TargetID.String(),
+		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
+		SkipInitialRefresh: true, MaterializationOnly: true,
+	})
+	if err != nil {
+		e.clearMaterializationRun(run)
+		return 0, nil, err
+	}
+	defer func() {
+		if closeErr := runtime.Close(); closeErr != nil {
+			e.clearMaterializationRun(run)
+			snapshotID = 0
+			observations = nil
+			err = errors.Join(err, fmt.Errorf("closing materialization runtime: %w", closeErr))
+		}
+	}()
+	if err := runtime.RefreshProjectTablesWithObservationWriter(ctx, request.Tables, writer); err != nil {
+		e.clearMaterializationRun(run)
+		return 0, nil, err
+	}
+	snapshotID = runtime.DuckLakeSnapshotID()
+	if snapshotID <= 0 {
+		e.clearMaterializationRun(run)
+		return 0, nil, fmt.Errorf("refresh did not produce a DuckLake snapshot")
+	}
+	observations = runtime.SourceObservations()
+	e.setMaterializationRun(run, observations)
+	return snapshotID, cloneSourceObservations(observations), nil
+}
+
 var _ analyticsmaterialization.SourceObservationProvider = (*duckDBProjectMaterializer)(nil)
 var _ analyticsmaterialization.ObservationExecutor = (*duckDBProjectMaterializer)(nil)
+var _ analyticsmaterialization.ObservationWriterExecutor = (*duckDBProjectMaterializer)(nil)
 
 func (e *duckDBProjectMaterializer) Materialize(ctx context.Context, request analyticsmaterialization.Request) (int64, error) {
 	snapshotID, _, err := e.MaterializeWithObservations(ctx, request)

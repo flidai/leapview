@@ -17,6 +17,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/connectors"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -1081,6 +1082,43 @@ func (r *ProjectRuntime) RefreshProjectTables(ctx context.Context, tableNames []
 	return r.rebuildViews(ctx)
 }
 
+// RefreshProjectTablesWithObservationWriter is the native-build variant of
+// RefreshProjectTables. The writer is called inside CommitTransaction after
+// table materialization and before DuckLake acknowledges the external commit.
+// Its error is returned from the transaction callback and therefore aborts the
+// DuckLake commit. Observations are published to the runtime only after that
+// commit succeeds.
+func (r *ProjectRuntime) RefreshProjectTablesWithObservationWriter(ctx context.Context, tableNames []string, writer analyticsmaterialization.ObservationWriter) error {
+	if r == nil {
+		return fmt.Errorf("project runtime is not initialized")
+	}
+	if len(tableNames) == 0 {
+		return fmt.Errorf("model table refresh plan is empty")
+	}
+	if writer == nil {
+		return fmt.Errorf("source observation writer is required")
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	ctx, release, err := r.acquireOperation(ctx)
+	if err != nil {
+		return err
+	}
+	defer release()
+
+	lastRefresh, snapshotID, err := r.refreshModelWithObservationWriter(ctx, r.materializationModel, tableNames, writer)
+	if err != nil {
+		return err
+	}
+	r.clearQueryCaches()
+	if err := r.discoverServingSchemas(ctx, r.materializationModel); err != nil {
+		return err
+	}
+	r.lastRefresh = lastRefresh
+	r.lastSnapshotID = snapshotID
+	return r.rebuildViews(ctx)
+}
+
 func (r *ProjectRuntime) clearQueryCaches() {
 	for _, view := range r.views {
 		view.ClearQueryCache()
@@ -1133,6 +1171,24 @@ func cloneTableSchema(schema semanticmodel.TableSchema) semanticmodel.TableSchem
 		clone.Columns[index].Nullable = &nullable
 	}
 	return clone
+}
+
+func cloneSourceObservations(observations []analyticsmaterialize.SourceObservation) []analyticsmaterialize.SourceObservation {
+	if observations == nil {
+		return nil
+	}
+	result := make([]analyticsmaterialize.SourceObservation, len(observations))
+	for i, observation := range observations {
+		result[i] = observation
+		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), observation.Schema...)
+		for column := range result[i].Schema {
+			if result[i].Schema[column].Nullable != nil {
+				nullable := *result[i].Schema[column].Nullable
+				result[i].Schema[column].Nullable = &nullable
+			}
+		}
+	}
+	return result
 }
 
 func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, selectedTable string) ([]string, error) {
@@ -1209,9 +1265,17 @@ func physicalTableNames(model *semanticmodel.Model, tables []string) ([]string, 
 }
 
 func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.Model, tableNames []string) (time.Time, int64, error) {
+	return r.refreshModelWithObservationWriter(ctx, model, tableNames, nil)
+}
+
+func (r *ProjectRuntime) refreshModelWithObservationWriter(ctx context.Context, model *semanticmodel.Model, tableNames []string, observationWriter analyticsmaterialization.ObservationWriter) (time.Time, int64, error) {
 	prepared, err := r.sources.Prepare(ctx, model)
 	if err != nil {
 		return time.Time{}, 0, err
+	}
+	if observationWriter != nil && r.committer == nil {
+		_ = prepared.Close()
+		return time.Time{}, 0, fmt.Errorf("source observation writer requires a DuckLake commit transaction")
 	}
 	if r.committer == nil {
 		if len(tableNames) > 0 {
@@ -1234,22 +1298,41 @@ func (r *ProjectRuntime) refreshModel(ctx context.Context, model *semanticmodel.
 		metadata[key] = value
 	}
 	servingStateID := firstNonEmpty(r.commitMetadata["servingStateId"], "project-refresh")
+	var callbackObservations []analyticsmaterialize.SourceObservation
 	snapshotID, err := r.committer.CommitTransaction(ctx, servingStateID, metadata, func(tx transaction.Transaction) error {
 		executor := txExecutor{tx: tx}
 		sources := txPreparedSources{PreparedSources: prepared.(*PreparedSources), tx: tx}
+		var materializeErr error
 		if len(tableNames) > 0 {
-			return analyticsmaterialize.ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, r.viewConfig.RelationNamespace)
+			materializeErr = analyticsmaterialize.ModelTablesNamedInNamespace(ctx, executor, sources, model, tableNames, r.viewConfig.RelationNamespace)
+		} else {
+			materializeErr = analyticsmaterialize.ModelTablesInNamespace(ctx, executor, sources, model, r.viewConfig.RelationNamespace)
 		}
-		return analyticsmaterialize.ModelTablesInNamespace(ctx, executor, sources, model, r.viewConfig.RelationNamespace)
+		if materializeErr != nil {
+			return materializeErr
+		}
+		if observationWriter == nil {
+			return nil
+		}
+		observations, observationErr := captureSourceObservations(ctx, prepared)
+		if observationErr != nil {
+			return observationErr
+		}
+		callbackObservations = cloneSourceObservations(observations)
+		return observationWriter(ctx, cloneSourceObservations(observations))
 	})
 	if err != nil {
 		_ = prepared.Close()
 		return time.Time{}, 0, err
 	}
-	observations, observationErr := captureSourceObservations(ctx, prepared)
-	if observationErr != nil {
-		_ = prepared.Close()
-		return time.Time{}, 0, observationErr
+	observations := callbackObservations
+	if observationWriter == nil {
+		var observationErr error
+		observations, observationErr = captureSourceObservations(ctx, prepared)
+		if observationErr != nil {
+			_ = prepared.Close()
+			return time.Time{}, 0, observationErr
+		}
 	}
 	r.sourceObservations = observations
 	if err := prepared.Close(); err != nil {
@@ -1374,12 +1457,7 @@ func (r *ProjectRuntime) SourceObservations() []analyticsmaterialize.SourceObser
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	result := make([]analyticsmaterialize.SourceObservation, len(r.sourceObservations))
-	for i, item := range r.sourceObservations {
-		result[i] = item
-		result[i].Schema = append([]semanticmodel.ColumnSchema(nil), item.Schema...)
-	}
-	return result
+	return cloneSourceObservations(r.sourceObservations)
 }
 
 func (r *ProjectRuntime) DBPath() string {
