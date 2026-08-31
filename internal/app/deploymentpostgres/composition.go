@@ -28,6 +28,11 @@ type Authorities struct {
 	Events     *eventspostgres.Repository
 	Jobs       *jobspostgres.Repository
 	Operations *operationpostgres.Repository
+	// ApprovalAuthorize is the access-owned, fail-closed authorization seam
+	// for publication approval requests and decisions. It is deliberately
+	// separate from the audit repository so a missing RBAC projection cannot
+	// accidentally authorize a mutation.
+	ApprovalAuthorize deploymentpostgresql.ApprovalAuthorizer
 }
 
 // NewPersistence constructs native Deployment persistence and all of its
@@ -53,11 +58,26 @@ func NewPersistence(control deploymentpostgresql.DBTX, authorities Authorities) 
 
 	activationAudit := deploymentaudit.NewWithRepository(authorities.Access)
 	repository := deploymentpostgresql.NewWithActivationAudit(control, activationAudit)
+	if authorities.ApprovalAuthorize == nil {
+		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL approval authorizer is required")
+	}
+	operationAdapter := deploymentoperation.New(authorities.Operations)
+	eventAdapter := deploymentevents.NewWithRepository(authorities.Events)
+	auditAdapter := deploymentaudit.NewWithRepository(authorities.Access)
+	workflowAdapter := deploymentworkflow.NewWithRepository(repository, authorities.Jobs)
+	approvalAuthority, err := deploymentpostgresql.NewApprovalAuthority(repository, deploymentpostgresql.ApprovalAuthorityOptions{
+		Authorize: authorities.ApprovalAuthorize, Operation: operationAdapter, Event: eventAdapter, Audit: auditAdapter,
+		Activation: workflowAdapter,
+	})
+	if err != nil {
+		return deploymentmodule.Persistence{}, fmt.Errorf("construct deployment PostgreSQL approval authority: %w", err)
+	}
 	persistence, err := deploymentmodule.NewPostgresPersistenceWithCapabilities(repository, deploymentmodule.NativePersistenceCapabilities{
-		Events:     deploymentevents.NewWithRepository(authorities.Events),
-		Audit:      deploymentaudit.NewWithRepository(authorities.Access),
-		Workflow:   deploymentworkflow.New(authorities.Jobs),
-		Operations: deploymentoperation.New(authorities.Operations),
+		Events:     eventAdapter,
+		Audit:      auditAdapter,
+		Workflow:   workflowAdapter,
+		Operations: operationAdapter,
+		Approval:   approvalAuthority,
 	})
 	if err != nil {
 		return deploymentmodule.Persistence{}, fmt.Errorf("construct deployment PostgreSQL persistence: %w", err)

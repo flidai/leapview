@@ -125,7 +125,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 		t.Fatal(err)
 	}
 	noop := approvalNoopEvidenceAppender{}
-	authority, err := NewApprovalAuthority(repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return nil }), Operation: noop, Event: noop, Audit: noop})
+	authority, err := newLowLevelApprovalAuthority(repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return nil }), Operation: noop, Event: noop, Audit: noop})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestApprovalAuthorityLifecycleAndAtomicity(t *testing.T) {
 	// Every evidence appender is part of the caller-owned transaction. A
 	// failure must leave no approval request behind.
 	failing := &approvalRecordingAppender{fail: errors.New("event append failed")}
-	failingAuthority, err := NewApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return nil }), Operation: failing, Event: failing, Audit: failing})
+	failingAuthority, err := newLowLevelApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return nil }), Operation: failing, Event: failing, Audit: failing})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -240,8 +240,11 @@ func TestApprovalAuthorityLifecycleAndAtomicity(t *testing.T) {
 		t.Fatalf("requester approval = %v", err)
 	}
 	var typedNil ApprovalAuthorizerFunc
-	if _, err := NewApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: typedNil, Operation: approvalNoopEvidenceAppender{}, Event: approvalNoopEvidenceAppender{}, Audit: approvalNoopEvidenceAppender{}}); !errors.Is(err, ErrInvalid) {
+	if _, err := newLowLevelApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: typedNil, Operation: approvalNoopEvidenceAppender{}, Event: approvalNoopEvidenceAppender{}, Audit: approvalNoopEvidenceAppender{}}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("typed nil authorizer = %v", err)
+	}
+	if _, err := NewApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return nil }), Operation: approvalNoopEvidenceAppender{}, Event: approvalNoopEvidenceAppender{}, Audit: approvalNoopEvidenceAppender{}}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing activation consequence = %v", err)
 	}
 	// The publication-scoped effective query cannot be redirected to another
 	// target even when all other immutable IDs are copied from a valid request.
@@ -285,7 +288,7 @@ func TestApprovalAuthorityLifecycleAndAtomicity(t *testing.T) {
 	if replay, err := f.authority.Approve(ctx, finalDecision); err != nil || replay.LatestDecision == nil || replay.LatestDecision.DecisionID != finalDecision.DecisionID {
 		t.Fatalf("terminal decision replay = %#v, %v", replay, err)
 	}
-	denying, err := NewApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return errors.New("changed authorization") }), Operation: approvalNoopEvidenceAppender{}, Event: approvalNoopEvidenceAppender{}, Audit: approvalNoopEvidenceAppender{}})
+	denying, err := newLowLevelApprovalAuthority(f.repository, ApprovalAuthorityOptions{Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return errors.New("changed authorization") }), Operation: approvalNoopEvidenceAppender{}, Event: approvalNoopEvidenceAppender{}, Audit: approvalNoopEvidenceAppender{}})
 	if err != nil {
 		t.Fatal(err)
 	}

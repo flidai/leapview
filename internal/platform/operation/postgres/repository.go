@@ -152,6 +152,103 @@ type AcquireResult struct {
 	Replay    bool
 }
 
+// AppendTerminalInput records a preallocated operation identity as one
+// terminal operation. It is used by source capabilities (such as delivery
+// approvals) whose immutable evidence IDs are allocated before the operation
+// authority is invoked. The operation is still admitted through the same
+// guarded pending insert and completed through CompleteTx; callers retain
+// transaction ownership and this method never commits or rolls back tx.
+type AppendTerminalInput struct {
+	OperationID    string
+	Scope          string
+	OperationType  string
+	IdempotencyKey string
+	RequestDigest  string
+	OwnerID        string
+	Outcome        json.RawMessage
+}
+
+// AppendTerminalTx inserts (or exactly replays) a preallocated operation and
+// atomically settles it to completed. Any immutable identity or outcome
+// mismatch returns ErrConflict. The operation ID is intentionally caller
+// supplied so append-only evidence can reference it deterministically.
+func (r *Repository) AppendTerminalTx(ctx context.Context, tx Tx, in AppendTerminalInput) (Operation, error) {
+	if r == nil || tx == nil {
+		return Operation{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	operationIDParsed, err := uuid.Parse(strings.TrimSpace(in.OperationID))
+	if err != nil || operationIDParsed.String() != in.OperationID {
+		return Operation{}, ErrInvalid
+	}
+	operationID := operationIDParsed.String()
+	if in.Scope != strings.TrimSpace(in.Scope) || in.OperationType != strings.TrimSpace(in.OperationType) || in.IdempotencyKey != strings.TrimSpace(in.IdempotencyKey) || in.OwnerID != strings.TrimSpace(in.OwnerID) {
+		return Operation{}, ErrInvalid
+	}
+	if in.Scope == "" || len(in.Scope) > 255 || in.OperationType == "" || len(in.OperationType) > 255 || in.IdempotencyKey == "" || len(in.IdempotencyKey) > 512 || in.OwnerID == "" || len(in.OwnerID) > 255 {
+		return Operation{}, ErrInvalid
+	}
+	if _, err := normalizeInput(&AcquireInput{Scope: in.Scope, OperationType: in.OperationType, IdempotencyKey: in.IdempotencyKey, RequestDigest: in.RequestDigest, OwnerID: in.OwnerID}); err != nil {
+		return Operation{}, err
+	}
+	outcome, err := canonicalObjectJSON(in.Outcome)
+	if err != nil {
+		return Operation{}, ErrInvalid
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return Operation{}, err
+	}
+	lease := r.lease
+	if lease <= 0 || lease > maxLeaseDuration {
+		lease = 30 * time.Second
+	}
+	retention := r.retention
+	if retention <= 0 || retention > maxRetentionDuration {
+		retention = 24 * time.Hour
+	}
+	_, insertErr := operationdb.New(tx).InsertOperation(ctx, operationdb.InsertOperationParams{
+		ScopeID: in.Scope, OperationType: in.OperationType, IdempotencyKey: in.IdempotencyKey,
+		RequestDigest: in.RequestDigest, OperationID: uuidParam(operationID), OwnerID: in.OwnerID,
+		LeaseExpiresAt: timestampParam(now.Add(lease)), CreatedAt: timestampParam(now),
+		RetentionInterval: intervalParam(retention), ExpiresAt: timestampParam(now.Add(retention)),
+	})
+	if insertErr != nil && !errors.Is(insertErr, pgx.ErrNoRows) {
+		return Operation{}, insertErr
+	}
+	stored, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Operation{}, ErrNotFound
+	}
+	if err != nil {
+		return Operation{}, err
+	}
+	op, err := operationFromForUpdateRow(stored)
+	if err != nil {
+		return Operation{}, err
+	}
+	if op.OperationID != operationID || op.OperationType != in.OperationType || op.RequestDigest != in.RequestDigest || op.OwnerID != in.OwnerID {
+		return Operation{}, ErrConflict
+	}
+	if op.State != StatePending {
+		storedOutcome, canonicalErr := canonicalObjectJSON(op.Outcome)
+		if op.State == StateCompleted && canonicalErr == nil && bytes.Equal(storedOutcome, outcome) {
+			return op, nil
+		}
+		return Operation{}, ErrConflict
+	}
+	if err := r.CompleteTx(ctx, tx, Lease{Scope: op.Scope, IdempotencyKey: op.IdempotencyKey, OperationID: op.OperationID, OwnerID: op.OwnerID, FencingGeneration: op.FencingGeneration, LeaseExpiresAt: op.LeaseExpiresAt}, outcome); err != nil {
+		return Operation{}, err
+	}
+	completed, err := operationdb.New(tx).GetOperation(ctx, operationdb.GetOperationParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
+	if err != nil {
+		return Operation{}, err
+	}
+	return operationFromRow(completed)
+}
+
 // BeginAttemptInput creates explicit cross-store attempt identity/evidence.
 type BeginAttemptInput struct {
 	Lease           Lease

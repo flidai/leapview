@@ -7,6 +7,7 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	deploymentpostgresql "github.com/flidai/leapview/internal/deployment/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
@@ -29,6 +30,7 @@ func deploymentPostgresAuthorities() Authorities {
 	return Authorities{
 		Access: accesspostgres.New(), Events: eventspostgres.New(),
 		Jobs: jobspostgres.NewRepository(nil), Operations: operationpostgres.New(nil),
+		ApprovalAuthorize: deploymentpostgresql.ApprovalAuthorizerFunc(func(context.Context, deploymentpostgresql.ApprovalAuthorizationInput) error { return nil }),
 	}
 }
 
@@ -37,7 +39,7 @@ func TestNewPersistenceBuildsNativeBundle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if persistence.Repository == nil || persistence.Candidates == nil || persistence.ProjectClaims == nil || persistence.DeliveryReader == nil || persistence.Activation == nil || persistence.Events == nil || persistence.Audit == nil || persistence.Workflow == nil || persistence.Operations == nil {
+	if persistence.Repository == nil || persistence.Candidates == nil || persistence.ProjectClaims == nil || persistence.DeliveryReader == nil || persistence.Activation == nil || persistence.Events == nil || persistence.Audit == nil || persistence.Workflow == nil || persistence.Operations == nil || persistence.Approval == nil {
 		t.Fatalf("native deployment bundle is incomplete: %#v", persistence)
 	}
 	if !persistence.Repository.Configured() {
@@ -60,6 +62,7 @@ func TestNewPersistenceRejectsMissingAuthority(t *testing.T) {
 		{name: "event", edit: func(a *Authorities) { a.Events = nil }},
 		{name: "jobs", edit: func(a *Authorities) { a.Jobs = nil }},
 		{name: "operation", edit: func(a *Authorities) { a.Operations = nil }},
+		{name: "approval", edit: func(a *Authorities) { a.ApprovalAuthorize = nil }},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

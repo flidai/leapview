@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
+	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -51,7 +53,80 @@ type JobConfig struct {
 }
 
 func (m *Module) JobHandlers() []jobs.Handler {
-	return []jobs.Handler{jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: 5 * time.Minute}}
+	return []jobs.Handler{
+		jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: 5 * time.Minute},
+		jobs.HandlerFunc{JobKind: "delivery.approval.activate", Run: m.activateApprovedPublication, ExecutionLeaseTimeout: 5 * time.Minute},
+	}
+}
+
+type approvedPublicationActivator interface {
+	ActivateApprovedPublication(context.Context, string, string, string) (apiadapter.Deployment, error)
+}
+
+// activateApprovedPublication is the dedicated approval worker. The durable
+// job is untrusted input: it reloads effective approval and verifies the full
+// immutable publication scope before the coordinator performs its atomic
+// lease/CAS activation transaction.
+func (m *Module) activateApprovedPublication(ctx context.Context, job jobs.Job) error {
+	if m == nil || m.persistence == nil || m.persistence.Repository == nil || m.persistence.Approval == nil || m.jobs.Coordinator == nil {
+		return fmt.Errorf("native approval activation worker is unavailable")
+	}
+	var payload ApprovalActivationJob
+	if err := json.Unmarshal(job.Payload, &payload); err != nil {
+		return fmt.Errorf("decode approval activation payload: %w", err)
+	}
+	if payload.RequestID == "" || payload.PublicationID == "" || payload.TargetID == "" || payload.GenerationID == "" || payload.CandidateID == "" || payload.RequestDigest == "" || payload.DecisionID == "" || payload.PublicationActorID == "" || payload.RequestedBy == "" || payload.DecidedBy == "" || payload.IdempotencyKey == "" || payload.ExpectedTargetRevision <= 0 || payload.PolicyRevision <= 0 || payload.DecisionRevision <= 0 {
+		return fmt.Errorf("invalid approval activation payload")
+	}
+	publication, err := m.persistence.Repository.Publication(ctx, payload.PublicationID)
+	if err != nil {
+		return err
+	}
+	if publication.ActorID != payload.PublicationActorID || publication.TargetID != payload.TargetID || publication.GenerationID != payload.GenerationID || publication.CandidateID != payload.CandidateID || publication.RequestDigest != payload.RequestDigest || publication.ExpectedTargetRevision != payload.ExpectedTargetRevision {
+		return deployment.ErrApprovalConflict
+	}
+	approval, err := m.persistence.Approval.Effective(ctx, payload.RequestID)
+	if err != nil && publication.State == "committed" && (errors.Is(err, nativepostgres.ErrApprovalRequired) || errors.Is(err, nativepostgres.ErrApprovalExpired)) {
+		// A previous activation may have committed before runtime reconciliation
+		// failed. Replay uses the immutable request/decision row (the effective
+		// query intentionally excludes committed publications), then Activate
+		// verifies the exact terminal operation without a second CAS advance.
+		approval, err = m.persistence.Approval.RequestByID(ctx, payload.RequestID)
+	}
+	if err != nil {
+		return err
+	}
+	decision := approval.LatestDecision
+	if decision == nil || decision.Decision != nativepostgres.ApprovalActionApprove || decision.DecisionID != payload.DecisionID || decision.Revision != payload.DecisionRevision {
+		return deployment.ErrApprovalRequired
+	}
+	if approval.PublicationID != payload.PublicationID || approval.TargetID != payload.TargetID || approval.GenerationID != payload.GenerationID || approval.CandidateID != payload.CandidateID || approval.RequestDigest != payload.RequestDigest || approval.ExpectedTargetRevision != payload.ExpectedTargetRevision || approval.PolicyRevision != payload.PolicyRevision || approval.RequestedBy.PrincipalID != payload.RequestedBy || decision.DecidedBy.PrincipalID != payload.DecidedBy {
+		return deployment.ErrApprovalConflict
+	}
+	activator, ok := m.jobs.Coordinator.(approvedPublicationActivator)
+	if !ok {
+		return fmt.Errorf("native approval activation coordinator is unavailable")
+	}
+	row, err := activator.ActivateApprovedPublication(ctx, payload.PublicationID, payload.PublicationActorID, payload.IdempotencyKey)
+	if err != nil {
+		return err
+	}
+	if m.jobs.ReconcileActivation != nil {
+		if err := m.jobs.ReconcileActivation(ctx, row); err != nil {
+			return jobs.Retryable(err, time.Second)
+		}
+	}
+	if m.jobs.Reconcile != nil {
+		if err := m.jobs.Reconcile(ctx); err != nil {
+			logger := m.jobs.Logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.WarnContext(ctx, "reconcile refresh pipelines after approval activation failed", "error", err)
+			return jobs.Retryable(err, time.Second)
+		}
+	}
+	return nil
 }
 
 func (m *Module) execution(operationID string) (apigencommand.AsyncExecutionContract, error) {
@@ -460,14 +535,23 @@ func loadDeploymentExecutionContracts() (map[string]apigencommand.AsyncExecution
 }
 
 func validateDeploymentJobHandlers(executions map[string]apigencommand.AsyncExecutionContract, handlers []jobs.Handler) error {
-	if len(handlers) != 1 {
-		return fmt.Errorf("deployment execution requires exactly one job handler, got %d", len(handlers))
+	if len(handlers) != 2 {
+		return fmt.Errorf("deployment execution requires activation and approval job handlers, got %d", len(handlers))
 	}
-	kind := handlers[0].Kind()
-	for operationID, execution := range executions {
-		if execution.JobKind != kind {
-			return fmt.Errorf("deployment command %q job kind %q does not match registered handler %q", operationID, execution.JobKind, kind)
+	kinds := make(map[string]struct{}, len(handlers))
+	for _, handler := range handlers {
+		if handler == nil || handler.Kind() == "" {
+			return fmt.Errorf("deployment job handler kind is required")
 		}
+		kinds[handler.Kind()] = struct{}{}
+	}
+	for operationID, execution := range executions {
+		if _, ok := kinds[execution.JobKind]; !ok {
+			return fmt.Errorf("deployment command %q job kind %q does not match registered handlers", operationID, execution.JobKind)
+		}
+	}
+	if _, ok := kinds["delivery.approval.activate"]; !ok {
+		return fmt.Errorf("approval activation job handler is not registered")
 	}
 	return nil
 }

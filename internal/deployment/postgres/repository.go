@@ -609,6 +609,28 @@ func databaseNow(ctx context.Context, db DBTX) (time.Time, error) {
 	return dbTime(now), nil
 }
 
+// DatabaseNowTx returns the PostgreSQL authority clock through a
+// caller-owned transaction. Transactional coordinators use this when they
+// need to derive a bounded lease deadline; application/node clocks must not
+// become durable lease authority.
+func (r *Repository) DatabaseNowTx(ctx context.Context, tx Tx) (time.Time, error) {
+	if tx == nil {
+		return time.Time{}, ErrInvalid
+	}
+	return databaseNow(contextOrBackground(ctx), tx)
+}
+
+// DatabaseNow returns the authoritative PostgreSQL clock for callers that
+// need to derive a bounded request deadline before opening their mutation
+// transaction. Transactional mutations should prefer DatabaseNowTx.
+func (r *Repository) DatabaseNow(ctx context.Context) (time.Time, error) {
+	db, err := requireDB(r)
+	if err != nil {
+		return time.Time{}, err
+	}
+	return databaseNow(contextOrBackground(ctx), db)
+}
+
 func requireDB(r *Repository) (DBTX, error) {
 	if r == nil || !nativeDBConfigured(r.db) {
 		return nil, ErrInvalid

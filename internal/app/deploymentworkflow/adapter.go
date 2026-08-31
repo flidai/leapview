@@ -15,7 +15,8 @@ import (
 
 // Adapter is stateless and safe to share between deployment requests.
 type Adapter struct {
-	jobs *jobspostgres.Repository
+	jobs     *jobspostgres.Repository
+	delivery *deploymentpostgres.Repository
 }
 
 var _ deploymentmodule.NativeDeliveryWorkflowRecorder = (*Adapter)(nil)
@@ -23,6 +24,13 @@ var _ deploymentmodule.NativeDeliveryWorkflowRecorder = (*Adapter)(nil)
 // New returns an adapter backed by the supplied jobs authority.
 func New(repository *jobspostgres.Repository) *Adapter {
 	return &Adapter{jobs: repository}
+}
+
+// NewWithRepository wires the delivery authority needed to resolve the
+// immutable publication actor while enqueuing approval activation. The lookup
+// runs on the caller-owned transaction, preserving one commit boundary.
+func NewWithRepository(delivery *deploymentpostgres.Repository, jobs *jobspostgres.Repository) *Adapter {
+	return &Adapter{delivery: delivery, jobs: jobs}
 }
 
 // RecordWorkflow forwards the caller-owned transaction unchanged. Neither

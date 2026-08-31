@@ -67,9 +67,35 @@ func (activationAuditStub) GetActivationAudit(context.Context, postgres.Tx, post
 	return postgres.AuditEvent{}, nil
 }
 
+type approvalAppenderStub struct{}
+
+func (approvalAppenderStub) AppendApprovalOperation(context.Context, postgres.Tx, postgres.ApprovalOperation) error {
+	return nil
+}
+func (approvalAppenderStub) AppendApprovalEvent(context.Context, postgres.Tx, postgres.ApprovalEvent) error {
+	return nil
+}
+func (approvalAppenderStub) AppendApprovalAudit(context.Context, postgres.Tx, postgres.ApprovalAudit) error {
+	return nil
+}
+func (approvalAppenderStub) EnqueueApprovalActivation(context.Context, postgres.Tx, postgres.ApprovalRequest, postgres.ApprovalDecision) error {
+	return nil
+}
+
+func testApprovalAuthority(repository *postgres.Repository) (*postgres.ApprovalAuthority, error) {
+	return postgres.NewApprovalAuthority(repository, postgres.ApprovalAuthorityOptions{
+		Authorize: postgres.ApprovalAuthorizerFunc(func(context.Context, postgres.ApprovalAuthorizationInput) error { return nil }),
+		Operation: approvalAppenderStub{}, Event: approvalAppenderStub{}, Audit: approvalAppenderStub{}, Activation: approvalAppenderStub{},
+	})
+}
+
 func TestNewPostgresPersistenceWiresNativeSurfaces(t *testing.T) {
 	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
 	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence.Approval, err = testApprovalAuthority(repository)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -97,6 +123,10 @@ func TestNewPostgresPersistenceRejectsNonTransactionalHandle(t *testing.T) {
 func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
 	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence.Approval, err = testApprovalAuthority(repository)
 	if err != nil {
 		t.Fatal(err)
 	}

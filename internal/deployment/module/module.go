@@ -57,6 +57,7 @@ type Module struct {
 	deliveryMutations         DeliveryMutationPort
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	nativeDeliveryPublication NativeDeliveryPublicationPort
+	nativeDeliveryApproval    NativeDeliveryApprovalPort
 	persistence               *Persistence
 }
 
@@ -259,6 +260,10 @@ type Config struct {
 	// rollback request port. It is intentionally separate from plan/build so
 	// those authorities cannot activate or publish inline.
 	NativeDeliveryPublication NativeDeliveryPublicationPort
+	// NativeDeliveryApproval owns publication-scoped request and decision
+	// transitions. Production must provide it whenever native persistence is
+	// enabled; no candidate-wide approval fallback is permitted.
+	NativeDeliveryApproval NativeDeliveryApprovalPort
 	// DeliveryReader is the durable, read-only plan/build/seal/operator port.
 	// When Database is configured, Build installs the SQLite repository by
 	// default; tests and alternate control stores may provide an implementation.
@@ -307,8 +312,20 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.NativeOperationAuthority == nil {
 			config.NativeOperationAuthority = config.Persistence.Operations
 		}
+		if config.NativeDeliveryApproval == nil && config.Persistence.Approval != nil {
+			var approvalPort NativeDeliveryApprovalPort
+			var approvalErr error
+			approvalPort, approvalErr = newNativeApprovalCoordinator(config.Persistence.Repository, config.Persistence.Approval, config.InstanceID, config.InstanceEnvironment)
+			if approvalErr != nil {
+				return nil, approvalErr
+			}
+			config.NativeDeliveryApproval = approvalPort
+		}
 		if config.NativeDeliveryEvents == nil || config.NativeDeliveryAudit == nil || config.NativeDeliveryWorkflow == nil || config.NativeOperationAuthority == nil {
 			return nil, errors.New("production native deployment requires delivery event, audit, workflow, and operation authorities")
+		}
+		if config.NativeDeliveryApproval == nil {
+			return nil, errors.New("production native deployment requires publication approval authority")
 		}
 		if config.NativeDeliveryReader == nil {
 			// The validated persistence bundle owns the native reader. Keep this
@@ -509,7 +526,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
 		nativeDeliveryReader: config.NativeDeliveryReader,
 		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
-		persistence: config.Persistence,
+		nativeDeliveryApproval: config.NativeDeliveryApproval,
+		persistence:            config.Persistence,
 	}
 	if m.bootstrapPolicies == nil {
 		m.bootstrapPolicies = durableBootstrapPolicies

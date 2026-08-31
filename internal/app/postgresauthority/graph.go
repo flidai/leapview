@@ -130,6 +130,7 @@ type PostgresAuthorityGraph struct {
 
 	DeploymentRepository   *deploymentpostgres.Repository
 	DeploymentPersistence  *module.Persistence
+	ApprovalAuthorizer     *deploymentcomposition.AccessApprovalAuthorizer
 	AgentRepository        *agentpostgres.Repository
 	AgentMaintenance       *agentpostgres.Maintenance
 	AgentPersistence       *agentmodule.Persistence
@@ -240,8 +241,14 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		return nil, fmt.Errorf("construct PostgreSQL refresh cancellation audit authority: %w", err)
 	}
 
+	approvalAuthorizer, err := deploymentcomposition.NewAccessApprovalAuthorizer(options.TargetID, func(ctx context.Context, targetID string) (deploymentpostgres.DeliveryTarget, error) {
+		return deploymentpostgres.New(runtime).Target(ctx, targetID)
+	})
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL approval authorizer: %w", err)
+	}
 	deploymentPersistence, err := deploymentcomposition.NewPersistence(runtime, deploymentcomposition.Authorities{
-		Access: audit, Events: events, Jobs: jobs, Operations: operations,
+		Access: audit, Events: events, Jobs: jobs, Operations: operations, ApprovalAuthorize: approvalAuthorizer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL deployment authority: %w", err)
@@ -383,7 +390,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,
-		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence,
+		DeploymentRepository: deploymentRepository, DeploymentPersistence: &deploymentPersistence, ApprovalAuthorizer: approvalAuthorizer,
 		AgentRepository: agentRepository, AgentMaintenance: agentMaintenance, AgentPersistence: &agentPersistence,
 		ManagedDataRepository: managedDataRepository, ManagedDataMaintenance: managedDataMaintenance, ManagedDataAudit: managedDataAudit, ManagedDataPersistence: &managedDataPersistence,
 		DashboardSession: dashboardSession, DashboardSessionMaintenance: dashboardSessionMaintenance, DashboardUsage: dashboardUsage, DashboardUsageMaintenance: dashboardUsageMaintenance,
@@ -474,7 +481,7 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"physical-pool authority", g.PhysicalPool}, {"DuckLake control ledger authority", g.DuckLakeControlLedger}, {"serving-state authority", g.ServingState},
 		{"refresh authority", g.Refresh}, {"refresh jobs authority", g.RefreshJobs}, {"refresh cancellation audit authority", g.RefreshCancelAudit},
 		{"release authority", g.Release}, {"release audit authority", g.ReleaseAudit}, {"release event authority", g.ReleaseEvents}, {"release catalog authority", g.ReleaseCatalog},
-		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence},
+		{"deployment repository", g.DeploymentRepository}, {"deployment persistence", g.DeploymentPersistence}, {"deployment approval authorizer", g.ApprovalAuthorizer},
 		{"agent repository", g.AgentRepository}, {"agent maintenance authority", g.AgentMaintenance}, {"agent persistence", g.AgentPersistence},
 		{"managed-data repository", g.ManagedDataRepository}, {"managed-data maintenance authority", g.ManagedDataMaintenance}, {"managed-data audit authority", g.ManagedDataAudit}, {"managed-data persistence", g.ManagedDataPersistence},
 		{"dashboard session authority", g.DashboardSession}, {"dashboard session maintenance authority", g.DashboardSessionMaintenance}, {"dashboard usage authority", g.DashboardUsage}, {"dashboard usage maintenance authority", g.DashboardUsageMaintenance},
@@ -545,6 +552,9 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	}
 	if !g.DeploymentRepository.Configured() || !g.DeploymentRepository.TransactionCapable() || !g.DeploymentRepository.AuditCapable() {
 		return errors.New("PostgreSQL authority graph deployment authority is not fully configured")
+	}
+	if g.DeploymentPersistence.Approval == nil {
+		return errors.New("PostgreSQL authority graph deployment approval authority is not configured")
 	}
 	if !g.AgentRepository.Configured() || !g.AgentRepository.TransactionCapable() || !g.AgentRepository.WorkflowCapable() || !g.AgentRepository.JobsCapable() || !g.AgentRepository.AuditCapable() || !g.AgentRepository.DomainEventCapable() {
 		return errors.New("PostgreSQL authority graph agent authority is not fully configured")

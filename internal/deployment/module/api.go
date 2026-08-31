@@ -18,6 +18,7 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
+	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	jobhttp "github.com/flidai/leapview/internal/platform/jobs/http"
@@ -504,6 +505,10 @@ func (m *Module) RequestDeploymentApproval(
 	deploymentID,
 	idempotencyKey string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeploymentApproval(), apigenfailure.New("approval_route_disabled", "Candidate-wide deployment approvals are unavailable; use publication-scoped approval routes"))
+		return
+	}
 	principal, ok := m.principal(r)
 	if !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
@@ -556,6 +561,10 @@ func (m *Module) ApproveDeployment(
 	approvalID,
 	idempotencyKey string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationApproveDeployment(), apigenfailure.New("approval_route_disabled", "Candidate-wide deployment approvals are unavailable; use publication-scoped approval routes"))
+		return
+	}
 	m.transitionApproval(w, r, project, deploymentID, approvalID, idempotencyKey, approvalDecisionApprove)
 }
 
@@ -567,6 +576,10 @@ func (m *Module) DenyDeploymentApproval(
 	approvalID,
 	idempotencyKey string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationDenyDeploymentApproval(), apigenfailure.New("approval_route_disabled", "Candidate-wide deployment approvals are unavailable; use publication-scoped approval routes"))
+		return
+	}
 	m.transitionApproval(w, r, project, deploymentID, approvalID, idempotencyKey, approvalDecisionDeny)
 }
 
@@ -578,6 +591,10 @@ func (m *Module) RevokeDeploymentApproval(
 	approvalID,
 	idempotencyKey string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRevokeDeploymentApproval(), apigenfailure.New("approval_route_disabled", "Candidate-wide deployment approvals are unavailable; use publication-scoped approval routes"))
+		return
+	}
 	m.transitionApproval(w, r, project, deploymentID, approvalID, idempotencyKey, approvalDecisionRevoke)
 }
 
@@ -588,6 +605,10 @@ func (m *Module) ActivateDeployment(
 	deploymentID,
 	idempotencyKey string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationActivateDeployment(), apigenfailure.New("approval_route_disabled", "Candidate-wide activation is unavailable; approved publications are activated by the native worker"))
+		return
+	}
 	principal, ok := m.principal(r)
 	if !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
@@ -795,10 +816,13 @@ func (m *Module) approvalActor(
 		return deployment.ApprovalActor{}, false
 	}
 	actor, ok := m.currentApprovalActor(r)
-	return actor, ok &&
-		actor.PrincipalID == principalID &&
-		m.approvals != nil &&
-		m.approvals.ValidateActor(actor) == nil
+	if !ok || actor.PrincipalID != principalID || actor.PrincipalID == "" || actor.CredentialID == "" || actor.CredentialExpiresAt.IsZero() {
+		return deployment.ApprovalActor{}, false
+	}
+	if m.nativeDeliveryApproval != nil {
+		return actor, true
+	}
+	return actor, m.approvals != nil && m.approvals.ValidateActor(actor) == nil
 }
 
 func (m *Module) approvalDeployment(
@@ -1286,6 +1310,39 @@ func approvalResponse(approval deployment.Approval) deploymentapi.ApprovalRespon
 	if !approval.RevokedAt.IsZero() {
 		value := approval.RevokedAt.UTC().Format(time.RFC3339Nano)
 		response.RevokedAt = &value
+	}
+	return response
+}
+
+func nativeApprovalResponse(project, environment string, approval nativepostgres.ApprovalRequest) deploymentapi.ApprovalResponse {
+	response := deploymentapi.ApprovalResponse{
+		ID: approval.RequestID, ProjectID: project, DeploymentID: approval.PublicationID,
+		Environment: environment, RequestDigest: approval.RequestDigest, ReleaseID: "",
+		Status: "pending", RequestedBy: approval.RequestedBy.PrincipalID,
+		RequestedAt: approval.RequestedAt.UTC().Format(time.RFC3339Nano), ExpiresAt: approval.ExpiresAt.UTC().Format(time.RFC3339Nano),
+	}
+	if approval.LatestDecision != nil {
+		response.Revision = approval.LatestDecision.Revision
+		switch approval.LatestDecision.Decision {
+		case nativepostgres.ApprovalActionApprove:
+			response.Status = "approved"
+			value := approval.LatestDecision.DecidedBy.PrincipalID
+			response.ApprovedBy = &value
+			at := approval.LatestDecision.DecidedAt.UTC().Format(time.RFC3339Nano)
+			response.ApprovedAt = &at
+		case nativepostgres.ApprovalActionDeny:
+			response.Status = "denied"
+			value := approval.LatestDecision.DecidedBy.PrincipalID
+			response.DeniedBy = &value
+			at := approval.LatestDecision.DecidedAt.UTC().Format(time.RFC3339Nano)
+			response.DeniedAt = &at
+		case nativepostgres.ApprovalActionRevoke:
+			response.Status = "revoked"
+			value := approval.LatestDecision.DecidedBy.PrincipalID
+			response.RevokedBy = &value
+			at := approval.LatestDecision.DecidedAt.UTC().Format(time.RFC3339Nano)
+			response.RevokedAt = &at
+		}
 	}
 	return response
 }

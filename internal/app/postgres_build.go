@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/analytics/catalogartifact"
@@ -276,7 +277,11 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: instanceID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, CancelAuditWriter: graph.RefreshCancelAudit})
+	nativeRefreshFinalizer, err := refreshmodule.NewPostgresNativeRefreshFinalizer(graph.Refresh, graph.DeploymentRepository, instanceID)
+	if err != nil {
+		return fail(err)
+	}
+	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: instanceID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, NativeFinalizer: nativeRefreshFinalizer, CancelAuditWriter: graph.RefreshCancelAudit})
 	if err != nil {
 		return fail(fmt.Errorf("build refresh persistence: %w", err))
 	}
@@ -384,6 +389,38 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(fmt.Errorf("build runtime host: %w", err))
 	}
+	// Approval authorization is deliberately late-bound to the active runtime
+	// snapshot. The graph is constructed before the runtime host and therefore
+	// starts fail-closed; install both identity and capability resolvers only
+	// after the host has proved its serving generation.
+	graph.ApprovalAuthorizer.SetResolvers(func(resolveCtx context.Context) (string, error) {
+		project, err := currentProject(resolveCtx)
+		if err != nil {
+			return "", err
+		}
+		return project.String(), nil
+	}, func(resolveCtx context.Context, principalID string) ([]access.Capability, error) {
+		subjects, err := accessBundle.Module.AuthorizationSubjects(resolveCtx, principalID)
+		if err != nil {
+			return nil, err
+		}
+		lease, err := runtimeHost.Acquire(resolveCtx)
+		if err != nil {
+			return nil, err
+		}
+		defer lease.Release()
+		authorizedLease, ok := lease.(interface {
+			AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+		})
+		if !ok {
+			return nil, errors.New("active runtime lease does not expose authorization snapshot")
+		}
+		snapshot := authorizedLease.AuthorizationSnapshot()
+		if err := snapshot.ValidateBound(); err != nil {
+			return nil, err
+		}
+		return snapshot.EffectiveCapabilities(subjects)
+	})
 	projectCatalogService, err := projectcatalog.NewService(projectCatalogLeaseProvider{provider: runtimeHost.Provider()}, projectCatalogSubjectResolver{resolve: accessBundle.Module.AuthorizationSubjects})
 	if err != nil {
 		return fail(err)
@@ -597,7 +634,20 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// The PostgreSQL module receives only the clean-slate native mutation port.
 	// Legacy delivery projection and candidate-builder paths remain absent.
 	// Refresh dispatch stays disabled until publication/activation is composed.
-	deploymentConfig := deploymentmodule.Config{Persistence: graph.DeploymentPersistence, Production: true, Protected: true, NativeDeliveryMutations: nativeDelivery, NativeDeliveryReader: appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository), CandidateSources: nativeProjectSource.CandidateSourceReader}
+	deploymentConfig := deploymentmodule.Config{
+		Persistence: graph.DeploymentPersistence, Production: true, Protected: true,
+		InstanceID: instanceID, InstanceEnvironment: string(environment),
+		NativeDeliveryMutations: nativeDelivery,
+		NativeDeliveryReader:    appdeploymentpostgres.NewNativeReader(graph.DeploymentRepository),
+		CandidateSources:        nativeProjectSource.CandidateSourceReader,
+		CurrentApprovalActor: func(r *http.Request) (deploymentmodule.ApprovalActor, bool) {
+			evidence, ok := accessBundle.Module.CurrentCredentialEvidence(r)
+			if !ok {
+				return deploymentmodule.ApprovalActor{}, false
+			}
+			return deploymentmodule.ApprovalActor{PrincipalID: evidence.PrincipalID, CredentialClass: deploymentmodule.CredentialClass(evidence.Class), CredentialID: evidence.ID, CredentialExpiresAt: evidence.ExpiresAt}, true
+		},
+	}
 	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: false, RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nil}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		lease, err := runtimeHost.Acquire(ctx)
 		if err != nil {

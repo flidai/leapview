@@ -75,6 +75,7 @@ type Persistence struct {
 	Audit          NativeDeliveryAuditAppender
 	Workflow       NativeDeliveryWorkflowRecorder
 	Operations     NativeOperationAuthority
+	Approval       *deploymentpostgres.ApprovalAuthority
 
 	native  *deploymentpostgres.Repository
 	backend persistenceBackend
@@ -88,6 +89,7 @@ type NativePersistenceCapabilities struct {
 	Audit      NativeDeliveryAuditAppender
 	Workflow   NativeDeliveryWorkflowRecorder
 	Operations NativeOperationAuthority
+	Approval   *deploymentpostgres.ApprovalAuthority
 }
 
 // NativeDeliveryEventInput is the capability-neutral event contract used by
@@ -359,10 +361,10 @@ func NewPostgresPersistenceWithCapabilities(repository *deploymentpostgres.Repos
 	if err != nil {
 		return Persistence{}, err
 	}
-	if capabilities.Events == nil || capabilities.Audit == nil || capabilities.Workflow == nil || capabilities.Operations == nil {
+	if capabilities.Events == nil || capabilities.Audit == nil || capabilities.Workflow == nil || capabilities.Operations == nil || capabilities.Approval == nil {
 		return Persistence{}, errors.New("native PostgreSQL deployment consequence authorities are required")
 	}
-	persistence.Events, persistence.Audit, persistence.Workflow, persistence.Operations = capabilities.Events, capabilities.Audit, capabilities.Workflow, capabilities.Operations
+	persistence.Events, persistence.Audit, persistence.Workflow, persistence.Operations, persistence.Approval = capabilities.Events, capabilities.Audit, capabilities.Workflow, capabilities.Operations, capabilities.Approval
 	return persistence, nil
 }
 
@@ -379,6 +381,9 @@ func (p Persistence) validate() error {
 	}
 	if !p.Repository.TransactionCapable() {
 		return errors.New("PostgreSQL deployment repository must support caller-owned transactions")
+	}
+	if p.Approval == nil {
+		return errors.New("PostgreSQL deployment approval authority is required")
 	}
 	if p.Candidates == nil || p.ProjectClaims == nil || p.DeliveryReader == nil || p.Activation == nil {
 		return errors.New("PostgreSQL deployment candidate, project-claim, delivery-reader, and activation surfaces are required")

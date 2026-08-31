@@ -45,6 +45,30 @@ type PostgresCanonicalVerifier interface {
 	VerifyCanonicalRefreshTx(context.Context, refreshpostgres.Tx, refreshrun.JobRecord, refreshrun.CanonicalRefreshResult) (refreshpostgres.PublicationInput, error)
 }
 
+// PostgresNativeRefreshFinalizer is the transaction-aware native delivery
+// publication seam for canonical refresh completion. Implementations must use
+// the caller-owned transaction: they may create/replay the exact native
+// publication, acquire and fence a delivery lease, and CAS activation, but
+// must not commit or roll back tx.
+//
+// The finalizer is optional while native refresh composition is being rolled
+// out. When configured, CompleteCanonicalRefresh invokes it before writing
+// refresh data-version/run/job terminal evidence, so every authority commits
+// or rolls back together.
+type PostgresNativeRefreshFinalizer interface {
+	FinalizeCanonicalRefreshTx(context.Context, refreshpostgres.Tx, refreshrun.JobRecord, refreshrun.CanonicalRefreshResult, refreshpostgres.PublicationInput) error
+}
+
+// PostgresNativeRefreshFinalizerFunc adapts a function to the finalizer seam.
+type PostgresNativeRefreshFinalizerFunc func(context.Context, refreshpostgres.Tx, refreshrun.JobRecord, refreshrun.CanonicalRefreshResult, refreshpostgres.PublicationInput) error
+
+func (f PostgresNativeRefreshFinalizerFunc) FinalizeCanonicalRefreshTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, publication refreshpostgres.PublicationInput) error {
+	if f == nil {
+		return errors.New("native refresh finalizer is unavailable")
+	}
+	return f(ctx, tx, job, result, publication)
+}
+
 // PostgresCancelAuditWriter writes a final cancellation audit row through the
 // caller-owned authority transaction.
 type PostgresCancelAuditWriter interface {
@@ -62,6 +86,10 @@ type PostgresPersistenceConfig struct {
 	// lifecycle, and recovery must all come from this one adapter.
 	Jobs              PostgresJobsAuthority
 	CanonicalVerifier PostgresCanonicalVerifier
+	// NativeFinalizer is deliberately separate from the verifier. The
+	// verifier proves the refresh result; the finalizer composes native
+	// publication/activation into the same caller-owned transaction.
+	NativeFinalizer   PostgresNativeRefreshFinalizer
 	CancelAuditWriter PostgresCancelAuditWriter
 }
 
@@ -97,7 +125,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 	return Persistence{
 		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, cancelAuditWriter: config.CancelAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
-		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
+		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
 		TerminalRecovery: terminalRecovery,
 	}, nil
 }
@@ -832,6 +860,7 @@ type postgresPublicationPersistence struct {
 	repository        *refreshpostgres.Repository
 	identityResolver  PostgresPublicationIdentityResolver
 	canonicalVerifier PostgresCanonicalVerifier
+	nativeFinalizer   PostgresNativeRefreshFinalizer
 	cancelAuditWriter PostgresCancelAuditWriter
 	queueLifecycle    PostgresQueueLifecycle
 	queueRecovery     PostgresQueueRecovery
@@ -907,6 +936,11 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		pubInput.OwnerID = job.LeaseOwner
 		pubInput.FenceGeneration = job.LeaseRevision
 		pubInput.Evidence = evidence
+		if p.nativeFinalizer != nil {
+			if err := p.nativeFinalizer.FinalizeCanonicalRefreshTx(ctx, tx, job, result, pubInput); err != nil {
+				return fmt.Errorf("finalize native canonical refresh: %w", err)
+			}
+		}
 		publication, err := p.repository.LinkPublicationTx(ctx, tx, pubInput)
 		if err != nil {
 			return fmt.Errorf("link canonical publication: %w", err)

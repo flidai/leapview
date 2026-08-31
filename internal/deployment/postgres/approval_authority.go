@@ -191,11 +191,19 @@ type ApprovalAuditAppender interface {
 	AppendApprovalAudit(context.Context, Tx, ApprovalAudit) error
 }
 
+// ApprovalActivationAppender enqueues the native activation intent in the
+// approval transaction. Implementations must use the supplied transaction and
+// preserve deterministic replay identity; they never commit or roll it back.
+type ApprovalActivationAppender interface {
+	EnqueueApprovalActivation(context.Context, Tx, ApprovalRequest, ApprovalDecision) error
+}
+
 type ApprovalAuthorityOptions struct {
-	Authorize ApprovalAuthorizer
-	Operation ApprovalOperationAppender
-	Event     ApprovalEventAppender
-	Audit     ApprovalAuditAppender
+	Authorize  ApprovalAuthorizer
+	Operation  ApprovalOperationAppender
+	Event      ApprovalEventAppender
+	Audit      ApprovalAuditAppender
+	Activation ApprovalActivationAppender
 }
 
 type ApprovalAuthority struct {
@@ -204,13 +212,34 @@ type ApprovalAuthority struct {
 	operation  ApprovalOperationAppender
 	event      ApprovalEventAppender
 	audit      ApprovalAuditAppender
+	activation ApprovalActivationAppender
 }
 
-func NewApprovalAuthority(repository *Repository, options ApprovalAuthorityOptions) (*ApprovalAuthority, error) {
+// newLowLevelApprovalAuthority constructs the approval state machine for
+// repository-focused tests and non-production adapters. It intentionally
+// omits the activation consequence and is package-private so app production
+// composition cannot bypass the strict constructor.
+func newLowLevelApprovalAuthority(repository *Repository, options ApprovalAuthorityOptions) (*ApprovalAuthority, error) {
 	if repository == nil || !repository.Configured() || !approvalPortPresent(options.Authorize) || !approvalPortPresent(options.Operation) || !approvalPortPresent(options.Event) || !approvalPortPresent(options.Audit) {
 		return nil, ErrInvalid
 	}
-	return &ApprovalAuthority{repository: repository, authorize: options.Authorize, operation: options.Operation, event: options.Event, audit: options.Audit}, nil
+	return &ApprovalAuthority{repository: repository, authorize: options.Authorize, operation: options.Operation, event: options.Event, audit: options.Audit, activation: options.Activation}, nil
+}
+
+// NewApprovalAuthority is the fail-closed constructor used by application
+// composition. Approval grants without an activation enqueue consequence are
+// unsafe in production and are rejected before the authority is published.
+func NewApprovalAuthority(repository *Repository, options ApprovalAuthorityOptions) (*ApprovalAuthority, error) {
+	if !approvalPortPresent(options.Activation) {
+		return nil, ErrInvalid
+	}
+	return newLowLevelApprovalAuthority(repository, options)
+}
+
+// NewProductionApprovalAuthority is retained as an explicit composition
+// alias for callers that prefer the production intent in the name.
+func NewProductionApprovalAuthority(repository *Repository, options ApprovalAuthorityOptions) (*ApprovalAuthority, error) {
+	return NewApprovalAuthority(repository, options)
 }
 
 // Interfaces supplied by composition may hold typed nil pointers/functions.
@@ -469,6 +498,11 @@ func (a *ApprovalAuthority) DecideTx(ctx context.Context, tx Tx, input ApprovalD
 	request.LatestDecision = &decision
 	if err := a.appendEvidence(ctx, tx, action, request, &decision, evidence); err != nil {
 		return ApprovalRequest{}, err
+	}
+	if action == ApprovalActionApprove && a.activation != nil {
+		if err := a.activation.EnqueueApprovalActivation(ctx, tx, request, decision); err != nil {
+			return ApprovalRequest{}, err
+		}
 	}
 	return request, nil
 }

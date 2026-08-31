@@ -123,7 +123,11 @@ type CanonicalPublicationUnitOfWork interface {
 type CanonicalRefreshResult struct {
 	PlanID         string
 	ServingStateID string
-	SnapshotID     int64
+	// NativeGenerationID is the delivery PostgreSQL generation identity used
+	// by the atomic native refresh finalizer. It is explicit because a serving
+	// state ID is not inherently a delivery generation ID across authorities.
+	NativeGenerationID string
+	SnapshotID         int64
 }
 
 type Service struct {

@@ -108,6 +108,22 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 	}
 }
 
+func TestPostgresBuildComposesNativeRefreshFinalization(t *testing.T) {
+	contents, err := os.ReadFile("postgres_build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{
+		"NewPostgresNativeRefreshFinalizer(",
+		"NativeFinalizer: nativeRefreshFinalizer",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("PostgreSQL composition is missing %q", required)
+		}
+	}
+}
+
 func TestBuildProductionFailsClosedBeforeLegacySQLiteComposition(t *testing.T) {
 	_, err := BuildProduction(context.Background(), config.Config{Production: true})
 	if err == nil {

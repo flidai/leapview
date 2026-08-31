@@ -635,6 +635,34 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 	return mapNativePublication(result.Publication, target.ProjectID, target.Environment, generation.ServingArtifactDigest), nil
 }
 
+// ActivateApprovedPublication is the worker-only activation entrypoint. It
+// resolves project/environment from the target authority, then delegates to
+// Activate, whose one transaction rechecks effective approval, acquires the
+// target lease, advances the CAS pointer, and appends activation evidence.
+// Keeping this separate from the HTTP Activate route prevents a caller from
+// smuggling a candidate-wide activation request into the native path.
+func (c *nativeCoordinator) ActivateApprovedPublication(ctx context.Context, publicationID, expectedPublicationActorID, idempotencyKey string) (apiadapter.Deployment, error) {
+	if c == nil || c.repository == nil || strings.TrimSpace(publicationID) != publicationID || strings.TrimSpace(idempotencyKey) != idempotencyKey || idempotencyKey == "" {
+		return apiadapter.Deployment{}, fmt.Errorf("%w: approval activation identity is invalid", apiadapter.ErrInvalid)
+	}
+	publicationID, err := canonicalUUID(publicationID, "publication id")
+	if err != nil {
+		return apiadapter.Deployment{}, err
+	}
+	target, err := c.repository.Target(ctx, c.targetID)
+	if err != nil {
+		return apiadapter.Deployment{}, mapNativeError(err)
+	}
+	publication, err := c.repository.Publication(ctx, publicationID)
+	if err != nil {
+		return apiadapter.Deployment{}, mapNativeError(err)
+	}
+	if publication.TargetID != c.targetID || publication.ActorID != expectedPublicationActorID || target.Environment != c.instanceEnv {
+		return apiadapter.Deployment{}, deployment.ErrNotFound
+	}
+	return c.Activate(ctx, apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: target.ProjectID, DeploymentID: publicationID}, Actor: publication.ActorID, IdempotencyKey: idempotencyKey})
+}
+
 func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapter.CancelRequest) (apiadapter.Deployment, error) {
 	scope := request.Scope
 	projectID, err := validateNativeScope(scope)

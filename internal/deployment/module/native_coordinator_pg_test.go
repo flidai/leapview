@@ -488,6 +488,21 @@ func TestNativeCoordinatorPostgresActivationReplayAndCancelCommittedConflict(t *
 	}
 }
 
+func TestNativeCoordinatorApprovedActivationRejectsTamperedPublicationActor(t *testing.T) {
+	f := newNativePGFixture(t)
+	created, err := f.coordinator.Create(t.Context(), nativeCreateRequest(f, "tampered-actor-create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.coordinator.ActivateApprovedPublication(t.Context(), created.ID, "forged-publication-actor", "approval-decision-1"); !errors.Is(err, deployment.ErrNotFound) {
+		t.Fatalf("tampered publication actor error = %v, want not found", err)
+	}
+	row, err := f.coordinator.Get(t.Context(), apiadapter.Scope{Project: "project_sales", DeploymentID: created.ID})
+	if err != nil || row.Status != apiadapter.StatusPending {
+		t.Fatalf("tampered actor changed publication = %#v, %v", row, err)
+	}
+}
+
 func TestNativeCoordinatorPostgresMutationFailuresRollbackSourceAndOperation(t *testing.T) {
 	tests := []struct {
 		name  string

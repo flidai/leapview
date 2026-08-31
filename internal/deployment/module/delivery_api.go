@@ -538,8 +538,34 @@ func (m *Module) RequestDeliveryPublicationApproval(
 	r *http.Request,
 	project,
 	publicationID string,
-	_ string,
+	idempotencyKey string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		principal, ok := m.principal(r)
+		if !ok {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval(), mapNativeApprovalError(nativepostgres.ErrApprovalUnauthorized))
+			return
+		}
+		actor, ok := m.approvalActor(r, principal.ID)
+		if !ok {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval(), mapNativeApprovalError(nativepostgres.ErrApprovalUnauthorized))
+			return
+		}
+		projectID, err := projectgraph.NewResourceID(project)
+		publicationUUID, parseErr := uuid.Parse(publicationID)
+		if err != nil || project != strings.TrimSpace(project) || parseErr != nil || publicationUUID.String() != publicationID {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval(), mapNativeApprovalError(nativepostgres.ErrApprovalInvalid))
+			return
+		}
+		approval, err := m.nativeDeliveryApproval.RequestPublicationApproval(r.Context(), NativeApprovalRequest{ProjectID: projectID.String(), TargetID: m.instanceID, Environment: m.handlerEnvironment(), PublicationID: publicationUUID, PrincipalID: principal.ID, IdempotencyKey: idempotencyKey, Actor: actor})
+		if err != nil {
+			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval(), mapNativeApprovalError(err))
+			return
+		}
+		w.Header().Set("Location", approvalLocation(project, publicationID, approval.RequestID))
+		apitransport.WriteJSON(w, http.StatusCreated, nativeApprovalResponse(project, m.handlerEnvironment(), approval))
+		return
+	}
 	operationID := deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval()
 	principal, ok := m.principal(r)
 	if !ok {
@@ -580,6 +606,24 @@ func (m *Module) GetDeliveryPublicationApproval(
 	publicationID,
 	approvalID string,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		if _, ok := m.principal(r); !ok {
+			apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
+			return
+		}
+		publicationUUID, parseErr := uuid.Parse(publicationID)
+		if parseErr != nil || publicationUUID.String() != publicationID {
+			writeAPIError(w, r, deployment.ErrApprovalNotFound)
+			return
+		}
+		approval, err := m.nativeDeliveryApproval.GetPublicationApproval(r.Context(), NativeApprovalLookup{ProjectID: project, TargetID: m.instanceID, Environment: m.handlerEnvironment(), PublicationID: publicationUUID.String(), RequestID: approvalID})
+		if err != nil {
+			writeAPIError(w, r, mapNativeApprovalReadError(err))
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeApprovalResponse(project, m.handlerEnvironment(), approval))
+		return
+	}
 	if _, ok := m.principal(r); !ok {
 		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return
@@ -599,9 +643,14 @@ func (m *Module) transitionDeliveryPublicationApproval(
 	r *http.Request,
 	project,
 	publicationID,
-	approvalID string,
+	approvalID,
+	idempotencyKey string,
 	decision approvalDecision,
 ) {
+	if m != nil && m.nativeDeliveryApproval != nil {
+		m.transitionNativeDeliveryPublicationApproval(w, r, project, publicationID, approvalID, idempotencyKey, decision)
+		return
+	}
 	operationID := operationIDForDeliveryDecision(decision)
 	var body deploymentapi.ApprovalDecisionRequest
 	if err := apitransport.DecodeBody(w, r, &body); err != nil {
@@ -672,16 +721,58 @@ func operationIDForDeliveryDecision(decision approvalDecision) deploymentgen.Gen
 	}
 }
 
-func (m *Module) ApproveDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, _ string) {
-	m.transitionDeliveryPublicationApproval(w, r, project, publicationID, approvalID, approvalDecisionApprove)
+func (m *Module) ApproveDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, idempotencyKey string) {
+	m.transitionDeliveryPublicationApproval(w, r, project, publicationID, approvalID, idempotencyKey, approvalDecisionApprove)
 }
 
-func (m *Module) DenyDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, _ string) {
-	m.transitionDeliveryPublicationApproval(w, r, project, publicationID, approvalID, approvalDecisionDeny)
+func (m *Module) DenyDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, idempotencyKey string) {
+	m.transitionDeliveryPublicationApproval(w, r, project, publicationID, approvalID, idempotencyKey, approvalDecisionDeny)
 }
 
-func (m *Module) RevokeDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, _ string) {
-	m.transitionDeliveryPublicationApproval(w, r, project, publicationID, approvalID, approvalDecisionRevoke)
+func (m *Module) RevokeDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, idempotencyKey string) {
+	m.transitionDeliveryPublicationApproval(w, r, project, publicationID, approvalID, idempotencyKey, approvalDecisionRevoke)
+}
+
+func (m *Module) transitionNativeDeliveryPublicationApproval(w http.ResponseWriter, r *http.Request, project, publicationID, approvalID, idempotencyKey string, decision approvalDecision) {
+	operationID := operationIDForDeliveryDecision(decision)
+	var body deploymentapi.ApprovalDecisionRequest
+	if err := apitransport.DecodeBody(w, r, &body); err != nil {
+		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_JSON", err.Error(), nil)
+		return
+	}
+	principal, ok := m.principal(r)
+	if !ok {
+		m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(nativepostgres.ErrApprovalUnauthorized))
+		return
+	}
+	actor, ok := m.approvalActor(r, principal.ID)
+	if !ok {
+		m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(nativepostgres.ErrApprovalUnauthorized))
+		return
+	}
+	pub, parseErr := uuid.Parse(publicationID)
+	if parseErr != nil || pub.String() != publicationID || strings.TrimSpace(idempotencyKey) != idempotencyKey || idempotencyKey == "" {
+		m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(nativepostgres.ErrApprovalInvalid))
+		return
+	}
+	input := NativeApprovalDecision{ProjectID: project, TargetID: m.instanceID, Environment: m.handlerEnvironment(), PublicationID: publicationID, RequestID: approvalID, ExpectedRevision: body.ExpectedRevision, IdempotencyKey: idempotencyKey, Actor: actor}
+	var approval nativepostgres.ApprovalRequest
+	var err error
+	switch decision {
+	case approvalDecisionApprove:
+		approval, err = m.nativeDeliveryApproval.ApprovePublicationApproval(r.Context(), input)
+	case approvalDecisionDeny:
+		approval, err = m.nativeDeliveryApproval.DenyPublicationApproval(r.Context(), input)
+	case approvalDecisionRevoke:
+		approval, err = m.nativeDeliveryApproval.RevokePublicationApproval(r.Context(), input)
+	default:
+		err = nativepostgres.ErrApprovalInvalid
+	}
+	if err != nil {
+		m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(err))
+		return
+	}
+	apitransport.WriteJSON(w, http.StatusOK, nativeApprovalResponse(project, m.handlerEnvironment(), approval))
 }
 
 func (m *Module) RollbackDeliveryGeneration(w http.ResponseWriter, r *http.Request, project, generationID, idempotencyKey string) {
