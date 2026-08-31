@@ -257,8 +257,8 @@ type NativeBuildOperationAuthority interface {
 	// identity field exactly before fencing the operation to indeterminate.
 	ExpireAttemptTx(context.Context, NativeOperationTx, NativeOperationLease, json.RawMessage) error
 	// ConfirmExpiredAttemptTx locks and projects the exact indeterminate row
-	// produced by ExpireAttemptTx. expectedFencingGeneration must be the
-	// predecessor lease fence plus one.
+	// produced by MarkIndeterminateTx or ExpireAttemptTx.
+	// expectedFencingGeneration must be the predecessor lease fence plus one.
 	ConfirmExpiredAttemptTx(context.Context, NativeOperationTx, NativeOperationLease, int64) (NativeOperationRecord, error)
 }
 

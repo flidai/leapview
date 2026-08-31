@@ -675,10 +675,10 @@ func (r *Repository) ExpireAttemptTx(ctx context.Context, tx Tx, lease Lease, ev
 }
 
 // ConfirmExpiredAttemptTx locks and returns the exact indeterminate operation
-// produced by expiry fencing. The expected fence must be the predecessor
-// lease's generation plus one; callers cannot confirm a later takeover or a
-// terminal operation. The caller owns tx and this method does not manage its
-// lifecycle.
+// produced by direct or expiry fencing. The expected fence must be the
+// predecessor lease's generation plus one; callers cannot confirm a later
+// takeover or a terminal operation. The caller owns tx and this method does
+// not manage its lifecycle.
 func (r *Repository) ConfirmExpiredAttemptTx(ctx context.Context, tx Tx, lease Lease, expectedFencingGeneration int64) (Operation, error) {
 	if r == nil || tx == nil {
 		return Operation{}, ErrInvalid
