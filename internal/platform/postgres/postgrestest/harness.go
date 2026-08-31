@@ -77,6 +77,11 @@ func Required() bool {
 // failures fatal (fail closed).
 func Start(t *testing.T) *Harness {
 	t.Helper()
+	// REQUIRED is the fail-closed lane contract and always wins over a stale
+	// skip flag inherited from an outer task or developer shell.
+	if shouldSkipConformance() {
+		t.Skip("PostgreSQL container tests run in the dedicated conformance lane")
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), defaultHarnessTimeout)
 	defer cancel()
 	if !Required() {
@@ -116,6 +121,17 @@ func Start(t *testing.T) *Harness {
 	t.Cleanup(func() { admin.Close() })
 	return h
 }
+
+func conformanceSkipped() bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP"))) {
+	case "1", "true", "t", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldSkipConformance() bool { return conformanceSkipped() && !Required() }
 
 // AdminURL returns a connection URL for the bootstrap administrator.
 func (h *Harness) AdminURL() string {

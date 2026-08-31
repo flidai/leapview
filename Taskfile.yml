@@ -1155,10 +1155,19 @@ tasks:
 
   test:go:packages:
     cmds:
-      # Real PostgreSQL 18 suites run once, fail closed, in test:go:external.
-      # Keep the ordinary package lane focused on unit tests instead of
-      # starting the same pinned containers a second time.
-      - go list ./... | grep -v '/internal/app$' | xargs go test -p 2 -skip '^(TestPostgreSQL18|TestBaselinePostgreSQL18$)'
+      # Container-backed PostgreSQL tests are run once, fail closed, by the
+      # dedicated conformance lane. Derive the exclusion by source so a new
+      # harness user cannot silently run in both lanes. App tests use the same
+      # skip flag in their stable shards below.
+      - |
+        set -euo pipefail
+        export LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1
+        postgres_packages="$(bash scripts/postgres-conformance-tests.sh list)"
+        test -n "$postgres_packages"
+        go list ./... |
+          grep -v '/internal/app$' |
+          grep -Fvx -f <(printf '%s\n' "$postgres_packages") |
+          xargs -r go test -p 2
 
   test:cache:qualification:
     desc: Race-qualify stable cache cutover, generation execution, and bounded cache observers
@@ -1175,25 +1184,25 @@ tasks:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 0 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:app:1:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 1 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:app:2:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 2 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:app:3:
     cmds:
       - |
         pattern="$(go run ./internal/app/tools/testshard --package ./internal/app --shard-index 3 --shard-count 4)"
-        go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
+        LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1 go test ./internal/app -run "$pattern" -skip '^TestMinIOParquetSourceRefreshContract$'
 
   test:go:external:
     desc: Run container-backed external-service integration tests serially
@@ -1203,16 +1212,11 @@ tasks:
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
-    desc: Run the fail-closed PostgreSQL 18 baseline, pool, event, Watermill proof, and job conformance suites
+    desc: Run every source-inventoried PostgreSQL container suite once, fail closed, under the pinned PostgreSQL 18 harness
     env:
       LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
     cmds:
-      - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
-      - go test ./internal/platform/postgres/migrations -run '^TestBaselinePostgreSQL18$' -count=1 -v
-      - go test ./internal/platform/events/postgres -run '^TestPostgreSQL18' -count=1 -v
-      - go test ./internal/platform/events/watermill -run '^TestPostgreSQL18' -count=1 -v
-      - go test ./internal/platform/events/watermillproof -run '^TestPostgreSQL18' -count=1 -v
-      - go test ./internal/platform/jobs/postgres -run '^TestPostgreSQL18' -count=1 -v
+      - bash scripts/postgres-conformance-tests.sh run
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView

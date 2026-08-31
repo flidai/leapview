@@ -7,6 +7,7 @@ import (
 	"go/parser"
 	"go/token"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -3205,7 +3206,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"test:go:",
 		"task --parallel test:go:packages test:go:app:shards",
 		"task --parallel --concurrency 3 test:go:app:0 test:go:app:1 test:go:app:2 test:go:app:3",
-		"go list ./... | grep -v '/internal/app$' | xargs go test -p 2",
+		"scripts/postgres-conformance-tests.sh list",
+		"grep -Fvx -f",
 		"--shard-count 4",
 		"image:qualify:production:",
 		"TMPDIR={{.ROOT_DIR}}/.tmp/qualification/tmp",
@@ -3241,6 +3243,82 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	} {
 		if _, err := os.Stat(filepath.Join(root, retired)); !os.IsNotExist(err) {
 			t.Fatalf("retired Autback shell implementation still exists at %s: %v", retired, err)
+		}
+	}
+}
+
+func TestPostgreSQLConformanceCIUsesSourceInventoryAndNoGlobalNameSkip(t *testing.T) {
+	root := repoRoot(t)
+	taskfileBytes, err := os.ReadFile(filepath.Join(root, "Taskfile.yml"))
+	if err != nil {
+		t.Fatalf("read Taskfile.yml: %v", err)
+	}
+	taskfile := string(taskfileBytes)
+	packages := taskfileTaskBlock(t, taskfile, "test:go:packages")
+	conformance := taskfileTaskBlock(t, taskfile, "test:go:postgres-conformance")
+	if strings.Contains(packages, "-skip '^(TestPostgreSQL18") || strings.Contains(packages, "TestBaselinePostgreSQL18$") {
+		t.Fatal("ordinary package lane must not skip PostgreSQL tests by test-name prefix")
+	}
+	for _, fragment := range []string{
+		"export LEAPVIEW_POSTGRES_CONFORMANCE_SKIP=1",
+		"scripts/postgres-conformance-tests.sh list",
+		"grep -Fvx -f",
+	} {
+		if !strings.Contains(packages, fragment) {
+			t.Fatalf("ordinary package lane missing PostgreSQL inventory guard %q", fragment)
+		}
+	}
+	if !strings.Contains(conformance, "bash scripts/postgres-conformance-tests.sh run") {
+		t.Fatal("PostgreSQL conformance lane must execute the same source-derived inventory")
+	}
+	if !strings.Contains(conformance, "LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED") {
+		t.Fatal("PostgreSQL conformance lane must remain fail-closed")
+	}
+	scriptBytes, err := os.ReadFile(filepath.Join(root, "scripts", "postgres-conformance-tests.sh"))
+	if err != nil {
+		t.Fatalf("read PostgreSQL conformance inventory: %v", err)
+	}
+	script := string(scriptBytes)
+	if !strings.Contains(script, "postgrestest\\.Start") || !strings.Contains(script, "tcpostgres\\.Run") {
+		t.Fatal("PostgreSQL inventory must include shared and direct PostgreSQL container harnesses")
+	}
+	if strings.Contains(script, "testcontainers\\.Run") {
+		t.Fatal("PostgreSQL inventory must not route generic containers such as MinIO")
+	}
+	listCmd := exec.Command("bash", filepath.Join(root, "scripts", "postgres-conformance-tests.sh"), "list")
+	listCmd.Dir = root
+	listedOutput, err := listCmd.Output()
+	if err != nil {
+		t.Fatalf("run PostgreSQL conformance inventory: %v", err)
+	}
+	allCmd := exec.Command("go", "list", "./...")
+	allCmd.Dir = root
+	allOutput, err := allCmd.Output()
+	if err != nil {
+		t.Fatalf("list Go packages for PostgreSQL inventory guard: %v", err)
+	}
+	allPackages := make(map[string]struct{})
+	for _, packagePath := range strings.Fields(string(allOutput)) {
+		allPackages[packagePath] = struct{}{}
+	}
+	for _, packagePath := range strings.Fields(string(listedOutput)) {
+		if _, ok := allPackages[packagePath]; !ok {
+			t.Fatalf("PostgreSQL inventory package %q is not a Go package", packagePath)
+		}
+	}
+	filteredCmd := exec.Command("bash", "-c", `set -o pipefail; go list ./... | grep -v '/internal/app$' | grep -Fvx -f <(bash scripts/postgres-conformance-tests.sh list)`)
+	filteredCmd.Dir = root
+	filteredOutput, err := filteredCmd.Output()
+	if err != nil {
+		t.Fatalf("compute ordinary Go package set: %v", err)
+	}
+	filteredPackages := make(map[string]struct{})
+	for _, packagePath := range strings.Fields(string(filteredOutput)) {
+		filteredPackages[packagePath] = struct{}{}
+	}
+	for _, packagePath := range strings.Fields(string(listedOutput)) {
+		if _, ok := filteredPackages[packagePath]; ok {
+			t.Fatalf("PostgreSQL inventory package %q remains in ordinary package set", packagePath)
 		}
 	}
 }

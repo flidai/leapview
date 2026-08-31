@@ -51,3 +51,26 @@ func TestRequiredParsesBooleanEnvironment(t *testing.T) {
 		}
 	}
 }
+
+func TestConformanceSkippedParsesBooleanEnvironment(t *testing.T) {
+	for _, value := range []string{"1", "true", "T", "yes", "on"} {
+		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP", value)
+		if !conformanceSkipped() {
+			t.Fatalf("conformanceSkipped() = false for %q", value)
+		}
+	}
+	for _, value := range []string{"", "0", "false", "off", "no"} {
+		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP", value)
+		if conformanceSkipped() {
+			t.Fatalf("conformanceSkipped() = true for %q", value)
+		}
+	}
+}
+
+func TestRequiredOverridesConformanceSkip(t *testing.T) {
+	t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_SKIP", "1")
+	t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", "1")
+	if shouldSkipConformance() {
+		t.Fatal("required conformance lane would be suppressed by skip flag")
+	}
+}
