@@ -205,7 +205,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: digest('e'),
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: digest('e'), CompilerDigest: digest('b'), ExecutableDigest: digest('4'), DependencyDigest: digest('5'), ConfigDigest: digest('c'), BindingDigest: digest('d'), RuntimeDigest: digest('0'), CapabilityDigest: digest('9')},
 		Provenance: deployment.DeliveryProvenance{Builder: "native-coordinator-test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: digest('2'), AuthorizationDigest: digest('d'), QualificationDigest: digest('3'), ExpiresAt: createdAt.Add(time.Hour)},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: digest('2'), AuthorizationDigest: digest('d'), QualificationDigest: digest('3'), ApprovalPolicyRevision: 1, ExpiresAt: createdAt.Add(time.Hour)},
 		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "native coordinator fixture", PhysicalWorkStatement: "seal fixture snapshot", ReuseStatement: "no fixture reuse", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact native snapshot", Steps: []deployment.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify native snapshot", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
 		CreatedAt:  createdAt,
 	})
@@ -217,7 +217,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		t.Fatal(err)
 	}
 	planDigest := richPlan.Digest
-	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), QualificationRequired: true, PlanDocument: planDocument, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
+	if _, err := repo.CreatePlan(ctx, deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), ArtifactDigest: digest('e'), QualificationDigest: digest('3'), QualificationRequired: false, ApprovalRequired: false, ApprovalPolicyRevision: 1, PlanDocument: planDocument, Evidence: []byte(`{"qualification":"none"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateCandidate(ctx, deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: digest('e')}); err != nil {
@@ -242,9 +242,6 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		t.Fatal(err)
 	}
 	if _, err := repo.QualifyCandidate(ctx, candidateID, sealID, digest('3')); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := repo.ApproveCandidate(ctx, deploymentpostgres.DeliveryApproval{ApprovalID: uuid.New().String(), CandidateID: candidateID, Decision: "approved", Evidence: json.RawMessage(`{"review":"ok"}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.CreateGeneration(ctx, deploymentpostgres.GenerationInput{GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/" + digest('e'), ArtifactRootDigest: digest('7'), ServingArtifactDigest: digest('e'), CompiledGraphDigest: digest('b'), CompiledConfigDigest: digest('c'), SecurityDomainFingerprint: digest('d'), GenerationRevision: 1}); err != nil {

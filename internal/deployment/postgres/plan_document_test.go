@@ -26,7 +26,7 @@ func richPlanDocumentFixture(t *testing.T, id, target, project string) (deployme
 		},
 		Provenance: deployment.DeliveryProvenance{Builder: "test"},
 		Governance: deployment.DeliveryGovernance{
-			PolicyDigest: d('2'), AuthorizationDigest: d('d'), QualificationDigest: d('3'),
+			PolicyDigest: d('2'), AuthorizationDigest: d('d'), QualificationDigest: d('3'), ApprovalPolicyRevision: 1,
 			ExpiresAt: created.Add(time.Hour), RequiresApproval: true,
 		},
 		Evidence: deployment.DeliveryPlanEvidence{
@@ -53,7 +53,7 @@ func planDocumentProjectionFixture(t *testing.T, rich deployment.DeliveryPlan, d
 		PlanID: rich.ID, TargetID: rich.TargetID, PlanRevision: 1, PlanDigest: rich.Digest,
 		CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest,
 		SecurityDomainFingerprint: rich.Governance.AuthorizationDigest, ArtifactDigest: rich.SourceDigest,
-		QualificationDigest: rich.Governance.QualificationDigest, PlanDocument: document,
+		QualificationDigest: rich.Governance.QualificationDigest, ApprovalRequired: rich.Governance.RequiresApproval, ApprovalPolicyRevision: rich.Governance.ApprovalPolicyRevision, PlanDocument: document,
 		Evidence: json.RawMessage(`{"review":"ok"}`),
 	}
 }

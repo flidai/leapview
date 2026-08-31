@@ -77,7 +77,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 		ID: planID, TargetID: "target-assembler", ProjectID: projectID, Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: sourceDigest,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: sourceDigest, CompilerDigest: assemblerDigest('1'), ExecutableDigest: assemblerDigest('2'), DependencyDigest: assemblerDigest('3'), ConfigDigest: assemblerDigest('c'), BindingDigest: assemblerDigest('4'), RuntimeDigest: assemblerDigest('5'), CapabilityDigest: assemblerDigest('6')},
 		Provenance: deployment.DeliveryProvenance{Builder: "assembler-test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: assemblerDigest('7'), AuthorizationDigest: assemblerDigest('d'), QualificationDigest: assemblerDigest('8'), ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: false},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: assemblerDigest('7'), AuthorizationDigest: assemblerDigest('d'), QualificationDigest: assemblerDigest('8'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: false},
 		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "impact", PhysicalWorkStatement: "refresh", ReuseStatement: "none", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact", Steps: []deployment.DeliveryQualificationStep{{ID: "schema", Kind: "contract", Description: "schema", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
 		CreatedAt:  now,
 	})

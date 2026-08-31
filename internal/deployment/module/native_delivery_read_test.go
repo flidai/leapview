@@ -157,7 +157,7 @@ func nativeReadRowsFixture(t *testing.T, target string) nativeReadRows {
 		ActorID: "actor", SourceOwnerID: "owner", SourceDigest: nativeReadDigest('a'), ServingArtifactDigest: nativeReadDigest('b'), CreatedAt: now,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: nativeReadDigest('a'), CompilerDigest: nativeReadDigest('c'), ExecutableDigest: nativeReadDigest('d'), DependencyDigest: nativeReadDigest('e'), ConfigDigest: nativeReadDigest('f'), BindingDigest: nativeReadDigest('1'), RuntimeDigest: nativeReadDigest('2'), CapabilityDigest: nativeReadDigest('3')},
 		Provenance: deployment.DeliveryProvenance{Builder: "native-test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: nativeReadDigest('4'), AuthorizationDigest: nativeReadDigest('5'), QualificationDigest: nativeReadDigest('6'), ExpiresAt: now.Add(time.Hour)},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: nativeReadDigest('4'), AuthorizationDigest: nativeReadDigest('5'), QualificationDigest: nativeReadDigest('6'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour)},
 		Evidence: deployment.DeliveryPlanEvidence{
 			ImpactStatement:       "native read fixture impact",
 			PhysicalWorkStatement: "native read fixture physical work",
@@ -178,7 +178,7 @@ func nativeReadRowsFixture(t *testing.T, target string) nativeReadRows {
 	if err != nil {
 		t.Fatal(err)
 	}
-	planRow := nativepostgres.DeliveryPlan{PlanID: plan.ID, TargetID: target, PlanDigest: plan.Digest, CompiledConfigDigest: plan.Execution.ConfigDigest, SecurityDomainFingerprint: plan.Governance.AuthorizationDigest, ArtifactDigest: plan.ServingArtifactDigest, QualificationDigest: plan.Governance.QualificationDigest, QualificationRequired: true, PlanDocument: document, Evidence: evidence, CreatedAt: now}
+	planRow := nativepostgres.DeliveryPlan{PlanID: plan.ID, TargetID: target, PlanDigest: plan.Digest, CompiledConfigDigest: plan.Execution.ConfigDigest, SecurityDomainFingerprint: plan.Governance.AuthorizationDigest, ArtifactDigest: plan.ServingArtifactDigest, QualificationDigest: plan.Governance.QualificationDigest, QualificationRequired: true, ApprovalPolicyRevision: plan.Governance.ApprovalPolicyRevision, PlanDocument: document, Evidence: evidence, CreatedAt: now}
 	attemptID, candidateID, sealID, generationID := "0198f2c0-7c7a-7f00-8a11-000000000202", "0198f2c0-7c7a-7f00-8a11-000000000203", "0198f2c0-7c7a-7f00-8a11-000000000204", "0198f2c0-7c7a-7f00-8a11-000000000205"
 	return nativeReadRows{plan: planRow,
 		attempt:     nativepostgres.DeliveryBuildAttempt{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: "owner", PhysicalPoolID: "pool", FencingEpoch: 1, PlanDigest: plan.Digest, RequestDigest: nativeReadDigest('7'), State: nativepostgres.AttemptCommitted, CreatedAt: now, UpdatedAt: now, FinishedAt: now},

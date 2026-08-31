@@ -129,7 +129,7 @@ func TestRichPlanFromRequestCarriesActorSourceOwnerAndBaseFence(t *testing.T) {
 		ActorID: "reviewer", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('a'), ServingArtifactDigest: d('6'), CreatedAt: now,
 		Provenance: deployment.DeliveryProvenance{Builder: "test", AttestationDigest: d('b')},
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('c'), ExecutableDigest: d('d'), DependencyDigest: d('e'), ConfigDigest: d('f'), BindingDigest: d('0'), RuntimeDigest: d('1'), CapabilityDigest: d('2')},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: d('3'), AuthorizationDigest: d('4'), QualificationDigest: d('5'), ExpiresAt: now.Add(time.Hour)},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: d('3'), AuthorizationDigest: d('4'), QualificationDigest: d('5'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour)},
 		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "impact", PhysicalWorkStatement: "work", ReuseStatement: "reuse", Qualification: deployment.DeliveryQualificationEvidence{Policy: "policy", Steps: []deployment.DeliveryQualificationStep{{ID: "schema", Kind: "contract", Description: "schema", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
 	}
 	plan, err := richPlanFromRequest(request, "author", "0198f2c0-7c7a-7f00-8a11-000000000106", "0198f2c0-7c7a-7f00-8a11-000000000107", 9)

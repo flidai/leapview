@@ -315,12 +315,13 @@ func (provenance DeliveryProvenance) Validate() error {
 // DeliveryGovernance controls expiry, authorization, and qualification. It
 // does not alter the execution digest.
 type DeliveryGovernance struct {
-	PolicyDigest          string    `json:"policyDigest"`
-	AuthorizationDigest   string    `json:"authorizationDigest"`
-	QualificationDigest   string    `json:"qualificationDigest"`
-	ExpiresAt             time.Time `json:"expiresAt"`
-	RequiresApproval      bool      `json:"requiresApproval"`
-	ObservedInputsAllowed bool      `json:"observedInputsAllowed"`
+	PolicyDigest           string    `json:"policyDigest"`
+	AuthorizationDigest    string    `json:"authorizationDigest"`
+	QualificationDigest    string    `json:"qualificationDigest"`
+	ExpiresAt              time.Time `json:"expiresAt"`
+	RequiresApproval       bool      `json:"requiresApproval"`
+	ApprovalPolicyRevision int64     `json:"approvalPolicyRevision"`
+	ObservedInputsAllowed  bool      `json:"observedInputsAllowed"`
 }
 
 func (governance DeliveryGovernance) Validate() error {
@@ -331,6 +332,9 @@ func (governance DeliveryGovernance) Validate() error {
 		if err := ValidateDeliveryDigest(value); err != nil {
 			return fmt.Errorf("%s digest: %w", name, err)
 		}
+	}
+	if governance.ApprovalPolicyRevision <= 0 {
+		return fmt.Errorf("%w: approval policy revision must be positive", ErrDeliveryInvalid)
 	}
 	return validateDeliveryTime("plan expiry", governance.ExpiresAt, true)
 }

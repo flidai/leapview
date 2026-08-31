@@ -26,7 +26,7 @@ func repoDeliveryPlan(t *testing.T, now time.Time) deployment.DeliveryPlan {
 		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('a'), BaseTargetRevision: 0,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('b'), ExecutableDigest: d('c'), DependencyDigest: d('d'), ConfigDigest: d('e'), BindingDigest: d('f'), RuntimeDigest: d('0'), CapabilityDigest: d('1')},
 		Provenance: deployment.DeliveryProvenance{Builder: "test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('4'), ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: true},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('4'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: true},
 		Evidence: deployment.DeliveryPlanEvidence{
 			ImpactStatement: "direct model change with downstream impact", PhysicalWorkStatement: "materialize affected relations", ReuseStatement: "reuse unchanged relations",
 			Qualification: deployment.DeliveryQualificationEvidence{Policy: "protected", Steps: []deployment.DeliveryQualificationStep{{ID: "contracts", Kind: "contract", Description: "run graph contracts", Required: true, Blocking: true}}},

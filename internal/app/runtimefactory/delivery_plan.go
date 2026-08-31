@@ -214,12 +214,18 @@ func materializationIdentity(artifacts release.CandidateArtifactSet) (string, er
 // CandidateDeliveryPolicy is resolved by the target owner at composition
 // time. Planning must not invent approval, rollback, or retention claims.
 type CandidateDeliveryPolicy struct {
-	RequiresApproval bool
-	RollbackClass    deployment.DeliveryRollbackClass
-	RetentionWindow  string
+	RequiresApproval       bool
+	ApprovalPolicyRevision int64
+	RollbackClass          deployment.DeliveryRollbackClass
+	RetentionWindow        string
 }
 
+const CurrentApprovalPolicyRevision int64 = 1
+
 func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
+	if p.ApprovalPolicyRevision < 1 {
+		return CandidateDeliveryPolicy{}, fmt.Errorf("approval policy revision must be positive")
+	}
 	if p.RollbackClass == "" {
 		p.RollbackClass = deployment.DeliveryServingSafe
 	}
@@ -239,7 +245,7 @@ func (p CandidateDeliveryPolicy) normalized() (CandidateDeliveryPolicy, error) {
 // compiler evidence retained in CandidateArtifactSet. It intentionally does
 // not inspect a worktree, credentials, or physical storage.
 func CandidatePlanRequest(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, now time.Time) (deployment.DeliveryPlanRequest, error) {
-	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, CandidateDeliveryPolicy{}, now, nil)
+	return CandidatePlanRequestWithPolicyAndReuse(input, artifacts, runtimeVersion, CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, now, nil)
 }
 
 func CandidatePlanRequestWithPolicy(input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string, policy CandidateDeliveryPolicy, now time.Time) (deployment.DeliveryPlanRequest, error) {
@@ -373,7 +379,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				return input.Plan.Governance.ExpiresAt
 			}
 			return now.Add(time.Hour)
-		}(), RequiresApproval: policy.RequiresApproval, ObservedInputsAllowed: false},
+		}(), RequiresApproval: policy.RequiresApproval, ApprovalPolicyRevision: policy.ApprovalPolicyRevision, ObservedInputsAllowed: false},
 		Evidence:  evidence,
 		CreatedAt: now, Persist: true,
 	}
@@ -596,7 +602,7 @@ func maxInt(a, b int) int {
 // PlanCandidate persists one deterministic plan through the canonical
 // lifecycle and returns the exact durable row consumed by Build.
 func PlanCandidate(ctx context.Context, lifecycle *deployment.DeliveryLifecycle, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet, runtimeVersion string) (deployment.DeliveryPlan, error) {
-	return PlanCandidateWithPolicy(ctx, lifecycle, input, artifacts, runtimeVersion, CandidateDeliveryPolicy{})
+	return PlanCandidateWithPolicy(ctx, lifecycle, input, artifacts, runtimeVersion, CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision})
 }
 
 // PlanCandidateWithPolicy persists a plan after target-owned policy has been

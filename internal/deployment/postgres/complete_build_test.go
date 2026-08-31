@@ -47,7 +47,7 @@ func newCompleteBuildFixtureWithSuffixBindingAndLifetime(t *testing.T, r *Reposi
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: f.TargetID, ProjectID: "project_complete_build_" + suffix, Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: f.PlanID, TargetID: f.TargetID, PlanRevision: 1, PlanDigest: f.PlanDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest, SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: f.ArtifactDigest, QualificationDigest: rich.Governance.QualificationDigest, PlanDocument: planDocument}); err != nil {
+	if _, err := r.CreatePlan(ctx, PlanInput{PlanID: f.PlanID, TargetID: f.TargetID, PlanRevision: 1, PlanDigest: f.PlanDigest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest, SecurityDomainFingerprint: testDigest('d'), ArtifactDigest: f.ArtifactDigest, QualificationDigest: rich.Governance.QualificationDigest, ApprovalRequired: rich.Governance.RequiresApproval, ApprovalPolicyRevision: rich.Governance.ApprovalPolicyRevision, PlanDocument: planDocument}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: f.CandidateID, TargetID: f.TargetID, PlanID: f.PlanID, CandidateRevision: 1, ArtifactDigest: f.ArtifactDigest}); err != nil {

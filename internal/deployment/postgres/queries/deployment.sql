@@ -29,15 +29,6 @@ SET next_generation_revision=next_generation_revision+1
 WHERE target_id=sqlc.arg(target_id)
 RETURNING (next_generation_revision-1)::bigint AS revision;
 
--- name: GetApproval :one
-SELECT approval_id::text AS approval_id,candidate_id::text AS candidate_id,COALESCE(principal_id::text,'')::text AS principal_id,decision,evidence,decided_at
-FROM delivery.delivery_approval WHERE approval_id=sqlc.arg(approval_id)::uuid;
-
--- name: InsertApproval :exec
-INSERT INTO delivery.delivery_approval(approval_id,candidate_id,principal_id,decision,evidence)
-VALUES(sqlc.arg(approval_id)::uuid,sqlc.arg(candidate_id)::uuid,sqlc.narg(principal_id)::uuid,sqlc.arg(decision),sqlc.arg(evidence)::jsonb)
-ON CONFLICT(approval_id) DO NOTHING;
-
 -- name: GetRetentionRoot :one
 SELECT root_id::text AS root_id,target_id,COALESCE(candidate_id::text,'')::text AS candidate_id,COALESCE(generation_id::text,'')::text AS generation_id,COALESCE(snapshot_seal_id::text,'')::text AS snapshot_seal_id,root_kind,state,expires_at,evidence,created_at,retired_at,expired_at
 FROM delivery.delivery_retention_root WHERE root_id=sqlc.arg(root_id)::uuid;
@@ -61,12 +52,12 @@ COALESCE((SELECT publication_id::text FROM delivery.delivery_active_pointer p WH
 t.created_at,t.updated_at FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id);
 
 -- name: InsertPlan :exec
-INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,plan_document,evidence)
-VALUES(sqlc.arg(plan_id)::uuid,sqlc.arg(target_id),sqlc.arg(plan_revision),sqlc.arg(plan_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(artifact_digest),sqlc.arg(qualification_digest),sqlc.arg(qualification_required),sqlc.arg(plan_document)::jsonb,sqlc.arg(evidence)::jsonb)
+INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,approval_required,approval_policy_revision,plan_document,evidence)
+VALUES(sqlc.arg(plan_id)::uuid,sqlc.arg(target_id),sqlc.arg(plan_revision),sqlc.arg(plan_digest),sqlc.arg(compiled_graph_digest),sqlc.arg(compiled_config_digest),sqlc.arg(security_domain_fingerprint),sqlc.arg(artifact_digest),sqlc.arg(qualification_digest),sqlc.arg(qualification_required),sqlc.arg(approval_required),sqlc.arg(approval_policy_revision),sqlc.arg(plan_document)::jsonb,sqlc.arg(evidence)::jsonb)
 ON CONFLICT(plan_id) DO NOTHING;
 
 -- name: GetPlan :one
-SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,plan_document,evidence,created_at
+SELECT plan_id::text,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,approval_required,approval_policy_revision,plan_document,evidence,created_at
 FROM delivery.delivery_plan WHERE plan_id=sqlc.arg(plan_id)::uuid;
 
 -- name: GetCandidatePlan :one
@@ -292,11 +283,8 @@ FROM delivery.delivery_target t WHERE t.target_id=sqlc.arg(target_id) FOR UPDATE
 -- name: GetSnapshotSealProof :one
 SELECT attempt_id::text,request_digest,plan_digest,ducklake_snapshot_id FROM delivery.delivery_snapshot_seal WHERE seal_id=sqlc.arg(seal_id)::uuid;
 
--- name: GetPlanQualification :one
-SELECT qualification_required FROM delivery.delivery_plan WHERE plan_id=(SELECT plan_id FROM delivery.delivery_generation WHERE generation_id=sqlc.arg(generation_id)::uuid);
-
--- name: CandidateApproved :one
-SELECT COALESCE((SELECT decision='approved' FROM delivery.delivery_approval WHERE candidate_id=sqlc.arg(candidate_id)::uuid ORDER BY decided_at DESC, approval_id DESC LIMIT 1),false)::boolean;
+-- name: GetPlanApprovalRequired :one
+SELECT approval_required FROM delivery.delivery_plan WHERE plan_id=(SELECT plan_id FROM delivery.delivery_generation WHERE generation_id=sqlc.arg(generation_id)::uuid);
 
 -- name: UpdateTargetRevision :one
 UPDATE delivery.delivery_target SET target_revision=sqlc.arg(new_revision),updated_at=clock_timestamp()

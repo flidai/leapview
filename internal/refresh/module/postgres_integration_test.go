@@ -257,7 +257,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 		},
 		Provenance: deployment.DeliveryProvenance{Builder: "refresh-concrete-test"},
 		Governance: deployment.DeliveryGovernance{
-			PolicyDigest: digest('2'), AuthorizationDigest: securityDigest, QualificationDigest: qualificationDigest, ExpiresAt: now.Add(time.Hour),
+			PolicyDigest: digest('2'), AuthorizationDigest: securityDigest, QualificationDigest: qualificationDigest, ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour),
 		},
 		Evidence: deployment.DeliveryPlanEvidence{
 			ImpactStatement: "refresh fixture impact", PhysicalWorkStatement: "materialize the exact pipeline closure", ReuseStatement: "no physical reuse",
@@ -280,7 +280,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 		t.Fatal(err)
 	}
 	planDigest := richPlan.Digest
-	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: qualificationDigest, PlanDocument: planDocument, Evidence: json.RawMessage(`{"source":"concrete"}`)})
+	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: qualificationDigest, ApprovalRequired: richPlan.Governance.RequiresApproval, ApprovalPolicyRevision: richPlan.Governance.ApprovalPolicyRevision, PlanDocument: planDocument, Evidence: json.RawMessage(`{"source":"concrete"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}

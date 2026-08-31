@@ -306,7 +306,7 @@ func conformanceProvenance(policy conformancePolicy) deployment.DeliveryProvenan
 }
 
 func conformanceGovernance(policy conformancePolicy, now time.Time) deployment.DeliveryGovernance {
-	return deployment.DeliveryGovernance{PolicyDigest: repoDeliveryDigest('2'), AuthorizationDigest: repoDeliveryDigest('3'), QualificationDigest: repoDeliveryDigest('4'), ExpiresAt: now.Add(4 * time.Hour), ObservedInputsAllowed: policy.observedInputsAllowed}
+	return deployment.DeliveryGovernance{PolicyDigest: repoDeliveryDigest('2'), AuthorizationDigest: repoDeliveryDigest('3'), QualificationDigest: repoDeliveryDigest('4'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(4 * time.Hour), ObservedInputsAllowed: policy.observedInputsAllowed}
 }
 
 func conformanceEvidence(policy conformancePolicy) deployment.DeliveryPlanEvidence {

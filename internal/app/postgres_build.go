@@ -517,9 +517,10 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		RuntimeVersion:  runtimeVersion,
 		PolicyResolver: func(operation deployment.DeliveryOperationKind) (appruntimefactory.CandidateDeliveryPolicy, error) {
 			return appruntimefactory.CandidateDeliveryPolicy{
-				RequiresApproval: requiresDeliveryApproval(true, cfg.EvaluationMode, operation),
-				RollbackClass:    deployment.DeliveryServingSafe,
-				RetentionWindow:  cfg.DeliveryRollbackRetention().String(),
+				RequiresApproval:       requiresDeliveryApproval(true, cfg.EvaluationMode, operation),
+				ApprovalPolicyRevision: appruntimefactory.CurrentApprovalPolicyRevision,
+				RollbackClass:          deployment.DeliveryServingSafe,
+				RetentionWindow:        cfg.DeliveryRollbackRetention().String(),
 			}, nil
 		},
 		Events:     graph.DeploymentPersistence.Events,

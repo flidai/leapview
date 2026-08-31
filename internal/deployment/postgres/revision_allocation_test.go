@@ -35,7 +35,7 @@ func TestPostgresTargetRevisionAllocationReplayRollbackAndConcurrency(t *testing
 				t.Fatal(err)
 			}
 		}
-		return PlanInput{PlanID: id, TargetID: target, PlanRevision: 0, PlanDigest: rich.Digest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest, SecurityDomainFingerprint: rich.Governance.AuthorizationDigest, ArtifactDigest: rich.SourceDigest, QualificationDigest: rich.Governance.QualificationDigest, PlanDocument: document}
+		return PlanInput{PlanID: id, TargetID: target, PlanRevision: 0, PlanDigest: rich.Digest, CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest, SecurityDomainFingerprint: rich.Governance.AuthorizationDigest, ArtifactDigest: rich.SourceDigest, QualificationDigest: rich.Governance.QualificationDigest, ApprovalRequired: rich.Governance.RequiresApproval, ApprovalPolicyRevision: rich.Governance.ApprovalPolicyRevision, PlanDocument: document}
 	}
 	invalidRevision := plan("0198f2c0-7c7a-7f00-8a11-000000001000", 'a')
 	invalidRevision.PlanRevision = 9

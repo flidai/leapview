@@ -64,7 +64,9 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_plan (
     security_domain_fingerprint text NOT NULL CHECK (security_domain_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     artifact_digest text NOT NULL CHECK (artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
     qualification_digest text NOT NULL CHECK (qualification_digest ~ '^sha256:[0-9a-f]{64}$'),
-    qualification_required boolean NOT NULL DEFAULT false,
+    qualification_required boolean NOT NULL,
+    approval_required boolean NOT NULL,
+    approval_policy_revision bigint NOT NULL CHECK (approval_policy_revision > 0),
     -- The complete canonical deployment.DeliveryPlan document is the
     -- execution contract. Digest/evidence columns above remain relational
     -- projections for indexed authority checks, but this document is what a
@@ -301,14 +303,58 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_active_pointer (
 -- keeps the selected publication/generation pair bound to one target and one
 -- qualified candidate without duplicating candidate or seal columns here.
 
-CREATE TABLE IF NOT EXISTS delivery.delivery_approval (
-    approval_id uuid PRIMARY KEY,
-    candidate_id uuid NOT NULL REFERENCES delivery.delivery_candidate(candidate_id),
-    principal_id uuid,
-    decision text NOT NULL CHECK (decision = btrim(decision) AND octet_length(decision) BETWEEN 1 AND 32 AND decision IN ('approved','denied','withdrawn')),
+-- Native publication approval authority.  Approval requests are immutable
+-- evidence for one exact pending publication; decisions (including
+-- revocations) are append-only child rows. There is deliberately no candidate-
+-- scoped approval projection in the clean-slate schema.
+CREATE TABLE IF NOT EXISTS delivery.delivery_approval_request (
+    request_id uuid PRIMARY KEY,
+    publication_id uuid NOT NULL REFERENCES delivery.delivery_publication(publication_id) ON DELETE RESTRICT,
+    target_id text NOT NULL CHECK (target_id = btrim(target_id) AND octet_length(target_id) BETWEEN 1 AND 255),
+    candidate_id uuid NOT NULL,
+    generation_id uuid NOT NULL,
+    request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    expected_target_revision bigint NOT NULL CHECK (expected_target_revision > 0),
+    policy_revision bigint NOT NULL CHECK (policy_revision > 0),
+    requested_by text NOT NULL CHECK (requested_by = btrim(requested_by) AND octet_length(requested_by) BETWEEN 1 AND 255),
+    request_credential_class text NOT NULL CHECK (request_credential_class IN ('human','workload','api_token','session')),
+    request_credential_id text NOT NULL CHECK (request_credential_id = btrim(request_credential_id) AND octet_length(request_credential_id) BETWEEN 1 AND 255),
+    request_credential_expires_at timestamptz NOT NULL,
+    requested_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    expires_at timestamptz NOT NULL,
+    operation_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    audit_id uuid NOT NULL,
     evidence jsonb NOT NULL DEFAULT '{}'::jsonb
-        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 16384),
-    decided_at timestamptz NOT NULL DEFAULT clock_timestamp()
+        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
+    CHECK (request_credential_expires_at > requested_at),
+    CHECK (expires_at > requested_at AND expires_at <= requested_at + interval '24 hours'),
+    UNIQUE (publication_id)
+);
+
+-- Per-request allocator for append-only decision revisions. The row is the
+-- sole mutable counter; decisions themselves remain immutable history.
+CREATE TABLE IF NOT EXISTS delivery.delivery_approval_revision (
+    request_id uuid PRIMARY KEY REFERENCES delivery.delivery_approval_request(request_id) ON DELETE RESTRICT,
+    next_revision bigint NOT NULL DEFAULT 1 CHECK (next_revision > 0)
+);
+
+CREATE TABLE IF NOT EXISTS delivery.delivery_approval_decision (
+    decision_id uuid PRIMARY KEY,
+    request_id uuid NOT NULL REFERENCES delivery.delivery_approval_request(request_id) ON DELETE RESTRICT,
+    decision_revision bigint NOT NULL CHECK (decision_revision > 0),
+    decision text NOT NULL CHECK (decision IN ('approved','denied','revoked')),
+    decided_by text NOT NULL CHECK (decided_by = btrim(decided_by) AND octet_length(decided_by) BETWEEN 1 AND 255),
+    decision_credential_class text NOT NULL CHECK (decision_credential_class IN ('human','workload','api_token','session')),
+    decision_credential_id text NOT NULL CHECK (decision_credential_id = btrim(decision_credential_id) AND octet_length(decision_credential_id) BETWEEN 1 AND 255),
+    decision_credential_expires_at timestamptz NOT NULL,
+    decided_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    operation_id uuid NOT NULL,
+    event_id uuid NOT NULL,
+    audit_id uuid NOT NULL,
+    evidence jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
+    UNIQUE (request_id, decision_revision)
 );
 
 CREATE TABLE IF NOT EXISTS delivery.delivery_lease (
@@ -510,10 +556,113 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION delivery.reject_approval_mutation()
+CREATE OR REPLACE FUNCTION delivery.guard_approval_request_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    publication delivery.delivery_publication%ROWTYPE;
+    durable_policy_revision bigint;
+    now_ts timestamptz := clock_timestamp();
+BEGIN
+    SELECT * INTO STRICT publication
+      FROM delivery.delivery_publication
+     WHERE publication_id = NEW.publication_id
+     FOR UPDATE;
+    IF publication.state <> 'pending'
+       OR publication.target_id <> NEW.target_id
+       OR publication.generation_id <> NEW.generation_id
+       OR publication.candidate_id <> NEW.candidate_id
+       OR publication.request_digest <> NEW.request_digest
+       OR publication.expected_target_revision <> NEW.expected_target_revision THEN
+        RAISE EXCEPTION 'approval request must bind the exact pending publication';
+    END IF;
+    SELECT plan.approval_policy_revision
+      INTO STRICT durable_policy_revision
+      FROM delivery.delivery_generation g
+      JOIN delivery.delivery_plan plan ON plan.plan_id = g.plan_id
+     WHERE g.generation_id = publication.generation_id;
+    IF NEW.policy_revision <> durable_policy_revision THEN
+        RAISE EXCEPTION 'approval request policy revision differs from durable plan';
+    END IF;
+    IF NEW.expires_at <= now_ts OR NEW.expires_at > now_ts + interval '24 hours'
+       OR NEW.expires_at > NEW.request_credential_expires_at THEN
+        RAISE EXCEPTION 'approval request expiry is outside the database-clock window';
+    END IF;
+    IF NEW.request_credential_expires_at <= now_ts THEN
+        RAISE EXCEPTION 'approval request credential is expired';
+    END IF;
+    IF NEW.requested_at IS DISTINCT FROM now_ts THEN
+        NEW.requested_at := now_ts;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.create_approval_revision_row()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-    RAISE EXCEPTION 'delivery approval evidence is immutable';
+    INSERT INTO delivery.delivery_approval_revision(request_id)
+    VALUES (NEW.request_id)
+    ON CONFLICT (request_id) DO NOTHING;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.guard_approval_decision_insert()
+RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE
+    request delivery.delivery_approval_request%ROWTYPE;
+    publication_state text;
+    now_ts timestamptz := clock_timestamp();
+BEGIN
+    SELECT p.state INTO STRICT publication_state
+      FROM delivery.delivery_publication p
+      JOIN delivery.delivery_approval_request r ON r.publication_id = p.publication_id
+     WHERE r.request_id = NEW.request_id
+     FOR UPDATE OF p;
+    IF publication_state <> 'pending' THEN
+        RAISE EXCEPTION 'approval decision requires a pending publication';
+    END IF;
+    SELECT * INTO STRICT request
+      FROM delivery.delivery_approval_request
+     WHERE request_id = NEW.request_id
+     FOR UPDATE;
+    IF request.expires_at <= now_ts OR NEW.decided_at > request.expires_at THEN
+        RAISE EXCEPTION 'approval request is expired';
+    END IF;
+    IF NEW.decision IN ('approved','denied') AND NEW.decided_by = request.requested_by THEN
+        RAISE EXCEPTION 'approval separation of duty violated';
+    END IF;
+    IF NEW.decision_credential_expires_at <= now_ts THEN
+        RAISE EXCEPTION 'approval decision credential is expired';
+    END IF;
+    IF NEW.decided_at IS DISTINCT FROM now_ts THEN
+        NEW.decided_at := now_ts;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_approval_request_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'approval request identity is immutable';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.reject_approval_decision_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'approval decision evidence is immutable';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.guard_approval_revision_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF TG_OP = 'DELETE' OR NEW.request_id <> OLD.request_id OR NEW.next_revision <> OLD.next_revision + 1 THEN
+        RAISE EXCEPTION 'approval decision revision allocator is monotonic';
+    END IF;
+    RETURN NEW;
 END;
 $$;
 
@@ -638,9 +787,24 @@ CREATE TRIGGER delivery_lease_immutable BEFORE UPDATE OR DELETE ON delivery.deli
 DROP TRIGGER IF EXISTS delivery_root_immutable ON delivery.delivery_retention_root;
 CREATE TRIGGER delivery_root_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_retention_root
     FOR EACH ROW EXECUTE FUNCTION delivery.reject_root_mutation();
-DROP TRIGGER IF EXISTS delivery_approval_immutable ON delivery.delivery_approval;
-CREATE TRIGGER delivery_approval_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_approval
-    FOR EACH ROW EXECUTE FUNCTION delivery.reject_approval_mutation();
+DROP TRIGGER IF EXISTS delivery_approval_request_insert_guard ON delivery.delivery_approval_request;
+CREATE TRIGGER delivery_approval_request_insert_guard BEFORE INSERT ON delivery.delivery_approval_request
+    FOR EACH ROW EXECUTE FUNCTION delivery.guard_approval_request_insert();
+DROP TRIGGER IF EXISTS delivery_approval_revision_after_insert ON delivery.delivery_approval_request;
+CREATE TRIGGER delivery_approval_revision_after_insert AFTER INSERT ON delivery.delivery_approval_request
+    FOR EACH ROW EXECUTE FUNCTION delivery.create_approval_revision_row();
+DROP TRIGGER IF EXISTS delivery_approval_request_immutable ON delivery.delivery_approval_request;
+CREATE TRIGGER delivery_approval_request_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_approval_request
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_approval_request_mutation();
+DROP TRIGGER IF EXISTS delivery_approval_decision_insert_guard ON delivery.delivery_approval_decision;
+CREATE TRIGGER delivery_approval_decision_insert_guard BEFORE INSERT ON delivery.delivery_approval_decision
+    FOR EACH ROW EXECUTE FUNCTION delivery.guard_approval_decision_insert();
+DROP TRIGGER IF EXISTS delivery_approval_decision_immutable ON delivery.delivery_approval_decision;
+CREATE TRIGGER delivery_approval_decision_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_approval_decision
+    FOR EACH ROW EXECUTE FUNCTION delivery.reject_approval_decision_mutation();
+DROP TRIGGER IF EXISTS delivery_approval_revision_monotonic ON delivery.delivery_approval_revision;
+CREATE TRIGGER delivery_approval_revision_monotonic BEFORE UPDATE OR DELETE ON delivery.delivery_approval_revision
+    FOR EACH ROW EXECUTE FUNCTION delivery.guard_approval_revision_mutation();
 DROP TRIGGER IF EXISTS delivery_active_pointer_consistency ON delivery.delivery_active_pointer;
 CREATE CONSTRAINT TRIGGER delivery_active_pointer_consistency AFTER INSERT OR UPDATE ON delivery.delivery_active_pointer
     DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION delivery.check_active_pointer_consistency();
@@ -649,6 +813,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.deli
 CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
 CREATE INDEX IF NOT EXISTS delivery_seal_attempt_idx ON delivery.delivery_snapshot_seal(attempt_id);
 CREATE INDEX IF NOT EXISTS delivery_root_snapshot_idx ON delivery.delivery_retention_root(snapshot_seal_id, state);
+CREATE INDEX IF NOT EXISTS delivery_approval_request_publication_idx ON delivery.delivery_approval_request(publication_id, requested_at DESC, request_id DESC);
+CREATE INDEX IF NOT EXISTS delivery_approval_decision_request_idx ON delivery.delivery_approval_decision(request_id, decision_revision DESC, decision_id DESC);
 
 -- Delivery authority evidence is never reachable through PUBLIC defaults.  The
 -- applying role remains the owner and therefore retains full control; deploy

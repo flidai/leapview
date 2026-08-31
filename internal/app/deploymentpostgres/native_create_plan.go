@@ -143,6 +143,9 @@ func NewNativeCreatePlanCoordinator(config NativeCreatePlanConfig) (*NativeCreat
 	if strings.TrimSpace(config.RuntimeVersion) == "" {
 		return nil, errors.New("native create-plan runtime version is required")
 	}
+	if config.PolicyResolver == nil && config.Policy.ApprovalPolicyRevision <= 0 {
+		return nil, errors.New("native create-plan approval policy revision is required")
+	}
 	if config.Events == nil || config.Audit == nil || config.Operations == nil {
 		return nil, errors.New("native create-plan event, audit, and operation authorities are required")
 	}
@@ -405,7 +408,7 @@ func (c *NativeCreatePlanCoordinator) CreatePlan(ctx context.Context, request de
 		PlanID: operationID, TargetID: request.TargetID, PlanRevision: 0, PlanDigest: rich.Digest,
 		CompiledGraphDigest: inspected.Compiler.Graph.Digest(), CompiledConfigDigest: rich.Execution.ConfigDigest,
 		SecurityDomainFingerprint: inspected.AuthorizationFingerprint, ArtifactDigest: inspected.Generation.ArtifactDigest,
-		QualificationDigest: rich.Governance.QualificationDigest, QualificationRequired: true,
+		QualificationDigest: rich.Governance.QualificationDigest, QualificationRequired: true, ApprovalRequired: rich.Governance.RequiresApproval, ApprovalPolicyRevision: rich.Governance.ApprovalPolicyRevision,
 		PlanDocument: planDocument, Evidence: evidence, CreatedAt: rich.CreatedAt,
 	})
 	if err != nil {

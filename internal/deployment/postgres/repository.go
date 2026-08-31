@@ -108,6 +108,8 @@ type DeliveryPlan struct {
 	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint string
 	ArtifactDigest, QualificationDigest                                  string
 	QualificationRequired                                                bool
+	ApprovalRequired                                                     bool
+	ApprovalPolicyRevision                                               int64
 	// PlanDocument is the complete canonical JSON serialization of the rich
 	// deployment.DeliveryPlan. PostgreSQL stores this document as jsonb; the
 	// repository canonicalizes it again on reads so native builders always
@@ -304,68 +306,6 @@ type CompleteBuildResult struct {
 	Seal      SnapshotSeal
 	Candidate DeliveryCandidate
 	Lease     DeliveryLease
-}
-
-type DeliveryApproval struct {
-	ApprovalID, CandidateID, PrincipalID, Decision string
-	Evidence                                       json.RawMessage
-	DecidedAt                                      time.Time
-}
-
-func loadApproval(ctx context.Context, db DBTX, id string) (DeliveryApproval, error) {
-	a := DeliveryApproval{}
-	row, err := depdb.New(db).GetApproval(ctx, dbUUID(id))
-	if errors.Is(err, pgx.ErrNoRows) {
-		return DeliveryApproval{}, ErrNotFound
-	}
-	if err != nil {
-		return DeliveryApproval{}, err
-	}
-	a.ApprovalID, a.CandidateID, a.PrincipalID, a.Decision, a.Evidence, a.DecidedAt = row.ApprovalID, row.CandidateID, row.PrincipalID, row.Decision, append([]byte(nil), row.Evidence...), dbTime(row.DecidedAt)
-	return a, nil
-}
-
-// ApproveCandidate records immutable reviewer evidence. Decisions are append
-// only; activation considers the most recent decision for the exact candidate.
-func (r *Repository) ApproveCandidate(ctx context.Context, in DeliveryApproval) (DeliveryApproval, error) {
-	db, err := requireDB(r)
-	if err != nil {
-		return DeliveryApproval{}, err
-	}
-	id, err := uuidID(in.ApprovalID, "approval id", true)
-	if err != nil {
-		return DeliveryApproval{}, err
-	}
-	candidate, err := uuidID(in.CandidateID, "candidate id", false)
-	if err != nil {
-		return DeliveryApproval{}, err
-	}
-	if in.Decision != "approved" && in.Decision != "denied" && in.Decision != "withdrawn" {
-		return DeliveryApproval{}, ErrInvalid
-	}
-	evidence, err := canonicalObject(in.Evidence, 16384, true)
-	if err != nil {
-		return DeliveryApproval{}, ErrInvalid
-	}
-	principalID := ""
-	if strings.TrimSpace(in.PrincipalID) != "" {
-		principalID, err = uuidID(in.PrincipalID, "principal id", false)
-		if err != nil {
-			return DeliveryApproval{}, err
-		}
-	}
-	err = depdb.New(db).InsertApproval(contextOrBackground(ctx), depdb.InsertApprovalParams{ApprovalID: dbUUID(id), CandidateID: dbUUID(candidate), PrincipalID: dbUUID(principalID), Decision: in.Decision, Evidence: evidence})
-	if err != nil {
-		return DeliveryApproval{}, err
-	}
-	a, err := loadApproval(contextOrBackground(ctx), db, id)
-	if err != nil {
-		return DeliveryApproval{}, err
-	}
-	if a.CandidateID != candidate || a.PrincipalID != principalID || a.Decision != in.Decision || !sameCanonical(a.Evidence, evidence) {
-		return DeliveryApproval{}, ErrConflict
-	}
-	return a, nil
 }
 
 type DeliveryRetentionRoot struct {
@@ -811,7 +751,9 @@ func planDocumentProjectionMatches(plan deployment.DeliveryPlan, in PlanInput) b
 		plan.Digest == in.PlanDigest && plan.Execution.ConfigDigest == in.CompiledConfigDigest &&
 		plannedArtifactDigest == in.ArtifactDigest &&
 		plan.Governance.AuthorizationDigest == in.SecurityDomainFingerprint &&
-		plan.Governance.QualificationDigest == in.QualificationDigest
+		plan.Governance.QualificationDigest == in.QualificationDigest &&
+		plan.Governance.RequiresApproval == in.ApprovalRequired &&
+		plan.Governance.ApprovalPolicyRevision == in.ApprovalPolicyRevision
 }
 
 func validatePlanTargetScope(ctx context.Context, db DBTX, plan DeliveryPlan) error {
@@ -848,6 +790,7 @@ func (p DeliveryPlan) RichPlan() (deployment.DeliveryPlan, error) {
 		PlanID: p.PlanID, TargetID: p.TargetID, PlanDigest: p.PlanDigest,
 		CompiledConfigDigest: p.CompiledConfigDigest, SecurityDomainFingerprint: p.SecurityDomainFingerprint,
 		ArtifactDigest: p.ArtifactDigest, QualificationDigest: p.QualificationDigest,
+		ApprovalRequired: p.ApprovalRequired, ApprovalPolicyRevision: p.ApprovalPolicyRevision,
 	}) {
 		return deployment.DeliveryPlan{}, fmt.Errorf("%w: plan projections differ from plan document", ErrConflict)
 	}
@@ -864,7 +807,7 @@ func mapPlanRow(row depdb.GetPlanRow) (DeliveryPlan, error) {
 		PlanDigest: row.PlanDigest, CompiledGraphDigest: row.CompiledGraphDigest,
 		CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint,
 		ArtifactDigest: row.ArtifactDigest, QualificationDigest: row.QualificationDigest,
-		QualificationRequired: row.QualificationRequired, PlanDocument: append([]byte(nil), document...),
+		QualificationRequired: row.QualificationRequired, ApprovalRequired: row.ApprovalRequired, ApprovalPolicyRevision: row.ApprovalPolicyRevision, PlanDocument: append([]byte(nil), document...),
 		Evidence: append([]byte(nil), row.Evidence...), CreatedAt: dbTime(row.CreatedAt),
 	}
 	if !planDocumentProjectionMatches(richPlan, PlanInput{
@@ -872,6 +815,7 @@ func mapPlanRow(row depdb.GetPlanRow) (DeliveryPlan, error) {
 		CompiledConfigDigest: p.CompiledConfigDigest, SecurityDomainFingerprint: p.SecurityDomainFingerprint,
 		ArtifactDigest: p.ArtifactDigest, QualificationDigest: p.QualificationDigest,
 		QualificationRequired: p.QualificationRequired,
+		ApprovalRequired:      p.ApprovalRequired, ApprovalPolicyRevision: p.ApprovalPolicyRevision,
 	}) {
 		return DeliveryPlan{}, fmt.Errorf("%w: persisted plan projections differ from plan document", ErrConflict)
 	}
@@ -1129,6 +1073,9 @@ func (r *Repository) CreateTargetAndPlanAllocatedTx(ctx context.Context, tx Tx, 
 }
 
 func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error) {
+	if in.ApprovalPolicyRevision < 1 {
+		return DeliveryPlan{}, ErrInvalid
+	}
 	id, err := uuidID(in.PlanID, "plan id", true)
 	if err != nil {
 		return DeliveryPlan{}, err
@@ -1163,7 +1110,7 @@ func createPlan(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error
 	if richPlan.ProjectID.String() != targetRow.ProjectID || richPlan.Environment != targetRow.Environment {
 		return DeliveryPlan{}, fmt.Errorf("%w: plan document scope differs from target", ErrConflict)
 	}
-	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, PlanDocument: planDocument, Evidence: evidence})
+	err = depdb.New(db).InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: in.PlanRevision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, ApprovalRequired: in.ApprovalRequired, ApprovalPolicyRevision: in.ApprovalPolicyRevision, PlanDocument: planDocument, Evidence: evidence})
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
@@ -1205,7 +1152,8 @@ func planImmutableMatches(p DeliveryPlan, in PlanInput, target, id string, evide
 	return p.PlanID == id && p.TargetID == target && p.PlanDigest == in.PlanDigest &&
 		p.CompiledGraphDigest == in.CompiledGraphDigest && p.CompiledConfigDigest == in.CompiledConfigDigest &&
 		p.SecurityDomainFingerprint == in.SecurityDomainFingerprint && p.ArtifactDigest == in.ArtifactDigest && p.QualificationDigest == in.QualificationDigest &&
-		p.QualificationRequired == in.QualificationRequired && sameCanonical(p.Evidence, evidence) && samePlanDocument(p.PlanDocument, in.PlanDocument)
+		p.QualificationRequired == in.QualificationRequired && p.ApprovalRequired == in.ApprovalRequired && p.ApprovalPolicyRevision == in.ApprovalPolicyRevision &&
+		sameCanonical(p.Evidence, evidence) && samePlanDocument(p.PlanDocument, in.PlanDocument)
 }
 
 func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in PlanInput, evidence []byte) (DeliveryPlan, error) {
@@ -1230,6 +1178,9 @@ func loadPlanForAllocation(ctx context.Context, db DBTX, id, target string, in P
 }
 
 func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPlan, error) {
+	if in.ApprovalPolicyRevision < 1 {
+		return DeliveryPlan{}, ErrInvalid
+	}
 	id, target, evidence, planDocument, err := planAllocationInput(in)
 	if err != nil {
 		return DeliveryPlan{}, err
@@ -1244,7 +1195,7 @@ func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPl
 		}
 		return DeliveryPlan{}, err
 	}
-	richPlan, richPlanErr := DeliveryPlan{PlanID: id, TargetID: target, PlanDigest: in.PlanDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, PlanDocument: planDocument}.RichPlan()
+	richPlan, richPlanErr := DeliveryPlan{PlanID: id, TargetID: target, PlanDigest: in.PlanDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, ApprovalRequired: in.ApprovalRequired, ApprovalPolicyRevision: in.ApprovalPolicyRevision, PlanDocument: planDocument}.RichPlan()
 	if richPlanErr != nil {
 		return DeliveryPlan{}, richPlanErr
 	}
@@ -1264,7 +1215,7 @@ func createPlanAllocated(ctx context.Context, db DBTX, in PlanInput) (DeliveryPl
 	if err != nil {
 		return DeliveryPlan{}, err
 	}
-	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, PlanDocument: planDocument, Evidence: evidence}); err != nil {
+	if err := q.InsertPlan(ctx, depdb.InsertPlanParams{PlanID: dbUUID(id), TargetID: target, PlanRevision: revision, PlanDigest: in.PlanDigest, CompiledGraphDigest: in.CompiledGraphDigest, CompiledConfigDigest: in.CompiledConfigDigest, SecurityDomainFingerprint: in.SecurityDomainFingerprint, ArtifactDigest: in.ArtifactDigest, QualificationDigest: in.QualificationDigest, QualificationRequired: in.QualificationRequired, ApprovalRequired: in.ApprovalRequired, ApprovalPolicyRevision: in.ApprovalPolicyRevision, PlanDocument: planDocument, Evidence: evidence}); err != nil {
 		return DeliveryPlan{}, err
 	}
 	allocated := in
@@ -1286,8 +1237,11 @@ func loadPlan(ctx context.Context, db DBTX, id string, expected PlanInput) (Deli
 	if scopeErr := validatePlanTargetScope(ctx, db, p); scopeErr != nil {
 		return DeliveryPlan{}, scopeErr
 	}
+	if expected.ApprovalPolicyRevision < 1 {
+		return DeliveryPlan{}, ErrInvalid
+	}
 	expectedEvidence, _ := canonicalObject(expected.Evidence, 65536, true)
-	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.CompiledConfigDigest != expected.CompiledConfigDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationDigest != expected.QualificationDigest || p.QualificationRequired != expected.QualificationRequired || !sameCanonical(p.Evidence, expectedEvidence) || !samePlanDocument(p.PlanDocument, expected.PlanDocument) {
+	if p.TargetID != expected.TargetID || p.PlanRevision != expected.PlanRevision || p.PlanDigest != expected.PlanDigest || p.CompiledGraphDigest != expected.CompiledGraphDigest || p.SecurityDomainFingerprint != expected.SecurityDomainFingerprint || p.ArtifactDigest != expected.ArtifactDigest || p.QualificationDigest != expected.QualificationDigest || p.QualificationRequired != expected.QualificationRequired || p.ApprovalRequired != expected.ApprovalRequired || p.ApprovalPolicyRevision != expected.ApprovalPolicyRevision || !sameCanonical(p.Evidence, expectedEvidence) || !samePlanDocument(p.PlanDocument, expected.PlanDocument) {
 		return DeliveryPlan{}, ErrConflict
 	}
 	return p, nil
@@ -4247,14 +4201,25 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	if genTarget != target || genCand != p.CandidateID || genSeal != p.SnapshotSealID {
 		return ActivationResult{}, fmt.Errorf("%w: generation identity differs", ErrConflict)
 	}
-	requiresApproval, err := depdb.New(tx).GetPlanQualification(ctx, dbUUID(p.GenerationID))
+	requiresApproval, err := depdb.New(tx).GetPlanApprovalRequired(ctx, dbUUID(p.GenerationID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ActivationResult{}, ErrNotFound
 	} else if err != nil {
 		return ActivationResult{}, err
 	}
 	if requiresApproval {
-		approved, err := depdb.New(tx).CandidateApproved(ctx, dbUUID(p.CandidateID))
+		if _, lockErr := depdb.New(tx).LockApprovalRequestForPublication(ctx, depdb.LockApprovalRequestForPublicationParams{
+			PublicationID: dbUUID(p.PublicationID), TargetID: target, GenerationID: dbUUID(p.GenerationID), CandidateID: dbUUID(p.CandidateID),
+			RequestDigest: p.RequestDigest, ExpectedTargetRevision: p.ExpectedTargetRevision,
+		}); errors.Is(lockErr, pgx.ErrNoRows) {
+			return ActivationResult{}, fmt.Errorf("%w: reviewer approval is required", ErrNotQualified)
+		} else if lockErr != nil {
+			return ActivationResult{}, lockErr
+		}
+		approved, err := depdb.New(tx).EffectiveApprovalForPublication(ctx, depdb.EffectiveApprovalForPublicationParams{
+			PublicationID: dbUUID(p.PublicationID), TargetID: target, GenerationID: dbUUID(p.GenerationID), CandidateID: dbUUID(p.CandidateID),
+			RequestDigest: p.RequestDigest, ExpectedTargetRevision: p.ExpectedTargetRevision,
+		})
 		if err != nil {
 			return ActivationResult{}, err
 		}

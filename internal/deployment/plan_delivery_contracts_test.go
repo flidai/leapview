@@ -43,7 +43,7 @@ func deliveryTestPlan(t *testing.T) DeliveryPlan {
 		Provenance: DeliveryProvenance{Repository: "https://example.invalid/repo", SourceRevision: "rev-1", Builder: "ci"},
 		Governance: DeliveryGovernance{
 			PolicyDigest: deliveryTestDigest('2'), AuthorizationDigest: deliveryTestDigest('3'),
-			QualificationDigest: deliveryTestDigest('4'), ExpiresAt: now.Add(time.Hour), RequiresApproval: true,
+			QualificationDigest: deliveryTestDigest('4'), ExpiresAt: now.Add(time.Hour), RequiresApproval: true, ApprovalPolicyRevision: 1,
 		},
 		Evidence: DeliveryPlanEvidence{
 			ImpactStatement:       "direct model change with downstream dashboard impact",

@@ -158,7 +158,7 @@ func TestDeliveryPlanPreviewExposesImmutableReviewEvidence(t *testing.T) {
 			StalePolicy:   deployment.DeliveryStalePolicy{Mode: "reject"},
 			Rollback:      deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryRollbackSafe},
 		},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: "sha256:" + strings.Repeat("2", 64), AuthorizationDigest: "sha256:" + strings.Repeat("3", 64), QualificationDigest: "sha256:" + strings.Repeat("4", 64), ExpiresAt: time.Now().UTC().Add(time.Hour)},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: "sha256:" + strings.Repeat("2", 64), AuthorizationDigest: "sha256:" + strings.Repeat("3", 64), QualificationDigest: "sha256:" + strings.Repeat("4", 64), ApprovalPolicyRevision: 1, ExpiresAt: time.Now().UTC().Add(time.Hour)},
 		CreatedAt:  time.Now().UTC(),
 	}
 	response := planPreviewResponse(plan)

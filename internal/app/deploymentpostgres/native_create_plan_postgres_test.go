@@ -172,6 +172,7 @@ func nativePlanCoordinator(t *testing.T, db *pgxpool.Pool, source *nativePlanSou
 	operationRepo := operationpostgres.NewWithConfig(db, time.Second, time.Hour)
 	coord, err := NewNativeCreatePlanCoordinator(NativeCreatePlanConfig{
 		Repository: deploymentnative.New(db), Sources: source, Artifacts: inspector, RuntimeVersion: "runtime-native-test",
+		Policy: runtimefactory.CandidateDeliveryPolicy{ApprovalPolicyRevision: runtimefactory.CurrentApprovalPolicyRevision},
 		Events: deploymentevents.NewWithRepository(eventRepo), Audit: deploymentaudit.NewWithRepository(accesspostgres.New()), Operations: deploymentoperation.New(operationRepo),
 		Clock: func() time.Time { return time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC) },
 	})
@@ -249,7 +250,7 @@ func TestNativeCreatePlanPostgresSuccessCompletionAndExactReplay(t *testing.T) {
 		if operation != deployment.DeliveryOperationCodeChange {
 			t.Fatalf("policy operation = %q, want code change", operation)
 		}
-		return runtimefactory.CandidateDeliveryPolicy{RequiresApproval: true}, nil
+		return runtimefactory.CandidateDeliveryPolicy{RequiresApproval: true, ApprovalPolicyRevision: runtimefactory.CurrentApprovalPolicyRevision}, nil
 	}
 	request := nativePlanRequest()
 	first, err := coord.CreatePlan(t.Context(), request)

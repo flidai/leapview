@@ -194,23 +194,37 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.QualifyCandidate(ctx, ids["candidate"], ids["seal"], testDigest('3')); err != nil {
 		t.Fatal(err)
 	}
-	approvalID := "0198f2c0-7c7a-7f00-8a11-000000000009"
-	approval, err := r.ApproveCandidate(ctx, DeliveryApproval{ApprovalID: approvalID, CandidateID: ids["candidate"], Decision: "approved", Evidence: json.RawMessage(`{"review":"ok"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay, err := r.ApproveCandidate(ctx, DeliveryApproval{ApprovalID: approvalID, CandidateID: ids["candidate"], Decision: "approved", Evidence: json.RawMessage(`{"review":"ok"}`)}); err != nil || replay.ApprovalID != approval.ApprovalID {
-		t.Fatalf("approval replay = %#v, %v", replay, err)
-	}
-	if _, err := r.ApproveCandidate(ctx, DeliveryApproval{ApprovalID: approvalID, CandidateID: ids["candidate"], Decision: "denied", Evidence: json.RawMessage(`{"review":"ok"}`)}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("approval identity mismatch = %v", err)
-	}
 	generationInput := GenerationInput{GenerationID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], PlanID: ids["plan"], PlanDigest: planDigest, ArtifactRoot: sealInput.ArtifactRoot, ArtifactRootDigest: sealInput.ArtifactRootDigest, ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: testDigest('c'), SecurityDomainFingerprint: testDigest('d'), GenerationRevision: 1}
 	if _, err := r.CreateGeneration(ctx, generationInput); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.CreatePublication(ctx, PublicationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "operator", RequestDigest: testDigest('4')}); err != nil {
 		t.Fatal(err)
+	}
+	approval, err := NewApprovalAuthority(r, ApprovalAuthorityOptions{
+		Authorize: ApprovalAuthorizerFunc(func(context.Context, ApprovalAuthorizationInput) error { return nil }),
+		Operation: approvalNoopEvidenceAppender{}, Event: approvalNoopEvidenceAppender{}, Audit: approvalNoopEvidenceAppender{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	requestInput := ApprovalRequestInput{
+		RequestID: ids["publication"], PublicationID: ids["publication"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"],
+		RequestDigest: testDigest('4'), ExpectedTargetRevision: 1, PolicyRevision: 2,
+		RequestedBy: ApprovalActor{PrincipalID: "requester", CredentialClass: "human", CredentialID: "requester-session", CredentialExpiresAt: time.Now().UTC().Add(2 * time.Hour)},
+		ExpiresAt:   time.Now().UTC().Add(time.Hour), Evidence: ApprovalEvidence{OperationID: "0198f2c0-7c7a-7f00-8a11-000000000011", EventID: "0198f2c0-7c7a-7f00-8a11-000000000012", AuditID: "0198f2c0-7c7a-7f00-8a11-000000000013"},
+	}
+	if _, err := approval.Request(ctx, requestInput); !errors.Is(err, ErrApprovalConflict) {
+		t.Fatalf("policy revision mismatch = %v", err)
+	}
+	validApproval := requestInput
+	validApproval.PolicyRevision = 1
+	validApproval.Evidence = ApprovalEvidence{OperationID: "0198f2c0-7c7a-7f00-8a11-000000000014", EventID: "0198f2c0-7c7a-7f00-8a11-000000000015", AuditID: "0198f2c0-7c7a-7f00-8a11-000000000016"}
+	if _, err := approval.Request(ctx, validApproval); err != nil {
+		t.Fatalf("valid approval request: %v", err)
+	}
+	if _, err := approval.Approve(ctx, ApprovalDecisionInput{RequestID: validApproval.RequestID, DecisionID: "0198f2c0-7c7a-7f00-8a11-000000000017", ExpectedRevision: 0, Actor: ApprovalActor{PrincipalID: "reviewer", CredentialClass: "human", CredentialID: "reviewer-session", CredentialExpiresAt: time.Now().UTC().Add(2 * time.Hour)}, Evidence: ApprovalEvidence{OperationID: "0198f2c0-7c7a-7f00-8a11-000000000018", EventID: "0198f2c0-7c7a-7f00-8a11-000000000019", AuditID: "0198f2c0-7c7a-7f00-8a11-000000000020"}}); err != nil {
+		t.Fatalf("valid approval decision: %v", err)
 	}
 	if _, err := r.CreatePublication(ctx, PublicationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "other", RequestDigest: testDigest('4')}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("publication actor mismatch = %v", err)
@@ -961,7 +975,7 @@ func TestPostgresAuthorityDatabaseGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	richPlan, planDocument := richPlanDocumentFixture(t, plan, "guard_target", "project_guard")
-	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,plan_document) VALUES($1::uuid,'guard_target',1,$2,$3,$4,$5,$6,$7,$8::jsonb)`, plan, richPlan.Digest, testDigest('b'), richPlan.Execution.ConfigDigest, richPlan.Governance.AuthorizationDigest, richPlan.SourceDigest, richPlan.Governance.QualificationDigest, planDocument); err != nil {
+	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_plan(plan_id,target_id,plan_revision,plan_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,artifact_digest,qualification_digest,qualification_required,approval_required,approval_policy_revision,plan_document) VALUES($1::uuid,'guard_target',1,$2,$3,$4,$5,$6,$7,true,true,1,$8::jsonb)`, plan, richPlan.Digest, testDigest('b'), richPlan.Execution.ConfigDigest, richPlan.Governance.AuthorizationDigest, richPlan.SourceDigest, richPlan.Governance.QualificationDigest, planDocument); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := New(p).CreateCandidate(ctx, CandidateInput{CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000038", TargetID: "guard_target_other", PlanID: plan, CandidateRevision: 1, ArtifactDigest: testDigest('a')}); !errors.Is(err, ErrConflict) {
@@ -972,13 +986,6 @@ func TestPostgresAuthorityDatabaseGuards(t *testing.T) {
 	}
 	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,plan_id,candidate_revision,artifact_digest) VALUES($1::uuid,'guard_target',$2::uuid,1,$3)`, candidate, plan, testDigest('a')); err != nil {
 		t.Fatal(err)
-	}
-	r := New(p)
-	if _, err := r.ApproveCandidate(ctx, DeliveryApproval{ApprovalID: "0198f2c0-7c7a-7f00-8a11-000000000034", CandidateID: candidate, Decision: "approved", Evidence: json.RawMessage(`{"source":"guard"}`)}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := p.Exec(ctx, `UPDATE delivery.delivery_approval SET decision='denied' WHERE approval_id='0198f2c0-7c7a-7f00-8a11-000000000034'`); err == nil {
-		t.Fatal("approval mutation was accepted")
 	}
 	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity) VALUES('0198f2c0-7c7a-7f00-8a11-000000000033',$1::uuid,$2::uuid,'builder','guard-pool',1,$3,$3,'committed','guard',clock_timestamp()+interval '1 hour','session')`, plan, candidate, testDigest('a')); err == nil {
 		t.Fatal("terminal build attempt without evidence was accepted")

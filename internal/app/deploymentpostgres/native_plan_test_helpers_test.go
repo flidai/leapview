@@ -33,7 +33,7 @@ func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID
 		Provenance: deploymentdomain.DeliveryProvenance{Builder: "native-test"},
 		Governance: deploymentdomain.DeliveryGovernance{
 			PolicyDigest: admissionDigest('2'), AuthorizationDigest: input.SecurityDomainFingerprint,
-			QualificationDigest: input.QualificationDigest, ExpiresAt: now.Add(time.Hour),
+			QualificationDigest: input.QualificationDigest, ExpiresAt: now.Add(time.Hour), ApprovalPolicyRevision: 1,
 		},
 		Evidence: deploymentdomain.DeliveryPlanEvidence{
 			ImpactStatement:       "native test plan impact",
@@ -58,5 +58,7 @@ func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID
 	input.PlanDigest = plan.Digest
 	input.PlanDocument = document
 	input.QualificationRequired = true
+	input.ApprovalRequired = plan.Governance.RequiresApproval
+	input.ApprovalPolicyRevision = plan.Governance.ApprovalPolicyRevision
 	return input
 }

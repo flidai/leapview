@@ -71,7 +71,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: artifactDigest,
 		Execution:  deploymentdomain.DeliveryExecutionInputs{SourceArtifactDigest: artifactDigest, CompilerDigest: graphDigest, ExecutableDigest: testPostgresResolverDigest('c'), DependencyDigest: testPostgresResolverDigest('d'), ConfigDigest: configDigest, BindingDigest: securityDigest, RuntimeDigest: testPostgresResolverDigest('e'), CapabilityDigest: testPostgresResolverDigest('f')},
 		Provenance: deploymentdomain.DeliveryProvenance{Builder: "runtimefactory-test"},
-		Governance: deploymentdomain.DeliveryGovernance{PolicyDigest: testPostgresResolverDigest('0'), AuthorizationDigest: securityDigest, QualificationDigest: runtimeFactoryDigest("qualification"), ExpiresAt: time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)},
+		Governance: deploymentdomain.DeliveryGovernance{PolicyDigest: testPostgresResolverDigest('0'), AuthorizationDigest: securityDigest, QualificationDigest: runtimeFactoryDigest("qualification"), ApprovalPolicyRevision: 1, ExpiresAt: time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)},
 		Evidence:   deploymentdomain.DeliveryPlanEvidence{ImpactStatement: "runtime resolver fixture", PhysicalWorkStatement: "resolve sealed physical state", ReuseStatement: "no fixture reuse", Qualification: deploymentdomain.DeliveryQualificationEvidence{Policy: "exact sealed snapshot", Steps: []deploymentdomain.DeliveryQualificationStep{{ID: "snapshot", Kind: "contract", Description: "verify sealed snapshot", Required: true, Blocking: true}}}, StalePolicy: deploymentdomain.DeliveryStalePolicy{Mode: "reject"}, Rollback: deploymentdomain.DeliveryRollbackEvidence{Class: deploymentdomain.DeliveryServingSafe}},
 		CreatedAt:  time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC),
 	})
@@ -122,7 +122,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest,
 		CompiledGraphDigest: graphDigest, CompiledConfigDigest: configDigest,
 		SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: runtimeFactoryDigest("qualification"),
-		QualificationRequired: true, PlanDocument: planDocumentJSON, Evidence: json.RawMessage(`{"source":"resolver-test"}`),
+		QualificationRequired: true, ApprovalRequired: false, ApprovalPolicyRevision: 1, PlanDocument: planDocumentJSON, Evidence: json.RawMessage(`{"source":"resolver-test"}`),
 	}); err != nil {
 		t.Fatal(err)
 	}
