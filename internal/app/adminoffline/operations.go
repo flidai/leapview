@@ -5,6 +5,7 @@ package adminoffline
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -26,13 +27,35 @@ import (
 
 type Operations struct{}
 
-func (Operations) RecoveryLedgerStatus(ctx context.Context, out io.Writer) error {
-	if out == nil {
-		return fmt.Errorf("recovery ledger status output is required")
-	}
+// ErrProductionUnavailable identifies the legacy administrative surface that
+// must not be used by a production instance. Production Admin commands must
+// be implemented by native PostgreSQL owners (for example
+// adminpostgres.Maintenance) and fail before any SQLite or local DuckLake
+// dependency is opened when no native owner exists.
+var ErrProductionUnavailable = errors.New("legacy offline admin operations are unavailable in production")
+
+// loadNonProductionConfig is the single admission gate for this composition
+// layer. Keep the production check immediately after environment decoding so
+// callers cannot accidentally construct an extension loader, SQLite store, or
+// filesystem-backed adapter before being rejected.
+func loadNonProductionConfig() (config.Config, error) {
 	cfg, err := config.Load()
 	if err != nil {
+		return config.Config{}, err
+	}
+	if cfg.Production {
+		return config.Config{}, ErrProductionUnavailable
+	}
+	return cfg, nil
+}
+
+func (Operations) RecoveryLedgerStatus(ctx context.Context, out io.Writer) error {
+	cfg, err := loadNonProductionConfig()
+	if err != nil {
 		return err
+	}
+	if out == nil {
+		return fmt.Errorf("recovery ledger status output is required")
 	}
 	store, err := platform.Open(ctx, cfg.DBPath())
 	if err != nil {
@@ -102,13 +125,12 @@ func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminofflin
 	return service.BootstrapPhysicalPool(ctx, request, out)
 }
 
-// BootstrapQualificationLocalPhysicalPool is the installed-candidate seam for
-// the isolated evaluation target. It runs the substantive local conformance
-// probe inside the exact candidate image and persists the resulting admission
-// through the same lock-protected offline service used by operators. General
-// production targets must continue to provide reviewed external evidence.
+// BootstrapQualificationLocalPhysicalPool is the legacy installed-candidate
+// seam for the isolated evaluation target. The shared production admission
+// guard runs before its local conformance probe; production callers must use
+// reviewed native evidence instead of this SQLite-backed path.
 func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, out io.Writer) error {
-	cfg, err := config.Load()
+	cfg, err := loadNonProductionConfig()
 	if err != nil {
 		return err
 	}
@@ -206,7 +228,7 @@ func (Operations) Restore(ctx context.Context, request adminoffline.RestoreReque
 }
 
 func newService() (*adminoffline.Service, error) {
-	cfg, err := config.Load()
+	cfg, err := loadNonProductionConfig()
 	if err != nil {
 		return nil, err
 	}

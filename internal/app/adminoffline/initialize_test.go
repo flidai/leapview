@@ -20,7 +20,7 @@ import (
 func TestAdminInitializeCreatesOneTimeCredentialBundle(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LEAPVIEW_HOME", home)
-	t.Setenv("LEAPVIEW_PRODUCTION", "1")
+	t.Setenv("LEAPVIEW_PRODUCTION", "0")
 	t.Setenv("LEAPVIEW_ENVIRONMENT", "prod")
 	t.Setenv("LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL", "owner@example.com")
 	var out bytes.Buffer
@@ -74,7 +74,7 @@ func TestAdminInitializeEvaluationPublisherCanStageDataWithoutAdminAuthority(
 ) {
 	home := t.TempDir()
 	t.Setenv("LEAPVIEW_HOME", home)
-	t.Setenv("LEAPVIEW_PRODUCTION", "1")
+	t.Setenv("LEAPVIEW_PRODUCTION", "0")
 	t.Setenv("LEAPVIEW_ENVIRONMENT", "evaluation")
 	t.Setenv("LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL", "admin@localhost")
 	var out bytes.Buffer
@@ -109,7 +109,7 @@ func TestAdminInitializeEvaluationPublisherCanStageDataWithoutAdminAuthority(
 func TestAdminInitializeReplaysCredentialsAfterDeliveryFailure(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LEAPVIEW_HOME", home)
-	t.Setenv("LEAPVIEW_PRODUCTION", "1")
+	t.Setenv("LEAPVIEW_PRODUCTION", "0")
 	t.Setenv("LEAPVIEW_ENVIRONMENT", "prod")
 	t.Setenv("LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL", "owner@example.com")
 
