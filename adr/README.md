@@ -48,6 +48,7 @@ historical records.
 - [Workload admission conformance](specifications/workload-admission-conformance.md)
 - [Watermill PostgreSQL proof](specifications/watermill-postgresql-proof.md)
 - [Watermill Router/subscriber runtime](specifications/watermill-router-runtime.md)
+- [Product histories and canonical asynchronous events](specifications/fai-594-product-histories-and-canonical-events.md)
 
 ## Conventions
 

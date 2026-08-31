@@ -53,6 +53,53 @@ func TestEventSSEReplaysAfterLastEventIDAndClosesAtTerminalEvent(t *testing.T) {
 	}
 }
 
+func TestEventHistoryUsesResourceScopedDomainIDsForJSONAndSSE(t *testing.T) {
+	repo := eventRepository(t)
+	a1 := appendEvent(t, repo, "release", "rel-a", "release.a.created", 1)
+	b1 := appendEvent(t, repo, "release", "rel-b", "release.b.created", 1)
+	a2 := appendEvent(t, repo, "release", "rel-a", "release.a.ready", 2)
+	b2 := appendEvent(t, repo, "release", "rel-b", "release.b.ready", 2)
+	if a1.ID != b1.ID || a2.ID != b2.ID {
+		t.Fatalf("fixture must have resource-scoped IDs: a=(%d,%d) b=(%d,%d)", a1.ID, a2.ID, b1.ID, b2.ID)
+	}
+
+	jsonRec := httptest.NewRecorder()
+	WriteEventPage(jsonRec, httptest.NewRequest(stdhttp.MethodGet, "/events", nil), repo, "release", "rel-a", nil, nil, "release:project-a:rel-a")
+	var history eventListResponse
+	if err := json.Unmarshal(jsonRec.Body.Bytes(), &history); err != nil {
+		t.Fatal(err)
+	}
+	if len(history.Items) != 2 || history.Items[0].ID != fmt.Sprintf("%020d", a1.ID) || history.Items[1].ID != fmt.Sprintf("%020d", a2.ID) || history.Items[0].ResourceID != "rel-a" || history.Items[1].ResourceID != "rel-a" {
+		t.Fatalf("JSON history = %#v", history.Items)
+	}
+	for _, item := range history.Items {
+		encoded, err := json.Marshal(item)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt", "watermill"} {
+			if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(transportField)) {
+				t.Fatalf("JSON event leaked transport metadata %q: %s", transportField, encoded)
+			}
+		}
+	}
+
+	sseReq := httptest.NewRequest(stdhttp.MethodGet, "/events", nil)
+	sseReq.Header.Set("Accept", "text/event-stream")
+	sseReq.Header.Set("Last-Event-ID", fmt.Sprintf("%020d", a1.ID))
+	sseRec := httptest.NewRecorder()
+	WriteEventPage(sseRec, sseReq, repo, "release", "rel-a", nil, nil, "release:project-a:rel-a")
+	body := sseRec.Body.String()
+	if !strings.Contains(body, fmt.Sprintf("id: %020d", a2.ID)) || !strings.Contains(body, "event: release.a.ready") || strings.Contains(body, "release.b.") {
+		t.Fatalf("SSE resume crossed resource boundary: %s", body)
+	}
+	for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt", "watermill"} {
+		if strings.Contains(strings.ToLower(body), strings.ToLower(transportField)) {
+			t.Fatalf("SSE event leaked transport metadata %q: %s", transportField, body)
+		}
+	}
+}
+
 func TestEventHistoryPagesBeyondTwoHundredRecords(t *testing.T) {
 	repo := eventRepository(t)
 	for index := 1; index <= 205; index++ {
