@@ -1682,6 +1682,32 @@ func TestRuntimeBundleCacheMixedHitExecutesOnlyLoneMiss(t *testing.T) {
 	}))
 }
 
+func TestRuntimeBundleLookupErrorFlushesEarlierBranchObservations(t *testing.T) {
+	runtime := bundleCacheRuntime(t, &bundleCountingDatabase{})
+	observations := []dataquery.CacheObservation{}
+	closed := false
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		observations = append(observations, observation)
+		if !closed && observation.Phase == dataquery.CacheObservationLookup && observation.MissReason != "" {
+			closed = true
+			require.NoError(t, runtime.queryCache.scope.Close())
+		}
+	})
+
+	_, err := runtime.ExecuteDataQueryBundle(ctx, bundleCacheRequests())
+	require.Error(t, err)
+	require.True(t, closed)
+	require.Equal(t, len(bundleCacheRequests()), countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission
+	}))
+	require.Equal(t, len(bundleCacheRequests()), countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup
+	}))
+	require.Equal(t, len(bundleCacheRequests()), countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationFinal && observation.Outcome == dataquery.CacheObservationError
+	}))
+}
+
 func TestRuntimeDegenerateBundleObservesFirstLogicalLookupReason(t *testing.T) {
 	database := &bundleCountingDatabase{}
 	runtime := bundleCacheRuntime(t, database)

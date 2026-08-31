@@ -207,6 +207,7 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 		cached, address, hit, lookup, err := r.queryCache.lookupArrow(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL)
 		duration := time.Since(started)
 		if err != nil {
+			observePendingBundleCacheError(ctx, out)
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionEligible, reason)
 			observeTypedCacheLookup(ctx, lookup, duration)
 			observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(cacheStarted))
@@ -229,9 +230,7 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 		out.misses = append(out.misses, branch)
 	}
 	if len(out.misses) > 1 {
-		for _, branch := range out.misses {
-			observeBundleCacheDecision(ctx, out.slots[branch.ID])
-		}
+		observeBundleCacheDecisions(ctx, out)
 	}
 	return out, nil
 }
@@ -251,6 +250,17 @@ func observeBundleCacheDecision(ctx context.Context, slot bundleCacheSlot) {
 	if slot.reusable && !slot.lookupObserved {
 		observeTypedCacheLookup(ctx, slot.lookup, slot.lookupDuration)
 	}
+}
+
+func observeBundleCacheDecisions(ctx context.Context, resolved resolvedBundle) {
+	for _, branch := range resolved.misses {
+		observeBundleCacheDecision(ctx, resolved.slots[branch.ID])
+	}
+}
+
+func observePendingBundleCacheError(ctx context.Context, resolved resolvedBundle) {
+	observeBundleCacheDecisions(ctx, resolved)
+	observeBundleFinal(ctx, resolved, dataquery.CacheObservationError)
 }
 
 func cachePlanningAdmissionReason(err error) dataquery.CacheAdmissionReason {
