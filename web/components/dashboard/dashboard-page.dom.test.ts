@@ -1749,7 +1749,7 @@ test('dashboard agent drawer carries page context and explicit visual references
       }],
     })
 
-	const accepted = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+	await page.evaluate(async () => {
 	  const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
 	  mergePatch({ agent: {
 		activeConversationId: 'agentconv_1',
@@ -1765,6 +1765,8 @@ test('dashboard agent drawer carries page context and explicit visual references
 		status: { enabled: true, running: true },
 		composer: { value: '', disabled: true, placeholder: 'Agent is working…' },
 	  } })
+	})
+	const accepted = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
 	  await element.updateComplete
 	  const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
 	  await drawer.updateComplete
