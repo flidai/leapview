@@ -32,6 +32,43 @@ test('browser QA uses canonical project resource IDs', async () => {
   expect(source).not.toContain("visualID === 'revenue_by_month'")
 })
 
+test('visual regression QA covers stable representative states, themes, and viewports', async () => {
+  const source = await readFile('scripts/visual_regression.spec.ts', 'utf8')
+
+  expect(source).toContain('/dashboards/dashboard:executive-sales/pages/overview')
+  expect(source).toContain('/dashboards/dashboard:visual-showcase/pages/overview')
+  expect(source).toContain('/dashboards/dashboard:visual-showcase/pages/tables')
+  expect(source).toContain("{ name: 'desktop', width: 1440, height: 900 }")
+  expect(source).toContain("{ name: 'compact', width: 600, height: 900 }")
+  expect(source).toContain("const modes = ['light', 'dark'] as const")
+  expect(source).toContain("document.fonts.load('400 16px \"Inter Variable\"'")
+  expect(source).toContain("document.fonts.load('600 16px \"Inter Variable\"'")
+  expect(source).toContain("page.screenshot({ animations: 'disabled', caret: 'hide', scale: 'css' })")
+  expect(source).toContain("expect(screenshot).toMatchSnapshot")
+  expect(source).toContain('isDenseDesktopTable ? 0.009 : isDesktop ? 0.003 : 0.001')
+  expect(source).toContain('threshold: isDesktop ? 0.5 : 0.2')
+})
+
+test('visual regression QA has an explicit baseline update and failure-artifact workflow', async () => {
+  const [runner, config, taskfile, mergeWorkflow] = await Promise.all([
+    readFile('scripts/qa_ui_framework.ts', 'utf8'),
+    readFile('scripts/playwright.visual.config.ts', 'utf8'),
+    readFile('Taskfile.yml', 'utf8'),
+    readFile('.github/workflows/merge-validation.yml', 'utf8'),
+  ])
+
+  expect(runner).toContain("await run([...visualCommand, '--update-snapshots'], visualEnv)")
+  expect(runner).toContain('await run(visualCommand, visualEnv)')
+  expect(runner).toContain("qaScope !== 'all' && qaScope !== 'visual'")
+  expect(config).toContain("trace: 'retain-on-failure'")
+  expect(config).toContain("video: 'retain-on-failure'")
+  expect(config).toContain("screenshot: 'only-on-failure'")
+  expect(taskfile).toContain('qa:ui-framework:visual:update:')
+  expect(taskfile).toContain('LEAPVIEW_UI_QA_SCOPE=visual LEAPVIEW_UPDATE_VISUAL_BASELINES=1')
+  expect(mergeWorkflow).toContain('leapview-ui-visual-regression-failure')
+  expect(mergeWorkflow).toContain('scripts/visual-regression-baselines')
+})
+
 test('WCAG route QA blocks only serious and critical axe violations', () => {
   const violations = [
     axeViolation('minor-rule', 'minor'),
