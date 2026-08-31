@@ -325,10 +325,10 @@ func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	requestID := uuid.MustParse("018f4f2e-0000-7000-0000-000000000731").String()
+	requestID := uuid.MustParse("018f4f2e-0000-7000-8000-000000000731").String()
 	_, err = module.MutatePublicationWithInvocation(t.Context(), projectID.String(), "website", principalID, publication.ActionSuspend, publication.CommandInvocation{
 		Surface: "api", OperationID: "suspendDashboardPublication", RequestID: requestID, CorrelationID: requestID,
-		IdempotencyKey: uuid.MustParse("018f4f2e-0000-7000-0000-000000000732").String(), ExpectedRevision: row.Revision,
+		IdempotencyKey: uuid.MustParse("018f4f2e-0000-7000-8000-000000000732").String(), ExpectedRevision: row.Revision,
 	})
 	if err != nil {
 		if errors.Is(err, publication.ErrNotFound) {

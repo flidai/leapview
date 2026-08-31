@@ -67,6 +67,9 @@ func TestDecodeMessageRejectsMalformedUnknownAndMismatched(t *testing.T) {
 		{"unknown envelope field", func(m *message.Message) {
 			m.Payload = append(m.Payload[:len(m.Payload)-1], []byte(`,"extra":true}`)...)
 		}, ErrEnvelope},
+		{"unsupported envelope version", func(m *message.Message) {
+			m.Payload = []byte(strings.Replace(string(m.Payload), `"envelopeVersion":1`, `"envelopeVersion":2`, 1))
+		}, ErrEnvelope},
 		{"unknown metadata", func(m *message.Message) { m.Metadata["caller"] = "secret" }, ErrMetadata},
 		{"missing metadata", func(m *message.Message) { delete(m.Metadata, MetadataTopic) }, ErrMetadata},
 		{"non object payload", func(m *message.Message) {

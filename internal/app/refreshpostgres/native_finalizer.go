@@ -2,6 +2,7 @@ package refreshpostgres
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"strings"
@@ -287,9 +288,24 @@ func NativeRefreshIdentities(job refreshrun.JobRecord, result refreshrun.Canonic
 		result.PlanID, result.NativeGenerationID, fmt.Sprintf("%d", result.SnapshotID),
 		fmt.Sprintf("%d", evidence.ExpectedTargetRevision), evidence.PhysicalPoolID, evidence.CatalogID,
 	}, "\x00")
-	publicationID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/native-refresh/publication\x00"+seed)).String()
-	leaseID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/native-refresh/lease\x00"+seed)).String()
-	correlationID = uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview/native-refresh/correlation\x00"+seed)).String()
+	publicationID = deterministicNativeRefreshUUID(result.NativeGenerationID, "publication\x00"+seed)
+	leaseID = deterministicNativeRefreshUUID(result.NativeGenerationID, "lease\x00"+seed)
+	correlationID = deterministicNativeRefreshUUID(result.NativeGenerationID, "correlation\x00"+seed)
 	requestDigest = deployment.CanonicalDeliveryDigest([]byte("leapview/native-refresh/request\x00" + seed))
 	return publicationID, leaseID, correlationID, requestDigest
+}
+
+// deterministicNativeRefreshUUID derives replay-stable UUIDv7 consequences
+// from the native generation. When the generation is itself UUIDv7, its
+// timestamp prefix is preserved so related publication evidence retains the
+// same time-ordering bucket. The hash supplies independent entropy per role.
+func deterministicNativeRefreshUUID(generationID, seed string) string {
+	digest := sha256.Sum256([]byte("leapview/native-refresh/" + seed))
+	id := uuid.UUID(digest[:16])
+	if generation, err := uuid.Parse(generationID); err == nil && generation.Version() == 7 && generation.Variant() == uuid.RFC4122 {
+		copy(id[:6], generation[:6])
+	}
+	id[6] = id[6]&0x0f | 0x70
+	id[8] = id[8]&0x3f | 0x80
+	return id.String()
 }

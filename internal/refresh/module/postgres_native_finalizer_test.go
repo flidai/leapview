@@ -64,11 +64,11 @@ func newNativeRefreshFixture(t *testing.T) nativeRefreshFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseLease, err := delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: "0198f2c0-7c7a-7f00-0000-000000000107", TargetID: "target_concrete_prod", OwnerID: "operator-native-finalizer", ExpiresAt: time.Now().UTC().Add(time.Hour)})
+	baseLease, err := delivery.AcquireLease(t.Context(), deploymentpostgres.LeaseInput{LeaseID: "0198f2c0-7c7a-7f00-8a11-000000000107", TargetID: "target_concrete_prod", OwnerID: "operator-native-finalizer", ExpiresAt: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: basePub.PublicationID, TargetID: basePub.TargetID, GenerationID: baseID, ExpectedTargetRevision: 1, RequestDigest: basePub.RequestDigest, ActorID: basePub.ActorID, LeaseID: baseLease.LeaseID, OwnerID: baseLease.OwnerID, FencingEpoch: baseLease.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-0000-000000000110"}); err != nil {
+	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: basePub.PublicationID, TargetID: basePub.TargetID, GenerationID: baseID, ExpectedTargetRevision: 1, RequestDigest: basePub.RequestDigest, ActorID: basePub.ActorID, LeaseID: baseLease.LeaseID, OwnerID: baseLease.OwnerID, FencingEpoch: baseLease.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000000110"}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{GenerationID: resultID, TargetID: "target_concrete_prod", CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", PlanID: plan.PlanID, PlanDigest: plan.PlanDigest, ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), ServingArtifactDigest: plan.ArtifactDigest, CompiledGraphDigest: plan.CompiledGraphDigest, CompiledConfigDigest: plan.CompiledConfigDigest, SecurityDomainFingerprint: plan.SecurityDomainFingerprint, GenerationRevision: 2}); err != nil {
