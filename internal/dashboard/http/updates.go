@@ -136,9 +136,10 @@ func (h Handler) Updates(w nethttp.ResponseWriter, r *nethttp.Request) {
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}
 	}
-	bootstrap := reportui.BootstrapSignalsWithRouteScope(h.RouteScope, clientID, streamInstanceID, metrics.Catalog(), reportDefinition, model, definitions, pages, activePage, initialFilters, providers...)
+	catalog := h.catalogWithDashboardAppearance(r.Context(), metrics.Catalog(), dashboardID)
+	bootstrap := reportui.BootstrapSignalsWithRouteScope(h.RouteScope, clientID, streamInstanceID, catalog, reportDefinition, model, definitions, pages, activePage, initialFilters, providers...)
 	if presentation, ok := publicPresentationFromContext(r.Context()); ok {
-		bootstrap = reportui.PublicBootstrapSignals(clientID, streamInstanceID, presentation.PublicID, presentation.Presentation, metrics.Catalog(), reportDefinition, model, definitions, pages, activePage, initialFilters)
+		bootstrap = reportui.PublicBootstrapSignals(clientID, streamInstanceID, presentation.PublicID, presentation.Presentation, catalog, reportDefinition, model, definitions, pages, activePage, initialFilters)
 	} else if hasClientAgentState(r) {
 		delete(bootstrap, "agent")
 		delete(bootstrap, "agentVisuals")

@@ -95,6 +95,36 @@ type runtimeServices struct {
 	projectIDResolver              func(context.Context) (projectgraph.ResourceID, error)
 }
 
+type dashboardAppearanceReader interface {
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardmodule.AppearanceRecord, error)
+}
+
+func dashboardAppearanceResolver(reader projectmodule.ProjectDefinitionReader, store dashboardAppearanceReader) func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+	return func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+		appearance := dashboardmodule.DefaultAppearance()
+		project, _, err := reader.ProjectDefinitionSnapshot(ctx)
+		if err != nil {
+			return dashboardmodule.Appearance{}, err
+		}
+		if source, ok := project.DashboardSources[dashboardID.String()]; ok && source.Document.Spec.Appearance != nil {
+			if source.Document.Spec.Appearance.Icon != nil {
+				appearance.Icon = strings.TrimSpace(*source.Document.Spec.Appearance.Icon)
+			}
+			if source.Document.Spec.Appearance.Color != nil {
+				appearance.Color = strings.TrimSpace(string(*source.Document.Spec.Appearance.Color))
+			}
+		}
+		overrides, err := store.ListProject(ctx, projectID)
+		if err != nil {
+			return dashboardmodule.Appearance{}, err
+		}
+		if record, ok := overrides[dashboardID]; ok {
+			return dashboardmodule.ResolveAppearance(record.Value), nil
+		}
+		return dashboardmodule.ResolveAppearance(appearance), nil
+	}
+}
+
 // resolveProjectID returns the exact project bound to the active serving
 // lease. A fresh installation has no project until its first activation, so
 // every project-dependent surface must resolve this at operation time rather
@@ -1311,6 +1341,26 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if persistence.requireNativeDashboard {
 			dashboardDatabase = nil
 		}
+		var appearanceStore dashboardAppearanceReader
+		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error)
+		if runtime.runtimeHostModule != nil {
+			definitionReader := projectmodule.NewActiveProjectDefinitionReader(runtime.runtimeHostModule.Provider())
+			if persistence.requireNativeDashboard {
+				// Build installs the validated PostgreSQL appearance authority below.
+				// The resolver executes only after composition has completed, so its
+				// closure observes the assigned native store without exposing the
+				// opaque persistence bundle's internals.
+				resolveDashboardAppearance = func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardmodule.Appearance, error) {
+					if appearanceStore == nil {
+						return dashboardmodule.Appearance{}, errors.New("native dashboard appearance store is unavailable")
+					}
+					return dashboardAppearanceResolver(definitionReader, appearanceStore)(ctx, projectID, dashboardID)
+				}
+			} else if database != nil {
+				appearanceStore = dashboardmodule.NewAppearanceStore(database)
+				resolveDashboardAppearance = dashboardAppearanceResolver(definitionReader, appearanceStore)
+			}
+		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:                 dashboardDatabase,
@@ -1325,10 +1375,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Authoring:           routes.dashboardAuthoring,
 			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{
-				Metrics:          runtime.metrics,
-				ProjectID:        runtime.projectID,
-				ResolveProjectID: runtime.resolveProjectID,
-				Admission:        workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
+				Metrics:                    runtime.metrics,
+				ProjectID:                  runtime.projectID,
+				ResolveProjectID:           runtime.resolveProjectID,
+				ResolveDashboardAppearance: resolveDashboardAppearance,
+				Admission:                  workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())
@@ -1454,6 +1505,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		})
 		if err != nil {
 			return fmt.Errorf("build dashboard module: %w", err)
+		}
+		if persistence.requireNativeDashboard {
+			appearanceStore = routes.dashboardModule.AppearanceStore()
 		}
 	}
 	if routes.projectBrowser != nil && persistence.requireNativeDashboard {

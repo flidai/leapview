@@ -1,5 +1,5 @@
 import { chromium } from '@playwright/test'
-import { existsSync } from 'node:fs'
+import { existsSync, realpathSync } from 'node:fs'
 import { mkdir, rm } from 'node:fs/promises'
 import { createServer } from 'node:net'
 import { join } from 'node:path'
@@ -8,6 +8,8 @@ const root = process.cwd()
 const captureRoot = join(root, '.tmp', 'site-product-capture')
 const home = join(captureRoot, 'home')
 const binary = join(captureRoot, 'leapview')
+const extensionSupplyPath = join(captureRoot, 'extension-supply.json')
+const olistData = realpathSync(join(root, '.data', 'olist'))
 const dashboardPath = '/dashboards/dashboard:visual-showcase/pages/overview'
 const viewport = { width: 1440, height: 900 }
 
@@ -16,7 +18,10 @@ await mkdir(join(home, 'managed-data'), { recursive: true })
 await mkdir(join(home, 'duckdb'), { recursive: true })
 await mkdir(join(home, 'ducklake'), { recursive: true })
 
-await run(['go', 'build', '-o', binary, './cmd/leapview'])
+await run(['go', 'run', './internal/app/tools/ducklakeprepare', '--supply-out', extensionSupplyPath])
+const extensionSupplySHA256 = (await Bun.file(`${extensionSupplyPath}.sha256`).text()).trim().split(/\s+/)[0]
+if (!extensionSupplySHA256) throw new Error('DuckDB extension supply preparation did not return a digest')
+await run(['go', 'build', '-tags=duckdb_arrow', '-o', binary, './cmd/leapview'])
 
 const port = await availablePort()
 const origin = `http://127.0.0.1:${port}`
@@ -30,6 +35,8 @@ const server = Bun.spawn([binary], {
     LEAPVIEW_MANAGED_DATA_DIR: join(home, 'managed-data'),
     LEAPVIEW_DUCKDB_DIR: join(home, 'duckdb'),
     LEAPVIEW_DUCKLAKE_CATALOG_PATH: join(home, 'ducklake', 'catalog.sqlite'),
+    LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH: extensionSupplyPath,
+    LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256: extensionSupplySHA256,
   },
   stdout: 'pipe',
   stderr: 'pipe',
@@ -49,7 +56,7 @@ try {
     '--connection',
     'olist',
     '--from',
-    '.data/olist',
+    olistData,
     '--target',
     origin,
     '--token',
@@ -58,7 +65,7 @@ try {
   const revision = syncOutput.match(/^staged (sha256:[0-9a-f]{64})$/m)?.[1]
   if (!revision) throw new Error(`managed data sync did not return a revision:\n${syncOutput}`)
 
-  await run([
+  const devOutput = await run([
     binary,
     'dev',
     '--once',
@@ -69,13 +76,12 @@ try {
     '--token',
     'dev',
   ])
+  const candidateID = devOutput.match(/^candidate (cand_[A-Za-z0-9_-]+)\b/m)?.[1]
+  if (!candidateID) throw new Error(`development sync did not return a candidate ID:\n${devOutput}`)
   await run([
     binary,
     'publish',
-    '--project',
-    'dashboards/leapview.yaml',
-    '--target',
-    origin,
+    candidateID,
     '--token',
     'dev',
   ])
@@ -94,7 +100,7 @@ try {
         }, mode)
         const page = await context.newPage()
         await page.goto(`${origin}${dashboardPath}`, { waitUntil: 'domcontentloaded' })
-        await page.getByRole('heading', { name: 'Visual Showcase', exact: true }).waitFor()
+        await page.getByRole('navigation', { name: 'Breadcrumb' }).getByText('Visual Showcase', { exact: true }).waitFor()
         await page.waitForFunction(() => {
           const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & {
             signals?: { status?: { loading?: boolean } }
@@ -113,6 +119,10 @@ try {
           })
         })
         await page.waitForTimeout(250)
+        await page.addStyleTag({ content: 'datastar-inspector { display: none !important; }' })
+        await page.evaluate(() => {
+          document.querySelectorAll('datastar-inspector').forEach((inspector) => inspector.remove())
+        })
         await page.screenshot({
           path: join(root, 'site', 'static', `product-dashboard-${mode}.png`),
           type: 'png',

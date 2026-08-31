@@ -13,6 +13,17 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
+type Appearance = dashboardappearance.Value
+type AppearanceRecord = dashboardappearance.Record
+
+func DefaultAppearance() Appearance {
+	return dashboardappearance.Default()
+}
+
+func ResolveAppearance(value Appearance) Appearance {
+	return dashboardappearance.Resolve(value)
+}
+
 func NewAppearanceStore(database *sql.DB) dashboardappearance.Store {
 	return appearancesqlite.NewRepository(database)
 }

@@ -303,7 +303,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
           tableAfterChart: (tableFrame?.top ?? 0) > (chart?.bottom ?? 0),
         }
       })
-      expect(state.title).toBe('Executive Sales Dashboard')
+      expect(state.title).toBe('Overview')
       expect(state.hostCount).toBe(3)
       expect(state.legacyCount).toBe(0)
       expect(state.kinds).toEqual(['cartesian', 'kpi', 'table'])
@@ -379,7 +379,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
   }
 })
 
-test('app report frame aligns identity and footer with the canvas around contextual rails', async () => {
+test('app report frame puts page navigation at the top and dashboard navigation in the footer', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-report-sidebar-collapsed', 'false'))
@@ -397,8 +397,8 @@ test('app report frame aligns identity and footer with the canvas around context
       await sidebar.updateComplete
       const root = sidebar.shadowRoot!
       const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
-      const railHeader = element.shadowRoot.querySelector('.rail-header') as HTMLElement
-      const back = railHeader.querySelector('.dashboard-back-link') as HTMLAnchorElement
+      const railFooter = element.shadowRoot.querySelector('.rail-footer') as HTMLElement
+      const back = railFooter.querySelector('.dashboard-back-link') as HTMLAnchorElement
       const backLabel = back.querySelector('.rail-back-label') as HTMLElement
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
       const header = root.querySelector('header') as HTMLElement
@@ -406,18 +406,21 @@ test('app report frame aligns identity and footer with the canvas around context
       const firstPage = root.querySelector('.item-link') as HTMLElement
       const main = element.shadowRoot.querySelector('.main') as HTMLElement
       const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
-      const title = reportHeader.querySelector('h1') as HTMLElement
+      const breadcrumb = reportHeader.querySelector('.breadcrumb') as HTMLElement
+      const title = breadcrumb.querySelector('h1') as HTMLElement
+      const dashboardGlyph = breadcrumb.querySelector('.dashboard-appearance-glyph') as HTMLElement
       const expandedWidth = Math.round(sidebar.getBoundingClientRect().width)
       const expandedPageTop = Math.round(firstPage.getBoundingClientRect().top)
       const backIconMarkup = back.querySelector('svg')?.innerHTML
       const expandedToggleIconMarkup = collapse.querySelector('svg')?.innerHTML
       const reportHeaderRect = reportHeader.getBoundingClientRect()
-      const railHeaderRect = railHeader.getBoundingClientRect()
+      const railFooterRect = railFooter.getBoundingClientRect()
       const backRect = back.getBoundingClientRect()
       const expandedBackLabelDisplay = getComputedStyle(backLabel).display
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
-      const titleRect = title.getBoundingClientRect()
+      const breadcrumbRect = breadcrumb.getBoundingClientRect()
+      const sectionTitleRect = sectionTitle.getBoundingClientRect()
       const reportFooterRect = reportFooter.getBoundingClientRect()
       collapse.click()
       await sidebar.updateComplete
@@ -427,10 +430,10 @@ test('app report frame aligns identity and footer with the canvas around context
       )
       const collapsedToggleIconMarkup = root.querySelector('.collapse svg')?.innerHTML
       const collapsedMainRect = main.getBoundingClientRect()
-      const collapsedRailHeaderRect = railHeader.getBoundingClientRect()
+      const collapsedRailFooterRect = railFooter.getBoundingClientRect()
       const collapsedBackRect = back.getBoundingClientRect()
       const collapsedBackLabelDisplay = getComputedStyle(backLabel).display
-      const collapsedTitleRect = title.getBoundingClientRect()
+      const collapsedBreadcrumbRect = breadcrumb.getBoundingClientRect()
       const collapsedSidebarRect = sidebar.getBoundingClientRect()
       const collapsedReportFooterRect = reportFooter.getBoundingClientRect()
       return {
@@ -441,30 +444,56 @@ test('app report frame aligns identity and footer with the canvas around context
         title: back.getAttribute('title'),
         expandedBackLabelDisplay,
         collapsedBackLabelDisplay,
-        reportTitle: reportHeader.querySelector('h1')?.textContent?.trim(),
+        reportTitle: title.textContent?.trim(),
         reportTitleCount: element.shadowRoot.querySelectorAll('h1').length,
+        breadcrumbLabel: breadcrumb.getAttribute('aria-label'),
+        breadcrumbItems: Array.from(breadcrumb.querySelectorAll('.breadcrumb-item')).map(item => ({
+          text: item.querySelector('.breadcrumb-label')?.textContent?.trim(),
+          href: item.querySelector('a')?.getAttribute('href') ?? null,
+          current: item.getAttribute('aria-current'),
+        })),
+        breadcrumbSeparatorCount: breadcrumb.querySelectorAll('.breadcrumb-separator').length,
+        dashboardGlyph: {
+          icon: dashboardGlyph.getAttribute('data-icon'),
+          color: dashboardGlyph.getAttribute('data-color'),
+          ariaHidden: dashboardGlyph.getAttribute('aria-hidden'),
+          width: Math.round(dashboardGlyph.getBoundingClientRect().width),
+          height: Math.round(dashboardGlyph.getBoundingClientRect().height),
+          background: getComputedStyle(dashboardGlyph).backgroundColor,
+          borderWidth: getComputedStyle(dashboardGlyph).borderTopWidth,
+          gap: getComputedStyle(dashboardGlyph.parentElement!).gap,
+          svgCount: dashboardGlyph.querySelectorAll('svg').length,
+        },
         sidebarTitleCount: root.querySelectorAll('.sidebar-title').length,
         sidebarBackCount: root.querySelectorAll('.back-link').length,
-        backInRailHeader: railHeader.contains(back),
-        railHeaderAligned: Math.round(railHeaderRect.left) === Math.round(sidebarRect.left),
-        backInset: Math.round(backRect.left - railHeaderRect.left),
+        backInRailFooter: railFooter.contains(back),
+        railFooterAligned: Math.round(railFooterRect.left) === Math.round(sidebarRect.left),
+        backInset: Math.round(backRect.left - railFooterRect.left),
         reportHeaderAligned: Math.round(reportHeaderRect.left) === Math.round(mainRect.left),
-        titleInset: Math.round(titleRect.left - mainRect.left),
-        sidebarBelowHeader: Math.abs(sidebarRect.top - railHeaderRect.bottom) < 2,
+        breadcrumbInset: Math.round(breadcrumbRect.left - mainRect.left),
+        pagesTitleBreadcrumbCenterDelta: Math.abs(
+          (sectionTitleRect.top + sectionTitleRect.bottom) / 2
+            - (breadcrumbRect.top + breadcrumbRect.bottom) / 2,
+        ),
+        sidebarStartsWithHeader: Math.abs(sidebarRect.top - reportHeaderRect.top) < 2,
+        pagesTitleAboveCanvas: sectionTitle.getBoundingClientRect().top < mainRect.top,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
-        railFooterCount: element.shadowRoot.querySelectorAll('.rail-footer').length,
-        sidebarSpansFooter: Math.abs(sidebarRect.bottom - reportFooterRect.bottom) < 2,
-        sidebarContinuesPastCanvas: sidebarRect.bottom > mainRect.bottom,
+        railHeaderCount: element.shadowRoot.querySelectorAll('.rail-header').length,
+        sidebarEndsAtFooter: Math.abs(sidebarRect.bottom - railFooterRect.top) < 2,
+        railFooterMatchesReportFooter: Math.abs(railFooterRect.top - reportFooterRect.top) < 2
+          && Math.abs(railFooterRect.bottom - reportFooterRect.bottom) < 2,
         footerAligned: Math.round(reportFooterRect.left) === Math.round(mainRect.left),
-        collapsedSidebarSpansFooter: Math.abs(collapsedSidebarRect.bottom - collapsedReportFooterRect.bottom) < 2,
-        collapsedTitleInset: Math.round(collapsedTitleRect.left - collapsedMainRect.left),
+        collapsedSidebarEndsAtFooter: Math.abs(collapsedSidebarRect.bottom - collapsedRailFooterRect.top) < 2,
+        collapsedRailFooterMatchesReportFooter: Math.abs(collapsedRailFooterRect.top - collapsedReportFooterRect.top) < 2
+          && Math.abs(collapsedRailFooterRect.bottom - collapsedReportFooterRect.bottom) < 2,
+        collapsedBreadcrumbInset: Math.round(collapsedBreadcrumbRect.left - collapsedMainRect.left),
         collapsedFooterAligned: Math.round(collapsedReportFooterRect.left) === Math.round(collapsedMainRect.left),
         collapsedBackCentered: Math.abs(
           (collapsedBackRect.left + collapsedBackRect.width / 2)
-            - (collapsedRailHeaderRect.left + collapsedRailHeaderRect.width / 2),
+            - (collapsedRailFooterRect.left + collapsedRailFooterRect.width / 2),
         ) < 2,
         collapsedBackWidth: Math.round(collapsedBackRect.width),
-        titleMovesWithCanvas: Math.round(collapsedTitleRect.left - titleRect.left)
+        breadcrumbMovesWithCanvas: Math.round(collapsedBreadcrumbRect.left - breadcrumbRect.left)
           === Math.round(collapsedMainRect.left - mainRect.left),
         collapseInHeader: header.contains(collapse),
         sectionTitle: sectionTitle.textContent?.trim(),
@@ -483,32 +512,53 @@ test('app report frame aligns identity and footer with the canvas around context
     expect(state).toEqual({
       href: '/',
       label: 'Back to dashboards',
-      text: 'Dashboards',
+      text: 'Back',
       backTag: 'A',
       title: 'All dashboards',
       expandedBackLabelDisplay: 'block',
       collapsedBackLabelDisplay: 'none',
-      reportTitle: 'Executive Sales Dashboard',
+      reportTitle: 'Overview',
       reportTitleCount: 1,
+      breadcrumbLabel: 'Breadcrumb',
+      breadcrumbItems: [
+        { text: 'Dashboards', href: '/', current: null },
+        { text: 'Executive Sales Dashboard', href: '/dashboards/executive-sales/pages/overview', current: null },
+        { text: 'Overview', href: null, current: 'page' },
+      ],
+      breadcrumbSeparatorCount: 2,
+      dashboardGlyph: {
+        icon: 'gallery-vertical-end',
+        color: 'blue',
+        ariaHidden: 'true',
+        width: 16,
+        height: 16,
+        background: 'rgba(0, 0, 0, 0)',
+        borderWidth: '0px',
+        gap: '8px',
+        svgCount: 1,
+      },
       sidebarTitleCount: 0,
       sidebarBackCount: 0,
-      backInRailHeader: true,
-      railHeaderAligned: true,
+      backInRailFooter: true,
+      railFooterAligned: true,
       backInset: 16,
       reportHeaderAligned: true,
-      titleInset: 16,
-      sidebarBelowHeader: true,
+      breadcrumbInset: 16,
+      pagesTitleBreadcrumbCenterDelta: expect.any(Number),
+      sidebarStartsWithHeader: true,
+      pagesTitleAboveCanvas: true,
       mainBelowHeader: true,
-      railFooterCount: 0,
-      sidebarSpansFooter: true,
-      sidebarContinuesPastCanvas: true,
+      railHeaderCount: 0,
+      sidebarEndsAtFooter: true,
+      railFooterMatchesReportFooter: true,
       footerAligned: true,
-      collapsedSidebarSpansFooter: true,
-      collapsedTitleInset: 16,
+      collapsedSidebarEndsAtFooter: true,
+      collapsedRailFooterMatchesReportFooter: true,
+      collapsedBreadcrumbInset: 16,
       collapsedFooterAligned: true,
       collapsedBackCentered: true,
       collapsedBackWidth: 32,
-      titleMovesWithCanvas: true,
+      breadcrumbMovesWithCanvas: true,
       collapseInHeader: true,
       sectionTitle: 'Pages',
       sectionTitleTransform: 'none',
@@ -521,6 +571,7 @@ test('app report frame aligns identity and footer with the canvas around context
       toggleIconDistinctFromBack: true,
       toggleIconChanges: false,
     })
+    expect(state.pagesTitleBreadcrumbCenterDelta).toBeLessThanOrEqual(2)
   } finally {
     await page.close()
   }
@@ -1600,7 +1651,7 @@ test('dashboard agent drawer carries page context and explicit visual references
     expect(opened.drawerWidth).toBeGreaterThanOrEqual(360)
     expect(opened.drawerWidth).toBeLessThanOrEqual(520)
 
-    const groupedSearch = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agentReferenceSearch: {
         query: 'orders', requestId: 1,
@@ -1610,6 +1661,8 @@ test('dashboard agent drawer carries page context and explicit visual references
 		  { reference: { kind: 'metric', id: 'olist.order_count' }, name: 'Orders count', description: 'Across the sales model', hierarchy: ['Sales', 'Olist'], href: '/metric', locations: [], context: [] },
         ],
       } })
+    })
+    const groupedSearch = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
       const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
       await drawer.updateComplete
@@ -1632,9 +1685,11 @@ test('dashboard agent drawer carries page context and explicit visual references
 	expect(groupedSearch.accessible).not.toContain('Finance orders Finance › Executive Sales › Overview Visual')
 	expect(groupedSearch.options.at(-1)).toBe('Orders count Sales › Olist Metric')
 
-    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+    await page.evaluate(async () => {
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
       mergePatch({ agentContext: { referenceLimit: 1 } })
+    })
+    await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
       await element.updateComplete
     })
 
@@ -1698,7 +1753,7 @@ test('dashboard agent drawer carries page context and explicit visual references
       }],
     })
 
-	const accepted = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+	await page.evaluate(async () => {
 	  const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev')
 	  mergePatch({ agent: {
 		activeConversationId: 'agentconv_1',
@@ -1714,6 +1769,8 @@ test('dashboard agent drawer carries page context and explicit visual references
 		status: { enabled: true, running: true },
 		composer: { value: '', disabled: true, placeholder: 'Agent is working…' },
 	  } })
+	})
+	const accepted = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
 	  await element.updateComplete
 	  const drawer = element.shadowRoot.querySelector('lv-chat-drawer') as any
 	  await drawer.updateComplete
@@ -1840,6 +1897,8 @@ test('mobile report header combines page and filter controls without stacked rai
       await dock.updateComplete
       const header = root.querySelector('.header') as HTMLElement
       const pageMenu = root.querySelector('.mobile-page-menu') as HTMLDetailsElement
+      const breadcrumb = root.querySelector('.breadcrumb') as HTMLElement
+      const breadcrumbCurrent = breadcrumb.querySelector('.breadcrumb-current') as HTMLElement
       const filterTrigger = root.querySelector('.mobile-filter-toggle') as HTMLButtonElement
       const agentTrigger = root.querySelector('.agent-toggle') as HTMLButtonElement
       const dockRail = dock.shadowRoot.querySelector('.rail') as HTMLButtonElement
@@ -1855,6 +1914,8 @@ test('mobile report header combines page and filter controls without stacked rai
         sidebarDisplay: getComputedStyle(root.querySelector('lv-sub-sidebar')).display,
         headerHeight: Math.round(header.getBoundingClientRect().height),
         pageMenuDisplay: getComputedStyle(pageMenu).display,
+        breadcrumbLabels: Array.from(breadcrumb.querySelectorAll('.breadcrumb-label')).map((item: any) => item.textContent.trim()),
+        breadcrumbCurrentDisplay: getComputedStyle(breadcrumbCurrent).display,
         pageLabel: pageMenu.querySelector('summary')?.textContent?.replace(/\s+/g, ' ').trim(),
         pageOptions: Array.from(pageMenu.querySelectorAll('a')).map((item: any) => item.textContent.trim()),
         filterLabel: filterTrigger.getAttribute('aria-label'),
@@ -1877,6 +1938,8 @@ test('mobile report header combines page and filter controls without stacked rai
     expect(compact).toMatchObject({
       sidebarDisplay: 'none',
       pageMenuDisplay: 'block',
+      breadcrumbLabels: ['Dashboards', 'Executive Sales Dashboard', 'Overview'],
+      breadcrumbCurrentDisplay: 'none',
       pageLabel: 'Overview',
       pageOptions: ['Overview', 'Details'],
       filterLabel: 'Filters, 1 active',
@@ -1900,7 +1963,12 @@ test('mobile report header combines page and filter controls without stacked rai
     const pageMenuSummary = page.locator('lv-dashboard-page .mobile-page-menu summary')
     await pageMenuSummary.click()
     expect(await pageMenu.getAttribute('open')).not.toBeNull()
-    await page.locator('lv-dashboard-page h1').click()
+    await dashboard.evaluate((element: any) => {
+      element.shadowRoot.querySelector('.header').dispatchEvent(new PointerEvent('pointerdown', {
+        bubbles: true,
+        composed: true,
+      }))
+    })
     expect(await pageMenu.getAttribute('open')).toBeNull()
 
     await pageMenuSummary.click()
@@ -3576,6 +3644,7 @@ test('dashboard agent restores its open state and active conversation after relo
 function testDocument(): string {
   const page = {
     kind: 'dashboard', title: 'Executive Sales Dashboard', dashboardId: 'executive-sales', dashboardTitle: 'Executive Sales Dashboard',
+    appearanceIcon: 'gallery-vertical-end', appearanceColor: 'blue',
     pageId: 'overview', pageTitle: 'Overview', headerDetail: 'Overview', modelId: 'olist', modelTitle: 'Olist',
     canvas: { width: 1024, height: 720 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 },
     pages: [

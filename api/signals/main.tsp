@@ -1293,6 +1293,8 @@ model DashboardPagePlacement {
 @apigen.contract(#{ kind: "ui-signal", tags: #["dashboard", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "dashboard" })
 model DashboardPageSignal {
+  `appearanceColor`: string;
+  `appearanceIcon`: string;
   `canvas`: DashboardPageCanvas;
   `components`: DashboardComponentSignal[];
   `dashboardId`: string;
