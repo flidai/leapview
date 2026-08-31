@@ -90,7 +90,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	}
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
 		StorageLocation: filepath.Join(t.TempDir(), "warehouse"), StorageNamespace: "warehouse",
-		Region: "us-east-1", Tenant: "tenant-preview", IsolationBoundary: targetID,
+		Region: "us-east-1", Tenant: "tenant-preview", EncryptionDomain: "tenant-preview", IsolationBoundary: targetID,
 		RetentionAuthority: targetID, RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 60},
 		Compatibility: compatibility,
 	})

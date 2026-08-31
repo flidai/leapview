@@ -143,7 +143,7 @@ func targetL3PostgresDB(t *testing.T) *pgxpool.Pool {
 func targetL3Contract(t *testing.T, bucket, prefix string) *ducklake.PoolContract {
 	t.Helper()
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:test", DuckLakeExtension: "ducklake:test", CatalogFormat: "ducklake:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
-	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://" + bucket, StorageNamespace: prefix, Region: "us-east-1", IsolationBoundary: "target-l3", RetentionAuthority: "target-l3", Compatibility: tuple})
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://" + bucket, StorageNamespace: prefix, Region: "us-east-1", EncryptionDomain: "target-l3", IsolationBoundary: "target-l3", RetentionAuthority: "target-l3", Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)
 	}

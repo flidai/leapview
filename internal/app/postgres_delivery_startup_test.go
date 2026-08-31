@@ -298,7 +298,7 @@ func startupNativeArtifact() servingstate.Artifact {
 func startupPhysicalPool(t *testing.T) (physicalpool.PhysicalPool, physicalpool.PoolAdmission) {
 	t.Helper()
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb", DuckLakeExtension: "ducklake", CatalogFormat: "catalog", StorageImplementation: "s3", ObjectNamingContract: "object-v1"}
-	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://bucket/data", StorageNamespace: "namespace", IsolationBoundary: "target", RetentionAuthority: "retention", Compatibility: tuple})
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://bucket/data", StorageNamespace: "namespace", EncryptionDomain: "target", IsolationBoundary: "target", RetentionAuthority: "retention", Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)
 	}

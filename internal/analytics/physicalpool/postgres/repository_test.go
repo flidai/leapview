@@ -23,7 +23,7 @@ func testCompatibility() physicalpool.Compatibility {
 
 func testPool(t *testing.T, location string) physicalpool.PhysicalPool {
 	t.Helper()
-	p, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: location, StorageNamespace: "tenant-a", Region: "us-east-1", Tenant: "tenant-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-ref", CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention", RetentionPolicy: physicalpool.RetentionPolicy{OrphanGracePeriodSeconds: 3600, ReaderGracePeriodSeconds: 300, BuildGracePeriodSeconds: 60}, Compatibility: testCompatibility()})
+	p, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: location, StorageNamespace: "tenant-a", Region: "us-east-1", Tenant: "tenant-a", EncryptionDomain: "encryption-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-ref", CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention", RetentionPolicy: physicalpool.RetentionPolicy{OrphanGracePeriodSeconds: 3600, ReaderGracePeriodSeconds: 300, BuildGracePeriodSeconds: 60}, Compatibility: testCompatibility()})
 	if err != nil {
 		t.Fatal(err)
 	}

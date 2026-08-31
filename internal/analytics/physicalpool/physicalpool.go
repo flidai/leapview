@@ -228,6 +228,7 @@ type PoolIdentity struct {
 	StorageNamespace    string          `json:"storage_namespace"`
 	Region              string          `json:"region"`
 	Tenant              string          `json:"tenant"`
+	EncryptionDomain    string          `json:"encryption_domain"`
 	IsolationBoundary   string          `json:"isolation_boundary"`
 	EncryptionKeyRef    string          `json:"encryption_key_ref,omitempty"`
 	CredentialReference string          `json:"credential_reference,omitempty"`
@@ -246,6 +247,7 @@ func (i PoolIdentity) Validate() error {
 		{"storage_namespace", i.StorageNamespace, true},
 		{"region", i.Region, false},
 		{"tenant", i.Tenant, false},
+		{"encryption_domain", i.EncryptionDomain, true},
 		{"isolation_boundary", i.IsolationBoundary, true},
 		{"encryption_key_ref", i.EncryptionKeyRef, false},
 		{"credential_reference", i.CredentialReference, false},
@@ -283,6 +285,7 @@ func (i PoolIdentity) CanonicalJSON() (string, error) {
 		StorageNamespace      string          `json:"storage_namespace"`
 		Region                string          `json:"region"`
 		Tenant                string          `json:"tenant"`
+		EncryptionDomain      string          `json:"encryption_domain"`
 		IsolationBoundary     string          `json:"isolation_boundary"`
 		EncryptionKeyRef      string          `json:"encryption_key_ref,omitempty"`
 		CredentialReference   string          `json:"credential_reference,omitempty"`
@@ -290,7 +293,7 @@ func (i PoolIdentity) CanonicalJSON() (string, error) {
 		RetentionPolicy       RetentionPolicy `json:"retention_policy"`
 		StorageImplementation string          `json:"storage_implementation"`
 		ObjectNamingContract  string          `json:"object_naming_contract"`
-	}{canonicalLocation, i.StorageNamespace, i.Region, i.Tenant, i.IsolationBoundary, i.EncryptionKeyRef, i.CredentialReference, i.RetentionAuthority, i.RetentionPolicy, i.Compatibility.StorageImplementation, i.Compatibility.ObjectNamingContract})
+	}{canonicalLocation, i.StorageNamespace, i.Region, i.Tenant, i.EncryptionDomain, i.IsolationBoundary, i.EncryptionKeyRef, i.CredentialReference, i.RetentionAuthority, i.RetentionPolicy, i.Compatibility.StorageImplementation, i.Compatibility.ObjectNamingContract})
 	if err != nil {
 		return "", fmt.Errorf("marshal pool identity: %w", err)
 	}

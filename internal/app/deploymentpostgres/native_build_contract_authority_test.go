@@ -356,7 +356,7 @@ type nativeBuildContractFixture struct {
 func newNativeBuildContractFixture(t *testing.T) nativeBuildContractFixture {
 	t.Helper()
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:v1", DuckLakeExtension: "ducklake:v1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
-	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: t.TempDir(), StorageNamespace: "objects", Region: "us-east", Tenant: "tenant-domain", IsolationBoundary: "boundary", RetentionAuthority: "retention", Compatibility: tuple})
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: t.TempDir(), StorageNamespace: "objects", Region: "us-east", Tenant: "tenant-domain", EncryptionDomain: "encryption-domain", IsolationBoundary: "boundary", RetentionAuthority: "retention", Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -3,14 +3,14 @@
 -- name: InsertPhysicalPool :execrows
 INSERT INTO physical_pool.physical_pools (
     id, identity_digest, storage_location, storage_namespace,
-    storage_implementation, object_naming_contract, region, tenant,
+    storage_implementation, object_naming_contract, region, tenant, encryption_domain,
     isolation_boundary, encryption_key_ref, credential_reference,
     retention_authority, orphan_grace_period_seconds,
     reader_grace_period_seconds, build_grace_period_seconds, retention_policy
 ) VALUES (
     sqlc.arg(id), sqlc.arg(id), sqlc.arg(storage_location), sqlc.arg(storage_namespace),
     sqlc.arg(storage_implementation), sqlc.arg(object_naming_contract), sqlc.arg(region),
-    sqlc.arg(tenant), sqlc.arg(isolation_boundary), sqlc.arg(encryption_key_ref),
+    sqlc.arg(tenant), sqlc.arg(encryption_domain), sqlc.arg(isolation_boundary), sqlc.arg(encryption_key_ref),
     sqlc.arg(credential_reference), sqlc.arg(retention_authority),
     sqlc.arg(orphan_grace_period_seconds), sqlc.arg(reader_grace_period_seconds),
     sqlc.arg(build_grace_period_seconds), sqlc.arg(retention_policy)::jsonb
@@ -19,7 +19,7 @@ ON CONFLICT DO NOTHING;
 
 -- name: GetPhysicalPool :one
 SELECT id, identity_digest, storage_location, storage_namespace,
-       storage_implementation, object_naming_contract, region, tenant,
+       storage_implementation, object_naming_contract, region, tenant, encryption_domain,
        isolation_boundary, encryption_key_ref, credential_reference,
        retention_authority, orphan_grace_period_seconds,
        reader_grace_period_seconds, build_grace_period_seconds,

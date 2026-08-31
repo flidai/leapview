@@ -468,7 +468,7 @@ func minioConformancePoolContractFromEvidence(t *testing.T, dataPath string, evi
 	tuple := evidence.Compatibility
 	storageLocation, storageNamespace := fixtureStorageIdentity(t, dataPath)
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
-		StorageLocation: storageLocation, StorageNamespace: storageNamespace, Region: "us-east-1",
+		StorageLocation: storageLocation, StorageNamespace: storageNamespace, Region: "us-east-1", EncryptionDomain: "minio-conformance",
 		IsolationBoundary: "minio-conformance", RetentionAuthority: "minio-conformance", Compatibility: tuple,
 	})
 	if err != nil {

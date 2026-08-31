@@ -73,7 +73,7 @@ func deliveryCredentialTestContract(t *testing.T) *ducklake.PoolContract {
 	for _, id := range ducklake.SharedPoolConformanceChecks {
 		checks = append(checks, physicalpool.EvidenceCheck{ID: id, Passed: true, ObservationDigest: "sha256:" + strings.Repeat("a", 64)})
 	}
-	p, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://bucket/prefix", StorageNamespace: "delivery", IsolationBoundary: "target", RetentionAuthority: "target", RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600}, Compatibility: tuple})
+	p, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://bucket/prefix", StorageNamespace: "delivery", EncryptionDomain: "target", IsolationBoundary: "target", RetentionAuthority: "target", RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600}, Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)
 	}

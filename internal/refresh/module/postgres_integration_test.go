@@ -214,7 +214,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	catalogDB, catalogUUID := "ducklake", "0198f2c0-7c7a-7f00-8a11-000000000108"
 	compatibility := physicalpool.Compatibility{DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "object:v1"}
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
-		StorageLocation: t.TempDir(), StorageNamespace: "concrete", Region: "us-east", Tenant: "tenant-concrete", IsolationBoundary: targetID,
+		StorageLocation: t.TempDir(), StorageNamespace: "concrete", Region: "us-east", Tenant: "tenant-concrete", EncryptionDomain: "encryption-concrete", IsolationBoundary: targetID,
 		RetentionAuthority: targetID, RetentionPolicy: physicalpool.RetentionPolicy{OrphanGracePeriodSeconds: 3600, ReaderGracePeriodSeconds: 300, BuildGracePeriodSeconds: 60}, Compatibility: compatibility,
 	})
 	if err != nil {

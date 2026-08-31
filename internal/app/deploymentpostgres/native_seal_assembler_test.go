@@ -49,7 +49,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 		t.Fatal(err)
 	}
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:v1", DuckLakeExtension: "ducklake:v1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
-	identity := physicalpool.PoolIdentity{StorageLocation: "/tmp", StorageNamespace: "native-assembler-objects", Region: "us-east", Tenant: "tenant-assembler", IsolationBoundary: "isolation-assembler", RetentionAuthority: "retention-assembler", Compatibility: tuple}
+	identity := physicalpool.PoolIdentity{StorageLocation: "/tmp", StorageNamespace: "native-assembler-objects", Region: "us-east", Tenant: "tenant-assembler", EncryptionDomain: "encryption-assembler", IsolationBoundary: "isolation-assembler", RetentionAuthority: "retention-assembler", Compatibility: tuple}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
 		t.Fatal(err)

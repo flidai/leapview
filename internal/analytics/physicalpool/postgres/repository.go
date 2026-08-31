@@ -107,7 +107,7 @@ func createPhysicalPoolTx(ctx context.Context, tx DBTX, normalized physicalpool.
 		return physicalpool.PhysicalPool{}, err
 	}
 	result, err := physicaldb.New(tx).InsertPhysicalPool(ctx, physicaldb.InsertPhysicalPoolParams{ID: string(normalized.ID), StorageLocation: normalized.Identity.StorageLocation, StorageNamespace: normalized.Identity.StorageNamespace,
-		StorageImplementation: normalized.Identity.Compatibility.StorageImplementation, ObjectNamingContract: normalized.Identity.Compatibility.ObjectNamingContract, Region: normalized.Identity.Region, Tenant: normalized.Identity.Tenant,
+		StorageImplementation: normalized.Identity.Compatibility.StorageImplementation, ObjectNamingContract: normalized.Identity.Compatibility.ObjectNamingContract, Region: normalized.Identity.Region, Tenant: normalized.Identity.Tenant, EncryptionDomain: normalized.Identity.EncryptionDomain,
 		IsolationBoundary: normalized.Identity.IsolationBoundary, EncryptionKeyRef: normalized.Identity.EncryptionKeyRef, CredentialReference: normalized.Identity.CredentialReference, RetentionAuthority: normalized.Identity.RetentionAuthority,
 		OrphanGracePeriodSeconds: normalized.Identity.RetentionPolicy.OrphanGracePeriodSeconds, ReaderGracePeriodSeconds: normalized.Identity.RetentionPolicy.ReaderGracePeriodSeconds, BuildGracePeriodSeconds: normalized.Identity.RetentionPolicy.BuildGracePeriodSeconds, RetentionPolicy: []byte(retention)})
 	if err == nil && result == 1 {
@@ -474,14 +474,14 @@ func loadStoredPoolTx(ctx context.Context, tx DBTX, id physicalpool.PoolID, fall
 	if err != nil {
 		return physicalpool.PhysicalPool{}, err
 	}
-	row := poolRow{ID: stored.ID, IdentityDigest: stored.IdentityDigest, StorageLocation: stored.StorageLocation, StorageNamespace: stored.StorageNamespace, StorageImplementation: stored.StorageImplementation, ObjectNamingContract: stored.ObjectNamingContract, Region: stored.Region, Tenant: stored.Tenant, IsolationBoundary: stored.IsolationBoundary, EncryptionKeyRef: stored.EncryptionKeyRef, CredentialReference: stored.CredentialReference, RetentionAuthority: stored.RetentionAuthority, OrphanGracePeriodSeconds: stored.OrphanGracePeriodSeconds, ReaderGracePeriodSeconds: stored.ReaderGracePeriodSeconds, BuildGracePeriodSeconds: stored.BuildGracePeriodSeconds, RetentionPolicy: stored.RetentionPolicy}
+	row := poolRow{ID: stored.ID, IdentityDigest: stored.IdentityDigest, StorageLocation: stored.StorageLocation, StorageNamespace: stored.StorageNamespace, StorageImplementation: stored.StorageImplementation, ObjectNamingContract: stored.ObjectNamingContract, Region: stored.Region, Tenant: stored.Tenant, EncryptionDomain: stored.EncryptionDomain, IsolationBoundary: stored.IsolationBoundary, EncryptionKeyRef: stored.EncryptionKeyRef, CredentialReference: stored.CredentialReference, RetentionAuthority: stored.RetentionAuthority, OrphanGracePeriodSeconds: stored.OrphanGracePeriodSeconds, ReaderGracePeriodSeconds: stored.ReaderGracePeriodSeconds, BuildGracePeriodSeconds: stored.BuildGracePeriodSeconds, RetentionPolicy: stored.RetentionPolicy}
 	return row.pool(fallback)
 }
 
 type poolRow struct {
-	ID, IdentityDigest, StorageLocation, StorageNamespace, StorageImplementation, ObjectNamingContract, Region, Tenant, IsolationBoundary, EncryptionKeyRef, CredentialReference, RetentionAuthority string
-	OrphanGracePeriodSeconds, ReaderGracePeriodSeconds, BuildGracePeriodSeconds                                                                                                                      int64
-	RetentionPolicy                                                                                                                                                                                  []byte
+	ID, IdentityDigest, StorageLocation, StorageNamespace, StorageImplementation, ObjectNamingContract, Region, Tenant, EncryptionDomain, IsolationBoundary, EncryptionKeyRef, CredentialReference, RetentionAuthority string
+	OrphanGracePeriodSeconds, ReaderGracePeriodSeconds, BuildGracePeriodSeconds                                                                                                                                        int64
+	RetentionPolicy                                                                                                                                                                                                    []byte
 }
 
 func (r poolRow) pool(compatibility physicalpool.Compatibility) (physicalpool.PhysicalPool, error) {
@@ -510,7 +510,7 @@ func (r poolRow) pool(compatibility physicalpool.Compatibility) (physicalpool.Ph
 	if !jsonEqual(parsed, canonMap) {
 		return physicalpool.PhysicalPool{}, safe(physicalpool.ErrInvalidPool, physicalpool.DiagnosticInvalidField, "retention_policy")
 	}
-	identity := physicalpool.PoolIdentity{StorageLocation: r.StorageLocation, StorageNamespace: r.StorageNamespace, Region: r.Region, Tenant: r.Tenant, IsolationBoundary: r.IsolationBoundary, EncryptionKeyRef: r.EncryptionKeyRef, CredentialReference: r.CredentialReference, RetentionAuthority: r.RetentionAuthority, RetentionPolicy: retention, Compatibility: compatibility}
+	identity := physicalpool.PoolIdentity{StorageLocation: r.StorageLocation, StorageNamespace: r.StorageNamespace, Region: r.Region, Tenant: r.Tenant, EncryptionDomain: r.EncryptionDomain, IsolationBoundary: r.IsolationBoundary, EncryptionKeyRef: r.EncryptionKeyRef, CredentialReference: r.CredentialReference, RetentionAuthority: r.RetentionAuthority, RetentionPolicy: retention, Compatibility: compatibility}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
 		return physicalpool.PhysicalPool{}, err
