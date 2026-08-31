@@ -3,21 +3,13 @@ package postgres
 import (
 	"context"
 	"errors"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/log"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
-
-const postgres18EventImage = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
 
 func TestPostgreSQL18EventRetentionRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
@@ -741,33 +733,201 @@ func TestPostgreSQL18ClaimFencingRetryPauseAndRetire(t *testing.T) {
 	}
 }
 
+func TestPostgreSQL18CommittedClaimSurvivesConnectionLossAndIsLeaseReclaimed(t *testing.T) {
+	db := eventTestDB(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
+	defer cancel()
+	r := New()
+
+	appendTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := r.AppendEvent(ctx, appendTx, EventInput{
+		ScopeID: "scope", AggregateType: "connection-loss", AggregateID: "1",
+		EventType: "item", SchemaVersion: 1, Payload: []byte(`{"ok":true}`),
+	})
+	if err != nil {
+		_ = appendTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := appendTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	enrollTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	consumer, err := r.EnrollConsumer(ctx, enrollTx, ConsumerInput{ConsumerKey: "connection-loss", ReplayFrom: time.Unix(0, 0)})
+	if err != nil {
+		_ = enrollTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := enrollTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	backfillTx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	backfill, err := r.Backfill(ctx, backfillTx, consumer.ConsumerID, 10)
+	if err != nil {
+		_ = backfillTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	if err := backfillTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !backfill.Done {
+		t.Fatal("backfill did not enable consumer")
+	}
+
+	// Keep each worker on an independent pool/connection. Hijacking the
+	// claimant connection and closing the underlying pgx connection models a
+	// process loss while leaving the committed claim visible to other workers.
+	claimantPool := eventTestPool(t, db)
+	successorPool := eventTestPool(t, db)
+	stalePool := eventTestPool(t, db)
+	claimantConn, err := claimantPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	claimTx, err := claimantConn.Begin(ctx)
+	if err != nil {
+		claimantConn.Release()
+		t.Fatal(err)
+	}
+	first, err := r.Claim(ctx, claimTx, ClaimOptions{
+		ConsumerID: consumer.ConsumerID, WorkerID: "worker-lost", Limit: 1, Lease: 100 * time.Millisecond,
+	})
+	if err != nil || len(first) != 1 {
+		_ = claimTx.Rollback(ctx)
+		claimantConn.Release()
+		t.Fatalf("first claim = %#v, %v", first, err)
+	}
+	if err := claimTx.Commit(ctx); err != nil {
+		claimantConn.Release()
+		t.Fatal(err)
+	}
+	firstClaim := first[0]
+	if firstClaim.EventID != event.EventID {
+		claimantConn.Release()
+		t.Fatalf("first claim event = %q, want %q", firstClaim.EventID, event.EventID)
+	}
+	// Hijack transfers ownership of the physical connection, so closing it is
+	// an actual connection loss rather than a pool release/reuse.
+	lostConn := claimantConn.Hijack()
+	claimantCloseCtx, closeCancel := context.WithTimeout(context.Background(), time.Second)
+	if err := lostConn.Close(claimantCloseCtx); err != nil {
+		closeCancel()
+		t.Fatal(err)
+	}
+	closeCancel()
+
+	var status string
+	var claimedBy string
+	if err := db.QueryRow(ctx, `
+		SELECT status, claimed_by FROM event.event_delivery
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, event.EventID).Scan(&status, &claimedBy); err != nil {
+		t.Fatal(err)
+	}
+	if status != "claimed" || claimedBy != "worker-lost" {
+		t.Fatalf("delivery after claimant loss = status %q owner %q, want claimed/worker-lost", status, claimedBy)
+	}
+
+	// Poll the database clock, rather than sleeping a fixed duration, so the
+	// successor claim starts as soon as the lease is observably expired while
+	// remaining bounded if the real PostgreSQL lane is unhealthy.
+	expiryCtx, expiryCancel := context.WithTimeout(ctx, 2*time.Second)
+	defer expiryCancel()
+	for {
+		var expired bool
+		if err := db.QueryRow(expiryCtx, `
+			SELECT claimed_until < clock_timestamp()
+			FROM event.event_delivery
+			WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, event.EventID).Scan(&expired); err != nil {
+			t.Fatal(err)
+		}
+		if expired {
+			break
+		}
+		select {
+		case <-expiryCtx.Done():
+			t.Fatalf("delivery lease did not expire: %v", expiryCtx.Err())
+		case <-time.After(5 * time.Millisecond):
+		}
+	}
+
+	successorConn, err := successorPool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	successorTx, err := successorConn.Begin(ctx)
+	if err != nil {
+		successorConn.Release()
+		t.Fatal(err)
+	}
+	second, err := r.Claim(ctx, successorTx, ClaimOptions{
+		ConsumerID: consumer.ConsumerID, WorkerID: "worker-successor", Limit: 1, Lease: time.Second,
+	})
+	if err != nil || len(second) != 1 {
+		_ = successorTx.Rollback(ctx)
+		successorConn.Release()
+		t.Fatalf("successor claim = %#v, %v", second, err)
+	}
+	if second[0].ClaimGeneration <= firstClaim.ClaimGeneration {
+		_ = successorTx.Rollback(ctx)
+		successorConn.Release()
+		t.Fatalf("claim generation did not advance: first=%d second=%d", firstClaim.ClaimGeneration, second[0].ClaimGeneration)
+	}
+	if err := successorTx.Commit(ctx); err != nil {
+		successorConn.Release()
+		t.Fatal(err)
+	}
+	successorConn.Release()
+
+	staleConn, err := stalePool.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleTx, err := staleConn.Begin(ctx)
+	if err != nil {
+		staleConn.Release()
+		t.Fatal(err)
+	}
+	staleErr := r.Complete(ctx, staleTx, consumer.ConsumerID, event.EventID, "worker-lost", firstClaim.ClaimGeneration, DeliverySucceeded, []byte(`{"stale":true}`))
+	if !errors.Is(staleErr, ErrDeliveryClaimLost) {
+		_ = staleTx.Rollback(ctx)
+		staleConn.Release()
+		t.Fatalf("stale completion error = %v, want ErrDeliveryClaimLost", staleErr)
+	}
+	_ = staleTx.Rollback(ctx)
+	staleConn.Release()
+
+	var currentGeneration int64
+	if err := db.QueryRow(ctx, `
+		SELECT status, claimed_by, claim_generation FROM event.event_delivery
+		WHERE consumer_id = $1::uuid AND event_id = $2::uuid`, consumer.ConsumerID, event.EventID).Scan(&status, &claimedBy, &currentGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if status != "claimed" || claimedBy != "worker-successor" {
+		t.Fatalf("delivery after stale completion = status %q owner %q, want claimed/worker-successor", status, claimedBy)
+	}
+	if currentGeneration != second[0].ClaimGeneration {
+		t.Fatalf("delivery generation after stale completion = %d, want %d", currentGeneration, second[0].ClaimGeneration)
+	}
+}
+
 func eventTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
-	defer cancel()
-	if !eventConformanceRequired() {
-		testcontainers.SkipIfProviderIsNotHealthy(t)
-	}
-	container, err := tcpostgres.Run(ctx, postgres18EventImage,
-		tcpostgres.WithDatabase("leapview_control"), tcpostgres.WithUsername("postgres"), tcpostgres.WithPassword("leapview-event-secret"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)),
-		testcontainers.WithLogger(log.TestLogger(t)))
-	if err != nil {
-		if eventConformanceRequired() {
-			t.Fatalf("required PostgreSQL 18 event container: %v", err)
-		}
-		t.Skipf("PostgreSQL 18 event container unavailable: %v", err)
-	}
-	testcontainers.CleanupContainer(t, container)
-	url, err := container.ConnectionString(ctx, "sslmode=disable")
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "")
+	db, err := pgxpool.New(t.Context(), database.AdminURL())
 	if err != nil {
 		t.Fatal(err)
 	}
-	db, err := pgxpool.New(ctx, url)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := db.Exec(ctx, SchemaSQL()); err != nil {
+	if _, err := db.Exec(t.Context(), SchemaSQL()); err != nil {
 		db.Close()
 		t.Fatal(err)
 	}
@@ -775,11 +935,15 @@ func eventTestDB(t *testing.T) *pgxpool.Pool {
 	return db
 }
 
-func eventConformanceRequired() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED"))) {
-	case "1", "true", "t", "yes", "on":
-		return true
-	default:
-		return false
+func eventTestPool(t *testing.T, base *pgxpool.Pool) *pgxpool.Pool {
+	t.Helper()
+	config := base.Config().Copy()
+	config.MaxConns = 1
+	config.MinConns = 0
+	pool, err := pgxpool.NewWithConfig(t.Context(), config)
+	if err != nil {
+		t.Fatal(err)
 	}
+	t.Cleanup(pool.Close)
+	return pool
 }

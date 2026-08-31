@@ -1108,7 +1108,10 @@ tasks:
 
   test:go:packages:
     cmds:
-      - go list ./... | grep -v '/internal/app$' | xargs go test -p 2
+      # Real PostgreSQL 18 suites run once, fail closed, in test:go:external.
+      # Keep the ordinary package lane focused on unit tests instead of
+      # starting the same pinned containers a second time.
+      - go list ./... | grep -v '/internal/app$' | xargs go test -p 2 -skip '^(TestPostgreSQL18|TestBaselinePostgreSQL18$)'
 
   test:go:app:0:
     cmds:
@@ -1142,11 +1145,14 @@ tasks:
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
-    desc: Run the required PostgreSQL 18 pool conformance test against a pinned image
+    desc: Run the fail-closed PostgreSQL 18 baseline, pool, event, and job conformance suites
     env:
       LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
     cmds:
       - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
+      - go test ./internal/platform/postgres/migrations -run '^TestBaselinePostgreSQL18$' -count=1 -v
+      - go test ./internal/platform/events/postgres -run '^TestPostgreSQL18' -count=1 -v
+      - go test ./internal/platform/jobs/postgres -run '^TestPostgreSQL18' -count=1 -v
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView

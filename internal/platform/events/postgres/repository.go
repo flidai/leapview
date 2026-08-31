@@ -47,6 +47,10 @@ func SchemaSQL() string { return schemaSQL }
 // New returns a stateless event repository.
 func New() *Repository { return &Repository{} }
 
+// ErrDeliveryClaimLost reports that a delivery transition no longer owns the
+// exact worker/generation fence supplied by the caller.
+var ErrDeliveryClaimLost = errors.New("event delivery is not claimed by worker")
+
 // EventInput describes one domain event. EventID is optional; when omitted a
 // UUIDv7 is generated.
 type EventInput struct {
@@ -715,7 +719,7 @@ func (r *Repository) Complete(ctx context.Context, tx Tx, consumerID, eventID, w
 		return fmt.Errorf("complete event delivery: %w", err)
 	}
 	if ct.RowsAffected() != 1 {
-		return errors.New("event delivery is not claimed by worker")
+		return ErrDeliveryClaimLost
 	}
 	return nil
 }
@@ -796,7 +800,7 @@ func (r *Repository) Retry(ctx context.Context, tx Tx, opts RetryOptions) error 
 		return fmt.Errorf("retry event delivery: %w", err)
 	}
 	if ct.RowsAffected() != 1 {
-		return errors.New("event delivery is not claimed by worker")
+		return ErrDeliveryClaimLost
 	}
 	return nil
 }

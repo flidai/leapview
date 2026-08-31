@@ -3,8 +3,6 @@ package postgres
 import (
 	"context"
 	"errors"
-	"os"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -13,9 +11,6 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5/pgxpool"
-	"github.com/testcontainers/testcontainers-go"
-	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 )
 
 func TestSchemaContainsNativeJobCoordinationTables(t *testing.T) {
@@ -125,26 +120,12 @@ func TestPostgreSQL18JobsLeastPrivilegeRoles(t *testing.T) {
 }
 
 func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "jobs_conformance")
+	database.CreateSchema(t, "jobs")
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Minute)
 	defer cancel()
-	if !postgresConformanceRequired() {
-		testcontainers.SkipIfProviderIsNotHealthy(t)
-	}
-	container, err := tcpostgres.Run(ctx, "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8",
-		tcpostgres.WithDatabase("jobs_conformance"), tcpostgres.WithUsername("jobs"), tcpostgres.WithPassword("jobs-secret"),
-		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(90*time.Second)))
-	if err != nil {
-		if postgresConformanceRequired() {
-			t.Fatalf("required PostgreSQL 18 jobs conformance container: %v", err)
-		}
-		t.Skipf("PostgreSQL conformance container unavailable: %v", err)
-	}
-	testcontainers.CleanupContainer(t, container)
-	url, err := container.ConnectionString(ctx, "sslmode=disable")
-	if err != nil {
-		t.Fatal(err)
-	}
-	pool, err := pgxpool.New(ctx, url)
+	pool, err := pgxpool.New(ctx, database.AdminURL())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -779,13 +760,4 @@ func TestPostgreSQL18ConcurrentWorkerClaimConformance(t *testing.T) {
 		}
 		_ = tx.Rollback(ctx)
 	})
-}
-
-func postgresConformanceRequired() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED"))) {
-	case "1", "true", "t", "yes", "on":
-		return true
-	default:
-		return false
-	}
 }

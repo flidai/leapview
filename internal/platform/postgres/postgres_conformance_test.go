@@ -119,6 +119,48 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 		}
 	})
 
+	t.Run("commit and constraint SQLSTATE", func(t *testing.T) {
+		name := schema + ".postgres_conformance_commit"
+		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
+			t.Fatal(err)
+		}
+		defer p.Exec(context.Background(), "DROP TABLE IF EXISTS "+name)
+		if _, err := p.Exec(ctx, "CREATE TABLE "+name+" (id integer primary key)"); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := p.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := tx.Exec(ctx, "INSERT INTO "+name+" VALUES (1)"); err != nil {
+			t.Fatal(err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+		var count int
+		if err := p.QueryRow(ctx, "SELECT count(*) FROM "+name).Scan(&count); err != nil || count != 1 {
+			t.Fatalf("committed row count=%d err=%v, want 1", count, err)
+		}
+		_, err = p.Exec(ctx, "INSERT INTO "+name+" VALUES (1)")
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			t.Fatalf("duplicate constraint error = %v, want unique_violation (23505)", err)
+		}
+	})
+
+	t.Run("statement timeout", func(t *testing.T) {
+		started := time.Now()
+		_, err := p.Exec(ctx, "SELECT pg_sleep(10)")
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "57014" {
+			t.Fatalf("statement timeout error = %v, want query_canceled (57014)", err)
+		}
+		if elapsed := time.Since(started); elapsed < time.Second || elapsed > 5*time.Second {
+			t.Fatalf("statement timeout elapsed=%s, want configured 2s bound", elapsed)
+		}
+	})
+
 	t.Run("lock timeout", func(t *testing.T) {
 		name := schema + ".postgres_conformance_lock"
 		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {
