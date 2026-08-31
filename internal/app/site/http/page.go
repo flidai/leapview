@@ -94,10 +94,6 @@ func sitePage(metadata sitePageMetadata) g.Node {
 						siteHomepageActions(),
 					),
 					g.El("figure", h.Class("site-product-frame"),
-						h.Div(h.Class("site-product-frame-bar"),
-							h.Span(h.Class("site-product-frame-dots"), g.Attr("aria-hidden", "true"), h.I(), h.I(), h.I()),
-							h.Span(g.Text("Dashboard · Visual Showcase")),
-						),
 						h.Div(h.Class("site-product-stage"),
 							h.Div(h.Class("site-product-dashboard"),
 								h.Img(

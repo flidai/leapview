@@ -228,22 +228,9 @@ lv-site-search:not(:defined) > .site-search-active-input {
   min-width: 0;
   margin: 0 auto;
   overflow: hidden;
-  border: var(--lv-border-default);
   border-radius: var(--lv-radius-large);
   background: var(--lv-bg-panel);
   box-shadow: var(--shadow-floating-small);
-}
-
-.site-product-frame-bar {
-  display: flex;
-  min-height: var(--control-large-size);
-  align-items: center;
-  gap: var(--base-size-12);
-  border-bottom: var(--lv-border-muted);
-  padding-inline: var(--base-size-16);
-  color: var(--lv-fg-muted);
-  font-size: var(--text-caption-size);
-  font-weight: var(--base-text-weight-medium);
 }
 
 .site-product-frame-dots {
