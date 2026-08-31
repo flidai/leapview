@@ -66,6 +66,17 @@ func TestReleasedHostRecoveryCompositionExecutesDueTransitionOwnersWithValidated
 		t.Fatal("embedded predecessor release is unavailable")
 	}
 	predecessor := predecessorRelease.IdentityForPlatform(runtime.GOOS + "/" + runtime.GOARCH)
+	for _, transition := range []struct {
+		operation     compatibility.Operation
+		current, next string
+	}{
+		{operation: compatibility.OperationUpgrade, current: predecessor.Image, next: identity.Image},
+		{operation: compatibility.OperationRollback, current: identity.Image, next: predecessor.Image},
+	} {
+		if err := policy.EvaluateImages(transition.operation, transition.current, transition.next, identity.Platform).Err(); err != nil {
+			t.Fatalf("valid %s transition denied before qualification: %v", transition.operation, err)
+		}
+	}
 	build := buildinfo.Identity{
 		Version: identity.Version, Revision: identity.SourceRevision, BuildTime: "2026-08-26T00:00:00Z",
 	}
@@ -174,11 +185,13 @@ esac
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Force more missed slots than the lifecycle batch can hold. Enqueueing must
+	// still distribute the bounded batch across every registered operation owner.
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 		UPDATE recovery_qualification_schedules
 		SET next_run_at = ?
 		WHERE closed_at IS NULL
-		`, now.Add(-time.Hour).Format("2006-01-02T15:04:05.000000000Z")); err != nil {
+	`, now.Add(-25*time.Hour).Format("2006-01-02T15:04:05.000000000Z")); err != nil {
 		t.Fatal(err)
 	}
 	if err := store.Close(); err != nil {

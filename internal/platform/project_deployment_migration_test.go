@@ -198,6 +198,15 @@ func TestRecoveryQualificationLedgerMigrationUpDownAndLegacyUpgrade(t *testing.T
 	} {
 		assertSQLTableCount(t, ctx, legacy, table, 1)
 	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 0)
+	if err := goose.UpToContext(ctx, legacy, "migrations", 94); err != nil {
+		t.Fatalf("upgrade recovery ledger fairness state: %v", err)
+	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 1)
+	if err := goose.DownToContext(ctx, legacy, "migrations", 93); err != nil {
+		t.Fatalf("downgrade recovery ledger fairness state: %v", err)
+	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 0)
 	if err := goose.DownToContext(ctx, legacy, "migrations", 92); err != nil {
 		t.Fatalf("downgrade recovery ledger migration: %v", err)
 	}
@@ -207,9 +216,10 @@ func TestRecoveryQualificationLedgerMigrationUpDownAndLegacyUpgrade(t *testing.T
 	} {
 		assertSQLTableCount(t, ctx, legacy, table, 0)
 	}
-	if err := goose.UpToContext(ctx, legacy, "migrations", 93); err != nil {
+	if err := goose.UpToContext(ctx, legacy, "migrations", 94); err != nil {
 		t.Fatalf("reapply recovery ledger migration: %v", err)
 	}
+	assertSQLTableCount(t, ctx, legacy, "recovery_qualification_enqueue_cursor", 1)
 }
 
 func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store) {
@@ -218,19 +228,19 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	if err := store.SQLDB().QueryRowContext(ctx, `SELECT COALESCE(max(version_id), 0) FROM goose_db_version WHERE is_applied = 1`).Scan(&latest); err != nil {
 		t.Fatalf("inspect applied Goose migrations: %v", err)
 	}
-	if latest != 93 {
-		t.Fatalf("latest applied migration = %d, want 93", latest)
+	if latest != 94 {
+		t.Fatalf("latest applied migration = %d, want 94", latest)
 	}
 	rows, err := store.SQLDB().QueryContext(ctx, `
 		SELECT version_id
 		FROM goose_db_version
-		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 93
+		WHERE is_applied = 1 AND version_id BETWEEN 73 AND 94
 		ORDER BY version_id`)
 	if err != nil {
 		t.Fatalf("inspect applied delivery migration sequence: %v", err)
 	}
 	defer rows.Close()
-	for want := int64(73); want <= 93; want++ {
+	for want := int64(73); want <= 94; want++ {
 		if !rows.Next() {
 			t.Fatalf("applied delivery migration sequence ended before %d", want)
 		}
@@ -275,6 +285,7 @@ func assertDeliveryMigrationTail(t *testing.T, ctx context.Context, store *Store
 	for _, table := range []string{
 		"recovery_qualification_schedules", "recovery_qualification_occurrences",
 		"recovery_qualification_attempts", "recovery_qualification_evidence_attempts",
+		"recovery_qualification_enqueue_cursor",
 	} {
 		assertTableCount(t, ctx, store, table, 1)
 	}

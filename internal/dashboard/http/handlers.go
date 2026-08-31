@@ -150,39 +150,40 @@ type Handler struct {
 	// ProjectID is the stable graph project resource selected by app
 	// composition. It is deliberately not taken from a route segment. When
 	// ResolveProjectID is configured, the lease-bound resolver is authoritative.
-	ProjectID               projectgraph.ResourceID
-	ResolveProjectID        func(context.Context) (projectgraph.ResourceID, error)
-	AnalyticalContext       func(context.Context) context.Context
-	Broker                  SignalBroker
-	Coordinators            *dashboardstream.Registry
-	Logger                  *slog.Logger
-	RefreshStarted          dashboardstream.StartObserver
-	RefreshFinished         dashboardstream.SummaryObserver
-	RefreshEventObserved    dashboardstream.EventPublisher
-	CacheObserved           dataquery.CacheOutcomeObserver
-	CurrentPrincipalID      func(r *nethttp.Request) string
-	CurrentUsagePrincipal   func(r *nethttp.Request) (string, bool)
-	RecordDashboardView     func(context.Context, usage.View) error
-	AuthorizeListResource   func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
-	CSRFToken               func(r *nethttp.Request) string
-	Layout                  func(r *nethttp.Request) webpage.Provider
-	Presentation            reportui.Presentation
-	Assets                  staticasset.Resolver
-	Environment             func(*nethttp.Request) string
-	DataRefreshedAt         func(context.Context, string, string, string) string
-	QueryFreshness          func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	CommandGuard            func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
-	SharedCommandPrepare    SharedCommandPrepare
-	SessionStore            dashboardsession.Store
-	SessionKey              SessionKeyFactory
-	OptionCursorSecret      []byte
-	OptionCache             *dashboardfilter.OptionCache
-	AgentBootstrap          func(*nethttp.Request, string) reportui.AgentBootstrap
-	AgentCommands           reportui.AgentCommandBindings
-	RouteScope              reportui.RouteScope
-	StreamNamespace         string
-	SpatialTileStreamClosed func(Metrics, string)
-	Authoring               AuthoringApplication
+	ProjectID                projectgraph.ResourceID
+	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
+	AnalyticalContext        func(context.Context) context.Context
+	Broker                   SignalBroker
+	Coordinators             *dashboardstream.Registry
+	Logger                   *slog.Logger
+	RefreshStarted           dashboardstream.StartObserver
+	RefreshFinished          dashboardstream.SummaryObserver
+	RefreshEventObserved     dashboardstream.EventPublisher
+	CacheObserved            dataquery.CacheOutcomeObserver
+	CacheObservationObserved dataquery.CacheObserver
+	CurrentPrincipalID       func(r *nethttp.Request) string
+	CurrentUsagePrincipal    func(r *nethttp.Request) (string, bool)
+	RecordDashboardView      func(context.Context, usage.View) error
+	AuthorizeListResource    func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
+	CSRFToken                func(r *nethttp.Request) string
+	Layout                   func(r *nethttp.Request) webpage.Provider
+	Presentation             reportui.Presentation
+	Assets                   staticasset.Resolver
+	Environment              func(*nethttp.Request) string
+	DataRefreshedAt          func(context.Context, string, string, string) string
+	QueryFreshness           func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	CommandGuard             func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
+	SharedCommandPrepare     SharedCommandPrepare
+	SessionStore             dashboardsession.Store
+	SessionKey               SessionKeyFactory
+	OptionCursorSecret       []byte
+	OptionCache              *dashboardfilter.OptionCache
+	AgentBootstrap           func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands            reportui.AgentCommandBindings
+	RouteScope               reportui.RouteScope
+	StreamNamespace          string
+	SpatialTileStreamClosed  func(Metrics, string)
+	Authoring                AuthoringApplication
 }
 
 func (h Handler) projectIDForRequest(ctx context.Context) (projectgraph.ResourceID, error) {

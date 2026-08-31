@@ -301,6 +301,18 @@ tasks:
       - go test ./internal/dashboard/http -run '^TestDashboardWarm' -bench '^BenchmarkDashboardWarmCacheConcurrency$' -benchmem -benchtime=250ms -count=10 -cpu=1
       - go test ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardWarmSerializationStages$' -benchmem -benchtime=500ms -count=10 -cpu=1
 
+  test:arrow:direct-streaming-experiment:
+    desc: Run the isolated FAI-543 governed native-v1 prototype contracts
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^(TestDashboardNativeArrowContract|TestDashboardDirectArrowExperiment)' -count=1
+      - go test -tags=fai543experiment ./internal/dashboard/queryauthz -run '^(TestDashboardNativeArrowContract|TestDirectArrowExperiment)' -count=1
+      - go test ./internal/dashboard/semanticapi -run '^(TestSemanticArrowSink|TestWriteSemanticArrowResponse)' -count=1
+
+  bench:arrow:direct-streaming-experiment:
+    desc: Compare current api_direct with the isolated FAI-543 governed native-v1 prototype
+    cmds:
+      - go test -tags=fai543experiment ./internal/dashboard/http -run '^$' -bench '^BenchmarkDashboardDirectArrowExperiment$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:
