@@ -125,12 +125,13 @@ CREATE INDEX IF NOT EXISTS ducklake_generation_binding_attempt_idx
     ON ducklake.generation_binding (attempt_id, fencing_epoch);
 
 -- A retention row is the gate for every durable root and active query lease.
--- Retiring prevents new leases while existing leases drain.
+-- Retiring/expiring prevents new leases while existing leases drain; expiring
+-- additionally records the exact maintenance claim being reconciled.
 CREATE TABLE IF NOT EXISTS ducklake.snapshot_retention (
     physical_pool_id text NOT NULL,
     catalog_id       text NOT NULL,
     snapshot_id      bigint NOT NULL CHECK (snapshot_id > 0),
-    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expired', 'quarantined', 'cleanup-complete')),
+    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expiring', 'expired', 'quarantined', 'cleanup-complete')),
     protected_until  timestamptz,
     retired_at       timestamptz,
     expired_at       timestamptz,
@@ -143,12 +144,17 @@ CREATE TABLE IF NOT EXISTS ducklake.snapshot_retention (
     cleanup_evidence jsonb,
     evidence         jsonb NOT NULL DEFAULT '{}'::jsonb
         CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
+    retention_claim_id uuid,
+    retention_claim_owner_id text,
+    retention_claim_fencing_epoch bigint NOT NULL DEFAULT 0 CHECK (retention_claim_fencing_epoch >= 0),
+    retention_claimed_at timestamptz,
     created_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (physical_pool_id, catalog_id, snapshot_id),
     FOREIGN KEY (physical_pool_id, catalog_id) REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
     CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
     CHECK ((state = 'live' AND retired_at IS NULL AND expired_at IS NULL) OR state <> 'live'),
     CHECK ((state = 'retiring' AND retired_at IS NOT NULL AND expired_at IS NULL) OR state <> 'retiring'),
+    CHECK ((state = 'expiring' AND retired_at IS NOT NULL AND expired_at IS NULL) OR state <> 'expiring'),
     CHECK ((state IN ('expired', 'quarantined', 'cleanup-complete') AND expired_at IS NOT NULL) OR state NOT IN ('expired', 'quarantined', 'cleanup-complete')),
     CHECK (retired_at IS NULL OR retired_at >= created_at),
     CHECK (expired_at IS NULL OR expired_at >= COALESCE(retired_at, created_at)),
@@ -160,8 +166,54 @@ CREATE TABLE IF NOT EXISTS ducklake.snapshot_retention (
     CHECK (quarantine_evidence IS NULL OR (jsonb_typeof(quarantine_evidence) = 'object' AND octet_length(quarantine_evidence::text) <= 32768)),
     CHECK (cleanup_evidence IS NULL OR (jsonb_typeof(cleanup_evidence) = 'object' AND octet_length(cleanup_evidence::text) <= 32768)),
     CHECK (quarantined_at IS NULL OR quarantined_at >= COALESCE(expired_at, created_at)),
-    CHECK (cleanup_completed_at IS NULL OR cleanup_completed_at >= COALESCE(quarantined_at, created_at))
+    CHECK (cleanup_completed_at IS NULL OR cleanup_completed_at >= COALESCE(quarantined_at, created_at)),
+    CHECK ((retention_claim_fencing_epoch = 0 AND retention_claim_id IS NULL AND retention_claim_owner_id IS NULL AND retention_claimed_at IS NULL)
+        OR (retention_claim_fencing_epoch > 0 AND retention_claim_id IS NOT NULL AND retention_claim_owner_id IS NOT NULL AND retention_claim_owner_id = btrim(retention_claim_owner_id) AND octet_length(retention_claim_owner_id) BETWEEN 1 AND 255 AND retention_claimed_at IS NOT NULL))
 );
+
+-- Add claim columns to installations created before the resumable retention
+-- coordinator existed. The checks above cover fresh databases; these guarded
+-- constraints preserve the same invariant during in-place upgrades.
+ALTER TABLE ducklake.snapshot_retention
+    ADD COLUMN IF NOT EXISTS retention_claim_id uuid,
+    ADD COLUMN IF NOT EXISTS retention_claim_owner_id text,
+    ADD COLUMN IF NOT EXISTS retention_claim_fencing_epoch bigint NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS retention_claimed_at timestamptz;
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ducklake.snapshot_retention'::regclass AND conname='snapshot_retention_claim_epoch_nonnegative') THEN
+        ALTER TABLE ducklake.snapshot_retention ADD CONSTRAINT snapshot_retention_claim_epoch_nonnegative CHECK (retention_claim_fencing_epoch >= 0);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ducklake.snapshot_retention'::regclass AND conname='snapshot_retention_claim_shape') THEN
+        ALTER TABLE ducklake.snapshot_retention ADD CONSTRAINT snapshot_retention_claim_shape CHECK ((retention_claim_fencing_epoch = 0 AND retention_claim_id IS NULL AND retention_claim_owner_id IS NULL AND retention_claimed_at IS NULL)
+            OR (retention_claim_fencing_epoch > 0 AND retention_claim_id IS NOT NULL AND retention_claim_owner_id IS NOT NULL AND retention_claim_owner_id = btrim(retention_claim_owner_id) AND octet_length(retention_claim_owner_id) BETWEEN 1 AND 255 AND retention_claimed_at IS NOT NULL));
+    END IF;
+END $$;
+
+-- Older installations predate the resumable expiry claim state and retain the
+-- original inline state check (which does not admit `expiring`).  Replace that
+-- generated constraint in place so claim_retention_snapshots can advance rows
+-- without requiring a destructive table rebuild.  Fresh databases already
+-- carry the current definition and therefore take the no-op path.
+DO $$
+DECLARE
+    v_definition text;
+BEGIN
+    SELECT pg_get_constraintdef(oid)
+      INTO v_definition
+      FROM pg_constraint
+     WHERE conrelid='ducklake.snapshot_retention'::regclass
+       AND conname='snapshot_retention_state_check';
+    IF v_definition IS NOT NULL AND position('expiring' IN v_definition) = 0 THEN
+        ALTER TABLE ducklake.snapshot_retention DROP CONSTRAINT snapshot_retention_state_check;
+        v_definition := NULL;
+    END IF;
+    IF v_definition IS NULL THEN
+        ALTER TABLE ducklake.snapshot_retention
+            ADD CONSTRAINT snapshot_retention_state_check
+            CHECK (state IN ('live', 'retiring', 'expiring', 'expired', 'quarantined', 'cleanup-complete'));
+    END IF;
+END $$;
 
 -- Query leases carry the exact generation binding and owner fence.  They are
 -- roots only while active; release and expiry are monotonic transitions.
@@ -300,6 +352,92 @@ CREATE TABLE IF NOT EXISTS ducklake.migration_fence (
 
 INSERT INTO ducklake.migration_fence(scope, physical_pool_id)
 VALUES ('global', '') ON CONFLICT (scope, physical_pool_id) DO NOTHING;
+
+-- Catalog-wide retention has its own authority.  It deliberately does not
+-- reuse migration_fence: snapshot expiry and physical-file cleanup are a
+-- resumable maintenance operation, not a catalog schema migration.  The
+-- composite key prevents two workers from expiring the same pool/catalog
+-- concurrently while the monotonically increasing epoch fences stale
+-- workers after lease takeover.
+CREATE TABLE IF NOT EXISTS ducklake.pool_maintenance_fence (
+    physical_pool_id       text NOT NULL,
+    catalog_id             text NOT NULL,
+    owner_id               text,
+    fencing_epoch          bigint NOT NULL DEFAULT 0 CHECK (fencing_epoch >= 0),
+    lease_expires_at       timestamptz,
+    updated_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (physical_pool_id, catalog_id),
+    FOREIGN KEY (physical_pool_id, catalog_id)
+        REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
+    CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
+    CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
+    CHECK ((owner_id IS NULL AND lease_expires_at IS NULL) OR
+           (owner_id IS NOT NULL AND owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255 AND lease_expires_at IS NOT NULL))
+);
+
+-- A maintenance run and its exact snapshot set survive worker crashes.  The
+-- operation row records catalog-wide phase progress; child rows carry the
+-- per-snapshot evidence needed for exact replay and audit.
+CREATE TABLE IF NOT EXISTS ducklake.retention_maintenance (
+    maintenance_id    uuid PRIMARY KEY,
+    physical_pool_id  text NOT NULL,
+    catalog_id        text NOT NULL,
+    owner_id           text NOT NULL,
+    fencing_epoch      bigint NOT NULL CHECK (fencing_epoch > 0),
+    state              text NOT NULL CHECK (state IN ('running','completed','failed')),
+    phase              text NOT NULL CHECK (phase IN ('expiry','old-files','orphans','completed')),
+    dry_run            boolean NOT NULL,
+    file_grace_micros  bigint NOT NULL CHECK (file_grace_micros > 0),
+    snapshot_set_digest text NOT NULL DEFAULT '' CHECK (snapshot_set_digest = '' OR snapshot_set_digest ~ '^sha256:[0-9a-f]{64}$'),
+    phase_evidence     jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(phase_evidence) = 'object' AND octet_length(phase_evidence::text) <= 32768),
+    started_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at         timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at       timestamptz,
+    FOREIGN KEY (physical_pool_id, catalog_id)
+        REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
+    UNIQUE (maintenance_id, physical_pool_id, catalog_id),
+    CHECK (completed_at IS NULL OR state IN ('completed','failed'))
+);
+
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conrelid='ducklake.snapshot_retention'::regclass AND conname='snapshot_retention_maintenance_claim_fk') THEN
+        ALTER TABLE ducklake.snapshot_retention
+            ADD CONSTRAINT snapshot_retention_maintenance_claim_fk
+            FOREIGN KEY (retention_claim_id, physical_pool_id, catalog_id)
+            REFERENCES ducklake.retention_maintenance(maintenance_id, physical_pool_id, catalog_id);
+    END IF;
+END $$;
+
+CREATE TABLE IF NOT EXISTS ducklake.retention_maintenance_snapshot (
+    maintenance_id      uuid NOT NULL REFERENCES ducklake.retention_maintenance(maintenance_id) ON DELETE RESTRICT,
+    physical_pool_id    text NOT NULL,
+    catalog_id          text NOT NULL,
+    snapshot_id         bigint NOT NULL CHECK (snapshot_id > 0),
+    phase                text NOT NULL CHECK (phase IN ('eligible','expired','quarantined','cleanup-complete')),
+    expiry_evidence     jsonb,
+    quarantine_evidence jsonb,
+    cleanup_evidence    jsonb,
+    created_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (maintenance_id, physical_pool_id, catalog_id, snapshot_id),
+    FOREIGN KEY (physical_pool_id, catalog_id, snapshot_id)
+        REFERENCES ducklake.snapshot_retention(physical_pool_id, catalog_id, snapshot_id),
+    FOREIGN KEY (maintenance_id, physical_pool_id, catalog_id)
+        REFERENCES ducklake.retention_maintenance(maintenance_id, physical_pool_id, catalog_id),
+    CHECK (expiry_evidence IS NULL OR (jsonb_typeof(expiry_evidence) = 'object' AND octet_length(expiry_evidence::text) <= 32768)),
+    CHECK (quarantine_evidence IS NULL OR (jsonb_typeof(quarantine_evidence) = 'object' AND octet_length(quarantine_evidence::text) <= 32768)),
+    CHECK (cleanup_evidence IS NULL OR (jsonb_typeof(cleanup_evidence) = 'object' AND octet_length(cleanup_evidence::text) <= 32768)),
+    CHECK ((phase = 'eligible' AND expiry_evidence IS NULL AND quarantine_evidence IS NULL AND cleanup_evidence IS NULL)
+        OR phase <> 'eligible'),
+    CHECK ((phase IN ('expired','quarantined','cleanup-complete') AND expiry_evidence IS NOT NULL) OR phase IN ('eligible')),
+    CHECK ((phase IN ('quarantined','cleanup-complete') AND quarantine_evidence IS NOT NULL) OR phase IN ('eligible','expired')),
+    CHECK ((phase = 'cleanup-complete' AND cleanup_evidence IS NOT NULL) OR phase <> 'cleanup-complete')
+);
+
+CREATE INDEX IF NOT EXISTS ducklake_retention_maintenance_snapshot_idx
+    ON ducklake.retention_maintenance_snapshot (physical_pool_id, catalog_id, phase, snapshot_id);
 
 -- One immutable row records the exact before/after tuple and every lifecycle
 -- outcome.  Completion/failure evidence is append-only through the guarded
@@ -636,6 +774,9 @@ BEGIN
     IF OLD.state = 'expired' AND NEW.state NOT IN ('expired', 'quarantined', 'cleanup-complete') THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
     END IF;
+    IF OLD.state = 'expiring' AND NEW.state NOT IN ('expiring', 'expired') THEN
+        RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
+    END IF;
     IF OLD.state IN ('expired', 'quarantined', 'cleanup-complete') AND NEW.state = OLD.state AND (
            NEW.protected_until IS DISTINCT FROM OLD.protected_until
         OR NEW.retired_at IS DISTINCT FROM OLD.retired_at
@@ -659,14 +800,19 @@ BEGIN
        AND (NEW.state NOT IN ('expired','quarantined') OR NEW.cleanup_owner_id IS NULL OR NEW.cleanup_lease_expires_at IS NULL) THEN
         RAISE EXCEPTION 'DuckLake cleanup claim requires an expiring snapshot';
     END IF;
+    IF NEW.state = 'expiring'
+       AND (NEW.retention_claim_id IS NULL OR NEW.retention_claim_owner_id IS NULL
+            OR NEW.retention_claim_fencing_epoch <= 0 OR NEW.retention_claimed_at IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake expiring snapshot requires a maintenance claim';
+    END IF;
     IF NEW.protected_until IS NOT NULL AND OLD.protected_until IS NOT NULL
        AND NEW.protected_until < OLD.protected_until THEN
         RAISE EXCEPTION 'DuckLake snapshot protection cannot move backwards';
     END IF;
-    IF OLD.state IN ('retiring', 'expired', 'quarantined', 'cleanup-complete') AND NEW.state = 'live' THEN
+    IF OLD.state IN ('retiring', 'expiring', 'expired', 'quarantined', 'cleanup-complete') AND NEW.state = 'live' THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
     END IF;
-    IF OLD.state = 'retiring' AND NEW.state NOT IN ('retiring', 'expired') THEN
+    IF OLD.state = 'retiring' AND NEW.state NOT IN ('retiring', 'expiring') THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle is monotonic';
     END IF;
     IF OLD.state = 'live' AND NEW.state NOT IN ('live', 'retiring') THEN
@@ -682,7 +828,7 @@ BEGIN
         RAISE EXCEPTION 'DuckLake snapshot durable roots must be released before retirement';
     END IF;
     IF NEW.evidence IS DISTINCT FROM OLD.evidence
-       AND NOT (OLD.state = 'retiring' AND NEW.state = 'expired') THEN
+       AND NOT (OLD.state IN ('retiring', 'expiring') AND NEW.state = 'expired') THEN
         RAISE EXCEPTION 'DuckLake snapshot retention evidence is immutable';
     END IF;
     IF NEW.state = OLD.state AND (
@@ -690,10 +836,10 @@ BEGIN
         OR NEW.expired_at IS DISTINCT FROM OLD.expired_at) THEN
         RAISE EXCEPTION 'DuckLake snapshot retention lifecycle timestamps are immutable';
     END IF;
-    IF OLD.state = 'live' AND NEW.state IN ('expired', 'quarantined', 'cleanup-complete') THEN
+    IF OLD.state = 'live' AND NEW.state IN ('expiring', 'expired', 'quarantined', 'cleanup-complete') THEN
         RAISE EXCEPTION 'DuckLake snapshot must retire before expiration';
     END IF;
-    IF OLD.state = 'retiring' AND NEW.state = 'expired'
+    IF OLD.state IN ('retiring', 'expiring') AND NEW.state = 'expired'
        AND (EXISTS (
                SELECT 1 FROM ducklake.snapshot_lease
                 WHERE physical_pool_id=OLD.physical_pool_id
@@ -895,6 +1041,100 @@ CREATE TRIGGER migration_fence_monotonic
     BEFORE UPDATE OR DELETE ON ducklake.migration_fence
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_migration_fence_change();
 
+CREATE OR REPLACE FUNCTION ducklake.reject_pool_maintenance_fence_change()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       OR NEW.physical_pool_id <> OLD.physical_pool_id
+       OR NEW.catalog_id <> OLD.catalog_id THEN
+        RAISE EXCEPTION 'DuckLake pool maintenance fence identity is immutable';
+    END IF;
+    IF NEW.fencing_epoch < OLD.fencing_epoch THEN
+        RAISE EXCEPTION 'DuckLake pool maintenance fencing epoch cannot move backwards';
+    END IF;
+    IF NEW.fencing_epoch = OLD.fencing_epoch
+       AND NEW.owner_id IS DISTINCT FROM OLD.owner_id
+       AND NOT (NEW.owner_id IS NULL AND NEW.lease_expires_at IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake pool maintenance fence owner change requires a new epoch';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.reject_retention_maintenance_change()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       OR NEW.maintenance_id <> OLD.maintenance_id
+       OR NEW.physical_pool_id <> OLD.physical_pool_id
+       OR NEW.catalog_id <> OLD.catalog_id
+       OR NEW.started_at <> OLD.started_at THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance identity is immutable';
+    END IF;
+    IF OLD.state IN ('completed','failed') AND
+       (NEW.state <> OLD.state OR NEW.phase <> OLD.phase
+        OR NEW.owner_id <> OLD.owner_id OR NEW.fencing_epoch <> OLD.fencing_epoch
+        OR NEW.dry_run <> OLD.dry_run OR NEW.file_grace_micros <> OLD.file_grace_micros
+        OR NEW.snapshot_set_digest <> OLD.snapshot_set_digest
+        OR NEW.phase_evidence IS DISTINCT FROM OLD.phase_evidence
+        OR NEW.completed_at IS DISTINCT FROM OLD.completed_at) THEN
+        RAISE EXCEPTION 'DuckLake terminal retention maintenance is immutable';
+    END IF;
+    IF OLD.state = 'running'
+       AND (NEW.dry_run <> OLD.dry_run OR NEW.file_grace_micros <> OLD.file_grace_micros
+            OR (OLD.snapshot_set_digest <> '' AND NEW.snapshot_set_digest <> OLD.snapshot_set_digest)) THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance request identity is immutable';
+    END IF;
+    IF NEW.fencing_epoch < OLD.fencing_epoch THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance fencing epoch cannot move backwards';
+    END IF;
+    IF NEW.state = 'completed' AND (NEW.phase <> 'completed' OR NEW.completed_at IS NULL) THEN
+        RAISE EXCEPTION 'DuckLake completed retention maintenance requires terminal phase';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.reject_retention_maintenance_snapshot_change()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       OR NEW.maintenance_id <> OLD.maintenance_id
+       OR NEW.physical_pool_id <> OLD.physical_pool_id
+       OR NEW.catalog_id <> OLD.catalog_id
+       OR NEW.snapshot_id <> OLD.snapshot_id
+       OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance snapshot identity is immutable';
+    END IF;
+    IF OLD.phase = 'cleanup-complete' AND (NEW.phase <> OLD.phase OR NEW.expiry_evidence IS DISTINCT FROM OLD.expiry_evidence OR NEW.quarantine_evidence IS DISTINCT FROM OLD.quarantine_evidence OR NEW.cleanup_evidence IS DISTINCT FROM OLD.cleanup_evidence) THEN
+        RAISE EXCEPTION 'DuckLake completed retention maintenance snapshot is immutable';
+    END IF;
+    IF OLD.phase = 'quarantined' AND NEW.phase NOT IN ('quarantined','cleanup-complete') THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance snapshot lifecycle is monotonic';
+    END IF;
+    IF OLD.phase = 'expired' AND NEW.phase NOT IN ('expired','quarantined','cleanup-complete') THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance snapshot lifecycle is monotonic';
+    END IF;
+    IF OLD.phase = 'eligible' AND NEW.phase NOT IN ('eligible','expired','quarantined') THEN
+        RAISE EXCEPTION 'DuckLake retention maintenance snapshot lifecycle is monotonic';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS pool_maintenance_fence_monotonic ON ducklake.pool_maintenance_fence;
+CREATE TRIGGER pool_maintenance_fence_monotonic
+    BEFORE UPDATE OR DELETE ON ducklake.pool_maintenance_fence
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_pool_maintenance_fence_change();
+DROP TRIGGER IF EXISTS retention_maintenance_immutable ON ducklake.retention_maintenance;
+CREATE TRIGGER retention_maintenance_immutable
+    BEFORE UPDATE OR DELETE ON ducklake.retention_maintenance
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_retention_maintenance_change();
+DROP TRIGGER IF EXISTS retention_maintenance_snapshot_immutable ON ducklake.retention_maintenance_snapshot;
+CREATE TRIGGER retention_maintenance_snapshot_immutable
+    BEFORE UPDATE OR DELETE ON ducklake.retention_maintenance_snapshot
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_retention_maintenance_snapshot_change();
+
 -- The control upgrade coordinator receives no direct DML on authority rows. These narrowly
 -- scoped SECURITY DEFINER functions are the database capability boundary: all
 -- fence claims, compatibility registration, lifecycle transitions, and
@@ -937,11 +1177,6 @@ BEGIN
        AND p_scope='pool' AND v_global_owner <> p_owner_id THEN
         RAISE EXCEPTION 'migration fence busy';
     END IF;
-    IF p_scope='global' AND v_global_owner IS NOT NULL AND v_global_expiry > v_now
-       AND v_global_owner = p_owner_id THEN
-        RETURN QUERY SELECT 'global'::text,''::text,v_global_owner,v_global_epoch,v_global_expiry;
-        RETURN;
-    END IF;
     IF p_scope='global' AND EXISTS (
         SELECT 1 FROM ducklake.migration_fence f
          WHERE f.scope='pool' AND f.owner_id IS NOT NULL AND f.lease_expires_at > v_now
@@ -957,6 +1192,21 @@ BEGIN
       FROM ducklake.migration_fence f
      WHERE f.scope=p_scope AND f.physical_pool_id=p_physical_pool_id
      FOR UPDATE;
+    -- Retention acquisition locks global migration → pool migration →
+    -- maintenance.  Use that same order to close the cross-authority race.
+    IF p_scope = 'global' THEN
+        PERFORM 1 FROM ducklake.pool_maintenance_fence f
+         WHERE f.owner_id IS NOT NULL AND f.lease_expires_at > v_now
+         FOR UPDATE;
+    ELSE
+        PERFORM 1 FROM ducklake.pool_maintenance_fence f
+         WHERE f.physical_pool_id=p_physical_pool_id
+           AND f.owner_id IS NOT NULL AND f.lease_expires_at > v_now
+         FOR UPDATE;
+    END IF;
+    IF FOUND THEN
+        RAISE EXCEPTION 'migration fence busy';
+    END IF;
     IF v_owner IS NOT NULL AND v_expiry > v_now THEN
         IF v_owner = p_owner_id THEN
             RETURN QUERY SELECT p_scope,p_physical_pool_id,v_owner,v_epoch,v_expiry;
@@ -1025,6 +1275,573 @@ BEGIN
         RAISE EXCEPTION 'migration fence expired';
     END IF;
     RAISE EXCEPTION 'migration fence stale';
+END;
+$$;
+
+-- Retention authority is catalog-wide for one physical pool.  Claims are
+-- serialized by the row lock and fenced by a monotonically increasing epoch.
+-- The function intentionally has no age-based defaults: callers enumerate
+-- exact control-plane eligible snapshots before invoking DuckLake expiry.
+CREATE OR REPLACE FUNCTION ducklake.acquire_pool_maintenance_fence(
+    p_physical_pool_id text,
+    p_catalog_id text,
+    p_owner_id text,
+    p_lease_expires_at timestamptz
+) RETURNS TABLE(physical_pool_id text, catalog_id text, owner_id text, fencing_epoch bigint, lease_expires_at timestamptz)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_lease timestamptz := COALESCE(p_lease_expires_at, v_now + interval '24 hours');
+    v_owner text;
+    v_epoch bigint;
+    v_expiry timestamptz;
+BEGIN
+    IF p_physical_pool_id = '' OR p_physical_pool_id <> btrim(p_physical_pool_id) OR octet_length(p_physical_pool_id) > 255
+       OR p_catalog_id = '' OR p_catalog_id <> btrim(p_catalog_id) OR octet_length(p_catalog_id) > 255
+       OR p_owner_id = '' OR p_owner_id <> btrim(p_owner_id) OR octet_length(p_owner_id) > 255
+       OR v_lease <= v_now OR v_lease > v_now + interval '24 hours' THEN
+        RAISE EXCEPTION 'invalid pool maintenance fence claim';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM ducklake.catalog_identity ci WHERE ci.physical_pool_id=p_physical_pool_id AND ci.catalog_id=p_catalog_id) THEN
+        RAISE EXCEPTION 'catalog identity not found';
+    END IF;
+    -- Lock the migration rows first.  Migration acquisition uses the same
+    -- global→pool→maintenance order, preventing a check-then-act race.
+    INSERT INTO ducklake.migration_fence(scope,physical_pool_id)
+    VALUES ('global','') ON CONFLICT DO NOTHING;
+    PERFORM 1 FROM ducklake.migration_fence mf
+     WHERE mf.scope='global' AND mf.physical_pool_id='' FOR UPDATE;
+    INSERT INTO ducklake.migration_fence(scope,physical_pool_id)
+    VALUES ('pool',p_physical_pool_id) ON CONFLICT DO NOTHING;
+    PERFORM 1 FROM ducklake.migration_fence mf
+     WHERE mf.scope='pool' AND mf.physical_pool_id=p_physical_pool_id FOR UPDATE;
+    INSERT INTO ducklake.pool_maintenance_fence(physical_pool_id,catalog_id)
+    VALUES (p_physical_pool_id,p_catalog_id) ON CONFLICT DO NOTHING;
+    SELECT f.owner_id,f.fencing_epoch,f.lease_expires_at
+      INTO v_owner,v_epoch,v_expiry
+      FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+     FOR UPDATE;
+    IF v_owner IS NOT NULL AND v_expiry > v_now THEN
+        IF v_owner = p_owner_id THEN
+            RETURN QUERY SELECT p_physical_pool_id,p_catalog_id,v_owner,v_epoch,v_expiry;
+            RETURN;
+        END IF;
+        RAISE EXCEPTION 'pool maintenance fence busy';
+    END IF;
+    -- Maintenance and catalog migration are separate authorities, but may not
+    -- mutate the same pool concurrently.
+    IF EXISTS (SELECT 1 FROM ducklake.migration_fence f
+              WHERE ((f.scope='global' AND f.physical_pool_id='') OR
+                     (f.scope='pool' AND f.physical_pool_id=p_physical_pool_id))
+                AND f.owner_id IS NOT NULL AND f.lease_expires_at > v_now) THEN
+        RAISE EXCEPTION 'pool maintenance fence busy';
+    END IF;
+    UPDATE ducklake.pool_maintenance_fence f
+       SET owner_id=p_owner_id, fencing_epoch=f.fencing_epoch+1,
+           lease_expires_at=v_lease, updated_at=v_now
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+     RETURNING f.owner_id,f.fencing_epoch,f.lease_expires_at
+      INTO v_owner,v_epoch,v_expiry;
+    RETURN QUERY SELECT p_physical_pool_id,p_catalog_id,v_owner,v_epoch,v_expiry;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.release_pool_maintenance_fence(
+    p_physical_pool_id text, p_catalog_id text, p_owner_id text, p_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_owner text; v_epoch bigint;
+BEGIN
+    UPDATE ducklake.pool_maintenance_fence
+       SET owner_id=NULL, lease_expires_at=NULL, updated_at=clock_timestamp()
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id
+       AND owner_id=p_owner_id AND fencing_epoch=p_fencing_epoch;
+    IF FOUND THEN RETURN; END IF;
+    SELECT owner_id,fencing_epoch INTO v_owner,v_epoch
+      FROM ducklake.pool_maintenance_fence
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'pool maintenance fence not found'; END IF;
+    IF v_owner IS NULL AND v_epoch=p_fencing_epoch THEN RETURN; END IF;
+    RAISE EXCEPTION 'pool maintenance fence stale';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.renew_pool_maintenance_fence(
+    p_physical_pool_id text, p_catalog_id text, p_owner_id text,
+    p_fencing_epoch bigint, p_lease_expires_at timestamptz
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_lease timestamptz := COALESCE(p_lease_expires_at, v_now + interval '24 hours');
+    v_owner text; v_epoch bigint; v_expiry timestamptz;
+BEGIN
+    IF v_lease <= v_now OR v_lease > v_now + interval '24 hours' THEN
+        RAISE EXCEPTION 'invalid pool maintenance fence renewal';
+    END IF;
+    UPDATE ducklake.pool_maintenance_fence
+       SET lease_expires_at=v_lease, updated_at=v_now
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id
+       AND owner_id=p_owner_id AND fencing_epoch=p_fencing_epoch
+       AND lease_expires_at > v_now;
+    IF FOUND THEN RETURN; END IF;
+    SELECT owner_id,fencing_epoch,lease_expires_at INTO v_owner,v_epoch,v_expiry
+      FROM ducklake.pool_maintenance_fence
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id;
+    IF NOT FOUND OR v_owner IS DISTINCT FROM p_owner_id OR v_epoch <> p_fencing_epoch THEN
+        RAISE EXCEPTION 'pool maintenance fence stale';
+    END IF;
+    IF v_expiry IS NULL OR v_expiry <= v_now THEN
+        RAISE EXCEPTION 'pool maintenance fence expired';
+    END IF;
+    RAISE EXCEPTION 'pool maintenance fence stale';
+END;
+$$;
+
+-- Retention lifecycle writes are capability-gated.  The maintenance role has
+-- no INSERT/UPDATE privilege on these tables; each function validates the
+-- exact pool fence and operation identity before changing state.  Snapshot
+-- retention and its durable per-operation evidence are advanced together in
+-- the same function transaction, so a crash cannot expose one without the
+-- other.
+CREATE OR REPLACE FUNCTION ducklake.begin_retention_maintenance(
+    p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_fencing_epoch bigint, p_dry_run boolean,
+    p_file_grace_micros bigint, p_snapshot_set_digest text,
+    p_phase_evidence jsonb
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_existing record;
+BEGIN
+    IF p_physical_pool_id = '' OR p_physical_pool_id <> btrim(p_physical_pool_id) OR octet_length(p_physical_pool_id) > 255
+       OR p_catalog_id = '' OR p_catalog_id <> btrim(p_catalog_id) OR octet_length(p_catalog_id) > 255
+       OR p_owner_id = '' OR p_owner_id <> btrim(p_owner_id) OR octet_length(p_owner_id) > 255
+       OR p_fencing_epoch <= 0 OR p_file_grace_micros <= 0
+       OR p_snapshot_set_digest <> '' AND p_snapshot_set_digest !~ '^sha256:[0-9a-f]{64}$'
+       OR jsonb_typeof(COALESCE(p_phase_evidence, '{}'::jsonb)) <> 'object' THEN
+        RAISE EXCEPTION 'invalid retention maintenance request';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_existing FROM ducklake.retention_maintenance
+     WHERE maintenance_id=p_maintenance_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+           OR v_existing.catalog_id IS DISTINCT FROM p_catalog_id
+           OR v_existing.dry_run IS DISTINCT FROM p_dry_run
+           OR v_existing.file_grace_micros IS DISTINCT FROM p_file_grace_micros
+           OR (v_existing.snapshot_set_digest <> '' AND p_snapshot_set_digest <> '' AND v_existing.snapshot_set_digest IS DISTINCT FROM p_snapshot_set_digest)
+           OR v_existing.state NOT IN ('running','completed') THEN
+            RAISE EXCEPTION 'retention maintenance conflict';
+        END IF;
+        IF v_existing.state='completed' THEN RETURN; END IF;
+        UPDATE ducklake.retention_maintenance
+           SET owner_id=p_owner_id, fencing_epoch=p_fencing_epoch, updated_at=v_now
+         WHERE maintenance_id=p_maintenance_id;
+        RETURN;
+    END IF;
+    INSERT INTO ducklake.retention_maintenance
+      (maintenance_id,physical_pool_id,catalog_id,owner_id,fencing_epoch,state,phase,
+       dry_run,file_grace_micros,snapshot_set_digest,phase_evidence,started_at,updated_at)
+    VALUES
+      (p_maintenance_id,p_physical_pool_id,p_catalog_id,p_owner_id,p_fencing_epoch,
+       'running','expiry',p_dry_run,p_file_grace_micros,COALESCE(p_snapshot_set_digest,''),
+       COALESCE(p_phase_evidence,'{}'::jsonb),v_now,v_now);
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.update_retention_maintenance(
+    p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_fencing_epoch bigint, p_state text, p_phase text,
+    p_dry_run boolean, p_file_grace_micros bigint, p_snapshot_set_digest text,
+    p_phase_evidence jsonb, p_completed_at timestamptz
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_existing record; v_missing bigint;
+BEGIN
+    IF p_state NOT IN ('running','completed','failed') OR p_phase NOT IN ('expiry','old-files','orphans','completed')
+       OR p_owner_id = '' OR p_owner_id <> btrim(p_owner_id) OR octet_length(p_owner_id) > 255
+       OR p_fencing_epoch <= 0 OR p_file_grace_micros <= 0
+       OR p_snapshot_set_digest <> '' AND p_snapshot_set_digest !~ '^sha256:[0-9a-f]{64}$'
+       OR jsonb_typeof(COALESCE(p_phase_evidence, '{}'::jsonb)) <> 'object' THEN
+        RAISE EXCEPTION 'invalid retention maintenance update';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_existing FROM ducklake.retention_maintenance
+     WHERE maintenance_id=p_maintenance_id FOR UPDATE;
+    IF NOT FOUND OR v_existing.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_existing.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_existing.owner_id IS DISTINCT FROM p_owner_id
+       OR v_existing.fencing_epoch IS DISTINCT FROM p_fencing_epoch THEN
+        RAISE EXCEPTION 'maintenance fence stale';
+    END IF;
+    IF v_existing.state <> 'running' THEN
+        IF v_existing.state=p_state AND v_existing.phase=p_phase
+           AND v_existing.phase_evidence IS NOT DISTINCT FROM COALESCE(p_phase_evidence,'{}'::jsonb) THEN RETURN; END IF;
+        RAISE EXCEPTION 'terminal retention maintenance is immutable';
+    END IF;
+    IF p_state='completed' AND p_snapshot_set_digest = '' THEN
+        RAISE EXCEPTION 'retention maintenance snapshot set is not frozen';
+    END IF;
+    IF p_state='completed' AND NOT p_dry_run THEN
+        SELECT count(*) INTO v_missing
+          FROM ducklake.retention_maintenance_snapshot s
+          JOIN ducklake.snapshot_retention r
+            ON r.physical_pool_id=s.physical_pool_id AND r.catalog_id=s.catalog_id AND r.snapshot_id=s.snapshot_id
+         WHERE s.maintenance_id=p_maintenance_id
+           AND (s.phase <> 'cleanup-complete' OR r.state <> 'cleanup-complete' OR r.retention_claim_id IS DISTINCT FROM p_maintenance_id);
+        IF v_missing <> 0 THEN RAISE EXCEPTION 'retention cleanup evidence incomplete'; END IF;
+    END IF;
+    UPDATE ducklake.retention_maintenance
+       SET state=p_state,phase=p_phase,dry_run=p_dry_run,
+           file_grace_micros=p_file_grace_micros,
+           snapshot_set_digest=p_snapshot_set_digest,
+           phase_evidence=COALESCE(p_phase_evidence,'{}'::jsonb),updated_at=v_now,
+           completed_at=CASE WHEN p_state='completed' THEN v_now ELSE NULL END
+     WHERE maintenance_id=p_maintenance_id AND state='running';
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.insert_retention_maintenance_snapshot(
+    p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_snapshot_id bigint, p_owner_id text, p_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_retention record;
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_fencing_epoch
+       OR v_operation.state <> 'running' OR v_operation.snapshot_set_digest <> '' THEN
+        RAISE EXCEPTION 'maintenance fence stale';
+    END IF;
+    SELECT retention_claim_id,state INTO v_retention FROM ducklake.snapshot_retention
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    IF NOT FOUND OR (v_operation.dry_run AND (v_retention.state NOT IN ('retiring','expired') OR v_retention.retention_claim_id IS NOT NULL))
+       OR (NOT v_operation.dry_run AND (v_retention.retention_claim_id IS DISTINCT FROM p_maintenance_id OR v_retention.state NOT IN ('expiring','expired'))) THEN
+        RAISE EXCEPTION 'retention snapshot claim mismatch';
+    END IF;
+    INSERT INTO ducklake.retention_maintenance_snapshot
+      (maintenance_id,physical_pool_id,catalog_id,snapshot_id,phase)
+    VALUES (p_maintenance_id,p_physical_pool_id,p_catalog_id,p_snapshot_id,'eligible')
+    ON CONFLICT (maintenance_id,physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.update_retention_maintenance_snapshot(
+    p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_snapshot_id bigint, p_owner_id text, p_fencing_epoch bigint,
+    p_phase text, p_expiry_evidence jsonb, p_quarantine_evidence jsonb,
+    p_cleanup_evidence jsonb
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_old record; v_retention record;
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    PERFORM 1 FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id AND m.physical_pool_id=p_physical_pool_id
+       AND m.catalog_id=p_catalog_id AND m.owner_id=p_owner_id AND m.fencing_epoch=p_fencing_epoch;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    SELECT * INTO v_old FROM ducklake.retention_maintenance_snapshot s
+     WHERE s.maintenance_id=p_maintenance_id AND s.physical_pool_id=p_physical_pool_id
+       AND s.catalog_id=p_catalog_id AND s.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'retention maintenance snapshot not found'; END IF;
+    SELECT state,evidence,quarantine_evidence,cleanup_evidence INTO v_retention
+      FROM ducklake.snapshot_retention
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    IF NOT FOUND THEN RAISE EXCEPTION 'snapshot retention not found'; END IF;
+    IF p_phase NOT IN ('eligible','expired','quarantined','cleanup-complete') THEN
+        RAISE EXCEPTION 'invalid retention maintenance snapshot phase';
+    END IF;
+    IF v_old.phase='cleanup-complete' THEN
+        IF v_old.phase IS DISTINCT FROM p_phase OR v_old.expiry_evidence IS DISTINCT FROM p_expiry_evidence
+           OR v_old.quarantine_evidence IS DISTINCT FROM p_quarantine_evidence OR v_old.cleanup_evidence IS DISTINCT FROM p_cleanup_evidence THEN
+            RAISE EXCEPTION 'completed retention maintenance snapshot is immutable';
+        END IF;
+        RETURN;
+    END IF;
+    IF (v_old.phase='quarantined' AND p_phase NOT IN ('quarantined','cleanup-complete'))
+       OR (v_old.phase='expired' AND p_phase NOT IN ('expired','quarantined','cleanup-complete'))
+       OR (v_old.phase='eligible' AND p_phase NOT IN ('eligible','expired','quarantined','cleanup-complete')) THEN
+        RAISE EXCEPTION 'retention maintenance snapshot lifecycle is monotonic';
+    END IF;
+    IF p_phase='expired' AND (v_retention.state NOT IN ('expired','quarantined','cleanup-complete') OR v_retention.evidence IS DISTINCT FROM p_expiry_evidence) THEN
+        RAISE EXCEPTION 'snapshot expiry evidence is not durable';
+    ELSIF p_phase='quarantined' AND (v_retention.state NOT IN ('quarantined','cleanup-complete') OR v_retention.quarantine_evidence IS DISTINCT FROM p_quarantine_evidence) THEN
+        RAISE EXCEPTION 'snapshot quarantine evidence is not durable';
+    ELSIF p_phase='cleanup-complete' AND (v_retention.state <> 'cleanup-complete' OR v_retention.cleanup_evidence IS DISTINCT FROM p_cleanup_evidence) THEN
+        RAISE EXCEPTION 'snapshot cleanup evidence is not durable';
+    END IF;
+    UPDATE ducklake.retention_maintenance_snapshot
+       SET phase=p_phase,expiry_evidence=p_expiry_evidence,
+           quarantine_evidence=p_quarantine_evidence,cleanup_evidence=p_cleanup_evidence,
+           updated_at=v_now
+     WHERE maintenance_id=p_maintenance_id AND physical_pool_id=p_physical_pool_id
+       AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.claim_retention_snapshots(
+    p_maintenance_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_fencing_epoch bigint
+) RETURNS bigint[]
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_ids bigint[];
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_fencing_epoch
+       OR v_operation.state <> 'running' OR v_operation.snapshot_set_digest <> '' THEN
+        RAISE EXCEPTION 'maintenance fence stale';
+    END IF;
+    WITH changed AS (
+        UPDATE ducklake.snapshot_retention AS r
+       SET state=CASE WHEN r.state='retiring' THEN 'expiring' ELSE r.state END,
+           retention_claim_id=p_maintenance_id,retention_claim_owner_id=p_owner_id,
+           retention_claim_fencing_epoch=p_fencing_epoch,retention_claimed_at=v_now
+     WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id
+       AND r.state IN ('retiring','expired') AND r.retention_claim_id IS NULL
+       AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_root root WHERE root.physical_pool_id=r.physical_pool_id AND root.catalog_id=r.catalog_id AND root.snapshot_id=r.snapshot_id AND root.state IN ('live','retiring'))
+       AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_lease lease WHERE lease.physical_pool_id=r.physical_pool_id AND lease.catalog_id=r.catalog_id AND lease.snapshot_id=r.snapshot_id AND lease.state='active')
+        RETURNING r.snapshot_id
+    )
+    SELECT COALESCE(array_agg(snapshot_id ORDER BY snapshot_id),'{}'::bigint[]) INTO v_ids FROM changed;
+    RETURN v_ids;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.expire_snapshot_under_maintenance_fence(
+    p_expired_at timestamptz, p_evidence jsonb, p_physical_pool_id text,
+    p_catalog_id text, p_snapshot_id bigint, p_maintenance_id uuid,
+    p_maintenance_owner_id text, p_maintenance_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_retention record; v_child record; v_expired timestamptz := COALESCE(p_expired_at, v_now);
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_maintenance_owner_id AND f.fencing_epoch=p_maintenance_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_maintenance_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_maintenance_fencing_epoch
+       OR v_operation.dry_run THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    SELECT * INTO v_retention FROM ducklake.snapshot_retention r
+     WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND OR v_retention.retention_claim_id IS DISTINCT FROM p_maintenance_id THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    IF v_retention.state='expiring' THEN
+        IF EXISTS (SELECT 1 FROM ducklake.snapshot_lease l WHERE l.physical_pool_id=p_physical_pool_id AND l.catalog_id=p_catalog_id AND l.snapshot_id=p_snapshot_id AND l.state='active')
+           OR EXISTS (SELECT 1 FROM ducklake.snapshot_root root WHERE root.physical_pool_id=p_physical_pool_id AND root.catalog_id=p_catalog_id AND root.snapshot_id=p_snapshot_id AND root.state IN ('live','retiring')) THEN
+            RAISE EXCEPTION 'DuckLake snapshot leases or roots remain';
+        END IF;
+        UPDATE ducklake.snapshot_retention SET state='expired',expired_at=v_expired,evidence=p_evidence
+         WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id AND state='expiring';
+    ELSIF v_retention.state='expired' THEN
+        IF v_retention.evidence IS DISTINCT FROM p_evidence THEN RAISE EXCEPTION 'expiration evidence differs'; END IF;
+    ELSE
+        RAISE EXCEPTION 'snapshot must be expiring before expiry';
+    END IF;
+    SELECT * INTO v_child FROM ducklake.retention_maintenance_snapshot s
+     WHERE s.maintenance_id=p_maintenance_id AND s.physical_pool_id=p_physical_pool_id AND s.catalog_id=p_catalog_id AND s.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'retention maintenance snapshot not found'; END IF;
+    IF v_child.phase='eligible' THEN
+        UPDATE ducklake.retention_maintenance_snapshot
+           SET phase='expired',expiry_evidence=p_evidence,updated_at=v_now
+         WHERE maintenance_id=p_maintenance_id AND physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    ELSIF v_child.phase='expired' AND v_child.expiry_evidence IS DISTINCT FROM p_evidence THEN
+        RAISE EXCEPTION 'expiration evidence differs';
+    ELSIF v_child.phase NOT IN ('expired','quarantined','cleanup-complete') THEN
+        RAISE EXCEPTION 'retention maintenance snapshot lifecycle is invalid';
+    END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.claim_snapshot_cleanup_under_maintenance_fence(
+    p_physical_pool_id text, p_catalog_id text, p_snapshot_id bigint,
+    p_cleanup_owner_id text, p_cleanup_lease_expires_at timestamptz,
+    p_maintenance_id uuid, p_maintenance_owner_id text,
+    p_maintenance_fencing_epoch bigint
+) RETURNS bigint LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_retention record; v_lease timestamptz := p_cleanup_lease_expires_at;
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_maintenance_owner_id AND f.fencing_epoch=p_maintenance_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_maintenance_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_maintenance_fencing_epoch
+       OR v_operation.dry_run THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    SELECT * INTO v_retention FROM ducklake.snapshot_retention r
+     WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND OR v_retention.retention_claim_id IS DISTINCT FROM p_maintenance_id THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    IF v_retention.state NOT IN ('expired','quarantined') THEN RAISE EXCEPTION 'snapshot cleanup pending'; END IF;
+    IF v_retention.cleanup_owner_id IS NOT NULL AND v_retention.cleanup_lease_expires_at > v_now THEN
+        IF v_retention.cleanup_owner_id=p_cleanup_owner_id THEN RETURN v_retention.cleanup_fencing_epoch; END IF;
+        RAISE EXCEPTION 'snapshot cleanup busy';
+    END IF;
+    IF v_lease IS NULL THEN v_lease := v_now + interval '24 hours'; END IF;
+    IF v_lease <= v_now OR v_lease > v_now + interval '24 hours' OR p_cleanup_owner_id = '' OR p_cleanup_owner_id <> btrim(p_cleanup_owner_id) OR octet_length(p_cleanup_owner_id) > 255 THEN
+        RAISE EXCEPTION 'invalid snapshot cleanup claim';
+    END IF;
+    UPDATE ducklake.snapshot_retention
+       SET cleanup_owner_id=p_cleanup_owner_id,cleanup_fencing_epoch=cleanup_fencing_epoch+1,cleanup_lease_expires_at=v_lease
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    SELECT cleanup_fencing_epoch INTO v_retention FROM ducklake.snapshot_retention
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    RETURN v_retention.cleanup_fencing_epoch;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.quarantine_snapshot_under_maintenance_fence(
+    p_quarantine_evidence jsonb, p_quarantined_at timestamptz,
+    p_physical_pool_id text, p_catalog_id text, p_snapshot_id bigint,
+    p_cleanup_owner_id text, p_cleanup_fencing_epoch bigint,
+    p_maintenance_id uuid, p_maintenance_owner_id text,
+    p_maintenance_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_retention record; v_child record; v_at timestamptz := v_now;
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_maintenance_owner_id AND f.fencing_epoch=p_maintenance_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_maintenance_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_maintenance_fencing_epoch
+       OR v_operation.dry_run THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    SELECT * INTO v_retention FROM ducklake.snapshot_retention r
+     WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND OR v_retention.retention_claim_id IS DISTINCT FROM p_maintenance_id
+       OR v_retention.cleanup_owner_id IS DISTINCT FROM p_cleanup_owner_id
+       OR v_retention.cleanup_fencing_epoch IS DISTINCT FROM p_cleanup_fencing_epoch
+       OR v_retention.cleanup_lease_expires_at <= v_now THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    IF v_retention.state='expired' THEN
+        UPDATE ducklake.snapshot_retention SET state='quarantined',quarantine_evidence=p_quarantine_evidence,quarantined_at=v_at
+         WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id AND state='expired';
+    ELSIF v_retention.state='quarantined' THEN
+        IF v_retention.quarantine_evidence IS DISTINCT FROM p_quarantine_evidence THEN RAISE EXCEPTION 'quarantine evidence differs'; END IF;
+    ELSE
+        RAISE EXCEPTION 'snapshot must be expired before quarantine';
+    END IF;
+    SELECT * INTO v_child FROM ducklake.retention_maintenance_snapshot s
+     WHERE s.maintenance_id=p_maintenance_id AND s.physical_pool_id=p_physical_pool_id AND s.catalog_id=p_catalog_id AND s.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'retention maintenance snapshot not found'; END IF;
+    IF v_child.phase IN ('expired','quarantined') THEN
+        IF v_child.phase='quarantined' AND v_child.quarantine_evidence IS DISTINCT FROM p_quarantine_evidence THEN RAISE EXCEPTION 'quarantine evidence differs'; END IF;
+        IF v_child.phase='expired' THEN
+            UPDATE ducklake.retention_maintenance_snapshot SET phase='quarantined',quarantine_evidence=p_quarantine_evidence,updated_at=v_now
+             WHERE maintenance_id=p_maintenance_id AND physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+        END IF;
+    ELSIF v_child.phase='cleanup-complete' THEN RETURN;
+    ELSE RAISE EXCEPTION 'retention maintenance snapshot expiry evidence missing';
+    END IF;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.complete_snapshot_cleanup_under_maintenance_fence(
+    p_cleanup_evidence jsonb, p_cleanup_completed_at timestamptz,
+    p_physical_pool_id text, p_catalog_id text, p_snapshot_id bigint,
+    p_cleanup_owner_id text, p_cleanup_fencing_epoch bigint,
+    p_maintenance_id uuid, p_maintenance_owner_id text,
+    p_maintenance_fencing_epoch bigint
+) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_operation record; v_retention record; v_child record; v_at timestamptz := v_now;
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_maintenance_owner_id AND f.fencing_epoch=p_maintenance_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_operation FROM ducklake.retention_maintenance m
+     WHERE m.maintenance_id=p_maintenance_id FOR SHARE;
+    IF NOT FOUND OR v_operation.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+       OR v_operation.catalog_id IS DISTINCT FROM p_catalog_id
+       OR v_operation.owner_id IS DISTINCT FROM p_maintenance_owner_id
+       OR v_operation.fencing_epoch IS DISTINCT FROM p_maintenance_fencing_epoch
+       OR v_operation.dry_run THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    SELECT * INTO v_retention FROM ducklake.snapshot_retention r
+     WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND OR v_retention.retention_claim_id IS DISTINCT FROM p_maintenance_id
+       OR v_retention.cleanup_owner_id IS DISTINCT FROM p_cleanup_owner_id
+       OR v_retention.cleanup_fencing_epoch IS DISTINCT FROM p_cleanup_fencing_epoch THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
+    IF v_retention.state='quarantined' THEN
+        IF v_retention.cleanup_lease_expires_at <= v_now THEN RAISE EXCEPTION 'snapshot cleanup lease expired'; END IF;
+        UPDATE ducklake.snapshot_retention SET state='cleanup-complete',cleanup_evidence=p_cleanup_evidence,cleanup_completed_at=v_at
+         WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id AND state='quarantined';
+    ELSIF v_retention.state='cleanup-complete' THEN
+        IF v_retention.cleanup_evidence IS DISTINCT FROM p_cleanup_evidence THEN RAISE EXCEPTION 'cleanup evidence differs'; END IF;
+    ELSE
+        RAISE EXCEPTION 'snapshot must be quarantined before cleanup-complete';
+    END IF;
+    SELECT * INTO v_child FROM ducklake.retention_maintenance_snapshot s
+     WHERE s.maintenance_id=p_maintenance_id AND s.physical_pool_id=p_physical_pool_id AND s.catalog_id=p_catalog_id AND s.snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'retention maintenance snapshot not found'; END IF;
+    IF v_child.phase='cleanup-complete' THEN
+        IF v_child.cleanup_evidence IS DISTINCT FROM p_cleanup_evidence THEN RAISE EXCEPTION 'cleanup evidence differs'; END IF;
+    ELSIF v_child.phase='quarantined' THEN
+        UPDATE ducklake.retention_maintenance_snapshot SET phase='cleanup-complete',cleanup_evidence=p_cleanup_evidence,updated_at=v_now
+         WHERE maintenance_id=p_maintenance_id AND physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    ELSE
+        RAISE EXCEPTION 'retention maintenance snapshot quarantine evidence missing';
+    END IF;
 END;
 $$;
 
@@ -1342,7 +2159,7 @@ BEGIN
             || 'ducklake.snapshot_orphan TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.source_observation_capture TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_runtime';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_readonly';
@@ -1351,7 +2168,8 @@ BEGIN
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
             || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
             || 'ducklake.snapshot_orphan, ducklake.snapshot_reader_drain, '
-            || 'ducklake.catalog_runtime_compatibility, ducklake.migration_fence, '
+            || 'ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, '
+            || 'ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, '
             || 'ducklake.catalog_migration, ducklake.snapshot_requalification, '
             || 'ducklake.source_observation_capture '
             || 'TO leapview_control_readonly';
@@ -1372,6 +2190,24 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_catalog_migration(uuid,text,bigint,bigint,jsonb) TO leapview_control_upgrade_coordinator';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.fail_catalog_migration(uuid,text,bigint,bigint,jsonb,text,jsonb) TO leapview_control_upgrade_coordinator';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.record_snapshot_requalification(uuid,text,text,bigint,uuid,text,text,text,text,text,text,jsonb,timestamptz,text,bigint,bigint) TO leapview_control_upgrade_coordinator';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_maintenance';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention FROM leapview_control_maintenance';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.pool_maintenance_fence TO leapview_control_maintenance';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention TO leapview_control_maintenance';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_root, ducklake.snapshot_lease TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.acquire_pool_maintenance_fence(text,text,text,timestamptz) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.release_pool_maintenance_fence(text,text,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.renew_pool_maintenance_fence(text,text,text,bigint,timestamptz) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.begin_retention_maintenance(uuid,text,text,text,bigint,boolean,bigint,text,jsonb) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.update_retention_maintenance(uuid,text,text,text,bigint,text,text,boolean,bigint,text,jsonb,timestamptz) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.insert_retention_maintenance_snapshot(uuid,text,text,bigint,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_retention_snapshots(uuid,text,text,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.expire_snapshot_under_maintenance_fence(timestamptz,jsonb,text,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_snapshot_cleanup_under_maintenance_fence(text,text,bigint,text,timestamptz,uuid,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.quarantine_snapshot_under_maintenance_fence(jsonb,timestamptz,text,text,bigint,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_snapshot_cleanup_under_maintenance_fence(jsonb,timestamptz,text,text,bigint,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
     END IF;
 END
 $$;

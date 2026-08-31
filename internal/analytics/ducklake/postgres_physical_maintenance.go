@@ -1,14 +1,5 @@
 package ducklake
 
-// PostgreSQL-backed DuckLake physical maintenance.
-//
-// Runtime environments deliberately cannot invoke DuckLake's file-deleting
-// functions when they are attached to a shared physical pool.  This file is
-// the lower-level operation boundary for the separately provisioned catalog
-// maintenance connection.  Composition owns opening that connection and
-// acquiring the control-plane lease/fence; this package validates the
-// resulting contract again immediately before every destructive statement.
-
 import (
 	"context"
 	"database/sql"
@@ -48,6 +39,10 @@ const (
 // its PostgreSQL metadata connection.
 type CatalogMaintenanceConnection interface {
 	ExecContext(context.Context, string, ...any) (sql.Result, error)
+}
+
+type catalogMaintenanceQueryConnection interface {
+	QueryRowContext(context.Context, string, ...any) *sql.Row
 }
 
 // PostgresCatalogMaintenanceLease is the control-plane lease held by the
@@ -191,30 +186,30 @@ func (m *PostgresCatalogMaintenance) Run(ctx context.Context, request PostgresCa
 		FileGrace:   request.FileGrace, DryRun: request.DryRun,
 	}
 	if len(snapshotIDs) > 0 {
-		if err := m.beforePhase(ctx); err != nil {
-			return result, err
-		}
 		statement := fmt.Sprintf("CALL ducklake_expire_snapshots(%s, versions => %s, dry_run => %t)", sqlStringLiteral(m.contract.CatalogAlias), snapshotListLiteral(snapshotIDs), request.DryRun)
-		if _, err := m.conn.ExecContext(ctx, statement); err != nil {
+		if err := m.executePhase(ctx, func(phaseCtx context.Context) error {
+			_, err := m.conn.ExecContext(phaseCtx, statement)
+			return err
+		}); err != nil {
 			return result, fmt.Errorf("expire DuckLake snapshots: %w", err)
 		}
 		result.Snapshots = true
 	}
-	if err := m.beforePhase(ctx); err != nil {
-		return result, err
-	}
 	olderThan := duckLakeOlderThan(request.FileGrace)
 	statement := fmt.Sprintf("CALL ducklake_cleanup_old_files(%s, older_than => %s, dry_run => %t)", sqlStringLiteral(m.contract.CatalogAlias), olderThan, request.DryRun)
-	if _, err := m.conn.ExecContext(ctx, statement); err != nil {
+	if err := m.executePhase(ctx, func(phaseCtx context.Context) error {
+		_, err := m.conn.ExecContext(phaseCtx, statement)
+		return err
+	}); err != nil {
 		return result, fmt.Errorf("cleanup DuckLake old files: %w", err)
 	}
 	result.OldFiles = true
 
-	if err := m.beforePhase(ctx); err != nil {
-		return result, err
-	}
 	statement = fmt.Sprintf("CALL ducklake_delete_orphaned_files(%s, older_than => %s, dry_run => %t)", sqlStringLiteral(m.contract.CatalogAlias), olderThan, request.DryRun)
-	if _, err := m.conn.ExecContext(ctx, statement); err != nil {
+	if err := m.executePhase(ctx, func(phaseCtx context.Context) error {
+		_, err := m.conn.ExecContext(phaseCtx, statement)
+		return err
+	}); err != nil {
 		return result, fmt.Errorf("delete DuckLake orphaned files: %w", err)
 	}
 	result.Orphans = true
@@ -239,6 +234,35 @@ func (m *PostgresCatalogMaintenance) ExpireSnapshots(ctx context.Context, snapsh
 		return fmt.Errorf("expire DuckLake snapshots: %w", err)
 	}
 	return nil
+}
+
+// VerifySnapshotsExpired proves that every explicit version requested for
+// expiry is absent from the attached catalog. DuckLake's table function may
+// legitimately no-op for the current/latest snapshot, so callers must not
+// infer success from a nil CALL result alone.
+func (m *PostgresCatalogMaintenance) VerifySnapshotsExpired(ctx context.Context, snapshotIDs []int64) error {
+	if m == nil || nilMaintenanceValue(m.conn) {
+		return fmt.Errorf("%w: executor is unavailable", ErrPostgresCatalogMaintenanceConnection)
+	}
+	ids := normalizeSnapshotIDs(snapshotIDs)
+	if len(ids) == 0 {
+		return nil
+	}
+	queryer, ok := m.conn.(catalogMaintenanceQueryConnection)
+	if !ok {
+		return fmt.Errorf("%w: connection cannot verify snapshot expiry", ErrPostgresCatalogMaintenanceConnection)
+	}
+	return m.runPhase(ctx, func(ctx context.Context) error {
+		row := queryer.QueryRowContext(ctx, fmt.Sprintf("SELECT count(*) FROM %s.snapshots() WHERE snapshot_id IN (%s)", quoteCatalogIdentifier(m.contract.CatalogAlias), snapshotListLiteral(ids)))
+		var found int64
+		if err := row.Scan(&found); err != nil {
+			return fmt.Errorf("verify DuckLake snapshot expiry: %w", err)
+		}
+		if found != 0 {
+			return fmt.Errorf("verify DuckLake snapshot expiry: %d explicit snapshots remain", found)
+		}
+		return nil
+	})
 }
 
 // CleanupOldFiles runs scheduled-file cleanup with an explicit grace period.
@@ -279,13 +303,47 @@ func (m *PostgresCatalogMaintenance) runPhase(ctx context.Context, fn func(conte
 		return err
 	}
 	defer m.release()
-	if err := m.beforePhase(ctx); err != nil {
+	return m.executePhase(ctx, fn)
+}
+
+// executePhase runs one native DuckLake call under a context whose deadline is
+// no later than either durable lease/fence expiry or the caller's deadline. The
+// live fence is checked both before and after the call: a nil native result is
+// not phase success if the lease expired or the fence was lost while DuckLake
+// was executing.
+func (m *PostgresCatalogMaintenance) executePhase(ctx context.Context, fn func(context.Context) error) error {
+	phaseCtx, cancel, err := m.phaseContext(ctx)
+	if err != nil {
 		return err
 	}
-	if err := fn(ctx); err != nil {
+	defer cancel()
+	if err := fn(phaseCtx); err != nil {
 		return err
 	}
-	return nil
+	return m.beforePhase(phaseCtx)
+}
+
+func (m *PostgresCatalogMaintenance) phaseContext(ctx context.Context) (context.Context, context.CancelFunc, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	deadline := m.contract.Lease.ExpiresAt
+	if fenceDeadline := m.contract.Fence.LeaseExpiresAt; fenceDeadline.Before(deadline) {
+		deadline = fenceDeadline
+	}
+	if callerDeadline, ok := ctx.Deadline(); ok && callerDeadline.Before(deadline) {
+		deadline = callerDeadline
+	}
+	phaseCtx, cancel := context.WithDeadline(ctx, deadline)
+	if err := phaseCtx.Err(); err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	if err := m.beforePhase(phaseCtx); err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	return phaseCtx, cancel, nil
 }
 
 func (m *PostgresCatalogMaintenance) beforePhase(ctx context.Context) error {

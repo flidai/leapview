@@ -258,6 +258,7 @@ type SnapshotRetentionState string
 const (
 	RetentionLive            SnapshotRetentionState = "live"
 	RetentionRetiring        SnapshotRetentionState = "retiring"
+	RetentionExpiring        SnapshotRetentionState = "expiring"
 	RetentionExpired         SnapshotRetentionState = "expired"
 	RetentionQuarantined     SnapshotRetentionState = "quarantined"
 	RetentionCleanupComplete SnapshotRetentionState = "cleanup-complete"
@@ -1592,57 +1593,38 @@ func (r *Repository) RetireSnapshot(ctx context.Context, ref SnapshotRef, retire
 	return RetireSnapshot(ctx, r.db, ref, retiredAt)
 }
 
-func ExpireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, expiredAt time.Time) error {
+// ExpireSnapshotUnderMaintenanceFence performs the control-ledger transition
+// with the pool maintenance fence in the same SQL UPDATE predicate. The
+// explicit root/lease checks make a stale worker fail closed even if it was
+// preempted between a fence read and this write.
+func ExpireSnapshotUnderMaintenanceFence(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, expiredAt time.Time, maintenanceID string, maintenance RetentionMaintenanceFence) error {
 	if tx == nil || !validSnapshotRef(ref) {
 		return ErrInvalid
 	}
-	if expiredAt.IsZero() {
-		expiredAt = time.Now().UTC()
+	if !validUUID(maintenanceID) {
+		return ErrInvalid
 	}
-	var clockErr error
-	expiredAt, clockErr = databaseClock(ctx, tx)
-	if clockErr != nil {
-		return clockErr
+	if err := validateRetentionFence(maintenance); err != nil {
+		return err
 	}
 	canonical, err := canonicalEvidence(evidence)
 	if err != nil {
 		return fmt.Errorf("%w: expiration evidence is required", ErrInvalid)
 	}
-	state, err := querygen(tx).LockSnapshotRetentionForState(ctx, dbgen.LockSnapshotRetentionForStateParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	} else if err != nil {
+	if err := CheckRetentionMaintenanceFence(ctx, tx, maintenance); err != nil {
 		return err
-	} else if state == "expired" || state == "quarantined" || state == "cleanup-complete" {
-		got, loadErr := loadSnapshotRetention(ctx, tx, ref)
-		if loadErr != nil {
-			return loadErr
+	}
+	if expiredAt.IsZero() {
+		expiredAt, err = databaseClock(ctx, tx)
+		if err != nil {
+			return err
 		}
-		if evidenceEqual(got.Evidence, canonical) {
-			return nil
-		}
-		return fmt.Errorf("%w: expiration evidence differs", ErrConflict)
-	} else if state != "retiring" {
-		return ErrConflict
 	}
-	var active int
-	active64, err := querygen(tx).CountActiveSnapshotLeases(ctx, dbgen.CountActiveSnapshotLeasesParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	active = int(active64)
-	if err != nil {
-		return err
-	}
-	if active != 0 {
-		return fmt.Errorf("%w: active query leases remain", ErrConflict)
-	}
-	roots64, err := querygen(tx).CountSnapshotRootsLiveRetiring(ctx, dbgen.CountSnapshotRootsLiveRetiringParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	roots := int(roots64)
-	if err != nil {
-		return err
-	}
-	if roots != 0 {
-		return fmt.Errorf("%w: durable snapshot roots remain", ErrConflict)
-	}
-	result, err := querygen(tx).ExpireSnapshot(ctx, dbgen.ExpireSnapshotParams{ExpiredAt: pgtype.Timestamptz{Time: expiredAt.UTC(), Valid: true}, Evidence: []byte(canonical), PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
+	result, err := querygen(tx).ExpireSnapshotUnderMaintenanceFence(ctx, dbgen.ExpireSnapshotUnderMaintenanceFenceParams{
+		ExpiredAt: pgtype.Timestamptz{Time: expiredAt.UTC(), Valid: true}, Evidence: []byte(canonical),
+		PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID,
+		MaintenanceID: upgradeUUID(maintenanceID), MaintenanceOwnerID: maintenance.OwnerID, MaintenanceFencingEpoch: maintenance.FencingEpoch,
+	})
 	if err != nil {
 		return err
 	}
@@ -1652,31 +1634,42 @@ func ExpireSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json
 	return ErrConflict
 }
 
-func (r *Repository) ExpireSnapshot(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, expiredAt time.Time) error {
+func (r *Repository) ExpireSnapshotUnderMaintenanceFence(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, expiredAt time.Time, maintenanceID string, maintenance RetentionMaintenanceFence) error {
 	if r == nil {
 		return ErrInvalid
 	}
-	return ExpireSnapshot(ctx, r.db, ref, evidence, expiredAt)
+	return inRepositoryExecTransaction(ctx, r.db, func(tx DBTX) error {
+		return ExpireSnapshotUnderMaintenanceFence(ctx, tx, ref, evidence, expiredAt, maintenanceID, maintenance)
+	})
 }
 
-// QuarantineSnapshot is the fail-closed handoff between retention expiry and
-// physical cleanup. It is intentionally separate from ExpireSnapshot so a
-// cleanup worker can never jump directly to a successful terminal state.
-func ClaimSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, ownerID string, leaseExpiresAt time.Time) (CleanupFence, error) {
+// ClaimSnapshotCleanupUnderMaintenanceFence binds the cleanup claim to the
+// active pool fence. The SQL UPDATE repeats the fence owner/epoch/clock check.
+func ClaimSnapshotCleanupUnderMaintenanceFence(ctx context.Context, tx DBTX, ref SnapshotRef, ownerID string, leaseExpiresAt time.Time, maintenanceID string, maintenance RetentionMaintenanceFence) (CleanupFence, error) {
 	if tx == nil || !validSnapshotRef(ref) || !validID(ownerID) {
 		return CleanupFence{}, ErrInvalid
+	}
+	if !validUUID(maintenanceID) {
+		return CleanupFence{}, ErrInvalid
+	}
+	if err := validateRetentionFence(maintenance); err != nil {
+		return CleanupFence{}, err
 	}
 	now, err := databaseClock(ctx, tx)
 	if err != nil {
 		return CleanupFence{}, err
 	}
-	row, err := querygen(tx).LockSnapshotRetentionCleanup(ctx, dbgen.LockSnapshotRetentionCleanupParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	state, currentOwner, currentEpoch, currentExpiry := row.State, row.CleanupOwnerID, row.CleanupFencingEpoch, row.CleanupLeaseExpiresAt
-	if errors.Is(err, pgx.ErrNoRows) {
-		return CleanupFence{}, ErrNotFound
-	} else if err != nil {
+	if err := CheckRetentionMaintenanceFence(ctx, tx, maintenance); err != nil {
 		return CleanupFence{}, err
 	}
+	row, err := querygen(tx).LockSnapshotRetentionCleanup(ctx, dbgen.LockSnapshotRetentionCleanupParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return CleanupFence{}, ErrNotFound
+	}
+	if err != nil {
+		return CleanupFence{}, err
+	}
+	state, currentOwner, currentEpoch, currentExpiry := row.State, row.CleanupOwnerID, row.CleanupFencingEpoch, row.CleanupLeaseExpiresAt
 	if state == string(RetentionCleanupComplete) {
 		return CleanupFence{}, ErrConflict
 	}
@@ -1696,8 +1689,15 @@ func ClaimSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, ownerID
 	if !leaseExpiresAt.After(now) || leaseExpiresAt.After(now.Add(maxSnapshotLease)) {
 		return CleanupFence{}, ErrInvalid
 	}
-	epoch, err := querygen(tx).ClaimSnapshotCleanup(ctx, dbgen.ClaimSnapshotCleanupParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID, CleanupOwnerID: &ownerID, CleanupLeaseExpiresAt: pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true}})
+	epoch, err := querygen(tx).ClaimSnapshotCleanupUnderMaintenanceFence(ctx, dbgen.ClaimSnapshotCleanupUnderMaintenanceFenceParams{
+		CleanupOwnerID: ownerID, CleanupLeaseExpiresAt: pgtype.Timestamptz{Time: leaseExpiresAt, Valid: true},
+		PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID,
+		MaintenanceID: upgradeUUID(maintenanceID), MaintenanceOwnerID: maintenance.OwnerID, MaintenanceFencingEpoch: maintenance.FencingEpoch,
+	})
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return CleanupFence{}, ErrRetentionMaintenanceFenceStale
+		}
 		return CleanupFence{}, err
 	}
 	if epoch <= 0 {
@@ -1706,19 +1706,27 @@ func ClaimSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, ownerID
 	return CleanupFence{OwnerID: ownerID, FencingEpoch: epoch, LeaseExpiresAt: leaseExpiresAt}, nil
 }
 
-func (r *Repository) ClaimSnapshotCleanup(ctx context.Context, ref SnapshotRef, ownerID string, leaseExpiresAt time.Time) (CleanupFence, error) {
+func (r *Repository) ClaimSnapshotCleanupUnderMaintenanceFence(ctx context.Context, ref SnapshotRef, ownerID string, leaseExpiresAt time.Time, maintenanceID string, maintenance RetentionMaintenanceFence) (CleanupFence, error) {
 	if r == nil {
 		return CleanupFence{}, ErrInvalid
 	}
-	return ClaimSnapshotCleanup(ctx, r.db, ref, ownerID, leaseExpiresAt)
+	return inRepositoryTransaction(ctx, r.db, func(tx DBTX) (CleanupFence, error) {
+		return ClaimSnapshotCleanupUnderMaintenanceFence(ctx, tx, ref, ownerID, leaseExpiresAt, maintenanceID, maintenance)
+	})
 }
 
-func QuarantineSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+func QuarantineSnapshotUnderMaintenanceFence(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence, maintenanceID string, maintenance RetentionMaintenanceFence) error {
 	if tx == nil || !validSnapshotRef(ref) {
 		return ErrInvalid
 	}
 	if !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
 		return ErrInvalid
+	}
+	if !validUUID(maintenanceID) {
+		return ErrInvalid
+	}
+	if err := validateRetentionFence(maintenance); err != nil {
+		return err
 	}
 	canonical, err := canonicalEvidence(evidence)
 	if err != nil {
@@ -1728,57 +1736,74 @@ func QuarantineSnapshot(ctx context.Context, tx DBTX, ref SnapshotRef, evidence 
 	if err != nil {
 		return err
 	}
-	row, err := querygen(tx).LockSnapshotRetentionQuarantine(ctx, dbgen.LockSnapshotRetentionQuarantineParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	state, owner, epoch, leaseExpiry, existingEvidence := row.State, row.CleanupOwnerID, row.CleanupFencingEpoch, row.CleanupLeaseExpiresAt, row.QuarantineEvidence
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	} else if err != nil {
+	if err := CheckRetentionMaintenanceFence(ctx, tx, maintenance); err != nil {
 		return err
 	}
-	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
+	row, err := querygen(tx).LockSnapshotRetentionQuarantine(ctx, dbgen.LockSnapshotRetentionQuarantineParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if row.CleanupOwnerID == nil || *row.CleanupOwnerID != fence.OwnerID || row.CleanupFencingEpoch != fence.FencingEpoch {
 		return ErrStaleFence
 	}
-	if state == string(RetentionCleanupComplete) {
+	if row.State == string(RetentionCleanupComplete) {
 		return ErrConflict
 	}
-	if state == string(RetentionQuarantined) {
-		if !evidenceEqual(existingEvidence, canonical) {
+	if row.State == string(RetentionQuarantined) {
+		if !evidenceEqual(row.QuarantineEvidence, canonical) {
 			return fmt.Errorf("%w: quarantine evidence differs", ErrConflict)
 		}
 		return nil
 	}
-	if !leaseExpiry.Valid || !leaseExpiry.Time.After(now) {
+	if !row.CleanupLeaseExpiresAt.Valid || !row.CleanupLeaseExpiresAt.Time.After(now) {
 		return ErrLeaseExpired
 	}
-	if state != string(RetentionExpired) {
+	if row.State != string(RetentionExpired) {
 		return fmt.Errorf("%w: snapshot must be expired before quarantine", ErrConflict)
 	}
-	result, err := querygen(tx).QuarantineSnapshot(ctx, dbgen.QuarantineSnapshotParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID, QuarantineEvidence: []byte(canonical), QuarantinedAt: pgtype.Timestamptz{Time: now, Valid: true}, CleanupOwnerID: &fence.OwnerID, CleanupFencingEpoch: fence.FencingEpoch})
+	cleanupOwner := fence.OwnerID
+	result, err := querygen(tx).QuarantineSnapshotUnderMaintenanceFence(ctx, dbgen.QuarantineSnapshotUnderMaintenanceFenceParams{
+		QuarantineEvidence: []byte(canonical), QuarantinedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID,
+		CleanupOwnerID: cleanupOwner, CleanupFencingEpoch: fence.FencingEpoch,
+		MaintenanceID: upgradeUUID(maintenanceID), MaintenanceOwnerID: maintenance.OwnerID, MaintenanceFencingEpoch: maintenance.FencingEpoch,
+	})
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() != 1 {
-		return ErrStaleFence
+		return ErrRetentionMaintenanceFenceStale
 	}
 	return nil
 }
 
-func (r *Repository) QuarantineSnapshot(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+func (r *Repository) QuarantineSnapshotUnderMaintenanceFence(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence, maintenanceID string, maintenance RetentionMaintenanceFence) error {
 	if r == nil {
 		return ErrInvalid
 	}
-	return QuarantineSnapshot(ctx, r.db, ref, evidence, fence)
+	return inRepositoryExecTransaction(ctx, r.db, func(tx DBTX) error {
+		return QuarantineSnapshotUnderMaintenanceFence(ctx, tx, ref, evidence, fence, maintenanceID, maintenance)
+	})
 }
 
 // CompleteSnapshotCleanup records a successful physical cleanup only after a
 // snapshot has passed through quarantine. The transition is idempotent for an
 // exact evidence replay and cannot reopen or rewrite a terminal row.
-func CompleteSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+func CompleteSnapshotCleanupUnderMaintenanceFence(ctx context.Context, tx DBTX, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence, maintenanceID string, maintenance RetentionMaintenanceFence) error {
 	if tx == nil || !validSnapshotRef(ref) {
 		return ErrInvalid
 	}
 	if !validID(fence.OwnerID) || fence.FencingEpoch <= 0 {
 		return ErrInvalid
+	}
+	if !validUUID(maintenanceID) {
+		return ErrInvalid
+	}
+	if err := validateRetentionFence(maintenance); err != nil {
+		return err
 	}
 	canonical, err := canonicalEvidence(evidence)
 	if err != nil {
@@ -1788,48 +1813,54 @@ func CompleteSnapshotCleanup(ctx context.Context, tx DBTX, ref SnapshotRef, evid
 	if err != nil {
 		return err
 	}
-	row, err := querygen(tx).LockSnapshotRetentionComplete(ctx, dbgen.LockSnapshotRetentionCompleteParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
-	state, owner, epoch, leaseExpiry, existingEvidence := row.State, row.CleanupOwnerID, row.CleanupFencingEpoch, row.CleanupLeaseExpiresAt, row.CleanupEvidence
-	if errors.Is(err, pgx.ErrNoRows) {
-		return ErrNotFound
-	} else if err != nil {
+	if err := CheckRetentionMaintenanceFence(ctx, tx, maintenance); err != nil {
 		return err
 	}
-	if owner == nil || *owner != fence.OwnerID || epoch != fence.FencingEpoch {
+	row, err := querygen(tx).LockSnapshotRetentionComplete(ctx, dbgen.LockSnapshotRetentionCompleteParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if row.CleanupOwnerID == nil || *row.CleanupOwnerID != fence.OwnerID || row.CleanupFencingEpoch != fence.FencingEpoch {
 		return ErrStaleFence
 	}
-	if state == string(RetentionCleanupComplete) {
-		if !evidenceEqual(existingEvidence, canonical) {
+	if row.State == string(RetentionCleanupComplete) {
+		if !evidenceEqual(row.CleanupEvidence, canonical) {
 			return fmt.Errorf("%w: cleanup evidence differs", ErrConflict)
 		}
 		return nil
 	}
-	if state != string(RetentionQuarantined) {
+	if row.State != string(RetentionQuarantined) {
 		return fmt.Errorf("%w: snapshot must be quarantined before cleanup-complete", ErrConflict)
 	}
-	if !leaseExpiry.Valid || !leaseExpiry.Time.After(now) {
+	if !row.CleanupLeaseExpiresAt.Valid || !row.CleanupLeaseExpiresAt.Time.After(now) {
 		return ErrLeaseExpired
 	}
-	result, err := querygen(tx).CompleteSnapshotCleanup(ctx, dbgen.CompleteSnapshotCleanupParams{PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID, CleanupEvidence: []byte(canonical), CleanupCompletedAt: pgtype.Timestamptz{Time: now, Valid: true}, CleanupOwnerID: &fence.OwnerID, CleanupFencingEpoch: fence.FencingEpoch})
+	cleanupOwner := fence.OwnerID
+	result, err := querygen(tx).CompleteSnapshotCleanupUnderMaintenanceFence(ctx, dbgen.CompleteSnapshotCleanupUnderMaintenanceFenceParams{
+		CleanupEvidence: []byte(canonical), CleanupCompletedAt: pgtype.Timestamptz{Time: now, Valid: true},
+		PhysicalPoolID: ref.PhysicalPoolID, CatalogID: ref.CatalogID, SnapshotID: ref.SnapshotID,
+		CleanupOwnerID: cleanupOwner, CleanupFencingEpoch: fence.FencingEpoch,
+		MaintenanceID: upgradeUUID(maintenanceID), MaintenanceOwnerID: maintenance.OwnerID, MaintenanceFencingEpoch: maintenance.FencingEpoch,
+	})
 	if err != nil {
 		return err
 	}
 	if result.RowsAffected() != 1 {
-		return ErrStaleFence
+		return ErrRetentionMaintenanceFenceStale
 	}
 	return nil
 }
 
-func (r *Repository) CompleteSnapshotCleanup(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
+func (r *Repository) CompleteSnapshotCleanupUnderMaintenanceFence(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence, maintenanceID string, maintenance RetentionMaintenanceFence) error {
 	if r == nil {
 		return ErrInvalid
 	}
-	return CompleteSnapshotCleanup(ctx, r.db, ref, evidence, fence)
-}
-
-// MarkCleanupComplete is a concise alias for maintenance workers.
-func (r *Repository) MarkCleanupComplete(ctx context.Context, ref SnapshotRef, evidence json.RawMessage, fence CleanupFence) error {
-	return r.CompleteSnapshotCleanup(ctx, ref, evidence, fence)
+	return inRepositoryExecTransaction(ctx, r.db, func(tx DBTX) error {
+		return CompleteSnapshotCleanupUnderMaintenanceFence(ctx, tx, ref, evidence, fence, maintenanceID, maintenance)
+	})
 }
 
 func RecordSnapshotOrphan(ctx context.Context, tx DBTX, in SnapshotOrphanInput) (SnapshotOrphan, error) {

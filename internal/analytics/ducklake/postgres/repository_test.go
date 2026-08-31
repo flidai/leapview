@@ -227,7 +227,22 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	if err := r.RetireSnapshot(t.Context(), lockRef, acquiredAt.Add(4*time.Second)); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ExpireSnapshot(t.Context(), SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 41}, json.RawMessage(`{"external_expiration":"verified"}`), acquiredAt.Add(2*time.Second)); err != nil {
+	maintenanceFence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-test", LeaseExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintenanceID := "0198f2c0-7c7a-7f00-0000-000000000091"
+	operation, err := startAndPrepareRetentionMaintenance(t.Context(), r.db, RetentionMaintenance{MaintenanceID: maintenanceID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: maintenanceFence.OwnerID, FencingEpoch: maintenanceFence.FencingEpoch, State: "running", Phase: "expiry", FileGraceMicros: int64(time.Hour / time.Microsecond)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if operation.SnapshotSetDigest == "" {
+		t.Fatal("fenced retention operation did not freeze snapshot set")
+	}
+	if err := r.ExpireSnapshotUnderMaintenanceFence(t.Context(), SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 41}, json.RawMessage(`{"external_expiration":"verified"}`), time.Time{}, maintenanceID, maintenanceFence); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReleaseRetentionMaintenanceFence(t.Context(), maintenanceFence); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -323,42 +338,50 @@ func TestPostgres18CleanupClaimFencesStaleWorkers(t *testing.T) {
 	if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.ExpireSnapshot(t.Context(), ref, json.RawMessage(`{"expired":"verified"}`), time.Time{}); err != nil {
+	maintenanceFence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-test", LeaseExpiresAt: time.Now().Add(time.Minute)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	maintenanceID := "0198f2c0-7c7a-7f00-0000-000000000092"
+	if _, err := startAndPrepareRetentionMaintenance(t.Context(), r.db, RetentionMaintenance{MaintenanceID: maintenanceID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: maintenanceFence.OwnerID, FencingEpoch: maintenanceFence.FencingEpoch, State: "running", Phase: "expiry", FileGraceMicros: int64(time.Hour / time.Microsecond)}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ExpireSnapshotUnderMaintenanceFence(t.Context(), ref, json.RawMessage(`{"expired":"verified"}`), time.Time{}, maintenanceID, maintenanceFence); err != nil {
 		t.Fatal(err)
 	}
 	var dbNow time.Time
 	if err := p.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
 		t.Fatal(err)
 	}
-	fenceA, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-a", dbNow.Add(100*time.Millisecond))
+	fenceA, err := r.ClaimSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, "cleanup-a", dbNow.Add(100*time.Millisecond), maintenanceID, maintenanceFence)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-a", dbNow.Add(time.Second)); err != nil || replay.FencingEpoch != fenceA.FencingEpoch {
+	if replay, err := r.ClaimSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, "cleanup-a", dbNow.Add(time.Second), maintenanceID, maintenanceFence); err != nil || replay.FencingEpoch != fenceA.FencingEpoch {
 		t.Fatalf("same-owner claim replay=%#v err=%v", replay, err)
 	}
-	if _, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-b", dbNow.Add(time.Second)); !errors.Is(err, ErrCleanupBusy) {
+	if _, err := r.ClaimSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, "cleanup-b", dbNow.Add(time.Second), maintenanceID, maintenanceFence); !errors.Is(err, ErrCleanupBusy) {
 		t.Fatalf("active-owner contention err=%v", err)
 	}
 	time.Sleep(200 * time.Millisecond)
-	fenceB, err := r.ClaimSnapshotCleanup(t.Context(), ref, "cleanup-b", time.Now().Add(time.Second))
+	fenceB, err := r.ClaimSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, "cleanup-b", time.Now().Add(time.Second), maintenanceID, maintenanceFence)
 	if err != nil || fenceB.FencingEpoch <= fenceA.FencingEpoch {
 		t.Fatalf("successor cleanup claim=%#v err=%v", fenceB, err)
 	}
-	if err := r.QuarantineSnapshot(t.Context(), ref, json.RawMessage(`{"worker":"b"}`), fenceA); !errors.Is(err, ErrStaleFence) {
+	if err := r.QuarantineSnapshotUnderMaintenanceFence(t.Context(), ref, json.RawMessage(`{"worker":"b"}`), fenceA, maintenanceID, maintenanceFence); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale quarantine err=%v", err)
 	}
-	if err := r.QuarantineSnapshot(t.Context(), ref, json.RawMessage(`{"worker":"b"}`), fenceB); err != nil {
+	if err := r.QuarantineSnapshotUnderMaintenanceFence(t.Context(), ref, json.RawMessage(`{"worker":"b"}`), fenceB, maintenanceID, maintenanceFence); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.CompleteSnapshotCleanup(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceA); !errors.Is(err, ErrStaleFence) {
+	if err := r.CompleteSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceA, maintenanceID, maintenanceFence); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale completion err=%v", err)
 	}
-	if err := r.CompleteSnapshotCleanup(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceB); err != nil {
+	if err := r.CompleteSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceB, maintenanceID, maintenanceFence); err != nil {
 		t.Fatal(err)
 	}
 	time.Sleep(1100 * time.Millisecond)
-	if err := r.CompleteSnapshotCleanup(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceB); err != nil {
+	if err := r.CompleteSnapshotCleanupUnderMaintenanceFence(t.Context(), ref, json.RawMessage(`{"worker":"b","deleted":true}`), fenceB, maintenanceID, maintenanceFence); err != nil {
 		t.Fatalf("exact completion replay err=%v", err)
 	}
 	retained, err := r.LoadSnapshotRetention(t.Context(), ref)
@@ -370,6 +393,9 @@ func TestPostgres18CleanupClaimFencesStaleWorkers(t *testing.T) {
 	}
 	if !evidenceEqual(retained.Evidence, `{"expired":"verified"}`) || !evidenceEqual(retained.QuarantineEvidence, `{"worker":"b"}`) || !evidenceEqual(retained.CleanupEvidence, `{"worker":"b","deleted":true}`) {
 		t.Fatalf("phase evidence was not retained: expiration=%s (%v) quarantine=%s (%v) cleanup=%s (%v)", retained.Evidence, evidenceEqual(retained.Evidence, `{"expired":"verified"}`), retained.QuarantineEvidence, evidenceEqual(retained.QuarantineEvidence, `{"worker":"b"}`), retained.CleanupEvidence, evidenceEqual(retained.CleanupEvidence, `{"worker":"b","deleted":true}`))
+	}
+	if err := r.ReleaseRetentionMaintenanceFence(t.Context(), maintenanceFence); err != nil {
+		t.Fatal(err)
 	}
 }
 

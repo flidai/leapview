@@ -15,9 +15,17 @@ type maintenanceExecStub struct {
 	statements []string
 	err        error
 	block      <-chan struct{}
+	started    chan struct{}
 }
 
 func (s *maintenanceExecStub) ExecContext(ctx context.Context, statement string, _ ...any) (sql.Result, error) {
+	if s.started != nil {
+		select {
+		case <-s.started:
+		default:
+			close(s.started)
+		}
+	}
 	if s.block != nil {
 		select {
 		case <-s.block:
@@ -136,6 +144,38 @@ func TestPostgresCatalogMaintenanceRejectsRuntimeDBPool(t *testing.T) {
 	}
 }
 
+func TestPostgresCatalogMaintenanceVerifySnapshotsExpired(t *testing.T) {
+	db, err := sql.Open("duckdb", ":memory:")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	conn, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(context.Background(), `CREATE SCHEMA lake; CREATE TABLE lake.snapshot_rows(snapshot_id BIGINT); CREATE MACRO lake.snapshots() AS TABLE SELECT snapshot_id FROM lake.snapshot_rows`); err != nil {
+		t.Fatal(err)
+	}
+	maintenance, err := NewPostgresCatalogMaintenance(conn, maintenanceContract())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := maintenance.VerifySnapshotsExpired(context.Background(), nil); err != nil {
+		t.Fatalf("empty verification = %v", err)
+	}
+	if err := maintenance.VerifySnapshotsExpired(context.Background(), []int64{11}); err != nil {
+		t.Fatalf("missing snapshot verification = %v", err)
+	}
+	if _, err := conn.ExecContext(context.Background(), `INSERT INTO lake.snapshot_rows VALUES (11)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := maintenance.VerifySnapshotsExpired(context.Background(), []int64{11}); err == nil {
+		t.Fatal("remaining snapshot was accepted as expired")
+	}
+}
+
 func TestPostgresCatalogMaintenanceCancellationAndFenceStopBeforeNextPhase(t *testing.T) {
 	started := make(chan struct{})
 	block := make(chan struct{})
@@ -176,5 +216,80 @@ func TestPostgresCatalogMaintenanceCancellationAndFenceStopBeforeNextPhase(t *te
 	}
 	if _, err := staleMaintenance.Run(context.Background(), PostgresCatalogMaintenanceRequest{SnapshotIDs: []int64{1}, FileGrace: time.Hour}); err == nil || !strings.Contains(err.Error(), "stale maintenance fence") {
 		t.Fatalf("stale fence run error = %v", err)
+	}
+}
+
+func TestPostgresCatalogMaintenanceLeaseExpiryCancelsBlockedPhase(t *testing.T) {
+	started := make(chan struct{})
+	block := make(chan struct{})
+	stub := &maintenanceExecStub{block: block, started: started}
+	contract := maintenanceContract()
+	expires := time.Now().Add(200 * time.Millisecond)
+	contract.Lease.ExpiresAt = expires
+	contract.Fence.LeaseExpiresAt = expires
+	maintenance, err := NewPostgresCatalogMaintenance(stub, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	done := make(chan struct {
+		result PostgresCatalogMaintenanceResult
+		err    error
+	}, 1)
+	go func() {
+		result, runErr := maintenance.Run(context.Background(), PostgresCatalogMaintenanceRequest{SnapshotIDs: []int64{1}, FileGrace: time.Hour})
+		done <- struct {
+			result PostgresCatalogMaintenanceResult
+			err    error
+		}{result: result, err: runErr}
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("maintenance phase did not start")
+	}
+
+	select {
+	case outcome := <-done:
+		if !errors.Is(outcome.err, context.DeadlineExceeded) {
+			t.Fatalf("expired lease run error = %v", outcome.err)
+		}
+		if outcome.result.Snapshots || outcome.result.OldFiles || outcome.result.Orphans {
+			t.Fatalf("expired lease reported phase success: %#v", outcome.result)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("blocked maintenance phase was not canceled at lease expiry")
+	}
+	if got := len(stub.calls()); got != 0 {
+		t.Fatalf("expired phase recorded %d SQL calls", got)
+	}
+}
+
+func TestPostgresCatalogMaintenanceRevalidatesFenceAfterPhase(t *testing.T) {
+	stub := &maintenanceExecStub{}
+	contract := maintenanceContract()
+	verifyCalls := 0
+	contract.Fence.Verify = func(context.Context) error {
+		verifyCalls++
+		if verifyCalls > 1 {
+			return errors.New("maintenance fence lost after native call")
+		}
+		return nil
+	}
+	maintenance, err := NewPostgresCatalogMaintenance(stub, contract)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := maintenance.Run(context.Background(), PostgresCatalogMaintenanceRequest{SnapshotIDs: []int64{1}, FileGrace: time.Hour})
+	if err == nil || !strings.Contains(err.Error(), "maintenance fence lost after native call") {
+		t.Fatalf("post-call fence error = %v", err)
+	}
+	if result.Snapshots || result.OldFiles || result.Orphans {
+		t.Fatalf("post-call fence loss reported phase success: %#v", result)
+	}
+	if got := len(stub.calls()); got != 1 {
+		t.Fatalf("calls after post-call fence loss = %d, want one", got)
 	}
 }
