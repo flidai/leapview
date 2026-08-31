@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/catalogartifact"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/gates"
@@ -63,6 +64,7 @@ type NativeQualificationOpenRequest struct {
 	SnapshotID        int64
 	ObjectRoot        string
 	RelationNamespace string
+	CommitMarker      catalogartifact.CommitMarker
 	Compatibility     ducklakepostgres.RuntimeCompatibility
 }
 
@@ -186,7 +188,7 @@ func QualifyNativeSnapshot(ctx context.Context, request NativeQualificationReque
 	openRequest := NativeQualificationOpenRequest{
 		PhysicalPoolID: build.Marker.PhysicalPoolID, CatalogID: build.CatalogID,
 		SnapshotID: build.SnapshotID, ObjectRoot: build.ObjectRoot,
-		RelationNamespace: build.Closure.RelationNamespace, Compatibility: request.Compatibility,
+		RelationNamespace: build.Closure.RelationNamespace, CommitMarker: build.Marker, Compatibility: request.Compatibility,
 	}
 	env, err := factory.Open(ctx, openRequest)
 	if err != nil {
@@ -316,13 +318,18 @@ func (f DuckLakeNativeQualificationEnvironmentFactory) Open(ctx context.Context,
 	if f.Config.PoolContract == nil || f.Config.ExtensionAdmission == nil {
 		return nil, fmt.Errorf("%w: pool contract and extension admission are required", ErrNativeQualificationRuntime)
 	}
+	marker, err := request.CommitMarker.Normalize()
+	if err != nil || marker.PhysicalPoolID != request.PhysicalPoolID {
+		return nil, fmt.Errorf("%w: exact commit marker is required", ErrNativeQualificationInvalid)
+	}
+	request.CommitMarker = marker
 	if request.SnapshotID <= 0 || strings.TrimSpace(request.PhysicalPoolID) == "" || request.PhysicalPoolID != f.Config.PoolContract.Pool.ID.String() {
 		return nil, fmt.Errorf("%w: physical pool or snapshot identity mismatch", ErrNativeQualificationInvalid)
 	}
 	if strings.TrimSpace(f.CatalogID) == "" || request.CatalogID != f.CatalogID {
 		return nil, fmt.Errorf("%w: catalog identity mismatch", ErrNativeQualificationInvalid)
 	}
-	if f.CompatibilityAuthority == nil {
+	if nativeBuildAuthorityNil(f.CompatibilityAuthority) {
 		return nil, fmt.Errorf("%w: PostgreSQL runtime compatibility authority is required", ErrNativeQualificationRuntime)
 	}
 	current, err := f.CompatibilityAuthority.LoadCatalogRuntimeCompatibility(ctx, request.PhysicalPoolID)
@@ -356,6 +363,7 @@ func (f DuckLakeNativeQualificationEnvironmentFactory) Open(ctx context.Context,
 	postgresCopy.SnapshotVersion = request.SnapshotID
 	postgresCopy.DataPath = ""
 	config.PostgresCatalog = &postgresCopy
+	config.CommitMarker = &marker
 	env, err := ducklake.Open(ctx, config)
 	if err != nil {
 		return nil, err
@@ -381,6 +389,13 @@ func (e *duckLakeNativeQualificationEnvironment) Close() error {
 		return nil
 	}
 	return e.environment.Close()
+}
+
+func (e *duckLakeNativeQualificationEnvironment) SnapshotSealEvidence(ctx context.Context, snapshotID int64) (ducklake.PostgresSnapshotSealEvidence, error) {
+	if e == nil || e.environment == nil {
+		return ducklake.PostgresSnapshotSealEvidence{}, ErrNativeQualificationRuntime
+	}
+	return e.environment.SnapshotSealEvidence(ctx, snapshotID)
 }
 
 func (e *duckLakeNativeQualificationEnvironment) NativeSnapshotClosureEvidence(ctx context.Context, request ducklake.NativeSnapshotClosureRequest) (ducklake.NativeSnapshotClosureEvidence, error) {

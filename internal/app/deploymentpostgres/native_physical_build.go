@@ -500,6 +500,14 @@ func RunNativePhysicalBuild(ctx context.Context, input NativePhysicalBuildInput,
 }
 
 func validateNativePhysicalBuildInput(input NativePhysicalBuildInput) (NativePhysicalBuildInput, []byte, string, error) {
+	return validateNativePhysicalBuildInputWithPolicy(input, time.Now().UTC(), deploymentnative.AttemptRunning, false)
+}
+
+// validateNativePhysicalBuildInputWithPolicy shares all physical-build
+// identity checks with both the live writer and recovery paths. An
+// indeterminate ledger state is the recovery fence, so recovery does not
+// require an otherwise-live lease, but all canonical identities still match.
+func validateNativePhysicalBuildInputWithPolicy(input NativePhysicalBuildInput, now time.Time, expectedState deploymentnative.BuildAttemptState, allowExpired bool) (NativePhysicalBuildInput, []byte, string, error) {
 	marker, err := input.Marker.Normalize()
 	if err != nil {
 		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: commit marker: %v", deploymentnative.ErrInvalid, err)
@@ -508,7 +516,7 @@ func validateNativePhysicalBuildInput(input NativePhysicalBuildInput) (NativePhy
 	if err != nil || len(canonicalMarker) > catalogartifact.MaxCommitMarkerBytes {
 		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: canonical commit marker: %v", deploymentnative.ErrInvalid, err)
 	}
-	if err := validateAttempt(input.Attempt); err != nil {
+	if err := validateAttemptWithPolicy(input.Attempt, now, expectedState, allowExpired); err != nil {
 		return NativePhysicalBuildInput{}, nil, "", err
 	}
 	if marker.AttemptID != input.Attempt.AttemptID || marker.PlanDigest != input.Attempt.PlanDigest || marker.RequestDigest != input.Attempt.RequestDigest || marker.PhysicalPoolID != input.Attempt.PhysicalPoolID || marker.LeaseEpoch != input.Attempt.FencingEpoch {
@@ -581,6 +589,10 @@ func validateNativePhysicalBuildInput(input NativePhysicalBuildInput) (NativePhy
 }
 
 func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
+	return validateAttemptWithPolicy(attempt, time.Now().UTC(), deploymentnative.AttemptRunning, false)
+}
+
+func validateAttemptWithPolicy(attempt deploymentnative.DeliveryBuildAttempt, now time.Time, expectedState deploymentnative.BuildAttemptState, allowExpired bool) error {
 	for label, value := range map[string]string{"attempt id": attempt.AttemptID, "plan id": attempt.PlanID, "owner id": attempt.OwnerID, "physical pool id": attempt.PhysicalPoolID} {
 		if err := validateTextField(value, label, 512); err != nil {
 			return err
@@ -600,8 +612,11 @@ func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
 	if attempt.FencingEpoch <= 0 {
 		return fmt.Errorf("%w: build attempt fencing epoch must be positive", deploymentnative.ErrInvalid)
 	}
-	if attempt.State != deploymentnative.AttemptRunning {
-		return fmt.Errorf("%w: build attempt must be running before physical materialization", deploymentnative.ErrConflict)
+	if expectedState != deploymentnative.AttemptRunning && expectedState != deploymentnative.AttemptIndeterminate {
+		return fmt.Errorf("%w: expected build attempt state is invalid", deploymentnative.ErrInvalid)
+	}
+	if attempt.State != expectedState {
+		return fmt.Errorf("%w: build attempt must be %s", deploymentnative.ErrConflict, expectedState)
 	}
 	expectedNamespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
 		CandidateID: attempt.CandidateID, AttemptID: attempt.AttemptID, FencingEpoch: attempt.FencingEpoch,
@@ -612,7 +627,7 @@ func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
 	if attempt.Namespace != expectedNamespace {
 		return fmt.Errorf("%w: build attempt relation namespace differs from canonical identity", deploymentnative.ErrConflict)
 	}
-	if attempt.LeaseExpiresAt.IsZero() || !attempt.LeaseExpiresAt.After(time.Now().UTC()) {
+	if attempt.LeaseExpiresAt.IsZero() || !allowExpired && !attempt.LeaseExpiresAt.After(now) {
 		return fmt.Errorf("%w: build attempt lease is expired", deploymentnative.ErrConflict)
 	}
 	for label, value := range map[string]string{"request digest": attempt.RequestDigest, "plan digest": attempt.PlanDigest} {

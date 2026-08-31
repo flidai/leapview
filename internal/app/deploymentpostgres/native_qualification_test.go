@@ -26,6 +26,7 @@ func qualificationDigest(value string) string {
 
 type qualificationEnvironmentFake struct {
 	compat  NativeRuntimeCompatibilityEvidence
+	seal    ducklake.PostgresSnapshotSealEvidence
 	closure ducklake.NativeSnapshotClosureEvidence
 	query   func(context.Context, semanticquery.Plan) (semanticquery.Rows, error)
 	closed  int
@@ -39,6 +40,9 @@ func (e *qualificationEnvironmentFake) Query(ctx context.Context, plan semanticq
 }
 func (e *qualificationEnvironmentFake) RuntimeCompatibility(context.Context) (NativeRuntimeCompatibilityEvidence, error) {
 	return e.compat, nil
+}
+func (e *qualificationEnvironmentFake) SnapshotSealEvidence(context.Context, int64) (ducklake.PostgresSnapshotSealEvidence, error) {
+	return e.seal, nil
 }
 func (e *qualificationEnvironmentFake) NativeSnapshotClosureEvidence(context.Context, ducklake.NativeSnapshotClosureRequest) (ducklake.NativeSnapshotClosureEvidence, error) {
 	return e.closure, nil
@@ -137,7 +141,7 @@ func TestQualifyNativeSnapshotRunsGatesAgainstExactNamespace(t *testing.T) {
 	if result.Gates.Outcome != release.GateSuccess || result.Digest == "" || env.closed != 1 {
 		t.Fatalf("result=%#v closed=%d", result, env.closed)
 	}
-	if factory.got.SnapshotID != 42 || factory.got.RelationNamespace != namespace || factory.got.PhysicalPoolID != "pool" {
+	if factory.got.SnapshotID != 42 || factory.got.RelationNamespace != namespace || factory.got.PhysicalPoolID != "pool" || factory.got.CommitMarker.AttemptID != request.Build.Marker.AttemptID {
 		t.Fatalf("open request=%#v", factory.got)
 	}
 	encoded, digestValue, err := result.Canonical()
