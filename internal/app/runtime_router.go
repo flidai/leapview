@@ -26,6 +26,7 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -89,6 +90,36 @@ type runtimeServices struct {
 	runtimeHostModule     *runtimehostmodule.Module
 	projectID             projectgraph.ResourceID
 	projectIDResolver     func(context.Context) (projectgraph.ResourceID, error)
+}
+
+type dashboardAppearanceReader interface {
+	ListProject(context.Context, projectgraph.ResourceID) (map[projectgraph.ResourceID]dashboardappearance.Record, error)
+}
+
+func dashboardAppearanceResolver(reader projectmodule.ProjectDefinitionReader, store dashboardAppearanceReader) func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error) {
+	return func(ctx context.Context, projectID, dashboardID projectgraph.ResourceID) (dashboardappearance.Value, error) {
+		appearance := dashboardappearance.Default()
+		project, _, err := reader.ProjectDefinitionSnapshot(ctx)
+		if err != nil {
+			return dashboardappearance.Value{}, err
+		}
+		if source, ok := project.DashboardSources[dashboardID.String()]; ok && source.Document.Spec.Appearance != nil {
+			if source.Document.Spec.Appearance.Icon != nil {
+				appearance.Icon = strings.TrimSpace(*source.Document.Spec.Appearance.Icon)
+			}
+			if source.Document.Spec.Appearance.Color != nil {
+				appearance.Color = strings.TrimSpace(string(*source.Document.Spec.Appearance.Color))
+			}
+		}
+		overrides, err := store.ListProject(ctx, projectID)
+		if err != nil {
+			return dashboardappearance.Value{}, err
+		}
+		if record, ok := overrides[dashboardID]; ok {
+			return dashboardappearance.Resolve(record.Value), nil
+		}
+		return dashboardappearance.Resolve(appearance), nil
+	}
 }
 
 // resolveProjectID returns the exact project bound to the active serving
@@ -1091,16 +1122,24 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.dashboardModule == nil {
 		agentUICommands := routes.agentModule.UICommandBindings()
+		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error)
+		if database != nil && runtime.runtimeHostModule != nil {
+			resolveDashboardAppearance = dashboardAppearanceResolver(
+				projectmodule.NewActiveProjectDefinitionReader(runtime.runtimeHostModule.Provider()),
+				dashboardmodule.NewAppearanceStore(database),
+			)
+		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
 			Database:            database,
 			Authoring:           routes.dashboardAuthoring,
 			AuditIntentRecorder: persistence.auditRecorder,
 			HTTP: dashboardmodule.HTTPConfig{
-				Metrics:          runtime.metrics,
-				ProjectID:        runtime.projectID,
-				ResolveProjectID: runtime.resolveProjectID,
-				Admission:        workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
+				Metrics:                    runtime.metrics,
+				ProjectID:                  runtime.projectID,
+				ResolveProjectID:           runtime.resolveProjectID,
+				ResolveDashboardAppearance: resolveDashboardAppearance,
+				Admission:                  workloadController(&runtime.workloads), Broker: runtime.dashboardBroker, Logger: platform.logger,
 				Telemetry: routes.dashboardTelemetry,
 				CurrentPrincipalID: func(r *http.Request) string {
 					principal, ok := accessmodule.PrincipalFromContext(r.Context())

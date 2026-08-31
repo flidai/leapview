@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
@@ -150,40 +151,67 @@ type Handler struct {
 	// ProjectID is the stable graph project resource selected by app
 	// composition. It is deliberately not taken from a route segment. When
 	// ResolveProjectID is configured, the lease-bound resolver is authoritative.
-	ProjectID                projectgraph.ResourceID
-	ResolveProjectID         func(context.Context) (projectgraph.ResourceID, error)
-	AnalyticalContext        func(context.Context) context.Context
-	Broker                   SignalBroker
-	Coordinators             *dashboardstream.Registry
-	Logger                   *slog.Logger
-	RefreshStarted           dashboardstream.StartObserver
-	RefreshFinished          dashboardstream.SummaryObserver
-	RefreshEventObserved     dashboardstream.EventPublisher
-	CacheObserved            dataquery.CacheOutcomeObserver
-	CacheObservationObserved dataquery.CacheObserver
-	CurrentPrincipalID       func(r *nethttp.Request) string
-	CurrentUsagePrincipal    func(r *nethttp.Request) (string, bool)
-	RecordDashboardView      func(context.Context, usage.View) error
-	AuthorizeListResource    func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
-	CSRFToken                func(r *nethttp.Request) string
-	Layout                   func(r *nethttp.Request) webpage.Provider
-	Presentation             reportui.Presentation
-	Assets                   staticasset.Resolver
-	Environment              func(*nethttp.Request) string
-	DataRefreshedAt          func(context.Context, string, string, string) string
-	QueryFreshness           func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	CommandGuard             func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
-	SharedCommandPrepare     SharedCommandPrepare
-	SessionStore             dashboardsession.Store
-	SessionKey               SessionKeyFactory
-	OptionCursorSecret       []byte
-	OptionCache              *dashboardfilter.OptionCache
-	AgentBootstrap           func(*nethttp.Request, string) reportui.AgentBootstrap
-	AgentCommands            reportui.AgentCommandBindings
-	RouteScope               reportui.RouteScope
-	StreamNamespace          string
-	SpatialTileStreamClosed  func(Metrics, string)
-	Authoring                AuthoringApplication
+	ProjectID                  projectgraph.ResourceID
+	ResolveProjectID           func(context.Context) (projectgraph.ResourceID, error)
+	ResolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error)
+	AnalyticalContext          func(context.Context) context.Context
+	Broker                     SignalBroker
+	Coordinators               *dashboardstream.Registry
+	Logger                     *slog.Logger
+	RefreshStarted             dashboardstream.StartObserver
+	RefreshFinished            dashboardstream.SummaryObserver
+	RefreshEventObserved       dashboardstream.EventPublisher
+	CacheObserved              dataquery.CacheOutcomeObserver
+	CacheObservationObserved   dataquery.CacheObserver
+	CurrentPrincipalID         func(r *nethttp.Request) string
+	CurrentUsagePrincipal      func(r *nethttp.Request) (string, bool)
+	RecordDashboardView        func(context.Context, usage.View) error
+	AuthorizeListResource      func(ctx context.Context, principalID string, resource access.ResourceRef, capability access.Capability) (bool, error)
+	CSRFToken                  func(r *nethttp.Request) string
+	Layout                     func(r *nethttp.Request) webpage.Provider
+	Presentation               reportui.Presentation
+	Assets                     staticasset.Resolver
+	Environment                func(*nethttp.Request) string
+	DataRefreshedAt            func(context.Context, string, string, string) string
+	QueryFreshness             func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	CommandGuard               func(*nethttp.Request, Metrics, command.Request, dashboard.Signals) error
+	SharedCommandPrepare       SharedCommandPrepare
+	SessionStore               dashboardsession.Store
+	SessionKey                 SessionKeyFactory
+	OptionCursorSecret         []byte
+	OptionCache                *dashboardfilter.OptionCache
+	AgentBootstrap             func(*nethttp.Request, string) reportui.AgentBootstrap
+	AgentCommands              reportui.AgentCommandBindings
+	RouteScope                 reportui.RouteScope
+	StreamNamespace            string
+	SpatialTileStreamClosed    func(Metrics, string)
+	Authoring                  AuthoringApplication
+}
+
+func (h Handler) catalogWithDashboardAppearance(ctx context.Context, source dashboard.Catalog, dashboardID string) dashboard.Catalog {
+	if h.ResolveDashboardAppearance == nil {
+		return source
+	}
+	projectID, err := h.projectIDForRequest(ctx)
+	if err != nil {
+		return source
+	}
+	resourceID, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return source
+	}
+	appearance, err := h.ResolveDashboardAppearance(ctx, projectID, resourceID)
+	if err != nil {
+		return source
+	}
+	source.Dashboards = append([]dashboard.CatalogDashboard(nil), source.Dashboards...)
+	for index := range source.Dashboards {
+		if source.Dashboards[index].ID == resourceID {
+			source.Dashboards[index].Appearance = dashboardappearance.Resolve(appearance)
+			break
+		}
+	}
+	return source
 }
 
 func (h Handler) projectIDForRequest(ctx context.Context) (projectgraph.ResourceID, error) {
@@ -386,7 +414,8 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 	if h.Layout != nil {
 		providers = []webpage.Provider{h.Layout(r)}
 	}
-	if err := reportui.PageWithRouteScopeAndAgentCommands(h.Presentation, h.RouteScope, clientID, csrfToken, metrics.Catalog(), reportDefinition, model, pages, activePage, initialFilters, h.AgentCommands, providers...).Render(w); err != nil {
+	catalog := h.catalogWithDashboardAppearance(r.Context(), metrics.Catalog(), dashboardID)
+	if err := reportui.PageWithRouteScopeAndAgentCommands(h.Presentation, h.RouteScope, clientID, csrfToken, catalog, reportDefinition, model, pages, activePage, initialFilters, h.AgentCommands, providers...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
 }

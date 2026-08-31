@@ -22,7 +22,9 @@ import { DatastarLit } from '../shared/datastar-lit'
 import { domainEvents, emitDomainEvent } from '../shared/events'
 import { checkSignalContract } from '../shared/signal-contract'
 import { agentIcon } from '../chat/agent-icon'
+import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
+import { breadcrumbStyles, renderBreadcrumb } from '../shared/breadcrumb'
 import '../navigation/sub-sidebar'
 import '../chat/chat-drawer'
 import './filters/filter-dock'
@@ -116,7 +118,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   })
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
 
-  static styles = css`
+  static styles = [breadcrumbStyles, css`
     :host {
       display: block;
       min-width: 0;
@@ -138,9 +140,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       transition: grid-template-columns var(--lv-duration-fast) var(--motion-easing-move);
     }
 
-    .route > .rail-header {
+    .route > .rail-footer {
       grid-column: 1;
-      grid-row: 1;
+      grid-row: 3;
     }
 
     .route > .header {
@@ -150,7 +152,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
     .route > lv-sub-sidebar {
       grid-column: 1;
-      grid-row: 2 / 4;
+      grid-row: 1 / 3;
+      --lv-sub-sidebar-header-height: calc(var(--control-medium-size) + (2 * var(--lv-space-control, var(--base-size-8))) + var(--borderWidth-thin));
+      --lv-sub-sidebar-header-padding-block: var(--lv-space-control, var(--base-size-8));
+      --lv-sub-sidebar-nav-padding-block-start: 0px;
     }
 
     .route > .main {
@@ -189,7 +194,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-decoration: underline;
     }
 
-    :host([presentation='embed']) .rail-header,
+    :host([presentation='embed']) .rail-footer,
     :host([presentation='embed']) .header,
     :host([presentation='embed']) lv-report-footer {
       display: none;
@@ -243,7 +248,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
     }
 
-    .rail-header {
+    .rail-footer {
       box-sizing: border-box;
       min-width: 0;
       contain: inline-size;
@@ -252,15 +257,16 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       background: var(--lv-sidebar-bg);
     }
 
-    .rail-header {
+    .rail-footer {
       display: grid;
+      min-height: var(--control-medium-size);
       align-items: center;
       justify-items: start;
-      border-bottom: var(--lv-border-muted);
-      padding: var(--lv-space-control, var(--base-size-8)) var(--base-size-16);
+      border-top: var(--lv-border-muted);
+      padding: 0 var(--base-size-16);
     }
 
-    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-header {
+    .route:has(> lv-sub-sidebar[data-collapsed]) .rail-footer {
       justify-items: center;
       padding-inline: 0;
     }
@@ -276,11 +282,33 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       display: none;
     }
 
-    .header-leading {
-      display: flex;
-      min-width: 0;
-      align-items: center;
-      gap: var(--base-size-8);
+    .breadcrumb-root {
+      flex: 0 0 auto;
+    }
+
+    .breadcrumb-dashboard,
+    .breadcrumb-current {
+      flex: 0 1 auto;
+    }
+
+    .dashboard-appearance-glyph {
+      color: var(--display-purple-fgColor);
+    }
+
+    .dashboard-appearance-glyph.appearance-color-gray { color: var(--display-gray-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-blue { color: var(--display-blue-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-green { color: var(--display-green-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-yellow { color: var(--display-yellow-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-orange { color: var(--display-orange-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-red { color: var(--display-red-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-purple { color: var(--display-purple-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-pink { color: var(--display-pink-fgColor); }
+    .dashboard-appearance-glyph.appearance-color-coral { color: var(--display-coral-fgColor); }
+
+    .breadcrumb-separator {
+      flex: 0 0 auto;
+      color: var(--lv-fg-muted);
+      font: var(--lv-type-body-compact);
     }
 
     .dashboard-back-link {
@@ -294,9 +322,11 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-decoration: none;
     }
 
-    .dashboard-back-link:hover,
+    .dashboard-back-link:hover {
+      color: var(--lv-fg-default);
+    }
+
     .dashboard-back-link:focus-visible {
-      background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
       outline: var(--focus-outline);
       outline-offset: var(--focus-outline-offset);
@@ -327,14 +357,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-medium);
     }
 
-    .mobile-dashboard-back-link {
-      display: none;
-    }
-
-    .title-block {
-      min-width: 0;
-    }
-
     h1,
     h2,
     p {
@@ -347,15 +369,6 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       text-overflow: ellipsis;
       white-space: nowrap;
       font: var(--lv-type-section-title);
-    }
-
-    .detail {
-      margin-top: var(--base-size-4);
-      overflow: hidden;
-      color: var(--lv-fg-muted);
-      text-overflow: ellipsis;
-      white-space: nowrap;
-      font: var(--lv-type-body-compact);
     }
 
     .actions {
@@ -748,7 +761,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         overflow: hidden;
       }
 
-      .route > .rail-header {
+      .route > .rail-footer {
         display: none;
       }
 
@@ -773,17 +786,13 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
         padding: var(--base-size-8) var(--base-size-12);
       }
 
+      :host(:not([presentation='embed'])) .breadcrumb-current {
+        display: none;
+      }
+
       :host(:not([presentation='embed'])) .dashboard-back-link {
         width: var(--control-medium-size);
         height: var(--control-medium-size);
-      }
-
-      :host(:not([presentation='embed'])) .mobile-dashboard-back-link {
-        display: grid;
-      }
-
-      :host(:not([presentation='embed'])) .detail {
-        display: none;
       }
 
       :host(:not([presentation='embed'])) .actions {
@@ -901,7 +910,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 				pointer-events: auto;
 			}
 		}
-  `
+  `]
 
   connectedCallback(): void {
     if (this.presentation === 'app' && !this.agentStateInitialized) {
@@ -1122,33 +1131,35 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const refreshProgress = this.refreshProgress(snapshot)
     const agentEnabled = this.presentation === 'app'
     const activeFilterCount = this.activeFilterCount(snapshot)
+    const dashboardHref = page.pages[0]?.href ?? `/dashboards/${page.dashboardId}`
     return html`
 			<div class=${`route${agentEnabled && this.agentDrawerOpen ? ' agent-open' : ''}`}>
-          <div class="rail-header">
+          <footer class="rail-footer">
             ${this.presentation === 'app' ? html`
               <a
                 class="dashboard-back-link rail-back-link"
                 href="/"
                 aria-label="Back to dashboards"
                 title="All dashboards"
-              >${lucideIcon(ArrowLeft)}<span class="rail-back-label">Dashboards</span></a>
+              >${lucideIcon(ArrowLeft)}<span class="rail-back-label">Back</span></a>
             ` : nothing}
-          </div>
+          </footer>
           <header class="header">
-            <div class="header-leading">
-              ${this.presentation === 'app' ? html`
-                <a
-                  class="dashboard-back-link mobile-dashboard-back-link"
-                  href="/"
-                  aria-label="Back to dashboards"
-                  title="All dashboards"
-                >${lucideIcon(ArrowLeft)}</a>
-              ` : nothing}
-              <div class="title-block">
-                <h1>${page.title}</h1>
-                <p class="detail">${page.headerDetail}</p>
-              </div>
-            </div>
+						${renderBreadcrumb([
+						  { label: 'Dashboards', href: '/', className: 'breadcrumb-root' },
+						  {
+							label: page.dashboardTitle,
+							href: dashboardHref,
+							className: 'breadcrumb-dashboard',
+							prefix: html`<span
+							  class=${`breadcrumb-glyph dashboard-appearance-glyph appearance-color-${appearanceColor(page.appearanceColor)}`}
+							  data-icon=${page.appearanceIcon}
+							  data-color=${appearanceColor(page.appearanceColor)}
+							  aria-hidden="true"
+							>${lucideIcon(lucideIconByCanonicalName(page.appearanceIcon), { size: 16, strokeWidth: 1.75 })}</span>`,
+						  },
+						  { label: page.pageTitle, current: true, className: 'breadcrumb-current' },
+						], 'Breadcrumb')}
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
 							<button
@@ -1912,6 +1923,10 @@ function tagForComponent(component: DashboardComponentSignal, visuals: Record<st
 
 function json(value: unknown): string {
   return JSON.stringify(value ?? {})
+}
+
+function appearanceColor(value: string): string {
+  return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'
 }
 
 if (!customElements.get('lv-dashboard-page')) customElements.define('lv-dashboard-page', LeapViewDashboardPage)

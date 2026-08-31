@@ -7,6 +7,7 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
@@ -19,6 +20,7 @@ const dashboardAgentReferenceLimit int32 = 12
 
 func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, definitions map[string]visualizationdefinition.Definition, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters) DashboardEnvelope {
 	activePage = activePage.WithDefaults()
+	appearance := dashboardAppearance(catalog, report.ID)
 	tableRequest := DefaultTableRequest(report, activePage)
 	initialFilters = report.NormalizeFiltersForPage(activePage.ID, initialFilters).WithDefaults()
 	modelID, modelTitle := strings.TrimSpace(report.SemanticModel), ""
@@ -60,21 +62,23 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 		AgentReferenceSearch: AgentReferenceSearchSignal{Results: []AgentReferenceSignal{}},
 		AgentVisuals:         map[string]visualizationir.VisualizationEnvelope{},
 		Page: DashboardPageSignal{
-			Kind:           RouteDashboard,
-			Presentation:   "app",
-			Title:          report.Title,
-			Description:    optionalValue(report.Description),
-			DashboardID:    report.ID,
-			DashboardTitle: report.Title,
-			PageID:         activePage.ID,
-			PageTitle:      activePage.Title,
-			HeaderDetail:   ReportPageHeaderDetail(activePage),
-			ModelID:        modelID,
-			ModelTitle:     modelTitle,
-			Canvas:         DashboardPageCanvasFromDashboard(activePage.Canvas),
-			Grid:           DashboardPageGridFromDashboard(activePage.Grid),
-			Pages:          dashboardPageNav(report.ID, pages, activePage),
-			Components:     dashboardComponents(activePage),
+			AppearanceColor: appearance.Color,
+			AppearanceIcon:  appearance.Icon,
+			Kind:            RouteDashboard,
+			Presentation:    "app",
+			Title:           report.Title,
+			Description:     optionalValue(report.Description),
+			DashboardID:     report.ID,
+			DashboardTitle:  report.Title,
+			PageID:          activePage.ID,
+			PageTitle:       activePage.Title,
+			HeaderDetail:    ReportPageHeaderDetail(activePage),
+			ModelID:         modelID,
+			ModelTitle:      modelTitle,
+			Canvas:          DashboardPageCanvasFromDashboard(activePage.Canvas),
+			Grid:            DashboardPageGridFromDashboard(activePage.Grid),
+			Pages:           dashboardPageNav(report.ID, pages, activePage),
+			Components:      dashboardComponents(activePage),
 		},
 		Runtime: RouteRuntimeSignal{
 			Kind:             RouteDashboard,
@@ -108,6 +112,15 @@ func DashboardInitialEnvelope(clientID, streamInstanceID string, catalog dashboa
 		Visuals:               InitialVisualizationEnvelopes(definitions, activePage, tableRequest, initialFilters),
 		Status:                DashboardStatusFromDashboard(dashboard.Status{}),
 	}
+}
+
+func dashboardAppearance(catalog dashboard.Catalog, dashboardID string) dashboardappearance.Value {
+	for _, candidate := range catalog.Dashboards {
+		if candidate.ID.String() == dashboardID {
+			return dashboardappearance.Resolve(candidate.Appearance)
+		}
+	}
+	return dashboardappearance.Default()
 }
 
 func DefaultTableRequest(report dashboarddefinition.Definition, page dashboard.Page) dashboard.TableRequest {

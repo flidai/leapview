@@ -171,8 +171,9 @@ class SubSidebar extends LitElement {
       box-sizing: border-box;
       display: grid;
       min-width: 0;
-      height: calc(var(--base-size-16) + var(--control-small-size));
-      padding: var(--base-size-8);
+      height: var(--lv-sub-sidebar-header-height, calc(var(--base-size-16) + var(--control-small-size)));
+      align-items: center;
+      padding: var(--lv-sub-sidebar-header-padding-block, var(--base-size-8)) var(--base-size-8);
     }
 
     .top-row {
@@ -243,7 +244,7 @@ class SubSidebar extends LitElement {
       min-height: 0;
       overflow-x: hidden;
       overflow-y: auto;
-      padding: var(--base-size-8) var(--base-size-4);
+      padding: var(--lv-sub-sidebar-nav-padding-block-start, var(--base-size-8)) var(--base-size-4) var(--base-size-8);
       scrollbar-gutter: stable;
       scrollbar-color: var(--lv-scrollbar-thumb) transparent;
       scrollbar-width: thin;
@@ -386,7 +387,7 @@ class SubSidebar extends LitElement {
     }
 
     :host([data-collapsed]) header {
-      padding: var(--base-size-8) var(--base-size-4);
+      padding: var(--lv-sub-sidebar-header-padding-block, var(--base-size-8)) var(--base-size-4);
     }
 
     :host([data-collapsed]) .section-title,
