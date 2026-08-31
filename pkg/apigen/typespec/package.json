@@ -19,14 +19,14 @@
     "typecheck": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.test.json"
   },
   "dependencies": {
-    "@typespec/compiler": "1.13.0",
-    "@typespec/http": "1.13.0",
-    "@typespec/openapi": "1.13.0"
+    "@typespec/compiler": "1.15.0",
+    "@typespec/http": "1.15.0",
+    "@typespec/openapi": "1.15.0"
   },
   "devDependencies": {
-    "@types/node": "26.0.0",
-    "typescript": "5.9.3",
-    "vitest": "3.2.7"
+    "@types/node": "26.4.0",
+    "typescript": "7.0.2",
+    "vitest": "4.1.11"
   },
   "overrides": {
     "fast-uri": "3.1.5",
