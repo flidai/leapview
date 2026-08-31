@@ -2,6 +2,8 @@ FAI-543 direct governed Arrow streaming prototype: benchstat comparison
 input: fai-543-0803b8f6-direct.txt
 tool: golang.org/x/perf/cmd/benchstat v0.0.0-20260825160852-19be9d8e6c70 (Go 1.26.7)
 comparison: current_api_direct renamed to lane in current.txt; candidate_governed_native renamed to lane in candidate.txt
+current input: awk '/^(goos|goarch|pkg|cpu):/{print; next} /current_api_direct/{gsub("current_api_direct", "lane"); print}' fai-543-0803b8f6-direct.txt > current.txt
+candidate input: awk '/^(goos|goarch|pkg|cpu):/{print; next} /candidate_governed_native/{gsub("candidate_governed_native", "lane"); print}' fai-543-0803b8f6-direct.txt > candidate.txt
 command: benchstat current.txt candidate.txt
 confidence: benchstat defaults (95% confidence; alpha 0.05)
 

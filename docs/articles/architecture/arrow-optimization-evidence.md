@@ -520,7 +520,7 @@ in `docs/articles/architecture/benchmark-data/fai-543-0803b8f6-direct.txt`
 (SHA-256 `69266dfbbfa38d8ea006cbe7f1d17eda3a3c8a14a5537b043f1aa1acc805bf8c`).
 The paired `benchstat` output is preserved in
 `docs/articles/architecture/benchmark-data/fai-543-0803b8f6-benchstat.txt`
-(SHA-256 `7863c6ce88a804054f2514494bf35aa64153bcd547d4c97b06cc8080f42779e7`).
+(SHA-256 `71ac7f16b2974377fc30c4eec0a94eb39c80bc3e8248177f22fc5c21e542fb47`).
 Both artifacts record their commands, inputs, versions, and sample policy.
 
 The primary comparison metrics are statistically significant in every
