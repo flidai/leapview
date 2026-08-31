@@ -36,6 +36,22 @@ LEFT JOIN delivery.delivery_candidate c
       AND c.target_id = r.target_id
 LEFT JOIN delivery.delivery_snapshot_seal s
        ON s.seal_id = COALESCE(r.snapshot_seal_id, g.snapshot_seal_id, c.snapshot_seal_id)
+      AND (
+          g.snapshot_seal_id = s.seal_id
+          OR c.snapshot_seal_id = s.seal_id
+          OR EXISTS (
+              SELECT 1
+              FROM delivery.delivery_generation owned_generation
+              WHERE owned_generation.target_id = r.target_id
+                AND owned_generation.snapshot_seal_id = s.seal_id
+          )
+          OR EXISTS (
+              SELECT 1
+              FROM delivery.delivery_candidate owned_candidate
+              WHERE owned_candidate.target_id = r.target_id
+                AND owned_candidate.snapshot_seal_id = s.seal_id
+          )
+      )
 WHERE r.target_id = $1
   AND t.environment = $2
 ORDER BY r.root_kind, r.root_id;

@@ -147,7 +147,13 @@ func TestRetentionInventoryScopesRootsLeasesAndSnapshotEvidence(t *testing.T) {
 	// A target in another environment must not appear when querying the prod
 	// target scope (and the same target with the wrong environment is empty).
 	otherGeneration := "22222222-2222-2222-2222-222222222222"
-	seedGenerationEnvironment(t, admin, otherGeneration, "target_inventory_other", "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", "55555555-5555-5555-5555-555555555555", digest, graphDigest, 43, "staging")
+	otherSeal := "55555555-5555-5555-5555-555555555555"
+	seedGenerationEnvironment(t, admin, otherGeneration, "target_inventory_other", "33333333-3333-3333-3333-333333333333", "44444444-4444-4444-4444-444444444444", otherSeal, digest, graphDigest, 43, "staging")
+	// A malformed direct root must remain observable to maintenance, but its
+	// cross-target seal must never disclose another target's pool or catalog.
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_retention_root(root_id,target_id,snapshot_seal_id,root_kind,state) VALUES('00000000-0000-0000-0000-000000000002',$1,$2::uuid,'recovery','retiring')`, target, otherSeal); err != nil {
+		t.Fatal(err)
+	}
 
 	r := New(runtime)
 	first, err := r.RetentionInventory(ctx, target, "prod")
@@ -161,8 +167,8 @@ func TestRetentionInventoryScopesRootsLeasesAndSnapshotEvidence(t *testing.T) {
 	if !reflect.DeepEqual(first, second) {
 		t.Fatalf("retention inventory is not stable across reads:\nfirst=%#v\nsecond=%#v", first, second)
 	}
-	if len(first.Roots) != 3 || len(first.ReaderLeases) != 3 {
-		t.Fatalf("inventory cardinality roots=%d leases=%d, want 3/3", len(first.Roots), len(first.ReaderLeases))
+	if len(first.Roots) != 4 || len(first.ReaderLeases) != 3 {
+		t.Fatalf("inventory cardinality roots=%d leases=%d, want 4/3", len(first.Roots), len(first.ReaderLeases))
 	}
 	if first.Roots[0].Kind != "candidate" || first.Roots[0].Snapshot == nil || first.Roots[0].Snapshot.SnapshotID != 42 || first.Roots[0].Snapshot.PhysicalPoolID != "pool_candidate" || first.Roots[0].Snapshot.CatalogID != "catalog_candidate" {
 		t.Fatalf("candidate root snapshot evidence = %#v", first.Roots[0])
@@ -170,7 +176,10 @@ func TestRetentionInventoryScopesRootsLeasesAndSnapshotEvidence(t *testing.T) {
 	if first.Roots[1].Kind != "generation" || first.Roots[1].State != "live" || first.Roots[1].Snapshot == nil || first.Roots[1].Snapshot.SnapshotID != 41 || first.Roots[1].Snapshot.PhysicalPoolID != "pool_inventory" || first.Roots[1].Snapshot.CatalogID != "catalog_inventory" {
 		t.Fatalf("active generation root = %#v", first.Roots[1])
 	}
-	if first.Roots[2].Kind != "rollback" || first.Roots[2].State != "retiring" {
+	if first.Roots[2].Kind != "recovery" || first.Roots[2].State != "retiring" || first.Roots[2].Snapshot != nil {
+		t.Fatalf("cross-target seal evidence leaked through malformed root: %#v", first.Roots[2])
+	}
+	if first.Roots[3].Kind != "rollback" || first.Roots[3].State != "retiring" {
 		t.Fatalf("root ordering/state = %#v", first.Roots)
 	}
 	for i, want := range []struct{ id, state string }{{"lease-active", "active"}, {"lease-expired", "expired"}, {"lease-released", "released"}} {
