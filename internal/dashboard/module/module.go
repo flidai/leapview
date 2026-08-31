@@ -33,7 +33,6 @@ import (
 	dashboardsignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/dashboard/usage"
 	usagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
-	dashboardusagesqlite "github.com/flidai/leapview/internal/dashboard/usage/sqlite"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
@@ -77,8 +76,8 @@ type Config struct {
 	// SessionStore, UsageRecorder/UsageReader, and AppearanceStore are the
 	// product-owned persistence seams. Native production composition supplies
 	// PostgreSQL implementations. Sessions use the concurrency-safe in-process
-	// MemoryStore when no native store is supplied; usage, appearance, and
-	// publication retain explicit SQLite fallbacks for legacy tests.
+	// MemoryStore when no native store is supplied; appearance and publication
+	// retain explicit SQLite fallbacks for legacy tests.
 	SessionStore             dashboardsession.Store
 	AppearanceStore          dashboardappearance.Store
 	LegacySQLite             bool
@@ -371,15 +370,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if sessionStore == nil {
 		sessionStore = dashboardsession.NewMemoryStore()
-	}
-	if config.Database != nil && (usageRecorder == nil || usageReader == nil) {
-		repository := dashboardusagesqlite.NewRepository(config.Database)
-		if usageRecorder == nil {
-			usageRecorder = repository
-		}
-		if usageReader == nil {
-			usageReader = repository
-		}
 	}
 	usageNow := config.UsageNow
 	if usageNow == nil {

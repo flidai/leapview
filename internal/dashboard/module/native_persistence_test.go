@@ -213,6 +213,9 @@ func TestBuildNativeDashboardUsesValidatedBundleWithoutSQLite(t *testing.T) {
 	if !module.PublicationsConfigured() {
 		t.Fatal("native dashboard build did not mark publication audit/mutation authority ready")
 	}
+	if module.HTTP().RecordDashboardView == nil {
+		t.Fatal("native dashboard build did not install usage recorder")
+	}
 }
 
 func TestBuildLegacyDatabaseUsesMemoryDashboardSessions(t *testing.T) {
@@ -227,6 +230,16 @@ func TestBuildLegacyDatabaseUsesMemoryDashboardSessions(t *testing.T) {
 	}
 	if _, ok := module.HTTP().SessionStore.(*dashboardsession.MemoryStore); !ok {
 		t.Fatalf("legacy dashboard database selected session store %T, want *session.MemoryStore", module.HTTP().SessionStore)
+	}
+	if module.HTTP().RecordDashboardView != nil {
+		t.Fatal("legacy dashboard database installed a usage recorder")
+	}
+	levels, err := module.Popularity(t.Context(), 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if levels != nil {
+		t.Fatalf("legacy dashboard database installed a usage reader: %#v", levels)
 	}
 }
 
