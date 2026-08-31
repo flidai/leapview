@@ -71,42 +71,129 @@ runtime_psql() {
     --set ON_ERROR_STOP=1 --tuples-only --no-align --command "$statement"
 }
 
+check_scalar() {
+  local label="$1"
+  local role="$2"
+  local password="$3"
+  local database="$4"
+  local statement="$5"
+  local expected="$6"
+  local actual
+
+  # Keep psql diagnostics out of the log so a failed probe cannot echo a
+  # connection URL or password supplied by the caller.
+  if ! actual="$(runtime_psql "$role" "$password" "$database" "$statement" 2>/dev/null)"; then
+    echo "PostgreSQL isolation check failed: $label query" >&2
+    return 1
+  fi
+  if [[ "$actual" != "$expected" ]]; then
+    echo "PostgreSQL isolation check failed: $label" >&2
+    return 1
+  fi
+}
+
+check_role_attributes() {
+  local role="$1"
+  local expected="$2"
+  check_scalar "role $role attributes" \
+    leapview_control_runtime "$CONTROL_PASSWORD" leapview_control \
+    "SELECT rolcanlogin::text || '|' || rolsuper::text || '|' || rolcreatedb::text || '|' || rolcreaterole::text || '|' || rolinherit::text FROM pg_roles WHERE rolname = '$role'" \
+    "$expected"
+}
+
 check_isolation() {
-  # Verify both positive connectivity and the negative privilege boundary.
+  # Fail fast if a caller points this helper at a PostgreSQL major other than
+  # the pinned development/test baseline.
+  check_scalar "PostgreSQL major version" \
+    leapview_control_runtime "$CONTROL_PASSWORD" leapview_control \
+    "SELECT current_setting('server_version_num')::integer / 10000" \
+    "18" || return 1
+
+  # Verify exact database owners before checking connectivity and privilege
+  # boundaries. Names are fixed constants and no secrets are selected.
+  check_scalar "control database owner" \
+    leapview_control_runtime "$CONTROL_PASSWORD" leapview_control \
+    "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'leapview_control'" \
+    "leapview_control_owner" || return 1
+  check_scalar "DuckLake database owner" \
+    leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_ducklake \
+    "SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = 'leapview_ducklake'" \
+    "leapview_ducklake_owner" || return 1
+
+  # Verify both positive connectivity and the exact PostgreSQL identity each
+  # credential resolves to.
   [[ "$(runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_control 'SELECT current_database()')" == "leapview_control" ]] || {
     echo "control runtime cannot connect to leapview_control" >&2
     return 1
   }
+  check_scalar "control runtime identity" leapview_control_runtime "$CONTROL_PASSWORD" leapview_control 'SELECT current_user' leapview_control_runtime || return 1
   [[ "$(runtime_psql leapview_control_readonly "$CONTROL_READONLY_PASSWORD" leapview_control 'SELECT current_database()')" == "leapview_control" ]] || {
     echo "control readonly cannot connect to leapview_control" >&2
     return 1
   }
+  check_scalar "control readonly identity" leapview_control_readonly "$CONTROL_READONLY_PASSWORD" leapview_control 'SELECT current_user' leapview_control_readonly || return 1
   [[ "$(runtime_psql leapview_control_upgrade_coordinator "$CONTROL_UPGRADE_COORDINATOR_PASSWORD" leapview_control 'SELECT current_database()')" == "leapview_control" ]] || {
     echo "control upgrade coordinator cannot connect to leapview_control" >&2
     return 1
   }
+  check_scalar "control upgrade coordinator identity" leapview_control_upgrade_coordinator "$CONTROL_UPGRADE_COORDINATOR_PASSWORD" leapview_control 'SELECT current_user' leapview_control_upgrade_coordinator || return 1
   [[ "$(runtime_psql leapview_control_maintenance "$CONTROL_MAINTENANCE_PASSWORD" leapview_control 'SELECT current_database()')" == "leapview_control" ]] || {
     echo "control maintenance role cannot connect to leapview_control" >&2
     return 1
   }
+  check_scalar "control maintenance identity" leapview_control_maintenance "$CONTROL_MAINTENANCE_PASSWORD" leapview_control 'SELECT current_user' leapview_control_maintenance || return 1
   [[ "$(runtime_psql leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_ducklake 'SELECT current_database()')" == "leapview_ducklake" ]] || {
     echo "DuckLake runtime cannot connect to leapview_ducklake" >&2
     return 1
   }
+  check_scalar "DuckLake runtime identity" leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_ducklake 'SELECT current_user' leapview_ducklake_runtime || return 1
   [[ "$(runtime_psql leapview_ducklake_migrator "$DUCKLAKE_MIGRATOR_PASSWORD" leapview_ducklake 'SELECT current_database()')" == "leapview_ducklake" ]] || {
     echo "DuckLake migrator cannot connect to leapview_ducklake" >&2
     return 1
   }
+  check_scalar "DuckLake migrator identity" leapview_ducklake_migrator "$DUCKLAKE_MIGRATOR_PASSWORD" leapview_ducklake 'SELECT current_user' leapview_ducklake_migrator || return 1
   [[ "$(runtime_psql leapview_ducklake_maintenance "$DUCKLAKE_MAINTENANCE_PASSWORD" leapview_ducklake 'SELECT current_database()')" == "leapview_ducklake" ]] || {
     echo "DuckLake maintenance cannot connect to leapview_ducklake" >&2
     return 1
   }
+  check_scalar "DuckLake maintenance identity" leapview_ducklake_maintenance "$DUCKLAKE_MAINTENANCE_PASSWORD" leapview_ducklake 'SELECT current_user' leapview_ducklake_maintenance || return 1
+  check_scalar "control migrator identity" leapview_control_migrator "$CONTROL_MIGRATOR_PASSWORD" leapview_control 'SELECT current_user' leapview_control_migrator || return 1
+
+  # Ensure every critical role has the exact login and capability flags from
+  # deploy/postgres/init.sh. The query deliberately excludes rolpassword.
+  check_role_attributes leapview_control_owner 'false|false|false|false|false' || return 1
+  check_role_attributes leapview_ducklake_owner 'false|false|false|false|false' || return 1
+  check_role_attributes leapview_control_runtime 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_control_readonly 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_ducklake_runtime 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_control_migrator 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_control_upgrade_coordinator 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_control_maintenance 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_control_backup 'false|false|false|false|false' || return 1
+  check_role_attributes leapview_ducklake_migrator 'true|false|false|false|false' || return 1
+  check_role_attributes leapview_ducklake_maintenance 'true|false|false|false|false' || return 1
+
+  # Owner-capable migration roles are the only logins allowed to assume the
+  # corresponding owner role.
+  if ! runtime_psql leapview_control_migrator "$CONTROL_MIGRATOR_PASSWORD" leapview_control 'SET ROLE leapview_control_owner' >/dev/null 2>&1; then
+    echo "control migrator cannot SET ROLE control owner" >&2
+    return 1
+  fi
+  if ! runtime_psql leapview_ducklake_migrator "$DUCKLAKE_MIGRATOR_PASSWORD" leapview_ducklake 'SET ROLE leapview_ducklake_owner' >/dev/null 2>&1; then
+    echo "DuckLake migrator cannot SET ROLE DuckLake owner" >&2
+    return 1
+  fi
+
   if runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_ducklake 'SELECT 1' >/dev/null 2>&1; then
     echo "control runtime unexpectedly connected to leapview_ducklake" >&2
     return 1
   fi
   if runtime_psql leapview_control_readonly "$CONTROL_READONLY_PASSWORD" leapview_ducklake 'SELECT 1' >/dev/null 2>&1; then
     echo "control readonly unexpectedly connected to leapview_ducklake" >&2
+    return 1
+  fi
+  if runtime_psql leapview_control_migrator "$CONTROL_MIGRATOR_PASSWORD" leapview_ducklake 'SELECT 1' >/dev/null 2>&1; then
+    echo "control migrator unexpectedly connected to leapview_ducklake" >&2
     return 1
   fi
   if runtime_psql leapview_ducklake_runtime "$DUCKLAKE_PASSWORD" leapview_control 'SELECT 1' >/dev/null 2>&1; then

@@ -2950,6 +2950,8 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Go application tests (PR)",
 		"frontend-validation:",
 		"name: Frontend tests (PR)",
+		"postgres-isolation-validation:",
+		"name: PostgreSQL topology isolation (PR)",
 		"spatial-tile-benchmarks:",
 		"name: Spatial tile benchmarks (PR)",
 		"runs-on: ubuntu-24.04",
@@ -2962,11 +2964,12 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks]",
+		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, postgres-isolation-validation, spatial-tile-benchmarks]",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
 		"FRONTEND_RESULT: ${{ needs.frontend-validation.result }}",
+		"POSTGRES_ISOLATION_RESULT: ${{ needs.postgres-isolation-validation.result }}",
 		"SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}",
 		"Validation is deferred to the top of this stack.",
 	} {
@@ -2978,11 +2981,13 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	goPackagesCI := workflowJobBlock(t, text, "go-packages-validation")
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
+	postgresIsolationCI := workflowJobBlock(t, text, "postgres-isolation-validation")
 	for name, block := range map[string]string{
-		"apigen-validation":         apigenCI,
-		"go-packages-validation":    goPackagesCI,
-		"go-application-validation": goApplicationCI,
-		"frontend-validation":       frontendCI,
+		"apigen-validation":             apigenCI,
+		"go-packages-validation":        goPackagesCI,
+		"go-application-validation":     goApplicationCI,
+		"frontend-validation":           frontendCI,
+		"postgres-isolation-validation": postgresIsolationCI,
 	} {
 		for _, want := range []string{
 			"github.event_name == 'workflow_dispatch'",
@@ -2992,6 +2997,16 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 			if !strings.Contains(block, want) {
 				t.Fatalf("%s job is not limited to standalone pull requests and stack tips: missing %q", name, want)
 			}
+		}
+	}
+	for _, want := range []string{
+		"run: task postgres:test:up",
+		"run: task postgres:test:check",
+		"if: always()",
+		"run: task postgres:test:down",
+	} {
+		if !strings.Contains(postgresIsolationCI, want) {
+			t.Fatalf("PostgreSQL topology isolation lane missing %q", want)
 		}
 	}
 	for _, want := range []string{
