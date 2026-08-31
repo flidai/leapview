@@ -113,10 +113,12 @@ generated dashboard API packages:
 - `BenchmarkDashboardWarmSerializationStages` compares production JSON and
   all-string table IPC with a test-only native IPC reference over the same
   deterministic physical values.
-- `BenchmarkDashboardDirectArrowPrototype` compares the real current
-  `api_direct` handler with a test-only synchronous IPC sink over the governed
-  direct Arrow executor. Both timed lanes require one physical query and no
-  retained-cache outcome.
+- `BenchmarkDashboardDirectArrowPrototype` compares the current `api_direct`
+  transformation boundary with a test-only synchronous IPC sink over the
+  governed direct Arrow executor. Request resolution and pagination validation
+  are shared outside the timer, and a regression test requires the extracted
+  control to emit the same bytes as the real handler. Both timed lanes require
+  one physical query and no retained-cache outcome.
 
 The dashboard shaping and string-projection benchmarks are test-only mirrors,
 not alternate production implementations. The FAI-540 fixtures are also
@@ -412,21 +414,35 @@ normalization, and all-string projection used by the current `api_direct`
 handler? It does not compare with a warm cache hit and it does not add a
 production route. **This prototype does not prove production readiness.**
 
-The benchmark has two lanes over the same deterministic model, projection,
-sort, result rows, policy-fingerprint governor, and physical database fixture:
+The benchmark resolves the visualization, validates eligibility and pagination,
+and builds one immutable query before timing. Both lanes then use that same
+query, result budget, deterministic model, original visualization projection,
+sort, policy-fingerprint governor, and physical database fixture. Only the
+post-query representation and response work differ:
 
 | Lane | Execution and response boundary |
 | --- | --- |
-| `current_api_direct` | Real dashboard table HTTP handler, owned Arrow result, decoded rows, dashboard shaping, string projection, and all-string IPC |
+| `current_api_direct` | Governed owned Arrow result, decoded rows, production-equivalent normalization and dashboard shaping, then the existing all-string IPC response functions |
 | `candidate_governed_native` | Public governed materialization Arrow executor, borrowed batches, response-safe `native-v1` metadata, and synchronous native IPC |
+
+The timed comparison deliberately excludes HTTP routing, request decoding,
+visual lookup, query construction, and pagination validation from **both**
+lanes. `TestDashboardDirectArrowPrototypeSharedControlMatchesAPIDirect` requires
+the extracted control to emit byte-for-byte the same Arrow payload as the real
+`api_direct` handler. This removes the prior asymmetric handler overhead while
+retaining an executable guard against a synthetic control.
 
 Every comparable sample requires exactly one physical query, zero retained
 cache outcomes, zero retained Arrow results or leases, and the same emitted
-row count. The test also requires the two lanes to compile the same physical
-SQL and ordered projection. The 50-row case and a 999-row final page under the
-1,000-row request ceiling satisfy those rules. The maximum-size full page is
-deliberately not a timing lane: the current handler makes a second exact-count
-query while the `native-v1` pagination contract uses a `limit + 1` probe.
+row count. The tests also require the two lanes to compile the same physical
+SQL and physical projection. Because the planner groups dimensions and metrics,
+the candidate synchronously restores the original visualization field order
+before IPC encoding; a mixed dimension/metric fixture requires identical
+aliases, values, nulls, and safe metadata column-for-column. The 50-row case
+and a 999-row final page under the 1,000-row request ceiling satisfy those
+rules. The maximum-size full page is deliberately not a timing lane: the
+current handler makes a second exact-count query while the `native-v1`
+pagination contract uses a `limit + 1` probe.
 Treating that two-query/one-query difference as an encoder speedup would be
 misleading. A test locks the mismatch until a later design explicitly
 reconciles exact-total and cursor semantics.
@@ -437,7 +453,13 @@ The correctness suite establishes these gates before the benchmark runs:
   decimal scale, timestamps, binary values, dictionaries, and safe metadata
   survive the candidate while the control retains its documented string and
   null-to-empty projection; schema-only empty results preserve the same fields
-  and metadata without emitting a record batch;
+  and metadata without emitting a record batch; a mixed
+  dimension/metric/dimension/metric projection proves response order is not
+  accidentally regrouped by query category;
+- the physical producer charges its schema bytes, and the response sink charges
+  the positive byte delta from contract and field metadata before response
+  commitment; a near-limit regression requires a result-budget failure with no
+  Arrow body, contract header, or successful cursor;
 - the producer-owned record is released before the encoded response is read;
   ordinary buffers are consumed synchronously, while dictionary values are
   deliberately deep-copied because Arrow's IPC writer memoizes them until
@@ -478,53 +500,77 @@ go test ./internal/dashboard/http \
   -memprofile=/tmp/fai543-direct-arrow-mem.pprof
 ```
 
-The comparison-grade run on 2026-08-30 used base commit
-`1f803c213578805b4a4299d23f891f790481462d` plus the FAI-543 test-only diff,
-Go 1.25.14, Linux amd64 7.0.0-29-generic, one benchmark CPU on an AMD EPYC-Rome
-Processor, and ten 500 ms samples. The host exposed 16 logical CPUs; `-cpu=1`
-fixed the benchmark scheduler. `ns/op` and the request percentiles below are
-medians across the ten independent samples. Within each sample, p50/p95/p99
-come from the calibrated per-request durations rather than from summing
-microbenchmarks. Go allocated bytes are not process RSS.
+### Comparison-grade evidence and provenance
 
-| Workload | Lane | Median ns/op | p50 | p95 | p99 | B/op | Allocs/op | IPC bytes | Physical queries/op |
-| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| 8 × 50 | Current | 0.717 ms | 0.552 ms | 1.240 ms | 1.582 ms | 257,460 | 2,765 | 6,176 | 1 |
-| 8 × 50 | Candidate | 0.227 ms | 0.174 ms | 0.450 ms | 0.573 ms | 99,037 | 611 | 5,960 | 1 |
-| 8 × 999 final page | Current | 6.883 ms | 6.867 ms | 9.211 ms | 10.770 ms | 2,732,224 | 35,724 | 91,296 | 1 |
-| 8 × 999 final page | Candidate | 1.028 ms | 0.758 ms | 1.848 ms | 2.211 ms | 707,649 | 2,249 | 71,968 | 1 |
-| 32 × 50 | Current | 3.192 ms | 2.720 ms | 5.307 ms | 5.933 ms | 1,549,505 | 9,516 | 23,840 | 1 |
-| 32 × 50 | Candidate | 0.906 ms | 0.659 ms | 1.666 ms | 1.981 ms | 506,166 | 2,323 | 23,448 | 1 |
-| 32 × 999 final page | Current | 40.170 ms | 39.705 ms | 44.750 ms | 44.750 ms | 19,162,423 | 123,275 | 367,680 | 1 |
-| 32 × 999 final page | Candidate | 4.533 ms | 4.551 ms | 5.995 ms | 6.743 ms | 3,031,537 | 11,456 | 268,816 | 1 |
+The fixed-boundary comparison was collected on 2026-08-31 against the exact
+prototype code commit `0803b8f6b3055e6dca1a9ee85afe4895e76a0fc4`:
 
-The five-second wide-page profile command also passed and produced both
-profile files. This environment's stripped Go toolchain does not include the
-`pprof` analysis tool, so stack attribution is intentionally not claimed; the
-reproducible command is retained for a full developer toolchain.
+- Go 1.25.14 on Linux amd64 7.0.0-29-generic;
+- one uninterrupted invocation on a shared Codex KVM host with 30 GiB RAM,
+  no swap, and 16 visible single-thread AMD EPYC-Rome virtual cores;
+- `-cpu=1`, ten independent samples per lane/workload, and a 500 ms minimum
+  benchmark time;
+- deterministic arithmetic values and exact null positions; and
+- 95% confidence intervals from `benchstat` with its default alpha of 0.05,
+  using `golang.org/x/perf` version
+  `v0.0.0-20260825160852-19be9d8e6c70`.
 
-On the wide near-ceiling fixture, the candidate median `ns/op` is about 88.7%
-lower in elapsed time, 84.2% lower in allocated bytes, 90.8% lower in
-allocations, and 26.9% smaller on the wire. This is a strong synthetic
-prototype signal, not production latency and not an adoption result. It
-includes deterministic record construction and `httptest.ResponseRecorder`,
-but excludes real DuckDB I/O, real network backpressure, browser decoding,
-process RSS, multi-CPU load, and production data distributions. The
-slow-writer test proves synchronous backpressure at the executor boundary, but
-it is only a lease-lifetime proxy, not a real DuckDB connection measurement.
-The outer authorization, admission, and audit contracts remain qualified by
-the FAI-541 oracle; their wrapper overhead is not isolated by this benchmark.
+The unedited Go benchmark stdout, including every sample's `b.N`, is preserved
+in `docs/articles/architecture/benchmark-data/fai-543-0803b8f6-direct.txt`
+(SHA-256 `0b237e6657b7e82209746e960d95159cf1c174dd640a629231f749fb51582eb6`).
+The paired `benchstat` output is preserved in
+`docs/articles/architecture/benchmark-data/fai-543-0803b8f6-benchstat.txt`
+(SHA-256 `608c4ff2361af04e33ba119a6bdb39183b1734d520b04fadcda0f99db718183f`).
+Both artifacts record their commands, inputs, versions, and sample policy.
+
+The primary comparison metrics are statistically significant in every
+workload. Values below are `benchstat` medians; allocated bytes are Go `B/op`,
+not process RSS.
+
+| Workload | Median time, current → candidate | Time change | B/op, current → candidate | Allocations, current → candidate | IPC bytes, current → candidate |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 8 × 50 | 653.1 µs → 284.1 µs | -56.50% | 227.5 KiB → 113.1 KiB | 2,652 → 855 | 6,184 → 5,960 |
+| 8 × 999 final page | 6.469 ms → 1.157 ms | -82.11% | 2,466.6 KiB → 707.5 KiB | 34,661 → 2,493 | 91,304 → 71,968 |
+| 32 × 50 | 2.578 ms → 1.138 ms | -55.86% | 1,149.4 KiB → 558.5 KiB | 8,880 → 3,189 | 23,848 → 23,448 |
+| 32 × 999 final page | 27.393 ms → 4.627 ms | -83.11% | 12.459 MiB → 2.954 MiB | 110,280 → 12,323 | 367,688 → 268,816 |
+
+Every one of the 80 raw samples recorded one physical query, zero retained
+cache outcomes, and the requested row and column counts. On the wide
+near-ceiling fixture, the candidate median time is 83.1% lower, allocated bytes
+are 76.3% lower, allocations are 88.8% lower, and IPC is 26.9% smaller.
+
+The harness also emits request p50/p95/p99 from individual request durations,
+but those tail metrics are **preliminary only** and are not used for the
+qualification decision. In particular, the 32 × 999 current lane calibrated
+only 18–21 requests per sample, making p95 effectively one of the slowest
+observations and p99 effectively the maximum. Increasing `-benchtime` or using
+a dedicated request-load harness is required before making a tail-latency
+claim. The primary `sec/op`, `B/op`, allocation, and payload comparisons use
+ten samples and the confidence report above.
+
+This is a strong synthetic prototype signal, not production latency and not an
+adoption result. The shared timed boundary excludes request parsing and handler
+routing equally, and includes deterministic record construction plus
+`httptest.ResponseRecorder`. It still excludes real DuckDB I/O, real network
+backpressure, browser decoding, process RSS, multi-CPU load, and production
+data distributions. The slow-writer test proves synchronous backpressure at
+the executor boundary, but it is only a lease-lifetime proxy, not a real
+DuckDB connection measurement. Authorization, row policy, column mask,
+admission, budget, and audit equivalence remain correctness gates rather than
+performance claims.
 
 ### FAI-543 decision
 
-The experiment shows that direct synchronous native IPC is technically viable
-for the narrow ordinary-detail eligibility set and that avoiding decode/map/
-normalization/string reconstruction is material on these fixtures. It does
-not justify production adoption. The evidence supports proceeding to FAI-544
-qualification only for that narrow scope. Qualification must reconcile the
-current exact-total behavior with the locked cursor contract, repeat the
-comparison with real DuckDB batches, and bound slow-consumer connection and
-memory behavior. Until those gates pass, no native route should be enabled.
+The fair-boundary, comparison-grade results show that direct synchronous native
+IPC is technically viable for the narrow ordinary-detail eligibility set and
+that avoiding decode/map/normalization/string reconstruction is material on
+these fixtures. The statistically significant primary metrics support
+proceeding to FAI-544 qualification only for that narrow scope; preliminary
+tail percentiles do not contribute to that decision. This does not justify
+production adoption. Qualification must reconcile the current exact-total
+behavior with the locked cursor contract, repeat the comparison with real
+DuckDB batches, and bound slow-consumer connection, RSS, multi-CPU, and real
+network behavior. Until those gates pass, no native route should be enabled.
 
 ## Required measurements
 
