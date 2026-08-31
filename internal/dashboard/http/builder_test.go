@@ -622,8 +622,23 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 	previewReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=2&revisionContentHash="+revisionHash, nil)
 	previewRec := httptest.NewRecorder()
 	handler.DashboardBuilderPreview(previewRec, withBuilderURLParams(previewReq, "sales", "revenue"))
-	if previewRec.Code != nethttp.StatusOK || !strings.Contains(previewRec.Header().Get("Content-Type"), "application/json") {
+	if previewRec.Code != nethttp.StatusOK || !strings.Contains(previewRec.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("preview response: status=%d content-type=%q", previewRec.Code, previewRec.Header().Get("Content-Type"))
+	}
+	previewBody := previewRec.Body.String()
+	for _, want := range []string{`<lv-dashboard-page`, `presentation="public"`, `read-only`, `Draft preview`, `_signals=1`, `Back to builder`} {
+		if !strings.Contains(previewBody, want) {
+			t.Fatalf("preview shell missing %q: %s", want, previewBody)
+		}
+	}
+	if strings.Contains(previewBody, "url-sync.js") {
+		t.Fatalf("exact preview must not load canonical URL synchronization: %s", previewBody)
+	}
+	if fake.compileCalls != 1 {
+		t.Fatalf("preview shell compile calls = %d, want 1", fake.compileCalls)
+	}
+	if fake.previewCalls != 0 {
+		t.Fatalf("preview shell executed visual queries: %d calls", fake.previewCalls)
 	}
 
 	exportReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/export.yaml", nil)
@@ -643,9 +658,9 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 func TestDashboardBuilderPreviewBindsExactDraftRevisionAndPage(t *testing.T) {
 	hash := "sha256:" + strings.Repeat("c", 64)
 	token := authoring.RevisionToken{RevisionID: "revision-7", Number: 7, ContentHash: hash}
-	fake := &builderAuthoringFake{preview: preview.Preview{Revision: token}}
+	fake := &builderAuthoringFake{preview: standaloneDraftPreviewFixture(t, token, "details")}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
-	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?_signals=1&datastar=transport-only&draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
 	rec := httptest.NewRecorder()
 	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
 	if rec.Code != nethttp.StatusOK {
@@ -654,14 +669,20 @@ func TestDashboardBuilderPreviewBindsExactDraftRevisionAndPage(t *testing.T) {
 	if fake.previewReq.ProjectID != "sales" || fake.previewReq.ActorID != "principal-1" || fake.previewReq.DashboardID != "revenue" || fake.previewReq.DraftID != "draft-7" || fake.previewReq.PageID != "details" || fake.previewReq.ExpectedRevision != token {
 		t.Fatalf("preview request = %#v, want exact draft/revision/page", fake.previewReq)
 	}
-	var response struct {
-		Revision authoring.RevisionToken `json:"revision"`
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("preview signal patches = %#v", patches)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &response); err != nil {
-		t.Fatalf("decode preview response: %v", err)
+	page, ok := patches[0]["page"].(map[string]any)
+	if !ok || page["pageId"] != "details" || page["presentation"] != "public" {
+		t.Fatalf("preview page signal = %#v", patches[0]["page"])
 	}
-	if response.Revision != token {
-		t.Fatalf("returned preview revision = %#v, want %#v", response.Revision, token)
+	if strings.Contains(rec.Body.String(), "datastar=") {
+		t.Fatalf("preview page href leaked transport query state: %s", rec.Body.String())
+	}
+	visuals, ok := patches[0]["visuals"].(map[string]any)
+	if !ok || visuals["orders"] == nil {
+		t.Fatalf("preview visuals = %#v", patches[0]["visuals"])
 	}
 }
 
@@ -705,7 +726,13 @@ func TestDashboardBuilderPreviewRejectsMissingOrStaleExactInputs(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			fake := &builderAuthoringFake{previewErr: test.previewErr}
 			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
-			req := httptest.NewRequest(nethttp.MethodGet, test.path, nil)
+			path := test.path
+			if strings.Contains(path, "?") {
+				path += "&_signals=1"
+			} else {
+				path += "?_signals=1"
+			}
+			req := httptest.NewRequest(nethttp.MethodGet, path, nil)
 			rec := httptest.NewRecorder()
 			handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
 			if rec.Code != test.wantStatus {
@@ -821,6 +848,37 @@ func canonicalBuilderVisualDefinition(t *testing.T) visualizationdefinition.Defi
 	return definition
 }
 
+func standaloneDraftPreviewFixture(t *testing.T, revision authoring.RevisionToken, pageID string) preview.Preview {
+	t.Helper()
+	visualDefinition := canonicalBuilderVisualDefinition(t)
+	visual, err := visualizationruntime.EmptyEnvelopeFromDefinition(visualDefinition, 2, 1, 0)
+	if err != nil {
+		t.Fatalf("empty draft preview visualization: %v", err)
+	}
+	page := dashboard.Page{
+		ID: pageID, Title: "Details",
+		Grid:             dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16},
+		ResponsiveLayout: &dashboard.PageResponsiveLayout{OccupiedRows: 4, NarrowView: "stack"},
+		Height:           4,
+		Visuals: []dashboard.PageVisual{{
+			ID: "orders-component", Kind: "visual", Visual: "orders",
+			Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 12, RowSpan: 4},
+		}},
+	}
+	definition, err := dashboarddefinition.New("revenue", "Revenue", "", "model", []dashboard.Page{page}, map[string]visualizationdefinition.Definition{"orders": visualDefinition})
+	if err != nil {
+		t.Fatalf("draft preview definition: %v", err)
+	}
+	return preview.Preview{
+		Revision: revision, Definition: definition,
+		PagePatch: dashboard.Patch{
+			Filters: dashboard.Filters{}, Status: dashboard.Status{Generation: 3},
+			Visuals: map[string]visualizationir.VisualizationEnvelope{"orders": visual},
+		},
+		SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-1"}},
+	}
+}
+
 func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
 	fake := &builderAuthoringFake{
 		builder:    uisignals.DashboardBuilderSignal{ProjectID: "project", DashboardID: "sales", DraftID: "draft-1"},
@@ -894,7 +952,9 @@ func TestDashboardBuilderInlinePreviewUsesAnalyticalContext(t *testing.T) {
 
 func TestDashboardBuilderStandalonePreviewUsesAnalyticalContext(t *testing.T) {
 	marker := &struct{}{}
-	fake := &builderAuthoringFake{}
+	hash := "sha256:" + strings.Repeat("a", 64)
+	token := authoring.RevisionToken{RevisionID: "revision-1", Number: 1, ContentHash: hash}
+	fake := &builderAuthoringFake{preview: standaloneDraftPreviewFixture(t, token, "overview")}
 	handler := Handler{
 		Authoring:          fake,
 		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
@@ -902,8 +962,7 @@ func TestDashboardBuilderStandalonePreviewUsesAnalyticalContext(t *testing.T) {
 			return context.WithValue(ctx, marker, true)
 		},
 	}
-	hash := "sha256:" + strings.Repeat("a", 64)
-	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash="+hash, nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?_signals=1&draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash="+hash, nil)
 	rec := httptest.NewRecorder()
 	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
 	if rec.Code != nethttp.StatusOK {

@@ -405,9 +405,70 @@ func optionalRuntimeString(value string) *string {
 	return &value
 }
 
-// DashboardBuilderPreview renders one exact draft revision as JSON. No
-// revision is defaulted: callers must identify the token they preview.
+// DashboardBuilderPreview renders one exact draft revision with the production
+// dashboard component. No revision is defaulted: callers must identify the
+// token they preview. The document shell bootstraps from a one-shot signal
+// request to the same exact URL so preview data is never serialized into HTML.
 func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Request) {
+	request, dashboardID, err := h.dashboardBuilderPreviewRequest(r)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if r.URL.Query().Get("_signals") != "1" {
+		compilation, compileErr := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
+			ProjectID: request.ProjectID, ActorID: request.ActorID, DashboardID: request.DashboardID,
+			DraftID: request.DraftID, ExpectedRevision: request.ExpectedRevision,
+		})
+		if compileErr != nil {
+			writeBuilderError(w, r, compileErr)
+			return
+		}
+		values := cloneURLValues(r.URL.Query())
+		values.Set("_signals", "1")
+		updatesURL := dashboardBuilderBasePath(dashboardID) + "/preview?" + values.Encode()
+		backValues := url.Values{}
+		backValues.Set("draft", string(request.DraftID))
+		backValues.Set("page", request.PageID)
+		backHref := dashboardBuilderBasePath(dashboardID) + "/edit?" + backValues.Encode()
+		var providers []webpage.Provider
+		if h.Layout != nil {
+			providers = []webpage.Provider{h.Layout(r)}
+		}
+		revisionLabel := fmt.Sprintf("Revision %d", request.ExpectedRevision.Number)
+		title := strings.TrimSpace(compilation.Definition.Title)
+		if title == "" {
+			title = "Draft dashboard"
+		}
+		if err := ui.DashboardDraftPreviewPage(title, dashboardID, request.PageID, revisionLabel, backHref, updatesURL, providers...).Render(w); err != nil {
+			nethttp.Error(w, "dashboard draft preview unavailable", nethttp.StatusInternalServerError)
+		}
+		return
+	}
+	result, err := h.Authoring.Preview(h.analyticalContext(r.Context()), request)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	pageHrefs := make(map[string]string, len(result.Definition.Pages))
+	for _, page := range result.Definition.Pages {
+		values := cloneURLValues(r.URL.Query())
+		values.Del("_signals")
+		values.Del("datastar")
+		values.Set("page", page.ID)
+		pageHrefs[page.ID] = dashboardBuilderBasePath(dashboardID) + "/preview?" + values.Encode()
+	}
+	signals, err := ui.DashboardDraftPreviewBootstrapSignals(result.Definition, result.PagePatch, request.PageID, result.SemanticEvidence.Identity.GenerationID, pageHrefs)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if err := pagestream.PatchResponse(w, r, pagestream.SignalPatch(signals)); err != nil {
+		nethttp.Error(w, "dashboard draft preview unavailable", nethttp.StatusInternalServerError)
+	}
+}
+
+func (h Handler) dashboardBuilderPreviewRequest(r *nethttp.Request) (preview.PreviewRequest, string, error) {
 	project, projectErr := h.projectIDForRequest(r.Context())
 	projectID := project.String()
 	dashboardID := strings.TrimSpace(chi.URLParam(r, "dashboard"))
@@ -422,27 +483,27 @@ func (h Handler) DashboardBuilderPreview(w nethttp.ResponseWriter, r *nethttp.Re
 		if err == nil {
 			err = access.ErrForbidden
 		}
-		writeBuilderError(w, r, err)
-		return
+		return preview.PreviewRequest{}, dashboardID, err
 	}
 	if err := authoring.DraftID(draftID).Validate(); err != nil {
-		writeBuilderError(w, r, err)
-		return
+		return preview.PreviewRequest{}, dashboardID, err
 	}
 	if pageID == "" {
-		writeBuilderError(w, r, fmt.Errorf("%w: preview page id is required", authoring.ErrInvalidPayload))
-		return
+		return preview.PreviewRequest{}, dashboardID, fmt.Errorf("%w: preview page id is required", authoring.ErrInvalidPayload)
 	}
-	result, err := h.Authoring.Preview(h.analyticalContext(r.Context()), preview.PreviewRequest{
+	return preview.PreviewRequest{
 		ProjectID: project, ActorID: actorID, DashboardID: authoring.DashboardID(dashboardID),
 		DraftID:          authoring.DraftID(draftID),
 		ExpectedRevision: revision, PageID: pageID,
-	})
-	if err != nil {
-		writeBuilderError(w, r, err)
-		return
+	}, dashboardID, nil
+}
+
+func cloneURLValues(values url.Values) url.Values {
+	clone := make(url.Values, len(values))
+	for key, items := range values {
+		clone[key] = append([]string(nil), items...)
 	}
-	writeJSON(w, nethttp.StatusOK, result)
+	return clone
 }
 
 // DashboardBuilderExportYAML downloads canonical authored YAML through the
