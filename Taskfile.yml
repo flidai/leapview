@@ -1145,13 +1145,14 @@ tasks:
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
-    desc: Run the fail-closed PostgreSQL 18 baseline, pool, event, and job conformance suites
+    desc: Run the fail-closed PostgreSQL 18 baseline, pool, event, Watermill proof, and job conformance suites
     env:
       LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
     cmds:
       - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
       - go test ./internal/platform/postgres/migrations -run '^TestBaselinePostgreSQL18$' -count=1 -v
       - go test ./internal/platform/events/postgres -run '^TestPostgreSQL18' -count=1 -v
+      - go test ./internal/platform/events/watermillproof -run '^TestPostgreSQL18' -count=1 -v
       - go test ./internal/platform/jobs/postgres -run '^TestPostgreSQL18' -count=1 -v
 
   test:workload:qualify:

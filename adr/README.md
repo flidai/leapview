@@ -46,6 +46,7 @@ historical records.
 - [Project delivery conformance](specifications/project-delivery-conformance.md)
 - [DuckDB SQL analysis conformance](specifications/duckdb-sql-analysis-conformance.md)
 - [Workload admission conformance](specifications/workload-admission-conformance.md)
+- [Watermill PostgreSQL proof](specifications/watermill-postgresql-proof.md)
 
 ## Conventions
 

@@ -604,6 +604,17 @@ therefore uses either a proven adapter over the canonical LeapView tables or a
 small Watermill `Publisher`/`Subscriber` implementation over those tables; it
 does not create a second Watermill-owned event authority.
 
+The [FAI-591 qualification](specifications/watermill-postgresql-proof.md)
+qualifies Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5` for package
+and caller-owned transaction integration only; a canonical adapter is not
+admitted. Its PostgreSQL 18 proof records that the stock SQL tables and integer
+offsets are unsuitable as an event authority. The selected target is the
+Watermill core router with a small publisher/subscriber adapter over LeapView's
+canonical event and delivery tables; the stock SQL transport remains
+qualification-only. Lost-ack redelivery, poison/replay retention, and router
+adapter conformance are separate FAI-592/FAI-593 work and are not claimed by
+this proof.
+
 LeapView migrations own every transport table, index, role grant, and rollback.
 Watermill publisher `AutoInitializeSchema` and subscriber `InitializeSchema` are
 always disabled, including tests outside the framework qualification fixture.
