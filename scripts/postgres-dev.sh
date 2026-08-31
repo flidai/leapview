@@ -66,7 +66,7 @@ runtime_psql() {
   local password="$2"
   local database="$3"
   local statement="$4"
-  compose exec --no-tty --env "PGPASSWORD=$password" postgres \
+  compose exec -T --env "PGPASSWORD=$password" postgres \
     psql --host 127.0.0.1 --username "$role" --dbname "$database" \
     --set ON_ERROR_STOP=1 --tuples-only --no-align --command "$statement"
 }
