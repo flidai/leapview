@@ -704,6 +704,21 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 1
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: 1
 
   - name: slow completed refreshes are not timely
     interval: 1m
@@ -743,6 +758,21 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -99
 
   - name: mixed completed refreshes report their timely fraction
     interval: 1m
@@ -782,6 +812,50 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -49
+
+  - name: partial 30-day history at the latency objective exhausts the budget
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0+99x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+100x10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: 0
 
   - name: canceled-only traffic emits no latency recordings
     interval: 1m
@@ -807,6 +881,15 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
         eval_time: 10m
         exp_samples: []
 
@@ -842,6 +925,15 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
         eval_time: 10m
         exp_samples: []
 
@@ -883,6 +975,21 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -49
 
   - name: latency recordings aggregate commands and prohibited labels
     interval: 1m
@@ -930,6 +1037,21 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
+            value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_consumption_30d",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:error_budget_remaining_30d",instance="app:8080",job="leapview"}'
+            value: -49
 
   - name: missing histogram traffic emits no latency recordings
     interval: 1m
@@ -951,5 +1073,14 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
         eval_time: 10m
         exp_samples: []
