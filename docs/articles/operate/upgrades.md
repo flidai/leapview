@@ -142,11 +142,14 @@ For another topology, preserve the same invariants: one controlled writer for pe
 
 Do not run two application versions against shared writable state unless the release explicitly declares mixed-version compatibility.
 
-### SQLite-backed DuckLake catalogs
+### Catalog compatibility boundary
 
-The first release using the process-owned DuckDB runtime automatically migrates the former SQLite-backed DuckLake metadata catalog before opening analytical storage. With the default layout, `ducklake/catalog.sqlite` is copied atomically to `ducklake/catalog.duckdb` and the SQLite source remains in place as a rollback backup. If `LEAPVIEW_DUCKLAKE_CATALOG_PATH` still names a SQLite file, LeapView converts that path in place and preserves the source beside it with the suffix `.legacy.sqlite`.
-
-Budget disk space for both catalog files during the upgrade. Keep the legacy file until snapshot validation, representative queries, refresh, backup, and restore have all passed. The migration never replaces an existing DuckDB target; if an earlier failed start already created `catalog.duckdb`, preserve both files and resolve that partial upgrade before retrying.
+Production upgrades operate only on an admitted PostgreSQL-backed DuckLake
+catalog. LeapView does not import or convert SQLite-backed DuckLake catalogs;
+this clean-install architecture has no legacy catalog migration path. A
+configured SQLite catalog is rejected, and an adjacent `catalog.sqlite` file is
+ignored rather than treated as authority. Restore or upgrade only from a
+qualified PostgreSQL/DuckLake recovery set.
 
 ## Verify after startup
 
@@ -171,7 +174,7 @@ actor attribution.
 They do not infer admission from configuration. After migration, a production
 target with no admitted pool remains administrable but reports a stable
 `missing_physical_pool_admission` readiness diagnostic. Run the controlled
-offline bootstrap in [Plan, build, and publish](plan-build-publish) with a
+native bootstrap in [Plan, build, and publish](plan-build-publish) with a
 fresh local or MinIO conformance artifact.
 
 Rows retained from an older schema with an empty serving-state identity are

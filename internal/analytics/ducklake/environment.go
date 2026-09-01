@@ -9,7 +9,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,7 +47,8 @@ type Config struct {
 	// PostgresCatalog selects the target-owned PostgreSQL metadata catalog
 	// path. When set, CatalogPath is never opened or written; DuckDB attaches
 	// the catalog through a separately provisioned DuckLake/PostgreSQL secret.
-	// The legacy file-backed path remains the default when this is nil.
+	// A file-backed catalog is available only to explicit local/evaluation
+	// callers when this is nil; production composition requires PostgreSQL.
 	PostgresCatalog *PostgresCatalogConfig
 	// CommitMarker is durable attempt identity for a PostgreSQL writer. It is
 	// written as DuckLake commit_extra_info inside every commit transaction and
@@ -392,15 +392,6 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	} else if !postgresMode {
 		if err := prepareLayout(layout); err != nil {
 			return nil, err
-		}
-	}
-	if !postgresMode && !config.ReadOnly {
-		migrated, err := migrateLegacySQLiteCatalog(ctx, layout.CatalogPath, config.ExtensionAdmission)
-		if err != nil {
-			return nil, err
-		}
-		if migrated {
-			slog.InfoContext(ctx, "migrated legacy SQLite-backed DuckLake catalog", "catalog_path", layout.CatalogPath)
 		}
 	}
 	if postgresMode && postgresConfig.Mode == PostgresCatalogInitialize && strings.TrimSpace(postgresConfig.DataPath) == "" {
