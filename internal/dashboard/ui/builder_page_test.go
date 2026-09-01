@@ -112,25 +112,6 @@ func TestDashboardBuilderPageUsesRouteLocalFocusLayout(t *testing.T) {
 	}
 }
 
-func TestDashboardCreateEntryUsesProductLanguage(t *testing.T) {
-	var rendered strings.Builder
-	if err := DashboardDraftCreatePageWithKey("project", "csrf", "/dashboards/new", "request-1").Render(&rendered); err != nil {
-		t.Fatal(err)
-	}
-	body := rendered.String()
-	for _, want := range []string{"New dashboard", "Start with a private draft.", `name="semanticModel"`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("create dashboard page missing %q: %s", want, body)
-		}
-	}
-	if strings.Contains(body, "Create dashboard draft") {
-		t.Fatalf("create dashboard page exposed implementation language: %s", body)
-	}
-	if strings.Contains(body, "route=dashboard_builder") {
-		t.Fatalf("create dashboard form opened a draft update stream before a draft exists: %s", body)
-	}
-}
-
 func TestDashboardCopyEntryUsesProductLanguageWithoutDraftStream(t *testing.T) {
 	var rendered strings.Builder
 	if err := DashboardDraftForkPageWithKey("dashboard:sales", "csrf", "/dashboards/dashboard:sales/fork", "request-1").Render(&rendered); err != nil {
@@ -144,19 +125,5 @@ func TestDashboardCopyEntryUsesProductLanguageWithoutDraftStream(t *testing.T) {
 	}
 	if strings.Contains(body, "route=dashboard_builder") {
 		t.Fatalf("copy dashboard form opened a draft update stream before the copy exists: %s", body)
-	}
-}
-
-func TestDashboardCreateEntryOffersGovernedSemanticModels(t *testing.T) {
-	var rendered strings.Builder
-	models := []DashboardSemanticModelOption{{ID: "semantic:orders", Title: "Orders"}, {ID: "semantic:customers", Title: "Customers"}}
-	if err := DashboardDraftCreatePageWithModelsAndKey("project", "csrf", "/dashboards/new", "request-1", models, "semantic:customers").Render(&rendered); err != nil {
-		t.Fatal(err)
-	}
-	body := html.UnescapeString(rendered.String())
-	for _, want := range []string{`<select id="dashboard-semantic-model" name="semanticModel" required>`, `<option value="semantic:orders">Orders</option>`, `<option value="semantic:customers" selected>Customers</option>`} {
-		if !strings.Contains(body, want) {
-			t.Fatalf("create dashboard model picker missing %q: %s", want, body)
-		}
 	}
 }

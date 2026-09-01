@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { ChartColumn, ChevronLeft, ChevronRight, Copy, Database, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Trash2, Undo2 } from 'lucide'
+import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Trash2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -445,6 +445,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .more-menu button:hover,
     .more-menu .button:hover {
       background: var(--lv-bg-panel-muted);
+    }
+
+    .more-menu .archive-action {
+      color: var(--lv-fg-danger);
     }
 
     button:disabled {
@@ -2325,6 +2329,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   updated(): void {
     const builder = this.builder
+    if (builder?.redirectTo) {
+      const target = new URL(builder.redirectTo, window.location.href)
+      if (target.origin === window.location.origin && target.href !== window.location.href) window.location.assign(target.href)
+      return
+    }
     checkSignalContract('dashboard builder', builder, {
       projectId: 'required',
       dashboardId: 'required',
@@ -2705,10 +2714,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       : previewValidation
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
-    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || Boolean(this.forkHref)
+    const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || builder.capabilities.canArchive || Boolean(this.forkHref)
     return html`
       <header class="toolbar">
-        ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboard">Back</a>` : html`<span class="back" aria-label="Back to dashboard">Back</span>`}
+        ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboards">Back</a>` : html`<span class="back" aria-label="Back to dashboards">Back</span>`}
         <div class="title-wrap">
           <h1 class="title">${builder.title}</h1>
           <div class="meta" data-state=${builder.hasUnpublishedChanges || saveState === 'dirty' ? 'dirty' : saveState} aria-label="Dashboard draft status" aria-live="polite" title=${`${builder.origin.label} · Revision ${builder.revision.number} · ${builder.revision.id}`}>
@@ -2730,6 +2739,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 ${builder.capabilities.canExport
                   ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`
                   : nothing}
+                ${builder.capabilities.canArchive ? html`<button type="button" class="archive-action" data-builder-action="archive" @click=${this.archiveDashboard}>${lucideIcon(Archive, { size: 14, strokeWidth: 2 })}<span>Archive dashboard</span></button>` : nothing}
               </div>
             </details>` : nothing}
           ${builder.capabilities.canPublish ? html`<button type="button" class="primary" data-builder-action="publish" title=${publishTitle} ?disabled=${publishDisabled} @click=${this.publish}>${publishLabel}</button>` : nothing}
@@ -3910,6 +3920,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const builder = this.builder
     if (!builder?.capabilities.canPublish || !builder.hasUnpublishedChanges || builder.diagnostics.some((item) => item.severity === 'error') || this.previewValidationMessage(builder) || this.commandPending) return
     this.emitCommand('publish')
+  }
+
+  private archiveDashboard = (): void => {
+    if (!this.builder?.capabilities.canArchive || this.commandPending) return
+    this.emitCommand('archive', {}, false)
   }
 
   private addPage = (): void => {

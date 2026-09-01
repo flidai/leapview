@@ -79,6 +79,7 @@ model DashboardBuilderSignal {
   `diagnostics`: DashboardBuilderDiagnosticSignal[];
   `preview`: DashboardBuilderPreviewStateSignal;
   `save`: DashboardBuilderSaveStateSignal;
+  `redirectTo`?: string;
 }
 
 model DashboardBuilderRevisionSignal {
@@ -271,6 +272,7 @@ model DashboardBuilderCapabilitiesSignal {
   `canEdit`: boolean;
   `canShare`: boolean;
   `canPublish`: boolean;
+  `canArchive`: boolean;
   `canPreview`: boolean;
   `canExport`: boolean;
   `canAddPage`: boolean;

@@ -82,61 +82,9 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 	})
 }
 
-// DashboardDraftCreatePage and DashboardDraftForkPage are intentionally
-// small, server-rendered entry points. They make the existing headless
-// authoring service discoverable to browser users without accepting authored
-// documents or bypassing the exact revision/authorization boundary.
-func DashboardDraftCreatePage(projectID, csrfToken, action string, providers ...webpage.Provider) g.Node {
-	return DashboardDraftCreatePageWithKey(projectID, csrfToken, action, "", providers...)
-}
-
-// DashboardDraftCreatePageWithKey renders the create form with a stable
-// idempotency key so a retry or double submit returns the original result.
-func DashboardDraftCreatePageWithKey(projectID, csrfToken, action, idempotencyKey string, providers ...webpage.Provider) g.Node {
-	return DashboardDraftCreatePageWithModelsAndKey(projectID, csrfToken, action, idempotencyKey, nil, "", providers...)
-}
-
-type DashboardSemanticModelOption struct {
-	ID    string
-	Title string
-}
-
-// DashboardDraftCreatePageWithModelsAndKey renders governed models as a
-// bounded choice. The text input fallback keeps focused tests and installations
-// without a loaded catalog recoverable rather than presenting an empty select.
-func DashboardDraftCreatePageWithModelsAndKey(projectID, csrfToken, action, idempotencyKey string, models []DashboardSemanticModelOption, selectedModel string, providers ...webpage.Provider) g.Node {
-	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionTitle: "Dashboards", PageTitle: "New dashboard", Compact: true})
-	modelField := g.Node(h.Input(h.ID("dashboard-semantic-model"), h.Name("semanticModel"), h.Required(), h.AutoComplete("off")))
-	if len(models) > 0 {
-		options := make([]g.Node, 0, len(models))
-		for _, model := range models {
-			id := strings.TrimSpace(model.ID)
-			if id == "" {
-				continue
-			}
-			title := strings.TrimSpace(model.Title)
-			if title == "" {
-				title = id
-			}
-			options = append(options, h.Option(h.Value(id), g.If(id == strings.TrimSpace(selectedModel), h.Selected()), g.Text(title)))
-		}
-		if len(options) > 0 {
-			modelField = h.Select(g.Group{h.ID("dashboard-semantic-model"), h.Name("semanticModel"), h.Required()}, g.Group(options))
-		}
-	}
-	return webpage.Render(layout, webpage.Spec{
-		Title:      "New dashboard",
-		CSRFToken:  csrfToken,
-		UpdatesURL: "/updates?route=catalog",
-		MainAttrs:  []g.Node{h.ID("dashboard-draft-create"), h.Class(webpage.RootClass)},
-		Content: draftForm("New dashboard", "Start with a private draft.", action, csrfToken, idempotencyKey,
-			g.Group{h.Label(h.For("dashboard-title"), g.Text("Title")), h.Input(h.ID("dashboard-title"), h.Name("title"), h.Required(), h.AutoComplete("off"))},
-			g.Group{h.Label(h.For("dashboard-semantic-model"), g.Text("Governed semantic model")), modelField},
-			g.Group{h.Label(h.For("dashboard-slug"), g.Text("Slug (optional)")), h.Input(h.ID("dashboard-slug"), h.Name("slug"), h.AutoComplete("off"))},
-		),
-	})
-}
-
+// DashboardDraftForkPage is a small, server-rendered entry point for the
+// existing headless copy operation. Dashboard creation lives in the catalog
+// modal so users keep their place while choosing the required data model.
 func DashboardDraftForkPage(dashboardID, csrfToken, action string, providers ...webpage.Provider) g.Node {
 	return DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, "", providers...)
 }
@@ -156,7 +104,7 @@ func DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, idempotencyKe
 }
 
 func draftForm(title, hint, action, csrfToken, idempotencyKey string, fields ...g.Node) g.Node {
-	return h.Main(h.Class("lv-draft-form"), h.Section(
+	return h.Div(h.Class("lv-draft-form"), h.Section(
 		h.H1(g.Text(title)), h.P(g.Text(hint)),
 		h.Form(h.Method("post"), h.Action(action), g.Group(append(fields,
 			h.Input(h.Type("hidden"), h.Name("gorilla.csrf.Token"), h.Value(csrfToken)),

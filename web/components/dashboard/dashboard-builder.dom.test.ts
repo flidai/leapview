@@ -66,6 +66,10 @@ test('dashboard builder renders bottom page tabs, canvas, and visual builder wit
         visuals: root.querySelectorAll('.visual').length,
         diagnostics: root.querySelectorAll('.diagnostic').length,
         evidence: root.querySelector('.evidence')?.textContent?.trim(),
+        back: {
+          href: root.querySelector<HTMLAnchorElement>('a.back')?.getAttribute('href'),
+          label: root.querySelector<HTMLAnchorElement>('a.back')?.getAttribute('aria-label'),
+        },
         builderCommand,
       }
     })
@@ -76,6 +80,7 @@ test('dashboard builder renders bottom page tabs, canvas, and visual builder wit
     expect(state.visuals).toBe(1)
     expect(state.diagnostics).toBe(1)
     expect(state.evidence).toContain('project')
+    expect(state.back).toEqual({ href: '/', label: 'Back to dashboards' })
     expect(state.builderCommand).toBe(true)
   } finally {
     await page.close()
@@ -1720,6 +1725,38 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
   }
 })
 
+test('dashboard builder archives an owned dashboard from More without an extra confirmation step', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      const archive = root.querySelector<HTMLButtonElement>('[data-builder-action="archive"]')
+      archive?.click()
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { capabilities: { canArchive: false } } })
+      await element.updateComplete
+      return {
+        label: archive?.textContent?.replace(/\s+/g, ' ').trim(),
+        disabled: archive?.disabled,
+        command,
+        archiveAfterPermissionChange: Boolean(root.querySelector('[data-builder-action="archive"]')),
+      }
+    })
+    expect(state.label).toBe('Archive dashboard')
+    expect(state.disabled).toBe(false)
+    expect(state.command).toMatchObject({ action: 'archive', dashboardId: 'revenue', draftId: 'draft-7', revisionId: 'rev-7' })
+    expect(state.archiveAfterPermissionChange).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder keeps governed previews interactive beneath a dedicated authoring header', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -2488,14 +2525,14 @@ function testDocument(): string {
         { id: 'details', title: 'Details', canvas: { width: 1200, height: 800 }, grid: { columns: 12, rowHeight: 48, gap: 16, padding: 16 }, visuals: [], filterComponents: [] },
       ],
       selectedPageId: 'overview', selectedVisualId: 'sales-chart',
-      capabilities: { canEdit: true, canShare: true, canPublish: true, canPreview: true, canExport: true, canAddPage: true, canAddVisual: true },
+      capabilities: { canEdit: true, canShare: true, canPublish: true, canArchive: true, canPreview: true, canExport: true, canAddPage: true, canAddVisual: true },
       diagnostics: [{ severity: 'warning', code: 'FIELD_REQUIRED', message: 'Add a metric to complete this visual.' }],
       preview: { active: false, mode: 'draft', loading: false, href: '/dashboards/revenue/preview?draft=draft-7&revisionId=rev-7&revisionNumber=7&revisionContentHash=sha256%3Aabc' }, save: { state: 'dirty', message: '2 changes' },
     },
     status: { loading: false, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 100 },
     runtime: { kind: 'dashboard_builder', projectId: 'sales', servingStateId: 'generation-7', dashboardId: 'revenue' },
   }
-  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-data-6:#bf3989;--lv-data-6-muted:#ffeff7;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/dashboards/revenue" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-data-6:#bf3989;--lv-data-6-muted:#ffeff7;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function escapeHTML(value: string): string {

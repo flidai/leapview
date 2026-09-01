@@ -55,10 +55,221 @@ test('catalog introduces authoring as New dashboard', async () => {
     const action = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       element.setAttribute('create-draft-href', '/dashboards/new')
       await element.updateComplete
-      const link = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
-      return { label: link?.textContent?.trim(), href: link?.getAttribute('href') }
+      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      return { label: trigger?.textContent?.trim(), tagName: trigger?.tagName, href: trigger?.getAttribute('href') }
     })
-    expect(action).toEqual({ label: 'New dashboard', href: '/dashboards/new' })
+    expect(action).toEqual({ label: 'New dashboard', tagName: 'A', href: '/dashboards/new' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('new dashboard trigger opens an accessible native dialog with the create form contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([
+        { id: 'semantic:sales_overview', title: 'sales_overview' },
+        { id: 'semantic:Kpis', title: 'Sales KPIs' },
+      ]))
+      element.setAttribute('create-draft-csrf-token', 'csrf-modal')
+      element.setAttribute('create-draft-idempotency-key', 'idem-modal')
+      await element.updateComplete
+      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      trigger.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+      const root = element.shadowRoot
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const form = root.querySelector('.catalog-create-dialog-form') as HTMLFormElement
+      return {
+        tagName: trigger.tagName,
+        href: trigger.getAttribute('href'),
+        hasDialogHint: trigger.getAttribute('aria-haspopup'),
+        controls: trigger.getAttribute('aria-controls'),
+        open: dialog.open,
+        labelledBy: dialog.getAttribute('aria-labelledby'),
+        title: root.querySelector('#catalog-create-draft-title')?.textContent?.trim(),
+		activeField: root.activeElement?.id ?? '',
+        method: form.method,
+        action: new URL(form.action).pathname,
+        nameRequired: root.querySelector<HTMLInputElement>('[name="title"]')?.required,
+        modelOptions: Array.from(root.querySelectorAll('#catalog-create-draft-model option')).map((option) => ({ id: option.getAttribute('value'), title: option.textContent?.trim() })),
+        selectedModel: root.querySelector<HTMLSelectElement>('#catalog-create-draft-model')?.value,
+        csrf: root.querySelector<HTMLInputElement>('[name="gorilla.csrf.Token"]')?.value,
+        idempotency: root.querySelector<HTMLInputElement>('[name="idempotencyKey"]')?.value,
+        advanced: root.querySelector('summary')?.textContent?.trim(),
+      }
+    })
+
+    expect(state).toEqual({
+      tagName: 'A',
+      href: '/dashboards/new',
+      hasDialogHint: 'dialog',
+      controls: 'catalog-create-draft-dialog',
+      open: true,
+      labelledBy: 'catalog-create-draft-title',
+      title: 'New dashboard',
+      activeField: 'catalog-create-draft-name',
+      method: 'post',
+      action: '/dashboards/new',
+      nameRequired: true,
+      modelOptions: [
+        { id: '', title: 'Select a data model' },
+        { id: 'semantic:sales_overview', title: 'Sales Overview' },
+        { id: 'semantic:Kpis', title: 'Sales KPIs' },
+      ],
+      selectedModel: '',
+      csrf: 'csrf-modal',
+      idempotency: 'idem-modal',
+      advanced: 'Advanced settings',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('create query auto-opens with the semantic model preselected and dismissal restores focus', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  try {
+    await page.goto(`${baseURL}/?create=dashboard&semanticModel=semantic%3Asales_overview`)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'semantic:sales_overview', title: 'sales_overview' }]))
+      await element.updateComplete
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      const root = element.shadowRoot
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const select = root.querySelector('select') as HTMLSelectElement
+      const autoOpened = dialog.open
+      const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
+      close.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return {
+        autoOpened,
+        selectedModel: select.value,
+        closed: !dialog.open,
+        restoredFocus: root.activeElement?.classList.contains('catalog-create-draft') ?? false,
+        query: window.location.search,
+      }
+    })
+
+    expect(state).toEqual({
+      autoOpened: true,
+      selectedModel: 'semantic:sales_overview',
+      closed: true,
+      restoredFocus: false,
+      query: '?create=dashboard&semanticModel=semantic%3Asales_overview',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('native Escape and backdrop dismissal close the create dialog', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      const dialog = () => root.querySelector('dialog') as HTMLDialogElement
+      trigger.click()
+      await element.updateComplete
+      const escapedOpen = dialog().open
+      dialog().dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      const closedAfterEscape = !dialog().open
+      const focusAfterEscape = root.activeElement === trigger
+      trigger.click()
+      await element.updateComplete
+      dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return { escapedOpen, closedAfterEscape, focusAfterEscape, closedAfterBackdrop: !dialog().open, focusAfterBackdrop: root.activeElement === trigger }
+    })
+
+    expect(state).toEqual({ escapedOpen: true, closedAfterEscape: true, focusAfterEscape: true, closedAfterBackdrop: true, focusAfterBackdrop: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile create dialog stays within the viewport and disables submission without models', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', '[]')
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      trigger.click()
+      await element.updateComplete
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const rect = dialog.getBoundingClientRect()
+      const select = root.querySelector('select') as HTMLSelectElement
+      const submit = root.querySelector('[type="submit"]') as HTMLButtonElement
+      return {
+        withinViewport: rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight,
+        selectDisabled: select.disabled,
+        submitDisabled: submit.disabled,
+        help: root.querySelector('#catalog-create-draft-model-help')?.textContent?.trim(),
+      }
+    })
+
+    expect(state).toEqual({
+      withinViewport: true,
+      selectDisabled: true,
+      submitDisabled: true,
+      help: 'No data models are available. Add one in Develop, then try again.',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('create form submits natively to the builder with hidden request values', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  let postData = ''
+  try {
+    await page.route('**/dashboards/new', async (route) => {
+      postData = route.request().postData() ?? ''
+      await route.fulfill({ status: 200, contentType: 'text/html', body: 'builder' })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
+      element.setAttribute('create-draft-csrf-token', 'csrf-submit')
+      element.setAttribute('create-draft-idempotency-key', 'idem-submit')
+      await element.updateComplete
+      const root = element.shadowRoot
+      ;(root.querySelector('.catalog-create-draft') as HTMLAnchorElement).click()
+      await element.updateComplete
+      ;(root.querySelector('[name="title"]') as HTMLInputElement).value = 'Sales overview'
+      ;(root.querySelector('[name="semanticModel"]') as HTMLSelectElement).value = 'sales'
+      ;(root.querySelector('.catalog-create-dialog-form') as HTMLFormElement).requestSubmit()
+    })
+    await page.waitForTimeout(100)
+    expect(postData).toContain('title=Sales+overview')
+    expect(postData).toContain('semanticModel=sales')
+    expect(postData).toContain('gorilla.csrf.Token=csrf-submit')
+    expect(postData).toContain('idempotencyKey=idem-submit')
   } finally {
     await page.close()
   }
