@@ -34,6 +34,7 @@ var (
 	revisionPattern      = regexp.MustCompile(`^[0-9a-f]{40}$`)
 	semverPattern        = regexp.MustCompile(`^[0-9]+\.[0-9]+\.[0-9]+$`)
 	digestPattern        = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
+	platformPattern      = regexp.MustCompile(`^linux/(amd64|arm64)$`)
 )
 
 type usageError struct{ message string }
@@ -46,6 +47,7 @@ type admissionOptions struct {
 	expectedWorkflow string
 	sourceRevision   string
 	policyPath       string
+	platform         string
 	mode             string
 	evidencePath     string
 	outputPath       string
@@ -77,9 +79,10 @@ type hermeticEvidence struct {
 		PredicateType string `json:"predicateType"`
 	} `json:"sbom"`
 	VulnerabilityPolicy struct {
-		SHA256  string `json:"sha256"`
-		Scanner string `json:"scanner"`
-		Passed  bool   `json:"passed"`
+		SHA256   string `json:"sha256"`
+		Scanner  string `json:"scanner"`
+		Passed   bool   `json:"passed"`
+		Platform string `json:"platform,omitempty"`
 	} `json:"vulnerabilityPolicy"`
 }
 
@@ -149,6 +152,7 @@ func parseOptions(args []string, stderr io.Writer) (admissionOptions, error) {
 	flags.StringVar(&opts.expectedWorkflow, "expected-workflow", "", "expected GitHub workflow")
 	flags.StringVar(&opts.sourceRevision, "source-revision", "", "source commit SHA")
 	flags.StringVar(&opts.policyPath, "policy", "", "vulnerability policy path")
+	flags.StringVar(&opts.platform, "platform", "", "target image platform (linux/amd64 or linux/arm64)")
 	flags.StringVar(&opts.mode, "mode", "live", "live or hermetic")
 	flags.StringVar(&opts.evidencePath, "evidence", "", "hermetic evidence path")
 	flags.StringVar(&opts.outputPath, "output", "", "optional output path")
@@ -158,6 +162,7 @@ func parseOptions(args []string, stderr io.Writer) (admissionOptions, error) {
 		fmt.Fprintln(stderr, "  --expected-workflow OWNER/REPO/.github/workflows/WORKFLOW.yml")
 		fmt.Fprintln(stderr, "  --source-revision HEX_SHA")
 		fmt.Fprintln(stderr, "  --policy PATH")
+		fmt.Fprintln(stderr, "  [--platform linux/amd64|linux/arm64]")
 		fmt.Fprintln(stderr, "  [--mode live|hermetic] [--evidence PATH] [--output PATH]")
 	}
 	if err := flags.Parse(args); err != nil {
@@ -190,6 +195,9 @@ func validateOptions(opts admissionOptions) error {
 	}
 	if !revisionPattern.MatchString(opts.sourceRevision) {
 		return errors.New("source revision must be a full commit SHA")
+	}
+	if opts.platform != "" && !platformPattern.MatchString(opts.platform) {
+		return errors.New("platform must be linux/amd64 or linux/arm64")
 	}
 	if info, err := os.Stat(opts.policyPath); err != nil || info.IsDir() {
 		return errors.New("vulnerability policy is missing")
@@ -261,7 +269,7 @@ func verifyHermetic(opts admissionOptions, policySHA256 string) error {
 	digest := opts.image[strings.LastIndex(opts.image, "@")+1:]
 	if evidence.SchemaVersion != 1 || evidence.Image != opts.image || evidence.Digest != digest || evidence.RegistryDigest != digest ||
 		!evidence.Attestation.Verified || evidence.Attestation.Repository != repositoryIdentity || evidence.Attestation.Workflow != opts.expectedWorkflow || evidence.Attestation.SourceRevision != opts.sourceRevision ||
-		!evidence.SBOM.Discoverable || evidence.SBOM.PredicateType != "https://spdx.dev/Document/v2.3" || evidence.VulnerabilityPolicy.SHA256 != policySHA256 || evidence.VulnerabilityPolicy.Scanner != "trivy" || !evidence.VulnerabilityPolicy.Passed {
+		!evidence.SBOM.Discoverable || evidence.SBOM.PredicateType != "https://spdx.dev/Document/v2.3" || evidence.VulnerabilityPolicy.SHA256 != policySHA256 || evidence.VulnerabilityPolicy.Scanner != "trivy" || !evidence.VulnerabilityPolicy.Passed || evidence.VulnerabilityPolicy.Platform != opts.platform {
 		return errors.New("hermetic evidence is missing verified identity, SBOM, digest, or policy")
 	}
 	return nil
