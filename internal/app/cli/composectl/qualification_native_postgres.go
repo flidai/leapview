@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -115,8 +116,8 @@ func (topology *qualificationNativePostgresTopology) Remove(ctx context.Context)
 }
 
 // newQualificationNativePostgresTopology starts one TLS-enabled PostgreSQL
-// 18 sidecar on an existing Compose network. It deliberately does not alter
-// QualifyInstalledCandidate; wiring belongs to the next qualification slice.
+// 18 sidecar on an existing Compose network for installed-candidate
+// qualification.
 func newQualificationNativePostgresTopology(
 	ctx context.Context,
 	runtime qualificationContainerRuntime,
@@ -220,6 +221,39 @@ func newQualificationNativePostgresTopology(
 		return nil, errors.Join(operationErr, cleanupErr)
 	}
 	return topology, nil
+}
+
+// AssertBootstrapOpen proves that qualification setup has not fabricated an
+// active delivery before the candidate lifecycle publishes one. The readonly
+// role is sufficient for this invariant and its password is expanded only by
+// the sidecar shell, so neither argv nor qualification diagnostics contain the
+// credential value.
+func (topology *qualificationNativePostgresTopology) AssertBootstrapOpen(ctx context.Context, stage string) error {
+	if topology == nil || topology.Container == nil {
+		return errors.New("qualification PostgreSQL topology is unavailable")
+	}
+	stage = strings.TrimSpace(stage)
+	if stage == "" {
+		return errors.New("qualification bootstrap stage is required")
+	}
+	output, err := topology.Container.Exec(
+		ctx,
+		nil,
+		"sh", "-ec",
+		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD"
+psql --host 127.0.0.1 --username leapview_control_readonly --dbname leapview_control --no-psqlrc --tuples-only --no-align --command 'SELECT count(*) FROM delivery.delivery_active_pointer'`,
+	)
+	if err != nil {
+		return qualificationContainerOperationError(ctx, topology.Container, "verify qualification bootstrap state after "+stage, err)
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(output)))
+	if err != nil || count < 0 {
+		return fmt.Errorf("verify qualification bootstrap state after %s: invalid active-pointer count %q", stage, strings.TrimSpace(string(redactQualificationBytes(output))))
+	}
+	if count != 0 {
+		return fmt.Errorf("qualification bootstrap closed before candidate publication after %s: found %d active delivery pointers", stage, count)
+	}
+	return nil
 }
 
 // startQualificationNativePostgresTopology is the Controller seam used by
@@ -448,7 +482,7 @@ func waitQualificationNativePostgresTopology(
 	if err != nil {
 		return errors.Join(err, lastErr)
 	}
-	return lastErr
+	return nil
 }
 
 func qualificationNativePostgresProbe(database, role, password string) string {

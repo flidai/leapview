@@ -499,25 +499,25 @@ func (c *Controller) compose(ctx context.Context, stdin io.Reader, stdout, stder
 	if c.composeOverride != nil {
 		return c.composeOverride(ctx, stdin, stdout, stderr, args...)
 	}
-	if err := requireNonEmptyFile(c.path(deploymentEnvName)); err != nil {
-		return err
-	}
-	https, err := envFileValue(c.path(deploymentEnvName), "COMPOSE_HTTPS")
+	commandArgs, err := composeArguments(c.root, args...)
 	if err != nil {
 		return err
 	}
-	commandArgs := []string{"compose", "--project-directory", c.root, "--env-file", c.path(deploymentEnvName), "-f", c.path("compose.yaml")}
-	if https == "1" {
-		commandArgs = append(commandArgs, "-f", c.path("compose.https.yaml"))
+	processEnvironment, err := composeProcessEnvironment(c.root, nil)
+	if err != nil {
+		return err
 	}
-	commandArgs = append(commandArgs, args...)
-	return c.docker(ctx, stdin, stdout, stderr, commandArgs...)
+	return c.dockerWithEnvironment(ctx, stdin, stdout, stderr, processEnvironment, commandArgs...)
 }
 
 func (c *Controller) docker(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, args ...string) error {
+	return c.dockerWithEnvironment(ctx, stdin, stdout, stderr, os.Environ(), args...)
+}
+
+func (c *Controller) dockerWithEnvironment(ctx context.Context, stdin io.Reader, stdout, stderr io.Writer, environment []string, args ...string) error {
 	command := exec.CommandContext(ctx, c.dockerBin, args...)
 	command.Dir = c.root
-	command.Env = os.Environ()
+	command.Env = environment
 	command.Stdin = stdin
 	command.Stdout = stdout
 	command.Stderr = stderr

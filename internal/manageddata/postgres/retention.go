@@ -2,8 +2,10 @@ package postgres
 
 import (
 	"context"
+	"reflect"
 	"time"
 
+	"github.com/flidai/leapview/internal/manageddata"
 	manageddb "github.com/flidai/leapview/internal/manageddata/postgres/internal/db"
 	"github.com/jackc/pgx/v5/pgtype"
 )
@@ -14,6 +16,42 @@ type Maintenance struct{ db MaintenanceDBTX }
 
 // NewMaintenance constructs the bounded upload-session retention facade.
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
+
+// PostgreSQLMaintenanceAuthority prevents production composition from
+// substituting the runtime repository for this separately authenticated
+// capability.
+func (*Maintenance) PostgreSQLMaintenanceAuthority() {}
+
+// Configured reports whether the facade retains its caller-owned maintenance
+// database handle.
+func (m *Maintenance) Configured() bool {
+	if m == nil || m.db == nil {
+		return false
+	}
+	value := reflect.ValueOf(m.db)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
+	}
+}
+
+// MarkUploadCleanupComplete records cleanup evidence through the separately
+// authenticated maintenance connection.
+func (m *Maintenance) MarkUploadCleanupComplete(ctx context.Context, id manageddata.UploadID) error {
+	if m == nil || m.db == nil || id.String() == "" {
+		return ErrInvalid
+	}
+	marked, err := manageddb.New(m.db).MarkUploadCleanup(contextOrBackground(ctx), id.String())
+	if err != nil {
+		return err
+	}
+	if !marked {
+		return ErrConflict
+	}
+	return nil
+}
 
 // PruneUploadSessions invokes the bounded SECURITY DEFINER maintenance
 // function. Only completed cleanup evidence and terminal rows are eligible;

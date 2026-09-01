@@ -28,6 +28,20 @@ type CanonicalAuditEvent struct {
 	MetadataJSON  string
 }
 
+const maxAuditRequestIdentityBytes = 256
+
+// validAuditRequestIdentities keeps request and correlation identifiers
+// deployment-neutral. Empty values represent an omitted identity; when
+// present, each value must already be trimmed and fit the bounded text
+// contract shared by the durable audit backends.
+func validAuditRequestIdentities(requestID, correlationID string) bool {
+	return validAuditRequestIdentity(requestID) && validAuditRequestIdentity(correlationID)
+}
+
+func validAuditRequestIdentity(value string) bool {
+	return value == strings.TrimSpace(value) && len(value) <= maxAuditRequestIdentityBytes
+}
+
 func (event CanonicalAuditEvent) Validate() error {
 	if err := event.Identity.Validate(); err != nil {
 		return fmt.Errorf("audit identity: %w", err)
@@ -43,6 +57,9 @@ func (event CanonicalAuditEvent) Validate() error {
 	}
 	if err := ValidateCapabilityForKind(event.Resource.Kind(), event.Capability); err != nil {
 		return fmt.Errorf("audit capability: %w", err)
+	}
+	if !validAuditRequestIdentities(event.RequestID, event.CorrelationID) {
+		return fmt.Errorf("audit request identity is not canonical")
 	}
 	if _, err := event.CanonicalMetadataJSON(); err != nil {
 		return fmt.Errorf("audit metadata: %w", err)

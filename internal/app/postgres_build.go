@@ -277,7 +277,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	analytics = analyticsBundle.Module
 
 	managedPersistence := graph.ManagedDataPersistence
-	managedData, err := manageddatamodule.Build(ctx, manageddatamodule.Config{Persistence: managedPersistence, Production: true, Product: managedDataProductConfig(cfg), ServingStates: graph.ServingState, Environment: string(environment), CurrentPrincipal: func(r *http.Request) (manageddatamodule.Principal, bool) {
+	managedData, err := manageddatamodule.Build(ctx, manageddatamodule.Config{Persistence: managedPersistence, Production: true, CleanupAcker: graph.ManagedDataMaintenance, Product: managedDataProductConfig(cfg), ServingStates: graph.ServingState, Environment: string(environment), CurrentPrincipal: func(r *http.Request) (manageddatamodule.Principal, bool) {
 		p, ok := accessBundle.Module.CurrentPrincipal(r)
 		return manageddatamodule.Principal{ID: p.ID, DevBypass: p.DevBypass}, ok
 	}, Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs, Worker: manageddatamodule.MaintenanceWorkerConfig{Interval: cfg.ManagedDataGCInterval, Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
@@ -658,6 +658,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		InstanceID: instanceID, InstanceEnvironment: string(environment),
 		NativeDeliveryMutations: nativeDelivery,
 		NativeDeliveryReader:    nativeDeliveryReader,
+		ProjectClaims:           graph.DeploymentRepository,
 		CandidateSources:        nativeProjectSource.CandidateSourceReader,
 		CurrentApprovalActor: func(r *http.Request) (deploymentmodule.ApprovalActor, bool) {
 			evidence, ok := accessBundle.Module.CurrentCredentialEvidence(r)

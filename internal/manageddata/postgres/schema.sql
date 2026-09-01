@@ -776,7 +776,18 @@ BEGIN
   PERFORM set_config('managed_data.maintenance','on',true);
   UPDATE managed_data.upload_session SET cleanup_completed_at=clock_timestamp(),updated_at=clock_timestamp()
     WHERE upload_id=p_upload_id AND status IN ('complete','aborted','expired','failed') AND cleanup_completed_at IS NULL;
-  RETURN FOUND;
+  IF FOUND THEN
+    RETURN true;
+  END IF;
+  -- Cleanup acknowledgement is idempotent. A retry after the durable marker
+  -- was written must succeed, while unknown or non-terminal uploads still
+  -- fail closed.
+  RETURN EXISTS (
+    SELECT 1 FROM managed_data.upload_session
+     WHERE upload_id=p_upload_id
+       AND status IN ('complete','aborted','expired','failed')
+       AND cleanup_completed_at IS NOT NULL
+  );
 END $$;
 
 REVOKE ALL ON SCHEMA managed_data FROM PUBLIC;

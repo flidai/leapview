@@ -47,8 +47,9 @@ func TestBuildProductionNativePersistenceDoesNotRequireLegacyAuditRecorder(t *te
 		t.Fatal(err)
 	}
 	module, err := Build(t.Context(), Config{
-		Persistence: &persistence,
-		Production:  true,
+		Persistence:  &persistence,
+		Production:   true,
+		CleanupAcker: manageddatapostgres.NewMaintenance(admissionDB{}),
 		Product: ProductConfig{
 			Backend:          "local",
 			Dir:              t.TempDir(),
@@ -61,6 +62,25 @@ func TestBuildProductionNativePersistenceDoesNotRequireLegacyAuditRecorder(t *te
 	}
 	if module == nil || module.HTTP() == nil {
 		t.Fatal("native production build did not expose HTTP handler")
+	}
+}
+
+func TestBuildProductionNativePersistenceRequiresMaintenanceCleanupAuthority(t *testing.T) {
+	repository := manageddatapostgres.NewWithOptions(admissionDB{}, manageddatapostgres.Options{
+		Workflow: admissionWorkflow{}, Audit: admissionAudit{},
+	})
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Build(t.Context(), Config{Persistence: &persistence, Production: true})
+	if err == nil || !strings.Contains(err.Error(), "maintenance cleanup authority") {
+		t.Fatalf("production build error = %v, want maintenance cleanup authority requirement", err)
+	}
+	var typedNil *manageddatapostgres.Maintenance
+	_, err = Build(t.Context(), Config{Persistence: &persistence, Production: true, CleanupAcker: typedNil})
+	if err == nil || !strings.Contains(err.Error(), "maintenance cleanup authority") {
+		t.Fatalf("production typed-nil build error = %v, want maintenance cleanup authority requirement", err)
 	}
 }
 

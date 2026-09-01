@@ -657,7 +657,7 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(
 		filepath.Join(root, deploymentEnvName),
-		[]byte("COMPOSE_HTTPS=1\n"),
+		[]byte("COMPOSE_PROJECT_NAME=qualification-project\nCOMPOSE_HTTPS=1\n"),
 		0o600,
 	); err != nil {
 		t.Fatal(err)
@@ -678,6 +678,7 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	}
 	want := []string{
 		"compose",
+		"--project-name", "qualification-project",
 		"--project-directory", root,
 		"--env-file", filepath.Join(root, deploymentEnvName),
 		"--file", filepath.Join(root, "compose.yaml"),

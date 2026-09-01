@@ -38,19 +38,58 @@ func (runtime *nativePostgresRuntimeFixture) Existing(string) qualificationConta
 }
 
 type nativePostgresContainerFixture struct {
-	probes  []string
-	removed int
-	execErr error
+	probes     []string
+	removed    int
+	execErr    error
+	execErrors []error
+	execOutput []byte
 }
 
 func (*nativePostgresContainerFixture) Name() string { return "qualification-postgres" }
 
 func (container *nativePostgresContainerFixture) Exec(_ context.Context, _ io.Reader, command ...string) ([]byte, error) {
 	container.probes = append(container.probes, strings.Join(command, " "))
+	if len(container.execErrors) > 0 {
+		err := container.execErrors[0]
+		container.execErrors = container.execErrors[1:]
+		if err != nil {
+			return nil, err
+		}
+	}
 	if container.execErr != nil {
 		return nil, container.execErr
 	}
+	if container.execOutput != nil {
+		return append([]byte(nil), container.execOutput...), nil
+	}
 	return []byte("1\n"), nil
+}
+
+func TestWaitQualificationNativePostgresTopologyClearsTransientProbeFailure(t *testing.T) {
+	container := &nativePostgresContainerFixture{
+		execErrors: []error{errors.New("postgres is still starting")},
+	}
+	credentials := qualificationNativePostgresCredentials{
+		controlRuntime:  strings.Repeat("a", 48),
+		duckLakeRuntime: strings.Repeat("b", 48),
+	}
+
+	require.NoError(t, waitQualificationNativePostgresTopology(t.Context(), container, credentials))
+	require.Len(t, container.probes, 3)
+}
+
+func TestQualificationNativePostgresBootstrapInvariant(t *testing.T) {
+	container := &nativePostgresContainerFixture{execOutput: []byte("0\n")}
+	topology := &qualificationNativePostgresTopology{Container: container}
+	require.NoError(t, topology.AssertBootstrapOpen(t.Context(), "initialization"))
+	require.Len(t, container.probes, 1)
+	require.Contains(t, container.probes[0], "LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD")
+	require.NotContains(t, container.probes[0], "postgres://")
+
+	container.execOutput = []byte("1\n")
+	err := topology.AssertBootstrapOpen(t.Context(), "application startup")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "closed before candidate publication")
 }
 
 func (*nativePostgresContainerFixture) CopyTo(context.Context, string, string) ([]byte, error) {

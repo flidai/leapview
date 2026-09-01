@@ -97,7 +97,7 @@ func TestPrepareQualificationNativePostgresNetworkUsesComposeLifecycle(t *testin
 		switch {
 		case strings.HasSuffix(strings.Join(arguments, " "), "create --no-build leapview"):
 			return []byte("created\n"), nil
-		case strings.HasSuffix(strings.Join(arguments, " "), "ps --quiet leapview"):
+		case strings.HasSuffix(strings.Join(arguments, " "), "ps --all --quiet leapview"):
 			return []byte("app-id\n"), nil
 		case strings.HasSuffix(strings.Join(arguments, " "), "rm --force --stop leapview"):
 			return []byte("removed\n"), nil
@@ -111,9 +111,9 @@ func TestPrepareQualificationNativePostgresNetworkUsesComposeLifecycle(t *testin
 	require.NoError(t, err)
 	require.Equal(t, network, got)
 	require.Equal(t, [][]string{
-		{"compose", "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml"), "create", "--no-build", "leapview"},
-		{"compose", "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml"), "ps", "--quiet", "leapview"},
-		{"compose", "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml"), "rm", "--force", "--stop", "leapview"},
+		{"compose", "--project-name", project, "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml"), "create", "--no-build", "leapview"},
+		{"compose", "--project-name", project, "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml"), "ps", "--all", "--quiet", "leapview"},
+		{"compose", "--project-name", project, "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml"), "rm", "--force", "--stop", "leapview"},
 	}, requests)
 	require.Equal(t, []string{"app-id"}, runtime.existingIDs)
 	require.Equal(t, []string{qualificationComposeNetworkInspectFormat}, container.inspectArgs)
@@ -178,7 +178,7 @@ func TestPrepareQualificationNativePostgresNetworkCleansUpRejectedNetworks(t *te
 					return nil, test.createErr
 				case strings.HasSuffix(joined, "create --no-build leapview"):
 					return nil, nil
-				case strings.HasSuffix(joined, "ps --quiet leapview"):
+				case strings.HasSuffix(joined, "ps --all --quiet leapview"):
 					return []byte("app-id\n"), nil
 				case strings.HasSuffix(joined, "rm --force --stop leapview"):
 					return nil, test.cleanupErr

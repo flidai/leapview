@@ -180,6 +180,15 @@ type Principal struct {
 // types out of the module configuration contract.
 type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
 
+// PostgreSQLCleanupAuthority is the capability marker for the separately
+// authenticated managed-data maintenance facade. Production composition may
+// not substitute the runtime repository for this authority.
+type PostgreSQLCleanupAuthority interface {
+	control.CleanupAcker
+	PostgreSQLMaintenanceAuthority()
+	Configured() bool
+}
+
 type Config struct {
 	// Persistence is the capability-owned authority bundle consumed by active
 	// module builds. SQLite is selected only through NewSQLitePersistence.
@@ -196,6 +205,7 @@ type Config struct {
 	Workflow            jobplatform.WorkflowRecorder
 	ServingStates       ServingStateReader
 	AuditIntentRecorder access.AuditIntentRecorder
+	CleanupAcker        PostgreSQLCleanupAuthority
 }
 
 type ProductConfig struct {
@@ -267,6 +277,9 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		if cfg.Persistence == nil || !cfg.Persistence.isPostgres() {
 			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
 		}
+		if cfg.CleanupAcker == nil || !cfg.CleanupAcker.Configured() {
+			return nil, errors.New("production managed-data module requires PostgreSQL maintenance cleanup authority")
+		}
 	}
 	if cfg.Persistence == nil {
 		return nil, errors.New("managed-data persistence is required; choose native PostgreSQL or explicit SQLite persistence")
@@ -281,7 +294,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	uploads, err := newManagedDataControl(repository, transitions, services, cfg.Product)
+	uploads, err := newManagedDataControl(repository, transitions, cfg.CleanupAcker, services, cfg.Product)
 	if err != nil {
 		return nil, err
 	}
@@ -628,15 +641,16 @@ func newS3BlobStore(ctx context.Context, cfg ProductConfig, prefix string) (*man
 	})
 }
 
-func newManagedDataControl(repo control.Repository, transitions manageddata.UploadTransitionPort, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {
+func newManagedDataControl(repo control.Repository, transitions manageddata.UploadTransitionPort, cleanupAcker control.CleanupAcker, services managedDataStorage, cfg ProductConfig) (*control.Service, error) {
 	return control.New(repo, services.blobs, control.Config{
 		Limits: manageddata.Limits{
 			MaxFiles:         cfg.MaxFiles,
 			MaxFileBytes:     cfg.MaxFileBytes,
 			MaxRevisionBytes: cfg.MaxRevisionBytes,
 		},
-		UploadTTL:   cfg.UploadSessionTTL,
-		Transport:   services.transport,
-		Transitions: transitions,
+		UploadTTL:    cfg.UploadSessionTTL,
+		Transport:    services.transport,
+		Transitions:  transitions,
+		CleanupAcker: cleanupAcker,
 	})
 }

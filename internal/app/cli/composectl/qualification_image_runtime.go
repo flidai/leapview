@@ -16,48 +16,42 @@ import (
 	"time"
 )
 
-const qualificationMetricsHelp = "# HELP leapview_http_request_duration_seconds "
-
-type productionImageRuntimeQualification struct {
-	metricsToken string
-}
-
 func (c *Controller) qualifyProductionImageRuntime(
 	ctx context.Context,
 	image string,
-) (result productionImageRuntimeQualification, runErr error) {
+) (runErr error) {
 	image = strings.TrimSpace(image)
 	if image == "" {
-		return result, errors.New("production image is required")
+		return errors.New("production image is required")
 	}
 	if _, err := c.qualificationDocker(ctx, nil, "pull", image); err != nil {
-		return result, fmt.Errorf("pull production image: %w", err)
+		return fmt.Errorf("pull production image: %w", err)
 	}
 	runtimeUID, err := c.qualificationImageIdentity(ctx, image, "-u")
 	if err != nil {
-		return result, err
+		return err
 	}
 	runtimeGID, err := c.qualificationImageIdentity(ctx, image, "-g")
 	if err != nil {
-		return result, err
+		return err
 	}
 	metricsToken, err := qualificationRandomHex(16)
 	if err != nil {
-		return result, err
+		return err
 	}
 	csrfKey, err := qualificationRandomHex(16)
 	if err != nil {
-		return result, err
+		return err
 	}
-	result.metricsToken = metricsToken
 	container := normalizedQualificationName("leapview-image-smoke-" + strconv.Itoa(os.Getpid()))
 	if _, err := c.qualificationDocker(
 		ctx, nil,
 		"run", "--detach", "--name", container,
 		"--read-only",
+		"--network", "none",
 		"--tmpfs", "/var/lib/leapview:rw,exec,nosuid,nodev,mode=0700,uid="+runtimeUID+",gid="+runtimeGID+",size=128m",
 		"--tmpfs", "/tmp:rw,nosuid,nodev,mode=1777,size=64m",
-		"--publish", "127.0.0.1::8080",
+		"--env", "LEAPVIEW_POSTGRES_CONTROL_URL=",
 		"--env", "LEAPVIEW_API_TOKEN_ONLY_AUTH=1",
 		"--env", "LEAPVIEW_CSRF_KEY="+csrfKey,
 		"--env", "LEAPVIEW_METRICS_BEARER_TOKEN="+metricsToken,
@@ -65,7 +59,7 @@ func (c *Controller) qualifyProductionImageRuntime(
 		"--env", "LEAPVIEW_PUBLIC_URL=https://localhost",
 		image,
 	); err != nil {
-		return result, fmt.Errorf("start production image: %w", err)
+		return fmt.Errorf("start production image: %w", err)
 	}
 	defer func() {
 		cleanupCtx, cancel := context.WithTimeout(context.Background(), qualificationCleanupTimeout)
@@ -74,30 +68,25 @@ func (c *Controller) qualifyProductionImageRuntime(
 		runErr = errors.Join(runErr, ignoreQualificationNotFound(cleanupErr))
 	}()
 
-	baseURL, err := c.qualificationPublishedURL(ctx, container, "8080/tcp")
+	if err := c.waitQualificationContainerValue(ctx, container, "{{.State.Status}}", "exited", time.Minute); err != nil {
+		return err
+	}
+	runtimeContainer := c.qualificationContainers.Existing(container)
+	exitCode, err := runtimeContainer.Inspect(ctx, "{{.State.ExitCode}}")
 	if err != nil {
-		return result, err
+		return fmt.Errorf("inspect fail-closed production image exit: %w", err)
 	}
-	client := &http.Client{Timeout: 5 * time.Second}
-	if err := waitQualificationHTTP(ctx, client, baseURL+"/healthz", http.StatusOK); err != nil {
-		return result, qualificationContainerOperationError(ctx, c.qualificationContainers.Existing(container), "wait for production image health", err)
+	if strings.TrimSpace(string(exitCode)) == "0" {
+		return errors.New("production image accepted a missing PostgreSQL control URL")
 	}
-	if err := expectQualificationHTTP(ctx, client, baseURL+"/readyz", "", http.StatusServiceUnavailable, "missing_physical_pool_admission"); err != nil {
-		return result, err
+	logs, err := runtimeContainer.Logs(ctx, 100)
+	if err != nil {
+		return fmt.Errorf("read fail-closed production image logs: %w", err)
 	}
-	if err := expectQualificationHTTP(ctx, client, baseURL+"/readyz", "", http.StatusServiceUnavailable, "target_revision_missing"); err != nil {
-		return result, err
+	if !bytes.Contains(logs, []byte("production serve requires LEAPVIEW_POSTGRES_CONTROL_URL")) {
+		return errors.New("production image did not fail closed on a missing PostgreSQL control URL")
 	}
-	if err := expectQualificationHTTP(ctx, client, baseURL+"/metrics", "", http.StatusUnauthorized, ""); err != nil {
-		return result, err
-	}
-	if err := expectQualificationHTTP(ctx, client, baseURL+"/metrics", metricsToken, http.StatusOK, qualificationMetricsHelp); err != nil {
-		return result, err
-	}
-	if err := c.waitQualificationContainerValue(ctx, container, "{{.State.Health.Status}}", "unhealthy", 2*time.Minute); err != nil {
-		return result, err
-	}
-	return result, nil
+	return nil
 }
 
 func (c *Controller) QualifySiteImage(

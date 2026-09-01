@@ -92,7 +92,7 @@ func newHealthQualificationController(
 	root := t.TempDir()
 	if err := os.WriteFile(
 		root+"/"+deploymentEnvName,
-		[]byte("COMPOSE_HTTPS=0\n"),
+		[]byte("COMPOSE_PROJECT_NAME=qualification-project\nCOMPOSE_HTTPS=0\n"),
 		0o600,
 	); err != nil {
 		t.Fatal(err)

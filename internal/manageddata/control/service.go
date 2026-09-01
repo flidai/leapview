@@ -33,6 +33,7 @@ type Service struct {
 	transport         Transport
 	now               func() time.Time
 	transitions       manageddata.UploadTransitionPort
+	cleanupAcker      CleanupAcker
 	finalizeMu        sync.Mutex
 	finalizers        map[string]*finalizeLock
 }
@@ -66,10 +67,15 @@ func New(repo Repository, blobs storage.BlobStore, config Config) (*Service, err
 	if clock == nil {
 		clock = time.Now
 	}
+	cleanupAcker := config.CleanupAcker
+	if cleanupAcker == nil {
+		cleanupAcker, _ = repo.(CleanupAcker)
+	}
 	return &Service{
 		repo: repo, blobs: blobs, limits: config.Limits, uploadTTL: config.UploadTTL,
 		verifyConcurrency: concurrency, transport: config.Transport, now: clock, transitions: config.Transitions,
-		finalizers: map[string]*finalizeLock{},
+		cleanupAcker: cleanupAcker,
+		finalizers:   map[string]*finalizeLock{},
 	}, nil
 }
 
@@ -516,13 +522,9 @@ type terminalUploadLister interface {
 	ListUploadSessionsForCleanup(context.Context, int64) ([]manageddata.UploadSession, error)
 }
 
-type terminalUploadAcker interface {
-	MarkUploadCleanupComplete(context.Context, manageddata.UploadID) error
-}
-
 func (s *Service) acknowledgeCleanup(ctx context.Context, uploadID manageddata.UploadID) error {
-	if acker, ok := s.repo.(terminalUploadAcker); ok {
-		return repositoryError(acker.MarkUploadCleanupComplete(ctx, uploadID))
+	if s.cleanupAcker != nil {
+		return repositoryError(s.cleanupAcker.MarkUploadCleanupComplete(ctx, uploadID))
 	}
 	return nil
 }
@@ -563,7 +565,7 @@ func (s *Service) CleanupTerminalUploads(ctx context.Context, limit int64) (Term
 		result.Backlog = 1 // at least one more row is known to remain
 		sessions = sessions[:limit]
 	}
-	acker, _ := s.repo.(terminalUploadAcker)
+	acker := s.cleanupAcker
 	for _, session := range sessions {
 		if !isTerminal(session.Status) {
 			continue
@@ -952,7 +954,7 @@ func repositoryError(err error) error {
 	case errors.Is(err, manageddata.ErrConflict):
 		return ErrConflict
 	default:
-		return ErrInternal
+		return fmt.Errorf("%w: repository operation: %w", ErrInternal, err)
 	}
 }
 

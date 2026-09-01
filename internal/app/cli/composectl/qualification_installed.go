@@ -278,6 +278,9 @@ func (c *Controller) QualifyInstalledCandidate(
 	}); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {
+		return err
+	}
 	if options.MinFreeBytes > 0 {
 		if err := appendOrReplaceQualificationEnv(
 			c.path(appEnvName),
@@ -297,7 +300,13 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := c.applyQualificationNativePhysicalPool(ctx, nativeTopology, artifacts); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "physical-pool bootstrap"); err != nil {
+		return err
+	}
 	if err := c.startQualificationBootstrap(ctx); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "application startup"); err != nil {
 		return err
 	}
 	var credentialsOutput bytes.Buffer
@@ -329,6 +338,9 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	report.Assertions.OneTimeCredentials = true
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
+		return err
+	}
 
 	containerID, err := c.containerID(ctx)
 	if err != nil {
@@ -592,7 +604,20 @@ func (c *Controller) waitQualificationReadiness(ctx context.Context) error {
 // Keeping the lookup and container handle together lets qualification health
 // checks use the same runtime seam as all other container operations.
 func (c *Controller) qualificationApplicationContainer(ctx context.Context) (qualificationContainer, error) {
-	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	return c.qualificationApplicationContainerState(ctx, false)
+}
+
+func (c *Controller) qualificationApplicationContainerIncludingStopped(ctx context.Context) (qualificationContainer, error) {
+	return c.qualificationApplicationContainerState(ctx, true)
+}
+
+func (c *Controller) qualificationApplicationContainerState(ctx context.Context, includeStopped bool) (qualificationContainer, error) {
+	arguments := []string{"ps"}
+	if includeStopped {
+		arguments = append(arguments, "--all")
+	}
+	arguments = append(arguments, "--quiet", "leapview")
+	containerOutput, err := c.qualificationCompose(ctx, c.root, arguments...)
 	if err != nil {
 		return nil, err
 	}

@@ -23,7 +23,7 @@ VALUES (sqlc.arg(audit_id)::uuid, NULLIF(sqlc.arg(domain_event_id)::text, '')::u
         NULLIF(sqlc.arg(principal_id)::text, '')::uuid, sqlc.arg(source),
         sqlc.arg(operation), sqlc.arg(action), NULLIF(sqlc.arg(resource_kind)::text, ''),
         NULLIF(sqlc.arg(resource_id)::text, ''), sqlc.arg(capability), sqlc.arg(outcome),
-        NULLIF(sqlc.arg(request_id)::text, '')::uuid, NULLIF(sqlc.arg(correlation_id)::text, '')::uuid,
+        NULLIF(sqlc.arg(request_id)::text, ''), NULLIF(sqlc.arg(correlation_id)::text, ''),
         sqlc.arg(aggregate_key), sqlc.arg(aggregate_sequence), sqlc.arg(intent_digest),
         NULLIF(sqlc.arg(request_digest)::text, ''),
         sqlc.arg(metadata)::jsonb)
@@ -84,7 +84,7 @@ VALUES (sqlc.arg(audit_id)::uuid, NULLIF(sqlc.arg(principal_id)::text, '')::uuid
         'access', 'repository', sqlc.arg(action), sqlc.arg(resource_kind),
         sqlc.arg(resource_id), sqlc.arg(capability),
         CASE WHEN sqlc.arg(status)::text = '' THEN 'success' ELSE sqlc.arg(status)::text END,
-        NULLIF(sqlc.arg(request_id)::text, '')::uuid, NULLIF(sqlc.arg(correlation_id)::text, '')::uuid,
+        NULLIF(sqlc.arg(request_id)::text, ''), NULLIF(sqlc.arg(correlation_id)::text, ''),
         sqlc.arg(aggregate_key), 0, sqlc.arg(intent_digest), sqlc.arg(metadata)::jsonb);
 
 -- name: ListAccessAuditEvents :many

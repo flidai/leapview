@@ -434,19 +434,19 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
 	}
-	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
+	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "AssertBootstrapOpen", "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("installed qualification missing sealed-delivery bootstrap contract %q", required)
 		}
 	}
-	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "startQualificationBootstrap", "waitQualificationReadiness"} {
+	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "AssertBootstrapOpen", "startQualificationBootstrap", "waitQualificationReadiness"} {
 		if !strings.Contains(imageQualification, required) {
 			t.Errorf("production-image qualification missing sealed-delivery bootstrap contract %q", required)
 		}
 	}
-	for _, required := range []string{"missing_physical_pool_admission", "target_revision_missing", `"unhealthy"`} {
+	for _, required := range []string{"production serve requires LEAPVIEW_POSTGRES_CONTROL_URL", "{{.State.Status}}", `"exited"`} {
 		if !strings.Contains(runtimeQualification, required) {
-			t.Errorf("bare production-image smoke missing fail-closed startup assertion %q", required)
+			t.Errorf("bare native production-image smoke missing fail-closed startup assertion %q", required)
 		}
 	}
 	for _, required := range []string{"ManagedUpload", "ReleaseFinalization", "DeploymentActivation", "RefreshRecovery", "QueryStreamReconnect", "BoundedDisk", "waitForQualificationEvents", "/events?limit=100"} {

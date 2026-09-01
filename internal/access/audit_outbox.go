@@ -209,8 +209,7 @@ func (intent AuditIntent) Canonicalize() (AuditIntent, error) {
 			return AuditIntent{}, fmt.Errorf("audit intent %s is not canonical", name)
 		}
 	}
-	if intent.RequestID != strings.TrimSpace(intent.RequestID) || len(intent.RequestID) > 256 ||
-		intent.CorrelationID != strings.TrimSpace(intent.CorrelationID) || len(intent.CorrelationID) > 256 {
+	if !validAuditRequestIdentities(intent.RequestID, intent.CorrelationID) {
 		return AuditIntent{}, fmt.Errorf("audit intent request identity is not canonical")
 	}
 	if intent.AggregateSequence < 0 {

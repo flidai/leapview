@@ -84,7 +84,7 @@ func (c *Controller) QualifyImage(
 	if options.RequireImmutable && !qualificationImmutableImagePattern.MatchString(options.Image) {
 		return errors.New("production qualification requires an immutable repository@sha256 digest")
 	}
-	if _, err := c.qualifyProductionImageRuntime(ctx, options.Image); err != nil {
+	if err := c.qualifyProductionImageRuntime(ctx, options.Image); err != nil {
 		return err
 	}
 	if options.EvidenceDir == "" {
@@ -360,6 +360,9 @@ func (c *Controller) QualifyImage(
 	}); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {
+		return err
+	}
 	target := "https://localhost:" + httpsPort
 	if err := updateEnvFile(filepath.Join(bundleRoot, appEnvName), map[string]string{
 		"LEAPVIEW_PUBLIC_URL": target,
@@ -369,7 +372,13 @@ func (c *Controller) QualifyImage(
 	if err := instanceController.applyQualificationNativePhysicalPool(ctx, nativeTopology, artifacts); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "physical-pool bootstrap"); err != nil {
+		return err
+	}
 	if err := instanceController.startQualificationBootstrap(ctx); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "application startup"); err != nil {
 		return err
 	}
 	credentialsPath := filepath.Join(bundleRoot, ".qualification-credentials.json")
@@ -390,6 +399,9 @@ func (c *Controller) QualifyImage(
 		return err
 	}
 	if err := writeQualificationJSON(credentialsPath, credentials); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertBootstrapOpen(ctx, "one-time credential delivery"); err != nil {
 		return err
 	}
 

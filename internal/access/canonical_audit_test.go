@@ -1,6 +1,7 @@
 package access
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/project/graph"
@@ -37,6 +38,45 @@ func TestCanonicalAuditEventRequiresExactServingIdentityAndResource(t *testing.T
 		if err := bad.ValidateAgainst(project); err == nil {
 			t.Fatalf("accepted invalid canonical audit event %#v", bad)
 		}
+	}
+}
+
+func TestCanonicalAuditEventValidatesRequestIdentities(t *testing.T) {
+	resource, err := NewResourceRef("dashboard_main", graph.KindDashboard)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base := CanonicalAuditEvent{
+		Identity:    graph.ServingIdentity{ProjectID: "project_demo", Environment: "production", GenerationID: "generation_7"},
+		PrincipalID: "alice", Action: "dashboard.read", Resource: resource, Capability: CapabilityResourceRead,
+	}
+	for _, test := range []struct {
+		name          string
+		requestID     string
+		correlationID string
+		wantErr       bool
+	}{
+		{name: "omitted identities"},
+		{name: "text identities", requestID: "req_abc", correlationID: "corr_abc"},
+		{name: "request leading whitespace", requestID: " req_abc", correlationID: "corr_abc", wantErr: true},
+		{name: "correlation trailing whitespace", requestID: "req_abc", correlationID: "corr_abc ", wantErr: true},
+		{name: "request whitespace only", requestID: "   ", correlationID: "corr_abc", wantErr: true},
+		{name: "correlation whitespace only", requestID: "req_abc", correlationID: "   ", wantErr: true},
+		{name: "request at limit", requestID: strings.Repeat("r", maxAuditRequestIdentityBytes), correlationID: "corr_abc"},
+		{name: "request too long", requestID: strings.Repeat("r", maxAuditRequestIdentityBytes+1), correlationID: "corr_abc", wantErr: true},
+		{name: "correlation too long", requestID: "req_abc", correlationID: strings.Repeat("c", maxAuditRequestIdentityBytes+1), wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			event := base
+			event.RequestID, event.CorrelationID = test.requestID, test.correlationID
+			err := event.Validate()
+			if test.wantErr && err == nil {
+				t.Fatal("Validate unexpectedly accepted non-canonical request identity")
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("Validate rejected request identity: %v", err)
+			}
+		})
 	}
 }
 

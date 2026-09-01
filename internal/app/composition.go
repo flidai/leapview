@@ -1573,6 +1573,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,
+		ProjectClaims:      projectClaimRepository,
 		BindClaimedProject: bindClaimedProject(runtimeHostModule, environment),
 		Protected: protectedPublishingTarget(
 			production,

@@ -74,7 +74,7 @@ func newQualificationNativePoolController(
 ) (*Controller, *recordingQualificationExecutor) {
 	t.Helper()
 	root := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("COMPOSE_HTTPS=0\n"), 0o600))
+	require.NoError(t, os.WriteFile(filepath.Join(root, deploymentEnvName), []byte("COMPOSE_PROJECT_NAME=qualification-project\nCOMPOSE_HTTPS=0\n"), 0o600))
 	require.NoError(t, os.WriteFile(filepath.Join(root, appEnvName), []byte("LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=\nLEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=\nLEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=stale\n"), 0o600))
 	executor := &recordingQualificationExecutor{}
 	index := 0
@@ -120,7 +120,7 @@ func TestPrepareQualificationNativePhysicalPoolWritesArtifactsAndExactComposeCom
 
 	pool, _ := physicalpool.NewPhysicalPool(fixture.identity)
 	compatibilityDigest, _ := fixture.evidence.Compatibility.Digest()
-	common := []string{"compose", "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml")}
+	common := []string{"compose", "--project-name", "qualification-project", "--project-directory", controller.root, "--env-file", filepath.Join(controller.root, deploymentEnvName), "--file", filepath.Join(controller.root, "compose.yaml")}
 	wantGenerator := append(append([]string(nil), common...), "run", "--rm", "--no-deps", "leapview", "admin", "delivery", "pool", "qualify")
 	wantDry := append(append([]string(nil), common...), qualificationNativePhysicalPoolBootstrapArguments(artifacts, false, nil)...)
 	require.Len(t, executor.requests, 2)

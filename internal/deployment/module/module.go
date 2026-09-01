@@ -226,6 +226,11 @@ type Config struct {
 	// no-active-generation revalidator.
 	BootstrapPolicies  BootstrapPolicyStore
 	AuthorizeBootstrap func(context.Context, deployment.BootstrapActivationPolicy) error
+	// ProjectClaims is the read-only durable instance/project binding used by
+	// pre-activation API authorization. It is deliberately independent from
+	// the activation-policy store so native PostgreSQL delivery does not need a
+	// legacy bootstrap-policy adapter merely to expose its canonical claim.
+	ProjectClaims ProjectClaimReader
 	// AfterActivated runs after runtime publication and durable activation.
 	// It is observational and cannot influence activation.
 	AfterActivated           func(context.Context, deployment.Deployment)

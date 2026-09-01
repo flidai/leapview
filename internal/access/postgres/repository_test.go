@@ -95,8 +95,8 @@ func auditIntent(id, action string) access.AuditIntent {
 		ResourceID:        auditActorID,
 		Capability:        access.CapabilityResourceEdit,
 		Outcome:           "success",
-		RequestID:         "30000000-0000-0000-0000-000000000001",
-		CorrelationID:     "40000000-0000-0000-0000-000000000001",
+		RequestID:         "req_30000000000000000000000000000001",
+		CorrelationID:     "corr_40000000000000000000000000000001",
 		AggregateKey:      "principal:" + auditActorID,
 		AggregateSequence: 1,
 		MetadataJSON:      `{"reason":"test"}`,
@@ -175,7 +175,7 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 			t.Fatal(err)
 		}
 		if principal != auditActorID || action != "principal.updated" || kind != "principal" || resource != auditActorID ||
-			request != "30000000-0000-0000-0000-000000000001" || correlation != "40000000-0000-0000-0000-000000000001" {
+			request != "req_30000000000000000000000000000001" || correlation != "corr_40000000000000000000000000000001" {
 			t.Fatalf("audit identity = principal %q action %q resource %q/%q request %q correlation %q", principal, action, kind, resource, request, correlation)
 		}
 		var metadataObject map[string]any

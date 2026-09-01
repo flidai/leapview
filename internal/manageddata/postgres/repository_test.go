@@ -40,6 +40,13 @@ func TestGeneratedOpaqueIDUsesUUIDv7(t *testing.T) {
 	}
 }
 
+func TestMaintenanceConfiguredRejectsTypedNilDatabase(t *testing.T) {
+	var pool *pgxpool.Pool
+	if NewMaintenance(pool).Configured() {
+		t.Fatal("maintenance accepted typed-nil PostgreSQL pool")
+	}
+}
+
 func openManagedDataTestPool(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *postgrestest.Database, *postgrestest.Harness) {
 	t.Helper()
 	h := postgrestest.Start(t)
@@ -218,8 +225,11 @@ func TestPostgresUploadRevisionAndBindings(t *testing.T) {
 	if err := r.MarkUploadCleanupComplete(t.Context(), s.ID); err == nil {
 		t.Fatal("runtime role unexpectedly has cleanup evidence capability")
 	}
-	if err := New(maintenance).MarkUploadCleanupComplete(t.Context(), s.ID); err != nil {
+	if err := NewMaintenance(maintenance).MarkUploadCleanupComplete(t.Context(), s.ID); err != nil {
 		t.Fatalf("bounded cleanup marker: %v", err)
+	}
+	if err := NewMaintenance(maintenance).MarkUploadCleanupComplete(t.Context(), s.ID); err != nil {
+		t.Fatalf("idempotent cleanup marker retry: %v", err)
 	}
 	if n, err := maintenanceFacade.PruneUploadSessions(t.Context(), time.Now().Add(time.Hour), 100); err != nil || n == 0 {
 		t.Fatalf("maintenance prune after cleanup marker: n=%d err=%v", n, err)

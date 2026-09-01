@@ -182,18 +182,6 @@ func (r *AuditRepository) RecordAuditEvent(ctx context.Context, tx Tx, intent ac
 			return Event{}, err
 		}
 	}
-	if canonical.RequestID != "" {
-		canonical.RequestID, err = canonicalUUID("audit request id", canonical.RequestID)
-		if err != nil {
-			return Event{}, err
-		}
-	}
-	if canonical.CorrelationID != "" {
-		canonical.CorrelationID, err = canonicalUUID("audit correlation id", canonical.CorrelationID)
-		if err != nil {
-			return Event{}, err
-		}
-	}
 	if err := validateOutcome(canonical.Outcome); err != nil {
 		return Event{}, err
 	}
@@ -306,25 +294,39 @@ func (r *AuditRepository) ListAuditEvents(ctx context.Context, db DBTX, limit in
 func auditIntentEvent(row accessdb.GetAuditIntentRow) Event {
 	return Event{AuditID: row.AuditID, DomainEventID: row.DomainEventID, ScopeID: row.ScopeID, ActorID: row.ActorID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
 		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
-		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
-		CorrelationID: principalUUID(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: auditNullableText(row.RequestID),
+		CorrelationID: auditNullableText(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
 		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
 }
 
 func auditIntentEventByID(row accessdb.GetAuditIntentByIDRow) Event {
 	return Event{AuditID: row.AuditID, DomainEventID: row.DomainEventID, ScopeID: row.ScopeID, ActorID: row.ActorID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
 		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
-		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
-		CorrelationID: principalUUID(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: auditNullableText(row.RequestID),
+		CorrelationID: auditNullableText(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
 		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
 }
 
 func auditIntentEventFromList(row accessdb.ListAuditIntentsRow) Event {
 	return Event{AuditID: row.AuditID, DomainEventID: row.DomainEventID, ScopeID: row.ScopeID, ActorID: row.ActorID, PrincipalID: principalUUID(row.PrincipalID), Source: row.Source,
 		Operation: row.Operation, Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
-		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: principalUUID(row.RequestID),
-		CorrelationID: principalUUID(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
+		Capability: access.Capability(row.Capability), Outcome: row.Outcome, RequestID: auditNullableText(row.RequestID),
+		CorrelationID: auditNullableText(row.CorrelationID), RequestDigest: row.RequestDigest, AggregateKey: row.AggregateKey, AggregateSequence: row.AggregateSequence,
 		IntentDigest: row.IntentDigest, MetadataJSON: row.MetadataJson, OccurredAt: row.OccurredAt.Time.UTC()}
+}
+
+func auditNullableText(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func auditNullableTextPointer(value string) *string {
+	if value == "" {
+		return nil
+	}
+	return &value
 }
 
 func validateOutcome(value string) error {

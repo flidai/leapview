@@ -95,7 +95,7 @@ func (c *Controller) prepareQualificationNativePostgresNetwork(
 	}
 	created = true
 
-	container, err := c.qualificationApplicationContainer(ctx)
+	container, err := c.qualificationApplicationContainerIncludingStopped(ctx)
 	if err != nil {
 		return "", fmt.Errorf("resolve pre-created qualification application container: %w", err)
 	}

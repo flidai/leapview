@@ -318,6 +318,14 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 		}
 		decision, err := a.bootstrap(r.Context(), r, operationID, projectID, capability)
 		if err != nil {
+			a.module.logger.WarnContext(
+				r.Context(),
+				"generated API bootstrap authorization failed",
+				"operation", operationID,
+				"project", projectID,
+				"capability", capability,
+				"error", err,
+			)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
@@ -421,6 +429,14 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 		}
 		decision, err := a.bootstrap(r.Context(), r, operationID, projectID, capability)
 		if err != nil {
+			a.module.logger.WarnContext(
+				r.Context(),
+				"generated API bootstrap authorization failed",
+				"operation", operationID,
+				"project", projectID,
+				"capability", capability,
+				"error", err,
+			)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
@@ -428,11 +444,13 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 			// The project has an active generation. Bootstrap never grants an
 			// active path; normal immutable-snapshot authz is authoritative.
 			if a.runtime == nil {
+				a.module.logger.WarnContext(r.Context(), "generated API active authorization runtime is unavailable", "operation", operationID, "project", projectID)
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
 			resolver := a.resourceResolverForContractMust(operationID)
 			if resolver == nil {
+				a.module.logger.WarnContext(r.Context(), "generated API active authorization resolver is unavailable", "operation", operationID, "project", projectID)
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
@@ -459,6 +477,14 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 		}
 		authorized, err := a.module.AuthorizeBootstrapRequest(r.Context(), r, capability)
 		if err != nil {
+			a.module.logger.WarnContext(
+				r.Context(),
+				"generated API bootstrap credential authorization failed",
+				"operation", operationID,
+				"project", projectID,
+				"capability", capability,
+				"error", err,
+			)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}
@@ -494,6 +520,7 @@ func (a *APIGenAuthorizer) protectResources(operationID string, capability acces
 		}
 		projectID := a.runtime.ProjectID()
 		if err := projectID.Validate(); err != nil {
+			a.module.logger.WarnContext(r.Context(), "generated API active project identity is unavailable", "operation", operationID, "error", err)
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 			return
 		}

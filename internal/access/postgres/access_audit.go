@@ -108,7 +108,7 @@ func (r *Repository) ListAuditEvents(ctx context.Context, filter access.AuditEve
 	out := make([]access.AuditEvent, 0, len(rows))
 	for _, row := range rows {
 		value := access.AuditEvent{ID: row.AuditID, PrincipalID: principalUUID(row.PrincipalID), Action: row.Action, ResourceKind: row.ResourceKind, ResourceID: row.ResourceID,
-			Capability: access.Capability(row.Capability), Status: row.Outcome, RequestID: principalUUID(row.RequestID), CorrelationID: principalUUID(row.CorrelationID), MetadataJSON: row.MetadataJson, CreatedAt: principalTimestamp(row.OccurredAt)}
+			Capability: access.Capability(row.Capability), Status: row.Outcome, RequestID: auditNullableText(row.RequestID), CorrelationID: auditNullableText(row.CorrelationID), MetadataJSON: row.MetadataJson, CreatedAt: principalTimestamp(row.OccurredAt)}
 		out = append(out, value)
 	}
 	return out, nil
