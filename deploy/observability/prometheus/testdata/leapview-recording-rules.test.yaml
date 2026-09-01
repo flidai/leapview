@@ -684,6 +684,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_5m",instance="app:8080",job="leapview"}'
             value: 0
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_1h",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_1h",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
         eval_time: 10m
         exp_samples:
@@ -709,6 +719,16 @@ tests:
         exp_samples:
           - labels: '{__name__="leapview:dashboard_refresh_latency:objective_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.99
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
         eval_time: 10m
         exp_samples:
@@ -871,6 +891,12 @@ tests:
       - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
         eval_time: 10m
         exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_1h'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
         eval_time: 10m
         exp_samples: []
@@ -884,6 +910,12 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h'
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
@@ -1063,6 +1095,12 @@ tests:
       - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
         eval_time: 10m
         exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_1h'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
         eval_time: 10m
         exp_samples: []
@@ -1076,6 +1114,12 @@ tests:
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h'
         eval_time: 10m
         exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
