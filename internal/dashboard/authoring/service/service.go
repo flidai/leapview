@@ -815,7 +815,20 @@ func (s *Service) edit(ctx context.Context, projectID graph.ResourceID, command 
 	if err != nil {
 		return Result{}, fmt.Errorf("allocate revision id: %w", err)
 	}
-	nextLifecycle, revision, err := authoring.ApplyEdit(lifecycle, current, command, nextID, current.Number+1, evidence.OccurredAt)
+	var nextLifecycle authoring.DashboardLifecycle
+	var revision authoring.Revision
+	if command.RestoreRevision != nil {
+		target, targetErr := s.repository.GetRevision(ctx, projectID, lifecycle.ID, command.RestoreRevision.TargetRevision.RevisionID)
+		if targetErr != nil {
+			return Result{}, targetErr
+		}
+		if !sameToken(target.Token(), command.RestoreRevision.TargetRevision) {
+			return Result{}, fmt.Errorf("%w: restore target revision token does not match retained revision", authoring.ErrStaleRevision)
+		}
+		nextLifecycle, revision, err = authoring.ApplyRevisionRestore(lifecycle, current, target, command, nextID, current.Number+1, evidence.OccurredAt)
+	} else {
+		nextLifecycle, revision, err = authoring.ApplyEdit(lifecycle, current, command, nextID, current.Number+1, evidence.OccurredAt)
+	}
 	if err != nil {
 		return Result{}, err
 	}

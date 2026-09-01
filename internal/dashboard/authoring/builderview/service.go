@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
@@ -22,12 +23,14 @@ import (
 )
 
 const (
-	maxPages       = 128
-	maxVisuals     = 1024
-	maxTables      = 256
-	maxFields      = 1024
-	maxSlots       = 64
-	maxDiagnostics = 128
+	maxPages              = 128
+	maxVisuals            = 1024
+	maxFilterComponents   = 1024
+	maxInteractionTargets = 1024
+	maxTables             = 256
+	maxFields             = 1024
+	maxSlots              = 64
+	maxDiagnostics        = 128
 )
 
 // Request identifies one project-scoped draft builder projection. Empty
@@ -209,8 +212,12 @@ func (s *Service) capabilities(ctx context.Context, actorID string, projectID gr
 	if err != nil {
 		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
 	}
+	archive, err := s.authorize(ctx, actorID, projectID, lifecycle, authoring.AuthorizationActionArchive)
+	if err != nil {
+		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
+	}
 	return uisignals.DashboardBuilderCapabilitiesSignal{
-		CanEdit: canEdit, CanShare: canEdit, CanPublish: publish, CanPreview: canEdit,
+		CanEdit: canEdit, CanShare: canEdit, CanPublish: publish, CanArchive: archive, CanPreview: canEdit,
 		CanExport: export, CanAddPage: canEdit, CanAddVisual: canEdit,
 	}, nil
 }
@@ -244,9 +251,9 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	}
 	signal := uisignals.DashboardBuilderSignal{
 		DashboardID: lifecycle.ID.String(), DraftID: draftID,
-		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
+		Revision: revisionValue, Title: lifecycle.Title, Appearance: projectAppearance(revision.Document), Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
-		SemanticModel: semantic, Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
+		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
 		Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Mode: "draft", Loading: false},
 		Save:    uisignals.DashboardBuilderSaveStateSignal{State: saveState(dirty), LastSavedAt: optionalTime(revision.CreatedAt)},
 	}
@@ -259,15 +266,96 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	return signal, nil
 }
 
+func projectAppearance(document dashboarddocument.DashboardDocument) uisignals.DashboardBuilderAppearanceSignal {
+	appearance := dashboardappearance.Default()
+	if authored := document.Spec.Appearance; authored != nil {
+		if authored.Icon != nil && strings.TrimSpace(*authored.Icon) != "" {
+			appearance.Icon = strings.TrimSpace(*authored.Icon)
+		}
+		if authored.Color != nil && strings.TrimSpace(string(*authored.Color)) != "" {
+			appearance.Color = strings.TrimSpace(string(*authored.Color))
+		}
+	}
+	return uisignals.DashboardBuilderAppearanceSignal{Icon: appearance.Icon, Color: appearance.Color}
+}
+
+func projectFilters(authored dashboarddocument.DashboardDocument) []uisignals.DashboardBuilderFilterSignal {
+	filters := authored.Spec.Filters
+	bindingsByFilter := make(map[string][]uisignals.DashboardBuilderFilterBindingSignal, len(filters))
+	for _, page := range authored.Spec.Pages {
+		if page.FilterBindings == nil {
+			continue
+		}
+		for _, binding := range *page.FilterBindings {
+			pageID := page.ID
+			projected := uisignals.DashboardBuilderFilterBindingSignal{ID: binding.ID, Scope: "page", PageID: &pageID, Targets: []string{}}
+			if binding.Targets != nil {
+				projected.Targets = append(projected.Targets, (*binding.Targets)...)
+			}
+			bindingsByFilter[binding.Filter] = append(bindingsByFilter[binding.Filter], projected)
+		}
+	}
+	result := make([]uisignals.DashboardBuilderFilterSignal, 0, len(filters))
+	for _, filter := range filters {
+		controlType := ""
+		if projectedType, err := filter.Control.Type(); err == nil {
+			controlType = projectedType
+		}
+		projected := uisignals.DashboardBuilderFilterSignal{
+			ID: filter.ID, Label: filter.Label, Dimension: filter.Dimension, ControlType: controlType,
+			Required:       filter.Required != nil && *filter.Required,
+			ReaderEditable: filter.ReaderEditable == nil || *filter.ReaderEditable,
+			Targets:        []string{},
+			Bindings:       append([]uisignals.DashboardBuilderFilterBindingSignal(nil), bindingsByFilter[filter.ID]...),
+		}
+		if len(projected.Bindings) == 0 {
+			reportTargets := []string{}
+			if filter.Targets != nil {
+				reportTargets = append(reportTargets, (*filter.Targets)...)
+			}
+			projected.Bindings = []uisignals.DashboardBuilderFilterBindingSignal{{ID: filter.ID, Scope: "report", Targets: reportTargets}}
+		}
+		sort.SliceStable(projected.Bindings, func(i, j int) bool {
+			leftPage, rightPage := "", ""
+			if projected.Bindings[i].PageID != nil {
+				leftPage = *projected.Bindings[i].PageID
+			}
+			if projected.Bindings[j].PageID != nil {
+				rightPage = *projected.Bindings[j].PageID
+			}
+			if leftPage == rightPage {
+				return projected.Bindings[i].ID < projected.Bindings[j].ID
+			}
+			return leftPage < rightPage
+		})
+		if filter.Description != nil {
+			projected.Description = filter.Description
+		}
+		if filter.Targets != nil {
+			projected.Targets = append(projected.Targets, (*filter.Targets)...)
+		}
+		if filter.URLParameter != nil {
+			projected.URLParameter = filter.URLParameter
+		}
+		result = append(result, projected)
+	}
+	sort.SliceStable(result, func(i, j int) bool { return result[i].ID < result[j].ID })
+	return result
+}
+
 func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID, requestedVisualID string) ([]uisignals.DashboardBuilderPageSignal, []uisignals.DashboardBuilderDiagnosticSignal, string, string, error) {
 	if len(authored.Spec.Pages) > maxPages {
 		return nil, nil, "", "", fmt.Errorf("dashboard builder pages exceed bounded limit")
 	}
 	pages := append([]dashboarddocument.DashboardPage(nil), authored.Spec.Pages...)
-	sort.SliceStable(pages, func(i, j int) bool { return pages[i].ID < pages[j].ID })
 	result := make([]uisignals.DashboardBuilderPageSignal, 0, len(pages))
 	diagnostics := make([]uisignals.DashboardBuilderDiagnosticSignal, 0)
 	visualTotal := 0
+	filterComponentTotal := 0
+	filterDefinitions := make(map[string]dashboarddocument.DashboardFilter, len(authored.Spec.Filters))
+	for _, filter := range authored.Spec.Filters {
+		filterDefinitions[filter.ID] = filter
+	}
 	for _, page := range pages {
 		components := append([]dashboarddocument.DashboardPageComponent(nil), page.Components...)
 		sort.SliceStable(components, func(i, j int) bool {
@@ -279,8 +367,37 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			return left.ID < right.ID
 		})
 		visuals := make([]uisignals.DashboardBuilderVisualSignal, 0, len(components))
+		filterComponents := make([]uisignals.DashboardBuilderFilterComponentSignal, 0)
 		seenVisualIDs := make(map[string]struct{}, len(components))
 		for _, component := range components {
+			if filterComponent, ok := component.Value.(*dashboarddocument.FilterDashboardPageComponent); ok {
+				filterComponentTotal++
+				if filterComponentTotal > maxFilterComponents {
+					return nil, nil, "", "", fmt.Errorf("dashboard builder filter components exceed bounded limit")
+				}
+				base, err := component.Base()
+				if err != nil {
+					return nil, nil, "", "", err
+				}
+				definition, exists := filterDefinitions[filterComponent.Filter]
+				if !exists {
+					diagnostics = append(diagnostics, diagnostic("error", "FILTER_MISSING", fmt.Sprintf("Filter %q is missing from the authored document.", filterComponent.Filter), filterComponent.Filter))
+					continue
+				}
+				controlType, err := definition.Control.Type()
+				if err != nil {
+					return nil, nil, "", "", err
+				}
+				placement := dashboard.PagePlacement{Col: int(base.Placement.Column), Row: int(base.Placement.Row), ColSpan: int(base.Placement.ColumnSpan), RowSpan: int(base.Placement.RowSpan)}
+				filterComponents = append(filterComponents, uisignals.DashboardBuilderFilterComponentSignal{
+					ID:          base.ID,
+					FilterID:    filterComponent.Filter,
+					Label:       display(definition.Label, definition.ID),
+					ControlType: controlType,
+					Placement:   uisignals.DashboardPagePlacementFromDashboard(placement),
+				})
+				continue
+			}
 			visualComponent, ok := component.Value.(*dashboarddocument.VisualDashboardPageComponent)
 			if !ok || strings.TrimSpace(visualComponent.Visual) == "" {
 				continue
@@ -293,12 +410,12 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			if visualTotal > maxVisuals {
 				return nil, nil, "", "", fmt.Errorf("dashboard builder visuals exceed bounded limit")
 			}
-			authored, ok := authored.Spec.Visuals[visualComponent.Visual]
+			authoredVisual, ok := authored.Spec.Visuals[visualComponent.Visual]
 			if !ok {
 				diagnostics = append(diagnostics, diagnostic("error", "VISUAL_MISSING", fmt.Sprintf("Visual %q is missing from the authored document.", visualComponent.Visual), visualComponent.Visual))
 				continue
 			}
-			visual, err := projectCanonicalVisual(base, visualComponent, authored)
+			visual, err := projectCanonicalVisual(base, visualComponent, authoredVisual)
 			if err != nil {
 				return nil, nil, "", "", err
 			}
@@ -326,11 +443,33 @@ func projectPages(authored dashboarddocument.DashboardDocument, requestedPageID,
 			seenVisualIDs[visual.ID] = struct{}{}
 			visuals = append(visuals, visual)
 		}
-		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Visuals: visuals})
+		result = append(result, uisignals.DashboardBuilderPageSignal{ID: page.ID, Title: display(page.Title, page.ID), Grid: projectCanonicalPageGrid(authored.Spec, page), Visuals: visuals, FilterComponents: filterComponents})
 	}
 	selectedPageID := choosePage(result, strings.TrimSpace(requestedPageID))
 	selectedVisualID := chooseVisual(result, selectedPageID, strings.TrimSpace(requestedVisualID))
 	return result, diagnostics, selectedPageID, selectedVisualID, nil
+}
+
+func projectCanonicalPageGrid(spec dashboarddocument.DashboardSpec, page dashboarddocument.DashboardPage) uisignals.DashboardPageGrid {
+	columns, rowHeight, gap, padding := int64(12), int64(48), int64(16), int64(16)
+	if spec.Layout != nil {
+		columns, rowHeight, gap, padding = int64(spec.Layout.Columns), int64(spec.Layout.RowHeight), int64(spec.Layout.Gap), int64(spec.Layout.Padding)
+	}
+	if page.Layout != nil {
+		if page.Layout.Columns != nil {
+			columns = int64(*page.Layout.Columns)
+		}
+		if page.Layout.RowHeight != nil {
+			rowHeight = int64(*page.Layout.RowHeight)
+		}
+		if page.Layout.Gap != nil {
+			gap = int64(*page.Layout.Gap)
+		}
+		if page.Layout.Padding != nil {
+			padding = int64(*page.Layout.Padding)
+		}
+	}
+	return uisignals.DashboardPageGrid{Columns: columns, RowHeight: rowHeight, Gap: gap, Padding: padding}
 }
 
 func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, component *dashboarddocument.VisualDashboardPageComponent, authored dashboarddocument.DashboardVisual) (uisignals.DashboardBuilderVisualSignal, error) {
@@ -346,7 +485,256 @@ func projectCanonicalVisual(base *dashboarddocument.DashboardPageComponentBase, 
 		return uisignals.DashboardBuilderVisualSignal{}, err
 	}
 	placement := dashboard.PagePlacement{Col: int(base.Placement.Column), Row: int(base.Placement.Row), ColSpan: int(base.Placement.ColumnSpan), RowSpan: int(base.Placement.RowSpan)}
-	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), Type: string(authored.Type), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}}, nil
+	titleVisible := true
+	if authored.TitleVisible != nil {
+		titleVisible = *authored.TitleVisible
+	}
+	legendVisible, labelsVisible, axisVisible := canonicalVisualFormatVisibility(authored)
+	formatOptions, err := authoring.CanonicalVisualFormatOptions(authored)
+	if err != nil {
+		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual format options: %w", err)
+	}
+	interaction, err := projectCanonicalInteraction(authored)
+	if err != nil {
+		return uisignals.DashboardBuilderVisualSignal{}, fmt.Errorf("project visual interaction: %w", err)
+	}
+	var datasetID *string
+	if records, ok := authored.Query.Value.(*dashboarddocument.RecordsDashboardQuery); ok {
+		resolved := strings.TrimSpace(records.Dataset)
+		if resolved != "" && resolved != "pending_dataset" {
+			datasetID = &resolved
+		}
+	}
+	return uisignals.DashboardBuilderVisualSignal{ID: base.ID, VisualID: component.Visual, Title: display(title, component.Visual), TitleVisible: titleVisible, Type: authored.Type, DatasetID: datasetID, LegendVisible: legendVisible, AxisVisible: axisVisible, DataLabelsVisible: labelsVisible, FormatOptions: projectVisualFormatOptions(formatOptions), Placement: uisignals.DashboardPagePlacementFromDashboard(placement), Slots: slots, Filters: []string{}, Interaction: interaction}, nil
+}
+
+// projectCanonicalInteraction exposes only the small, closed subset needed by
+// the visual builder. It never returns an authored interaction union: spatial,
+// multiple, and malformed declarations remain visible as configured but
+// non-editable metadata so the browser cannot clobber them.
+func projectCanonicalInteraction(authored dashboarddocument.DashboardVisual) (*uisignals.DashboardBuilderInteractionSignal, error) {
+	projection := &uisignals.DashboardBuilderInteractionSignal{
+		Configured: false, Editable: false, Toggle: true,
+		Mappings: []uisignals.DashboardBuilderInteractionMappingSignal{},
+		Targets:  []string{}, HighlightTargets: []string{}, NoneTargets: []string{},
+	}
+	if authored.Interactions == nil || len(*authored.Interactions) == 0 {
+		mapping, ok := inferCanonicalInteractionMapping(authored.Query)
+		if ok {
+			projection.Editable = true
+			mode := "single"
+			projection.Mode = &mode
+			projection.Mappings = []uisignals.DashboardBuilderInteractionMappingSignal{mapping}
+			return projection, nil
+		}
+		// No authored interaction and no stable selection identity: omit the
+		// optional projection so the builder can present its unavailable state.
+		return nil, nil
+	}
+	projection.Configured = true
+	if len(*authored.Interactions) != 1 {
+		message := "Multiple authored interactions are not editable in the builder."
+		projection.Message = &message
+		return projection, nil
+	}
+	interaction := (*authored.Interactions)[0]
+	selection, ok := interaction.Value.(*dashboarddocument.SelectionDashboardInteraction)
+	if !ok || selection == nil {
+		message := "Spatial or unsupported authored interactions are not editable in the builder."
+		projection.Message = &message
+		return projection, nil
+	}
+	if selection.Mode != dashboarddocument.DashboardSelectionModeSingle && selection.Mode != dashboarddocument.DashboardSelectionModeMultiple {
+		message := "Unsupported authored interaction mode is not editable in the builder."
+		projection.Message = &message
+		return projection, nil
+	}
+	if len(selection.Mappings) > maxSlots {
+		return nil, fmt.Errorf("dashboard builder interaction mappings exceed bounded limit")
+	}
+	projection.Editable = true
+	mode := string(selection.Mode)
+	projection.Mode = &mode
+	projection.Toggle = selection.Toggle
+	projection.Mappings = make([]uisignals.DashboardBuilderInteractionMappingSignal, 0, len(selection.Mappings))
+	for _, mapping := range selection.Mappings {
+		if safeFieldID(mapping.Field) == "" || safeFieldID(mapping.Value) == "" {
+			projection.Editable = false
+			message := "This authored interaction contains an unsupported field mapping."
+			projection.Message = &message
+			projection.Mappings = []uisignals.DashboardBuilderInteractionMappingSignal{}
+			return projection, nil
+		}
+		projected := uisignals.DashboardBuilderInteractionMappingSignal{Field: mapping.Field, Value: mapping.Value}
+		if mapping.Dataset != nil {
+			dataset := *mapping.Dataset
+			projected.Dataset = &dataset
+		}
+		if mapping.Grain != nil {
+			grain := string(*mapping.Grain)
+			projected.Grain = &grain
+		}
+		if mapping.Label != nil {
+			label := *mapping.Label
+			projected.Label = &label
+		}
+		projection.Mappings = append(projection.Mappings, projected)
+	}
+	projection.Targets = appendBoundedInteractionTargets(projection.Targets, selection.Targets)
+	projection.HighlightTargets = appendBoundedInteractionTargets(projection.HighlightTargets, selection.HighlightTargets)
+	projection.NoneTargets = appendBoundedInteractionTargets(projection.NoneTargets, selection.NoneTargets)
+	if len(projection.Targets) > maxInteractionTargets || len(projection.HighlightTargets) > maxInteractionTargets || len(projection.NoneTargets) > maxInteractionTargets {
+		return nil, fmt.Errorf("dashboard builder interaction targets exceed bounded visual limit")
+	}
+	if !interactionTargetsDisjoint(projection.Targets, projection.HighlightTargets, projection.NoneTargets) {
+		projection.Editable = false
+		message := "This authored interaction contains overlapping target effects."
+		projection.Message = &message
+	}
+	return projection, nil
+}
+
+func appendBoundedInteractionTargets(dst []string, targets *[]string) []string {
+	if targets == nil {
+		return dst
+	}
+	return append(dst, (*targets)...)
+}
+
+func interactionTargetsDisjoint(groups ...[]string) bool {
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		for _, target := range group {
+			if _, exists := seen[target]; exists {
+				return false
+			}
+			seen[target] = struct{}{}
+		}
+	}
+	return true
+}
+
+// inferCanonicalInteractionMapping follows the builder's canonical query
+// field helpers, choosing the first aggregate dimension, pivot row, or record
+// field. Metrics, histograms, and distributions intentionally have no default
+// interaction mapping because they do not expose a stable selectable identity.
+func inferCanonicalInteractionMapping(query dashboarddocument.DashboardQuery) (uisignals.DashboardBuilderInteractionMappingSignal, bool) {
+	var fieldID, label, dataset string
+	var grain *string
+	switch value := query.Value.(type) {
+	case *dashboarddocument.AggregateDashboardQuery:
+		if len(value.Dimensions) == 0 {
+			return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+		}
+		fieldID, label = canonicalDimension(value.Dimensions[0])
+		if reference := value.Dimensions[0].Reference; reference != nil && reference.Grain != nil {
+			value := string(*reference.Grain)
+			grain = &value
+		}
+	case *dashboarddocument.PivotDashboardQuery:
+		if len(value.Rows) == 0 {
+			return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+		}
+		fieldID, label = canonicalDimension(value.Rows[0])
+		if reference := value.Rows[0].Reference; reference != nil && reference.Grain != nil {
+			value := string(*reference.Grain)
+			grain = &value
+		}
+	case *dashboarddocument.RecordsDashboardQuery:
+		if len(value.Fields) == 0 {
+			return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+		}
+		fieldID, label = canonicalRecordField(value.Fields[0])
+		dataset = strings.TrimSpace(value.Dataset)
+	default:
+		return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+	}
+	if safeFieldID(fieldID) == "" {
+		return uisignals.DashboardBuilderInteractionMappingSignal{}, false
+	}
+	mapping := uisignals.DashboardBuilderInteractionMappingSignal{Field: fieldID, Value: fieldID}
+	if dataset != "" {
+		mapping.Dataset = &dataset
+	}
+	if grain != nil {
+		mapping.Grain = grain
+	}
+	if safeLabel(label) && label != fieldID {
+		mapping.Label = &label
+	}
+	return mapping, true
+}
+
+func projectVisualCatalog() []uisignals.DashboardBuilderVisualTypeSignal {
+	catalog := authoring.CanonicalVisualCatalog()
+	result := make([]uisignals.DashboardBuilderVisualTypeSignal, 0, len(catalog))
+	for _, entry := range catalog {
+		roles := make([]uisignals.DashboardBuilderFieldRoleSignal, 0, len(authoring.CanonicalVisualRoles(entry.Type)))
+		for _, role := range authoring.CanonicalVisualRoles(entry.Type) {
+			roles = append(roles, uisignals.DashboardBuilderFieldRoleSignal(role))
+		}
+		limits := make([]uisignals.DashboardBuilderVisualRoleLimitSignal, 0, len(authoring.CanonicalVisualRoleLimits(entry.Type)))
+		for _, limit := range authoring.CanonicalVisualRoleLimits(entry.Type) {
+			limits = append(limits, uisignals.DashboardBuilderVisualRoleLimitSignal{Role: uisignals.DashboardBuilderFieldRoleSignal(limit.Role), Minimum: limit.Minimum, Maximum: limit.Maximum})
+		}
+		result = append(result, uisignals.DashboardBuilderVisualTypeSignal{Type: entry.Type, Label: entry.Label, Group: entry.Group, ReferenceHref: entry.ReferenceHref, Roles: roles, RoleLimits: limits})
+	}
+	return result
+}
+
+func projectVisualFormatOptions(options []authoring.VisualFormatOption) []uisignals.DashboardBuilderFormatOptionSignal {
+	result := make([]uisignals.DashboardBuilderFormatOptionSignal, 0, len(options))
+	for _, option := range options {
+		choices := make([]uisignals.DashboardBuilderFormatChoiceSignal, 0, len(option.Choices))
+		for _, choice := range option.Choices {
+			choices = append(choices, uisignals.DashboardBuilderFormatChoiceSignal{Value: choice.Value, Label: choice.Label})
+		}
+		projected := uisignals.DashboardBuilderFormatOptionSignal{Key: option.Key, Label: option.Label, Section: option.Section, Control: option.Control, Value: option.Value, Choices: choices}
+		if option.Placeholder != "" {
+			projected.Placeholder = &option.Placeholder
+		}
+		result = append(result, projected)
+	}
+	return result
+}
+
+func canonicalVisualFormatVisibility(visual dashboarddocument.DashboardVisual) (legendVisible, labelsVisible, axisVisible bool) {
+	// Unsupported controls remain false so the browser cannot present a toggle
+	// that the selected presentation cannot persist.
+	legendVisible, labelsVisible, axisVisible = false, false, true
+	if base, err := visual.Presentation.Base(); err == nil {
+		if base.AxisVisible != nil {
+			axisVisible = *base.AxisVisible
+		}
+	}
+	switch presentation := visual.Presentation.Value.(type) {
+	case *dashboarddocument.CartesianDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.PointDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.ProportionalDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.HierarchyDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.PolarDashboardPresentation:
+		legendVisible = dashboardLegendVisible(presentation.Legend)
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	case *dashboarddocument.GeographicDashboardPresentation:
+		labelsVisible = dashboardLabelsVisible(presentation.Labels)
+	}
+	return legendVisible, labelsVisible, axisVisible
+}
+
+func dashboardLegendVisible(position *dashboarddocument.DashboardLegendPosition) bool {
+	return position == nil || *position != dashboarddocument.DashboardLegendPositionNone
+}
+
+func dashboardLabelsVisible(policy *dashboarddocument.DashboardLabelPolicy) bool {
+	return policy == nil || policy.Density != dashboarddocument.DashboardLabelDensityHidden
 }
 
 func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.DashboardBuilderVisualSlotSignal, error) {
@@ -371,10 +759,20 @@ func canonicalSlots(query dashboarddocument.DashboardQuery) ([]uisignals.Dashboa
 			id, label := canonicalDimension(field)
 			slots = append(slots, slot(fmt.Sprintf("row-%d", index), label, "dimension", id, true))
 		}
+		for index, field := range value.Columns {
+			id, label := canonicalDimension(field)
+			slots = append(slots, slot(fmt.Sprintf("column-%d", index), label, "dimension", id, true))
+		}
 		for index, field := range value.Metrics {
 			id, label := canonicalMetric(field)
 			slots = append(slots, slot(fmt.Sprintf("metric-%d", index), label, "metric", id, true))
 		}
+	case *dashboarddocument.HistogramDashboardQuery:
+		id, label := canonicalMetric(value.Field)
+		slots = append(slots, slot("metric-0", label, "metric", id, true))
+	case *dashboarddocument.DistributionDashboardQuery:
+		id, label := canonicalMetric(value.Field)
+		slots = append(slots, slot("metric-0", label, "metric", id, true))
 	}
 	return boundSlots(slots)
 }
@@ -500,17 +898,20 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 	for _, tableID := range tables {
 		fields := make([]uisignals.DashboardBuilderFieldSignal, 0)
 		for id, dimension := range model.Dimensions {
-			binding, ok := dimension.Bindings[tableID]
+			_, ok := dimension.Bindings[tableID]
 			if !ok {
 				continue
 			}
 			fieldID := id
-			if strings.TrimSpace(binding.Field) != "" {
-				fieldID = binding.Field
-			} else if strings.TrimSpace(dimension.Name) != "" {
+			// Semantic dimensions are referenced by their model member IDs in
+			// aggregate and pivot query selections. Their physical binding is
+			// execution metadata and must not leak into the assign_field payload
+			// (e.g. `orders.status` is not accepted where `status` is required).
+			if strings.TrimSpace(dimension.Name) != "" {
 				fieldID = dimension.Name
 			}
-			if projected, ok := fieldSignal(fieldID, display(dimension.Label, fieldID), "dimension", dimension.Type, dimension.Description); ok {
+			if projected, ok := fieldSignal(fieldID, display(dimension.Label, fieldID), "dimension", uisignals.DashboardBuilderFieldRoleSignalDimension, dimension.Type, dimension.Description); ok {
+				projected.DatasetID = uisignals.Pointer(tableID)
 				fields = append(fields, projected)
 			}
 		}
@@ -520,8 +921,9 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 				if strings.TrimSpace(dimension.Field) != "" {
 					fieldID = dimension.Field
 				}
-				if !containsField(fields, fieldID) {
-					if projected, ok := fieldSignal(fieldID, display(dimension.Label, id), "dimension", dimension.Type, dimension.Description); ok {
+				if !containsFieldRole(fields, fieldID, uisignals.DashboardBuilderFieldRoleSignalDetail) {
+					if projected, ok := fieldSignal(fieldID, display(dimension.Label, id), "dimension", uisignals.DashboardBuilderFieldRoleSignalDetail, dimension.Type, dimension.Description); ok {
+						projected.DatasetID = uisignals.Pointer(tableID)
 						fields = append(fields, projected)
 					}
 				}
@@ -532,7 +934,8 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 				continue
 			}
 			fieldID := id
-			if projected, ok := fieldSignal(fieldID, display(metric.Label, id), "metric", "number", metric.Description); ok {
+			if projected, ok := fieldSignal(fieldID, display(metric.Label, id), "metric", uisignals.DashboardBuilderFieldRoleSignalMetric, "number", metric.Description); ok {
+				projected.DatasetID = uisignals.Pointer(tableID)
 				fields = append(fields, projected)
 			}
 		}
@@ -557,7 +960,7 @@ func projectSemanticModel(modelID string, model *semanticmodel.Model) (uisignals
 	return uisignals.DashboardBuilderSemanticModelSignal{ID: modelID, Title: display(model.Title, model.Name), Datasets: result}, nil
 }
 
-func fieldSignal(id, label, kind, dataType, description string) (uisignals.DashboardBuilderFieldSignal, bool) {
+func fieldSignal(id, label, kind string, role uisignals.DashboardBuilderFieldRoleSignal, dataType, description string) (uisignals.DashboardBuilderFieldSignal, bool) {
 	id = safeFieldID(id)
 	if id == "" {
 		return uisignals.DashboardBuilderFieldSignal{}, false
@@ -565,7 +968,7 @@ func fieldSignal(id, label, kind, dataType, description string) (uisignals.Dashb
 	if !safeLabel(label) {
 		label = id
 	}
-	field := uisignals.DashboardBuilderFieldSignal{ID: id, Label: display(label, id), Kind: kind, DataType: safeDataType(dataType)}
+	field := uisignals.DashboardBuilderFieldSignal{ID: id, Label: display(label, id), Kind: kind, Roles: []uisignals.DashboardBuilderFieldRoleSignal{role}, DataType: safeDataType(dataType)}
 	if strings.TrimSpace(description) != "" && safeLabel(description) {
 		field.Description = &description
 	}
@@ -580,10 +983,15 @@ func safeDataType(value string) string {
 	return value
 }
 
-func containsField(fields []uisignals.DashboardBuilderFieldSignal, id string) bool {
+func containsFieldRole(fields []uisignals.DashboardBuilderFieldSignal, id string, role uisignals.DashboardBuilderFieldRoleSignal) bool {
 	for _, field := range fields {
-		if field.ID == id {
-			return true
+		if field.ID != id {
+			continue
+		}
+		for _, candidate := range field.Roles {
+			if candidate == role {
+				return true
+			}
 		}
 	}
 	return false

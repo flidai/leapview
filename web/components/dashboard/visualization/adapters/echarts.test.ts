@@ -888,6 +888,15 @@ test('ECharts translates every cartesian mark with stable renderer-owned identit
   expect(incompleteOption.graphic[0].style.text).toBe('No complete distribution data')
 })
 
+test('ECharts hides both cartesian axes when formatting disables axes', () => {
+  const envelope = cartesianFixture('column') as any
+  envelope.spec.presentation.axisVisible = false
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.xAxis.show).toBe(false)
+  expect(option.yAxis.show).toBe(false)
+})
+
 test('ECharts honors proportional presentation and hierarchy/network layout', () => {
   const donut = echartsOption(proportionalFixture('donut'), defaultRendererContext) as any
   expect(donut.series[0]).toMatchObject({ id: 'series:primary:donut', type: 'pie', radius: ['54%', '76%'], roseType: 'radius' })

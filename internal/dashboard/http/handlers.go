@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	nethttp "net/http"
+	"net/url"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
@@ -118,9 +119,17 @@ type AuthoringApplication interface {
 	Builder(context.Context, builderview.Request) (uisignals.DashboardBuilderSignal, error)
 	Execute(context.Context, projectgraph.ResourceID, authoring.Command) (authoringservice.Result, error)
 	ExecuteIntent(context.Context, application.IntentRequest) (authoringservice.Result, error)
+	Compile(context.Context, preview.CompileRequest) (preview.Compilation, error)
 	Preview(context.Context, preview.PreviewRequest) (preview.Preview, error)
 	ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
 	ExportDraftYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error)
+}
+
+// dashboardAuthoringDraftReader is optional because serving a published
+// dashboard does not require authoring. The resolved runtime source decides
+// whether the dashboard can be edited in place or must first be forked.
+type dashboardAuthoringDraftReader interface {
+	Draft(context.Context, application.DraftRequest) (application.DraftRead, error)
 }
 
 type browserDraftCreator interface {
@@ -415,9 +424,55 @@ func (h Handler) RenderPage(w nethttp.ResponseWriter, r *nethttp.Request, dashbo
 		providers = []webpage.Provider{h.Layout(r)}
 	}
 	catalog := h.catalogWithDashboardAppearance(r.Context(), metrics.Catalog(), dashboardID)
-	if err := reportui.PageWithRouteScopeAndAgentCommands(h.Presentation, h.RouteScope, clientID, csrfToken, catalog, reportDefinition, model, pages, activePage, initialFilters, h.AgentCommands, providers...).Render(w); err != nil {
+	authoringAction := h.dashboardAuthoringAction(r, dashboardID, activePage.ID, resolved.Source.Kind)
+	if err := reportui.PageWithRouteScopeAndAgentCommandsAndAuthoring(h.Presentation, h.RouteScope, clientID, csrfToken, catalog, reportDefinition, model, pages, activePage, initialFilters, h.AgentCommands, authoringAction, providers...).Render(w); err != nil {
 		nethttp.Error(w, err.Error(), nethttp.StatusInternalServerError)
 	}
+}
+
+func (h Handler) dashboardAuthoringAction(r *nethttp.Request, dashboardID, pageID string, source dashboardresolver.Source) reportui.DashboardAuthoringAction {
+	if strings.TrimSpace(h.RouteScope.BasePath) != "" {
+		return reportui.DashboardAuthoringAction{}
+	}
+	projectID, err := h.projectIDForRequest(r.Context())
+	actorID := h.currentActor(r)
+	if err != nil || actorID == "" {
+		return reportui.DashboardAuthoringAction{}
+	}
+	id, err := projectgraph.NewResourceID(strings.TrimSpace(dashboardID))
+	if err != nil {
+		return reportui.DashboardAuthoringAction{}
+	}
+	if source == dashboardresolver.SourceInstance {
+		reader, ok := h.Authoring.(dashboardAuthoringDraftReader)
+		if !ok {
+			return reportui.DashboardAuthoringAction{}
+		}
+		draft, draftErr := reader.Draft(r.Context(), application.DraftRequest{ProjectID: projectID, ActorID: actorID, DashboardID: id})
+		if draftErr == nil && draft.Lifecycle.Draft != nil {
+			label := "Edit dashboard"
+			if draft.Lifecycle.Published == nil || draft.Lifecycle.Published.Revision != draft.Lifecycle.Draft.Revision {
+				label = "Continue editing"
+			}
+			return reportui.DashboardAuthoringAction{Label: label, Href: dashboardBuilderPageRoute(id.String(), draft.Lifecycle.Draft.ID.String(), pageID)}
+		}
+		if draftErr != nil && !errors.Is(draftErr, access.ErrForbidden) && !errors.Is(draftErr, authoring.ErrNotFound) {
+			return reportui.DashboardAuthoringAction{}
+		}
+	}
+	return reportui.DashboardAuthoringAction{Label: "Make a copy", Href: dashboardBuilderBasePath(id.String()) + "/fork"}
+}
+
+func dashboardBuilderPageRoute(dashboardID, draftID, pageID string) string {
+	href := dashboardBuilderDraftRoute(dashboardID, draftID, "/edit")
+	parsed, err := url.Parse(href)
+	if err != nil || strings.TrimSpace(pageID) == "" {
+		return href
+	}
+	query := parsed.Query()
+	query.Set("page", strings.TrimSpace(pageID))
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func (h Handler) metricsForRequest(_ *nethttp.Request) (Metrics, bool) {

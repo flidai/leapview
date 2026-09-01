@@ -18,11 +18,15 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring/preview"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
+	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
+	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	visualizationruntime "github.com/flidai/leapview/internal/dashboard/visualization/runtime"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	"github.com/flidai/leapview/internal/platform/testing/ssetest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
@@ -32,12 +36,15 @@ type builderAuthoringFake struct {
 	builderReq       builderview.Request
 	executed         authoring.Command
 	preview          preview.Preview
+	compilation      preview.Compilation
 	previewCtx       context.Context
 	previewReq       preview.PreviewRequest
 	previewCalls     int
+	compileCalls     int
 	yaml             []byte
 	err              error
 	previewErr       error
+	compileErr       error
 	exportErr        error
 	exportDraftCalls int
 	exportDraftReq   sourceadapter.ExportRequest
@@ -47,6 +54,12 @@ type builderAuthoringFake struct {
 	forkResult       authoringservice.Result
 	createRequest    authoringservice.CreateRequest
 	forkRequest      sourceadapter.ForkRequest
+}
+
+type semanticCatalogMetrics struct{ fakeMetrics }
+
+func (semanticCatalogMetrics) Catalog() dashboard.Catalog {
+	return dashboard.Catalog{Project: dashboard.CatalogProject{ID: "sales"}, Models: []dashboard.CatalogModel{{ID: "semantic:orders", Title: "Orders"}, {ID: "semantic:customers", Title: "Customers"}}}
 }
 
 func (f *builderAuthoringFake) Builder(_ context.Context, request builderview.Request) (uisignals.DashboardBuilderSignal, error) {
@@ -91,8 +104,8 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }, CSRFToken: func(*nethttp.Request) string { return "csrf" }}
 	getCreate := httptest.NewRecorder()
 	handler.DashboardDraftCreate(getCreate, httptest.NewRequest(nethttp.MethodGet, "/dashboards/new", nil))
-	if getCreate.Code != nethttp.StatusOK || !strings.Contains(getCreate.Body.String(), `action="/dashboards/new"`) || !strings.Contains(getCreate.Body.String(), "Governed semantic model") || !strings.Contains(getCreate.Body.String(), `name="gorilla.csrf.Token" value="csrf"`) || !strings.Contains(getCreate.Body.String(), `name="idempotencyKey" value="req_`) {
-		t.Fatalf("create page = %d %s", getCreate.Code, getCreate.Body.String())
+	if getCreate.Code != nethttp.StatusSeeOther || getCreate.Header().Get("Location") != "/?create=dashboard" {
+		t.Fatalf("create entry redirect = %d %q", getCreate.Code, getCreate.Header().Get("Location"))
 	}
 	getFork := httptest.NewRecorder()
 	getForkRequest := withBuilderURLParams(httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/fork", nil), "sales", "revenue")
@@ -120,6 +133,52 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	}
 	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != "fork-form-1" {
 		t.Fatalf("fork request = %#v", fake.forkRequest)
+	}
+}
+
+func TestDashboardDraftCreateOffersAndPreselectsGovernedModels(t *testing.T) {
+	handler := Handler{
+		Authoring:          &builderAuthoringFake{},
+		Metrics:            semanticCatalogMetrics{},
+		ProjectID:          "sales",
+		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/dashboards/new?semanticModel=semantic%3Acustomers", nil)
+	handler.DashboardDraftCreate(recorder, request)
+	if recorder.Code != nethttp.StatusSeeOther || recorder.Header().Get("Location") != "/?create=dashboard&semanticModel=semantic%3Acustomers" {
+		t.Fatalf("new dashboard model selection redirect = %d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
+func TestDashboardDataModelOptionsUseReadableTitles(t *testing.T) {
+	handler := Handler{Metrics: semanticCatalogMetrics{}}
+	options := handler.dashboardSemanticModelOptions()
+	if len(options) != 2 || options[0].Title != "Customers" || options[1].Title != "Orders" {
+		t.Fatalf("data model options = %#v", options)
+	}
+	if got := humanizeDashboardDataModelTitle("sales_orders"); got != "Sales Orders" {
+		t.Fatalf("humanized data model title = %q", got)
+	}
+}
+
+func TestDashboardDraftCreateRejectsADataModelOutsideThePicker(t *testing.T) {
+	fake := &builderAuthoringFake{createResult: browserDraftResult(t, "dashboard-created")}
+	handler := Handler{
+		Authoring:          fake,
+		Metrics:            semanticCatalogMetrics{},
+		ProjectID:          "sales",
+		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
+	}
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=semantic%3Aunknown&idempotencyKey=create-form-unknown"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.DashboardDraftCreate(recorder, request)
+	if recorder.Code != nethttp.StatusBadRequest || !strings.Contains(recorder.Body.String(), "select an available data model") {
+		t.Fatalf("unknown data model response = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if fake.createRequest.SemanticModel != "" {
+		t.Fatalf("unknown data model reached authoring service: %#v", fake.createRequest)
 	}
 }
 
@@ -222,11 +281,362 @@ func TestDashboardBuilderCommandPreservesIdempotencyFallbackWithGeneratedRequest
 	}
 }
 
+func TestDashboardBuilderCommandTranslatesPageActions(t *testing.T) {
+	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	tests := []struct {
+		name   string
+		fields map[string]any
+		assert func(*testing.T, authoring.Command)
+	}{
+		{name: "rename", fields: map[string]any{"action": "rename_page", "pageId": "overview", "title": "Revenue"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RenamePage == nil || command.RenamePage.PageID != "overview" || command.RenamePage.Title != "Revenue" {
+				t.Fatalf("rename page = %#v", command.RenamePage)
+			}
+		}},
+		{name: "duplicate", fields: map[string]any{"action": "duplicate_page", "pageId": "overview", "newPageId": "overview-copy", "title": "Copy"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.DuplicatePage == nil || command.DuplicatePage.PageID != "overview" || command.DuplicatePage.NewPageID != "overview-copy" || command.DuplicatePage.Title != "Copy" {
+				t.Fatalf("duplicate page = %#v", command.DuplicatePage)
+			}
+		}},
+		{name: "move", fields: map[string]any{"action": "move_page", "pageId": "overview", "index": 0}, assert: func(t *testing.T, command authoring.Command) {
+			if command.MovePage == nil || command.MovePage.PageID != "overview" || command.MovePage.Index != 0 {
+				t.Fatalf("move page = %#v", command.MovePage)
+			}
+		}},
+		{name: "layout", fields: map[string]any{"action": "update_page_layout", "pageId": "overview", "columns": 8, "rowHeight": 36, "gap": 8, "padding": 4}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdatePageLayout == nil || command.UpdatePageLayout.Columns != 8 || command.UpdatePageLayout.RowHeight != 36 || command.UpdatePageLayout.Gap != 8 || command.UpdatePageLayout.Padding != 4 {
+				t.Fatalf("page layout = %#v", command.UpdatePageLayout)
+			}
+		}},
+		{name: "remove", fields: map[string]any{"action": "remove_page", "pageId": "overview"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RemovePage == nil || command.RemovePage.PageID != "overview" {
+				t.Fatalf("remove page = %#v", command.RemovePage)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			payload := map[string]any{
+				"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
+			}
+			for key, value := range test.fields {
+				payload[key] = value
+			}
+			req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": payload})
+			req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+			req.Header.Set("X-Request-ID", "page-action-"+test.name)
+			recorder := httptest.NewRecorder()
+			handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+			if recorder.Code != nethttp.StatusOK {
+				t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+			}
+			if fake.intentCalls != 1 || fake.executeCalls != 0 {
+				t.Fatalf("dispatch calls = %d/%d", fake.intentCalls, fake.executeCalls)
+			}
+			test.assert(t, fake.executed)
+		})
+	}
+}
+
+func TestDashboardBuilderCommandPreservesRuntimeIdentityPatch(t *testing.T) {
+	page := "overview"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+		Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)},
+		Pages:    []uisignals.DashboardBuilderPageSignal{{ID: page}}, SelectedPageID: &page,
+	}}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1",
+			"revisionContentHash": "sha256:" + strings.Repeat("a", 64), "pageId": page, "action": "publish",
+		},
+		"runtime": map[string]any{"clientId": "client_1", "streamInstanceId": "stream_1", "projectId": "sales", "pageId": page},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "runtime-preserve-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, recorder.Body.String())
+	if len(patches) != 2 || patches[0]["builderVisuals"] != nil {
+		t.Fatalf("patches = %#v", patches)
+	}
+	runtime, ok := patches[1]["runtime"].(map[string]any)
+	if !ok {
+		t.Fatalf("runtime patch = %#v", patches[1]["runtime"])
+	}
+	for key, want := range map[string]string{"clientId": "client_1", "streamInstanceId": "stream_1", "projectId": "sales", "dashboardId": "revenue", "pageId": page} {
+		if runtime[key] != want {
+			t.Fatalf("runtime[%q] = %#v, want %q (runtime=%#v)", key, runtime[key], want, runtime)
+		}
+	}
+}
+
+func TestDashboardBuilderCommandFallsBackFromDeletedRequestedPage(t *testing.T) {
+	selected := "overview"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+		Pages: []uisignals.DashboardBuilderPageSignal{{ID: selected}}, SelectedPageID: &selected,
+	}}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
+			"pageId": "deleted-page", "action": "publish",
+		},
+		"runtime": map[string]any{"pageId": "deleted-page"},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "deleted-page-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	patches := ssetest.PatchSignals(t, recorder.Body.String())
+	if len(patches) != 2 || patches[0]["builderVisuals"] != nil {
+		t.Fatalf("patches = %#v", patches)
+	}
+	runtime, ok := patches[1]["runtime"].(map[string]any)
+	if !ok || runtime["pageId"] != selected {
+		t.Fatalf("runtime page = %#v, want %q", patches[1]["runtime"], selected)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesSmartVisualField(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "type": "kpi", "title": "Revenue", "fieldId": "revenue", "role": "metric", "action": "add_visual",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "smart-visual-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.executed.AddVisual == nil || fake.executed.AddVisual.Type != "kpi" || fake.executed.AddVisual.FieldID != "revenue" || fake.executed.AddVisual.Role != authoring.FieldRoleMetric {
+		t.Fatalf("smart visual command = %#v", fake.executed)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesDashboardAppearanceAsAuthoredMetadata(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"action": "update_appearance", "icon": "chart-no-axes-combined", "color": "orange",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "appearance-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if fake.executeCalls != 1 || fake.intentCalls != 0 || fake.executed.Metadata == nil || fake.executed.Metadata.Appearance == nil {
+		t.Fatalf("dispatch calls=%d/%d command=%#v", fake.executeCalls, fake.intentCalls, fake.executed)
+	}
+	appearance := fake.executed.Metadata.Appearance
+	if appearance.Icon == nil || *appearance.Icon != "chart-no-axes-combined" || appearance.Color == nil || *appearance.Color != document.DashboardAppearanceColorOrange {
+		t.Fatalf("appearance = %#v", appearance)
+	}
+}
+
+func TestDashboardBuilderCommandRejectsInvalidDashboardAppearance(t *testing.T) {
+	handler := Handler{Authoring: &builderAuthoringFake{}, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"action": "update_appearance", "icon": "not-a-real-icon", "color": "ultraviolet",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "appearance-invalid")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesContractFormatOption(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "visualId": "sales-chart", "formatKey": "stacking", "formatValue": "percent", "action": "update_visual_format",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "format-option-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+	}
+	if fake.executed.UpdateVisualFormat == nil || fake.executed.UpdateVisualFormat.FormatKey != "stacking" || fake.executed.UpdateVisualFormat.FormatValue == nil || *fake.executed.UpdateVisualFormat.FormatValue != "percent" {
+		t.Fatalf("format command = %#v", fake.executed.UpdateVisualFormat)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesExactRevisionRestore(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	currentHash := "sha256:" + strings.Repeat("b", 64)
+	targetHash := "sha256:" + strings.Repeat("a", 64)
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-8", "revisionNumber": "8", "revisionContentHash": currentHash,
+		"targetRevisionId": "revision-7", "targetRevisionNumber": "7", "targetRevisionContentHash": targetHash, "action": "restore_revision",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "restore-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	want := authoring.RevisionToken{RevisionID: "revision-7", Number: 7, ContentHash: targetHash}
+	if fake.intentCalls != 1 || fake.executed.RestoreRevision == nil || fake.executed.RestoreRevision.TargetRevision != want {
+		t.Fatalf("restore command = %#v", fake.executed)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
+		"pageId": "overview", "action": "set_placements", "placements": []map[string]any{
+			{"componentId": "orders-component", "column": 1, "row": 1, "columnSpan": 6, "rowSpan": 4},
+			{"visualId": "summary-component", "col": 7, "row": 1, "colSpan": 6, "rowSpan": 4},
+		},
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "placement-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.intentCalls != 1 || fake.executeCalls != 0 || fake.executed.SetPlacements == nil {
+		t.Fatalf("builder dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
+	}
+	placements := fake.executed.SetPlacements.Placements
+	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
+		t.Fatalf("translated placements = %#v", placements)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
+	tests := []struct {
+		name   string
+		action map[string]any
+		assert func(*testing.T, authoring.Command)
+	}{
+		{name: "add", action: map[string]any{"action": "add_filter", "fieldId": "status", "title": "Status", "dataset": "orders", "controlType": "multiSelect"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.AddFilter == nil || command.AddFilter.Dimension != "status" || command.AddFilter.Dataset != "orders" || command.AddFilter.ControlType != "multiSelect" {
+				t.Fatalf("add filter = %#v", command.AddFilter)
+			}
+		}},
+		{name: "update", action: map[string]any{"action": "update_filter", "filterId": "status", "title": "Order status", "dataset": "orders", "controlType": "singleSelect", "required": true, "readerEditable": false, "urlParameter": "status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.UpdateFilter == nil || command.UpdateFilter.FilterID != "status" || !command.UpdateFilter.Required || command.UpdateFilter.ReaderEditable || command.UpdateFilter.URLParameter != "status" {
+				t.Fatalf("update filter = %#v", command.UpdateFilter)
+			}
+		}},
+		{name: "set targets", action: map[string]any{"action": "set_filter_targets", "filterId": "status", "targets": []string{"orders", "summary"}}, assert: func(t *testing.T, command authoring.Command) {
+			if command.SetFilterTargets == nil || command.SetFilterTargets.FilterID != "status" || len(command.SetFilterTargets.Targets) != 2 || command.SetFilterTargets.Targets[0] != "orders" || command.SetFilterTargets.Targets[1] != "summary" {
+				t.Fatalf("set filter targets = %#v", command.SetFilterTargets)
+			}
+		}},
+		{name: "set targets all pages", action: map[string]any{"action": "set_filter_targets", "filterId": "status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.SetFilterTargets == nil || command.SetFilterTargets.FilterID != "status" || command.SetFilterTargets.Targets != nil {
+				t.Fatalf("set filter targets all-pages = %#v", command.SetFilterTargets)
+			}
+		}},
+		{name: "set page filter scope", action: map[string]any{"action": "set_filter_scope", "filterId": "status", "scope": "page", "pageId": "overview"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.SetFilterScope == nil || command.SetFilterScope.FilterID != "status" || command.SetFilterScope.Scope != "page" || command.SetFilterScope.PageID != "overview" {
+				t.Fatalf("set filter scope = %#v", command.SetFilterScope)
+			}
+		}},
+		{name: "remove", action: map[string]any{"action": "remove_filter", "filterId": "status"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RemoveFilter == nil || command.RemoveFilter.FilterID != "status" {
+				t.Fatalf("remove filter = %#v", command.RemoveFilter)
+			}
+		}},
+		{name: "place slicer", action: map[string]any{"action": "add_filter_component", "pageId": "overview", "filterId": "status", "componentId": "status-slicer"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.AddFilterComponent == nil || command.AddFilterComponent.PageID != "overview" || command.AddFilterComponent.FilterID != "status" || command.AddFilterComponent.ComponentID != "status-slicer" {
+				t.Fatalf("add filter component = %#v", command.AddFilterComponent)
+			}
+		}},
+		{name: "remove slicer", action: map[string]any{"action": "remove_filter_component", "pageId": "overview", "componentId": "status-slicer"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.RemoveFilterComponent == nil || command.RemoveFilterComponent.PageID != "overview" || command.RemoveFilterComponent.ComponentID != "status-slicer" {
+				t.Fatalf("remove filter component = %#v", command.RemoveFilterComponent)
+			}
+		}},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			signal := map[string]any{"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64)}
+			for key, value := range test.action {
+				signal[key] = value
+			}
+			req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": signal})
+			req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+			req.Header.Set("X-Request-ID", "filter-"+test.name)
+			recorder := httptest.NewRecorder()
+			handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+			if recorder.Code != nethttp.StatusOK {
+				t.Fatalf("response = %d %s", recorder.Code, recorder.Body.String())
+			}
+			test.assert(t, fake.executed)
+		})
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesInteractionTargetIntent(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"pageId": "overview", "visualId": "source-component", "targetVisualId": "target", "effect": "highlight", "action": "set_interaction_target",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "interaction-target-1")
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.intentCalls != 1 || fake.executeCalls != 0 || fake.executed.SetInteractionTarget == nil {
+		t.Fatalf("dispatch calls=%d/%d command=%#v", fake.intentCalls, fake.executeCalls, fake.executed)
+	}
+	intent := fake.executed.SetInteractionTarget
+	if intent.PageID != "overview" || intent.VisualID != "source-component" || intent.TargetVisualID != "target" || intent.Effect != "highlight" {
+		t.Fatalf("translated interaction target = %#v", intent)
+	}
+}
+
 func (f *builderAuthoringFake) Preview(ctx context.Context, request preview.PreviewRequest) (preview.Preview, error) {
 	f.previewCtx = ctx
 	f.previewReq = request
 	f.previewCalls++
 	return f.preview, f.previewErr
+}
+func (f *builderAuthoringFake) Compile(_ context.Context, _ preview.CompileRequest) (preview.Compilation, error) {
+	f.compileCalls++
+	if f.compilation.Definition.ID == "" && f.preview.Definition.ID != "" {
+		return preview.Compilation{Revision: f.preview.Revision, Definition: f.preview.Definition, SemanticEvidence: f.preview.SemanticEvidence}, f.compileErr
+	}
+	return f.compilation, f.compileErr
 }
 func (f *builderAuthoringFake) ExportYAML(context.Context, sourceadapter.ExportRequest) ([]byte, error) {
 	return f.yaml, f.exportErr
@@ -273,6 +683,32 @@ func TestDashboardBuilderCommandTranslatesPublishWithExactRevision(t *testing.T)
 	}
 }
 
+func TestDashboardBuilderCommandArchivesAndRedirectsToCatalog(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1",
+			"revisionNumber": "7", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "archive",
+		},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "archive-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK || fake.executed.Archive == nil || fake.executed.ID != "archive-1" {
+		t.Fatalf("archive response = %d command=%#v body=%s", recorder.Code, fake.executed, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	patches := ssetest.PatchSignals(t, body)
+	if len(patches) != 1 || patches[0]["builder"].(map[string]any)["redirectTo"] != "/" {
+		t.Fatalf("archive did not signal a catalog redirect: %#v body=%s", patches, body)
+	}
+	if fake.builderReq.DashboardID != "" {
+		t.Fatalf("archive attempted to re-project an archived builder: %#v", fake.builderReq)
+	}
+}
+
 func TestDashboardBuilderCommandRejectsUnsupportedAndMissingClaims(t *testing.T) {
 	fake := &builderAuthoringFake{}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
@@ -300,11 +736,26 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 	fake := &builderAuthoringFake{yaml: []byte("title: Revenue\n")}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	revisionHash := "sha256:" + strings.Repeat("b", 64)
-	previewReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?page=overview&revisionId=revision-1&revisionNumber=2&revisionContentHash="+revisionHash, nil)
+	previewReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=2&revisionContentHash="+revisionHash, nil)
 	previewRec := httptest.NewRecorder()
 	handler.DashboardBuilderPreview(previewRec, withBuilderURLParams(previewReq, "sales", "revenue"))
-	if previewRec.Code != nethttp.StatusOK || !strings.Contains(previewRec.Header().Get("Content-Type"), "application/json") {
+	if previewRec.Code != nethttp.StatusOK || !strings.Contains(previewRec.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("preview response: status=%d content-type=%q", previewRec.Code, previewRec.Header().Get("Content-Type"))
+	}
+	previewBody := previewRec.Body.String()
+	for _, want := range []string{`<lv-dashboard-page`, `presentation="public"`, `read-only`, `Draft preview`, `_signals=1`, `Back to builder`} {
+		if !strings.Contains(previewBody, want) {
+			t.Fatalf("preview shell missing %q: %s", want, previewBody)
+		}
+	}
+	if strings.Contains(previewBody, "url-sync.js") {
+		t.Fatalf("exact preview must not load canonical URL synchronization: %s", previewBody)
+	}
+	if fake.compileCalls != 1 {
+		t.Fatalf("preview shell compile calls = %d, want 1", fake.compileCalls)
+	}
+	if fake.previewCalls != 0 {
+		t.Fatalf("preview shell executed visual queries: %d calls", fake.previewCalls)
 	}
 
 	exportReq := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/export.yaml", nil)
@@ -318,6 +769,144 @@ func TestDashboardBuilderPreviewAndExport(t *testing.T) {
 	}
 	if fake.exportDraftCalls != 1 || fake.exportDraftReq.Source.Kind != sourceadapter.SourceInstance || fake.exportDraftReq.Source.ProjectID != "sales" || fake.exportDraftReq.Source.DashboardID != "revenue" || fake.exportDraftReq.ActorID != "principal-1" {
 		t.Fatalf("draft export request = %#v calls=%d", fake.exportDraftReq, fake.exportDraftCalls)
+	}
+}
+
+func TestDashboardBuilderPreviewBindsExactDraftRevisionAndPage(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("c", 64)
+	token := authoring.RevisionToken{RevisionID: "revision-7", Number: 7, ContentHash: hash}
+	fake := &builderAuthoringFake{preview: standaloneDraftPreviewFixture(t, token, "details")}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?_signals=1&datastar=transport-only&draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d, body = %s", rec.Code, rec.Body.String())
+	}
+	if fake.previewReq.ProjectID != "sales" || fake.previewReq.ActorID != "principal-1" || fake.previewReq.DashboardID != "revenue" || fake.previewReq.DraftID != "draft-7" || fake.previewReq.PageID != "details" || fake.previewReq.ExpectedRevision != token {
+		t.Fatalf("preview request = %#v, want exact draft/revision/page", fake.previewReq)
+	}
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("preview signal patches = %#v", patches)
+	}
+	page, ok := patches[0]["page"].(map[string]any)
+	if !ok || page["pageId"] != "details" || page["presentation"] != "public" {
+		t.Fatalf("preview page signal = %#v", patches[0]["page"])
+	}
+	if strings.Contains(rec.Body.String(), "datastar=") {
+		t.Fatalf("preview page href leaked transport query state: %s", rec.Body.String())
+	}
+	visuals, ok := patches[0]["visuals"].(map[string]any)
+	if !ok || visuals["orders"] == nil {
+		t.Fatalf("preview visuals = %#v", patches[0]["visuals"])
+	}
+}
+
+func TestDashboardBuilderPreviewStaleShellRendersHTMLRecovery(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("e", 64)
+	fake := &builderAuthoringFake{compileErr: authoring.ErrStaleRevision}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, nethttp.StatusConflict, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/html") {
+		t.Fatalf("content type = %q, want HTML", got)
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		"Draft changed",
+		"older draft revision",
+		"did not open a newer revision automatically",
+		"Back to builder",
+		`href="/dashboards/revenue/edit?draft=draft-7&amp;page=details"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("stale preview recovery missing %q: %s", want, body)
+		}
+	}
+	if fake.compileCalls != 1 || fake.previewCalls != 0 {
+		t.Fatalf("stale preview calls compile=%d preview=%d, want compile=1 preview=0", fake.compileCalls, fake.previewCalls)
+	}
+}
+
+func TestDashboardBuilderPreviewStaleSignalKeepsPlainConflictError(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("f", 64)
+	fake := &builderAuthoringFake{previewErr: authoring.ErrStaleRevision}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?_signals=1&draft=draft-7&page=details&revisionId=revision-7&revisionNumber=7&revisionContentHash="+hash, nil)
+	rec := httptest.NewRecorder()
+	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+	if rec.Code != nethttp.StatusConflict {
+		t.Fatalf("status = %d, want %d, body = %s", rec.Code, nethttp.StatusConflict, rec.Body.String())
+	}
+	if got := rec.Header().Get("Content-Type"); !strings.Contains(got, "text/plain") {
+		t.Fatalf("content type = %q, want plain text", got)
+	}
+	if strings.Contains(rec.Body.String(), "Draft changed") || !strings.Contains(rec.Body.String(), "dashboard builder revision is stale") {
+		t.Fatalf("signal stale error = %q, want plain conflict error", rec.Body.String())
+	}
+}
+
+func TestDashboardBuilderPreviewRejectsMissingOrStaleExactInputs(t *testing.T) {
+	hash := "sha256:" + strings.Repeat("d", 64)
+	tests := []struct {
+		name       string
+		path       string
+		previewErr error
+		wantStatus int
+	}{
+		{
+			name:       "missing draft",
+			path:       "/dashboards/revenue/preview?page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			wantStatus: nethttp.StatusBadRequest,
+		},
+		{
+			name:       "missing revision",
+			path:       "/dashboards/revenue/preview?draft=draft-1&page=overview",
+			wantStatus: nethttp.StatusBadRequest,
+		},
+		{
+			name:       "missing page",
+			path:       "/dashboards/revenue/preview?draft=draft-1&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			wantStatus: nethttp.StatusBadRequest,
+		},
+		{
+			name:       "mismatched draft",
+			path:       "/dashboards/revenue/preview?draft=draft-old&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			previewErr: authoring.ErrNotFound,
+			wantStatus: nethttp.StatusNotFound,
+		},
+		{
+			name:       "stale revision",
+			path:       "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash=" + hash,
+			previewErr: authoring.ErrStaleRevision,
+			wantStatus: nethttp.StatusConflict,
+		},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			fake := &builderAuthoringFake{previewErr: test.previewErr}
+			handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+			path := test.path
+			if strings.Contains(path, "?") {
+				path += "&_signals=1"
+			} else {
+				path += "?_signals=1"
+			}
+			req := httptest.NewRequest(nethttp.MethodGet, path, nil)
+			rec := httptest.NewRecorder()
+			handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
+			if rec.Code != test.wantStatus {
+				t.Fatalf("status = %d, want %d, body = %s", rec.Code, test.wantStatus, rec.Body.String())
+			}
+			if test.previewErr == nil && fake.previewCalls != 0 {
+				t.Fatalf("preview called for invalid request: %d calls", fake.previewCalls)
+			}
+		})
 	}
 }
 
@@ -342,6 +931,18 @@ func TestDashboardBuilderErrorsDistinguishStaleAndForbidden(t *testing.T) {
 				t.Fatalf("error leaked revision: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+func TestDashboardBuilderStrictCompilerDiagnosticsAreValidationErrors(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", nil)
+	writeBuilderError(recorder, request, errors.New(`strictly compile dashboard: compile dashboard filters: filter "category" must narrow targets explicitly`))
+	if recorder.Code != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, nethttp.StatusUnprocessableEntity, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "compile dashboard filters") {
+		t.Fatalf("compiler diagnostic was hidden: %s", recorder.Body.String())
 	}
 }
 
@@ -380,6 +981,12 @@ func TestDashboardBuilderGETPropagatesPageSelectionAndPageBaseHref(t *testing.T)
 		t.Fatalf("builder selection request = %#v", fake.builderReq)
 	}
 	body := rec.Body.String()
+	if !strings.Contains(body, `back-href="/"`) {
+		t.Fatalf("builder back link must return to dashboard catalog: %s", body)
+	}
+	if strings.Contains(body, `fork-href=`) {
+		t.Fatalf("instance dashboard builder exposed an invalid project-source copy action: %s", body)
+	}
 	if !strings.Contains(body, `page-base-href="/dashboards/revenue/edit?draft=draft-1"`) {
 		t.Fatalf("page base href missing from shell: %s", body)
 	}
@@ -424,21 +1031,63 @@ func canonicalBuilderVisualDefinition(t *testing.T) visualizationdefinition.Defi
 	return definition
 }
 
+func standaloneDraftPreviewFixture(t *testing.T, revision authoring.RevisionToken, pageID string) preview.Preview {
+	t.Helper()
+	visualDefinition := canonicalBuilderVisualDefinition(t)
+	visual, err := visualizationruntime.EmptyEnvelopeFromDefinition(visualDefinition, 2, 1, 0)
+	if err != nil {
+		t.Fatalf("empty draft preview visualization: %v", err)
+	}
+	page := dashboard.Page{
+		ID: pageID, Title: "Details",
+		Grid:             dashboard.PageGrid{Columns: 12, RowHeight: 48, Gap: 16, Padding: 16},
+		ResponsiveLayout: &dashboard.PageResponsiveLayout{OccupiedRows: 4, NarrowView: "stack"},
+		Height:           4,
+		Visuals: []dashboard.PageVisual{{
+			ID: "orders-component", Kind: "visual", Visual: "orders",
+			Placement: dashboard.PagePlacement{Col: 1, Row: 1, ColSpan: 12, RowSpan: 4},
+		}},
+	}
+	definition, err := dashboarddefinition.New("revenue", "Revenue", "", "model", []dashboard.Page{page}, map[string]visualizationdefinition.Definition{"orders": visualDefinition})
+	if err != nil {
+		t.Fatalf("draft preview definition: %v", err)
+	}
+	return preview.Preview{
+		Revision: revision, Definition: definition,
+		PagePatch: dashboard.Patch{
+			Filters: dashboard.Filters{}, Status: dashboard.Status{Generation: 3},
+			Visuals: map[string]visualizationir.VisualizationEnvelope{"orders": visual},
+		},
+		SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-1"}},
+	}
+}
+
 func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
 	fake := &builderAuthoringFake{
 		builder:    uisignals.DashboardBuilderSignal{ProjectID: "project", DashboardID: "sales", DraftID: "draft-1"},
 		previewErr: errors.New("query preview failed"),
+		compilation: preview.Compilation{Definition: dashboarddefinition.Definition{
+			ID: "sales", SemanticModel: "sales_model",
+			FilterDefinitions: map[string]dashboardfilter.Definition{"status": {Label: "Status", Field: "status", ValueKind: dashboardfilter.ValueString}},
+			FilterBindings: map[string]dashboardfilter.Binding{"status": {
+				Key: "status-key", ID: "status", Filter: "status", Scope: dashboardfilter.ScopeReport, ValueKind: dashboardfilter.ValueString,
+				Default: dashboardfilter.Expression{Kind: dashboardfilter.ExpressionUnfiltered},
+			}},
+		}},
 	}
 	handler := Handler{Authoring: fake}
 	envelope := handler.dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", fake.builder)
-	if fake.previewCalls != 1 {
-		t.Fatalf("preview calls = %d, want 1", fake.previewCalls)
+	if fake.previewCalls != 1 || fake.compileCalls != 1 {
+		t.Fatalf("preview/compile calls = %d/%d, want 1/1", fake.previewCalls, fake.compileCalls)
 	}
 	if envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "query preview failed" {
 		t.Fatalf("preview failure state = %#v", envelope.Builder.Preview)
 	}
 	if envelope.BuilderVisuals == nil || len(envelope.BuilderVisuals) != 0 {
 		t.Fatalf("preview failure visuals = %#v, want empty map", envelope.BuilderVisuals)
+	}
+	if _, ok := envelope.BuilderFilterContract.Definitions["status"]; !ok {
+		t.Fatalf("preview failure omitted compile-only filter contract: %#v", envelope.BuilderFilterContract)
 	}
 	statusFailure := &builderAuthoringFake{
 		builder: uisignals.DashboardBuilderSignal{ProjectID: "project", DashboardID: "sales", DraftID: "draft-1"},
@@ -447,6 +1096,71 @@ func TestDashboardBuilderPreviewFailureKeepsBuilderVisible(t *testing.T) {
 	statusEnvelope := (Handler{Authoring: statusFailure}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", statusFailure.builder)
 	if statusEnvelope.Builder.Preview.Active || statusEnvelope.Builder.Preview.Error == nil || *statusEnvelope.Builder.Preview.Error != "runtime unavailable" {
 		t.Fatalf("status preview failure state = %#v", statusEnvelope.Builder.Preview)
+	}
+}
+
+func TestDashboardBuilderPreviewFailureIsAttributedToExactVisual(t *testing.T) {
+	message := `strictly compile dashboard draft: visual "orders": proportional requires at least 1 dimension(s) and 1 metric(s), got 0 and 1`
+	builder := uisignals.DashboardBuilderSignal{Pages: []uisignals.DashboardBuilderPageSignal{{
+		ID: "overview",
+		Visuals: []uisignals.DashboardBuilderVisualSignal{
+			{ID: "orders-component", VisualID: "orders"},
+			{ID: "revenue-component", VisualID: "revenue"},
+		},
+	}}}
+	attributed := dashboardBuilderWithVisualPreviewError(builder, message)
+	if attributed.Pages[0].Visuals[0].PreviewError == nil || *attributed.Pages[0].Visuals[0].PreviewError != message {
+		t.Fatalf("orders preview error = %#v", attributed.Pages[0].Visuals[0].PreviewError)
+	}
+	if attributed.Pages[0].Visuals[1].PreviewError != nil {
+		t.Fatalf("unrelated visual received preview error = %#v", attributed.Pages[0].Visuals[1].PreviewError)
+	}
+	if got := dashboardBuilderPreviewErrorVisualID(`compile failed without a visual target`); got != "" {
+		t.Fatalf("untargeted error visual = %q", got)
+	}
+}
+
+func TestDashboardBuilderBestEffortPreviewKeepsValidSurfaceActive(t *testing.T) {
+	message := `visual "orders": heatmap requires at least 2 dimension(s) and 1 metric(s), got 1 and 1`
+	builder := uisignals.DashboardBuilderSignal{
+		ProjectID: "project", DashboardID: "sales", DraftID: "draft-1",
+		Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-1", Number: 1, ContentHash: "sha256:abc"},
+		Pages:    []uisignals.DashboardBuilderPageSignal{{ID: "overview", Visuals: []uisignals.DashboardBuilderVisualSignal{{ID: "orders-component", VisualID: "orders"}, {ID: "revenue-component", VisualID: "revenue"}}}},
+	}
+	fake := &builderAuthoringFake{builder: builder, preview: preview.Preview{
+		Definition:   dashboarddefinition.Definition{ID: "sales", SemanticModel: "sales_model"},
+		PagePatch:    dashboard.Patch{Filters: dashboard.Filters{}, Visuals: map[string]visualizationir.VisualizationEnvelope{}},
+		VisualErrors: map[string]string{"orders": message},
+	}}
+	envelope := (Handler{Authoring: fake}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", builder)
+	if !envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "1 visual unavailable" {
+		t.Fatalf("best-effort preview state = %#v", envelope.Builder.Preview)
+	}
+	orders := envelope.Builder.Pages[0].Visuals[0]
+	if orders.PreviewError == nil || *orders.PreviewError != message || envelope.Builder.Pages[0].Visuals[1].PreviewError != nil {
+		t.Fatalf("best-effort visual attribution = %#v", envelope.Builder.Pages[0].Visuals)
+	}
+	if !fake.previewReq.BestEffortVisuals {
+		t.Fatalf("builder preview request was not fail-soft: %#v", fake.previewReq)
+	}
+}
+
+func TestDashboardBuilderPreviewSuccessExplicitlyClearsStreamedError(t *testing.T) {
+	stale := "aggregate visual requires a metric"
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{
+		ProjectID: "project", DashboardID: "sales", DraftID: "draft-1",
+		Preview: uisignals.DashboardBuilderPreviewStateSignal{Error: &stale},
+	}}
+	envelope := (Handler{Authoring: fake}).dashboardBuilderEnvelopeWithPreview(context.Background(), "actor-1", fake.builder)
+	if !envelope.Builder.Preview.Active || envelope.Builder.Preview.Error == nil || *envelope.Builder.Preview.Error != "" {
+		t.Fatalf("successful preview did not explicitly clear prior error: %#v", envelope.Builder.Preview)
+	}
+	encoded, err := json.Marshal(envelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(encoded, []byte(`"error":""`)) {
+		t.Fatalf("successful preview patch omits explicit error clear: %s", encoded)
 	}
 }
 
@@ -467,7 +1181,9 @@ func TestDashboardBuilderInlinePreviewUsesAnalyticalContext(t *testing.T) {
 
 func TestDashboardBuilderStandalonePreviewUsesAnalyticalContext(t *testing.T) {
 	marker := &struct{}{}
-	fake := &builderAuthoringFake{}
+	hash := "sha256:" + strings.Repeat("a", 64)
+	token := authoring.RevisionToken{RevisionID: "revision-1", Number: 1, ContentHash: hash}
+	fake := &builderAuthoringFake{preview: standaloneDraftPreviewFixture(t, token, "overview")}
 	handler := Handler{
 		Authoring:          fake,
 		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
@@ -475,8 +1191,7 @@ func TestDashboardBuilderStandalonePreviewUsesAnalyticalContext(t *testing.T) {
 			return context.WithValue(ctx, marker, true)
 		},
 	}
-	hash := "sha256:" + strings.Repeat("a", 64)
-	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash="+hash, nil)
+	req := httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/preview?_signals=1&draft=draft-1&page=overview&revisionId=revision-1&revisionNumber=1&revisionContentHash="+hash, nil)
 	rec := httptest.NewRecorder()
 	handler.DashboardBuilderPreview(rec, withBuilderURLParams(req, "sales", "revenue"))
 	if rec.Code != nethttp.StatusOK {

@@ -49,6 +49,12 @@ func (compiled CanonicalFilterCompilation) ApplyToDefinition(definition *dashboa
 	}
 	for pageIndex := range definition.Pages {
 		page := &definition.Pages[pageIndex]
+		for _, compiledPage := range compiled.Pages {
+			if compiledPage.ID == page.ID {
+				page.FilterBindings = cloneCanonicalBindings(compiledPage.FilterBindings)
+				break
+			}
+		}
 		for componentIndex := range page.Visuals {
 			component := &page.Visuals[componentIndex]
 			if component.Kind != "slicer" {
@@ -99,6 +105,34 @@ func cloneCanonicalBindings(values map[string]dashboardfilter.Binding) map[strin
 // to this seam; callers can compile visuals independently and pass the same
 // canonical document to the query compiler.
 func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
+	return compileCanonicalDashboardFilters(doc, model, canonicalFilterVisualValidationStrict)
+}
+
+// CompileCanonicalDashboardFilterContract compiles the governed filter state
+// contract without lowering visual queries. It is used by exact draft option
+// loading, where an unrelated in-progress visual must not block filter state
+// or static/distinct option metadata.
+func CompileCanonicalDashboardFilterContract(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
+	return compileCanonicalDashboardFilters(doc, model, canonicalFilterVisualValidationNone)
+}
+
+// CompileCanonicalDashboardBuilderFilters validates filter compatibility for
+// every visual query that can be lowered independently. Invalid in-progress
+// visuals are omitted by the builder preview, so they must not hide filter
+// validation errors on otherwise valid visual targets.
+func CompileCanonicalDashboardBuilderFilters(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
+	return compileCanonicalDashboardFilters(doc, model, canonicalFilterVisualValidationBestEffort)
+}
+
+type canonicalFilterVisualValidation uint8
+
+const (
+	canonicalFilterVisualValidationNone canonicalFilterVisualValidation = iota
+	canonicalFilterVisualValidationBestEffort
+	canonicalFilterVisualValidationStrict
+)
+
+func compileCanonicalDashboardFilters(doc document.DashboardDocument, model *semanticmodel.Model, visualValidation canonicalFilterVisualValidation) (CanonicalFilterCompilation, error) {
 	if model == nil {
 		return CanonicalFilterCompilation{}, fmt.Errorf("semantic model is required")
 	}
@@ -116,7 +150,6 @@ func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 		Order:       make([]string, 0, len(doc.Spec.Filters)),
 		Application: dashboardfilter.ApplicationPolicy{Mode: dashboardfilter.ApplicationImmediate},
 	}
-	urlNames := map[string]string{}
 	for index, authored := range doc.Spec.Filters {
 		id := strings.TrimSpace(authored.ID)
 		if id == "" {
@@ -129,12 +162,6 @@ func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 		if err != nil {
 			return CanonicalFilterCompilation{}, fmt.Errorf("filter %q: %w", id, err)
 		}
-		if binding.URL.Param != "" {
-			if previous, exists := urlNames[binding.URL.Param]; exists {
-				return CanonicalFilterCompilation{}, fmt.Errorf("URL parameter %q is used by filters %q and %q", binding.URL.Param, previous, id)
-			}
-			urlNames[binding.URL.Param] = id
-		}
 		result.Definitions[id] = definition
 		result.Bindings[id] = binding
 		result.Order = append(result.Order, id)
@@ -142,11 +169,14 @@ func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 	if err := validateCanonicalOptionDependencies(doc.Spec.Filters, result.Definitions, model); err != nil {
 		return CanonicalFilterCompilation{}, err
 	}
-	pages, err := compileCanonicalFilterPages(doc, model, dashboardID, result.Definitions, result.Bindings)
+	pages, err := compileCanonicalFilterPages(doc, model, dashboardID, result.Definitions, result.Bindings, visualValidation)
 	if err != nil {
 		return CanonicalFilterCompilation{}, err
 	}
 	result.Pages = pages
+	if err := validateCanonicalRouteURLParameters(result.Bindings, result.Pages); err != nil {
+		return CanonicalFilterCompilation{}, err
+	}
 	return result, nil
 }
 
@@ -392,14 +422,100 @@ func validateCanonicalOptionDependencies(filters []document.DashboardFilter, def
 	return nil
 }
 
-func compileCanonicalFilterPages(doc document.DashboardDocument, model *semanticmodel.Model, dashboardID string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding) ([]dashboard.Page, error) {
+func compileCanonicalFilterPages(doc document.DashboardDocument, model *semanticmodel.Model, dashboardID string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, visualValidation canonicalFilterVisualValidation) ([]dashboard.Page, error) {
 	authoredFilters := make(map[string]document.DashboardFilter, len(doc.Spec.Filters))
 	for _, filter := range doc.Spec.Filters {
 		authoredFilters[strings.TrimSpace(filter.ID)] = filter
 	}
+	templates := cloneCanonicalBindings(bindings)
+	pageBindings := make(map[string]map[string]dashboardfilter.Binding, len(doc.Spec.Pages))
+	pageBindingIDsByFilter := make(map[string]map[string]string, len(doc.Spec.Pages))
+	pageScopedFilters := map[string]struct{}{}
+	for _, authoredPage := range doc.Spec.Pages {
+		pageID := strings.TrimSpace(authoredPage.ID)
+		pageBindings[pageID] = map[string]dashboardfilter.Binding{}
+		pageBindingIDsByFilter[pageID] = map[string]string{}
+		if authoredPage.FilterBindings == nil {
+			continue
+		}
+		for _, authoredBinding := range *authoredPage.FilterBindings {
+			bindingID := strings.TrimSpace(authoredBinding.ID)
+			filterID := strings.TrimSpace(authoredBinding.Filter)
+			if bindingID == "" || filterID == "" {
+				return nil, fmt.Errorf("page %q filter binding requires id and filter", pageID)
+			}
+			if _, exists := pageBindings[pageID][bindingID]; exists {
+				return nil, fmt.Errorf("page %q has duplicate filter binding id %q", pageID, bindingID)
+			}
+			if previous, exists := pageBindingIDsByFilter[pageID][filterID]; exists {
+				return nil, fmt.Errorf("page %q binds filter %q more than once (%q and %q)", pageID, filterID, previous, bindingID)
+			}
+			template, exists := templates[filterID]
+			if !exists {
+				return nil, fmt.Errorf("page %q filter binding %q references unknown filter %q", pageID, bindingID, filterID)
+			}
+			template.ID = bindingID
+			template.Scope = dashboardfilter.ScopePage
+			template.PageID = pageID
+			template.Key = dashboardfilter.BindingKey(dashboardID, dashboardfilter.ScopePage, pageID, bindingID)
+			template.TargetPolicy = dashboardfilter.TargetPolicy{}
+			template.Targets = nil
+			template.OptionDependencies = nil
+			definition := definitions[filterID]
+			if authoredBinding.Default != nil {
+				expression, err := canonicalExpression(*authoredBinding.Default, template.ValueKind)
+				if err != nil {
+					return nil, fmt.Errorf("page %q filter binding %q default: %w", pageID, bindingID, err)
+				}
+				if !definitionAllowsExpression(definition, expression) {
+					return nil, fmt.Errorf("page %q filter binding %q default predicate is not allowed", pageID, bindingID)
+				}
+				template.Default = expression
+			}
+			if authoredBinding.Required != nil {
+				template.Required = *authoredBinding.Required
+			}
+			if template.Required && template.Default.Kind == dashboardfilter.ExpressionUnfiltered {
+				return nil, fmt.Errorf("page %q filter binding %q required filter must have a non-empty default", pageID, bindingID)
+			}
+			if authoredBinding.ReaderEditable != nil {
+				template.ReaderEditable = authoredBinding.ReaderEditable
+			}
+			if authoredBinding.URLParameter != nil {
+				param := strings.TrimSpace(*authoredBinding.URLParameter)
+				if err := validateCanonicalURLParameter(param); err != nil {
+					return nil, fmt.Errorf("page %q filter binding %q urlParameter: %w", pageID, bindingID, err)
+				}
+				template.URL = dashboardfilter.URLPolicy{Param: param}
+			}
+			if authoredBinding.Targets != nil {
+				if len(*authoredBinding.Targets) == 0 {
+					return nil, fmt.Errorf("page %q filter binding %q targets cannot be empty when specified", pageID, bindingID)
+				}
+				seenTargets := map[string]struct{}{}
+				for _, target := range *authoredBinding.Targets {
+					if _, exists := seenTargets[target]; exists {
+						return nil, fmt.Errorf("page %q filter binding %q has duplicate target %q", pageID, bindingID, target)
+					}
+					seenTargets[target] = struct{}{}
+				}
+				template.TargetPolicy.Include = append([]string(nil), (*authoredBinding.Targets)...)
+			}
+			pageBindings[pageID][bindingID] = template
+			pageBindingIDsByFilter[pageID][filterID] = bindingID
+			pageScopedFilters[filterID] = struct{}{}
+		}
+	}
+	// A governed filter has one authored state scope. Existing documents with
+	// no page bindings retain their implicit report binding; explicitly placing
+	// it on any page moves that definition out of report scope.
+	for filterID := range pageScopedFilters {
+		delete(bindings, filterID)
+	}
+
 	pages := make([]dashboard.Page, 0, len(doc.Spec.Pages))
 	for _, authored := range doc.Spec.Pages {
-		page := dashboard.Page{ID: strings.TrimSpace(authored.ID), Title: authored.Title, Visuals: []dashboard.PageVisual{}}
+		page := dashboard.Page{ID: strings.TrimSpace(authored.ID), Title: authored.Title, FilterBindings: pageBindings[strings.TrimSpace(authored.ID)], Visuals: []dashboard.PageVisual{}}
 		if page.ID == "" {
 			return nil, fmt.Errorf("page requires id")
 		}
@@ -435,7 +551,13 @@ func compileCanonicalFilterPages(doc document.DashboardDocument, model *semantic
 					return nil, fmt.Errorf("page %q places filter %q more than once", page.ID, filterID)
 				}
 				seenFilters[filterID] = struct{}{}
-				page.Visuals = append(page.Visuals, dashboard.PageVisual{ID: base.ID, Kind: "slicer", Binding: dashboardfilter.BindingRef{Scope: dashboardfilter.ScopeReport, ID: filterID}, Presentation: presentation, Placement: placement})
+				bindingRef := dashboardfilter.BindingRef{Scope: dashboardfilter.ScopeReport, ID: filterID}
+				if bindingID, exists := pageBindingIDsByFilter[page.ID][filterID]; exists {
+					bindingRef = dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: bindingID}
+				} else if _, exists := bindings[filterID]; !exists {
+					return nil, fmt.Errorf("page %q component %q references page-scoped filter %q without a local binding", page.ID, base.ID, filterID)
+				}
+				page.Visuals = append(page.Visuals, dashboard.PageVisual{ID: base.ID, Kind: "slicer", Binding: bindingRef, Presentation: presentation, Placement: placement})
 			case *document.VisualDashboardPageComponent:
 				if strings.TrimSpace(value.Visual) == "" {
 					return nil, fmt.Errorf("page %q component %q visual is required", page.ID, base.ID)
@@ -456,7 +578,7 @@ func compileCanonicalFilterPages(doc document.DashboardDocument, model *semantic
 		}
 		pages = append(pages, page)
 	}
-	if err := resolveCanonicalFilterTargets(doc, model, dashboardID, definitions, bindings, pages); err != nil {
+	if err := resolveCanonicalFilterTargets(doc, model, dashboardID, definitions, bindings, pages, visualValidation); err != nil {
 		return nil, err
 	}
 	return pages, nil
@@ -497,8 +619,9 @@ func canonicalFilterPresentation(control document.DashboardFilterControl) (dashb
 	return presentation, nil
 }
 
-func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semanticmodel.Model, _ string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, pages []dashboard.Page) error {
-	for _, page := range pages {
+func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semanticmodel.Model, _ string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, pages []dashboard.Page, visualValidation canonicalFilterVisualValidation) error {
+	for pageIndex := range pages {
+		page := &pages[pageIndex]
 		for _, component := range page.Visuals {
 			if component.Kind != "visual" {
 				continue
@@ -508,36 +631,45 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 				return fmt.Errorf("page %q component %q references unknown visual %q", page.ID, component.ID, component.Visual)
 			}
 			var datasets []string
-			if lowered, err := LowerDashboardQuery(visual.Query, model, model.Name); err == nil {
-				datasets = append(datasets, lowered.Plan.Datasets...)
-				if len(datasets) == 0 {
-					datasets, err = canonicalQueryDatasets(visual.Query, model)
-					if err != nil {
-						return fmt.Errorf("visual %q query: %w", component.Visual, err)
+			if visualValidation != canonicalFilterVisualValidationNone {
+				if lowered, err := LowerDashboardQuery(visual.Query, model, model.Name); err == nil {
+					datasets = append(datasets, lowered.Plan.Datasets...)
+					if len(datasets) == 0 {
+						datasets, err = canonicalQueryDatasets(visual.Query, model)
+						if err != nil {
+							if visualValidation == canonicalFilterVisualValidationBestEffort {
+								continue
+							}
+							return fmt.Errorf("visual %q query: %w", component.Visual, err)
+						}
 					}
-				}
-			} else {
-				var resolveErr error
-				datasets, resolveErr = canonicalQueryDatasets(visual.Query, model)
-				if resolveErr != nil {
-					return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
+				} else {
+					var resolveErr error
+					datasets, resolveErr = canonicalQueryDatasets(visual.Query, model)
+					if resolveErr != nil {
+						if visualValidation == canonicalFilterVisualValidationBestEffort {
+							continue
+						}
+						return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
+					}
 				}
 			}
 			for filterID, definition := range definitions {
-				binding := bindings[filterID]
-				explicit := len(binding.TargetPolicy.Include) > 0
-				matches := explicit && canonicalTargetMatches(binding.TargetPolicy.Include, component.Visual)
-				compatible := canonicalDimensionApplies(definition.Field, datasets, model)
-				if explicit && matches && !compatible {
-					return fmt.Errorf("filter %q target %q is semantically incompatible with dimension %q", filterID, page.ID+"/"+component.ID, definition.Field)
+				if binding, exists := bindings[filterID]; exists {
+					if err := addCanonicalBindingTarget(&binding, definition, page.ID, component, datasets, model, visualValidation != canonicalFilterVisualValidationNone); err != nil {
+						return fmt.Errorf("filter %q: %w", filterID, err)
+					}
+					bindings[filterID] = binding
 				}
-				if !explicit && !compatible {
-					return fmt.Errorf("filter %q is visible on incompatible target %q; narrow targets explicitly", filterID, page.ID+"/"+component.ID)
+				for bindingID, binding := range page.FilterBindings {
+					if binding.Filter != filterID {
+						continue
+					}
+					if err := addCanonicalBindingTarget(&binding, definition, page.ID, component, datasets, model, visualValidation != canonicalFilterVisualValidationNone); err != nil {
+						return fmt.Errorf("filter %q page binding %q: %w", filterID, bindingID, err)
+					}
+					page.FilterBindings[bindingID] = binding
 				}
-				if compatible && (!explicit || matches) {
-					binding.Targets = append(binding.Targets, page.ID+"/"+component.ID)
-				}
-				bindings[filterID] = binding
 			}
 		}
 	}
@@ -547,11 +679,99 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 				if !canonicalTargetExists(target, pages) {
 					return fmt.Errorf("filter %q references unknown target %q", filterID, target)
 				}
+				if pageID, componentID, qualified := strings.Cut(target, "/"); qualified && !canonicalComponentTargetIsUnique(pages, pageID, componentID) {
+					return fmt.Errorf("filter %q target %q reuses a visual definition and cannot have independent component state", filterID, target)
+				}
 			}
 		}
 		sort.Strings(binding.Targets)
-		binding.OptionDependencies = canonicalOptionDependencyRefs(doc.Spec.Filters, filterID)
+		dependencies, err := canonicalOptionDependencyRefsForBinding(doc.Spec.Filters, filterID, binding, bindings, pages)
+		if err != nil {
+			return err
+		}
+		binding.OptionDependencies = dependencies
 		bindings[filterID] = binding
+	}
+	for pageIndex := range pages {
+		page := &pages[pageIndex]
+		for bindingID, binding := range page.FilterBindings {
+			if len(binding.TargetPolicy.Include) > 0 {
+				for _, target := range binding.TargetPolicy.Include {
+					if !canonicalTargetExistsOnPage(target, *page) {
+						return fmt.Errorf("page %q filter binding %q references target %q outside its page", page.ID, bindingID, target)
+					}
+					if !canonicalComponentTargetIsUnique(pages, page.ID, target) {
+						return fmt.Errorf("page %q filter binding %q target %q reuses a visual definition and cannot have independent component state", page.ID, bindingID, target)
+					}
+				}
+			}
+			sort.Strings(binding.Targets)
+			dependencies, err := canonicalOptionDependencyRefsForBinding(doc.Spec.Filters, binding.Filter, binding, bindings, pages)
+			if err != nil {
+				return err
+			}
+			binding.OptionDependencies = dependencies
+			page.FilterBindings[bindingID] = binding
+		}
+	}
+	return nil
+}
+
+func addCanonicalBindingTarget(binding *dashboardfilter.Binding, definition dashboardfilter.Definition, pageID string, component dashboard.PageVisual, datasets []string, model *semanticmodel.Model, validateCompatibility bool) error {
+	if !validateCompatibility {
+		// Filter-contract-only compilation cannot truthfully derive semantic
+		// consumers without lowering the visual query. Keep targets empty; the
+		// full preview compiler remains authoritative for query fan-out.
+		return nil
+	}
+	explicit := len(binding.TargetPolicy.Include) > 0
+	matches := explicit && canonicalBindingTargetMatches(*binding, pageID, component)
+	compatible := canonicalDimensionApplies(definition.Field, datasets, model)
+	if explicit && matches && !compatible {
+		return fmt.Errorf("target %q is semantically incompatible with dimension %q", pageID+"/"+component.ID, definition.Field)
+	}
+	if !explicit && !compatible {
+		return fmt.Errorf("is visible on incompatible target %q; narrow targets explicitly", pageID+"/"+component.ID)
+	}
+	if compatible && (!explicit || matches) {
+		binding.Targets = append(binding.Targets, pageID+"/"+component.ID)
+	}
+	return nil
+}
+
+func validateCanonicalRouteURLParameters(reportBindings map[string]dashboardfilter.Binding, pages []dashboard.Page) error {
+	validate := func(pageID string, pageBindings map[string]dashboardfilter.Binding) error {
+		seen := map[string]string{}
+		add := func(binding dashboardfilter.Binding) error {
+			identity := string(binding.Scope) + ":" + binding.ID
+			if binding.URL.Param == "" {
+				return nil
+			}
+			if previous, exists := seen[binding.URL.Param]; exists {
+				return fmt.Errorf("URL parameter %q is used by bindings %q and %q on page %q", binding.URL.Param, previous, identity, pageID)
+			}
+			seen[binding.URL.Param] = identity
+			return nil
+		}
+		for _, binding := range reportBindings {
+			if err := add(binding); err != nil {
+				return err
+			}
+		}
+		for _, binding := range pageBindings {
+			if err := add(binding); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	if len(pages) == 0 {
+		return validate("", nil)
+	}
+	for _, page := range pages {
+		if err := validate(page.ID, page.FilterBindings); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -650,9 +870,93 @@ func canonicalOptionDependencyRefs(filters []document.DashboardFilter, id string
 	return nil
 }
 
+func canonicalOptionDependencyRefsForBinding(filters []document.DashboardFilter, id string, current dashboardfilter.Binding, reportBindings map[string]dashboardfilter.Binding, pages []dashboard.Page) ([]dashboardfilter.BindingRef, error) {
+	dependencies := canonicalOptionDependencyRefs(filters, id)
+	if len(dependencies) == 0 {
+		return nil, nil
+	}
+	refs := make([]dashboardfilter.BindingRef, 0, len(dependencies))
+	for _, dependency := range dependencies {
+		if current.Scope == dashboardfilter.ScopePage {
+			for _, page := range pages {
+				if page.ID != current.PageID {
+					continue
+				}
+				for _, binding := range page.FilterBindings {
+					if binding.Filter == dependency.ID {
+						if canonicalBindingTargetPoliciesOverlap(current, binding, pages) {
+							refs = append(refs, dashboardfilter.BindingRef{Scope: dashboardfilter.ScopePage, ID: binding.ID})
+						}
+						goto resolved
+					}
+				}
+			}
+		}
+		if report, exists := reportBindings[dependency.ID]; exists {
+			if canonicalBindingTargetPoliciesOverlap(current, report, pages) {
+				refs = append(refs, dashboardfilter.BindingRef{Scope: dashboardfilter.ScopeReport, ID: report.ID})
+			}
+			goto resolved
+		}
+		return nil, fmt.Errorf("filter %q option dependency %q has no binding available in %s scope", id, dependency.ID, current.Scope)
+	resolved:
+	}
+	return refs, nil
+}
+
+func canonicalBindingTargetPoliciesOverlap(left, right dashboardfilter.Binding, pages []dashboard.Page) bool {
+	if len(left.TargetPolicy.Include) == 0 || len(right.TargetPolicy.Include) == 0 {
+		return true
+	}
+	leftConsumers := canonicalAuthoredTargetConsumers(left, pages)
+	for consumer := range canonicalAuthoredTargetConsumers(right, pages) {
+		if _, exists := leftConsumers[consumer]; exists {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalAuthoredTargetConsumers(binding dashboardfilter.Binding, pages []dashboard.Page) map[string]struct{} {
+	consumers := map[string]struct{}{}
+	for _, target := range binding.TargetPolicy.Include {
+		if binding.Scope == dashboardfilter.ScopePage {
+			consumers[binding.PageID+"/"+target] = struct{}{}
+			continue
+		}
+		if strings.Contains(target, "/") {
+			consumers[target] = struct{}{}
+			continue
+		}
+		for _, page := range pages {
+			for _, component := range page.Visuals {
+				if component.Kind == "visual" && component.Visual == target {
+					consumers[page.ID+"/"+component.ID] = struct{}{}
+				}
+			}
+		}
+	}
+	return consumers
+}
+
 func canonicalTargetMatches(targets []string, visualID string) bool {
 	for _, target := range targets {
 		if target == visualID {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalBindingTargetMatches(binding dashboardfilter.Binding, pageID string, component dashboard.PageVisual) bool {
+	for _, target := range binding.TargetPolicy.Include {
+		if binding.Scope == dashboardfilter.ScopePage {
+			if target == component.ID {
+				return true
+			}
+			continue
+		}
+		if target == component.Visual || target == pageID+"/"+component.ID {
 			return true
 		}
 	}
@@ -665,10 +969,45 @@ func canonicalTargetExists(target string, pages []dashboard.Page) bool {
 			if component.Kind != "visual" {
 				continue
 			}
-			if target == component.Visual {
+			if target == component.Visual || target == page.ID+"/"+component.ID {
 				return true
 			}
 		}
+	}
+	return false
+}
+
+func canonicalTargetExistsOnPage(target string, page dashboard.Page) bool {
+	for _, component := range page.Visuals {
+		if component.Kind == "visual" && target == component.ID {
+			return true
+		}
+	}
+	return false
+}
+
+func canonicalComponentTargetIsUnique(pages []dashboard.Page, pageID, componentID string) bool {
+	for _, page := range pages {
+		if page.ID != pageID {
+			continue
+		}
+		visualID := ""
+		for _, component := range page.Visuals {
+			if component.Kind == "visual" && component.ID == componentID {
+				visualID = component.Visual
+				break
+			}
+		}
+		if visualID == "" {
+			return false
+		}
+		placements := 0
+		for _, component := range page.Visuals {
+			if component.Kind == "visual" && component.Visual == visualID {
+				placements++
+			}
+		}
+		return placements == 1
 	}
 	return false
 }

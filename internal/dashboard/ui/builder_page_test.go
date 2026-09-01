@@ -111,3 +111,19 @@ func TestDashboardBuilderPageUsesRouteLocalFocusLayout(t *testing.T) {
 		t.Fatal("route-local focus helper mutated the injected provider")
 	}
 }
+
+func TestDashboardCopyEntryUsesProductLanguageWithoutDraftStream(t *testing.T) {
+	var rendered strings.Builder
+	if err := DashboardDraftForkPageWithKey("dashboard:sales", "csrf", "/dashboards/dashboard:sales/fork", "request-1").Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	body := html.UnescapeString(rendered.String())
+	for _, want := range []string{"Make a copy", "Create an editable copy in My dashboards."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("copy dashboard page missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "route=dashboard_builder") {
+		t.Fatalf("copy dashboard form opened a draft update stream before the copy exists: %s", body)
+	}
+}

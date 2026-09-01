@@ -7,6 +7,7 @@
       "dependencies": {
         "@shikijs/monaco": "^4.3.0",
         "dompurify": "^3.4.13",
+        "gridstack": "13.2.0",
         "lucide": "^1.21.0",
         "markdown-it": "^15.0.1",
         "mermaid": "^11.16.1",
@@ -539,6 +540,8 @@
     "gl-matrix": ["gl-matrix@3.4.4", "", {}, "sha512-latSnyDNt/8zYUB6VIJ6PCh2jBjJX6gnDsoCZ7LyW7GkqrD51EWwa9qCoGixj8YqBtETQK/xY7OmpTF8xz1DdQ=="],
 
     "graceful-fs": ["graceful-fs@4.2.11", "", {}, "sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ=="],
+
+    "gridstack": ["gridstack@13.2.0", "", {}, "sha512-+ImmOx6qd1wiF0EagY7e/pPdngh/6s0FM+r9hh4d8AsXslO51iHEuoAF7CMrXCFr0Xqd0X4WS/bqRLXtEUThug=="],
 
     "hachure-fill": ["hachure-fill@0.5.2", "", {}, "sha512-3GKBOn+m2LX9iq+JC1064cSFprJY4jL1jCXTcpnfER5HYE2l/4EfWSGzkPa/ZDBmYI0ZOEj5VHV/eKnPGkHuOg=="],
 

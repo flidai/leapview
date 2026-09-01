@@ -129,11 +129,11 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 		}
 	}
 	var rendered bytes.Buffer
-	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironment(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{}, "").Render(&rendered); err != nil {
+	if err := ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(catalog.Catalog{}, project, asset, []projectview.DevelopAssetView{asset}, nil, "details", "dev", "", AssetRefreshState{}, AssetVersionsState{}, "", "/dashboards/new?semanticModel=semantic%3Asales").Render(&rendered); err != nil {
 		t.Fatal(err)
 	}
 	dom := rendered.String()
-	if !strings.Contains(dom, "<lv-project-asset-page") || !strings.Contains(dom, "/static/semantic-model-graph.js") {
+	if !strings.Contains(dom, "<lv-project-asset-page") || !strings.Contains(dom, "/static/semantic-model-graph.js") || !strings.Contains(dom, `create-dashboard-href="/dashboards/new?semanticModel=semantic%3Asales"`) {
 		t.Fatalf("semantic-model detail DOM missing route root or graph asset: %s", dom)
 	}
 }

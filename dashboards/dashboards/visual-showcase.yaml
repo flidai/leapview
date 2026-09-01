@@ -5,6 +5,7 @@ metadata:
   name: visual-showcase
   displayName: Visual Showcase
   description: Sales, order, category, and delivery overview.
+  owner: Data team
   tags:
   - dev
   - visuals

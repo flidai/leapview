@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, Copy, PencilLine, SlidersHorizontal } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -81,6 +81,9 @@ type DashboardRefreshProgress = {
 
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @property({ type: String, reflect: true }) presentation: 'app' | 'public' | 'embed' = 'app'
+  @property({ type: Boolean, reflect: true, attribute: 'read-only' }) readOnly = false
+  @property({ attribute: 'authoring-action-label' }) authoringActionLabel = ''
+  @property({ attribute: 'authoring-action-href' }) authoringActionHref = ''
   @state() private unsupportedKinds = new Set<string>()
   @state() private optimisticSelections: CanonicalInteractionSelection[] | null = null
   @state() private optimisticSpatialSelections: VisualizationSpatialSelectionState[] | null = null
@@ -381,6 +384,41 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       align-items: center;
       justify-content: flex-end;
       gap: var(--base-size-8);
+    }
+
+    .authoring-action {
+      display: inline-flex;
+      height: var(--control-medium-size);
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-6);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-default);
+      padding: 0 var(--base-size-12);
+      text-decoration: none;
+      white-space: nowrap;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .authoring-action:hover,
+    .authoring-action:focus-visible {
+      background: var(--lv-bg-control-hover);
+      outline: 0;
+    }
+
+    .authoring-action:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .authoring-action svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+      flex: 0 0 auto;
     }
 
     .mobile-page-menu,
@@ -816,13 +854,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-toggle,
-      :host(:not([presentation='embed'])) .agent-toggle {
+      :host(:not([presentation='embed'])) .agent-toggle,
+      :host(:not([presentation='embed'])) .authoring-action {
         width: var(--control-medium-size);
         padding-inline: 0;
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-label,
-      :host(:not([presentation='embed'])) .agent-toggle span {
+      :host(:not([presentation='embed'])) .agent-toggle span,
+      :host(:not([presentation='embed'])) .authoring-action span {
         display: none;
       }
 
@@ -1166,6 +1206,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 						], 'Breadcrumb')}
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
+							${this.authoringActionLabel && this.authoringActionHref ? html`
+							<a
+								class="authoring-action"
+								href=${this.authoringActionHref}
+								aria-label=${this.authoringActionLabel}
+								title=${this.authoringActionLabel}
+							>
+								${this.authoringActionLabel === 'Make a copy' ? lucideIcon(Copy) : lucideIcon(PencilLine)}
+								<span>${this.authoringActionLabel}</span>
+							</a>
+							` : nothing}
 							<button
 								type="button"
 								class="icon-button mobile-filter-toggle"
@@ -1370,6 +1421,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (!anchor?.href) return
     const target = this.page?.pages.find((item) => new URL(item.href, window.location.href).href === anchor.href)
     if (!target) return
+    // Exact draft previews deliberately have no mutation bridge. Let their
+    // revision-pinned page links perform normal document navigation instead
+    // of dispatching an authoring command that nothing can handle.
+    if (this.readOnly) return
     if (target.active) {
       event.preventDefault()
       return
@@ -1635,6 +1690,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticInteraction = (event: CustomEvent<unknown>): void => {
+    if (this.readOnly) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<OptimisticInteractionCommand>
     if (typeof candidate.sourceId !== 'string') return
@@ -1660,6 +1716,10 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleFilterMutation = (event: CustomEvent<FilterMutationDetail>): void => {
+    if (this.readOnly) {
+      event.stopPropagation()
+      return
+    }
     if (!event.detail?.bindingKey || !event.detail.expression) return
     event.stopPropagation()
     // Clearing is a first-class mutation so textbox and drawer clears share
@@ -1674,6 +1734,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterClear = (event: CustomEvent<{ bindingKey: string }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     const binding = this.filterContract.bindings[event.detail?.bindingKey]
     if (!binding?.readerEditable) return
     this.filterController.clear(binding.key)
@@ -1682,6 +1743,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterResetBinding = (event: CustomEvent<{ bindingKey: string }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     const binding = this.filterContract.bindings[event.detail?.bindingKey]
     if (!binding?.readerEditable) return
     this.filterController.resetBinding(binding.key)
@@ -1693,6 +1755,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     bindingKeys: string[]
   }>): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (event.detail?.scope !== 'page' && event.detail?.scope !== 'dashboard') return
     const pageID = (this.renderSnapshot?.page ?? this.page)?.pageId
     const allowed = Object.values(this.filterContract.bindings)
@@ -1708,6 +1771,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterApply = (event: Event): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (this.filterContract.applicationMode !== 'deferred') return
     this.filterController.apply()
     this.requestUpdate()
@@ -1715,12 +1779,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
   private handleFilterCancel = (event: Event): void => {
     event.stopPropagation()
+    if (this.readOnly) return
     if (this.filterContract.applicationMode !== 'deferred') return
     this.filterController.cancel()
     this.requestUpdate()
   }
 
   private handleFilterOptionsNeeded = (event: CustomEvent<FilterOptionsNeededDetail>): void => {
+    if (this.readOnly) {
+      event.stopPropagation()
+      return
+    }
     const detail = event.detail
     if (!detail?.bindingKey) return
     event.stopPropagation()
@@ -1773,6 +1842,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
   }
 
   private handleOptimisticSpatialInteraction = (event: CustomEvent<unknown>): void => {
+    if (this.readOnly) return
     if (!event.detail || typeof event.detail !== 'object') return
     const candidate = event.detail as Partial<VisualizationSpatialSelectionCommand>
     if (typeof candidate.visualID !== 'string') return

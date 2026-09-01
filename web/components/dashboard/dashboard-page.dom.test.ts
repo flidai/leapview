@@ -28,6 +28,27 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
   }
 })
 
+test('dashboard exposes its contextual authoring action in the header', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const action = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      element.setAttribute('authoring-action-label', 'Continue editing')
+      element.setAttribute('authoring-action-href', '/dashboards/executive-sales/edit?draft=draft-7&page=overview')
+      await element.updateComplete
+      const link = element.shadowRoot.querySelector('.authoring-action') as HTMLAnchorElement
+      return { label: link?.textContent?.trim(), href: link?.getAttribute('href') }
+    })
+    expect(action).toEqual({
+      label: 'Continue editing',
+      href: '/dashboards/executive-sales/edit?draft=draft-7&page=overview',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard refresh loading does not mark unrelated filter controls stale', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -3460,6 +3481,28 @@ test('same-dashboard page navigation commits canonical history after the page pa
       params: { state: 'canonical' },
       path: '/dashboards/executive-sales/pages/details',
     }])
+  } finally {
+    await page.close()
+  }
+})
+
+test('read-only draft preview preserves native revision-pinned page navigation', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page?.pageId === 'overview')
+    const navigation = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      element.readOnly = true
+      await element.updateComplete
+      let commands = 0
+      element.addEventListener('lv-page-navigate', () => { commands += 1 })
+      const sidebar = element.shadowRoot.querySelector('lv-sub-sidebar')
+      const details = sidebar.shadowRoot.querySelector('a[href$="/details"]') as HTMLAnchorElement
+      const click = new MouseEvent('click', { bubbles: true, composed: true, cancelable: true, button: 0 })
+      details.dispatchEvent(click)
+      return { commands, defaultPrevented: click.defaultPrevented, reflected: element.hasAttribute('read-only') }
+    })
+    expect(navigation).toEqual({ commands: 0, defaultPrevented: false, reflected: true })
   } finally {
     await page.close()
   }

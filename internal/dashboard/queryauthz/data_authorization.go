@@ -773,6 +773,31 @@ func (m Metrics) QueryVisualizationForDefinition(ctx context.Context, definition
 	return provider.QueryVisualizationForDefinition(dataquery.WithGovernor(ctx, m), definition, pageID, filters, visualID)
 }
 
+// QueryCompiledFilterOptionsForDefinition preserves the authorization
+// governor while executing options against an immutable exact draft
+// definition.
+func (m Metrics) QueryCompiledFilterOptionsForDefinition(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryCompiledFilterOptionsForDefinition(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error)
+	})
+	if !ok {
+		return dashboardfilter.OptionResult{}, errors.New("compiled filter options are not supported by this runtime")
+	}
+	return provider.QueryCompiledFilterOptionsForDefinition(dataquery.WithGovernor(ctx, m), definition, query)
+}
+
+// QueryCompiledFilterOptionsForDefinitionAtGeneration preserves both the
+// authorization governor and the exact serving-generation guard.
+func (m Metrics) QueryCompiledFilterOptionsForDefinitionAtGeneration(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery, expectedGeneration string) (dashboardfilter.OptionResult, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryCompiledFilterOptionsForDefinitionAtGeneration(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery, string) (dashboardfilter.OptionResult, error)
+	})
+	if !ok {
+		return dashboardfilter.OptionResult{}, errors.New("generation-bound compiled filter options are not supported by this runtime")
+	}
+	return provider.QueryCompiledFilterOptionsForDefinitionAtGeneration(dataquery.WithGovernor(ctx, m), definition, query, expectedGeneration)
+}
+
 // DefaultFiltersForDefinition forwards authored defaults through the
 // authorization decorator; filter defaults do not execute a data query.
 func (m Metrics) DefaultFiltersForDefinition(definition dashboarddefinition.Definition) dashboard.Filters {

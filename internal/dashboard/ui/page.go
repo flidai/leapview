@@ -79,6 +79,14 @@ type AgentCommandBindings struct {
 	CreateRun          uicommand.Binding
 }
 
+// DashboardAuthoringAction is the single contextual transition from a
+// published dashboard into authoring. The HTTP boundary decides whether the
+// caller may continue/edit the same dashboard or must fork it first.
+type DashboardAuthoringAction struct {
+	Label string
+	Href  string
+}
+
 func (commands AgentCommandBindings) Workflow() []uicommand.Binding {
 	return []uicommand.Binding{commands.CreateConversation, commands.CreateRun}
 }
@@ -88,18 +96,22 @@ func Page(clientID, csrfToken string, catalog dashboard.Catalog, report dashboar
 }
 
 func PageWithPresentation(presentation Presentation, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, RouteScope{}, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, providers...)
+	return pageWithRouteScope(presentation, RouteScope{}, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, DashboardAuthoringAction{}, providers...)
 }
 
 func PageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, providers...)
+	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, AgentCommandBindings{}, DashboardAuthoringAction{}, providers...)
 }
 
 func PageWithRouteScopeAndAgentCommands(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
-	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, providers...)
+	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, DashboardAuthoringAction{}, providers...)
 }
 
-func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
+func PageWithRouteScopeAndAgentCommandsAndAuthoring(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, action DashboardAuthoringAction, providers ...webpage.Provider) g.Node {
+	return pageWithRouteScope(presentation, routes, clientID, csrfToken, catalog, report, model, pages, activePage, initialFilters, commands, action, providers...)
+}
+
+func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, csrfToken string, catalog dashboard.Catalog, report dashboarddefinition.Definition, model *semanticmodel.Model, pages []dashboard.Page, activePage dashboard.Page, initialFilters dashboard.Filters, commands AgentCommandBindings, action DashboardAuthoringAction, providers ...webpage.Provider) g.Node {
 	if activePage.ID == "" {
 		activePage = defaultPage()
 	}
@@ -148,6 +160,12 @@ func pageWithRouteScope(presentation Presentation, routes RouteScope, clientID, 
 		g.Attr("data-on:lv-interaction-select", "$interactionCommand = evt.detail; "+uiactions.EventPost(commandBase+"select", "runtime", "interactionCommand")),
 		g.Attr("data-on:lv-interaction-spatial-select", "$spatialInteractionCommand = evt.detail; "+uiactions.EventPost(commandBase+"spatial-select", "runtime", "spatialInteractionCommand")),
 		g.Attr("data-on:lv-visualization-window-request", "$visualWindowCommand = evt.detail; "+uiactions.EventPost(commandBase+"visual-window", "runtime", "visualWindowCommand")),
+	}
+	if strings.TrimSpace(action.Label) != "" && strings.TrimSpace(action.Href) != "" && routes.BasePath == "" {
+		componentAttrs = append(componentAttrs,
+			g.Attr("authoring-action-label", strings.TrimSpace(action.Label)),
+			g.Attr("authoring-action-href", strings.TrimSpace(action.Href)),
+		)
 	}
 	if routes.BasePath == "" {
 		agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $filterState; $agentContext.generation = $status.generation; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")

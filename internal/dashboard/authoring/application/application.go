@@ -235,6 +235,29 @@ func (a *Application) Preview(ctx context.Context, request preview.PreviewReques
 	return service.Preview(ctx, request)
 }
 
+// Compile strictly compiles one exact draft revision without executing a
+// dashboard page. Filter-option loading uses this path so a failing visual
+// query cannot hide an otherwise valid governed filter contract.
+func (a *Application) Compile(ctx context.Context, request preview.CompileRequest) (preview.Compilation, error) {
+	if err := a.validate(); err != nil {
+		return preview.Compilation{}, err
+	}
+	projectID, err := projectID(request.ProjectID)
+	if err != nil {
+		return preview.Compilation{}, err
+	}
+	service, err := preview.NewService(preview.Options{
+		Repository: a.repository,
+		Authorizer: a.authorizer,
+		Provider:   projectProvider{projectID: projectID, acquire: a.acquireRuntime},
+	})
+	if err != nil {
+		return preview.Compilation{}, err
+	}
+	request.ProjectID = projectID
+	return service.Compile(ctx, request)
+}
+
 // Builder returns the governed dashboard-builder bootstrap for one exact
 // project draft. The runtime provider is scoped to the normalized request
 // project and the builder service owns the single lease for this call.

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"reflect"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	"github.com/flidai/leapview/internal/project/graph"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
@@ -66,7 +68,7 @@ func builderDocument() document.DashboardDocument {
 		Kind:       document.DashboardResourceKindDashboard,
 		Metadata:   document.DashboardMetadata{ID: "sales", Name: "sales", DisplayName: builderStringPtr("Sales")},
 		Spec: document.DashboardSpec{
-			SemanticModel: "sales_model", Filters: []document.DashboardFilter{}, Visuals: map[string]document.DashboardVisual{"orders": visual},
+			SemanticModel: "sales_model", Filters: []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{Type: "multiSelect"}}}}, Visuals: map[string]document.DashboardVisual{"orders": visual},
 			Pages: []document.DashboardPage{{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{{Value: &document.VisualDashboardPageComponent{DashboardPageComponentBase: base, Type: "visual", Visual: "orders"}}}}},
 		},
 	}
@@ -93,6 +95,85 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if signal.SemanticModel.ID != "sales_model" {
 		t.Fatalf("semantic model signal id = %q, want canonical resource id", signal.SemanticModel.ID)
 	}
+	if !signal.Capabilities.CanArchive {
+		t.Fatalf("archive capability = %#v, want manage-authorized archive", signal.Capabilities)
+	}
+	if len(signal.VisualCatalog) != 26 || signal.VisualCatalog[0].Type != "line" || signal.VisualCatalog[0].ReferenceHref != "/docs/visuals/line" {
+		t.Fatalf("visual catalog = %#v", signal.VisualCatalog)
+	}
+	if len(signal.Pages) != 1 || len(signal.Pages[0].Visuals) != 1 || len(signal.Pages[0].Visuals[0].FormatOptions) == 0 {
+		t.Fatalf("projected format options = %#v", signal.Pages)
+	}
+	if len(signal.Filters) != 1 || signal.Filters[0].ID != "status" || signal.Filters[0].ControlType != "multiSelect" || !signal.Filters[0].ReaderEditable || len(signal.Filters[0].Bindings) != 1 || signal.Filters[0].Bindings[0].Scope != "report" {
+		t.Fatalf("projected filters = %#v", signal.Filters)
+	}
+}
+
+func TestBuildHidesArchiveWhenManageAuthorizationIsDenied(t *testing.T) {
+	f := newBuilderFixture(t)
+	f.authorizer.errors[authoring.AuthorizationActionArchive] = access.ErrForbidden
+	signal, err := f.service.Build(t.Context(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signal.Capabilities.CanArchive {
+		t.Fatalf("archive capability = %#v, want manage-denied archive hidden", signal.Capabilities)
+	}
+}
+
+func TestBuildProjectsAuthoredDashboardAppearance(t *testing.T) {
+	f := newBuilderFixture(t)
+	doc := f.revision.Document
+	icon := "chart-no-axes-combined"
+	color := document.DashboardAppearanceColorOrange
+	doc.Spec.Appearance = &document.DashboardAppearance{Icon: &icon, Color: &color}
+	revision, err := authoring.NewRevision("revision-appearance", "sales", 7, f.revision.CreatedAt, doc, f.revision.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.revision = revision
+	f.repository.lifecycle.Draft.Revision = revision.Token()
+	f.repository.revisions = map[authoring.RevisionID]authoring.Revision{revision.ID: revision}
+
+	signal, err := f.service.Build(t.Context(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signal.Appearance.Icon != icon || signal.Appearance.Color != "orange" {
+		t.Fatalf("appearance = %#v", signal.Appearance)
+	}
+}
+
+func TestCanonicalSlotsIncludesPivotRowsAndColumns(t *testing.T) {
+	row, column, metric := "category", "purchase_month", "revenue"
+	slots, err := canonicalSlots(document.DashboardQuery{Value: &document.PivotDashboardQuery{
+		Type:    "pivot",
+		Rows:    []document.DashboardDimensionSelection{{String: &row}},
+		Columns: []document.DashboardDimensionSelection{{String: &column}},
+		Metrics: []document.DashboardMetricSelection{{String: &metric}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(slots) != 3 || slots[0].ID != "row-0" || slots[1].ID != "column-0" || slots[2].ID != "metric-0" {
+		t.Fatalf("pivot slots = %#v", slots)
+	}
+}
+
+func TestProjectFiltersExposesAuthoredPageBindings(t *testing.T) {
+	bindings := []document.DashboardPageFilterBinding{{ID: "page_status", Filter: "status"}}
+	authored := document.DashboardDocument{Spec: document.DashboardSpec{
+		Filters: []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.MultiSelectDashboardFilterControl{Type: "multiSelect"}}}},
+		Pages:   []document.DashboardPage{{ID: "overview", FilterBindings: &bindings}},
+	}}
+	projected := projectFilters(authored)
+	if len(projected) != 1 || len(projected[0].Bindings) != 1 {
+		t.Fatalf("projected filters = %#v", projected)
+	}
+	binding := projected[0].Bindings[0]
+	if binding.ID != "page_status" || binding.Scope != "page" || binding.PageID == nil || *binding.PageID != "overview" {
+		t.Fatalf("projected page binding = %#v", binding)
+	}
 }
 
 func TestBuildReleasesLeaseOnRuntimeFailuresAndProjectsDetachedModel(t *testing.T) {
@@ -114,19 +195,169 @@ func TestBuildReleasesLeaseOnRuntimeFailuresAndProjectsDetachedModel(t *testing.
 	}
 }
 
-func TestProjectPagesCanonicalOrderingAndGlobalBounds(t *testing.T) {
+func TestProjectedSemanticDimensionIDAppliesToAggregateReducer(t *testing.T) {
+	semantic, err := projectSemanticModel("sales_model", builderModel())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var fieldID string
+	var physicalField bool
+	var semanticRoles, physicalRoles []uisignals.DashboardBuilderFieldRoleSignal
+	var semanticDataset, physicalDataset string
+	for _, dataset := range semantic.Datasets {
+		if dataset.ID != "orders" {
+			continue
+		}
+		for _, field := range dataset.Fields {
+			if field.ID == "status" && field.Kind == "dimension" {
+				fieldID = field.ID
+				semanticRoles = field.Roles
+				if field.DatasetID != nil {
+					semanticDataset = *field.DatasetID
+				}
+			}
+			if field.ID == "orders.status" && field.Kind == "dimension" {
+				physicalField = true
+				physicalRoles = field.Roles
+				if field.DatasetID != nil {
+					physicalDataset = *field.DatasetID
+				}
+			}
+		}
+	}
+	if fieldID != "status" {
+		t.Fatalf("projected semantic dimension id = %q, want unqualified member id", fieldID)
+	}
+	if !physicalField {
+		t.Fatal("projected dataset lost its physical table field for detail/table use")
+	}
+	if !reflect.DeepEqual(semanticRoles, []uisignals.DashboardBuilderFieldRoleSignal{uisignals.DashboardBuilderFieldRoleSignalDimension}) {
+		t.Fatalf("semantic dimension roles = %#v", semanticRoles)
+	}
+	if !reflect.DeepEqual(physicalRoles, []uisignals.DashboardBuilderFieldRoleSignal{uisignals.DashboardBuilderFieldRoleSignalDetail}) {
+		t.Fatalf("physical dimension roles = %#v", physicalRoles)
+	}
+	if semanticDataset != "orders" || physicalDataset != "orders" {
+		t.Fatalf("projected field datasets = %q / %q", semanticDataset, physicalDataset)
+	}
+
+	// Start with an aggregate visual that has no dimensions, then feed the
+	// projected field through the existing canonical assign_field reducer path.
+	doc := builderDocument()
+	aggregate, ok := doc.Spec.Visuals["orders"].Query.Value.(*document.AggregateDashboardQuery)
+	if !ok {
+		t.Fatal("builder fixture visual is not aggregate")
+	}
+	aggregate.Dimensions = []document.DashboardDimensionSelection{}
+	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "actor"}
+	current, err := authoring.NewRevision("revision-assign", "sales", 1, time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC), doc, provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
+		ProjectID: "project", ID: "sales", OwnerPrincipalID: "owner", Slug: "sales", Title: "Sales",
+		SemanticModel: "sales_model", Visibility: authoring.VisibilityPrivate,
+		Draft: &authoring.Draft{ID: "draft-assign", DashboardID: "sales", Revision: current.Token(), Provenance: provenance},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	command := authoring.Command{
+		ID: "assign-status", DashboardID: "sales", DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(), Provenance: provenance,
+		AssignField: &authoring.AssignFieldPayload{PageID: "overview", VisualID: "orders-placement", FieldID: fieldID, Role: authoring.FieldRoleDimension},
+	}
+	_, next, err := authoring.ApplyEdit(lifecycle, current, command, "revision-assign-2", 2, time.Date(2026, 8, 18, 1, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("assign projected semantic dimension: %v", err)
+	}
+	updated, ok := next.Document.Spec.Visuals["orders"].Query.Value.(*document.AggregateDashboardQuery)
+	if !ok || len(updated.Dimensions) != 1 || updated.Dimensions[0].String == nil || *updated.Dimensions[0].String != "status" {
+		t.Fatalf("assigned aggregate dimensions = %#v", updated)
+	}
+}
+
+func TestProjectCanonicalVisualExposesBoundRecordsDataset(t *testing.T) {
+	field := "order_id"
+	base := &document.DashboardPageComponentBase{ID: "orders-component", Placement: document.DashboardPlacement{Column: 1, Row: 1, ColumnSpan: 4, RowSpan: 4}}
+	component := &document.VisualDashboardPageComponent{Visual: "orders"}
+	authored := document.DashboardVisual{
+		Type: document.DashboardVisualTypeTable,
+		Query: document.DashboardQuery{Value: &document.RecordsDashboardQuery{
+			Type: "records", Dataset: "orders", Fields: []document.DashboardRecordFieldSelection{{String: &field}},
+		}},
+		Presentation: document.DashboardPresentation{Value: &document.TableDashboardPresentation{Type: "table", ShowHeader: true, RowHeight: 32}},
+	}
+	projected, err := projectCanonicalVisual(base, component, authored)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projected.DatasetID == nil || *projected.DatasetID != "orders" {
+		t.Fatalf("projected dataset = %#v", projected.DatasetID)
+	}
+}
+
+func TestProjectPagesPreservesAuthoredOrderingAndGlobalBounds(t *testing.T) {
 	doc := builderDocument()
 	doc.Spec.Pages = []document.DashboardPage{{ID: "z-page", Title: "Z"}, {ID: "a-page", Title: "A"}}
 	pages, _, selected, _, err := projectPages(doc, "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := []string{pages[0].ID, pages[1].ID}; !reflect.DeepEqual(got, []string{"a-page", "z-page"}) || selected != "a-page" {
+	if got := []string{pages[0].ID, pages[1].ID}; !reflect.DeepEqual(got, []string{"z-page", "a-page"}) || selected != "z-page" {
 		t.Fatalf("pages/selection = %#v/%q", got, selected)
 	}
 	doc.Spec.Pages = make([]document.DashboardPage, maxPages+1)
 	if _, _, _, _, err := projectPages(doc, "", ""); err == nil || !strings.Contains(err.Error(), "pages exceed bounded limit") {
 		t.Fatalf("bound error = %v", err)
+	}
+}
+
+func TestProjectPagesProjectsCanonicalFilterComponentsAndMissingReferences(t *testing.T) {
+	doc := builderDocument()
+	doc.Spec.Pages[0].Components = append(doc.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.FilterDashboardPageComponent{
+		DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "status-slicer", Type: "filter", Placement: document.DashboardPlacement{Column: 7, Row: 1, ColumnSpan: 3, RowSpan: 2}},
+		Type:                       "filter",
+		Filter:                     "status",
+	}})
+	pages, diagnostics, _, _, err := projectPages(doc, "overview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(diagnostics) != 0 || len(pages) != 1 || len(pages[0].FilterComponents) != 1 {
+		t.Fatalf("projection = pages %#v diagnostics %#v", pages, diagnostics)
+	}
+	if pages[0].Grid.Columns != 12 || pages[0].Grid.RowHeight != 48 || pages[0].Grid.Gap != 16 || pages[0].Grid.Padding != 16 {
+		t.Fatalf("default grid = %#v", pages[0].Grid)
+	}
+	component := pages[0].FilterComponents[0]
+	if component.ID != "status-slicer" || component.FilterID != "status" || component.Label != "Status" || component.ControlType != "multiSelect" {
+		t.Fatalf("filter component = %#v", component)
+	}
+	if component.Placement.Col != 7 || component.Placement.Row != 1 || component.Placement.ColSpan != 3 || component.Placement.RowSpan != 2 {
+		t.Fatalf("filter component placement = %#v", component.Placement)
+	}
+
+	doc.Spec.Pages[0].Components[1].Value.(*document.FilterDashboardPageComponent).Filter = "missing"
+	pages, diagnostics, _, _, err = projectPages(doc, "overview", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pages[0].FilterComponents) != 0 || len(diagnostics) != 1 || diagnostics[0].Code != "FILTER_MISSING" {
+		t.Fatalf("missing filter projection = pages %#v diagnostics %#v", pages, diagnostics)
+	}
+
+	doc = builderDocument()
+	doc.Spec.Pages[0].Components = make([]document.DashboardPageComponent, 0, maxFilterComponents+1)
+	for index := 0; index <= maxFilterComponents; index++ {
+		doc.Spec.Pages[0].Components = append(doc.Spec.Pages[0].Components, document.DashboardPageComponent{Value: &document.FilterDashboardPageComponent{
+			DashboardPageComponentBase: document.DashboardPageComponentBase{ID: "slicer-" + strconv.Itoa(index), Type: "filter", Placement: document.DashboardPlacement{Column: 1, Row: int32(index + 1), ColumnSpan: 3, RowSpan: 2}},
+			Type:                       "filter",
+			Filter:                     "status",
+		}})
+	}
+	if _, _, _, _, err := projectPages(doc, "overview", ""); err == nil || !strings.Contains(err.Error(), "filter components exceed bounded limit") {
+		t.Fatalf("filter component bound error = %v", err)
 	}
 }
 

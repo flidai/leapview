@@ -106,6 +106,30 @@ func (m admittedMetrics) QueryVisualizationForDefinition(ctx context.Context, de
 	return provider.QueryVisualizationForDefinition(m.readContext(ctx), definition, pageID, filters, visualID)
 }
 
+// QueryCompiledFilterOptionsForDefinition preserves exact-draft option
+// execution through workload admission.
+func (m admittedMetrics) QueryCompiledFilterOptionsForDefinition(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryCompiledFilterOptionsForDefinition(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery) (dashboardfilter.OptionResult, error)
+	})
+	if !ok {
+		return dashboardfilter.OptionResult{}, errors.New("compiled filter options are not supported by this runtime")
+	}
+	return provider.QueryCompiledFilterOptionsForDefinition(m.readContext(ctx), definition, query)
+}
+
+// QueryCompiledFilterOptionsForDefinitionAtGeneration preserves the active
+// generation guard through workload admission.
+func (m admittedMetrics) QueryCompiledFilterOptionsForDefinitionAtGeneration(ctx context.Context, definition dashboarddefinition.Definition, query dashboardfilter.OptionQuery, expectedGeneration string) (dashboardfilter.OptionResult, error) {
+	provider, ok := m.Metrics.(interface {
+		QueryCompiledFilterOptionsForDefinitionAtGeneration(context.Context, dashboarddefinition.Definition, dashboardfilter.OptionQuery, string) (dashboardfilter.OptionResult, error)
+	})
+	if !ok {
+		return dashboardfilter.OptionResult{}, errors.New("generation-bound compiled filter options are not supported by this runtime")
+	}
+	return provider.QueryCompiledFilterOptionsForDefinitionAtGeneration(m.readContext(ctx), definition, query, expectedGeneration)
+}
+
 // DefaultFiltersForDefinition forwards authored defaults through the
 // admission decorator so canonical visual queries use the same initial state
 // as dashboard pages.

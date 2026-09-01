@@ -20,15 +20,17 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 	(&Module{handler: dashboardhttp.Handler{}}).MountAuthenticated(router, RouteGuard{ProtectWithResources: identityResources})
 
 	want := map[string]bool{
-		"GET /dashboards/new":                          false,
-		"POST /dashboards/new":                         false,
-		"GET /dashboards/{dashboard}/fork":             false,
-		"POST /dashboards/{dashboard}/fork":            false,
-		"GET /dashboards/{dashboard}/edit":             false,
-		"GET /dashboards/{dashboard}/preview":          false,
-		"GET /dashboards/{dashboard}/export.yaml":      false,
-		"POST /dashboards/{dashboard}/draft/command":   false,
-		"POST /dashboards/{dashboard}/commands/select": false,
+		"GET /dashboards/new":                               false,
+		"POST /dashboards/new":                              false,
+		"GET /dashboards/{dashboard}/fork":                  false,
+		"POST /dashboards/{dashboard}/fork":                 false,
+		"GET /dashboards/{dashboard}/edit":                  false,
+		"GET /dashboards/{dashboard}/preview":               false,
+		"GET /dashboards/{dashboard}/export.yaml":           false,
+		"POST /dashboards/{dashboard}/draft/command":        false,
+		"POST /dashboards/{dashboard}/draft/filter":         false,
+		"POST /dashboards/{dashboard}/draft/filter-options": false,
+		"POST /dashboards/{dashboard}/commands/select":      false,
 	}
 	if err := chi.Walk(router, func(method, route string, _ http.Handler, _ ...func(http.Handler) http.Handler) error {
 		key := method + " " + route
@@ -52,7 +54,8 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 		access.CapabilityResourceRead,
 		access.CapabilityResourceEdit,
 		access.CapabilityResourceEdit,
-		access.CapabilityResourceEdit,
+		// Forking requires VIEW of the source and EDIT on the target project.
+		access.CapabilityResourceRead,
 		access.CapabilityResourceEdit,
 	} {
 		if capabilities[index] != wantCapability {

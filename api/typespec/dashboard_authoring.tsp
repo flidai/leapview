@@ -181,7 +181,7 @@ model DashboardAuthoringUpsertVisualIntent {
 }
 
 model DashboardAuthoringRemovePageIntent { pageId: string; }
-model DashboardAuthoringRemoveVisualIntent { visualId: string; }
+model DashboardAuthoringRemoveVisualIntent { pageId?: string; visualId: string; }
 model DashboardAuthoringSetLayoutIntent {
   pageId: string;
   layout?: LeapViewDashboard.DashboardLayoutOverride;
@@ -196,12 +196,71 @@ model DashboardAuthoringSetInteractionIntent {
   interaction?: LeapViewDashboard.DashboardInteraction;
   clear?: boolean;
 }
+model DashboardAuthoringSetInteractionTargetIntent {
+  pageId: string;
+  visualId: string;
+  targetVisualId: string;
+  effect: "filter" | "highlight" | "none";
+}
 
 model DashboardAuthoringAssignFieldIntent {
   pageId: string;
   visualId: string;
   fieldId: string;
   role: "metric" | "dimension" | "detail";
+}
+
+model DashboardAuthoringSetVisualTypeIntent {
+  pageId: string;
+  visualId: string;
+  type: LeapViewDashboard.DashboardVisualType;
+}
+
+model DashboardAuthoringRenameVisualIntent {
+  pageId: string;
+  visualId: string;
+  title: string;
+}
+
+model DashboardAuthoringDuplicateVisualIntent {
+  pageId: string;
+  visualId: string;
+  newVisualId?: string;
+  newComponentId?: string;
+  title?: string;
+}
+
+model DashboardAuthoringRestoreRevisionIntent {
+  targetRevision: DashboardAuthoringRevisionToken;
+}
+
+model DashboardAuthoringUpdateVisualFormatIntent {
+  pageId: string;
+  visualId: string;
+  title?: string;
+  titleVisible?: boolean;
+  legendVisible?: boolean;
+  axisVisible?: boolean;
+  dataLabelsVisible?: boolean;
+  formatKey?: string;
+  formatValue?: string;
+}
+
+model DashboardAuthoringRemoveFieldIntent {
+  pageId: string;
+  visualId: string;
+  fieldId: string;
+  role: "metric" | "dimension" | "detail";
+}
+
+model DashboardAuthoringMoveFieldIntent {
+  pageId: string;
+  visualId: string;
+  fieldId: string;
+  role: "metric" | "dimension" | "detail";
+  targetRole?: "metric" | "dimension" | "detail";
+  direction?: string;
+  index?: int32;
 }
 
 @discriminator("kind")
@@ -239,6 +298,41 @@ model DashboardAuthoringAssignFieldCommand extends DashboardAuthoringCommandRequ
   assignField: DashboardAuthoringAssignFieldIntent;
 }
 
+model DashboardAuthoringSetVisualTypeCommand extends DashboardAuthoringCommandRequest {
+  kind: "setVisualType";
+  setVisualType: DashboardAuthoringSetVisualTypeIntent;
+}
+
+model DashboardAuthoringRenameVisualCommand extends DashboardAuthoringCommandRequest {
+  kind: "renameVisual";
+  renameVisual: DashboardAuthoringRenameVisualIntent;
+}
+
+model DashboardAuthoringDuplicateVisualCommand extends DashboardAuthoringCommandRequest {
+  kind: "duplicateVisual";
+  duplicateVisual: DashboardAuthoringDuplicateVisualIntent;
+}
+
+model DashboardAuthoringRestoreRevisionCommand extends DashboardAuthoringCommandRequest {
+  kind: "restoreRevision";
+  restoreRevision: DashboardAuthoringRestoreRevisionIntent;
+}
+
+model DashboardAuthoringUpdateVisualFormatCommand extends DashboardAuthoringCommandRequest {
+  kind: "updateVisualFormat";
+  updateVisualFormat: DashboardAuthoringUpdateVisualFormatIntent;
+}
+
+model DashboardAuthoringRemoveFieldCommand extends DashboardAuthoringCommandRequest {
+  kind: "removeField";
+  removeField: DashboardAuthoringRemoveFieldIntent;
+}
+
+model DashboardAuthoringMoveFieldCommand extends DashboardAuthoringCommandRequest {
+  kind: "moveField";
+  moveField: DashboardAuthoringMoveFieldIntent;
+}
+
 model DashboardAuthoringUpsertPageCommand extends DashboardAuthoringCommandRequest {
   kind: "upsertPage";
   upsertPage: LeapViewDashboard.DashboardPage;
@@ -272,6 +366,11 @@ model DashboardAuthoringSetFiltersCommand extends DashboardAuthoringCommandReque
 model DashboardAuthoringSetInteractionCommand extends DashboardAuthoringCommandRequest {
   kind: "setInteraction";
   setInteraction: DashboardAuthoringSetInteractionIntent;
+}
+
+model DashboardAuthoringSetInteractionTargetCommand extends DashboardAuthoringCommandRequest {
+  kind: "setInteractionTarget";
+  setInteractionTarget: DashboardAuthoringSetInteractionTargetIntent;
 }
 
 model DashboardAuthoringPublishCommand extends DashboardAuthoringCommandRequest {

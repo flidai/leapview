@@ -91,16 +91,20 @@ type AssetVersionDrawerSignal struct {
 type CatalogDashboardSignal struct {
 	AppearanceColor string           `json:"appearanceColor" yaml:"appearanceColor"`
 	AppearanceIcon  string           `json:"appearanceIcon" yaml:"appearanceIcon"`
+	CatalogScope    string           `json:"catalogScope" yaml:"catalogScope"`
 	Description     *string          `json:"description,omitempty" yaml:"description,omitempty"`
 	DashboardID     string           `json:"dashboardId" yaml:"dashboardId"`
 	Href            string           `json:"href" yaml:"href"`
 	ID              string           `json:"id" yaml:"id"`
 	LastRefreshedAt *string          `json:"lastRefreshedAt,omitempty" yaml:"lastRefreshedAt,omitempty"`
+	Owner           *string          `json:"owner,omitempty" yaml:"owner,omitempty"`
 	PageCount       int64            `json:"pageCount" yaml:"pageCount"`
 	Popularity      *PopularityLevel `json:"popularity,omitempty" yaml:"popularity,omitempty"`
 	SemanticModel   *string          `json:"semanticModel,omitempty" yaml:"semanticModel,omitempty"`
+	Status          string           `json:"status" yaml:"status"`
 	Tags            *[]string        `json:"tags,omitempty" yaml:"tags,omitempty"`
 	Title           string           `json:"title" yaml:"title"`
+	UpdatedAt       *string          `json:"updatedAt,omitempty" yaml:"updatedAt,omitempty"`
 }
 
 type CatalogPageEnvelope struct {

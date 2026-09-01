@@ -14,6 +14,7 @@ import { resolveVisualizationMetadata } from './metadata'
 export class VisualizationHost extends LitElement {
   @property({ attribute: false }) envelope?: VisualizationEnvelope
   @property({ attribute: false }) openVisualFocus?: (source: HTMLElement, detail: VisualActionDetail) => void
+  @property({ type: Boolean, reflect: true }) authoring = false
   @query('.renderer') private rendererContainer?: HTMLDivElement
   @state() private error = ''
   @state() private applying = false
@@ -293,21 +294,25 @@ export class VisualizationHost extends LitElement {
     const error = this.error || statusError
     const header = this.sharedHeader()
     const metadata = this.envelope ? resolveVisualizationMetadata(this.envelope) : undefined
+    const titleVisible = this.envelope?.spec.titleVisible !== false
+    const showHeader = Boolean((header && titleVisible) || this.authoring)
     const showInitialLoading = !this.presented && !error
     const loadingLabel = `Loading ${header ?? 'visualization'}…`
-    return html`<div class=${header ? 'surface' : 'surface headerless'}>
-      ${header ? html`
+    return html`<div class=${showHeader ? 'surface' : 'surface headerless'}>
+      ${showHeader ? html`
         <header class="toolbar">
           <div class="toolbar-title">
-            <h2 data-visualization-title>${metadata?.title}</h2>
+            ${this.authoring
+              ? html`<slot name="authoring-drag-handle"><h2 data-visualization-title>${metadata?.title}</h2></slot>`
+              : html`<h2 data-visualization-title>${metadata?.title}</h2>`}
             ${metadata?.subtitle ? html`<p class="toolbar-subtitle" data-visualization-subtitle>${metadata.subtitle}</p>` : null}
           </div>
           <div class="visual-actions">
             <slot name="agent-action"></slot>
-            <button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>
+            ${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}
           </div>
         </header>
-      ` : html`<div class="headerless-actions"><slot name="agent-action"></slot></div>`}
+      ` : html`<div class="headerless-actions"><slot name="agent-action"></slot>${header ? html`<button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>` : null}</div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">

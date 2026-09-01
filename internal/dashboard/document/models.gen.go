@@ -2388,11 +2388,12 @@ const (
 )
 
 type DashboardPage struct {
-	ID          string                   `json:"id" yaml:"id"`
-	Title       string                   `json:"title" yaml:"title"`
-	Description *string                  `json:"description,omitempty" yaml:"description,omitempty"`
-	Layout      *DashboardLayoutOverride `json:"layout,omitempty" yaml:"layout,omitempty"`
-	Components  []DashboardPageComponent `json:"components" yaml:"components"`
+	ID             string                        `json:"id" yaml:"id"`
+	Title          string                        `json:"title" yaml:"title"`
+	Description    *string                       `json:"description,omitempty" yaml:"description,omitempty"`
+	Layout         *DashboardLayoutOverride      `json:"layout,omitempty" yaml:"layout,omitempty"`
+	FilterBindings *[]DashboardPageFilterBinding `json:"filterBindings,omitempty" yaml:"filterBindings,omitempty"`
+	Components     []DashboardPageComponent      `json:"components" yaml:"components"`
 }
 
 type DashboardPageComponentVariant interface {
@@ -2605,6 +2606,16 @@ type DashboardPageComponentBase struct {
 	ID        string             `json:"id" yaml:"id"`
 	Type      string             `json:"type" yaml:"type"`
 	Placement DashboardPlacement `json:"placement" yaml:"placement"`
+}
+
+type DashboardPageFilterBinding struct {
+	ID             string                     `json:"id" yaml:"id"`
+	Filter         string                     `json:"filter" yaml:"filter"`
+	Default        *DashboardFilterExpression `json:"default,omitempty" yaml:"default,omitempty"`
+	Required       *bool                      `json:"required,omitempty" yaml:"required,omitempty"`
+	ReaderEditable *bool                      `json:"readerEditable,omitempty" yaml:"readerEditable,omitempty"`
+	Targets        *[]string                  `json:"targets,omitempty" yaml:"targets,omitempty"`
+	URLParameter   *string                    `json:"urlParameter,omitempty" yaml:"urlParameter,omitempty"`
 }
 
 type DashboardPathGeographicLayer struct {
@@ -3012,6 +3023,7 @@ func (value *DashboardPresentation) Base() (*DashboardPresentationBase, error) {
 type DashboardPresentationBase struct {
 	Type                  string                        `json:"type" yaml:"type"`
 	ConditionalFormatting *[]DashboardConditionalFormat `json:"conditionalFormatting,omitempty" yaml:"conditionalFormatting,omitempty"`
+	AxisVisible           *bool                         `json:"axisVisible,omitempty" yaml:"axisVisible,omitempty"`
 }
 
 type DashboardProportionalAlignment string
@@ -3514,6 +3526,7 @@ const (
 type DashboardVisual struct {
 	Type          DashboardVisualType        `json:"type" yaml:"type"`
 	Title         *string                    `json:"title,omitempty" yaml:"title,omitempty"`
+	TitleVisible  *bool                      `json:"titleVisible,omitempty" yaml:"titleVisible,omitempty"`
 	Subtitle      *string                    `json:"subtitle,omitempty" yaml:"subtitle,omitempty"`
 	Description   *string                    `json:"description,omitempty" yaml:"description,omitempty"`
 	Query         DashboardQuery             `json:"query" yaml:"query"`

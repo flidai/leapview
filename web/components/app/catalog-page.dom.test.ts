@@ -47,6 +47,244 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('catalog introduces authoring as New dashboard', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const action = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      await element.updateComplete
+      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      return { label: trigger?.textContent?.trim(), tagName: trigger?.tagName, href: trigger?.getAttribute('href') }
+    })
+    expect(action).toEqual({ label: 'New dashboard', tagName: 'A', href: '/dashboards/new' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('new dashboard trigger opens an accessible native dialog with the create form contract', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([
+        { id: 'semantic:sales_overview', title: 'sales_overview' },
+        { id: 'semantic:Kpis', title: 'Sales KPIs' },
+      ]))
+      element.setAttribute('create-draft-csrf-token', 'csrf-modal')
+      element.setAttribute('create-draft-idempotency-key', 'idem-modal')
+      await element.updateComplete
+      const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      trigger.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => setTimeout(resolve, 10))
+      const root = element.shadowRoot
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const form = root.querySelector('.catalog-create-dialog-form') as HTMLFormElement
+      const shell = root.querySelector('.catalog-create-dialog-shell') as HTMLElement
+      const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
+      return {
+        tagName: trigger.tagName,
+        href: trigger.getAttribute('href'),
+        hasDialogHint: trigger.getAttribute('aria-haspopup'),
+        controls: trigger.getAttribute('aria-controls'),
+        open: dialog.open,
+        labelledBy: dialog.getAttribute('aria-labelledby'),
+        title: root.querySelector('#catalog-create-draft-title')?.textContent?.trim(),
+		activeField: root.activeElement?.id ?? '',
+        method: form.method,
+        action: new URL(form.action).pathname,
+        nameRequired: root.querySelector<HTMLInputElement>('[name="title"]')?.required,
+        modelOptions: Array.from(root.querySelectorAll('#catalog-create-draft-model option')).map((option) => ({ id: option.getAttribute('value'), title: option.textContent?.trim() })),
+        selectedModel: root.querySelector<HTMLSelectElement>('#catalog-create-draft-model')?.value,
+        csrf: root.querySelector<HTMLInputElement>('[name="gorilla.csrf.Token"]')?.value,
+        idempotency: root.querySelector<HTMLInputElement>('[name="idempotencyKey"]')?.value,
+        advanced: root.querySelector('summary')?.textContent?.trim(),
+        closeHasSVG: Boolean(close.querySelector('svg')),
+        closeText: close.textContent?.trim(),
+        noHorizontalOverflow: shell.scrollWidth <= shell.clientWidth,
+      }
+    })
+
+    expect(state).toEqual({
+      tagName: 'A',
+      href: '/dashboards/new',
+      hasDialogHint: 'dialog',
+      controls: 'catalog-create-draft-dialog',
+      open: true,
+      labelledBy: 'catalog-create-draft-title',
+      title: 'New dashboard',
+      activeField: 'catalog-create-draft-name',
+      method: 'post',
+      action: '/dashboards/new',
+      nameRequired: true,
+      modelOptions: [
+        { id: '', title: 'Select a data model' },
+        { id: 'semantic:sales_overview', title: 'Sales Overview' },
+        { id: 'semantic:Kpis', title: 'Sales KPIs' },
+      ],
+      selectedModel: '',
+      csrf: 'csrf-modal',
+      idempotency: 'idem-modal',
+      advanced: 'Advanced settings',
+      closeHasSVG: true,
+      closeText: '',
+      noHorizontalOverflow: true,
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('create query auto-opens with the semantic model preselected and dismissal restores focus', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  try {
+    await page.goto(`${baseURL}/?create=dashboard&semanticModel=semantic%3Asales_overview`)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'semantic:sales_overview', title: 'sales_overview' }]))
+      await element.updateComplete
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      const root = element.shadowRoot
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const select = root.querySelector('select') as HTMLSelectElement
+      const autoOpened = dialog.open
+      const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
+      close.click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return {
+        autoOpened,
+        selectedModel: select.value,
+        closed: !dialog.open,
+        restoredFocus: root.activeElement?.classList.contains('catalog-create-draft') ?? false,
+        query: window.location.search,
+      }
+    })
+
+    expect(state).toEqual({
+      autoOpened: true,
+      selectedModel: 'semantic:sales_overview',
+      closed: true,
+      restoredFocus: false,
+      query: '?create=dashboard&semanticModel=semantic%3Asales_overview',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('native Escape and backdrop dismissal close the create dialog', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      const dialog = () => root.querySelector('dialog') as HTMLDialogElement
+      trigger.click()
+      await element.updateComplete
+      const escapedOpen = dialog().open
+      dialog().dispatchEvent(new Event('cancel', { bubbles: true, cancelable: true }))
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      const closedAfterEscape = !dialog().open
+      const focusAfterEscape = root.activeElement === trigger
+      trigger.click()
+      await element.updateComplete
+      dialog().dispatchEvent(new MouseEvent('click', { bubbles: true }))
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return { escapedOpen, closedAfterEscape, focusAfterEscape, closedAfterBackdrop: !dialog().open, focusAfterBackdrop: root.activeElement === trigger }
+    })
+
+    expect(state).toEqual({ escapedOpen: true, closedAfterEscape: true, focusAfterEscape: true, closedAfterBackdrop: true, focusAfterBackdrop: true })
+  } finally {
+    await page.close()
+  }
+})
+
+test('mobile create dialog stays within the viewport and disables submission without models', async () => {
+  const page = await browser.newPage({ viewport: { width: 390, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', '[]')
+      await element.updateComplete
+      const root = element.shadowRoot
+      const trigger = root.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      trigger.click()
+      await element.updateComplete
+      const dialog = root.querySelector('dialog') as HTMLDialogElement
+      const rect = dialog.getBoundingClientRect()
+      const select = root.querySelector('select') as HTMLSelectElement
+      const submit = root.querySelector('[type="submit"]') as HTMLButtonElement
+      return {
+        withinViewport: rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight,
+        noHorizontalOverflow: dialog.scrollWidth <= dialog.clientWidth,
+        selectDisabled: select.disabled,
+        submitDisabled: submit.disabled,
+        help: root.querySelector('#catalog-create-draft-model-help')?.textContent?.trim(),
+      }
+    })
+
+    expect(state).toEqual({
+      withinViewport: true,
+      noHorizontalOverflow: true,
+      selectDisabled: true,
+      submitDisabled: true,
+      help: 'No data models are available. Add one in Develop, then try again.',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('create form submits natively to the builder with hidden request values', async () => {
+  const page = await browser.newPage({ viewport: { width: 960, height: 700 } })
+  let postData = ''
+  try {
+    await page.route('**/dashboards/new', async (route) => {
+      postData = route.request().postData() ?? ''
+      await route.fulfill({ status: 200, contentType: 'text/html', body: 'builder' })
+    })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      element.setAttribute('create-draft-models', JSON.stringify([{ id: 'sales', title: 'Sales' }]))
+      element.setAttribute('create-draft-csrf-token', 'csrf-submit')
+      element.setAttribute('create-draft-idempotency-key', 'idem-submit')
+      await element.updateComplete
+      const root = element.shadowRoot
+      ;(root.querySelector('.catalog-create-draft') as HTMLAnchorElement).click()
+      await element.updateComplete
+      ;(root.querySelector('[name="title"]') as HTMLInputElement).value = 'Sales overview'
+      ;(root.querySelector('[name="semanticModel"]') as HTMLSelectElement).value = 'sales'
+      ;(root.querySelector('.catalog-create-dialog-form') as HTMLFormElement).requestSubmit()
+    })
+    await page.waitForTimeout(100)
+    expect(postData).toContain('title=Sales+overview')
+    expect(postData).toContain('semanticModel=sales')
+    expect(postData).toContain('gorilla.csrf.Token=csrf-submit')
+    expect(postData).toContain('idempotencyKey=idem-submit')
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'compact desktop', width: 706, height: 793 },
   { name: 'mobile', width: 390, height: 820 },
@@ -75,14 +313,14 @@ for (const viewport of [
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
           descriptions: rows.map((row) => row.querySelector('.entity-list-description')?.textContent?.trim()),
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
-          refreshed: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
-          refreshedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.getAttribute('title')),
+          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.getAttribute('title')),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
           popularityLevels: rows.map((row) => row.querySelector('.entity-list-badge')?.classList.contains('is-high') ? 'high' : row.querySelector('.entity-list-badge')?.classList.contains('is-medium') ? 'medium' : row.querySelector('.entity-list-badge')?.classList.contains('is-low') ? 'low' : ''),
-          emptyPopularityLabels: rows.map((row) => row.querySelector('.entity-list-badge-empty')?.getAttribute('aria-label') ?? ''),
-          emptyPopularityOpacity: getComputedStyle(rows[3].querySelector('.entity-list-badge-empty') as HTMLElement).color,
           popularityColoredBars: rows.slice(0, 3).map((row) => {
             const paths = Array.from(row.querySelectorAll('.entity-list-badge path'))
             const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-badge path')[2]).stroke
@@ -91,6 +329,8 @@ for (const viewport of [
           iconsAreFramed: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-framed')),
           framedIconBorderWidth: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
           framedIconBackground: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
+          originBadges: rows.filter((row) => row.querySelector('.entity-list-label-badge')).length,
+          tabs: Array.from(root.querySelectorAll('.catalog-tab')).map((tab) => tab.textContent?.trim()),
           hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
           fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
@@ -108,19 +348,21 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptions: ['Fixture report', 'Fulfillment and delivery performance.', 'Stock exposure and replenishment.', 'Customer profile details.'],
-        headers: ['Dashboard', 'Popularity', 'Last refreshed'],
-        refreshed: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
-        refreshedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
+        headers: ['Dashboard', 'Owner', 'Status', 'Updated'],
+        owners: ['Analytics', 'Operations', 'Supply chain', '—'],
+        statuses: ['Published', 'Published', 'Published', 'Published'],
+        updated: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
+        updatedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
         popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', ''],
         popularityLevels: ['high', 'medium', 'low', ''],
-        emptyPopularityLabels: ['', '', '', 'No popularity data'],
-        emptyPopularityOpacity: 'rgb(129, 139, 152)',
         popularityColoredBars: [3, 2, 1],
         iconsAreFramed: true,
         framedIconBorderWidth: '1px',
         framedIconBackground: 'rgb(251, 239, 255)',
+        originBadges: 0,
+        tabs: ['All dashboards', 'My dashboards', 'Shared with me'],
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
@@ -136,36 +378,72 @@ for (const viewport of [
   })
 }
 
-test('shared entity list sorts rows by popularity rank', async () => {
+test('dashboard tabs filter by ownership without hiding managed dashboards from All', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
-      const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
-      const popularityHeader = list.querySelector('button[aria-label="Sort by Popularity"]') as HTMLButtonElement
-      const before = rows()
-      popularityHeader.click()
-      await list.updateComplete
-      const ascending = rows()
-      const ascendingSort = popularityHeader.closest('th')?.getAttribute('aria-sort')
-      popularityHeader.click()
-      await list.updateComplete
-      return { before, ascending, ascendingSort, descending: rows(), descendingSort: popularityHeader.closest('th')?.getAttribute('aria-sort') }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const dashboards = element.page.dashboards.map((dashboard: any, index: number) => ({
+        ...dashboard,
+        catalogScope: index === 0 ? 'mine' : index === 1 ? 'shared' : 'managed',
+      }))
+      mergePatch({ page: { ...element.page, dashboards } })
+      await element.updateComplete
+      const rows = () => Array.from(element.shadowRoot.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
+      const all = rows()
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      await element.updateComplete
+      const mine = rows()
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { all, mine, shared: rows() }
     })
 
-    expect(state.before).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
-    expect(state.ascending).toEqual(['Customer Detail', 'Inventory Risk', 'Operations Health', 'Executive Sales Dashboard'])
-    expect(state.ascendingSort).toBe('ascending')
-    expect(state.descending).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
-    expect(state.descendingSort).toBe('descending')
+    expect(state.all).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
+    expect(state.mine).toEqual(['Executive Sales Dashboard'])
+    expect(state.shared).toEqual(['Operations Health'])
   } finally {
     await page.close()
   }
 })
 
-test('last refreshed sorting uses timestamps rather than relative labels', async () => {
+test('dashboard lifecycle statuses use distinct semantic icons and tones', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const statuses = ['published', 'private_draft', 'unpublished_changes', 'published']
+      mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({ ...dashboard, status: statuses[index] })) } })
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      return Array.from(list.querySelectorAll('.entity-list-status')).map((status: Element) => ({
+        className: status.className,
+        label: status.textContent?.trim(),
+        icon: status.querySelector('.entity-list-status-icon')?.innerHTML,
+      }))
+    })
+
+    expect(state.map(({ label, className }) => ({ label, className }))).toEqual([
+      { label: 'Published', className: 'entity-list-status is-success' },
+      { label: 'Private draft', className: 'entity-list-status is-muted' },
+      { label: 'Unpublished changes', className: 'entity-list-status is-attention' },
+      { label: 'Published', className: 'entity-list-status is-success' },
+    ])
+    expect(state[1].icon).toContain('cx="12" cy="16" r="1"')
+    expect(state[2].icon).toContain('M14.364 13.634')
+    expect(state[0].icon).not.toEqual(state[1].icon)
+    expect(state[1].icon).not.toEqual(state[2].icon)
+  } finally {
+    await page.close()
+  }
+})
+
+test('updated sorting uses timestamps rather than relative labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
@@ -174,7 +452,7 @@ test('last refreshed sorting uses timestamps rather than relative labels', async
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
       const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
-      const header = list.querySelector('button[aria-label="Sort by Last refreshed"]') as HTMLButtonElement
+      const header = list.querySelector('button[aria-label="Sort by Updated"]') as HTMLButtonElement
       header.click()
       await list.updateComplete
       const ascending = rows()
@@ -211,7 +489,8 @@ test('CSV export uses displayed values instead of internal sort keys', async () 
       return exported?.text()
     })
 
-    expect(csv).toContain('"High"')
+    expect(csv).toContain('"Analytics"')
+    expect(csv).toContain('"Published"')
     expect(csv).toContain('"2 hr ago"')
     expect(csv).not.toContain('2026-08-12T09:42:00Z')
   } finally {
@@ -226,7 +505,7 @@ test('relative freshness labels update while the catalog remains open', async ()
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const freshness = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim(),
+      element.shadowRoot.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim(),
     )
 
     expect(await freshness()).toBe('59 min ago')
@@ -245,10 +524,8 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
     const colors = async () => page.locator('lv-catalog-page').evaluate((element: any) => {
       const root = element.shadowRoot
       const highPaths = Array.from(root.querySelectorAll('.entity-list-badge-popularity.is-high path')) as SVGPathElement[]
-      const empty = root.querySelector('.entity-list-badge-empty') as HTMLElement
       return {
         bars: highPaths.map((path) => getComputedStyle(path).stroke),
-        empty: getComputedStyle(empty).color,
       }
     })
 
@@ -258,11 +535,9 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
 
     expect(light).toEqual({
       bars: ['rgb(31, 111, 235)', 'rgb(31, 111, 235)', 'rgb(31, 111, 235)'],
-      empty: 'rgb(129, 139, 152)',
     })
     expect(dark).toEqual({
       bars: ['rgb(77, 160, 255)', 'rgb(77, 160, 255)', 'rgb(77, 160, 255)'],
-      empty: 'rgb(101, 108, 118)',
     })
   } finally {
     await page.close()
@@ -330,6 +605,9 @@ function testDocument(): string {
         dashboardId: 'executive-sales',
         appearanceIcon: 'chart-no-axes-combined',
         appearanceColor: 'purple',
+        catalogScope: 'managed',
+        status: 'published',
+        owner: 'Analytics',
         title: 'Executive Sales Dashboard',
         description: 'Fixture report',
         semanticModel: 'olist',
@@ -344,6 +622,9 @@ function testDocument(): string {
         dashboardId: 'operations-health',
         appearanceIcon: 'package-check',
         appearanceColor: 'orange',
+        catalogScope: 'managed',
+        status: 'published',
+        owner: 'Operations',
         title: 'Operations Health',
         description: 'Fulfillment and delivery performance.',
         semanticModel: 'operations',
@@ -355,6 +636,12 @@ function testDocument(): string {
       },
       {
         id: 'inventory-risk',
+        dashboardId: 'inventory-risk',
+        appearanceIcon: 'layout-dashboard',
+        appearanceColor: 'purple',
+        catalogScope: 'managed',
+        status: 'published',
+        owner: 'Supply chain',
         title: 'Inventory Risk',
         description: 'Stock exposure and replenishment.',
         semanticModel: 'inventory',
@@ -366,6 +653,11 @@ function testDocument(): string {
       },
       {
         id: 'customer-detail',
+        dashboardId: 'customer-detail',
+        appearanceIcon: 'layout-dashboard',
+        appearanceColor: 'purple',
+        catalogScope: 'managed',
+        status: 'published',
         title: 'Customer Detail',
         description: 'Customer profile details.',
         semanticModel: 'customers',
