@@ -57,13 +57,11 @@ type ChatTurnExecution struct {
 }
 
 func (h *Handler) Chat(w nethttp.ResponseWriter, r *nethttp.Request) {
-	scope := h.chatScope(r)
-	h.renderChat(w, r, "list", h.chatSignal(r.Context(), scope, "", "", false))
+	h.renderChat(w, r, "list", ui.ChatViewState{})
 }
 
 func (h *Handler) ChatNew(w nethttp.ResponseWriter, r *nethttp.Request) {
-	scope := h.chatScope(r)
-	h.renderChat(w, r, "new", h.chatSignal(r.Context(), scope, "", "", false))
+	h.renderChat(w, r, "new", ui.ChatViewState{})
 }
 
 func (h *Handler) ChatConversation(w nethttp.ResponseWriter, r *nethttp.Request) {
@@ -74,14 +72,14 @@ func (h *Handler) ChatConversation(w nethttp.ResponseWriter, r *nethttp.Request)
 		return
 	}
 	if h.options.Service == nil || !h.options.Service.Enabled() {
-		h.renderChat(w, r, "conversation", h.chatSignal(r.Context(), scope, "", "", false))
+		h.renderChat(w, r, "conversation", ui.ChatViewState{})
 		return
 	}
 	if scope.PrincipalID == "" {
 		nethttp.Error(w, "chat requires an authenticated principal", nethttp.StatusUnauthorized)
 		return
 	}
-	state, err := h.options.Service.ConversationTranscriptState(r.Context(), scope, conversationID)
+	_, err := h.options.Service.GetConversation(r.Context(), scope, conversationID)
 	if err != nil {
 		nethttp.Error(w, err.Error(), statusForNotFound(err))
 		return
@@ -89,7 +87,7 @@ func (h *Handler) ChatConversation(w nethttp.ResponseWriter, r *nethttp.Request)
 	if h.options.QueueMissingTitle != nil {
 		h.options.QueueMissingTitle(r.Context(), scope, conversationID, chatClientID(r))
 	}
-	h.renderChat(w, r, "conversation", h.chatSignalWith(r.Context(), scope, conversationID, state.Transcript, state.Artifacts, "", h.options.Service.ConversationRunning(conversationID)))
+	h.renderChat(w, r, "conversation", ui.ChatViewState{Agent: ui.ChatSignal{ActiveConversationID: conversationID}})
 }
 
 // ChatRestore is the Datastar adapter for restoring an embedded chat. The
@@ -199,7 +197,7 @@ func (h *Handler) ChatUpdates(w nethttp.ResponseWriter, r *nethttp.Request) {
 		return
 	}
 	if h.options.Service == nil || !h.options.Service.Enabled() || scope.PrincipalID == "" || h.options.Broker == nil {
-		<-r.Context().Done()
+		updates.Wait(r.Context())
 		return
 	}
 	_ = updates.Forward(r.Context(), h.options.Broker, streamID)
