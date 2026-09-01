@@ -64,7 +64,7 @@ function coordinator(options: {
       platform: options.platform ?? "win32",
       architecture: "x64",
       applicationVersion: "1.2.3",
-      electronVersion: "43.2.0",
+      electronVersion: "44.0.0",
       packaged: true,
       releaseChannel: "stable",
     },
