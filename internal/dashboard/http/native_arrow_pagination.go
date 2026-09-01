@@ -28,8 +28,9 @@ const (
 )
 
 var (
-	errDashboardArrowContractNotAcceptable = errors.New("dashboard Arrow contract is not acceptable")
-	errDashboardNativeArrowCursorInvalid   = errors.New("invalid native dashboard page token")
+	errDashboardArrowContractNotAcceptable         = errors.New("dashboard Arrow contract is not acceptable")
+	errDashboardNativeArrowCursorInvalid           = errors.New("invalid native dashboard page token")
+	errDashboardNativeArrowCursorTrailerUndeclared = errors.New("native dashboard cursor trailer was not declared before response commitment")
 )
 
 type dashboardArrowContractMode uint8
@@ -297,11 +298,44 @@ func decodeDashboardNativeArrowCursor(token string, scope dashboardNativeArrowCu
 	}, nil
 }
 
+// declareDashboardNativeArrowCursorTrailer must run before response commitment.
+// Keeping declaration separate from publication lets pre-commit failures retain
+// their structured problem response while reserving the completion-only trailer.
+func declareDashboardNativeArrowCursorTrailer(w stdhttp.ResponseWriter) error {
+	if w == nil {
+		return errDashboardNativeArrowCursorTrailerUndeclared
+	}
+	header := w.Header()
+	if header.Get(dashboardNativeArrowNextCursorHeader) != "" {
+		return fmt.Errorf("native dashboard cursor was set before response commitment")
+	}
+	if !dashboardNativeArrowCursorTrailerDeclared(header) {
+		header.Add("Trailer", dashboardNativeArrowNextCursorHeader)
+	}
+	return nil
+}
+
 // publishDashboardNativeArrowCursor is deliberately separate from cursor
-// derivation so callers can invoke it only after the IPC writer closes cleanly.
-// The response must have declared X-Next-Cursor as a trailer before commitment.
-func publishDashboardNativeArrowCursor(w stdhttp.ResponseWriter, cursor string) {
+// derivation and trailer declaration. Callers invoke it only after the IPC
+// writer closes cleanly. A missing pre-commit declaration fails without
+// setting X-Next-Cursor as an ordinary response header.
+func publishDashboardNativeArrowCursor(w stdhttp.ResponseWriter, cursor string) error {
+	if w == nil || !dashboardNativeArrowCursorTrailerDeclared(w.Header()) {
+		return errDashboardNativeArrowCursorTrailerUndeclared
+	}
 	if cursor != "" {
 		w.Header().Set(dashboardNativeArrowNextCursorHeader, cursor)
 	}
+	return nil
+}
+
+func dashboardNativeArrowCursorTrailerDeclared(header stdhttp.Header) bool {
+	for _, value := range header.Values("Trailer") {
+		for _, name := range strings.Split(value, ",") {
+			if strings.EqualFold(strings.TrimSpace(name), dashboardNativeArrowNextCursorHeader) {
+				return true
+			}
+		}
+	}
+	return false
 }

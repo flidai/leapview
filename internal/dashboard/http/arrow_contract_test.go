@@ -399,7 +399,9 @@ func dashboardNativeArrowContractResponse(t testing.TB, limit, offset int, scope
 	recorder.Header().Set("X-Query-ID", dashboardNativeArrowQueryID)
 	recorder.Header().Set("X-Serving-Snapshot", dashboardNativeArrowSnapshot)
 	recorder.Header().Set(dashboardNativeArrowContractHeader, dashboardNativeArrowContract)
-	recorder.Header().Set("Trailer", "X-Next-Cursor")
+	if err := declareDashboardNativeArrowCursorTrailer(recorder); err != nil {
+		t.Fatalf("declare native Arrow cursor trailer: %v", err)
+	}
 	recorder.WriteHeader(stdhttp.StatusOK)
 	body := dashboardNativeArrowContractBody(t, empty, plan.EmitLimit)
 	_, _ = recorder.Write(body)
@@ -411,7 +413,9 @@ func dashboardNativeArrowContractResponse(t testing.TB, limit, offset int, scope
 	if err != nil {
 		t.Fatalf("complete native Arrow page: %v", err)
 	}
-	publishDashboardNativeArrowCursor(recorder, cursor)
+	if err := publishDashboardNativeArrowCursor(recorder, cursor); err != nil {
+		t.Fatalf("publish native Arrow cursor trailer: %v", err)
+	}
 	return recorder.Result()
 }
 

@@ -400,9 +400,13 @@ func TestDashboardNativeArrowCursorPublishedOnlyAfterSuccessfulCompletion(t *tes
 				t.Fatalf("completion = (%q, %v), want no cursor and %v", cursor, err, test.err)
 			}
 			recorder := httptest.NewRecorder()
-			recorder.Header().Set("Trailer", dashboardNativeArrowNextCursorHeader)
+			if err := declareDashboardNativeArrowCursorTrailer(recorder); err != nil {
+				t.Fatal(err)
+			}
 			recorder.WriteHeader(stdhttp.StatusOK)
-			publishDashboardNativeArrowCursor(recorder, cursor)
+			if err := publishDashboardNativeArrowCursor(recorder, cursor); err != nil {
+				t.Fatal(err)
+			}
 			response := recorder.Result()
 			defer response.Body.Close()
 			if got := response.Trailer.Get(dashboardNativeArrowNextCursorHeader); got != "" {
@@ -416,14 +420,90 @@ func TestDashboardNativeArrowCursorPublishedOnlyAfterSuccessfulCompletion(t *tes
 		t.Fatalf("successful completion = (%q, %v)", cursor, err)
 	}
 	recorder := httptest.NewRecorder()
-	recorder.Header().Set("Trailer", dashboardNativeArrowNextCursorHeader)
+	if err := declareDashboardNativeArrowCursorTrailer(recorder); err != nil {
+		t.Fatal(err)
+	}
 	recorder.WriteHeader(stdhttp.StatusOK)
-	publishDashboardNativeArrowCursor(recorder, cursor)
+	if err := publishDashboardNativeArrowCursor(recorder, cursor); err != nil {
+		t.Fatal(err)
+	}
 	response := recorder.Result()
 	defer response.Body.Close()
 	if got := response.Trailer.Get(dashboardNativeArrowNextCursorHeader); got != cursor {
 		t.Fatalf("success trailer = %q, want %q", got, cursor)
 	}
+}
+
+func TestDashboardNativeArrowCursorTrailerPublicationIsDefensive(t *testing.T) {
+	t.Parallel()
+	const cursor = "d3.next"
+
+	t.Run("declaration before commitment publishes trailer", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		if err := declareDashboardNativeArrowCursorTrailer(recorder); err != nil {
+			t.Fatal(err)
+		}
+		if got := recorder.Header().Get("Trailer"); got != dashboardNativeArrowNextCursorHeader {
+			t.Fatalf("trailer declaration = %q", got)
+		}
+		recorder.WriteHeader(stdhttp.StatusOK)
+		if err := publishDashboardNativeArrowCursor(recorder, cursor); err != nil {
+			t.Fatal(err)
+		}
+		response := recorder.Result()
+		defer response.Body.Close()
+		if got := response.Header.Get(dashboardNativeArrowNextCursorHeader); got != "" {
+			t.Fatalf("cursor leaked as ordinary header %q", got)
+		}
+		if got := response.Trailer.Get(dashboardNativeArrowNextCursorHeader); got != cursor {
+			t.Fatalf("cursor trailer = %q, want %q", got, cursor)
+		}
+	})
+
+	t.Run("missing declaration before commitment fails safely", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		if err := publishDashboardNativeArrowCursor(recorder, cursor); !errors.Is(err, errDashboardNativeArrowCursorTrailerUndeclared) {
+			t.Fatalf("publish error = %v, want undeclared trailer", err)
+		}
+		if got := recorder.Header().Get(dashboardNativeArrowNextCursorHeader); got != "" {
+			t.Fatalf("cursor leaked as ordinary header %q", got)
+		}
+	})
+
+	t.Run("missing declaration after commitment fails safely", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		recorder.WriteHeader(stdhttp.StatusOK)
+		if err := publishDashboardNativeArrowCursor(recorder, cursor); !errors.Is(err, errDashboardNativeArrowCursorTrailerUndeclared) {
+			t.Fatalf("publish error = %v, want undeclared trailer", err)
+		}
+		response := recorder.Result()
+		defer response.Body.Close()
+		if got := response.Header.Get(dashboardNativeArrowNextCursorHeader); got != "" {
+			t.Fatalf("cursor leaked as ordinary header %q", got)
+		}
+		if got := response.Trailer.Get(dashboardNativeArrowNextCursorHeader); got != "" {
+			t.Fatalf("cursor leaked as trailer %q", got)
+		}
+	})
+
+	t.Run("empty cursor remains empty", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		if err := declareDashboardNativeArrowCursorTrailer(recorder); err != nil {
+			t.Fatal(err)
+		}
+		recorder.WriteHeader(stdhttp.StatusOK)
+		if err := publishDashboardNativeArrowCursor(recorder, ""); err != nil {
+			t.Fatal(err)
+		}
+		response := recorder.Result()
+		defer response.Body.Close()
+		if got := response.Header.Get(dashboardNativeArrowNextCursorHeader); got != "" {
+			t.Fatalf("empty cursor leaked as ordinary header %q", got)
+		}
+		if got := response.Trailer.Get(dashboardNativeArrowNextCursorHeader); got != "" {
+			t.Fatalf("empty cursor trailer = %q", got)
+		}
+	})
 }
 
 func TestDashboardNativeArrowCompletionRejectsImpossibleProbeCounts(t *testing.T) {
