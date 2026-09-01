@@ -21,7 +21,7 @@ const packageDocument = {
   version: "0.1.0",
   devDependencies: {
     electron: "43.2.0",
-    node: "24.14.0",
+    node: "26.8.1",
     "@electron-forge/cli": "8.0.0-alpha.9",
   },
 };
@@ -54,7 +54,7 @@ const policy = {
     electron: "43.2.0",
     electronMajor: 43,
     chromium: "150.0.7871.129",
-    node: "24.14.0",
+    node: "26.8.1",
     forge: "8.0.0-alpha.9",
     bun: "1.3.14",
   },
@@ -123,7 +123,7 @@ const packageVerification = {
   runtime: {
     electron: "43.2.0",
     chromium: "150.0.7871.129",
-    node: "24.14.0",
+    node: "26.8.1",
   },
   fuses: {
     RunAsNode: "disabled",
