@@ -26,7 +26,8 @@ ready. The readiness endpoint reports stable, non-secret diagnostic codes such
 as `missing_physical_pool_admission`, `physical_pool_not_admitted`,
 `target_revision_missing`, `migrated_serving_state_identity_missing`, and
 `indeterminate_publication_state`.
-Repair these with the offline operator command; do not edit SQLite rows by hand.
+Repair these with the native operator command; do not edit PostgreSQL control
+rows or DuckLake metadata by hand.
 
 1. Generate a complete local or MinIO qualification result for the exact
    DuckDB/DuckLake runtime, extension, catalog format, storage implementation,
@@ -51,14 +52,28 @@ Repair these with the offline operator command; do not edit SQLite rows by hand.
 
 The command stores opaque credential references only. It rejects an incomplete
 or unknown checklist, tuple mismatch, stale digest, and a conflicting namespace
-without mutating the pool. Create-and-admit is one SQLite transaction and is
-safe to retry after a crash. A failed evidence check leaves no half-created
-pool or admission row.
+without mutating the pool. Apply authenticates the control migrator and the
+separate DuckLake catalog migrator, verifies both database/role identities,
+creates or verifies the namespace ownership marker, initializes the exact
+hash-qualified PostgreSQL DuckLake metadata schema, and provisions distinct
+runtime and maintenance grants. The immutable pool admission, catalog identity,
+and runtime compatibility rows commit in one caller-owned PostgreSQL control
+transaction. External marker and catalog steps are deterministic exact-replay
+operations, so a retry converges after a crash without admitting changed
+identity. A failed evidence check leaves no pool, catalog, or admission row.
+
+The catalog ID and RFC 9562 UUID are derived deterministically from the physical
+pool. The catalog database and global DuckLake catalog format version are read
+from the authenticated catalog rather than supplied by an operator. Runtime and
+maintenance credentials cannot create schemas or mutate the registered catalog
+identity.
 
 One physical namespace has one deletion authority. Separate LeapView instance
-databases must not independently bootstrap the same storage namespace. Use one
-shared control database (or an external ownership/fencing service) for a
-shared pool; otherwise choose a distinct namespace and isolation boundary.
+authorities must not independently bootstrap the same storage namespace. Use
+one shared PostgreSQL control authority (or an external ownership/fencing
+service) for a shared pool; otherwise choose a distinct namespace and isolation
+boundary.
+
 The local/MinIO conformance artifact does not grant cross-instance ownership by
 itself.
 
@@ -92,9 +107,9 @@ replacement is verified.
 GC marks roots, leases, generations, candidates, and in-flight publications
 before deleting anything. A pool fence and epoch prevent an expired writer or
 GC worker from acting after restart. The sealed DuckLake catalog is authoritative
-for physical membership; SQLite stores control evidence and roots, never file
-membership or reference counts. Native DuckLake cleanup/checkpoint operations
-are rejected on shared pools.
+for physical membership; PostgreSQL stores control evidence and roots, never
+file membership or reference counts. Native DuckLake cleanup/checkpoint
+operations are rejected on shared pools.
 
 ## Qualification lanes and support boundary
 

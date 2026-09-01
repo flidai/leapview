@@ -223,9 +223,33 @@ Initialization treats `--domain` as the canonical public hostname and derives `L
 `leapviewctl` is an optional production operations controller, not a prerequisite for pulling or running LeapView. It invokes the installed Docker Compose CLI and does not require Bash or direct access to the Docker socket API. You may manage the image with your existing container platform if it preserves the same single-process, persistent-home, initialization, backup, and environment contracts.
 
 Operators integrating the image directly must set the documented production
-environment first, run `leapview admin initialize --format json`, store its
-one-time output securely, acknowledge that output, and then start `leapview
-serve --production`. The Compose controller performs those steps atomically.
+environment first. The initialization command authenticates the dedicated
+control migrator, applies or verifies the exact control baseline, closes that
+owner-capable pool, and creates the first administrator through the ordinary
+control runtime role:
+
+```sh
+leapview admin initialize --format json > initial-credentials.json
+# Store the mode-0600 file in the target secret manager before acknowledging it.
+leapview admin initialize --acknowledge-credentials
+
+leapview admin delivery pool bootstrap \
+  --pool pool-identity.json \
+  --evidence shared-pool-evidence.json
+leapview admin delivery pool bootstrap \
+  --pool pool-identity.json \
+  --evidence shared-pool-evidence.json \
+  --apply
+```
+
+Set `LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID` and
+`LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST` to the exact values
+printed by the bootstrap command, then start `leapview serve --production`.
+Both initialization and pool bootstrap are exact-replay operations. After
+credential acknowledgement, initialization reports that the instance already
+exists and never returns the credential material again. The Compose controller
+performs the initialization and one-time credential handoff atomically; target
+provisioning must still supply the reviewed pool identity and evidence.
 
 The Caddy overlay is enabled by default. Pass `--no-https` only when an existing trusted HTTPS proxy fronts the localhost-bound application port. This changes where TLS terminates, not the external scheme: the generated public URL remains HTTPS, secure cookies remain enabled, and forwarded host and scheme headers must come only from that trusted proxy.
 

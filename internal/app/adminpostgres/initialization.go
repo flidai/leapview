@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/app/config"
+	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	platformbootstrap "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
@@ -47,6 +48,9 @@ func (o Operations) Initialize(ctx context.Context, request adminoffline.Initial
 	key, err := accessFingerprintKey(cfg)
 	if err != nil {
 		return err
+	}
+	if err := deps.PrepareBaseline(ctx, cfg); err != nil {
+		return fmt.Errorf("prepare PostgreSQL control baseline before initialization: %w", err)
 	}
 	pool, err := deps.OpenAccess(ctx, accessConfig)
 	if err != nil {
@@ -203,6 +207,30 @@ func productionAccessConfig(cfg config.Config) (platformpostgres.Config, error) 
 		return platformpostgres.Config{}, fmt.Errorf("invalid PostgreSQL control runtime configuration: %w", err)
 	}
 	return accessConfig, nil
+}
+
+func prepareProductionBaseline(ctx context.Context, cfg config.Config) error {
+	migratorConfig := cfg.PostgresControlPlaneConfig().Migrator
+	if err := migratorConfig.Validate(); err != nil {
+		return fmt.Errorf("invalid PostgreSQL control migrator configuration: %w", err)
+	}
+	pool, err := platformpostgres.OpenControl(ctx, migratorConfig)
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL control migrator: %w", err)
+	}
+	defer pool.Close()
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin PostgreSQL control baseline migration: %w", err)
+	}
+	defer tx.Rollback(context.WithoutCancel(ctx))
+	if err := postgresbaseline.Apply(ctx, tx); err != nil {
+		return fmt.Errorf("apply PostgreSQL control baseline: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit PostgreSQL control baseline: %w", err)
+	}
+	return nil
 }
 
 type nativeLocker struct {

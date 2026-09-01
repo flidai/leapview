@@ -95,6 +95,7 @@ type Dependencies struct {
 	LoadConfig      func() (config.Config, error)
 	OpenMaintenance func(context.Context, platformpostgres.Config) (MaintenancePool, error)
 	OpenAccess      func(context.Context, platformpostgres.Config) (AccessPool, error)
+	PrepareBaseline func(context.Context, config.Config) error
 	VerifyBaseline  func(context.Context, postgresbaseline.RevisionReader) error
 	NewNative       func(postgresmaintenance.NativeDB) (Native, error)
 	NewAccess       func(AccessPool, []byte) (AccessInitializer, error)
@@ -126,6 +127,9 @@ func (d Dependencies) withDefaults() Dependencies {
 		d.OpenAccess = func(ctx context.Context, cfg platformpostgres.Config) (AccessPool, error) {
 			return platformpostgres.OpenControl(ctx, cfg)
 		}
+	}
+	if d.PrepareBaseline == nil {
+		d.PrepareBaseline = prepareProductionBaseline
 	}
 	if d.VerifyBaseline == nil {
 		d.VerifyBaseline = postgresbaseline.Verify

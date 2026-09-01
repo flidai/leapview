@@ -16,7 +16,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/adminpostgres"
 	"github.com/flidai/leapview/internal/app/config"
-	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	extensionfixture "github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -35,7 +34,6 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 
 	fixture := extensionfixture.New(t, "ducklake", "postgres")
 	cfg := postgresOnboardingConfig(t, control, catalog, roles, fixture)
-	applyPostgresOnboardingBaseline(t, cfg)
 
 	operations := adminpostgres.New(adminpostgres.Dependencies{
 		LoadConfig: func() (config.Config, error) { return cfg, nil },
@@ -196,25 +194,5 @@ func postgresOnboardingConfig(t *testing.T, control, catalog *postgrestest.Datab
 		QueryCacheRuntimeMaxEntries: 16, QueryCacheRuntimeMaxBytes: 4 << 20, QueryCacheNodeMaxEntries: 64, QueryCacheNodeMaxBytes: 16 << 20,
 		CSRFKey: strings.Repeat("c", 32), TokenHashKey: strings.Repeat("t", 32), MetricsBearerToken: strings.Repeat("m", 32),
 		APITokenOnlyAuth: true, PublicURL: "https://localhost", AllowedHosts: "localhost",
-	}
-}
-
-func applyPostgresOnboardingBaseline(t *testing.T, cfg config.Config) {
-	t.Helper()
-	pool, err := platformpostgres.OpenControl(t.Context(), cfg.PostgresControlPlaneConfig().Migrator)
-	if err != nil {
-		t.Fatalf("open control migrator: %v", err)
-	}
-	defer pool.Close()
-	tx, err := pool.Begin(t.Context())
-	if err != nil {
-		t.Fatalf("begin control baseline migration: %v", err)
-	}
-	defer tx.Rollback(t.Context())
-	if err := postgresbaseline.Apply(t.Context(), tx); err != nil {
-		t.Fatalf("apply control baseline: %v", err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatalf("commit control baseline: %v", err)
 	}
 }
