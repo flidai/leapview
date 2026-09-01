@@ -101,7 +101,13 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		if h.CSRFToken != nil {
 			csrfToken = h.CSRFToken(r)
 		}
-		if err := ui.DashboardDraftCreatePageWithKey(project.String(), csrfToken, "/dashboards/new", httptransport.NewRequestID()).Render(w); err != nil {
+		models := []ui.DashboardSemanticModelOption{}
+		if h.Metrics != nil {
+			for _, model := range h.Metrics.Catalog().Models {
+				models = append(models, ui.DashboardSemanticModelOption{ID: model.ID.String(), Title: model.Title})
+			}
+		}
+		if err := ui.DashboardDraftCreatePageWithModelsAndKey(project.String(), csrfToken, "/dashboards/new", httptransport.NewRequestID(), models, strings.TrimSpace(r.URL.Query().Get("semanticModel"))).Render(w); err != nil {
 			nethttp.Error(w, "dashboard draft unavailable", nethttp.StatusInternalServerError)
 		}
 		return

@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, GitFork, PencilLine, SlidersHorizontal } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -82,6 +82,8 @@ type DashboardRefreshProgress = {
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @property({ type: String, reflect: true }) presentation: 'app' | 'public' | 'embed' = 'app'
   @property({ type: Boolean, reflect: true, attribute: 'read-only' }) readOnly = false
+  @property({ attribute: 'authoring-action-label' }) authoringActionLabel = ''
+  @property({ attribute: 'authoring-action-href' }) authoringActionHref = ''
   @state() private unsupportedKinds = new Set<string>()
   @state() private optimisticSelections: CanonicalInteractionSelection[] | null = null
   @state() private optimisticSpatialSelections: VisualizationSpatialSelectionState[] | null = null
@@ -382,6 +384,41 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       align-items: center;
       justify-content: flex-end;
       gap: var(--base-size-8);
+    }
+
+    .authoring-action {
+      display: inline-flex;
+      height: var(--control-medium-size);
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-6);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-default);
+      padding: 0 var(--base-size-12);
+      text-decoration: none;
+      white-space: nowrap;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .authoring-action:hover,
+    .authoring-action:focus-visible {
+      background: var(--lv-bg-control-hover);
+      outline: 0;
+    }
+
+    .authoring-action:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .authoring-action svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+      flex: 0 0 auto;
     }
 
     .mobile-page-menu,
@@ -817,13 +854,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-toggle,
-      :host(:not([presentation='embed'])) .agent-toggle {
+      :host(:not([presentation='embed'])) .agent-toggle,
+      :host(:not([presentation='embed'])) .authoring-action {
         width: var(--control-medium-size);
         padding-inline: 0;
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-label,
-      :host(:not([presentation='embed'])) .agent-toggle span {
+      :host(:not([presentation='embed'])) .agent-toggle span,
+      :host(:not([presentation='embed'])) .authoring-action span {
         display: none;
       }
 
@@ -1167,6 +1206,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 						], 'Breadcrumb')}
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
+							${this.authoringActionLabel && this.authoringActionHref ? html`
+							<a
+								class="authoring-action"
+								href=${this.authoringActionHref}
+								aria-label=${this.authoringActionLabel}
+								title=${this.authoringActionLabel}
+							>
+								${this.authoringActionLabel === 'Fork as draft' ? lucideIcon(GitFork) : lucideIcon(PencilLine)}
+								<span>${this.authoringActionLabel}</span>
+							</a>
+							` : nothing}
 							<button
 								type="button"
 								class="icon-button mobile-filter-toggle"

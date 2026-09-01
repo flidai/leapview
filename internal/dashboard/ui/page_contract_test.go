@@ -90,3 +90,21 @@ func TestCanonicalPrivateRouteScopeKeepsDashboardTrafficInsideCandidate(t *testi
 		}
 	}
 }
+
+func TestCanonicalPageExposesOneContextualAuthoringAction(t *testing.T) {
+	report := canonicalPageDefinition(t)
+	var out strings.Builder
+	action := DashboardAuthoringAction{Label: "Continue editing", Href: "/dashboards/report/edit?draft=draft-7&page=showcase"}
+	if err := PageWithRouteScopeAndAgentCommandsAndAuthoring(
+		Presentation{ProductName: "LeapView"}, RouteScope{}, "client", "", dashboard.Catalog{}, report,
+		canonicalPageModel(), report.Pages, report.Pages[0], dashboard.Filters{}, AgentCommandBindings{}, action,
+	).Render(&out); err != nil {
+		t.Fatal(err)
+	}
+	rendered := html.UnescapeString(out.String())
+	for _, want := range []string{`authoring-action-label="Continue editing"`, `authoring-action-href="/dashboards/report/edit?draft=draft-7&page=showcase"`} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("missing %q in page shell: %s", want, rendered)
+		}
+	}
+}

@@ -517,7 +517,11 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		writeDocument(w, projectui.ConnectionAssetPageWithAdministrationForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Versions, administration, h.ConnectionCommands, h.csrf(r), []webpage.Provider{h.layout(r)}))
 		return
 	}
-	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.csrf(r), h.layout(r)))
+	createDashboardHref := ""
+	if projection.Asset.Type == string(projectview.AssetTypeSemanticModel) && h.dashboardCreationAllowed(r) {
+		createDashboardHref = "/dashboards/new?semanticModel=" + url.QueryEscape(projection.Asset.ID)
+	}
+	writeDocument(w, projectui.ProjectAssetPageWithRefreshAndVersionsForEnvironmentAndDashboardCreation(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.csrf(r), createDashboardHref, h.layout(r)))
 }
 
 func (h *BrowserHandler) projectAssets(w stdhttp.ResponseWriter, r *stdhttp.Request, area, activeType string) {

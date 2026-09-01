@@ -28,6 +28,27 @@ test('dashboard fixtures satisfy the fail-closed visualization contract', () => 
   }
 })
 
+test('dashboard exposes its contextual authoring action in the header', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => (document.querySelector('lv-dashboard-page') as any)?.page)
+    const action = await page.locator('lv-dashboard-page').evaluate(async (element: any) => {
+      element.setAttribute('authoring-action-label', 'Continue editing')
+      element.setAttribute('authoring-action-href', '/dashboards/executive-sales/edit?draft=draft-7&page=overview')
+      await element.updateComplete
+      const link = element.shadowRoot.querySelector('.authoring-action') as HTMLAnchorElement
+      return { label: link?.textContent?.trim(), href: link?.getAttribute('href') }
+    })
+    expect(action).toEqual({
+      label: 'Continue editing',
+      href: '/dashboards/executive-sales/edit?draft=draft-7&page=overview',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard refresh loading does not mark unrelated filter controls stale', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {

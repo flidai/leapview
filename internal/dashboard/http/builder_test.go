@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"html"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -53,6 +54,12 @@ type builderAuthoringFake struct {
 	forkResult       authoringservice.Result
 	createRequest    authoringservice.CreateRequest
 	forkRequest      sourceadapter.ForkRequest
+}
+
+type semanticCatalogMetrics struct{ fakeMetrics }
+
+func (semanticCatalogMetrics) Catalog() dashboard.Catalog {
+	return dashboard.Catalog{Project: dashboard.CatalogProject{ID: "sales"}, Models: []dashboard.CatalogModel{{ID: "semantic:orders", Title: "Orders"}, {ID: "semantic:customers", Title: "Customers"}}}
 }
 
 func (f *builderAuthoringFake) Builder(_ context.Context, request builderview.Request) (uisignals.DashboardBuilderSignal, error) {
@@ -126,6 +133,22 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	}
 	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != "fork-form-1" {
 		t.Fatalf("fork request = %#v", fake.forkRequest)
+	}
+}
+
+func TestDashboardDraftCreateOffersAndPreselectsGovernedModels(t *testing.T) {
+	handler := Handler{
+		Authoring:          &builderAuthoringFake{},
+		Metrics:            semanticCatalogMetrics{},
+		ProjectID:          "sales",
+		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
+	}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodGet, "/dashboards/new?semanticModel=semantic%3Acustomers", nil)
+	handler.DashboardDraftCreate(recorder, request)
+	body := html.UnescapeString(recorder.Body.String())
+	if recorder.Code != nethttp.StatusOK || !strings.Contains(body, `<option value="semantic:customers" selected>Customers</option>`) {
+		t.Fatalf("new dashboard model selection = %d body=%s", recorder.Code, body)
 	}
 }
 

@@ -47,6 +47,23 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
+test('catalog introduces authoring as New dashboard', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const action = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      element.setAttribute('create-draft-href', '/dashboards/new')
+      await element.updateComplete
+      const link = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
+      return { label: link?.textContent?.trim(), href: link?.getAttribute('href') }
+    })
+    expect(action).toEqual({ label: 'New dashboard', href: '/dashboards/new' })
+  } finally {
+    await page.close()
+  }
+})
+
 for (const viewport of [
   { name: 'compact desktop', width: 706, height: 793 },
   { name: 'mobile', width: 390, height: 820 },

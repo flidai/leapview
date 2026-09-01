@@ -78,7 +78,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	forkHandler := protectResource(
 		access.CapabilityResourceEdit,
 		dashboardhttp.ProjectObjectRefs,
-		protectResource(access.CapabilityResourceEdit, dashboardhttp.DashboardObjectRefs, h.DashboardDraftFork),
+		protectResource(access.CapabilityResourceRead, dashboardhttp.DashboardObjectRefs, h.DashboardDraftFork),
 	)
 	r.Get("/dashboards/{dashboard}/fork", forkHandler)
 	r.Post("/dashboards/{dashboard}/fork", forkHandler)
