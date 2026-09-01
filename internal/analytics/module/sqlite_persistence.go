@@ -16,8 +16,8 @@ func NewSQLiteConnectionBindings(database *sql.DB, audit access.AuditIntentRecor
 	if database == nil {
 		return nil, errors.New("SQLite analytics database is required")
 	}
-	if audit != nil {
-		return analyticssqlite.NewConnectionBindingRepositoryWithAudit(database, audit), nil
+	if audit == nil {
+		return nil, errors.New("SQLite analytics audit intent recorder is required")
 	}
-	return analyticssqlite.NewConnectionBindingRepository(database), nil
+	return analyticssqlite.NewConnectionBindingRepositoryWithAudit(database, audit), nil
 }

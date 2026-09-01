@@ -18,18 +18,15 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-type ActivationHooks struct{}
-
 // SQLitePersistenceConfig contains the complete explicit local/evaluation
 // adapter construction inputs. Build never infers SQLite from a raw database
 // handle; callers must construct this bundle deliberately.
 type SQLitePersistenceConfig struct {
-	Database        *sql.DB
-	ActivationHooks ActivationHooks
-	Releases        ReleasePort
-	Workflow        jobplatform.WorkflowRecorder
-	CancelJob       jobplatform.WorkflowJobCanceller
-	Audit           access.AuditIntentRecorder
+	Database  *sql.DB
+	Releases  ReleasePort
+	Workflow  jobplatform.WorkflowRecorder
+	CancelJob jobplatform.WorkflowJobCanceller
+	Audit     access.AuditIntentRecorder
 }
 
 // NewSQLiteBootstrapPersistence constructs the durable bootstrap policy and
@@ -51,7 +48,7 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 		return Persistence{}, errors.New("SQLite deployment database is required")
 	}
 	repository, activation, candidates, approvals := newPersistence(
-		config.Database, config.ActivationHooks, config.Releases, config.Workflow,
+		config.Database, config.Releases, config.Workflow,
 		config.CancelJob, config.Audit,
 	)
 	return Persistence{
@@ -71,7 +68,6 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 
 func newPersistence(
 	database *sql.DB,
-	hooks ActivationHooks,
 	releases ReleasePort,
 	workflow jobplatform.WorkflowRecorder,
 	cancelJob jobplatform.WorkflowJobCanceller,

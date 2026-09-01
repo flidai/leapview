@@ -4,11 +4,19 @@ import (
 	"context"
 	"strings"
 	"testing"
+
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 )
 
 func TestNewSQLiteAuditStoreRequiresDatabase(t *testing.T) {
 	if store := NewSQLiteAuditStore(nil); store != nil {
 		t.Fatal("NewSQLiteAuditStore(nil) returned a store")
+	}
+}
+
+func TestNewPostgresPersistenceRejectsUnconfiguredRepository(t *testing.T) {
+	if _, err := NewPostgresPersistence(&accesspostgres.Repository{}, nil); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("unconfigured PostgreSQL repository error = %v", err)
 	}
 }
 

@@ -55,6 +55,12 @@ type Repository struct {
 
 var _ access.Repository = (*Repository)(nil)
 
+// Configured reports whether the authority was created with both native
+// connection state and the required credential fingerprint key.
+func (r *Repository) Configured() bool {
+	return r != nil && r.db != nil && len(r.fingerprintKey) >= 32
+}
+
 // AuditRepository is the operationally stateless transaction-bound audit
 // appender. The non-zero marker gives each allocated authority a distinct Go
 // identity so composition can validate exact adapter wiring.

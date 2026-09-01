@@ -22,14 +22,15 @@ import (
 // PostgreSQL repository; SQLite is available only through NewSQLitePersistence
 // for local development and tests.
 type Persistence struct {
-	Repository  access.Repository
-	OAuth       *mcpoauth.Service
-	Avatar      avatar.Repository
-	Authoring   access.AuthoringAuthRepository
-	Desktop     access.DesktopSessionRepository
-	Snapshot    SnapshotInstaller
-	Publication DashboardPublicationActivator
-	backend     persistenceBackend
+	Repository       access.Repository
+	OAuth            *mcpoauth.Service
+	Avatar           avatar.Repository
+	Authoring        access.AuthoringAuthRepository
+	Desktop          access.DesktopSessionRepository
+	Snapshot         SnapshotInstaller
+	Publication      DashboardPublicationActivator
+	backend          persistenceBackend
+	nativeRepository *accesspostgres.Repository
 	// legacyDatabase is retained only by the explicit SQLite adapter for
 	// constructing the local MCP OAuth service. It is deliberately private so
 	// callers cannot inject a database through the module configuration.
@@ -98,6 +99,25 @@ func (p Persistence) Validate() error {
 	if p.Repository == nil {
 		return errors.New("access repository is required")
 	}
+	if p.backend == backendPostgres && (p.nativeRepository == nil || p.Repository != p.nativeRepository || !p.nativeRepository.Configured()) {
+		return errors.New("PostgreSQL access repository does not match the configured native authority")
+	}
+	if p.backend == backendPostgres {
+		if _, ok := p.Snapshot.(postgresActivationPorts); !ok {
+			return errors.New("PostgreSQL access snapshot authority does not match the configured backend")
+		}
+		if _, ok := p.Publication.(postgresActivationPorts); !ok {
+			return errors.New("PostgreSQL access publication authority does not match the configured backend")
+		}
+	}
+	if p.backend == backendSQLiteLegacy {
+		if _, ok := p.Snapshot.(sqliteActivationPorts); !ok {
+			return errors.New("SQLite access snapshot authority does not match the configured backend")
+		}
+		if _, ok := p.Publication.(sqliteActivationPorts); !ok {
+			return errors.New("SQLite access publication authority does not match the configured backend")
+		}
+	}
 	if _, ok := p.Repository.(access.AuthoringAuthRepository); !ok {
 		return errors.New("access repository does not implement authoring authentication")
 	}
@@ -129,10 +149,13 @@ func NewPostgresPersistence(repository *accesspostgres.Repository, oauth *mcpoau
 	if repository == nil {
 		return Persistence{}, errors.New("PostgreSQL access repository is required")
 	}
+	if !repository.Configured() {
+		return Persistence{}, errors.New("PostgreSQL access repository is not configured")
+	}
 	if oauth != nil && !oauth.IsPostgresBacked() {
 		return Persistence{}, errors.New("PostgreSQL access persistence requires PostgreSQL-backed MCP OAuth state")
 	}
-	p := Persistence{Repository: repository, OAuth: oauth, backend: backendPostgres}
+	p := Persistence{Repository: repository, OAuth: oauth, backend: backendPostgres, nativeRepository: repository}
 	p.Snapshot, p.Publication = postgresActivationPorts{}, postgresActivationPorts{}
 	p.Authoring, _ = any(repository).(access.AuthoringAuthRepository)
 	p.Desktop, _ = any(repository).(access.DesktopSessionRepository)

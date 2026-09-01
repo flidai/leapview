@@ -35,6 +35,12 @@ func TestBuildRejectsUnmarkedOrLegacyAuthorityForProduction(t *testing.T) {
 	}
 }
 
+func TestNewPostgresPersistenceRejectsUnconfiguredRepository(t *testing.T) {
+	if _, err := NewPostgresPersistence(jobpostgres.NewRepository(nil)); err == nil || !strings.Contains(err.Error(), "not configured") {
+		t.Fatalf("unconfigured PostgreSQL repository error = %v", err)
+	}
+}
+
 func TestModuleFailurePayloadOmitsHandlerErrorText(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
 	if err != nil {

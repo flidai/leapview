@@ -588,6 +588,9 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	if data.RefreshPersistence == nil {
 		return errors.New("production runtime composition requires native refresh persistence")
 	}
+	if runtimeConfig.DeliveryTargetReader == nil {
+		return errors.New("production runtime composition requires the canonical delivery target reader")
+	}
 	return nil
 }
 
@@ -791,7 +794,7 @@ func buildApplicationSurfaces(
 	// Persistence is capability-owned in production. A nil SQLite database is
 	// therefore not evidence that the runtime is stateless: native graph
 	// bundles and pre-built job modules are durable authorities too.
-	runtime.persistenceConfigured = data.AuditRuntime != nil || data.RefreshPersistence != nil ||
+	runtime.persistenceConfigured = data.AccessRepo != nil || data.AuditRuntime != nil || data.RefreshPersistence != nil ||
 		capabilities.JobModule != nil || nativePersistenceInputsPresent(data, capabilities)
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
@@ -1219,7 +1222,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if routes.accessModule == nil {
 		return errors.New("application composition requires an explicit access module")
 	}
-	if routes.deploymentModule == nil {
+	// Focused/profile assemblies may intentionally omit the deployment
+	// capability. Real local and production roots always inject an explicit
+	// persistence bundle; the router never manufactures one from a database.
+	if routes.deploymentModule == nil && moduleWorkflow.deploymentConfig.Persistence != nil {
 		config := moduleWorkflow.deploymentConfig
 		config.Logger = platform.logger
 		config.InstanceID = storage.instanceID
@@ -2164,6 +2170,9 @@ func hasActiveBootstrapServingState(
 		if !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
 			return false, fmt.Errorf("read active delivery target: %w", err)
 		}
+		// A configured canonical target authority is definitive. A missing row
+		// means bootstrap is still open; never resurrect stale legacy scope state.
+		return false, nil
 	}
 	if states == nil {
 		return false, errors.New("serving-state repository is unavailable")
@@ -2189,9 +2198,8 @@ func hasActiveBootstrapServingState(
 	if activeCount > 0 {
 		return true, nil
 	}
-	// The legacy scope table is only a compatibility fallback when no canonical
-	// target row exists. A runtime host may still be warming up (or be nil in a
-	// fresh process) while the durable stores have no active generation.
+	// The legacy scope table is used only by local/offline compositions that do
+	// not provide a canonical target authority.
 	return false, nil
 }
 

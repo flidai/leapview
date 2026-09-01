@@ -6,13 +6,17 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform"
+	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
 )
 
@@ -46,13 +50,42 @@ func TestBuildProductionRejectsSQLiteAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: store.SQLDB()})
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return nil }),
+		Workflow:            jobplatform.WorkflowRecorderFunc(func(context.Context, transaction.Transaction, jobs.WorkflowIntent) error { return nil }),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	_, err = Build(t.Context(), Config{Production: true, Persistence: &persistence})
 	if err == nil || !strings.Contains(err.Error(), "native PostgreSQL") {
 		t.Fatalf("production SQLite build error = %v", err)
+	}
+}
+
+func TestNewSQLitePersistenceRequiresAuditIntentRecorder(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: store.SQLDB()}); err == nil || !strings.Contains(err.Error(), "audit intent recorder") {
+		t.Fatalf("missing audit recorder error = %v", err)
+	}
+}
+
+func TestNewSQLitePersistenceRequiresWorkflowRecorder(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	if _, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return nil }),
+	}); err == nil || !strings.Contains(err.Error(), "workflow recorder") {
+		t.Fatalf("missing workflow recorder error = %v", err)
 	}
 }
 

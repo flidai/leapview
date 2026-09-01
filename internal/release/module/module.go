@@ -161,6 +161,12 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 	if config.Database == nil {
 		return Persistence{}, errors.New("SQLite release database is required")
 	}
+	if config.AuditIntentRecorder == nil {
+		return Persistence{}, errors.New("SQLite release audit intent recorder is required")
+	}
+	if config.Workflow == nil {
+		return Persistence{}, errors.New("SQLite release workflow recorder is required")
+	}
 	repository, finalization, catalog, deployments, err := releaseStoresWithAudit(config.Database, config.Workflow, config.AuditIntentRecorder)
 	if err != nil {
 		return Persistence{}, err
@@ -211,6 +217,9 @@ func (p Persistence) validate() error {
 		return errors.New("release persistence surfaces are required")
 	}
 	if p.isPostgres() {
+		if any(p.Finalization) != any(p.native) || any(p.CandidateProvenance) != any(p.native) || any(p.ServingProvenance) != any(p.native) {
+			return errors.New("PostgreSQL release persistence surfaces do not match the configured native authority")
+		}
 		authority, ok := p.native.(postgresAuthority)
 		if !ok || !authority.Configured() || !authority.AuditCapable() || !authority.EventCapable() || !authority.WorkflowCapable() {
 			return errors.New("PostgreSQL release persistence is not fully configured")

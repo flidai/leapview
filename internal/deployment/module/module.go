@@ -185,7 +185,6 @@ type Config struct {
 	States                    ServingStatePort
 	Runtime                   deployment.Runtime
 	ManagedData               deployment.ManagedDataResolver
-	ActivationHooks           ActivationHooks
 	MaxJSONBodyBytes          int64
 	Logger                    *slog.Logger
 	InstanceID                string

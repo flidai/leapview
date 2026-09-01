@@ -94,6 +94,18 @@ func TestHasActiveBootstrapServingStateUsesCanonicalTargetScope(t *testing.T) {
 	}
 }
 
+func TestHasActiveBootstrapServingStateDoesNotFallBackPastCanonicalTarget(t *testing.T) {
+	project := bootstrapProject(t, "project_demo")
+	states := bootstrapStateStoreFake{scopes: []servingstate.ActiveScope{{ProjectID: project, Environment: "prod"}}}
+	active, err := hasActiveBootstrapServingState(context.Background(), nil, states, "prod", bootstrapTargetReaderFake{err: deployment.ErrNotFound}, "target_demo", project.String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active {
+		t.Fatal("legacy serving-state scope overrode missing canonical target")
+	}
+}
+
 func TestBootstrapAPIGenDecision(t *testing.T) {
 	project := bootstrapProject(t, "project_demo")
 	foreign := bootstrapProject(t, "project_foreign")

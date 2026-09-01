@@ -1878,7 +1878,6 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 				slog.Default().Warn("dashboard generation revalidation failed", "project", generation.Identity.ProjectID, "generation", generation.Identity.GenerationID, "error", revalidationErr)
 			}
 		},
-		ActivationHooks:   deploymentmodule.ActivationHooks{},
 		SealedCoordinator: sealedCoordinator, SealedPublishRequest: sealedPublishRequest,
 		SealedRollbackRequest: sealedRollbackRequest, SealedRollbackFence: sealedRollbackFence, RequireSealedCoordinator: true,
 		SealedReconcile: func(ctx context.Context, generationID string) error {

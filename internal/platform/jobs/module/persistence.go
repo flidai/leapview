@@ -30,8 +30,9 @@ type Persistence struct {
 	NativeWorkflow  NativeWorkflowPort
 	NativeCommitter jobs.WorkflowCommitter
 
-	backend        persistenceBackend
-	legacyDatabase *sql.DB
+	backend          persistenceBackend
+	legacyDatabase   *sql.DB
+	nativeRepository *jobpostgres.Repository
 }
 
 type persistenceBackend uint8
@@ -62,9 +63,12 @@ func NewPostgresPersistence(repository *jobpostgres.Repository) (Persistence, er
 	if repository == nil {
 		return Persistence{}, errors.New("PostgreSQL jobs repository is required")
 	}
+	if !repository.Configured() {
+		return Persistence{}, errors.New("PostgreSQL jobs repository is not configured")
+	}
 	return Persistence{
 		Repository: repository, NativeWorkflow: repository,
-		NativeCommitter: repository, backend: backendPostgres,
+		NativeCommitter: repository, backend: backendPostgres, nativeRepository: repository,
 	}, nil
 }
 
@@ -94,6 +98,12 @@ func (p Persistence) validate() error {
 	}
 	switch p.backend {
 	case backendPostgres:
+		if p.nativeRepository == nil || p.Repository != p.nativeRepository || !p.nativeRepository.Configured() {
+			return errors.New("PostgreSQL jobs repository does not match the configured native authority")
+		}
+		if any(p.NativeWorkflow) != any(p.nativeRepository) || any(p.NativeCommitter) != any(p.nativeRepository) {
+			return errors.New("PostgreSQL jobs workflow authorities do not match the configured native repository")
+		}
 		if p.NativeWorkflow == nil || p.NativeCommitter == nil {
 			return errors.New("PostgreSQL jobs workflow and committer are required")
 		}

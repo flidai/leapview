@@ -79,6 +79,10 @@ type Attempt struct {
 
 var _ jobs.Repository = (*Repository)(nil)
 
+// Configured reports whether the repository has a native PostgreSQL query
+// authority. It lets composition reject zero-value repositories at startup.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
 // MaxAttempts is the bounded retry ceiling for jobs created through this
 // adapter. EnqueueInput predates retry policy, so one explicit default is
 // persisted rather than permitting unbounded lease reclaim.

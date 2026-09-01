@@ -70,6 +70,10 @@ func TestProductionRuntimeInputsRequireNativeDurableAuthorities(t *testing.T) {
 		t.Fatalf("missing refresh persistence error = %v", err)
 	}
 	data.RefreshPersistence = &refreshmodule.Persistence{}
+	if err := validateProductionRuntimeInputs(data, capabilities, production); err == nil || !strings.Contains(err.Error(), "delivery target reader") {
+		t.Fatalf("missing delivery target reader error = %v", err)
+	}
+	production.DeliveryTargetReader = bootstrapTargetReaderFake{}
 	if err := validateProductionRuntimeInputs(data, capabilities, production); err != nil {
 		t.Fatalf("complete native production authorities rejected: %v", err)
 	}
