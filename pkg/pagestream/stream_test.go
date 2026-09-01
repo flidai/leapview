@@ -103,6 +103,62 @@ func TestSignalStreamForwardRelaysBrokerPatchesAndCleansUp(t *testing.T) {
 	}
 }
 
+func TestSignalStreamWaitSendsKeepAlivesUntilCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/updates", nil).WithContext(ctx)
+	rec := newSynchronizedRecorder()
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		NewSignalStream(rec, req).wait(ctx, time.Millisecond)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(rec.BodyString(), ": keepalive\n\n") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(rec.BodyString(), ": keepalive\n\n") {
+		t.Fatal("idle stream did not send an SSE keepalive comment")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("idle stream did not stop after cancellation")
+	}
+}
+
+func TestSignalStreamForwardUpdatesKeepsQuietSubscriptionAlive(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	req := httptest.NewRequest(http.MethodGet, "/updates", nil).WithContext(ctx)
+	rec := newSynchronizedRecorder()
+	done := make(chan error, 1)
+
+	go func() {
+		done <- NewSignalStream(rec, req).forwardUpdates(ctx, make(chan SignalPatch), time.Millisecond)
+	}()
+
+	deadline := time.Now().Add(time.Second)
+	for !strings.Contains(rec.BodyString(), ": keepalive\n\n") && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	if !strings.Contains(rec.BodyString(), ": keepalive\n\n") {
+		t.Fatal("quiet forwarded stream did not send an SSE keepalive comment")
+	}
+
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("forward updates: %v", err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("forwarded stream did not stop after cancellation")
+	}
+}
+
 type synchronizedRecorder struct {
 	*httptest.ResponseRecorder
 	mu sync.Mutex
