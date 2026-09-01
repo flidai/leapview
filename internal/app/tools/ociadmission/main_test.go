@@ -46,6 +46,19 @@ func TestHermeticAdmissionContract(t *testing.T) {
 	}
 }
 
+func TestHermeticAdmissionRejectsMismatchedScannerPlatform(t *testing.T) {
+	policyPath, policyHash := testPolicy(t)
+	evidence := writeEvidence(t, policyHash, func(e map[string]any) {
+		e["vulnerabilityPolicy"].(map[string]any)["platform"] = "linux/amd64"
+	})
+	args := append(admissionArgs(policyPath, testImage, evidence), "--platform", "linux/arm64")
+	var output bytes.Buffer
+	err := runAdmission(args, testEnv(nil), &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "hermetic evidence") {
+		t.Fatalf("runAdmission error = %v, want mismatched hermetic scanner platform", err)
+	}
+}
+
 func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 	policyPath, _ := testPolicy(t)
 	tests := []struct {
@@ -74,6 +87,11 @@ func TestLiveAdmissionContractWithFakeTools(t *testing.T) {
 				}
 			} else if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("runAdmission error = %v, want %q", err, tc.want)
+			}
+			if tc.mode == "unavailable" {
+				if strings.Contains(err.Error(), "fixture-token") || !strings.Contains(err.Error(), "registry unavailable with token ***") {
+					t.Fatalf("runAdmission diagnostic = %q, want useful redacted scanner failure", err)
+				}
 			}
 		})
 	}
@@ -104,6 +122,16 @@ func TestLiveAdmissionRejectsMissingVerifier(t *testing.T) {
 	err := runAdmission(liveArgs(policyPath), testEnv(map[string]string{"PATH": t.TempDir(), "GITHUB_TOKEN": "test"}), &output, &output)
 	if err == nil || !strings.Contains(err.Error(), "verifier") || !strings.Contains(err.Error(), "missing") {
 		t.Fatalf("runAdmission error = %v", err)
+	}
+}
+
+func TestAdmissionRejectsInvalidPlatform(t *testing.T) {
+	policyPath, _ := testPolicy(t)
+	args := append(liveArgs(policyPath), "--platform", "linux/ppc64le")
+	var output bytes.Buffer
+	err := runAdmission(args, testEnv(nil), &output, &output)
+	if err == nil || !strings.Contains(err.Error(), "platform") {
+		t.Fatalf("runAdmission error = %v, want invalid platform", err)
 	}
 }
 
@@ -260,7 +288,7 @@ func admissionArgs(policy, image, evidence string) []string {
 }
 
 func liveArgs(policy string) []string {
-	return []string{"--image", testImage, "--repository", "ghcr.io/flidai/leapview", "--expected-workflow", testWorkflow, "--source-revision", testRevision, "--policy", policy}
+	return []string{"--image", testImage, "--repository", "ghcr.io/flidai/leapview", "--expected-workflow", testWorkflow, "--source-revision", testRevision, "--policy", policy, "--platform", "linux/arm64"}
 }
 
 func testEnv(values map[string]string) []string {
@@ -276,7 +304,7 @@ func liveTools(t *testing.T) string {
 	dir := t.TempDir()
 	writeTool(t, filepath.Join(dir, "gh"), "#!/bin/sh\nset -eu\nif [ \"$3\" = --help ]; then exit 0; fi\nrepository='https://github.com/"+repositoryIdentity+"'\nworkflow='https://github.com/"+testWorkflow+"@refs/heads/main'\nrevision='"+testRevision+"'\n[ \"$OCI_TEST_MODE\" = wrong-repository ] && repository='https://github.com/attacker/example'\n[ \"$OCI_TEST_MODE\" = wrong-workflow ] && workflow='https://github.com/flidai/leapview/.github/workflows/untrusted.yml@refs/heads/main'\n[ \"$OCI_TEST_MODE\" = wrong-revision ] && revision='ffffffffffffffffffffffffffffffffffffffff'\nprintf '[{\"verificationResult\":{\"signature\":{\"certificate\":{\"sourceRepositoryURI\":\"%s\",\"buildSignerURI\":\"%s\",\"sourceRepositoryDigest\":\"%s\"}}}}]\\n' \"$repository\" \"$workflow\" \"$revision\"\n")
 	writeTool(t, filepath.Join(dir, "docker"), "#!/bin/sh\nset -eu\ncase \"$*\" in\n  *'imagetools inspect'*)\n    [ \"$OCI_TEST_MODE\" = missing-sbom ] && printf '{}\\n' || printf '{\"SPDX\":{\"SPDXID\":\"SPDXRef-DOCUMENT\"}}\\n';;\n  *) exit 64;;\nesac\n")
-	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\nif [ \"$1\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\n[ \"$OCI_TEST_MODE\" = unavailable ] && exit 70\n[ \"$OCI_TEST_MODE\" = vulnerable ] && printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n' || printf '{\"Results\":[]}\\n'\n")
+	writeTool(t, filepath.Join(dir, "trivy"), "#!/bin/sh\nset -eu\nif [ \"$1\" = version ]; then printf '{\"Version\":\"0.74.0\"}\\n'; exit 0; fi\ncase \" $* \" in *' --platform linux/arm64 '*) ;; *) printf 'target platform was not explicit\\n' >&2; exit 71;; esac\nif [ \"$OCI_TEST_MODE\" = unavailable ]; then printf 'registry unavailable with token %s\\n' \"$GH_TOKEN\" >&2; exit 70; fi\n[ \"$OCI_TEST_MODE\" = vulnerable ] && printf '{\"Results\":[{\"Vulnerabilities\":[{\"VulnerabilityID\":\"CVE-2026-0001\"}]}]}\\n' || printf '{\"Results\":[]}\\n'\n")
 	return dir
 }
 

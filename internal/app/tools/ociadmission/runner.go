@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os"
 	"os/exec"
@@ -68,9 +69,15 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 	if *policy.IgnoreUnfixed {
 		args = append(args, "--ignore-unfixed")
 	}
+	if opts.platform != "" {
+		args = append(args, "--platform", opts.platform)
+	}
 	args = append(args, opts.image)
-	trivyJSON, err := r.runCommandParts(args)
+	trivyJSON, diagnostic, err := r.runCommandPartsWithDiagnostic(args)
 	if err != nil {
+		if diagnostic != "" {
+			return fmt.Errorf("pinned vulnerability scan could not complete: %s", diagnostic)
+		}
 		return errors.New("pinned vulnerability scan could not complete")
 	}
 	unresolved, err := unresolvedCount(trivyJSON, contract)
@@ -85,11 +92,15 @@ func (r commandRunner) verifyLive(opts admissionOptions, policy vulnerabilityPol
 		return errors.New("vulnerability evidence exceeds policy")
 	}
 	digest := opts.image[strings.LastIndex(opts.image, "@")+1:]
+	vulnerabilityResult := map[string]any{"sha256": policySHA256, "scanner": "trivy", "passed": true}
+	if opts.platform != "" {
+		vulnerabilityResult["platform"] = opts.platform
+	}
 	result := map[string]any{
 		"schemaVersion": 1, "image": opts.image, "digest": digest, "registryDigest": digest,
 		"attestation":         map[string]any{"verified": true, "repository": repositoryIdentity, "workflow": opts.expectedWorkflow, "sourceRevision": opts.sourceRevision},
 		"sbom":                map[string]any{"discoverable": true, "predicateType": "https://spdx.dev/Document/v2.3"},
-		"vulnerabilityPolicy": map[string]any{"sha256": policySHA256, "scanner": "trivy", "passed": true},
+		"vulnerabilityPolicy": vulnerabilityResult,
 	}
 	return writeResult(opts, r.env, result, stdout)
 }
@@ -133,6 +144,37 @@ func (r commandRunner) runCommandParts(parts []string) ([]byte, error) {
 		return nil, errors.New("empty command")
 	}
 	return r.run(parts[0], parts[1:], "")
+}
+
+func (r commandRunner) runCommandPartsWithDiagnostic(parts []string) ([]byte, string, error) {
+	if len(parts) == 0 {
+		return nil, "", errors.New("empty command")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), commandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, parts[0], parts[1:]...)
+	cmd.Env = r.env
+	var diagnostic strings.Builder
+	cmd.Stderr = &diagnostic
+	output, err := cmd.Output()
+	if ctx.Err() != nil {
+		err = ctx.Err()
+	}
+	return output, r.redactDiagnostic(diagnostic.String()), err
+}
+
+func (r commandRunner) redactDiagnostic(value string) string {
+	value = strings.TrimSpace(value)
+	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
+		if secret, ok := envValue(r.env, key); ok && secret != "" {
+			value = strings.ReplaceAll(value, secret, "***")
+		}
+	}
+	const limit = 2000
+	if len(value) > limit {
+		value = value[:limit] + "..."
+	}
+	return value
 }
 
 func (r commandRunner) loadExceptionContract(policyPath string) (*securitypolicy.Exceptions, error) {
