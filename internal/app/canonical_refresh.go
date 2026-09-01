@@ -7,15 +7,62 @@ import (
 	"fmt"
 	"strings"
 
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
 
 type canonicalRefreshDeliveryReader interface {
 	deployment.DeliveryReader
 	ActiveDeliveryGenerationForTarget(context.Context, string, string, string) (deployment.DeliveryGeneration, error)
+}
+
+// canonicalPublishedDataVersion resolves the baseline freshness established
+// by the active sealed publication. Later semantic-model refreshes persist
+// their own data version and take precedence in the refresh module.
+func canonicalPublishedDataVersion(
+	reader canonicalRefreshDeliveryReader,
+	targetID string,
+) refreshmodule.PublishedDataVersionResolver {
+	return func(ctx context.Context, identity projectgraph.ServingIdentity) (refreshmodule.PublishedDataVersion, bool, error) {
+		if reader == nil || targetID == "" {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("canonical publication data version is unavailable")
+		}
+		if err := identity.Validate(); err != nil {
+			return refreshmodule.PublishedDataVersion{}, false, err
+		}
+		generation, err := reader.ActiveDeliveryGenerationForTarget(ctx, targetID, identity.ProjectID.String(), identity.Environment)
+		if err != nil {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("resolve canonical publication generation: %w", err)
+		}
+		if generation.ServingStateID != identity.GenerationID || generation.Status != deployment.DeliveryGenerationActive || generation.ActivatedAt.IsZero() {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("canonical publication generation does not match the active refresh identity")
+		}
+		candidate, err := reader.DeliveryCandidateByID(ctx, generation.CandidateID)
+		if err != nil {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("resolve canonical publication candidate: %w", err)
+		}
+		if candidate.ID != generation.CandidateID || candidate.ServingStateID != identity.GenerationID || candidate.SealID == "" {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("canonical publication candidate identity is inconsistent")
+		}
+		seal, err := reader.DeliveryCatalogSealByID(ctx, candidate.SealID)
+		if err != nil {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("resolve canonical publication seal: %w", err)
+		}
+		attempt, err := reader.DeliveryBuildAttemptByID(ctx, seal.AttemptID)
+		if err != nil {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("resolve canonical publication snapshot: %w", err)
+		}
+		if attempt.CandidateID != candidate.ID || attempt.Status != deployment.DeliveryBuildSealed || attempt.QualifiedSnapshotID <= 0 {
+			return refreshmodule.PublishedDataVersion{}, false, fmt.Errorf("canonical publication snapshot evidence is inconsistent")
+		}
+		return refreshmodule.PublishedDataVersion{
+			SnapshotID: attempt.QualifiedSnapshotID, RefreshedAt: generation.ActivatedAt.UTC(),
+		}, true, nil
+	}
 }
 
 func canonicalRefreshSourceDigest(
@@ -55,10 +102,14 @@ func canonicalRefreshExecutor(
 	mutations deploymentmodule.DeliveryMutationPort,
 	reader canonicalRefreshDeliveryReader,
 	targetID string,
+	allowLocalDevelopmentAuthorization bool,
 ) func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
 	return func(ctx context.Context, job refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error) {
 		if mutations == nil || reader == nil || targetID == "" {
 			return refreshrun.CanonicalRefreshResult{}, fmt.Errorf("canonical refresh delivery is unavailable")
+		}
+		if allowLocalDevelopmentAuthorization && job.PrincipalID == accessmodule.LocalDeveloperPrincipal().ID {
+			ctx = accessmodule.WithPrincipal(ctx, accessmodule.LocalDeveloperPrincipal())
 		}
 		planKey := "refresh-plan-" + job.RunID
 		expectedPlanID := deploymentmodule.CanonicalDeliveryPlanID(
