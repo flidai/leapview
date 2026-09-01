@@ -52,6 +52,13 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 	}
 }
 
+func TestQualificationAuthoringUsesUnprivilegedClientProjectCopy(t *testing.T) {
+	options := normalizeQualificationAuthoringOptions(qualificationAuthoringOptions{
+		Image: "leapview:test",
+	})
+	require.Equal(t, "/workspace/evaluation/project/leapview.yaml", options.Project)
+}
+
 func TestQualificationLoginKeepsDiagnosticsOutOfJSONEventStream(t *testing.T) {
 	bin := t.TempDir()
 	leapview := filepath.Join(bin, "leapview")

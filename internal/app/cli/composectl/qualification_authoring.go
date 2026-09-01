@@ -604,7 +604,10 @@ func normalizeQualificationAuthoringOptions(options qualificationAuthoringOption
 		options.Target = "https://localhost"
 	}
 	if options.Project == "" {
-		options.Project = "/app/evaluation/project/leapview.yaml"
+		// The client image copies and re-owns the fixture under /workspace so the
+		// unprivileged author user can traverse and read it. The base image's
+		// /app copy deliberately retains production runtime ownership.
+		options.Project = "/workspace/evaluation/project/leapview.yaml"
 	}
 	if options.ProjectID == "" {
 		options.ProjectID = "project:leapview-evaluation"
