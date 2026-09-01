@@ -76,6 +76,24 @@ printf '%s\n' '{"schemaVersion":1,"type":"authenticated"}'
 	}, challenge)
 }
 
+func TestQualificationLoginReportsCommandFailureBeforeIncompleteStream(t *testing.T) {
+	bin := t.TempDir()
+	leapview := filepath.Join(bin, "leapview")
+	script := `#!/bin/sh
+printf '%s\n' '{"schemaVersion":1,"type":"deviceChallenge","verificationUrl":"https://example.test/device","userCode":"ABCD-EFGH"}'
+printf '%s\n' 'native credential storage unavailable' >&2
+exit 1
+`
+	require.NoError(t, os.WriteFile(leapview, []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	err := runQualificationLogin(t.Context(), os.Environ(), QualificationClientWorkerOptions{
+		Target: "https://example.test", Project: "dashboards/leapview.yaml",
+	}, func(qualificationLoginChallenge) error { return nil })
+	require.ErrorContains(t, err, "native credential storage unavailable")
+	require.NotContains(t, err.Error(), "login event stream is incomplete")
+}
+
 func TestQualificationPlanEvidenceUsesSharedCandidateIdentityDomains(t *testing.T) {
 	candidate := QualificationCandidate{
 		PlanDigest: "sha256:plan", ArtifactDigest: "sha256:artifact",

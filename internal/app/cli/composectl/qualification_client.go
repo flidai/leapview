@@ -359,11 +359,11 @@ func runQualificationLogin(
 	_ = writer.Close()
 	scanErr := <-scanned
 	_ = reader.Close()
-	if scanErr != nil {
-		return fmt.Errorf("read leapview login: %w", scanErr)
-	}
 	if waitErr != nil {
 		return fmt.Errorf("leapview login: %w: %s", waitErr, redactQualificationLog(output.Bytes(), 100))
+	}
+	if scanErr != nil {
+		return fmt.Errorf("read leapview login: %w", scanErr)
 	}
 	return nil
 }
