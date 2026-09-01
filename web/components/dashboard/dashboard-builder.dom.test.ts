@@ -809,6 +809,61 @@ test('dashboard builder edits page name and grid through the page Format contrac
   }
 })
 
+test('dashboard builder exposes page settings from the active tab and page actions menu', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const selectionEvents: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-visual-select', (event: CustomEvent) => selectionEvents.push(event.detail))
+      ;(root.querySelector('.page-tab[data-page-id="overview"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const fromTab = {
+        selectedVisuals: root.querySelectorAll('.visual[data-selected="true"]').length,
+        inspectorTab: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
+        paneLabel: root.querySelector('.visual-builder')?.getAttribute('aria-label'),
+        title: root.querySelector('.visual-builder .pane-title')?.textContent?.trim(),
+        badge: root.querySelector('.visual-builder .visual-type-badge')?.textContent?.trim(),
+        panel: root.querySelector('.visual-builder [role="tabpanel"]')?.getAttribute('aria-label'),
+      }
+      ;(root.querySelector('[data-pane-toggle="visuals"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const menu = root.querySelector('.page-actions') as HTMLDetailsElement
+      menu.open = true
+      ;(menu.querySelector('[data-page-action="settings"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return {
+        fromTab,
+        menuLabels: Array.from(menu.querySelectorAll('button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
+        settingsHasIcon: Boolean(menu.querySelector('[data-page-action="settings"] svg[data-lucide="icon"]')),
+        paneReopened: root.querySelector('.visual-builder')?.getAttribute('data-collapsed'),
+        inspectorTab: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
+        menuOpen: menu.open,
+        selectionEvents,
+      }
+    })
+    expect(state.fromTab).toEqual({
+      selectedVisuals: 0,
+      inspectorTab: 'format',
+      paneLabel: 'Page properties',
+      title: 'Overview',
+      badge: 'Page',
+      panel: 'Format page',
+    })
+    expect(state.menuLabels[0]).toBe('Page settings')
+    expect(state.settingsHasIcon).toBe(true)
+    expect(state.paneReopened).toBe('false')
+    expect(state.inspectorTab).toBe('format')
+    expect(state.menuOpen).toBe(false)
+    expect(state.selectionEvents.at(-1)).toMatchObject({ visualId: '' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder reorders, duplicates, and immediately deletes pages through bounded commands', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -831,7 +886,7 @@ test('dashboard builder reorders, duplicates, and immediately deletes pages thro
       await element.updateComplete
       const menu = root.querySelector('.page-actions') as HTMLDetailsElement
       menu.open = true
-      ;(menu.querySelector('button:nth-of-type(3)') as HTMLButtonElement).click()
+      ;(menu.querySelector('button:nth-of-type(4)') as HTMLButtonElement).click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       await element.updateComplete
@@ -854,7 +909,7 @@ test('dashboard builder reorders, duplicates, and immediately deletes pages thro
       }
     })
     expect(state.deleteDisabled).toBe(false)
-    expect(state.actionLabels).toEqual(['Move earlier', 'Move later', 'Duplicate page', 'Delete page'])
+    expect(state.actionLabels).toEqual(['Page settings', 'Move earlier', 'Move later', 'Duplicate page', 'Delete page'])
     expect(state.commands[0]).toMatchObject({ action: 'move_page', pageId: 'overview', index: 1 })
     expect(state.commands[1]).toMatchObject({ action: 'duplicate_page', pageId: 'overview', newPageId: '', title: 'Overview copy' })
     expect(state.commands[2]).toMatchObject({ action: 'remove_page', pageId: 'overview' })
@@ -1768,11 +1823,17 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
       element.setAttribute('page-base-href', '/dashboards/revenue/builder?draft=draft-7')
       await element.updateComplete
       const root = element.shadowRoot
+      const activePage = root.querySelector('.page-tab[aria-current="page"]') as HTMLAnchorElement
+      const activeNavigationCanceled = !activePage.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
+      await element.updateComplete
       return {
         href: root.querySelector('.page-tab[href*="page=details"]')?.getAttribute('href'),
         currentPage: root.querySelector('.page-tab[aria-current="page"]')?.textContent?.trim(),
         routeTabRole: root.querySelector('.page-tab')?.getAttribute('role'),
         tablistRole: root.querySelector('.page-tabs')?.getAttribute('role'),
+        activeNavigationCanceled,
+        inspectorTab: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
+        paneLabel: root.querySelector('.visual-builder')?.getAttribute('aria-label'),
       }
     })
     expect(state).toEqual({
@@ -1780,6 +1841,9 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
       currentPage: 'Overview',
       routeTabRole: null,
       tablistRole: null,
+      activeNavigationCanceled: true,
+      inspectorTab: 'format',
+      paneLabel: 'Page properties',
     })
   } finally {
     await page.close()
