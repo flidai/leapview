@@ -562,6 +562,11 @@ func (m *Module) RequestDeliveryPublicationApproval(
 			m.writeCommandFailure(w, r, deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval(), mapNativeApprovalError(err))
 			return
 		}
+		operationID := deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval()
+		if err := completeNativeApprovalCommand(r.Context(), m.nativeDeliveryApproval, operationID.APIGenOperationID(), "delivery.publication.approval_requested", approval, nativepostgres.ApprovalActionRequest); err != nil {
+			m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(err))
+			return
+		}
 		w.Header().Set("Location", approvalLocation(project, publicationID, approval.RequestID))
 		apitransport.WriteJSON(w, http.StatusCreated, nativeApprovalResponse(project, m.handlerEnvironment(), approval))
 		return
@@ -769,6 +774,19 @@ func (m *Module) transitionNativeDeliveryPublicationApproval(w http.ResponseWrit
 		err = nativepostgres.ErrApprovalInvalid
 	}
 	if err != nil {
+		m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(err))
+		return
+	}
+	action := nativepostgres.ApprovalActionRevoke
+	eventType := "delivery.publication.approval_revoked"
+	if decision == approvalDecisionApprove {
+		action = nativepostgres.ApprovalActionApprove
+		eventType = "delivery.publication.approved"
+	} else if decision == approvalDecisionDeny {
+		action = nativepostgres.ApprovalActionDeny
+		eventType = "delivery.publication.denied"
+	}
+	if err := completeNativeApprovalCommand(r.Context(), m.nativeDeliveryApproval, operationID.APIGenOperationID(), eventType, approval, action); err != nil {
 		m.writeCommandFailure(w, r, operationID, mapNativeApprovalError(err))
 		return
 	}

@@ -238,64 +238,105 @@ type NativeDeliveryMutationFuncs struct {
 	Build func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error)
 }
 
-func completeNativePlanCommand(ctx context.Context, port NativeDeliveryMutationPort, plan NativeDeliveryPlan) error {
-	operationID, generated := apigencommand.OperationID(ctx)
+// executeNativeDeliveryCommand applies the generated command contract to a
+// native mutation that has already committed. The durable completer remains
+// the source of verification evidence; the generated executor owns the
+// guarantee and marks the transport guard complete only after verification
+// succeeds. Calls made outside a generated transport retain their historical
+// no-op behavior so refresh/non-HTTP workers can invoke coordinators directly.
+func executeNativeDeliveryCommand(
+	ctx context.Context,
+	operationID, auditAction string,
+	verify func(context.Context) error,
+	execute func(context.Context, *apigencommand.Executor, apigencommand.Execution) error,
+) error {
+	activeOperation, generated := apigencommand.OperationID(ctx)
 	if !generated {
 		return nil
 	}
-	if operationID != deploymentgen.GenCommandOperationCreateDeliveryPlan().APIGenOperationID() {
-		return fmt.Errorf("%w: active %q is not native plan creation", apigencommand.ErrOperationMismatch, operationID)
+	if activeOperation != operationID {
+		return fmt.Errorf("%w: active %q, completing %q", apigencommand.ErrOperationMismatch, activeOperation, operationID)
 	}
-	completer, ok := port.(NativeDeliveryCommandCompleter)
-	if !ok {
+	if verify == nil || execute == nil {
 		return ErrDeliveryInputUnavailable
 	}
-	return completer.CompleteNativePlanCommand(ctx, plan)
+	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, nil)
+	if err != nil {
+		return err
+	}
+	return execute(ctx, executor, apigencommand.Execution{Transactional: func(verifyCtx context.Context, contract apigencommand.Contract) error {
+		if contract.Guarantee != apigencommand.GuaranteeTransactional {
+			return fmt.Errorf("%w: native delivery command %q does not provide transactional auditing", apigencommand.ErrInvalidContract, operationID)
+		}
+		if contract.AuditAction != auditAction {
+			return fmt.Errorf("%w: native delivery command %q audit action is %q, want %q", apigencommand.ErrInvalidContract, operationID, contract.AuditAction, auditAction)
+		}
+		return verify(verifyCtx)
+	}})
+}
+
+func completeNativePlanCommand(ctx context.Context, port NativeDeliveryMutationPort, plan NativeDeliveryPlan) error {
+	operationID := deploymentgen.GenCommandOperationCreateDeliveryPlan().APIGenOperationID()
+	completer, generated := port.(NativeDeliveryCommandCompleter)
+	if !generated {
+		if _, active := apigencommand.OperationID(ctx); active {
+			return ErrDeliveryInputUnavailable
+		}
+		return nil
+	}
+	return executeNativeDeliveryCommand(ctx, operationID, "delivery.plan.created", func(verifyCtx context.Context) error {
+		return completer.CompleteNativePlanCommand(verifyCtx, plan)
+	}, func(execCtx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return deploymentgen.ExecuteGenCreateDeliveryPlanCommand(execCtx, executor, deploymentgen.GenCreateDeliveryPlanCommandInvocation{}, execution)
+	})
 }
 
 func completeNativeBuildCommand(ctx context.Context, port NativeDeliveryMutationPort, build NativeDeliveryBuild) error {
-	operationID, generated := apigencommand.OperationID(ctx)
+	operationID := deploymentgen.GenCommandOperationBuildDeliveryPlan().APIGenOperationID()
+	completer, generated := port.(NativeDeliveryCommandCompleter)
 	if !generated {
+		if _, active := apigencommand.OperationID(ctx); active {
+			return ErrDeliveryInputUnavailable
+		}
 		return nil
 	}
-	if operationID != deploymentgen.GenCommandOperationBuildDeliveryPlan().APIGenOperationID() {
-		return fmt.Errorf("%w: active %q is not native plan build", apigencommand.ErrOperationMismatch, operationID)
-	}
-	completer, ok := port.(NativeDeliveryCommandCompleter)
-	if !ok {
-		return ErrDeliveryInputUnavailable
-	}
-	return completer.CompleteNativeBuildCommand(ctx, build)
+	return executeNativeDeliveryCommand(ctx, operationID, "delivery.build.sealed", func(verifyCtx context.Context) error {
+		return completer.CompleteNativeBuildCommand(verifyCtx, build)
+	}, func(execCtx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return deploymentgen.ExecuteGenBuildDeliveryPlanCommand(execCtx, executor, deploymentgen.GenBuildDeliveryPlanCommandInvocation{}, execution)
+	})
 }
 
 func completeNativePublishCommand(ctx context.Context, port NativeDeliveryPublicationPort, publication NativeDeliveryPublication) error {
-	operationID, generated := apigencommand.OperationID(ctx)
+	operationID := deploymentgen.GenCommandOperationPublishDeliveryCandidate().APIGenOperationID()
+	completer, generated := port.(NativeDeliveryPublicationCommandCompleter)
 	if !generated {
+		if _, active := apigencommand.OperationID(ctx); active {
+			return ErrDeliveryInputUnavailable
+		}
 		return nil
 	}
-	if operationID != deploymentgen.GenCommandOperationPublishDeliveryCandidate().APIGenOperationID() {
-		return fmt.Errorf("%w: active %q is not native candidate publication", apigencommand.ErrOperationMismatch, operationID)
-	}
-	completer, ok := port.(NativeDeliveryPublicationCommandCompleter)
-	if !ok {
-		return ErrDeliveryInputUnavailable
-	}
-	return completer.CompleteNativePublishCommand(ctx, publication)
+	return executeNativeDeliveryCommand(ctx, operationID, "delivery.publication.requested", func(verifyCtx context.Context) error {
+		return completer.CompleteNativePublishCommand(verifyCtx, publication)
+	}, func(execCtx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return deploymentgen.ExecuteGenPublishDeliveryCandidateCommand(execCtx, executor, deploymentgen.GenPublishDeliveryCandidateCommandInvocation{}, execution)
+	})
 }
 
 func completeNativeRollbackCommand(ctx context.Context, port NativeDeliveryPublicationPort, publication NativeDeliveryPublication) error {
-	operationID, generated := apigencommand.OperationID(ctx)
+	operationID := deploymentgen.GenCommandOperationRollbackDeliveryGeneration().APIGenOperationID()
+	completer, generated := port.(NativeDeliveryPublicationCommandCompleter)
 	if !generated {
+		if _, active := apigencommand.OperationID(ctx); active {
+			return ErrDeliveryInputUnavailable
+		}
 		return nil
 	}
-	if operationID != deploymentgen.GenCommandOperationRollbackDeliveryGeneration().APIGenOperationID() {
-		return fmt.Errorf("%w: active %q is not native generation rollback", apigencommand.ErrOperationMismatch, operationID)
-	}
-	completer, ok := port.(NativeDeliveryPublicationCommandCompleter)
-	if !ok {
-		return ErrDeliveryInputUnavailable
-	}
-	return completer.CompleteNativeRollbackCommand(ctx, publication)
+	return executeNativeDeliveryCommand(ctx, operationID, "delivery.rollback.requested", func(verifyCtx context.Context) error {
+		return completer.CompleteNativeRollbackCommand(verifyCtx, publication)
+	}, func(execCtx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		return deploymentgen.ExecuteGenRollbackDeliveryGenerationCommand(execCtx, executor, deploymentgen.GenRollbackDeliveryGenerationCommandInvocation{}, execution)
+	})
 }
 
 var _ NativeDeliveryMutationPort = NativeDeliveryMutationFuncs{}

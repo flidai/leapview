@@ -4,9 +4,12 @@ import (
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
+	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	depauth "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/google/uuid"
 )
@@ -20,6 +23,44 @@ type NativeDeliveryApprovalPort interface {
 	ApprovePublicationApproval(context.Context, NativeApprovalDecision) (depauth.ApprovalRequest, error)
 	DenyPublicationApproval(context.Context, NativeApprovalDecision) (depauth.ApprovalRequest, error)
 	RevokePublicationApproval(context.Context, NativeApprovalDecision) (depauth.ApprovalRequest, error)
+}
+
+// NativeDeliveryApprovalCommandCompleter is an optional verification seam for
+// generated HTTP command guards. Implementations reread the approval request
+// and its latest decision after the authority's atomic mutation has committed.
+// Refresh and other non-HTTP callers do not need to provide this capability.
+type NativeDeliveryApprovalCommandCompleter interface {
+	CompleteNativeApprovalRequestCommand(context.Context, depauth.ApprovalRequest) error
+	CompleteNativeApprovalDecisionCommand(context.Context, depauth.ApprovalRequest, depauth.ApprovalAction) error
+}
+
+func completeNativeApprovalCommand(ctx context.Context, port NativeDeliveryApprovalPort, operationID, auditAction string, approval depauth.ApprovalRequest, action depauth.ApprovalAction) error {
+	completer, implementsCompletion := port.(NativeDeliveryApprovalCommandCompleter)
+	if !implementsCompletion {
+		if _, generated := apigencommand.OperationID(ctx); generated {
+			return ErrDeliveryInputUnavailable
+		}
+		return nil
+	}
+	return executeNativeDeliveryCommand(ctx, operationID, auditAction, func(verifyCtx context.Context) error {
+		if action == depauth.ApprovalActionRequest {
+			return completer.CompleteNativeApprovalRequestCommand(verifyCtx, approval)
+		}
+		return completer.CompleteNativeApprovalDecisionCommand(verifyCtx, approval, action)
+	}, func(execCtx context.Context, executor *apigencommand.Executor, execution apigencommand.Execution) error {
+		switch operationID {
+		case deploymentgen.GenCommandOperationRequestDeliveryPublicationApproval().APIGenOperationID():
+			return deploymentgen.ExecuteGenRequestDeliveryPublicationApprovalCommand(execCtx, executor, deploymentgen.GenRequestDeliveryPublicationApprovalCommandInvocation{}, execution)
+		case deploymentgen.GenCommandOperationApproveDeliveryPublicationApproval().APIGenOperationID():
+			return deploymentgen.ExecuteGenApproveDeliveryPublicationApprovalCommand(execCtx, executor, deploymentgen.GenApproveDeliveryPublicationApprovalCommandInvocation{}, execution)
+		case deploymentgen.GenCommandOperationDenyDeliveryPublicationApproval().APIGenOperationID():
+			return deploymentgen.ExecuteGenDenyDeliveryPublicationApprovalCommand(execCtx, executor, deploymentgen.GenDenyDeliveryPublicationApprovalCommandInvocation{}, execution)
+		case deploymentgen.GenCommandOperationRevokeDeliveryPublicationApproval().APIGenOperationID():
+			return deploymentgen.ExecuteGenRevokeDeliveryPublicationApprovalCommand(execCtx, executor, deploymentgen.GenRevokeDeliveryPublicationApprovalCommandInvocation{}, execution)
+		default:
+			return fmt.Errorf("%w: unsupported native approval operation %q", apigencommand.ErrOperationMismatch, operationID)
+		}
+	})
 }
 
 type NativeApprovalRequest struct {
@@ -168,6 +209,85 @@ func (c *nativeApprovalCoordinator) DenyPublicationApproval(ctx context.Context,
 }
 func (c *nativeApprovalCoordinator) RevokePublicationApproval(ctx context.Context, input NativeApprovalDecision) (depauth.ApprovalRequest, error) {
 	return c.decide(ctx, input, depauth.ApprovalActionRevoke)
+}
+
+// CompleteNativeApprovalRequestCommand rereads the immutable approval row
+// after the authority's transaction commits. The authority has already
+// required operation/event/audit appenders in that transaction; comparing the
+// returned projection with the reread row prevents a forged or partial
+// projection from satisfying the generated command guard.
+func (c *nativeApprovalCoordinator) CompleteNativeApprovalRequestCommand(ctx context.Context, approval depauth.ApprovalRequest) error {
+	if c == nil || c.authority == nil {
+		return ErrDeliveryInputUnavailable
+	}
+	if err := validateNativeApprovalEvidence(approval, depauth.ApprovalActionRequest); err != nil {
+		return err
+	}
+	persisted, err := c.authority.RequestByID(ctx, approval.RequestID)
+	if err != nil {
+		return err
+	}
+	if !reflect.DeepEqual(persisted, approval) {
+		return fmt.Errorf("%w: persisted native approval request differs from returned evidence", depauth.ErrApprovalConflict)
+	}
+	return nil
+}
+
+// CompleteNativeApprovalDecisionCommand rereads the request and latest
+// append-only decision, then checks the exact decision action and evidence
+// identities returned by the mutation.
+func (c *nativeApprovalCoordinator) CompleteNativeApprovalDecisionCommand(ctx context.Context, approval depauth.ApprovalRequest, action depauth.ApprovalAction) error {
+	if c == nil || c.authority == nil {
+		return ErrDeliveryInputUnavailable
+	}
+	if action == depauth.ApprovalActionRequest {
+		return fmt.Errorf("%w: decision completion requires a decision action", depauth.ErrApprovalInvalid)
+	}
+	if err := validateNativeApprovalEvidence(approval, action); err != nil {
+		return err
+	}
+	persisted, err := c.authority.RequestByID(ctx, approval.RequestID)
+	if err != nil {
+		return err
+	}
+	// ApprovalAuthority returns the current projection on exact idempotent
+	// retries, even if a later decision has advanced the request. The durable
+	// operation identity/evidence has already been checked by the authority, so
+	// completion must not require the latest decision to repeat this action.
+	if persisted.LatestDecision == nil || !reflect.DeepEqual(persisted, approval) {
+		return fmt.Errorf("%w: persisted native approval decision differs from returned evidence", depauth.ErrApprovalConflict)
+	}
+	return nil
+}
+
+func validateNativeApprovalEvidence(approval depauth.ApprovalRequest, action depauth.ApprovalAction) error {
+	if action != depauth.ApprovalActionRequest && action != depauth.ApprovalActionApprove && action != depauth.ApprovalActionDeny && action != depauth.ApprovalActionRevoke {
+		return fmt.Errorf("%w: unsupported native approval action %q", depauth.ErrApprovalInvalid, action)
+	}
+	if strings.TrimSpace(approval.RequestID) == "" || strings.TrimSpace(approval.PublicationID) == "" || strings.TrimSpace(approval.TargetID) == "" ||
+		strings.TrimSpace(approval.CandidateID) == "" || strings.TrimSpace(approval.GenerationID) == "" || strings.TrimSpace(approval.RequestDigest) == "" ||
+		!canonicalApprovalEvidenceID(approval.Evidence.OperationID) || !canonicalApprovalEvidenceID(approval.Evidence.EventID) || !canonicalApprovalEvidenceID(approval.Evidence.AuditID) {
+		return fmt.Errorf("%w: native approval evidence is incomplete", depauth.ErrApprovalConflict)
+	}
+	if action == depauth.ApprovalActionRequest {
+		if approval.LatestDecision == nil {
+			return nil
+		}
+	} else if approval.LatestDecision == nil {
+		return fmt.Errorf("%w: native approval decision evidence is incomplete", depauth.ErrApprovalConflict)
+	}
+	if approval.LatestDecision != nil && (approval.LatestDecision.RequestID != approval.RequestID ||
+		!canonicalApprovalEvidenceID(approval.LatestDecision.DecisionID) || !canonicalApprovalEvidenceID(approval.LatestDecision.Evidence.OperationID) ||
+		!canonicalApprovalEvidenceID(approval.LatestDecision.Evidence.EventID) || !canonicalApprovalEvidenceID(approval.LatestDecision.Evidence.AuditID) ||
+		(approval.LatestDecision.Decision != depauth.ApprovalActionApprove && approval.LatestDecision.Decision != depauth.ApprovalActionDeny && approval.LatestDecision.Decision != depauth.ApprovalActionRevoke)) {
+		return fmt.Errorf("%w: native approval decision evidence is incomplete", depauth.ErrApprovalConflict)
+	}
+	return nil
+}
+
+func canonicalApprovalEvidenceID(value string) bool {
+	id, err := uuid.Parse(value)
+	return err == nil && id != uuid.Nil && id.String() == value
 }
 
 func approvalEvidenceFor(seed string, action depauth.ApprovalAction) depauth.ApprovalEvidence {
