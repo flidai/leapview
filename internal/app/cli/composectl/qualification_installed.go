@@ -552,62 +552,97 @@ func (c *Controller) startQualificationBootstrap(ctx context.Context) error {
 }
 
 func (c *Controller) waitQualificationBootstrapLiveness(ctx context.Context) error {
-	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	container, err := c.qualificationApplicationContainer(ctx)
 	if err != nil {
 		return err
 	}
-	containerID := strings.TrimSpace(string(containerOutput))
-	if containerID == "" {
-		return fmt.Errorf("qualification application container is missing")
-	}
-	healthCtx, cancel := qualificationContext(ctx, 2*time.Minute)
-	defer cancel()
-	err = qualificationWait(healthCtx, time.Second, func(waitCtx context.Context) (bool, error) {
-		_, checkErr := c.qualificationDocker(
-			waitCtx,
-			nil,
-			"exec", containerID,
-			"leapview", "healthcheck",
-			"--url", "http://127.0.0.1:8080/healthz",
-			"--timeout", "5s",
-		)
-		return checkErr == nil, nil
-	})
-	if err != nil {
+	if err := waitQualificationHealthcheck(
+		ctx,
+		container,
+		"http://127.0.0.1:8080/healthz",
+		2*time.Minute,
+	); err != nil {
 		return fmt.Errorf("wait for qualification bootstrap liveness: %w", err)
 	}
 	return nil
 }
 
 func (c *Controller) waitQualificationReadiness(ctx context.Context) error {
-	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	container, err := c.qualificationApplicationContainer(ctx)
 	if err != nil {
 		return err
 	}
+	if err := waitQualificationHealthcheck(
+		ctx,
+		container,
+		"http://127.0.0.1:8080/readyz",
+		3*time.Minute,
+	); err != nil {
+		return fmt.Errorf("wait for qualification readiness: %w", err)
+	}
+	if err := waitQualificationContainerValue(
+		ctx,
+		container,
+		"{{.State.Health.Status}}",
+		"healthy",
+		time.Minute,
+	); err != nil {
+		err = qualificationContainerOperationError(
+			ctx,
+			container,
+			"wait for container state healthy",
+			err,
+		)
+		return fmt.Errorf("wait for Docker qualification health: %w", err)
+	}
+	return nil
+}
+
+// qualificationApplicationContainer resolves the service container created by
+// the qualification Compose project through the injected container runtime.
+// Keeping the lookup and container handle together lets qualification health
+// checks use the same runtime seam as all other container operations.
+func (c *Controller) qualificationApplicationContainer(ctx context.Context) (qualificationContainer, error) {
+	containerOutput, err := c.qualificationCompose(ctx, c.root, "ps", "--quiet", "leapview")
+	if err != nil {
+		return nil, err
+	}
 	containerID := strings.TrimSpace(string(containerOutput))
 	if containerID == "" {
-		return fmt.Errorf("qualification application container is missing")
+		return nil, fmt.Errorf("qualification application container is missing")
 	}
-	readyCtx, cancel := qualificationContext(ctx, 3*time.Minute)
+	container := c.qualificationContainers.Existing(containerID)
+	if container == nil {
+		return nil, fmt.Errorf("qualification application container is missing")
+	}
+	return container, nil
+}
+
+// waitQualificationHealthcheck retries the in-container healthcheck command
+// until it succeeds or the supplied qualification timeout expires. The
+// command intentionally retains the explicit URL and five-second request
+// timeout used by qualification's bootstrap/readiness stages.
+func waitQualificationHealthcheck(
+	ctx context.Context,
+	container qualificationContainer,
+	endpoint string,
+	timeout time.Duration,
+) error {
+	if container == nil {
+		return fmt.Errorf("qualification container is missing")
+	}
+	healthCtx, cancel := qualificationContext(ctx, timeout)
 	defer cancel()
-	err = qualificationWait(readyCtx, time.Second, func(waitCtx context.Context) (bool, error) {
-		_, checkErr := c.qualificationDocker(
+	return qualificationWait(healthCtx, time.Second, func(waitCtx context.Context) (bool, error) {
+		_, checkErr := container.Exec(
 			waitCtx,
 			nil,
-			"exec", containerID,
 			"leapview", "healthcheck",
-			"--url", "http://127.0.0.1:8080/readyz",
+			"--url", endpoint,
 			"--timeout", "5s",
 		)
 		return checkErr == nil, nil
 	})
-	if err != nil {
-		return fmt.Errorf("wait for qualification readiness: %w", err)
-	}
-	if err := c.waitQualificationContainerValue(ctx, containerID, "{{.State.Health.Status}}", "healthy", time.Minute); err != nil {
-		return fmt.Errorf("wait for Docker qualification health: %w", err)
-	}
-	return nil
 }
 
 func verifyQualificationChecksums(root string) error {

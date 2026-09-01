@@ -184,19 +184,47 @@ func (c *Controller) qualificationPublishedURL(ctx context.Context, container, p
 }
 
 func (c *Controller) waitQualificationContainerValue(ctx context.Context, container, format, wanted string, timeout time.Duration) error {
+	qualificationContainer := c.qualificationContainers.Existing(container)
+	if qualificationContainer == nil {
+		return fmt.Errorf("qualification container %q is missing", container)
+	}
+	if err := waitQualificationContainerValue(
+		ctx,
+		qualificationContainer,
+		format,
+		wanted,
+		timeout,
+	); err != nil {
+		return qualificationContainerOperationError(
+			ctx,
+			qualificationContainer,
+			"wait for container state "+wanted,
+			err,
+		)
+	}
+	return nil
+}
+
+func waitQualificationContainerValue(
+	ctx context.Context,
+	container qualificationContainer,
+	format string,
+	wanted string,
+	timeout time.Duration,
+) error {
+	if container == nil {
+		return fmt.Errorf("qualification container is missing")
+	}
 	waitCtx, cancel := qualificationContext(ctx, timeout)
 	defer cancel()
 	err := qualificationWait(waitCtx, time.Second, func(requestCtx context.Context) (bool, error) {
-		output, inspectErr := c.qualificationDocker(requestCtx, nil, "inspect", "--format", format, container)
+		output, inspectErr := container.Inspect(requestCtx, format)
 		if inspectErr != nil {
 			return false, nil
 		}
 		return strings.TrimSpace(string(output)) == wanted, nil
 	})
-	if err != nil {
-		return qualificationContainerOperationError(ctx, c.qualificationContainers.Existing(container), "wait for container state "+wanted, err)
-	}
-	return nil
+	return err
 }
 
 func waitQualificationHTTP(ctx context.Context, client *http.Client, endpoint string, status int) error {
