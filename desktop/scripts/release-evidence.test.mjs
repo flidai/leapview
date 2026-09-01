@@ -22,7 +22,7 @@ const packageDocument = {
   devDependencies: {
     electron: "44.0.0",
     node: "24.14.0",
-    "@electron-forge/cli": "8.0.0-alpha.9",
+    "@electron-forge/cli": "8.0.0-alpha.10",
   },
 };
 
@@ -55,7 +55,7 @@ const policy = {
     electronMajor: 44,
     chromium: "152.0.7977.54",
     node: "24.14.0",
-    forge: "8.0.0-alpha.9",
+    forge: "8.0.0-alpha.10",
     bun: "1.3.14",
   },
   updates: {
@@ -335,6 +335,7 @@ test("SPDX relationships preserve Bun alias install paths and wrapper edges", ()
         devDependencies: {
           "brace-expansion": "file:vendor/brace-expansion-compat",
           "image-size": "file:vendor/image-size-next-compat",
+          "minimatch-legacy": "npm:minimatch@3.1.5",
           "minimatch-modern": "npm:minimatch@10.2.6",
         },
       },
@@ -350,6 +351,15 @@ test("SPDX relationships preserve Bun alias install paths and wrapper edges", ()
         { dependencies: { "image-size-next": "1.2.2" } },
       ],
       "image-size-next": ["image-size-next@1.2.2", "", {}],
+      "minimatch-legacy": [
+        "minimatch@3.1.5",
+        "",
+        { dependencies: { "brace-expansion": "^1.1.7" } },
+      ],
+      "minimatch-legacy/brace-expansion": [
+        "brace-expansion@file:vendor/brace-expansion-compat",
+        { dependencies: { "brace-expansion-next": "npm:brace-expansion@5.0.9" } },
+      ],
       "minimatch-modern": [
         "minimatch@10.2.6",
         "",
@@ -395,6 +405,8 @@ test("SPDX relationships preserve Bun alias install paths and wrapper edges", ()
         entry.relatedSpdxElement === packageIdForPath(childInstallPath),
     );
 
+  assert.ok(dependsOn("", "minimatch-legacy"));
+  assert.ok(dependsOn("minimatch-legacy", "minimatch-legacy/brace-expansion"));
   assert.ok(dependsOn("", "minimatch-modern"));
   assert.ok(dependsOn("minimatch-modern", "minimatch-modern/brace-expansion"));
   assert.ok(dependsOn("brace-expansion", "brace-expansion-next"));
