@@ -66,7 +66,6 @@ type CatalogDashboardItem struct {
 	PageCount                                                int
 	Tags                                                     []string
 	Appearance                                               dashboardappearance.Value
-	RepositoryManaged                                        bool
 }
 
 type CatalogListOptions struct {
@@ -241,21 +240,20 @@ func catalogPageBase(query string) uisignals.CatalogPageSignal {
 func catalogDashboardSignal(_ catalog.Project, report catalog.Dashboard, id string, metadata CatalogDashboardMetadata) uisignals.CatalogDashboardSignal {
 	appearance := dashboardappearance.Resolve(report.Appearance)
 	return uisignals.CatalogDashboardSignal{
-		AppearanceColor:   appearance.Color,
-		AppearanceIcon:    appearance.Icon,
-		CatalogScope:      "managed",
-		DashboardID:       report.ID,
-		ID:                id,
-		Title:             report.Title,
-		Description:       uisignals.Optional(report.Description),
-		SemanticModel:     uisignals.Optional(report.SemanticModel),
-		PageCount:         int64(report.PageCount),
-		Popularity:        uisignals.Optional(metadata.Popularity),
-		RepositoryManaged: true,
-		LastRefreshedAt:   uisignals.Optional(metadata.LastRefreshedAt),
-		Status:            "published",
-		Tags:              uisignals.OptionalSlice(report.Tags),
-		Href:              "/dashboards/" + url.PathEscape(report.ID),
+		AppearanceColor: appearance.Color,
+		AppearanceIcon:  appearance.Icon,
+		CatalogScope:    "managed",
+		DashboardID:     report.ID,
+		ID:              id,
+		Title:           report.Title,
+		Description:     uisignals.Optional(report.Description),
+		SemanticModel:   uisignals.Optional(report.SemanticModel),
+		PageCount:       int64(report.PageCount),
+		Popularity:      uisignals.Optional(metadata.Popularity),
+		LastRefreshedAt: uisignals.Optional(metadata.LastRefreshedAt),
+		Status:          "published",
+		Tags:            uisignals.OptionalSlice(report.Tags),
+		Href:            "/dashboards/" + url.PathEscape(report.ID),
 	}
 }
 
@@ -266,8 +264,8 @@ func catalogDashboardItemSignal(item CatalogDashboardItem) uisignals.CatalogDash
 		CatalogScope: item.CatalogScope, Description: uisignals.Optional(item.Description),
 		DashboardID: item.DashboardID, Href: item.Href, ID: item.ID,
 		Owner: uisignals.Optional(item.Owner), PageCount: int64(item.PageCount),
-		RepositoryManaged: item.RepositoryManaged, SemanticModel: uisignals.Optional(item.SemanticModel),
-		Status: item.Status, Tags: uisignals.OptionalSlice(item.Tags), Title: item.Title,
+		SemanticModel: uisignals.Optional(item.SemanticModel),
+		Status:        item.Status, Tags: uisignals.OptionalSlice(item.Tags), Title: item.Title,
 		UpdatedAt: uisignals.Optional(item.UpdatedAt),
 	}
 }
