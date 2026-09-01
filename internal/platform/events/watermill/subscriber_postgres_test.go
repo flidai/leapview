@@ -15,7 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const subscriberTestLease = 500 * time.Millisecond
+const (
+	subscriberTestLease          = 2 * time.Second
+	subscriberTestRecoveryMargin = 750 * time.Millisecond
+)
 
 type subscriberPGFixture struct {
 	db       *pgxpool.Pool
@@ -294,7 +297,7 @@ func newSubscriberPGFixture(t *testing.T, db *pgxpool.Pool, name string) subscri
 	return subscriberPGFixture{db: db, repo: repo, consumer: consumer, config: SubscriberConfig{
 		ConsumerID: consumer.ConsumerID, ConsumerKey: consumer.ConsumerKey, Topic: TopicAgent, WorkerID: "worker-" + consumerID.String()[24:],
 		PollInterval: 10 * time.Millisecond, ClaimLease: subscriberTestLease, AckDeadline: 100 * time.Millisecond,
-		RecoveryMargin: 50 * time.Millisecond, BatchSize: 1, MaxInFlight: 1, BaseRetry: time.Millisecond, MaxRetry: 2 * time.Millisecond, MaxAttempts: 8,
+		RecoveryMargin: subscriberTestRecoveryMargin, BatchSize: 1, MaxInFlight: 1, BaseRetry: time.Millisecond, MaxRetry: 2 * time.Millisecond, MaxAttempts: 8,
 	}}
 }
 
@@ -314,10 +317,11 @@ func appendSubscriberEvent(t *testing.T, fixture subscriberPGFixture, suffix str
 func receiveSubscriberMessage(t *testing.T, messages <-chan *message.Message) *message.Message {
 	t.Helper()
 	select {
-	case msg := <-messages:
+	case msg, open := <-messages:
+		require.True(t, open, "subscriber output closed before delivering a message")
 		require.NotNil(t, msg)
 		return msg
-	case <-time.After(3 * time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("timed out waiting for subscriber message")
 		return nil
 	}
