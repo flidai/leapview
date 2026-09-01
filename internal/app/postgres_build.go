@@ -660,6 +660,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		NativeDeliveryReader:    nativeDeliveryReader,
 		ProjectClaims:           graph.DeploymentRepository,
 		CandidateSources:        nativeProjectSource.CandidateSourceReader,
+		BindClaimedProject:      bindClaimedProject(runtimeHost, environment),
 		CurrentApprovalActor: func(r *http.Request) (deploymentmodule.ApprovalActor, bool) {
 			evidence, ok := accessBundle.Module.CurrentCredentialEvidence(r)
 			if !ok {

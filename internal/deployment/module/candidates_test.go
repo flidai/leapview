@@ -26,6 +26,7 @@ import (
 	"github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/stretchr/testify/require"
 )
 
@@ -545,6 +546,17 @@ func TestCandidateSynchronizationMapsProjectSourceErrors(t *testing.T) {
 func TestCandidateSourcePlanDoesNotRequireLegacyCandidateService(t *testing.T) {
 	module := testCandidateModule(t, "principal_1")
 	module.candidates = nil
+	claims := &candidateProjectClaimRepositoryStub{}
+	claimService, err := deployment.NewProjectClaimService(claims)
+	require.NoError(t, err)
+	module.projectClaims = claimService
+	module.instanceEnvironment = "prod"
+	var boundProject projectgraph.ResourceID
+	module.bindClaimedProject = func(_ context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) error {
+		boundProject = projectID
+		require.Equal(t, servingstate.Environment("prod"), environment)
+		return nil
+	}
 	module.candidateSourceAudit = func(context.Context, CandidateSourceAuditEvent) error { return nil }
 	digest := "sha256:" + strings.Repeat("a", 64)
 	module.candidateSources = &candidateSourceSynchronizerStub{}
@@ -561,6 +573,31 @@ func TestCandidateSourcePlanDoesNotRequireLegacyCandidateService(t *testing.T) {
 
 	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), `"planId":"plan-test"`)
+	require.Equal(t, projectgraph.ResourceID("finance"), claims.input.ProjectID)
+	require.Equal(t, "principal_1", claims.input.ClaimedBy)
+	require.Equal(t, projectgraph.ResourceID("finance"), boundProject)
+}
+
+func TestNativeCandidateSourcePlanRequiresProjectClaimAuthority(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	module.candidates = nil
+	sources := &candidateSourceSynchronizerStub{}
+	module.candidateSources = sources
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	response := callCandidateAPI(
+		t,
+		http.MethodPost,
+		"/api/v1/projects/finance/candidate-sync/plan",
+		`{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`,
+		func(w http.ResponseWriter, r *http.Request) {
+			module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
+		},
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "CANDIDATE_SERVICE_UNAVAILABLE")
+	require.Zero(t, sources.plans)
 }
 
 func TestLegacyCandidateSourceCommitStillRequiresCandidateService(t *testing.T) {
@@ -880,6 +917,7 @@ func decodeCandidateResponse(t *testing.T, response *httptest.ResponseRecorder, 
 type candidateSourceSynchronizerStub struct {
 	missing     []string
 	uploaded    []byte
+	plans       int
 	commits     int
 	planErr     error
 	attestation string
@@ -890,7 +928,25 @@ func (stub *candidateSourceSynchronizerStub) Plan(
 	_ deployment.CandidateSourceScope,
 	request deployment.CandidateSynchronizationRequest,
 ) (project.CandidateSynchronizationPlan, error) {
+	stub.plans++
 	return project.CandidateSynchronizationPlan{PlanID: "plan-test", ArtifactDigest: request.ArtifactDigest, MissingDigests: append([]string(nil), stub.missing...)}, stub.planErr
+}
+
+type candidateProjectClaimRepositoryStub struct {
+	input deployment.ProjectClaimInput
+	err   error
+}
+
+func (stub *candidateProjectClaimRepositoryStub) ClaimProject(_ context.Context, input deployment.ProjectClaimInput) (deployment.ProjectClaim, error) {
+	stub.input = input
+	if stub.err != nil {
+		return deployment.ProjectClaim{}, stub.err
+	}
+	return deployment.ProjectClaim{ProjectID: input.ProjectID, Environment: input.Environment, ClaimedBy: input.ClaimedBy, ClaimedAt: input.ClaimedAt}, nil
+}
+
+func (stub *candidateProjectClaimRepositoryStub) GetProjectClaim(context.Context) (deployment.ProjectClaim, error) {
+	return deployment.ProjectClaim{}, deployment.ErrProjectClaimNotFound
 }
 
 func (stub *candidateSourceSynchronizerStub) Upload(

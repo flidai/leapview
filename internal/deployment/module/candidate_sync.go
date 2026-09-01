@@ -49,11 +49,9 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	// environment before reporting missing blobs. The durable singleton claim
 	// is idempotent for the same project and fails closed for a race with a
 	// different project.
-	if m.candidates != nil {
-		if err := m.candidates.ClaimProject(r.Context(), projectID, principalID); err != nil {
-			m.writeCandidateCommandFailure(w, r, operationID, err)
-			return
-		}
+	if err := m.claimCandidateSynchronizationProject(r.Context(), projectID, principalID); err != nil {
+		m.writeCandidateCommandFailure(w, r, operationID, err)
+		return
 	}
 	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
 		return
@@ -81,6 +79,30 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 	apitransport.WriteJSON(w, http.StatusOK, deploymentapi.CandidateSynchronizationPlanResponse{
 		PlanID: plan.PlanID, ArtifactDigest: plan.ArtifactDigest, MissingDigests: plan.MissingDigests,
 	})
+}
+
+func (m *Module) claimCandidateSynchronizationProject(ctx context.Context, projectID projectgraph.ResourceID, principalID string) error {
+	if m == nil {
+		return deployment.ErrCandidateUnavailable
+	}
+	if m.candidates != nil {
+		return m.candidates.ClaimProject(ctx, projectID, principalID)
+	}
+	if m.projectClaims == nil {
+		return deployment.ErrCandidateUnavailable
+	}
+	_, err := m.projectClaims.ClaimProject(ctx, deployment.ProjectClaimInput{
+		ProjectID: projectID, Environment: m.instanceEnvironment, ClaimedBy: principalID,
+	})
+	if err != nil {
+		return err
+	}
+	if m.bindClaimedProject != nil {
+		if err := m.bindClaimedProject(ctx, projectID, m.instanceEnvironment); err != nil {
+			return fmt.Errorf("bind claimed project: %w", err)
+		}
+	}
+	return nil
 }
 
 // RetainProjectCandidateSource stores an exact immutable source snapshot for

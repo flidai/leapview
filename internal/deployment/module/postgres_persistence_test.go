@@ -137,6 +137,9 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 	if m.NativePersistence() != &persistence {
 		t.Fatal("module did not expose native persistence")
 	}
+	if m.projectClaims == nil {
+		t.Fatal("module did not construct the native project-claim service")
+	}
 	if _, ok := m.jobs.Coordinator.(*nativeCoordinator); !ok {
 		t.Fatalf("built production coordinator has type %T, want native coordinator", m.jobs.Coordinator)
 	}

@@ -22,6 +22,7 @@ import (
 type Module struct {
 	handler                   *deploymenthttp.Handler
 	candidates                *deployment.CandidateService
+	projectClaims             *deployment.ProjectClaimService
 	approvals                 *deployment.ApprovalService
 	candidateRuntimes         CandidateRuntimePreparer
 	candidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
@@ -35,6 +36,8 @@ type Module struct {
 	jobs                      JobConfig
 	api                       APIConfig
 	instanceID                string
+	instanceEnvironment       servingstate.Environment
+	bindClaimedProject        func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
 	executions                map[string]apigencommand.AsyncExecutionContract
 	protected                 bool
 	auditIntentConfigured     bool
@@ -354,6 +357,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	var coordinator deploymenthttp.Coordinator
 	var candidates *deployment.CandidateService
+	var projectClaims *deployment.ProjectClaimService
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	var durableBootstrapPolicies BootstrapPolicyStore
@@ -376,6 +380,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			if publicationPort, ok := coordinator.(NativeDeliveryPublicationPort); ok {
 				config.NativeDeliveryPublication = publicationPort
 			}
+		}
+		projectClaims, coordinatorErr = deployment.NewProjectClaimService(config.Persistence.ProjectClaims)
+		if coordinatorErr != nil {
+			return nil, coordinatorErr
 		}
 	} else {
 		database := config.Persistence.legacyDatabase
@@ -500,6 +508,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	m := &Module{
 		handler: deploymenthttp.NewHandler(options), candidates: candidates,
+		projectClaims:     projectClaims,
 		approvals:         approvals,
 		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
 		candidateArtifacts:       config.CandidateArtifacts,
@@ -514,7 +523,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return config.Persistence.legacyAudit != nil
 		}(),
 		jobs: jobs, api: config.API, protected: config.Protected,
-		instanceID: config.InstanceID, executions: executions,
+		instanceID: config.InstanceID, instanceEnvironment: servingstate.Environment(config.InstanceEnvironment),
+		bindClaimedProject: config.BindClaimedProject, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,

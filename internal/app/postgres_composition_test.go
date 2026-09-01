@@ -135,6 +135,7 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 		"NewNativeDeliveryCoordinator(",
 		"NativeDeliveryMutations: nativeDelivery",
 		"ProjectClaims:           graph.DeploymentRepository",
+		"BindClaimedProject:      bindClaimedProject(runtimeHost, environment)",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("PostgreSQL composition is missing %q", required)
