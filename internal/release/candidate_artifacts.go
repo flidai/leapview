@@ -131,6 +131,11 @@ type CandidateArtifactRecoveryRequest struct {
 	CandidateID     string
 	ServingIdentity projectgraph.ServingIdentity
 	SourceDigest    string
+	// ManagedDataPins is the exact immutable revision ledger selected by the
+	// durable delivery plan. Managed activations are not embedded in serving
+	// bundles, so native recovery must carry these pins explicitly rather than
+	// dropping managed-data bindings or consulting mutable source state.
+	ManagedDataPins []ManagedDataPin
 	Artifact        CandidateArtifactIdentity
 }
 

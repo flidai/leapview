@@ -31,14 +31,6 @@ func parseQualificationCandidate(output, sourceRevision string) (QualificationCa
 	return parseQualificationCandidateWithPlan(output, sourceRevision, true)
 }
 
-// parseQualificationCandidateBootstrap accepts the candidate projection emitted
-// before the first serving generation exists. Bootstrap synchronization still
-// prepares the target-owned candidate, but deliberately does not resolve a
-// delivery plan until the first generation is active.
-func parseQualificationCandidateBootstrap(output, sourceRevision string) (QualificationCandidate, error) {
-	return parseQualificationCandidateWithPlan(output, sourceRevision, false)
-}
-
 func parseQualificationCandidateWithPlan(output, sourceRevision string, requirePlan bool) (QualificationCandidate, error) {
 	var wire struct {
 		SchemaVersion    int    `json:"schemaVersion"`

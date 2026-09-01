@@ -37549,6 +37549,7 @@ paths:
                 baseGenerationId: example
                 basePhysicalPoolId: example
                 candidateId: example
+                candidateRevision: 1
                 createdAt: "2026-01-02T15:04:05Z"
                 executionDigest: example
                 failureCode: example
@@ -39825,6 +39826,7 @@ paths:
                 baseGenerationId: example
                 basePhysicalPoolId: example
                 candidateId: example
+                candidateRevision: 1
                 createdAt: "2026-01-02T15:04:05Z"
                 executionDigest: example
                 failureCode: example
@@ -73866,6 +73868,10 @@ components:
           type: integer
           format: int64
           example: 1
+        candidateRevision:
+          type: integer
+          format: int64
+          example: 1
         createdAt:
           type: string
           format: date-time
@@ -73883,6 +73889,7 @@ components:
         baseGenerationId: example
         basePhysicalPoolId: example
         candidateId: example
+        candidateRevision: 1
         createdAt: "2026-01-02T15:04:05Z"
         executionDigest: example
         failureCode: example

@@ -656,11 +656,18 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	deploymentConfig := deploymentmodule.Config{
 		Persistence: graph.DeploymentPersistence, Production: true, Protected: true,
 		InstanceID: instanceID, InstanceEnvironment: string(environment),
-		NativeDeliveryMutations: nativeDelivery,
-		NativeDeliveryReader:    nativeDeliveryReader,
-		ProjectClaims:           graph.DeploymentRepository,
-		CandidateSources:        nativeProjectSource.CandidateSourceReader,
-		BindClaimedProject:      bindClaimedProject(runtimeHost, environment),
+		CanonicalOrigin:           publicURL,
+		CandidateConnections:      candidateConnections,
+		CandidateRuntime:          runtimeHost,
+		CandidateArtifactRecovery: release,
+		CandidateRuntimeLifecycle: runtimeHost,
+		CandidateAdmission:        candidatePreparationAdmitter(workloadBundle.Controller, workloadmodule.ControlRequest("candidate.prepare")),
+		RuntimeVersion:            runtimeVersion,
+		NativeDeliveryMutations:   nativeDelivery,
+		NativeDeliveryReader:      nativeDeliveryReader,
+		ProjectClaims:             graph.DeploymentRepository,
+		CandidateSources:          nativeProjectSource.CandidateSourceReader,
+		BindClaimedProject:        bindClaimedProject(runtimeHost, environment),
 		CurrentApprovalActor: func(r *http.Request) (deploymentmodule.ApprovalActor, bool) {
 			evidence, ok := accessBundle.Module.CurrentCredentialEvidence(r)
 			if !ok {

@@ -52,6 +52,7 @@ func (*devCommandClient) Transport(
 type devRemoteFactory struct {
 	credentials cliapi.Credentials
 	concurrency int
+	native      bool
 }
 
 func (factory *devRemoteFactory) Remote(
@@ -61,16 +62,18 @@ func (factory *devRemoteFactory) Remote(
 ) (devloop.Remote, error) {
 	factory.credentials = credentials
 	factory.concurrency = concurrency
-	return devCommandRemote{}, nil
+	return devCommandRemote{native: factory.native}, nil
 }
 
-type devCommandRemote struct{}
+type devCommandRemote struct {
+	native bool
+}
 
-func (devCommandRemote) Synchronize(
+func (remote devCommandRemote) Synchronize(
 	_ context.Context,
 	request devloop.SyncRequest,
 ) (devloop.Candidate, error) {
-	return devloop.Candidate{
+	candidate := devloop.Candidate{
 		ID:               "cand_1",
 		ProjectID:        request.Snapshot.ProjectID,
 		OwnerID:          "principal_ci",
@@ -80,7 +83,14 @@ func (devCommandRemote) Synchronize(
 		Environment:      "production",
 		ProvenanceDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		Revision:         7,
-	}, nil
+	}
+	if remote.native {
+		candidate.PlanID = "plan-built"
+		candidate.PlanDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		candidate.ExecutionDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		candidate.EvidenceDigest = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+	}
+	return candidate, nil
 }
 
 func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
@@ -182,10 +192,10 @@ type devPlanRecorder struct {
 
 func (recorder *devPlanRecorder) Create(context.Context, DeliveryPlanOptions) (DeliveryPlanResult, error) {
 	recorder.called = true
-	return DeliveryPlanResult{}, errors.New("bootstrap must not resolve a delivery plan")
+	return DeliveryPlanResult{}, errors.New("native dev must not create a delivery plan")
 }
 
-func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
+func TestDevCommandReusesNativeDeliveryPlanEvidence(t *testing.T) {
 	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
 	checkpoints := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
 	plan := &devPlanRecorder{}
@@ -193,21 +203,40 @@ func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
 		t.Context(),
 		&devCommandClient{},
 		checkpoints,
-		&devRemoteFactory{},
+		&devRemoteFactory{native: true},
 		nil,
 		plan,
 	)
-	command.SetOut(io.Discard)
+	var output strings.Builder
+	command.SetOut(&output)
 	command.SetErr(io.Discard)
 	command.SetArgs([]string{
-		"--once", "--no-browser", "--bootstrap",
+		"--once", "--no-browser", "--format", "json",
 		"--project", projectPath, "--target", "prod",
 	})
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
 	if plan.called {
-		t.Fatal("bootstrap dev resolved a delivery plan")
+		t.Fatal("native dev created a duplicate delivery plan")
+	}
+	checkpoint, err := checkpoints.LoadCandidate(projectPath, "http://localhost:8080", "default")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if checkpoint.PlanID != "plan-built" ||
+		checkpoint.PlanDigest != "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" ||
+		checkpoint.ExecutionDigest != "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" ||
+		checkpoint.EvidenceDigest != "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" {
+		t.Fatalf("checkpoint plan evidence = %#v", checkpoint)
+	}
+	var result DevResult
+	if err := json.Unmarshal([]byte(output.String()), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result.PlanID != checkpoint.PlanID || result.PlanDigest != checkpoint.PlanDigest ||
+		result.ExecutionDigest != checkpoint.ExecutionDigest || result.EvidenceDigest != checkpoint.EvidenceDigest {
+		t.Fatalf("dev result plan evidence = %#v", result)
 	}
 }
 

@@ -218,7 +218,7 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	if _, err := delivery.CreatePlan(t.Context(), deploymentnative.PlanInput{PlanID: base.Plan.ID, TargetID: request.TargetID, PlanDigest: base.Plan.Digest, PlanRevision: 1, CompiledGraphDigest: base.Artifacts.Compiler.Graph.Digest(), CompiledConfigDigest: base.Plan.Execution.ConfigDigest, SecurityDomainFingerprint: base.Artifacts.AuthorizationFingerprint, ArtifactDigest: base.Artifacts.Generation.ArtifactDigest, QualificationDigest: base.Plan.Governance.QualificationDigest, QualificationRequired: true, ApprovalRequired: base.Plan.Governance.RequiresApproval, ApprovalPolicyRevision: base.Plan.Governance.ApprovalPolicyRevision, PlanDocument: planDoc, Evidence: json.RawMessage(`{}`), CreatedAt: base.Plan.CreatedAt}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateCandidate(t.Context(), deploymentnative.CandidateInput{CandidateID: candidateID, TargetID: request.TargetID, PlanID: base.Plan.ID, CandidateRevision: 1, ArtifactDigest: base.Artifacts.Generation.ArtifactDigest}); err != nil {
+	if _, err := delivery.CreateCandidate(t.Context(), deploymentnative.CandidateInput{CandidateID: candidateID, TargetID: request.TargetID, PlanID: base.Plan.ID, CandidateRevision: 11, ArtifactDigest: base.Artifacts.Generation.ArtifactDigest}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := ducklake.RegisterCatalog(t.Context(), base.CatalogIdentity); err != nil {
@@ -337,6 +337,9 @@ func TestCompleteRecoveredNativeBuildPostgresSuccessAndExactReplay(t *testing.T)
 	}
 	if first != second {
 		t.Fatalf("replay projection changed: first=%+v second=%+v", first, second)
+	}
+	if first.CandidateRevision != 11 || first.Revision != f.Input.Admission.Attempt.FencingEpoch {
+		t.Fatalf("recovery revisions = candidate %d build %d, want candidate 11 build %d", first.CandidateRevision, first.Revision, f.Input.Admission.Attempt.FencingEpoch)
 	}
 	operation, found, err := f.Coordinator.operations.Lookup(t.Context(), deploymentmodule.NativeOperationAcquireInput{Scope: f.Input.Request.TargetID, OperationType: nativeBuildOperationType, IdempotencyKey: f.Input.Request.IdempotencyKey, RequestDigest: f.Input.RequestDigest, OwnerID: f.Input.Reservation.Operation.OwnerID})
 	if err != nil || !found || operation.State != deploymentmodule.NativeOperationStateCompleted {

@@ -88,6 +88,13 @@ func (r *NativeReader) LoadCandidate(ctx context.Context, id string) (nativepost
 	}
 	return authority.LoadCandidate(ctx, id)
 }
+func (r *NativeReader) ResolveCandidateGeneration(ctx context.Context, id string) (nativepostgres.CandidateGenerationResolution, error) {
+	authority, err := r.authority()
+	if err != nil {
+		return nativepostgres.CandidateGenerationResolution{}, err
+	}
+	return authority.ResolveCandidateGeneration(ctx, id)
+}
 func (r *NativeReader) Generation(ctx context.Context, id string) (nativepostgres.DeliveryGeneration, error) {
 	authority, err := r.authority()
 	if err != nil {

@@ -101,7 +101,7 @@ func nativePlanResponse(plan deployment.DeliveryPlan) deploymentgen.DeliveryPlan
 	return planPreviewResponse(plan)
 }
 
-func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal) deploymentgen.DeliveryBuildStatusResponse {
+func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deployment.DeliveryPlan, candidate nativepostgres.DeliveryCandidate, seal nativepostgres.SnapshotSeal) deploymentgen.DeliveryBuildStatusResponse {
 	sealed := attempt.State == nativepostgres.AttemptCommitted && attempt.CandidateID != "" && seal.SealID != ""
 	response := deploymentgen.DeliveryBuildStatusResponse{
 		Id: attempt.AttemptID, PlanId: attempt.PlanID, PlanDigest: attempt.PlanDigest,
@@ -110,6 +110,7 @@ func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deplo
 		Status: nativeBuildStatus(attempt.State, sealed), Revision: attempt.FencingEpoch,
 		CreatedAt: isoTime(attempt.CreatedAt), UpdatedAt: isoTime(attempt.UpdatedAt),
 		SealId: optionalText(seal.SealID), CandidateId: optionalText(attempt.CandidateID),
+		CandidateRevision: optionalNativeInt64(candidate.CandidateRevision),
 	}
 	if attempt.FencingEpoch <= 0 {
 		response.Revision = 1

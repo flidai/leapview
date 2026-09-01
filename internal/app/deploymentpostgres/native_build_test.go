@@ -53,10 +53,10 @@ func TestNativeBuildProjectionUsesAttemptAndPersistedArtifactIdentity(t *testing
 	}
 	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	finished := created.Add(2 * time.Minute)
-	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: ids["attempt"], PlanID: "0198f2c0-7c7a-7f00-8a11-000000001101", CandidateID: ids["candidate"], PhysicalPoolID: "pool-native", CreatedAt: created, UpdatedAt: finished, FinishedAt: finished}
+	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: ids["attempt"], PlanID: "0198f2c0-7c7a-7f00-8a11-000000001101", CandidateID: ids["candidate"], PhysicalPoolID: "pool-native", FencingEpoch: 11, CreatedAt: created, UpdatedAt: finished, FinishedAt: finished}
 	lease := deploymentnative.DeliveryLease{LeaseID: ids["lease"]}
 	outcome := nativeBuildOutcome{OperationID: operationID, OperationOwnerID: "0198f2c0-7c7a-7f00-8a11-000000001103", AttemptID: ids["attempt"], PlanID: attempt.PlanID, CandidateID: ids["candidate"], LeaseID: ids["lease"], GenerationID: ids["generation"], SealID: ids["seal"], EventID: ids["event"], AuditID: ids["audit"], ServingArtifactID: "artifact-planned-identity", ServingArtifactDigest: "sha256:" + "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorID: "principal", IdempotencyKey: "key", RequestDigest: "sha256:" + "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PlanDigest: "sha256:" + "c" + "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", SourceDigest: "sha256:" + "d" + "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", ExecutionDigest: "sha256:" + "e" + "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", QualificationDigest: "sha256:" + "f" + "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
-	projected, err := nativeBuildProjection(outcome, "0198f2c0-7c7a-7f00-8a11-000000001102", attempt, lease, GenerationEvidence{GenerationRevision: 7})
+	projected, err := nativeBuildProjection(outcome, "0198f2c0-7c7a-7f00-8a11-000000001102", attempt, lease, 13)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,8 +75,8 @@ func TestNativeBuildProjectionUsesAttemptAndPersistedArtifactIdentity(t *testing
 	if !projected.CreatedAt.Equal(created) || !projected.UpdatedAt.Equal(finished) || !projected.TerminalAt.Equal(finished) {
 		t.Fatalf("projection lifecycle timestamps = %v/%v/%v", projected.CreatedAt, projected.UpdatedAt, projected.TerminalAt)
 	}
-	if projected.Status != "sealed" || projected.Revision != 7 {
-		t.Fatalf("projection terminal evidence = status %q revision %d", projected.Status, projected.Revision)
+	if projected.Status != "sealed" || projected.Revision != 11 || projected.CandidateRevision != 13 {
+		t.Fatalf("projection terminal evidence = status %q revision %d candidate revision %d", projected.Status, projected.Revision, projected.CandidateRevision)
 	}
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
+	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -157,7 +158,7 @@ func nativeReadRowsFixture(t *testing.T, target string) nativeReadRows {
 		ActorID: "actor", SourceOwnerID: "owner", SourceDigest: nativeReadDigest('a'), ServingArtifactDigest: nativeReadDigest('b'), CreatedAt: now,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: nativeReadDigest('a'), CompilerDigest: nativeReadDigest('c'), ExecutableDigest: nativeReadDigest('d'), DependencyDigest: nativeReadDigest('e'), ConfigDigest: nativeReadDigest('f'), BindingDigest: nativeReadDigest('1'), RuntimeDigest: nativeReadDigest('2'), CapabilityDigest: nativeReadDigest('3')},
 		Provenance: deployment.DeliveryProvenance{Builder: "native-test"},
-		Governance: deployment.DeliveryGovernance{PolicyDigest: nativeReadDigest('4'), AuthorizationDigest: nativeReadDigest('5'), QualificationDigest: nativeReadDigest('6'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour)},
+		Governance: deployment.DeliveryGovernance{PolicyDigest: nativeReadDigest('4'), AuthorizationDigest: nativeReadDigest('5'), QualificationDigest: nativeReadDigest('6'), ApprovalPolicyRevision: 1, ExpiresAt: time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)},
 		Evidence: deployment.DeliveryPlanEvidence{
 			ImpactStatement:       "native read fixture impact",
 			PhysicalWorkStatement: "native read fixture physical work",
@@ -240,6 +241,23 @@ func TestNativeDeliveryObjectReadsUseNativePort(t *testing.T) {
 				t.Fatalf("response does not contain %q: %s", test.id, recorder.Body.String())
 			}
 		})
+	}
+}
+
+func TestNativeDeliveryBuildReadProjectsCandidateRevisionSeparately(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryBuildStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.attempt.AttemptID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryBuildStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Revision != rows.attempt.FencingEpoch || response.CandidateRevision == nil || *response.CandidateRevision != rows.candidate.CandidateRevision {
+		t.Fatalf("build revisions = attempt %d candidate %v, want attempt %d candidate %d", response.Revision, response.CandidateRevision, rows.attempt.FencingEpoch, rows.candidate.CandidateRevision)
 	}
 }
 

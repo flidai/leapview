@@ -397,6 +397,7 @@ model DeliveryBuildStatusResponse {
   candidateId?: string;
   failureCode?: string;
   revision: int64;
+  candidateRevision?: int64;
   createdAt: utcDateTime;
   updatedAt: utcDateTime;
   terminalAt?: utcDateTime;

@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"sort"
 	"strings"
 	"unicode"
 	"unicode/utf8"
@@ -598,12 +599,17 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	// Managed-data pins are not embedded in the serving bundle and cannot be
-	// inferred from its compiled connection activations. Recovery therefore
-	// rejects managed activations until an exact persisted pin ledger is added
-	// to this recovery request.
-	if len(managedConnections) != 0 {
-		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact requires unavailable managed-data pins"))
+	managedPins, err := nativeRecoveryManagedDataPins(request.ManagedDataPins)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	if len(managedConnections) != len(managedPins) {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("native recovered serving artifact managed-data pin set differs from compiled activations"))
+	}
+	for _, connectionID := range managedConnections {
+		if _, ok := managedPins[connectionID]; !ok {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(fmt.Errorf("native recovered serving artifact managed-data pin %q is missing", connectionID))
+		}
 	}
 
 	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
@@ -614,7 +620,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	dataRevision, err := release.CandidateSourcesDataRevision(request.SourceDigest, nil)
+	dataRevision, err := release.CandidateSourcesDataRevision(request.SourceDigest, releaseManagedDataPins(managedPins))
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -622,7 +628,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	relationContext, err := candidateRelationContexts(nil, canonicalProject, candidateActivationBindings(activations))
+	relationContext, err := candidateRelationContexts(managedPins, canonicalProject, candidateActivationBindings(activations))
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -643,7 +649,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 			NativeArtifact:   nativeArtifactObjectEvidence(object.Info),
 			AccessPolicyJSON: accessPolicyJSON, DashboardPublicationsJSON: publicationsJSON, DashboardAppearancesJSON: appearancesJSON,
 			DataRevision: dataRevision, DataMode: release.GenerationDataRefreshSources,
-			Deterministic: compiled.Plan.Deterministic, Connections: requirements, AuthoredConnections: authored,
+			Deterministic: compiled.Plan.Deterministic, ManagedDataPins: releaseManagedDataPins(managedPins), Connections: requirements, AuthoredConnections: authored,
 			Restrictions: candidateRestrictions(authorizationSnapshot),
 		},
 		Compiler: release.CandidateCompilerEvidence{
@@ -679,7 +685,41 @@ func validateNativeRecoveryRequest(request release.CandidateArtifactRecoveryRequ
 	if request.Artifact.ServingStateID != request.ServingIdentity.GenerationID {
 		return errors.New("native recovered serving artifact state identity differs from serving identity")
 	}
+	if _, err := nativeRecoveryManagedDataPins(request.ManagedDataPins); err != nil {
+		return err
+	}
 	return nil
+}
+
+// nativeRecoveryManagedDataPins validates the durable pin ledger and lowers it
+// to the relation-context map consumed by compiler projections. The caller is
+// expected to compare the resulting key set to compiled managed activations.
+func nativeRecoveryManagedDataPins(values []release.ManagedDataPin) (map[string]string, error) {
+	pins := make(map[string]string, len(values))
+	for _, pin := range values {
+		connectionID, revisionID := strings.TrimSpace(pin.ConnectionID), strings.TrimSpace(pin.RevisionID)
+		if connectionID == "" || connectionID != pin.ConnectionID || revisionID == "" || revisionID != pin.RevisionID {
+			return nil, errors.New("native recovered managed-data pin identity is invalid")
+		}
+		if _, exists := pins[connectionID]; exists {
+			return nil, fmt.Errorf("native recovered managed-data pin %q is duplicated", connectionID)
+		}
+		pins[connectionID] = revisionID
+	}
+	return pins, nil
+}
+
+func releaseManagedDataPins(values map[string]string) []release.ManagedDataPin {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	result := make([]release.ManagedDataPin, 0, len(keys))
+	for _, key := range keys {
+		result = append(result, release.ManagedDataPin{ConnectionID: key, RevisionID: values[key]})
+	}
+	return result
 }
 
 func sameNativeJSON(left, right any) bool {

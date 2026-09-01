@@ -953,9 +953,11 @@ func (m *Module) GetDeliveryBuildStatus(w http.ResponseWriter, r *http.Request, 
 			m.writeDeliveryReadError(w, r, err)
 			return
 		}
+		candidate := nativepostgres.DeliveryCandidate{}
 		seal := nativepostgres.SnapshotSeal{}
 		if attempt.CandidateID != "" {
-			candidate, candidateErr := m.nativeDeliveryReader.Candidate(r.Context(), attempt.CandidateID)
+			var candidateErr error
+			candidate, candidateErr = m.nativeDeliveryReader.Candidate(r.Context(), attempt.CandidateID)
 			if candidateErr != nil {
 				m.writeDeliveryReadError(w, r, nativeReadError(candidateErr))
 				return
@@ -968,7 +970,7 @@ func (m *Module) GetDeliveryBuildStatus(w http.ResponseWriter, r *http.Request, 
 				}
 			}
 		}
-		apitransport.WriteJSON(w, http.StatusOK, nativeBuildResponse(attempt, plan, seal))
+		apitransport.WriteJSON(w, http.StatusOK, nativeBuildResponse(attempt, plan, candidate, seal))
 		return
 	}
 	attempt, err := m.deliveryReader.DeliveryBuildAttemptByID(r.Context(), buildID)

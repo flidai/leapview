@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -12,7 +13,9 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentapi "github.com/flidai/leapview/internal/deployment/api"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	deploymentui "github.com/flidai/leapview/internal/deployment/ui"
+	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/project"
@@ -21,14 +24,23 @@ import (
 )
 
 func (m *Module) ResolveOwnedCandidate(ctx context.Context, candidateID, principalID string) (Candidate, error) {
-	if m == nil || m.candidates == nil {
+	candidateID = strings.TrimSpace(candidateID)
+	principalID = strings.TrimSpace(principalID)
+	if m == nil {
 		return Candidate{}, deployment.ErrCandidateUnavailable
 	}
-	return m.candidates.GetOwned(
-		ctx,
-		strings.TrimSpace(candidateID),
-		strings.TrimSpace(principalID),
-	)
+	if m.candidates != nil {
+		candidate, err := m.candidates.GetOwned(ctx, candidateID, principalID)
+		if err != nil {
+			return Candidate{}, err
+		}
+		candidate.PreviewURL = m.candidates.PreviewURL(candidate.ID)
+		return candidate, nil
+	}
+	if m.nativeDeliveryReader == nil {
+		return Candidate{}, deployment.ErrCandidateUnavailable
+	}
+	return m.resolveNativeOwnedCandidate(ctx, candidateID, principalID)
 }
 
 // ResolveCandidateForReview returns bounded candidate evidence for a reviewer
@@ -59,11 +71,11 @@ func (m *Module) ServeCandidatePreview(
 	candidateID, principalID string,
 	layout webpage.Provider,
 ) {
-	if m == nil || m.candidates == nil {
+	if m == nil || (m.candidates == nil && m.nativeDeliveryReader == nil) {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	candidate, err := m.candidates.GetOwned(r.Context(), strings.TrimSpace(candidateID), strings.TrimSpace(principalID))
+	candidate, err := m.ResolveOwnedCandidate(r.Context(), candidateID, principalID)
 	if err != nil {
 		if errors.Is(err, deployment.ErrCandidateNotFound) {
 			http.NotFound(w, r)
@@ -90,6 +102,141 @@ func (m *Module) ServeCandidatePreview(
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	w.WriteHeader(status)
 	_ = deploymentui.CandidatePage(candidate, layout).Render(w)
+}
+
+// resolveNativeOwnedCandidate rehydrates the legacy owner-bound candidate
+// view from the canonical PostgreSQL delivery evidence. Native candidate rows
+// intentionally do not persist an owner; ownership is proved by the exact
+// candidate -> seal -> build-attempt -> plan chain, with the attempt owner
+// compared to the authenticated principal before any candidate fields are
+// returned.
+func (m *Module) resolveNativeOwnedCandidate(ctx context.Context, candidateID, principalID string) (Candidate, error) {
+	if candidateID == "" || principalID == "" || candidateID != strings.TrimSpace(candidateID) || principalID != strings.TrimSpace(principalID) {
+		return Candidate{}, deployment.ErrCandidateNotFound
+	}
+	reader := m.nativeDeliveryReader
+	row, err := reader.Candidate(ctx, candidateID)
+	if err != nil {
+		return Candidate{}, nativeCandidateReadError(err)
+	}
+	if row.CandidateID != candidateID || row.TargetID == "" || (m.instanceID != "" && row.TargetID != m.instanceID) || row.PlanID == "" || row.SnapshotSealID == "" {
+		return Candidate{}, deployment.ErrCandidateNotFound
+	}
+	seal, err := reader.SnapshotSeal(ctx, row.SnapshotSealID)
+	if err != nil {
+		return Candidate{}, nativeCandidateReadError(err)
+	}
+	if seal.SealID != row.SnapshotSealID || seal.CandidateID != row.CandidateID || seal.AttemptID == "" || (row.AttemptID != "" && row.AttemptID != seal.AttemptID) {
+		return Candidate{}, nativeCandidateEvidenceUnavailable("candidate snapshot seal identity is inconsistent")
+	}
+	attempt, err := reader.BuildAttempt(ctx, seal.AttemptID)
+	if err != nil {
+		return Candidate{}, nativeCandidateReadError(err)
+	}
+	if attempt.AttemptID != seal.AttemptID || attempt.CandidateID != row.CandidateID || attempt.PlanID != row.PlanID {
+		return Candidate{}, nativeCandidateEvidenceUnavailable("candidate build attempt identity is inconsistent")
+	}
+	// A foreign candidate must be indistinguishable from a missing candidate.
+	if attempt.OwnerID != principalID {
+		return Candidate{}, deployment.ErrCandidateNotFound
+	}
+	plan, err := nativeReadPlan(ctx, reader, row.PlanID)
+	if err != nil {
+		return Candidate{}, nativeCandidateReadError(err)
+	}
+	if plan.ID != row.PlanID || plan.TargetID != row.TargetID || plan.ProjectID.Validate() != nil || plan.Environment == "" ||
+		(m.instanceEnvironment != "" && plan.Environment != string(m.instanceEnvironment)) ||
+		attempt.PlanDigest != plan.Digest || seal.PlanDigest != plan.Digest || seal.AttemptID != attempt.AttemptID ||
+		seal.ServingArtifactDigest == "" || row.ArtifactDigest == "" || row.ArtifactDigest != seal.ServingArtifactDigest ||
+		plan.ServingArtifactDigest != seal.ServingArtifactDigest || row.CandidateRevision < 1 || row.CreatedAt.IsZero() ||
+		plan.Governance.ExpiresAt.IsZero() || platformdigest.ValidateSHA256Identity(plan.SourceDigest) != nil || platformdigest.ValidateSHA256Identity(plan.ProvenanceDigest) != nil {
+		return Candidate{}, nativeCandidateEvidenceUnavailable("candidate delivery evidence is inconsistent")
+	}
+
+	nativeStatus := strings.ToLower(strings.TrimSpace(row.Status))
+	if (nativeStatus == "qualified" || nativeStatus == "ready") && (attempt.State != nativepostgres.AttemptCommitted || row.QualifiedAt.IsZero()) {
+		return Candidate{}, nativeCandidateEvidenceUnavailable("qualified candidate evidence is incomplete")
+	}
+	// The durable row may remain qualified after its governance deadline. Keep
+	// the owner-facing projection terminal at the deadline so callers return
+	// the normal expired-candidate response instead of attempting preparation
+	// against an already-invalid plan. Capture one UTC instant for this check.
+	now := time.Now().UTC()
+	status := nativeCandidateStatusForPreviewAt(row.Status, attempt.State, plan.Governance.ExpiresAt, now)
+	previewURL, err := m.candidatePreviewURL(row.CandidateID)
+	if err != nil {
+		return Candidate{}, nativeCandidateEvidenceUnavailable("candidate preview origin is unavailable")
+	}
+	updatedAt := row.CreatedAt.UTC()
+	if !attempt.UpdatedAt.IsZero() && attempt.UpdatedAt.After(updatedAt) {
+		updatedAt = attempt.UpdatedAt.UTC()
+	}
+	if !row.QualifiedAt.IsZero() && row.QualifiedAt.After(updatedAt) {
+		updatedAt = row.QualifiedAt.UTC()
+	}
+	result := Candidate{
+		ID: row.CandidateID, Key: row.CandidateID, TargetID: row.TargetID, OwnerID: attempt.OwnerID, PreviewURL: previewURL,
+		Scope: deployment.CandidateScope{ProjectID: plan.ProjectID, Environment: plan.Environment, BaseGenerationID: plan.BaseGenerationID},
+		// The legacy candidate view calls this field ArtifactDigest, but its
+		// authoring/CLI contract is the retained source identity. Native
+		// serving-artifact identity remains in the seal and is checked above.
+		ArtifactDigest: plan.SourceDigest, ProvenanceDigest: plan.ProvenanceDigest,
+		Status: status, ExpiresAt: plan.Governance.ExpiresAt.UTC(), CreatedAt: row.CreatedAt.UTC(), UpdatedAt: updatedAt,
+		Revision: row.CandidateRevision,
+	}
+	if status == deployment.CandidateReady {
+		result.ReadyAt = row.QualifiedAt.UTC()
+	}
+	return result, nil
+}
+
+func nativeCandidateStatusForPreview(status string, attemptState nativepostgres.BuildAttemptState) deployment.CandidateStatus {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "qualified", "ready":
+		return deployment.CandidateReady
+	case "rejected", "failed":
+		return deployment.CandidateFailed
+	case "retired":
+		return deployment.CandidateExpired
+	}
+	switch attemptState {
+	case nativepostgres.AttemptAborted, nativepostgres.AttemptFenced:
+		return deployment.CandidateFailed
+	default:
+		return deployment.CandidatePreparing
+	}
+}
+
+func nativeCandidateStatusForPreviewAt(status string, attemptState nativepostgres.BuildAttemptState, expiresAt, now time.Time) deployment.CandidateStatus {
+	previewStatus := nativeCandidateStatusForPreview(status, attemptState)
+	if previewStatus == deployment.CandidateReady && !expiresAt.After(now) {
+		return deployment.CandidateExpired
+	}
+	return previewStatus
+}
+
+func nativeCandidateReadError(err error) error {
+	if errors.Is(err, nativepostgres.ErrNotFound) || errors.Is(err, deployment.ErrNotFound) {
+		return fmt.Errorf("%w: native candidate not found", deployment.ErrCandidateNotFound)
+	}
+	return fmt.Errorf("%w: native candidate evidence read failed: %v", deployment.ErrCandidateUnavailable, err)
+}
+
+func nativeCandidateEvidenceUnavailable(detail string) error {
+	return fmt.Errorf("%w: %s", deployment.ErrCandidateUnavailable, detail)
+}
+
+func (m *Module) candidatePreviewURL(candidateID string) (string, error) {
+	origin := strings.TrimRight(strings.TrimSpace(m.canonicalOrigin), "/")
+	parsed, err := url.Parse(origin)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" || (parsed.EscapedPath() != "" && parsed.EscapedPath() != "/") {
+		return "", fmt.Errorf("resolved target has no canonical HTTP origin")
+	}
+	candidateID = strings.TrimSpace(candidateID)
+	if candidateID == "" {
+		return "", fmt.Errorf("native delivery candidate identity is missing")
+	}
+	return parsed.Scheme + "://" + parsed.Host + "/candidates/" + url.PathEscape(candidateID), nil
 }
 
 // ServeCandidateReview renders non-sensitive candidate evidence for an
@@ -440,12 +587,16 @@ func (m *Module) candidatePrincipalIDCommand(w http.ResponseWriter, r *http.Requ
 }
 
 func (m *Module) candidateResponse(candidate deployment.Candidate, resumed bool) deploymentapi.CandidateResponse {
+	previewURL := candidate.PreviewURL
+	if previewURL == "" && m != nil && m.candidates != nil {
+		previewURL = m.candidates.PreviewURL(candidate.ID)
+	}
 	response := deploymentapi.CandidateResponse{
 		ID: candidate.ID, ProjectID: candidate.Scope.ProjectID.String(), CandidateKey: candidate.Key,
 		TargetID:    candidate.TargetID,
 		Environment: candidate.Scope.Environment, OwnerID: candidate.OwnerID, BaseGeneration: candidate.Scope.BaseGenerationID,
 		ArtifactDigest: candidate.ArtifactDigest, Status: string(candidate.Status),
-		PreviewURL: m.candidates.PreviewURL(candidate.ID), ExpiresAt: candidate.ExpiresAt.UTC().Format(time.RFC3339Nano),
+		PreviewURL: previewURL, ExpiresAt: candidate.ExpiresAt.UTC().Format(time.RFC3339Nano),
 		CreatedAt: candidate.CreatedAt.UTC().Format(time.RFC3339Nano), UpdatedAt: candidate.UpdatedAt.UTC().Format(time.RFC3339Nano),
 		Revision: candidate.Revision,
 	}

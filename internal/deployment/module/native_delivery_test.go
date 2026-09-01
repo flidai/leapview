@@ -87,7 +87,7 @@ func TestNativeDeliveryBuildHandlerUsesInjectedUUIDPort(t *testing.T) {
 			t.Fatalf("native build request = %#v", request)
 		}
 		now := time.Now().UTC()
-		return NativeDeliveryBuild{ID: attemptID, PlanID: planID, PlanDigest: nativeDigest('a'), SourceDigest: nativeDigest('b'), ExecutionDigest: nativeDigest('c'), PhysicalPoolID: "pool", WriterLeaseID: leaseID, CandidateID: candidateID, SealID: sealID, ServingArtifactID: "artifact-native", ServingArtifactDigest: nativeDigest('d'), ServingStateID: generationID, Status: string(deploymentgen.DeliveryBuildStatusSealed), CreatedAt: now, UpdatedAt: now, TerminalAt: now, Revision: 1}, nil
+		return NativeDeliveryBuild{ID: attemptID, PlanID: planID, PlanDigest: nativeDigest('a'), SourceDigest: nativeDigest('b'), ExecutionDigest: nativeDigest('c'), PhysicalPoolID: "pool", WriterLeaseID: leaseID, CandidateID: candidateID, SealID: sealID, ServingArtifactID: "artifact-native", ServingArtifactDigest: nativeDigest('d'), ServingStateID: generationID, Status: string(deploymentgen.DeliveryBuildStatusSealed), CreatedAt: now, UpdatedAt: now, TerminalAt: now, Revision: 7, CandidateRevision: 13}, nil
 	}}
 	m := nativeDeliveryHandlerModule(port)
 	recorder := httptest.NewRecorder()
@@ -102,7 +102,7 @@ func TestNativeDeliveryBuildHandlerUsesInjectedUUIDPort(t *testing.T) {
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Id != attemptID.String() || response.PlanId != planID.String() || response.WriterLeaseId != leaseID.String() {
+	if response.Id != attemptID.String() || response.PlanId != planID.String() || response.WriterLeaseId != leaseID.String() || response.Revision != 7 || response.CandidateRevision == nil || *response.CandidateRevision != 13 {
 		t.Fatalf("response identity = %#v", response)
 	}
 }

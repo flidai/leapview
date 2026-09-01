@@ -227,6 +227,7 @@ type NativeDeliveryBuild struct {
 	UpdatedAt             time.Time
 	TerminalAt            time.Time
 	Revision              int64
+	CandidateRevision     int64
 }
 
 // NativeDeliveryMutationFuncs is a small adapter for composition and tests.
@@ -509,7 +510,7 @@ func (b NativeDeliveryBuild) validate(request NativeDeliveryBuildRequest) error 
 	if b.ServingArtifactID == "" || b.ServingArtifactID != strings.TrimSpace(b.ServingArtifactID) || platformdigest.ValidateSHA256Identity(b.ServingArtifactDigest) != nil {
 		return fmt.Errorf("%w: native serving artifact identity is incomplete", deployment.ErrDeliveryInvalid)
 	}
-	if b.Revision <= 0 || b.CreatedAt.IsZero() || b.UpdatedAt.IsZero() || b.TerminalAt.IsZero() || !b.CreatedAt.Equal(b.CreatedAt.UTC()) || !b.UpdatedAt.Equal(b.UpdatedAt.UTC()) || !b.TerminalAt.Equal(b.TerminalAt.UTC()) || b.UpdatedAt.Before(b.CreatedAt) || b.TerminalAt.Before(b.UpdatedAt) {
+	if b.Revision <= 0 || b.CandidateRevision <= 0 || b.CreatedAt.IsZero() || b.UpdatedAt.IsZero() || b.TerminalAt.IsZero() || !b.CreatedAt.Equal(b.CreatedAt.UTC()) || !b.UpdatedAt.Equal(b.UpdatedAt.UTC()) || !b.TerminalAt.Equal(b.TerminalAt.UTC()) || b.UpdatedAt.Before(b.CreatedAt) || b.TerminalAt.Before(b.UpdatedAt) {
 		return fmt.Errorf("%w: native build lifecycle evidence is incomplete", deployment.ErrDeliveryInvalid)
 	}
 	return nil
@@ -537,9 +538,16 @@ func nativeBuildStatusResponse(build NativeDeliveryBuild) deploymentgen.Delivery
 		BasePhysicalPoolId: optionalText(build.BasePhysicalPoolID), PhysicalPoolId: build.PhysicalPoolID,
 		WriterLeaseId: build.WriterLeaseID.String(), Status: deploymentgen.DeliveryBuildStatus(build.Status),
 		SealId: optionalNativeUUID(build.SealID), CandidateId: optionalNativeUUID(build.CandidateID),
-		FailureCode: optionalText(build.FailureCode), Revision: build.Revision,
+		FailureCode: optionalText(build.FailureCode), Revision: build.Revision, CandidateRevision: optionalNativeInt64(build.CandidateRevision),
 		CreatedAt: isoTime(build.CreatedAt), UpdatedAt: isoTime(build.UpdatedAt), TerminalAt: optionalText(isoTime(build.TerminalAt)),
 	}
+}
+
+func optionalNativeInt64(value int64) *int64 {
+	if value <= 0 {
+		return nil
+	}
+	return &value
 }
 
 func optionalNativeUUID(value uuid.UUID) *string {

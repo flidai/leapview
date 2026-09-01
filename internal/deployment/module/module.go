@@ -30,12 +30,14 @@ type Module struct {
 	candidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
 	candidateSourceBlobAudit  func(context.Context, CandidateSourceAuditEvent) error
 	candidateArtifacts        release.CandidateArtifactPreparer
+	candidateArtifactRecovery release.CandidateArtifactRecovery
 	candidateAdmission        CandidatePreparationAdmitter
 	deliveryCandidateBuilder  func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
 	logger                    *slog.Logger
 	jobs                      JobConfig
 	api                       APIConfig
 	instanceID                string
+	canonicalOrigin           string
 	instanceEnvironment       servingstate.Environment
 	bindClaimedProject        func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
 	executions                map[string]apigencommand.AsyncExecutionContract
@@ -204,6 +206,11 @@ type Config struct {
 	CandidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
 	CandidateSources          deployment.CandidateSourceSynchronizer
 	CandidateArtifacts        release.CandidateArtifactPreparer
+	// CandidateArtifactRecovery is the value-only native serving-bundle
+	// recovery authority used to replay candidate runtime preparation after a
+	// process restart. It is deliberately separate from source/artifact
+	// preparation so preview cannot recompile mutable authoring state.
+	CandidateArtifactRecovery release.CandidateArtifactRecovery
 	CandidateAdmission        CandidatePreparationAdmitter
 	// DeliveryCandidateBuilder is the canonical plan -> build -> seal adapter.
 	// When configured, candidate synchronization delegates to it after the
@@ -445,23 +452,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, err
 		}
 		service.SetAfterActivated(config.AfterActivated)
-		if config.CandidateConnections != nil || config.CandidateRuntime != nil {
-			if config.CandidateAdmission == nil {
-				return nil, errors.New(
-					"candidate runtime preparation workload admission is required",
-				)
-			}
-			candidateRuntimes, err = deployment.NewCandidateRuntimeService(
-				deployment.CandidateRuntimeServiceConfig{
-					Connections:    config.CandidateConnections,
-					Runtime:        config.CandidateRuntime,
-					RuntimeVersion: config.RuntimeVersion,
-				},
-			)
-			if err != nil {
-				return nil, err
-			}
-		}
 		coordinator, err = apiadapter.New(service)
 		if err != nil {
 			return nil, err
@@ -499,6 +489,24 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, err
 		}
 	}
+	// Candidate runtime preparation is shared by explicit SQLite composition
+	// and native PostgreSQL composition. SQLite retains its admission gate;
+	// native preparation is replayed lazily from durable delivery evidence.
+	if config.CandidateConnections != nil || config.CandidateRuntime != nil {
+		if config.CandidateAdmission == nil {
+			return nil, errors.New("candidate runtime preparation workload admission is required")
+		}
+		candidateRuntimes, err = deployment.NewCandidateRuntimeService(
+			deployment.CandidateRuntimeServiceConfig{
+				Connections:    config.CandidateConnections,
+				Runtime:        config.CandidateRuntime,
+				RuntimeVersion: config.RuntimeVersion,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+	}
 	options.Coordinator = coordinator
 	options.Logger = config.Logger
 	options.InstanceEnvironment = config.InstanceEnvironment
@@ -511,7 +519,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		projectClaims:     projectClaims,
 		approvals:         approvals,
 		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
-		candidateArtifacts:       config.CandidateArtifacts,
+		candidateArtifacts: config.CandidateArtifacts, candidateArtifactRecovery: config.CandidateArtifactRecovery,
 		candidateAdmission:       config.CandidateAdmission,
 		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
 		candidateSourceAudit:     config.CandidateSourceAudit,
@@ -523,7 +531,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return config.Persistence.legacyAudit != nil
 		}(),
 		jobs: jobs, api: config.API, protected: config.Protected,
-		instanceID: config.InstanceID, instanceEnvironment: servingstate.Environment(config.InstanceEnvironment),
+		instanceID: config.InstanceID, canonicalOrigin: config.CanonicalOrigin, instanceEnvironment: servingstate.Environment(config.InstanceEnvironment),
 		bindClaimedProject: config.BindClaimedProject, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
 		authorizeApproval:    config.AuthorizeApproval,

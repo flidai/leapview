@@ -125,6 +125,10 @@ func deriveNativeBuildRecoveryArtifactValues(
 	prepared NativeBuildRecoveryPreparationResult,
 	physicalPoolID string,
 ) (release.CandidateArtifactRecoveryRequest, deploymentnative.BuildArtifactBinding, catalogartifact.CommitMarker, error) {
+	managedPins, err := nativeRecoveryPlanManagedDataPins(plan.DeliveryPlan)
+	if err != nil {
+		return release.CandidateArtifactRecoveryRequest{}, deploymentnative.BuildArtifactBinding{}, catalogartifact.CommitMarker{}, err
+	}
 	artifactIdentity := release.CandidateArtifactIdentity{ServingArtifactDigest: plan.ArtifactDigest, ServingStateID: prepared.GenerationID}
 	if prepared.Artifact.AttemptID == "" {
 		artifactIdentity.ServingArtifactID = "artifact-" + strings.TrimPrefix(plan.ArtifactDigest, "sha256:")
@@ -140,7 +144,32 @@ func deriveNativeBuildRecoveryArtifactValues(
 	marker := nativeBuildMarker(prepared.Operation.OperationID, prepared.GenerationID, prepared.AttemptID, requestDigest, request, plan.Digest, physicalPoolID, prepared.DeliveryAttempt.FencingEpoch)
 	marker.FencingToken = fmt.Sprintf("%d", prepared.DeliveryAttempt.FencingEpoch)
 	binding := deploymentnative.BuildArtifactBinding{AttemptID: prepared.AttemptID, ServingArtifactID: artifactIdentity.ServingArtifactID, ServingArtifactDigest: artifactIdentity.ServingArtifactDigest, ServingStateID: artifactIdentity.ServingStateID}
-	return release.CandidateArtifactRecoveryRequest{CandidateID: prepared.CandidateID, ServingIdentity: servingIdentity, SourceDigest: plan.SourceDigest, Artifact: artifactIdentity}, binding, marker, nil
+	return release.CandidateArtifactRecoveryRequest{CandidateID: prepared.CandidateID, ServingIdentity: servingIdentity, SourceDigest: plan.SourceDigest, ManagedDataPins: managedPins, Artifact: artifactIdentity}, binding, marker, nil
+}
+
+// nativeRecoveryPlanManagedDataPins lowers the exact pinned managed-data
+// inputs retained in the canonical plan. The source-artifact input is the
+// project source identity rather than a managed-data revision and is omitted.
+func nativeRecoveryPlanManagedDataPins(plan deploymentdomain.DeliveryPlan) ([]release.ManagedDataPin, error) {
+	result := make([]release.ManagedDataPin, 0, len(plan.Execution.DataInputs))
+	seen := make(map[string]struct{}, len(plan.Execution.DataInputs))
+	for _, input := range plan.Execution.DataInputs {
+		if strings.TrimSpace(input.ID) == "source-artifact" {
+			continue
+		}
+		if input.Mode != deploymentdomain.DeliveryDataPinned {
+			continue
+		}
+		if strings.TrimSpace(input.ID) != input.ID || strings.TrimSpace(input.Revision) != input.Revision || input.ID == "" || input.Revision == "" {
+			return nil, fmt.Errorf("%w: native recovery managed-data plan input is not an exact pinned revision", deploymentdomain.ErrDeliveryConflict)
+		}
+		if _, exists := seen[input.ID]; exists {
+			return nil, fmt.Errorf("%w: native recovery managed-data plan input is duplicated", deploymentdomain.ErrDeliveryConflict)
+		}
+		seen[input.ID] = struct{}{}
+		result = append(result, release.ManagedDataPin{ConnectionID: input.ID, RevisionID: input.Revision})
+	}
+	return result, nil
 }
 
 // deriveNativeBuildRecoveryPhysicalInput constructs the read-only physical

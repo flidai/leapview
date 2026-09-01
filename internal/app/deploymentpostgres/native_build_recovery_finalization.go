@@ -337,7 +337,7 @@ func (c *NativeBuildCoordinator) finalizeRecoveredNativeBuildTx(ctx context.Cont
 	if completedAttempt.State != deploymentnative.AttemptCommitted || completedAttempt.AttemptID != input.Assembled.Commit.AttemptID || completedAttempt.PlanID != input.Assembled.Generation.PlanID || completedAttempt.CandidateID != input.Assembled.Generation.CandidateID || completedAttempt.OwnerID != input.Assembled.Commit.OwnerID || completedAttempt.PhysicalPoolID != input.Assembled.Seal.PhysicalPoolID || completedAttempt.FencingEpoch != input.Assembled.Commit.FencingEpoch || completedAttempt.RequestDigest != input.Assembled.Seal.RequestDigest || completedAttempt.PlanDigest != input.Assembled.Generation.PlanDigest || completedAttempt.Namespace != input.Assembled.Seal.RelationNamespace || completedAttempt.SnapshotID != input.Assembled.Commit.SnapshotID || completedAttempt.SessionIdentity == "" || completedAttempt.LeaseExpiresAt.IsZero() || completedAttempt.FinishedAt.IsZero() || completedAttempt.UpdatedAt.IsZero() || completedAttempt.FinishedAt.Before(completedAttempt.CreatedAt) || len(completedAttempt.TerminationEvidence) != 0 || !sameCommitMarker(completedAttempt.CommitMarker, input.Assembled.Commit.CommitMarker) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: completed recovered build attempt evidence is incomplete", deploymentdomain.ErrDeliveryConflict)
 	}
-	return nativeBuildProjection(outcome, input.Plan.BaseGenerationID, completedAttempt, lease, generation.Generation)
+	return nativeBuildProjection(outcome, input.Plan.BaseGenerationID, completedAttempt, lease, generation.CandidateRevision)
 }
 
 func validateRecoveredFinalizationLease(got, expected deploymentnative.DeliveryLease) error {

@@ -2,7 +2,10 @@ package cli
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,6 +13,7 @@ import (
 	"testing"
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
+	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
@@ -174,6 +178,97 @@ func TestCandidateSynchronizationIdempotencyKeysBindExpectedPredecessor(t *testi
 	}
 }
 
+func TestNativeSynchronizationProjectsCanonicalDeliveryCandidate(t *testing.T) {
+	const (
+		projectID   = "finance"
+		artifact    = "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d"
+		attestation = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		planID      = "0198f2c0-7c7a-7f00-8a11-000000000101"
+		buildID     = "0198f2c0-7c7a-7f00-8a11-000000000102"
+		candidateID = "0198f2c0-7c7a-7f00-8a11-000000000103"
+		sealID      = "0198f2c0-7c7a-7f00-8a11-000000000104"
+		planDigest  = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		provenance  = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		execution   = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+		evidence    = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	)
+	source := nativeCandidateSetDigestForTest(projectID, "leapview.yaml", artifact, 6)
+	generic := &nativeDeliveryTransportStub{sourceDigest: source}
+	transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic))
+	transport.principalClient = accessgen.NewGenClient(generic)
+	transport.canonicalOrigin = "https://target.example"
+	candidate, err := transport.SynchronizeNative(t.Context(), projectdevloop.SyncRequest{
+		Snapshot: projectdevloop.Snapshot{
+			ProjectID: projectID, ProjectFile: "leapview.yaml", Digest: source,
+			CandidateKey: "native", Artifacts: []projectdevloop.Artifact{{
+				Path: "leapview.yaml", Digest: artifact, SizeBytes: 6, Content: []byte("source"),
+			}},
+		},
+	}, 2)
+	require.NoError(t, err)
+	if candidate.ID != candidateID || candidate.ProjectID != projectID ||
+		candidate.OwnerID != "principal_native" || candidate.ArtifactDigest != source ||
+		candidate.TargetID != "target_native" || candidate.Environment != "production" ||
+		candidate.ProvenanceDigest != provenance || candidate.Revision != 17 ||
+		candidate.PreviewURL != "https://target.example/candidates/"+candidateID ||
+		candidate.PlanID != planID || candidate.PlanDigest != planDigest ||
+		candidate.ExecutionDigest != "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" ||
+		candidate.EvidenceDigest != "sha256:9999999999999999999999999999999999999999999999999999999999999999" {
+		t.Fatalf("candidate = %#v", candidate)
+	}
+	for _, request := range generic.requests {
+		if request.OperationID == deploymentgen.GenOperationCommitProjectCandidateSynchronization {
+			t.Fatal("native synchronization invoked legacy candidate commit")
+		}
+	}
+	if !generic.sawNativePlan || !generic.sawNativeBuild || !generic.sawSourceRetention {
+		t.Fatalf("native requests were incomplete: %#v", generic.requests)
+	}
+	if generic.nativePlanKey == "" || generic.nativeBuildKey == "" {
+		t.Fatal("native requests did not carry idempotency keys")
+	}
+	if generic.retainedSource != attestation {
+		t.Fatalf("retained source attestation = %q, want %q", generic.retainedSource, attestation)
+	}
+}
+
+func TestNativeDeliveryKeysAreStableAcrossTransportInstances(t *testing.T) {
+	request, source := nativeDeliverySyncRequestForTest()
+	firstStub := &nativeDeliveryTransportStub{sourceDigest: source}
+	first := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(firstStub))
+	first.principalClient = accessgen.NewGenClient(firstStub)
+	first.canonicalOrigin = "https://target.example"
+	if _, err := first.SynchronizeNative(t.Context(), request, 2); err != nil {
+		t.Fatal(err)
+	}
+	secondStub := &nativeDeliveryTransportStub{sourceDigest: source}
+	second := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(secondStub))
+	second.principalClient = accessgen.NewGenClient(secondStub)
+	second.canonicalOrigin = "https://target.example"
+	if _, err := second.SynchronizeNative(t.Context(), request, 2); err != nil {
+		t.Fatal(err)
+	}
+	if firstStub.nativePlanKey == "" || firstStub.nativeBuildKey == "" ||
+		firstStub.nativePlanKey != secondStub.nativePlanKey ||
+		firstStub.nativeBuildKey != secondStub.nativeBuildKey {
+		t.Fatalf("native idempotency keys differ: first plan=%q build=%q second plan=%q build=%q", firstStub.nativePlanKey, firstStub.nativeBuildKey, secondStub.nativePlanKey, secondStub.nativeBuildKey)
+	}
+}
+
+func TestRetainSourceRejectsMismatchedProjectIdentity(t *testing.T) {
+	_, source := nativeDeliverySyncRequestForTest()
+	stub := &nativeDeliveryTransportStub{sourceDigest: source, retainedProjectID: "other-project"}
+	transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(stub))
+	request := projectdevloop.SynchronizationPlanRequest{
+		ProjectID: "finance", ArtifactDigest: source, ProjectFile: "leapview.yaml",
+		CandidateKey: "native", PlanID: "source-plan",
+		Artifacts: []projectdevloop.ArtifactReference{{Path: "leapview.yaml", Digest: "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d", SizeBytes: 6}},
+	}
+	if _, err := transport.RetainSource(t.Context(), request); err == nil {
+		t.Fatal("retained source accepted a mismatched project identity")
+	}
+}
+
 func TestDevCommandExposesOneAuthenticatedRemoteWorkflow(t *testing.T) {
 	command := devCommand(context.Background())
 	if command.Name() != "dev" || !strings.Contains(strings.ToLower(command.Short), "private") {
@@ -196,6 +291,77 @@ func TestDevCommandExposesOneAuthenticatedRemoteWorkflow(t *testing.T) {
 
 type candidateSyncTransportStub struct {
 	requests []apigenclient.Request
+}
+
+type nativeDeliveryTransportStub struct {
+	requests           []apigenclient.Request
+	sourceDigest       string
+	retainedProjectID  string
+	nativePlanKey      string
+	nativeBuildKey     string
+	retainedSource     string
+	sawNativePlan      bool
+	sawNativeBuild     bool
+	sawSourceRetention bool
+}
+
+func (stub *nativeDeliveryTransportStub) DoAPIGen(
+	_ context.Context,
+	request apigenclient.Request,
+	out any,
+) (apigenclient.Response, error) {
+	stub.requests = append(stub.requests, request)
+	status := http.StatusOK
+	var response any
+	const (
+		attestation = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+		planID      = "0198f2c0-7c7a-7f00-8a11-000000000101"
+		buildID     = "0198f2c0-7c7a-7f00-8a11-000000000102"
+		candidateID = "0198f2c0-7c7a-7f00-8a11-000000000103"
+		sealID      = "0198f2c0-7c7a-7f00-8a11-000000000104"
+		planDigest  = "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+		provenance  = "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		execution   = "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"
+		evidence    = "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+	)
+	source := stub.sourceDigest
+	retainedProjectID := stub.retainedProjectID
+	if retainedProjectID == "" {
+		retainedProjectID = "finance"
+	}
+	switch request.OperationID {
+	case deploymentgen.GenOperationPlanProjectCandidateSynchronization:
+		body := request.Body.(deploymentgen.CandidateSynchronizationRequest)
+		response = deploymentgen.CandidateSynchronizationPlanResponse{PlanId: "source-plan", ArtifactDigest: body.ArtifactDigest, MissingDigests: []string{body.Artifacts[0].Digest}}
+	case deploymentgen.GenOperationUploadProjectCandidateSourceBlob:
+		status = http.StatusCreated
+		response = deploymentgen.CandidateSourceBlobResponse{Digest: request.PathParams["digest"], SizeBytes: int64(len(request.Body.([]byte)))}
+	case deploymentgen.GenOperationRetainProjectCandidateSource:
+		stub.sawSourceRetention = true
+		response = deploymentgen.CandidateSourceSnapshotResponse{ProjectId: retainedProjectID, SourceDigest: source, ProjectDigest: source, SourceAttestationDigest: attestation, TargetId: "target_native", Environment: "production"}
+	case deploymentgen.GenOperationCreateDeliveryPlan:
+		stub.sawNativePlan = true
+		stub.nativePlanKey = request.Headers.Get("Idempotency-Key")
+		response = deploymentgen.DeliveryPlanPreviewResponse{Id: planID, ProjectId: "finance", TargetId: "target_native", Environment: "production", Operation: deploymentgen.DeliveryOperationKindCodeChange, SourceDigest: source, SourceAttestationDigest: attestation, PlanDigest: planDigest, ExecutionDigest: execution, EvidenceDigest: evidence, ProvenanceDigest: provenance, Status: deploymentgen.DeliveryPlanStatusPlanned}
+	case deploymentgen.GenOperationBuildDeliveryPlan:
+		stub.sawNativeBuild = true
+		stub.nativeBuildKey = request.Headers.Get("Idempotency-Key")
+		candidateRevision := int64(17)
+		response = deploymentgen.DeliveryBuildStatusResponse{Id: buildID, PlanId: planID, PlanDigest: planDigest, SourceDigest: source, ExecutionDigest: execution, Status: deploymentgen.DeliveryBuildStatusSealed, CandidateId: testPointer(candidateID), CandidateRevision: &candidateRevision, SealId: testPointer(sealID), Revision: 9}
+	case accessgen.GenOperationGetCurrentPrincipal:
+		response = accessgen.CurrentPrincipalResponse{Id: "principal_native"}
+	}
+	encoded, err := json.Marshal(response)
+	if err != nil {
+		return apigenclient.Response{}, err
+	}
+	if err := json.Unmarshal(encoded, out); err != nil {
+		return apigenclient.Response{}, err
+	}
+	if request.OperationID == deploymentgen.GenOperationRetainProjectCandidateSource {
+		stub.retainedSource = response.(deploymentgen.CandidateSourceSnapshotResponse).SourceAttestationDigest
+	}
+	return apigenclient.Response{StatusCode: status, Headers: make(http.Header), ContentType: "application/json"}, nil
 }
 
 func (stub *candidateSyncTransportStub) DoAPIGen(
@@ -241,4 +407,23 @@ func (stub *candidateSyncTransportStub) DoAPIGen(
 
 func testPointer[T any](value T) *T {
 	return &value
+}
+
+func nativeCandidateSetDigestForTest(projectID, projectFile, artifactDigest string, size int64) string {
+	hash := sha256.New()
+	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:", len(projectID), projectID, len(projectFile), projectFile)
+	path := "leapview.yaml"
+	_, _ = fmt.Fprintf(hash, "%d:%s:%d:%s:%d:", len(path), path, len(artifactDigest), artifactDigest, size)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func nativeDeliverySyncRequestForTest() (projectdevloop.SyncRequest, string) {
+	const artifact = "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d"
+	source := nativeCandidateSetDigestForTest("finance", "leapview.yaml", artifact, 6)
+	return projectdevloop.SyncRequest{Snapshot: projectdevloop.Snapshot{
+		ProjectID: "finance", ProjectFile: "leapview.yaml", Digest: source,
+		CandidateKey: "native", Artifacts: []projectdevloop.Artifact{{
+			Path: "leapview.yaml", Digest: artifact, SizeBytes: 6, Content: []byte("source"),
+		}},
+	}}, source
 }

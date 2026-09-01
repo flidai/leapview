@@ -32,10 +32,14 @@ const (
 // Candidate is the durable, Deployment-owned identity of one author's private
 // project runtime. It never changes active serving-state pointers.
 type Candidate struct {
-	ID               string
-	Key              string
-	TargetID         string
-	OwnerID          string
+	ID       string
+	Key      string
+	TargetID string
+	OwnerID  string
+	// PreviewURL is the canonical, opaque candidate route. It is retained on
+	// the internal projection for native read paths; generated API DTOs choose
+	// explicitly which fields to expose and must not derive owner data from it.
+	PreviewURL       string
 	Scope            CandidateScope
 	ArtifactDigest   string
 	ProvenanceDigest string

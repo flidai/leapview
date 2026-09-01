@@ -166,20 +166,11 @@ func (c *Controller) runQualificationAuthoring(
 	}()
 	cleanup.Add(func(context.Context) error { return os.RemoveAll(workDir) })
 
-	ctx = phases.Begin(rootContext, "initial serving bootstrap", 20*time.Minute)
-	if strings.TrimSpace(credentials.PublisherToken) == "" {
-		return report, fmt.Errorf("initial qualification publisher token is required")
-	}
-	if err := c.bootstrapQualificationServingGeneration(
-		ctx,
-		options,
-		credentials.PublisherToken,
-	); err != nil {
-		return report, err
-	}
-	if err := phases.Finish(nil); err != nil {
-		return report, err
-	}
+	// Native delivery owns candidate planning, sealing, and publication. There
+	// is intentionally no legacy "bootstrap" publication here: the first
+	// generation must follow the same review-gated path as every later change.
+	// This keeps target revision zero fail-closed until the normal authoring
+	// journey has an explicit approval and activation authority.
 	ctx = phases.Begin(rootContext, "browser and client setup", 15*time.Minute)
 
 	runSuffix := normalizedQualificationName(
@@ -425,6 +416,9 @@ func (c *Controller) runQualificationAuthoring(
 	if err := clientWorker.CallContext(ctx, "dev", nil, &candidate, nil); err != nil {
 		return report, err
 	}
+	if strings.TrimSpace(candidate.PreviewURL) == "" {
+		return report, fmt.Errorf("native delivery candidate %s has no private preview URL; preview authority is not available", candidate.ID)
+	}
 	var preview struct {
 		CandidateID       string `json:"candidateId"`
 		GovernedOrderRows int    `json:"governedOrderRows"`
@@ -457,12 +451,11 @@ func (c *Controller) runQualificationAuthoring(
 	); err != nil {
 		return report, err
 	}
-	var activated QualificationPublication
-	if err := clientWorker.CallContext(ctx, "publish", nil, &activated, nil); err != nil {
+	activated, err := waitQualificationNativePublication(
+		ctx, apiClient, options, administratorToken.AccessToken, publication,
+	)
+	if err != nil {
 		return report, err
-	}
-	if activated.Status != "committed" {
-		return report, fmt.Errorf("approved publication transitioned to %q", activated.Status)
 	}
 	publication, deployment, err := qualificationCanonicalPublicationEvidence(
 		ctx,
@@ -547,6 +540,60 @@ func (c *Controller) runQualificationAuthoring(
 		return report, err
 	}
 	return report, nil
+}
+
+// waitQualificationNativePublication observes the publication created by the
+// native PublishDeliveryCandidate command. Approval schedules activation in a
+// separate worker; issuing publish a second time would create another pending
+// publication instead of observing this one.
+func waitQualificationNativePublication(
+	ctx context.Context,
+	client *http.Client,
+	options qualificationAuthoringOptions,
+	token string,
+	pending QualificationPublication,
+) (QualificationPublication, error) {
+	api := deploymentgen.NewGenClient(qualificationGeneratedTransport(options.Target, token, client))
+	waitCtx, cancel := qualificationContext(ctx, 5*time.Minute)
+	defer cancel()
+	var committed QualificationPublication
+	err := qualificationWait(waitCtx, 2*time.Second, func(pollCtx context.Context) (bool, error) {
+		current, err := api.GetDeliveryPublicationEvidence(
+			pollCtx,
+			deploymentgen.GenGetDeliveryPublicationEvidenceClientRequest{
+				Project: options.ProjectID, Publication: pending.DeploymentID,
+			},
+		)
+		if err != nil {
+			if qualificationTransientDeploymentError(err) {
+				return false, nil
+			}
+			return false, err
+		}
+		body := current.Body
+		if body.Id != pending.DeploymentID || body.CandidateId != pending.CandidateID ||
+			body.PlanId != pending.PlanID || body.PlanDigest != pending.PlanDigest ||
+			body.TargetId != pending.TargetID {
+			return false, fmt.Errorf("native publication evidence does not match the requested candidate")
+		}
+		switch body.Status {
+		case deploymentgen.DeliveryPublicationStatusPending:
+			return false, nil
+		case deploymentgen.DeliveryPublicationStatusCommitted:
+			committed = pending
+			committed.Status = string(body.Status)
+			committed.GenerationID = body.GenerationId
+			return true, nil
+		case deploymentgen.DeliveryPublicationStatusRejected, deploymentgen.DeliveryPublicationStatusIndeterminate:
+			return false, fmt.Errorf("native publication ended in %q", body.Status)
+		default:
+			return false, fmt.Errorf("native publication returned unknown status %q", body.Status)
+		}
+	})
+	if err != nil {
+		return QualificationPublication{}, err
+	}
+	return committed, nil
 }
 
 func normalizeQualificationAuthoringOptions(options qualificationAuthoringOptions) qualificationAuthoringOptions {
@@ -682,32 +729,16 @@ func qualificationCanonicalPublicationEvidence(
 	if err != nil {
 		return QualificationPublication{}, QualificationDeployment{}, err
 	}
-	if !qualificationPlanMatchesCandidate(plan.Body, candidate) {
+	planMatches := qualificationPlanMatchesCandidate(plan.Body, candidate)
+	provenanceMatches := plan.Body.ProvenanceDigest == candidate.ProvenanceDigest
+	if !planMatches || !provenanceMatches {
 		return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf(
-			"canonical plan evidence does not match the previewed candidate (plan digest=%t, source digest=%t, target=%t)",
+			"canonical plan evidence does not match the previewed candidate (plan digest=%t, source digest=%t, provenance=%t, target=%t)",
 			plan.Body.PlanDigest == candidate.PlanDigest,
 			plan.Body.SourceDigest == candidate.ArtifactDigest,
+			plan.Body.ProvenanceDigest == candidate.ProvenanceDigest,
 			plan.Body.TargetId == candidate.TargetID,
 		)
-	}
-	synchronizedCandidate, err := client.GetProjectCandidate(
-		ctx,
-		deploymentgen.GenGetProjectCandidateClientRequest{
-			Project: options.ProjectID, Candidate: candidate.ID,
-		},
-	)
-	if err != nil {
-		return QualificationPublication{}, QualificationDeployment{}, err
-	}
-	serverSynchronizedCandidate := synchronizedCandidate.Body
-	if serverSynchronizedCandidate.Id != candidate.ID ||
-		serverSynchronizedCandidate.Revision != candidate.Revision ||
-		serverSynchronizedCandidate.OwnerId != candidate.PrincipalID ||
-		serverSynchronizedCandidate.TargetId != candidate.TargetID ||
-		serverSynchronizedCandidate.ArtifactDigest != candidate.ArtifactDigest ||
-		serverSynchronizedCandidate.ProvenanceDigest == nil ||
-		*serverSynchronizedCandidate.ProvenanceDigest != candidate.ProvenanceDigest {
-		return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf("synchronized candidate evidence does not match the previewed candidate")
 	}
 	serverCandidate, err := client.GetDeliveryCandidateStatus(
 		ctx,
@@ -719,6 +750,7 @@ func qualificationCanonicalPublicationEvidence(
 		return QualificationPublication{}, QualificationDeployment{}, err
 	}
 	if serverCandidate.Body.Id != candidate.ID ||
+		serverCandidate.Body.Status != deploymentgen.DeliveryCandidateStatusReady ||
 		serverCandidate.Body.PlanId != candidate.PlanID ||
 		serverCandidate.Body.PlanDigest != candidate.PlanDigest ||
 		serverCandidate.Body.SourceDigest != candidate.ArtifactDigest ||
@@ -743,14 +775,16 @@ func qualificationCanonicalPublicationEvidence(
 		return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf("canonical generation evidence does not match the previewed candidate")
 	}
 	pending.ArtifactDigest = serverCandidate.Body.ServingArtifactDigest
-	pending.CandidateRevision = serverSynchronizedCandidate.Revision
-	pending.PrincipalID = serverSynchronizedCandidate.OwnerId
-	pending.ReleaseDigest = *serverSynchronizedCandidate.ProvenanceDigest
+	pending.CandidateRevision = candidate.Revision
+	pending.PrincipalID = candidate.PrincipalID
+	pending.ReleaseDigest = candidate.ProvenanceDigest
+	pending.Status = string(serverPublication.Status)
+	pending.GenerationID = serverPublication.GenerationId
 	return pending, QualificationDeployment{
-		CandidateID: candidate.ID, CandidateRevision: serverSynchronizedCandidate.Revision,
-		TargetID: candidate.TargetID, PrincipalID: serverSynchronizedCandidate.OwnerId,
+		CandidateID: candidate.ID, CandidateRevision: candidate.Revision,
+		TargetID: candidate.TargetID, PrincipalID: candidate.PrincipalID,
 		ArtifactDigest: generation.Body.ServingArtifactDigest,
-		ReleaseDigest:  *serverSynchronizedCandidate.ProvenanceDigest,
+		ReleaseDigest:  candidate.ProvenanceDigest,
 		GenerationID:   generation.Body.Id, PlanID: generation.Body.PlanId,
 		PlanDigest: generation.Body.PlanDigest, Status: string(generation.Body.Status),
 	}, nil
@@ -766,114 +800,11 @@ func qualificationPlanMatchesCandidate(plan deploymentgen.DeliveryPlanPreviewRes
 		plan.TargetId == candidate.TargetID
 }
 
-func (c *Controller) bootstrapQualificationServingGeneration(
-	ctx context.Context,
-	options qualificationAuthoringOptions,
-	publisherToken string,
-) error {
-	output, err := c.qualificationCompose(
-		ctx,
-		options.BundleRoot,
-		"ps", "--quiet", "leapview",
-	)
-	if err != nil {
-		return err
-	}
-	containerID := strings.TrimSpace(string(output))
-	if containerID == "" {
-		return fmt.Errorf("qualification application container is not running")
-	}
-	environment := []string{
-		"LEAPVIEW_API_TOKEN=" + publisherToken,
-		"LEAPVIEW_TARGET=http://localhost:8080",
-	}
-	devOutput, err := c.qualificationContainers.Existing(containerID).Exec(
-		ctx,
-		nil,
-		"env",
-		environment[0],
-		environment[1],
-		"leapview", "dev", "--once", "--no-browser",
-		"--bootstrap",
-		"--project", options.Project,
-		"--target", "http://localhost:8080",
-		"--candidate-key", "qualification-serving-bootstrap",
-		"--source-revision", options.SourceRevision,
-		"--format", "json",
-	)
-	if err != nil {
-		return fmt.Errorf("bootstrap qualification candidate: %w", err)
-	}
-	candidate, err := parseQualificationCandidateBootstrap(string(devOutput), options.SourceRevision)
-	if err != nil {
-		return err
-	}
-	bootstrap := true
-	client := deploymentgen.NewGenClient(qualificationGeneratedTransport(
-		options.Target,
-		publisherToken,
-		qualificationHTTPSClient(),
-	))
-	published, err := client.PublishProjectCandidate(
-		ctx,
-		deploymentgen.GenPublishProjectCandidateClientRequest{
-			Project: options.ProjectID, Candidate: candidate.ID,
-			Headers: deploymentgen.GenPublishProjectCandidateClientHeaders{
-				IdempotencyKey: "qualification-serving-bootstrap-" + candidate.ID,
-			},
-			Body: deploymentgen.GenSchemaCandidatePublishRequest{
-				Bootstrap: &bootstrap, ExpectedRevision: candidate.Revision,
-				ProvenanceDigest: candidate.ProvenanceDigest,
-				TargetId:         candidate.TargetID,
-			},
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("publish qualification bootstrap candidate: %w", err)
-	}
-	deploymentID := published.Body.Id
-	if deploymentID == "" {
-		return fmt.Errorf("qualification bootstrap publication returned no deployment identity")
-	}
-	waitCtx, cancel := qualificationContext(ctx, 5*time.Minute)
-	defer cancel()
-	err = qualificationWait(waitCtx, 2*time.Second, func(pollCtx context.Context) (bool, error) {
-		current, getErr := client.GetDeployment(
-			pollCtx,
-			deploymentgen.GenGetDeploymentClientRequest{
-				Project: options.ProjectID, Deployment: deploymentID,
-			},
-		)
-		if getErr != nil {
-			if qualificationTransientDeploymentError(getErr) {
-				return false, nil
-			}
-			return false, getErr
-		}
-		switch current.Body.Status {
-		case deploymentgen.DeploymentStatusActive:
-			if current.Body.Evidence.CandidateId != candidate.ID ||
-				current.Body.Evidence.CandidateRevision != candidate.Revision ||
-				current.Body.Evidence.TargetId != candidate.TargetID {
-				return false, fmt.Errorf("qualification bootstrap activated unexpected candidate evidence")
-			}
-			return true, nil
-		case deploymentgen.DeploymentStatusQueued, deploymentgen.DeploymentStatusRunning:
-			return false, nil
-		case deploymentgen.DeploymentStatusCancelled, deploymentgen.DeploymentStatusFailed, deploymentgen.DeploymentStatusSuperseded:
-			return false, fmt.Errorf("qualification bootstrap publication ended in %q", current.Body.Status)
-		default:
-			return false, fmt.Errorf("qualification bootstrap publication returned unknown status %q", current.Body.Status)
-		}
-	})
-	return err
-}
-
 // qualificationTransientDeploymentError treats generated problem responses and
 // plain-text 503/429s from authorization, readiness, or rate-limit middleware
-// as transient while the first serving generation is still being activated.
-// These responses may bypass APIGen's problem+json envelope, so checking only
-// ProblemError would abort the bootstrap poll before the async worker finishes.
+// as transient while a native publication is being activated. These responses
+// may bypass APIGen's problem+json envelope, so checking only ProblemError
+// would abort observation before the async worker finishes.
 func qualificationTransientDeploymentError(err error) bool {
 	if err == nil {
 		return false
@@ -913,7 +844,7 @@ func approveQualificationPublication(
 		return fmt.Errorf("read canonical publication approval: %w", err)
 	}
 	if requested.Body.Id == "" || requested.Body.Status != "pending" ||
-		requested.Body.RequestedBy != publication.PrincipalID {
+		publication.PrincipalID == "" || requested.Body.RequestedBy != publication.PrincipalID {
 		return fmt.Errorf("canonical publication approval is not pending")
 	}
 	reviewer := deploymentgen.NewGenClient(qualificationGeneratedTransport(

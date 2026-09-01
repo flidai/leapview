@@ -226,8 +226,8 @@ func verifyExactAuthoringCandidate(
 	publication QualificationPublication,
 	deployment QualificationDeployment,
 ) error {
-	if publication.Status != "pending" {
-		return fmt.Errorf("publication status %q is not pending", publication.Status)
+	if publication.Status != "committed" {
+		return fmt.Errorf("publication status %q is not committed", publication.Status)
 	}
 	if deployment.Status != "active" {
 		return fmt.Errorf("generation status %q is not active", deployment.Status)

@@ -111,6 +111,7 @@ type BundleEvidenceInput struct {
 // callers to retain and use for subsequent publication orchestration.
 type GenerationAdmissionResult struct {
 	AttemptID, SealID, CandidateID string
+	CandidateRevision              int64
 	Generation                     GenerationEvidence
 	Bundle                         BundleEvidence
 }
@@ -303,7 +304,8 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	}
 	return GenerationAdmissionResult{
 		AttemptID: completed.Attempt.AttemptID, SealID: completed.Seal.SealID, CandidateID: completed.Candidate.CandidateID,
-		Generation: fromNativeGeneration(generation), Bundle: fromNativeBundle(bundle),
+		CandidateRevision: completed.Candidate.CandidateRevision,
+		Generation:        fromNativeGeneration(generation), Bundle: fromNativeBundle(bundle),
 	}, nil
 }
 

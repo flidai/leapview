@@ -342,7 +342,7 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if err != nil {
 		t.Fatalf("complete and admit: %v", err)
 	}
-	if first.Generation.GenerationID != input.Generation.GenerationID || first.Generation.GenerationRevision != 1 || first.Bundle.ArtifactLocator != input.Bundle.ArtifactLocator {
+	if first.Generation.GenerationID != input.Generation.GenerationID || first.Generation.GenerationRevision != 1 || first.CandidateRevision != 1 || first.Bundle.ArtifactLocator != input.Bundle.ArtifactLocator {
 		t.Fatalf("admission result = %#v", first)
 	}
 	attemptEvidence, err := ducklake.LoadAttempt(t.Context(), input.Commit.AttemptID)

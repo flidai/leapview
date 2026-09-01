@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/url"
@@ -25,6 +26,14 @@ type candidatePreviewHandler interface {
 
 type candidateReviewHandler interface {
 	ServeCandidateReview(http.ResponseWriter, *http.Request, string, projectgraph.ResourceID, webpage.Provider)
+}
+
+type candidateRuntimeHost interface {
+	ResolveOwnedCandidate(string, string) (runtimehostmodule.OwnedCandidateView, error)
+}
+
+type candidateNativeRuntimePreparer interface {
+	EnsureNativeCandidateRuntime(context.Context, string, string) error
 }
 
 type candidateRouteDependencies struct {
@@ -54,8 +63,12 @@ func candidatePreview(deps candidateRouteDependencies, w http.ResponseWriter, r 
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
-	view, err := deps.runtimeHost.ResolveOwnedCandidate(candidate.ID, principalID)
+	view, err := resolveCandidateRuntime(deps, r, candidate.ID, principalID)
 	if err != nil || view.Provider == nil || deps.candidateMetrics == nil {
+		if errors.Is(err, deploymentmodule.ErrCandidateNotFound) {
+			http.NotFound(w, r)
+			return
+		}
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -162,7 +175,7 @@ func resolveCandidateDashboardHTTP(
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return dashboardmodule.HTTP{}, false
 	}
-	view, err := deps.runtimeHost.ResolveOwnedCandidate(candidate.ID, principalID)
+	view, err := resolveCandidateRuntime(deps, r, candidate.ID, principalID)
 	if err != nil {
 		status := http.StatusServiceUnavailable
 		if errors.Is(err, runtimehostmodule.ErrCandidateRuntimeNotFound) ||
@@ -202,6 +215,43 @@ func resolveCandidateDashboardHTTP(
 		return dashboardmodule.HTTP{}, false
 	}
 	return handler, true
+}
+
+// resolveCandidateRuntime first uses an already-registered process-local
+// runtime. Only a missing/expired registration triggers durable native
+// evidence recovery; ordinary dashboard requests and SSE reconnects do not
+// rebuild or replace a live candidate runtime.
+func resolveCandidateRuntime(
+	deps candidateRouteDependencies,
+	r *http.Request,
+	candidateID, principalID string,
+) (runtimehostmodule.OwnedCandidateView, error) {
+	return resolveCandidateRuntimeWith(deps.runtimeHost, deps.deployments, r.Context(), candidateID, principalID)
+}
+
+func resolveCandidateRuntimeWith(
+	runtimeHost candidateRuntimeHost,
+	deployments candidateNativeRuntimePreparer,
+	ctx context.Context,
+	candidateID, principalID string,
+) (runtimehostmodule.OwnedCandidateView, error) {
+	if runtimeHost == nil {
+		return runtimehostmodule.OwnedCandidateView{}, runtimehostmodule.ErrCandidateRuntimeClosed
+	}
+	view, err := runtimeHost.ResolveOwnedCandidate(candidateID, principalID)
+	if err == nil {
+		return view, nil
+	}
+	if !errors.Is(err, runtimehostmodule.ErrCandidateRuntimeNotFound) && !errors.Is(err, runtimehostmodule.ErrCandidateRuntimeExpired) {
+		return runtimehostmodule.OwnedCandidateView{}, err
+	}
+	if deployments == nil {
+		return runtimehostmodule.OwnedCandidateView{}, err
+	}
+	if ensureErr := deployments.EnsureNativeCandidateRuntime(ctx, candidateID, principalID); ensureErr != nil {
+		return runtimehostmodule.OwnedCandidateView{}, ensureErr
+	}
+	return runtimeHost.ResolveOwnedCandidate(candidateID, principalID)
 }
 
 func resolveOwnedCandidate(deps candidateRouteDependencies, w http.ResponseWriter, r *http.Request) (deploymentmodule.Candidate, string, bool) {

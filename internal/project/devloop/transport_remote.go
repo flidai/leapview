@@ -46,6 +46,15 @@ type SynchronizationTransport interface {
 	Commit(context.Context, SynchronizationPlanRequest) (Candidate, error)
 }
 
+// NativeSynchronizationTransport is the canonical PostgreSQL delivery seam.
+// Implementations own the source-retention, plan, and build requests and must
+// return the same candidate projection as the legacy protocol. The upload
+// limit is supplied by TransportRemote so native and legacy flows preserve the
+// caller's bounded concurrency policy.
+type NativeSynchronizationTransport interface {
+	SynchronizeNative(context.Context, SyncRequest, int) (Candidate, error)
+}
+
 // RetainedSource is the target-verified identity returned by the source-only
 // retention command. It intentionally has no candidate or physical storage
 // authority.
@@ -92,6 +101,14 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 		ExpectedArtifactDigest: strings.TrimSpace(request.ExpectedArtifactDigest),
 		Artifacts:              make([]ArtifactReference, len(snapshot.Artifacts)),
 		SourceRevision:         snapshot.SourceRevision,
+	}
+	request.Snapshot = cloneSnapshot(snapshot)
+	if native, ok := remote.transport.(NativeSynchronizationTransport); ok {
+		candidate, nativeErr := native.SynchronizeNative(ctx, request, remote.maxParallelUploads)
+		if nativeErr != nil {
+			return Candidate{}, fmt.Errorf("synchronize project delivery: %w", nativeErr)
+		}
+		return candidate, nil
 	}
 	artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
 	for index, artifact := range snapshot.Artifacts {
@@ -165,10 +182,19 @@ func (remote *TransportRemote) RetainSource(ctx context.Context, snapshot Snapsh
 		if err != nil {
 			return RetainedSource{}, err
 		}
+		group, uploadContext := errgroup.WithContext(ctx)
+		group.SetLimit(remote.maxParallelUploads)
 		for _, artifact := range missing {
-			if err := remote.transport.Upload(ctx, clonePlanRequest(planRequest), artifact); err != nil {
-				return RetainedSource{}, fmt.Errorf("upload project source %q: %w", artifact.Path, err)
-			}
+			artifact := artifact
+			group.Go(func() error {
+				if err := remote.transport.Upload(uploadContext, clonePlanRequest(planRequest), artifact); err != nil {
+					return fmt.Errorf("upload project source %q: %w", artifact.Path, err)
+				}
+				return nil
+			})
+		}
+		if err := group.Wait(); err != nil {
+			return RetainedSource{}, err
 		}
 		return retainer.RetainSource(ctx, clonePlanRequest(planRequest))
 	}

@@ -49,6 +49,13 @@ type Candidate struct {
 	Environment      string
 	ProvenanceDigest string
 	Revision         int64
+	// Native delivery transports return the plan that produced the sealed
+	// candidate. Legacy candidate transports leave these fields empty; the
+	// Project CLI then resolves a plan through its injected plan operations.
+	PlanID          string
+	PlanDigest      string
+	ExecutionDigest string
+	EvidenceDigest  string
 }
 
 type SyncRequest struct {
@@ -217,6 +224,10 @@ func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, erro
 	candidate.TargetID = strings.TrimSpace(candidate.TargetID)
 	candidate.Environment = strings.TrimSpace(candidate.Environment)
 	candidate.ProvenanceDigest = strings.TrimSpace(candidate.ProvenanceDigest)
+	candidate.PlanID = strings.TrimSpace(candidate.PlanID)
+	candidate.PlanDigest = strings.TrimSpace(candidate.PlanDigest)
+	candidate.ExecutionDigest = strings.TrimSpace(candidate.ExecutionDigest)
+	candidate.EvidenceDigest = strings.TrimSpace(candidate.EvidenceDigest)
 	if err := candidate.ProjectID.Validate(); err != nil {
 		return Candidate{}, fmt.Errorf("remote candidate project identity is invalid: %w", err)
 	}
@@ -229,6 +240,22 @@ func normalizeCandidate(candidate Candidate, snapshot Snapshot) (Candidate, erro
 	}
 	if err := digest.ValidateSHA256Identity(candidate.ProvenanceDigest); err != nil {
 		return Candidate{}, fmt.Errorf("remote candidate provenance digest is invalid: %w", err)
+	}
+	hasPlanEvidence := candidate.PlanID != "" || candidate.PlanDigest != "" ||
+		candidate.ExecutionDigest != "" || candidate.EvidenceDigest != ""
+	if hasPlanEvidence {
+		if candidate.PlanID == "" {
+			return Candidate{}, fmt.Errorf("remote candidate plan evidence is missing plan identity")
+		}
+		for name, value := range map[string]string{
+			"plan":      candidate.PlanDigest,
+			"execution": candidate.ExecutionDigest,
+			"evidence":  candidate.EvidenceDigest,
+		} {
+			if err := digest.ValidateSHA256Identity(value); err != nil {
+				return Candidate{}, fmt.Errorf("remote candidate %s digest is invalid: %w", name, err)
+			}
+		}
 	}
 	return candidate, nil
 }

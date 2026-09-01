@@ -131,7 +131,7 @@ func TestVerifyExactAuthoringCandidate(t *testing.T) {
 		GenerationID:      "generation_1",
 		PlanID:            candidate.PlanID,
 		PlanDigest:        candidate.PlanDigest,
-		Status:            "pending",
+		Status:            "committed",
 	}
 	deployment := QualificationDeployment{
 		CandidateID:       candidate.ID,
@@ -888,24 +888,6 @@ func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 		publication.CandidateID != candidate.ID ||
 		publication.ReleaseDigest != candidate.ProvenanceDigest {
 		t.Fatalf("publication = %+v", publication)
-	}
-}
-
-func TestQualificationBootstrapCandidateAllowsMissingDeliveryPlan(t *testing.T) {
-	output := fmt.Sprintf(
-		`{"schemaVersion":1,"candidateId":"cand_bootstrap","revision":7,"targetId":"target_1",`+
-			`"principalId":"principal_1","artifactDigest":"sha256:%s","provenanceDigest":"sha256:%s",`+
-			`"previewUrl":"https://localhost/candidates/cand_bootstrap"}`,
-		strings.Repeat("a", 64),
-		strings.Repeat("b", 64),
-	)
-	if _, err := parseQualificationCandidate(output, ""); err == nil {
-		t.Fatal("normal candidate parser accepted a missing delivery plan")
-	}
-	candidate, err := parseQualificationCandidateBootstrap(output, "")
-	require.NoError(t, err)
-	if candidate.ID != "cand_bootstrap" || candidate.PlanID != "" || candidate.PlanDigest != "" {
-		t.Fatalf("bootstrap candidate = %+v", candidate)
 	}
 }
 

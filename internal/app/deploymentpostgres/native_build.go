@@ -884,12 +884,15 @@ func (c *NativeBuildCoordinator) completeNativeBuild(ctx context.Context, reques
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	committed = true
-	return nativeBuildProjection(outcome, plan.BaseGenerationID, completedAttempt, admission.Lease, generation.Generation)
+	return nativeBuildProjection(outcome, plan.BaseGenerationID, completedAttempt, admission.Lease, generation.CandidateRevision)
 }
 
 type nativeBuildEventPayload struct{ OperationID, ProjectID, ResourceID, Status string }
 
-func nativeBuildProjection(outcome nativeBuildOutcome, baseGenerationID string, attempt deploymentnative.DeliveryBuildAttempt, lease deploymentnative.DeliveryLease, generation GenerationEvidence) (deploymentmodule.NativeDeliveryBuild, error) {
+func nativeBuildProjection(outcome nativeBuildOutcome, baseGenerationID string, attempt deploymentnative.DeliveryBuildAttempt, lease deploymentnative.DeliveryLease, candidateRevision int64) (deploymentmodule.NativeDeliveryBuild, error) {
+	if candidateRevision <= 0 {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native candidate revision is invalid", deploymentdomain.ErrDeliveryConflict)
+	}
 	base := uuid.Nil
 	if baseGenerationID != "" {
 		parsed, err := uuid.Parse(baseGenerationID)
@@ -945,7 +948,7 @@ func nativeBuildProjection(outcome nativeBuildOutcome, baseGenerationID string, 
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	return deploymentmodule.NativeDeliveryBuild{ActorID: outcome.ActorID, OperationOwnerID: outcome.OperationOwnerID, IdempotencyKey: outcome.IdempotencyKey, RequestDigest: outcome.RequestDigest, OperationID: operationID, EventID: eventID, AuditID: auditID, ID: attemptID, PlanID: planID, PlanDigest: outcome.PlanDigest, SourceDigest: outcome.SourceDigest, ExecutionDigest: outcome.ExecutionDigest, BaseGenerationID: base, PhysicalPoolID: attempt.PhysicalPoolID, WriterLeaseID: writerLeaseID, ServingArtifactID: outcome.ServingArtifactID, ServingArtifactDigest: outcome.ServingArtifactDigest, ServingStateID: servingStateID, Status: "sealed", SealID: sealID, CandidateID: candidateID, CreatedAt: attempt.CreatedAt.UTC(), UpdatedAt: attempt.UpdatedAt.UTC(), TerminalAt: attempt.FinishedAt.UTC(), Revision: generation.GenerationRevision}, nil
+	return deploymentmodule.NativeDeliveryBuild{ActorID: outcome.ActorID, OperationOwnerID: outcome.OperationOwnerID, IdempotencyKey: outcome.IdempotencyKey, RequestDigest: outcome.RequestDigest, OperationID: operationID, EventID: eventID, AuditID: auditID, ID: attemptID, PlanID: planID, PlanDigest: outcome.PlanDigest, SourceDigest: outcome.SourceDigest, ExecutionDigest: outcome.ExecutionDigest, BaseGenerationID: base, PhysicalPoolID: attempt.PhysicalPoolID, WriterLeaseID: writerLeaseID, ServingArtifactID: outcome.ServingArtifactID, ServingArtifactDigest: outcome.ServingArtifactDigest, ServingStateID: servingStateID, Status: "sealed", SealID: sealID, CandidateID: candidateID, CreatedAt: attempt.CreatedAt.UTC(), UpdatedAt: attempt.UpdatedAt.UTC(), TerminalAt: attempt.FinishedAt.UTC(), Revision: attempt.FencingEpoch, CandidateRevision: candidateRevision}, nil
 }
 
 func (c *NativeBuildCoordinator) replayBuild(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest, requestDigest string, operation deploymentmodule.NativeOperationRecord) (deploymentmodule.NativeDeliveryBuild, error) {
@@ -1044,7 +1047,7 @@ func (c *NativeBuildCoordinator) replayBuild(ctx context.Context, request deploy
 	if lease.LeaseID != outcome.LeaseID || lease.TargetID != request.TargetID || lease.OwnerID != request.PrincipalID || lease.State != "released" || lease.FencingEpoch != attempt.FencingEpoch || lease.ExpiresAt.IsZero() || lease.AcquiredAt.IsZero() || lease.ReleasedAt.IsZero() {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: replay lease identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
-	return nativeBuildProjection(outcome, plan.BaseGenerationID, attempt, lease, GenerationEvidence{GenerationRevision: generation.GenerationRevision})
+	return nativeBuildProjection(outcome, plan.BaseGenerationID, attempt, lease, candidate.CandidateRevision)
 }
 
 func replayFailedNativeBuild(operation deploymentmodule.NativeOperationRecord, requestDigest string) error {
