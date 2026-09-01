@@ -2696,11 +2696,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private renderToolbar(builder: DashboardBuilderSignal) {
     const saveState = builder.save.state
     const blockingDiagnostics = builder.diagnostics.filter((item) => item.severity === 'error')
+    const previewValidation = this.previewValidationMessage(builder)
     const publishing = this.commandPending && this.activeCommandAction === 'publish'
-    const publishDisabled = this.commandPending || !builder.hasUnpublishedChanges || blockingDiagnostics.length > 0
+    const publishDisabled = this.commandPending || !builder.hasUnpublishedChanges || blockingDiagnostics.length > 0 || Boolean(previewValidation)
     const publishLabel = publishing ? 'Publishing…' : builder.hasUnpublishedChanges ? 'Publish' : 'Published'
     const publishTitle = blockingDiagnostics.length > 0
       ? `Fix ${blockingDiagnostics.length} validation ${blockingDiagnostics.length === 1 ? 'error' : 'errors'} before publishing`
+      : previewValidation
+        ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || Boolean(this.forkHref)
     return html`
@@ -3224,7 +3227,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private builderFilterErrorMessage(): string {
     if (this.builderFilterTransportError) return this.builderFilterTransportError
     const validation = this.builderFilterValidation
-    return validation.accepted ? '' : validation.message
+    if (!validation.accepted) return validation.message
+    const previewError = this.builder?.preview.error?.trim() ?? ''
+    if (previewError.includes('compile dashboard filters')) {
+      return previewError.includes('narrow targets explicitly')
+        ? 'Choose a narrower filter scope for compatible visuals.'
+        : 'Review this filter’s field and scope.'
+    }
+    return ''
+  }
+
+  private previewValidationMessage(builder: DashboardBuilderSignal): string {
+    const error = builder.preview.error?.trim() ?? ''
+    if (builder.preview.active || !error.includes('strictly compile dashboard draft:')) return ''
+    return error.includes('compile dashboard filters')
+      ? 'Fix the filter scope before publishing'
+      : 'Fix draft validation before publishing'
   }
 
   private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
@@ -3890,7 +3908,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
   private publish = (): void => {
     const builder = this.builder
-    if (!builder?.capabilities.canPublish || !builder.hasUnpublishedChanges || builder.diagnostics.some((item) => item.severity === 'error') || this.commandPending) return
+    if (!builder?.capabilities.canPublish || !builder.hasUnpublishedChanges || builder.diagnostics.some((item) => item.severity === 'error') || this.previewValidationMessage(builder) || this.commandPending) return
     this.emitCommand('publish')
   }
 

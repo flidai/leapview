@@ -104,7 +104,7 @@ func CompileDocumentBuilderPreview(doc document.DashboardDocument, models map[st
 	if model == nil {
 		return BuilderPreviewResult{}, fmt.Errorf("dashboard semantic model %q is unavailable", modelID)
 	}
-	filters, err := CompileCanonicalDashboardFilterContract(doc, model)
+	filters, err := CompileCanonicalDashboardBuilderFilters(doc, model)
 	if err != nil {
 		return BuilderPreviewResult{}, fmt.Errorf("compile dashboard filters: %w", err)
 	}
