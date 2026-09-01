@@ -122,6 +122,9 @@ func (s SignalStream) forwardUpdates(ctx context.Context, updates <-chan SignalP
 			return nil
 		case <-ticker.C:
 			if err := s.keepAlive(); err != nil {
+				if ctx.Err() != nil {
+					return nil
+				}
 				return err
 			}
 		case patch, ok := <-updates:

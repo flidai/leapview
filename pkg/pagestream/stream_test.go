@@ -174,6 +174,12 @@ func (r *synchronizedRecorder) Write(p []byte) (int, error) {
 	return r.ResponseRecorder.Write(p)
 }
 
+func (r *synchronizedRecorder) WriteString(value string) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.ResponseRecorder.WriteString(value)
+}
+
 func (r *synchronizedRecorder) WriteHeader(statusCode int) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
