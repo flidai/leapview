@@ -220,6 +220,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		return fail(fmt.Errorf("build native project source reader: %w", err))
 	}
 	readClaim := readClaimedProject(graph.DeploymentRepository, environment)
+	authoringProject := postgresAuthoringProjectIDResolver(graph.DeploymentRepository, graph.ServingState, environment)
 	claimedProject, found, err := readClaim(ctx)
 	if err != nil {
 		return fail(err)
@@ -255,7 +256,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: true, Auth: accessAuthConfig(cfg, true, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject})
+	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{Persistence: &accessPersistence, Production: true, Auth: accessAuthConfig(cfg, true, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs, PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProject, AuthoringProject: authoringProject})
 	if err != nil {
 		return fail(err)
 	}

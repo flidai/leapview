@@ -75,7 +75,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		return fmt.Errorf("configure refresh persistence: native composition requires an injected persistence bundle")
 	}
 	config := refreshmodule.Config{
-		Persistence: refreshPersistence, Service: service,
+		Persistence: refreshPersistence, Production: persistence.requireNativePersistence, Service: service,
 		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
 		Artifacts: appruntimefactory.NewRefreshArtifactLoader(),
 		HTTP: refreshmodule.HTTPConfig{

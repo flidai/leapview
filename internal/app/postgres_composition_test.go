@@ -129,6 +129,7 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(contents)
+	normalizedSource := strings.Join(strings.Fields(source), " ")
 	for _, required := range []string{
 		"NewNativeCreatePlanCoordinator(",
 		"NewNativeBuildCoordinator(",
@@ -137,7 +138,7 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 		"ProjectClaims:           graph.DeploymentRepository",
 		"BindClaimedProject:      bindClaimedProject(runtimeHost, environment)",
 	} {
-		if !strings.Contains(source, required) {
+		if !strings.Contains(normalizedSource, strings.Join(strings.Fields(required), " ")) {
 			t.Fatalf("PostgreSQL composition is missing %q", required)
 		}
 	}

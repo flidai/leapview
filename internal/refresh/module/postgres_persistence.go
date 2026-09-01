@@ -98,8 +98,8 @@ type PostgresPersistenceConfig struct {
 // authority; callers should provide job queue behavior separately when they
 // enable the dispatcher.
 func NewPostgresPersistence(repository *refreshpostgres.Repository, config PostgresPersistenceConfig) (Persistence, error) {
-	if repository == nil {
-		return Persistence{}, errors.New("refresh PostgreSQL repository is required")
+	if repository == nil || !repository.Configured() {
+		return Persistence{}, errors.New("configured refresh PostgreSQL repository is required")
 	}
 	if strings.TrimSpace(config.SchedulerOwner) == "" {
 		return Persistence{}, errors.New("PostgreSQL scheduler owner is required")
@@ -126,7 +126,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, cancelAuditWriter: config.CancelAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
 		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
-		TerminalRecovery: terminalRecovery,
+		TerminalRecovery: terminalRecovery, backend: backendPostgres, nativeRepository: repository,
 	}, nil
 }
 

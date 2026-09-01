@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
@@ -11,9 +12,16 @@ import (
 )
 
 func TestNewPostgresPersistenceRequiresPublicationIdentityResolver(t *testing.T) {
-	_, err := NewPostgresPersistence(refreshpostgres.New(nil), PostgresPersistenceConfig{SchedulerOwner: "scheduler"})
+	_, err := NewPostgresPersistence(refreshpostgres.New(fakeRefreshTx{}), PostgresPersistenceConfig{SchedulerOwner: "scheduler"})
 	if !errors.Is(err, ErrPublicationIdentityUnavailable) {
 		t.Fatalf("NewPostgresPersistence error=%v, want ErrPublicationIdentityUnavailable", err)
+	}
+}
+
+func TestNewPostgresPersistenceRejectsUnconfiguredRepository(t *testing.T) {
+	_, err := NewPostgresPersistence(refreshpostgres.New(nil), PostgresPersistenceConfig{})
+	if err == nil || !strings.Contains(err.Error(), "configured refresh PostgreSQL repository") {
+		t.Fatalf("NewPostgresPersistence error=%v, want configured repository admission", err)
 	}
 }
 

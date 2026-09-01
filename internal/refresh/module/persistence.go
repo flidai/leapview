@@ -10,6 +10,7 @@ import (
 	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
@@ -35,7 +36,9 @@ func RecoverWithPersistence(ctx context.Context, recovery TerminalRunRecovery, e
 
 // Persistence is the refresh capability's storage bundle.  Domain services
 // consume the narrow repository contracts they own; no handler or service
-// needs to know which database adapter supplies them.
+// needs to know which database adapter supplies them. The private backend and
+// authority identity are set only by the explicit constructors below, so a
+// repository-shaped struct literal cannot opt into production PostgreSQL.
 //
 // Recovery is the qualification-ledger repository and is intentionally
 // optional because scheduled qualification is independently configured.
@@ -50,7 +53,19 @@ type Persistence struct {
 	Publication      refreshrun.PublicationUnitOfWork
 	Recovery         RecoveryRepository
 	TerminalRecovery TerminalRunRecovery
+
+	backend          persistenceBackend
+	legacyDatabase   *sql.DB
+	nativeRepository *refreshpostgres.Repository
 }
+
+type persistenceBackend uint8
+
+const (
+	backendUnknown persistenceBackend = iota
+	backendPostgres
+	backendSQLiteLegacy
+)
 
 // RunPersistence is the complete module-facing run capability.  It embeds
 // queue/workflow, read projection, lease-fenced completion, admission and
@@ -85,7 +100,37 @@ func (p Persistence) Validate() error {
 	if p.TerminalRecovery == nil {
 		return errors.New("refresh terminal recovery persistence is required")
 	}
-	return nil
+	switch p.backend {
+	case backendPostgres:
+		if p.nativeRepository == nil || !p.nativeRepository.Configured() {
+			return errors.New("PostgreSQL refresh persistence is not configured")
+		}
+		runs, runsOK := p.Runs.(*postgresRunPersistence)
+		schedules, schedulesOK := p.Schedules.(*postgresSchedulePersistence)
+		publication, publicationOK := p.Publication.(*postgresPublicationPersistence)
+		recovery, recoveryOK := p.TerminalRecovery.(*PostgresTerminalRecovery)
+		if !runsOK || runs == nil || runs.repository != p.nativeRepository ||
+			!schedulesOK || schedules == nil || schedules.repository != p.nativeRepository ||
+			!publicationOK || publication == nil || publication.repository != p.nativeRepository ||
+			!recoveryOK || recovery == nil || recovery.Refresh != p.nativeRepository {
+			return errors.New("PostgreSQL refresh persistence surfaces do not match the configured native authority")
+		}
+		return nil
+	case backendSQLiteLegacy:
+		if p.legacyDatabase == nil {
+			return errors.New("SQLite refresh persistence is not configured")
+		}
+		if p.nativeRepository != nil {
+			return errors.New("SQLite refresh persistence cannot expose native PostgreSQL authority")
+		}
+		return nil
+	default:
+		return errors.New("refresh persistence backend is not configured")
+	}
+}
+
+func (p Persistence) isPostgres() bool {
+	return p.backend == backendPostgres && p.nativeRepository != nil && p.nativeRepository.Configured()
 }
 
 func (m *Module) readRuns() (RunPersistence, error) {
@@ -148,5 +193,5 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 		InitialState: config.Execution.InitialState,
 	}, config.Audit)
 	schedules := refreshsqlite.NewRepository(config.Database)
-	return Persistence{Runs: runs, Schedules: schedules, Publication: refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot), Recovery: NewSQLiteRecoveryRepository(config.Database), TerminalRecovery: runs}, nil
+	return Persistence{Runs: runs, Schedules: schedules, Publication: refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot), Recovery: NewSQLiteRecoveryRepository(config.Database), TerminalRecovery: runs, backend: backendSQLiteLegacy, legacyDatabase: config.Database}, nil
 }

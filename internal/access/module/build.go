@@ -30,6 +30,7 @@ type Config struct {
 	MCPIssuerURL                 string
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProjectID           func(context.Context) (projectgraph.ResourceID, error)
 	Presentation                 webpage.Presentation
 	Assets                       staticasset.Resolver
 	AvatarBlobs                  avatar.BlobStore
@@ -56,8 +57,9 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		surface := surfaceConfig{
 			Persistence: config.Persistence,
 			Auth:        auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
-			CurrentProjectID: config.CurrentProjectID,
-			Presentation:     config.Presentation, Assets: config.Assets,
+			CurrentProjectID:   config.CurrentProjectID,
+			AuthoringProjectID: config.AuthoringProjectID,
+			Presentation:       config.Presentation, Assets: config.Assets,
 		}
 		if auth != nil {
 			surface.CurrentPrincipal = auth.Principal
@@ -119,6 +121,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		Auth:                         auth,
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		CurrentProjectID:             config.CurrentProjectID,
+		AuthoringProjectID:           config.AuthoringProjectID,
 		AuthoringAuth:                authoringAuth,
 		Avatar:                       avatarService,
 		Presentation:                 config.Presentation,

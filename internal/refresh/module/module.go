@@ -50,7 +50,10 @@ type Config struct {
 	// Persistence is the capability-owned refresh store.  Production callers
 	// inject a complete bundle. SQLite callers must construct
 	// NewSQLitePersistence explicitly.
-	Persistence         *Persistence
+	Persistence *Persistence
+	// Production requires the typed PostgreSQL persistence bundle. The module
+	// never infers a backend from the repository interfaces in Persistence.
+	Production          bool
 	HTTP                HTTPConfig
 	Authorization       AuthorizationConfig
 	Service             refreshrun.Service
@@ -135,6 +138,13 @@ type Module struct {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if config.Production {
+		if config.Persistence == nil || !config.Persistence.isPostgres() {
+			return nil, errors.New("production refresh module requires PostgreSQL persistence")
+		}
+	} else if config.Persistence != nil && config.Persistence.isPostgres() {
+		return nil, errors.New("native PostgreSQL refresh persistence requires production refresh mode")
+	}
 	if config.RecoveryLifecycle != nil {
 		if err := config.RecoveryLifecycle.Validate(); err != nil {
 			return nil, fmt.Errorf("configure scheduled recovery qualification: %w", err)

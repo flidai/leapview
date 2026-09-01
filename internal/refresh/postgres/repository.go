@@ -154,6 +154,11 @@ func int64Ptr(v int64) *int64    { return &v }
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
 
+// Configured reports whether the repository has a native PostgreSQL query
+// authority. Composition uses this marker to reject a typed but nil-backed
+// repository before any refresh surface is mounted.
+func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+
 // NewRepository is an explicit constructor alias used by composition roots
 // that name capability repositories uniformly.
 func NewRepository(db DBTX) *Repository { return New(db) }

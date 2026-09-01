@@ -30,9 +30,14 @@ type Module struct {
 	authoringAuth                *access.AuthoringAuthService
 	currentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	currentProjectID             func(context.Context) (projectgraph.ResourceID, error)
-	logger                       *slog.Logger
-	presentation                 webpage.Presentation
-	assets                       staticasset.Resolver
+	// authoringProjectID resolves the durable project binding used by
+	// authoring OAuth. It is intentionally separate from the active-runtime
+	// resolver: a fresh target has no serving lease yet, but may still accept
+	// a validated project before the first claim/plan is created.
+	authoringProjectID func(context.Context) (projectgraph.ResourceID, error)
+	logger             *slog.Logger
+	presentation       webpage.Presentation
+	assets             staticasset.Resolver
 }
 
 type surfaceConfig struct {
@@ -42,6 +47,7 @@ type surfaceConfig struct {
 	CurrentCredential            func(*http.Request) (access.APICredential, bool)
 	CurrentEffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProjectID           func(context.Context) (projectgraph.ResourceID, error)
 	Auth                         *Auth
 	Logger                       *slog.Logger
 	OAuth                        *mcpoauth.Service
@@ -102,6 +108,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
+		authoringProjectID:           config.AuthoringProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
 			Repository: config.Repository, CurrentPrincipal: currentPrincipal,
 			CurrentCredential: config.CurrentCredential, CurrentSession: currentSession,

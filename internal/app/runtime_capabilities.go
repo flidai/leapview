@@ -42,28 +42,28 @@ type workloadCapabilityBundle struct {
 }
 
 type analyticsCapabilityConfig struct {
-	ConnectionBindings  connectionbinding.BindingCatalog
-	QueryAuditStore     analyticsmodule.QueryAuditStore
-	Production          bool
-	CredentialMode      analyticsmodule.CredentialMode
-	CredentialTarget    string
-	CredentialProject   projectgraph.ResourceID
-	Environment         string
-	TargetCredentials   analyticsmodule.TargetCredentialConfig
-	RootDir             string
-	ExtensionSupply     *extensionsupply.Supply
-	CatalogPath         string
-	DataPath            string
-	MaxConnections      int
-	MemoryMaxBytes      int64
-	TempMaxBytes        int64
-	MaxThreads          int
-	TempDir             string
-	DisableProcessEnv   bool
-	RuntimeCacheItems   int
-	RuntimeCacheBytes   int64
-	NodeCacheItems      int
-	NodeCacheBytes      int64
+	ConnectionBindings connectionbinding.BindingCatalog
+	QueryAuditStore    analyticsmodule.QueryAuditStore
+	Production         bool
+	CredentialMode     analyticsmodule.CredentialMode
+	CredentialTarget   string
+	CredentialProject  projectgraph.ResourceID
+	Environment        string
+	TargetCredentials  analyticsmodule.TargetCredentialConfig
+	RootDir            string
+	ExtensionSupply    *extensionsupply.Supply
+	CatalogPath        string
+	DataPath           string
+	MaxConnections     int
+	MemoryMaxBytes     int64
+	TempMaxBytes       int64
+	MaxThreads         int
+	TempDir            string
+	DisableProcessEnv  bool
+	RuntimeCacheItems  int
+	RuntimeCacheBytes  int64
+	NodeCacheItems     int
+	NodeCacheBytes     int64
 }
 
 func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig) (analyticsCapabilityBundle, error) {
@@ -93,15 +93,16 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 }
 
 type accessCapabilityConfig struct {
-	Persistence    *accessmodule.Persistence
-	Production     bool
-	Auth           accessmodule.AuthConfig
-	Assets         staticasset.Resolver
-	AvatarBlobs    accessmodule.AvatarBlobStore
-	PublicURL      string
-	InstanceID     string
-	MCPIssuerURL   string
-	CurrentProject func(context.Context) (projectgraph.ResourceID, error)
+	Persistence      *accessmodule.Persistence
+	Production       bool
+	Auth             accessmodule.AuthConfig
+	Assets           staticasset.Resolver
+	AvatarBlobs      accessmodule.AvatarBlobStore
+	PublicURL        string
+	InstanceID       string
+	MCPIssuerURL     string
+	CurrentProject   func(context.Context) (projectgraph.ResourceID, error)
+	AuthoringProject func(context.Context) (projectgraph.ResourceID, error)
 }
 
 func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (accessCapabilityBundle, error) {
@@ -114,10 +115,11 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 	module, err := accessmodule.Build(ctx, accessmodule.Config{
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
-		Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
+		Auth:        cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
-		CurrentProjectID: cfg.CurrentProject,
-		Presentation:     page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
+		CurrentProjectID:   cfg.CurrentProject,
+		AuthoringProjectID: cfg.AuthoringProject,
+		Presentation:       page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
 	})
 	if err != nil {
 		return accessCapabilityBundle{}, fmt.Errorf("build access capability: %w", err)
@@ -155,7 +157,7 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
-		Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
+		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
 	})
 	if err != nil {
 		controller.Close()

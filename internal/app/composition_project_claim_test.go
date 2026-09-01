@@ -82,6 +82,52 @@ func TestResolveClaimedProjectIDRequiresDurableClaim(t *testing.T) {
 	}
 }
 
+func TestPostgresAuthoringProjectIDResolverFreshClaimedAndCorruptStates(t *testing.T) {
+	claim := deployment.ProjectClaim{ProjectID: "finance", Environment: "prod", ClaimedBy: "principal", ClaimedAt: time.Now().UTC()}
+	readErr := errors.New("claim database unavailable")
+	stateErr := errors.New("serving state unavailable")
+	for _, test := range []struct {
+		name    string
+		claim   projectClaimRepositoryStub
+		states  authoringServingStateReaderStub
+		want    projectgraph.ResourceID
+		wantErr string
+	}{
+		{name: "fresh target", claim: projectClaimRepositoryStub{err: deployment.ErrProjectClaimNotFound}, want: ""},
+		{name: "claimed target", claim: projectClaimRepositoryStub{claim: claim}, states: authoringServingStateReaderStub{scopes: []servingstatemodule.ActiveScope{{ProjectID: "finance", Environment: "prod"}}}, want: "finance"},
+		{name: "active without claim", claim: projectClaimRepositoryStub{err: deployment.ErrProjectClaimNotFound}, states: authoringServingStateReaderStub{scopes: []servingstatemodule.ActiveScope{{ProjectID: "finance", Environment: "prod"}}}, wantErr: "has no durable project claim"},
+		{name: "claim read error", claim: projectClaimRepositoryStub{err: readErr}, wantErr: readErr.Error()},
+		{name: "serving state read error", claim: projectClaimRepositoryStub{claim: claim}, states: authoringServingStateReaderStub{err: stateErr}, wantErr: stateErr.Error()},
+		{name: "claim and active scope disagree", claim: projectClaimRepositoryStub{claim: claim}, states: authoringServingStateReaderStub{scopes: []servingstatemodule.ActiveScope{{ProjectID: "marketing", Environment: "prod"}}}, wantErr: "disagrees"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			resolver := postgresAuthoringProjectIDResolver(test.claim, test.states, "prod")
+			got, err := resolver(t.Context())
+			if test.wantErr == "" {
+				if err != nil || got != test.want {
+					t.Fatalf("resolver() = %q, %v, want %q", got, err, test.want)
+				}
+				return
+			}
+			if err == nil || !containsError(err, test.wantErr) {
+				t.Fatalf("resolver() error = %v, want %q", err, test.wantErr)
+			}
+			if got != "" {
+				t.Fatalf("resolver() returned %q after error", got)
+			}
+		})
+	}
+}
+
+type authoringServingStateReaderStub struct {
+	scopes []servingstatemodule.ActiveScope
+	err    error
+}
+
+func (s authoringServingStateReaderStub) ListActiveScopes(context.Context) ([]servingstatemodule.ActiveScope, error) {
+	return s.scopes, s.err
+}
+
 func TestResolveDeliveryStartupProjectIDReadsLiveClaim(t *testing.T) {
 	readClaim := func(context.Context) (projectgraph.ResourceID, bool, error) {
 		return "finance", true, nil

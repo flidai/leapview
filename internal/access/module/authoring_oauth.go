@@ -182,16 +182,37 @@ type authoringOAuthAuthentication interface {
 // syntactically valid foreign ID must never reach an issuance service, since
 // those services persist the resulting scope.
 func (m *Module) authoringOAuthScope(ctx context.Context, targetID, requestedProjectID string, capabilities []access.Capability) (access.AuthoringScope, error) {
-	activeProjectID, err := m.CurrentProjectID(ctx)
+	requested, err := graph.NewResourceID(requestedProjectID)
+	if err != nil {
+		return access.AuthoringScope{}, access.ErrAuthoringScopeDenied
+	}
+	resolveProject := m.authoringProjectID
+	durableResolver := resolveProject != nil
+	if resolveProject == nil {
+		// SQLite/evaluation callers historically supplied only the active
+		// serving resolver. Production composition injects the durable
+		// authoring resolver above, so errors from CurrentProjectID are never
+		// interpreted as a fresh target there.
+		resolveProject = m.CurrentProjectID
+	}
+	if resolveProject == nil {
+		return access.AuthoringScope{}, fmt.Errorf("resolve active authoring project: resolver is unavailable")
+	}
+	var boundProjectID graph.ResourceID
+	boundProjectID, err = resolveProject(ctx)
 	if err != nil {
 		return access.AuthoringScope{}, fmt.Errorf("resolve active authoring project: %w", err)
 	}
-	if err := activeProjectID.Validate(); err != nil {
-		return access.AuthoringScope{}, fmt.Errorf("active authoring project is invalid: %w", err)
+	if boundProjectID == "" && !durableResolver {
+		return access.AuthoringScope{}, fmt.Errorf("resolve active authoring project: active project is unavailable")
 	}
-	requested, err := graph.NewResourceID(requestedProjectID)
-	if err != nil || requested != activeProjectID {
-		return access.AuthoringScope{}, access.ErrAuthoringScopeDenied
+	if boundProjectID != "" {
+		if err := boundProjectID.Validate(); err != nil {
+			return access.AuthoringScope{}, fmt.Errorf("active authoring project is invalid: %w", err)
+		}
+		if requested != boundProjectID {
+			return access.AuthoringScope{}, access.ErrAuthoringScopeDenied
+		}
 	}
 	scope, err := access.NewAuthoringScope(targetID, requested, capabilities)
 	if err != nil {

@@ -129,6 +129,46 @@ func TestBuildRequiresCanonicalAuthorizer(t *testing.T) {
 	}
 }
 
+func TestBuildProductionRejectsSQLitePersistence(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+
+	_, err = Build(t.Context(), Config{
+		Persistence: sqlitePersistence(t, store.SQLDB()), Production: true,
+		Authorization: testAuthorization(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "PostgreSQL persistence") {
+		t.Fatalf("production refresh build error = %v, want PostgreSQL persistence admission", err)
+	}
+}
+
+func TestBuildProductionRejectsUnmarkedPersistence(t *testing.T) {
+	_, err := Build(t.Context(), Config{
+		Persistence: &Persistence{}, Production: true,
+		Authorization: testAuthorization(),
+	})
+	if err == nil || !strings.Contains(err.Error(), "PostgreSQL persistence") {
+		t.Fatalf("unmarked production refresh build error = %v, want PostgreSQL persistence admission", err)
+	}
+}
+
+func TestPersistenceValidateRejectsUnmarkedBackend(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+
+	persistence := sqlitePersistence(t, store.SQLDB())
+	persistence.backend = backendUnknown
+	if err := persistence.Validate(); err == nil || !strings.Contains(err.Error(), "backend is not configured") {
+		t.Fatalf("unmarked persistence validation error = %v, want backend admission", err)
+	}
+}
+
 func TestPersistenceValidateRequiresTerminalRecovery(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
