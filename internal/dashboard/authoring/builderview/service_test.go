@@ -95,6 +95,9 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	if signal.SemanticModel.ID != "sales_model" {
 		t.Fatalf("semantic model signal id = %q, want canonical resource id", signal.SemanticModel.ID)
 	}
+	if !signal.Capabilities.CanArchive {
+		t.Fatalf("archive capability = %#v, want manage-authorized archive", signal.Capabilities)
+	}
 	if len(signal.VisualCatalog) != 26 || signal.VisualCatalog[0].Type != "line" || signal.VisualCatalog[0].ReferenceHref != "/docs/visuals/line" {
 		t.Fatalf("visual catalog = %#v", signal.VisualCatalog)
 	}
@@ -103,6 +106,18 @@ func TestBuildAuthorizesBeforeRevisionAndRuntimeAndPreservesExactToken(t *testin
 	}
 	if len(signal.Filters) != 1 || signal.Filters[0].ID != "status" || signal.Filters[0].ControlType != "multiSelect" || !signal.Filters[0].ReaderEditable || len(signal.Filters[0].Bindings) != 1 || signal.Filters[0].Bindings[0].Scope != "report" {
 		t.Fatalf("projected filters = %#v", signal.Filters)
+	}
+}
+
+func TestBuildHidesArchiveWhenManageAuthorizationIsDenied(t *testing.T) {
+	f := newBuilderFixture(t)
+	f.authorizer.errors[authoring.AuthorizationActionArchive] = access.ErrForbidden
+	signal, err := f.service.Build(t.Context(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signal.Capabilities.CanArchive {
+		t.Fatalf("archive capability = %#v, want manage-denied archive hidden", signal.Capabilities)
 	}
 }
 

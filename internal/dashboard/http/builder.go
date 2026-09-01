@@ -7,8 +7,10 @@ import (
 	"fmt"
 	nethttp "net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
@@ -72,8 +74,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		providers = []webpage.Provider{h.Layout(r)}
 	}
 	if err := ui.DashboardBuilderPage(envelope, csrfToken, ui.DashboardBuilderActionBindings{
-		BackHref:          "/dashboards/" + url.PathEscape(dashboardID),
-		ForkHref:          dashboardBuilderBasePath(dashboardID) + "/fork",
+		BackHref:          "/",
 		PreviewHref:       dashboardBuilderPreviewPath(dashboardID, builder),
 		ExportYAMLHref:    dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/export.yaml"),
 		PageBaseHref:      dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/edit"),
@@ -86,10 +87,9 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 }
 
-// DashboardDraftCreate renders a discoverable browser entry point for the
-// existing headless create operation. The form accepts only bounded metadata;
-// the application still generates identities and the initial authored
-// document transactionally.
+// DashboardDraftCreate keeps the deep-link entry point and executes the
+// catalog modal's bounded form. The application still generates identities
+// and the initial authored document transactionally.
 func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Request) {
 	project, err := h.projectIDForRequest(r.Context())
 	if err != nil || h.Authoring == nil || h.currentActor(r) == "" {
@@ -97,19 +97,11 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		return
 	}
 	if r.Method == nethttp.MethodGet {
-		csrfToken := ""
-		if h.CSRFToken != nil {
-			csrfToken = h.CSRFToken(r)
+		values := url.Values{"create": []string{"dashboard"}}
+		if semanticModel := strings.TrimSpace(r.URL.Query().Get("semanticModel")); semanticModel != "" {
+			values.Set("semanticModel", semanticModel)
 		}
-		models := []ui.DashboardSemanticModelOption{}
-		if h.Metrics != nil {
-			for _, model := range h.Metrics.Catalog().Models {
-				models = append(models, ui.DashboardSemanticModelOption{ID: model.ID.String(), Title: model.Title})
-			}
-		}
-		if err := ui.DashboardDraftCreatePageWithModelsAndKey(project.String(), csrfToken, "/dashboards/new", httptransport.NewRequestID(), models, strings.TrimSpace(r.URL.Query().Get("semanticModel"))).Render(w); err != nil {
-			nethttp.Error(w, "dashboard draft unavailable", nethttp.StatusInternalServerError)
-		}
+		nethttp.Redirect(w, r, "/?"+values.Encode(), nethttp.StatusSeeOther)
 		return
 	}
 	creator, ok := h.Authoring.(browserDraftCreator)
@@ -131,6 +123,10 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		writeBuilderError(w, r, fmt.Errorf("%w: semantic model: %v", authoring.ErrInvalidAuthoring, err))
 		return
 	}
+	if h.Metrics != nil && !dashboardSemanticModelAvailable(h.dashboardSemanticModelOptions(), semanticModel.String()) {
+		writeBuilderError(w, r, fmt.Errorf("%w: select an available data model", authoring.ErrInvalidPayload))
+		return
+	}
 	actor := h.currentActor(r)
 	result, err := creator.Create(r.Context(), authoringservice.CreateRequest{
 		ProjectID: project, ActorID: actor, Title: strings.TrimSpace(r.FormValue("title")), Slug: strings.TrimSpace(r.FormValue("slug")),
@@ -149,6 +145,65 @@ func (h Handler) DashboardDraftCreate(w nethttp.ResponseWriter, r *nethttp.Reque
 		draftID = result.Lifecycle.Draft.ID.String()
 	}
 	nethttp.Redirect(w, r, dashboardBuilderDraftRoute(result.Lifecycle.ID.String(), draftID, "/edit"), nethttp.StatusSeeOther)
+}
+
+type dashboardSemanticModelOption struct {
+	ID    string
+	Title string
+}
+
+func (h Handler) dashboardSemanticModelOptions() []dashboardSemanticModelOption {
+	if h.Metrics == nil {
+		return nil
+	}
+	models := h.Metrics.Catalog().Models
+	options := make([]dashboardSemanticModelOption, 0, len(models))
+	for _, model := range models {
+		id := strings.TrimSpace(model.ID.String())
+		if id == "" {
+			continue
+		}
+		title := strings.TrimSpace(model.Title)
+		if title == "" {
+			title = id
+		}
+		title = humanizeDashboardDataModelTitle(title)
+		options = append(options, dashboardSemanticModelOption{ID: id, Title: title})
+	}
+	sort.Slice(options, func(i, j int) bool {
+		if options[i].Title == options[j].Title {
+			return options[i].ID < options[j].ID
+		}
+		return options[i].Title < options[j].Title
+	})
+	return options
+}
+
+func humanizeDashboardDataModelTitle(title string) string {
+	title = strings.TrimSpace(title)
+	if title == "" || title != strings.ToLower(title) {
+		return title
+	}
+	words := strings.Fields(strings.NewReplacer("_", " ", "-", " ").Replace(title))
+	for index, word := range words {
+		runes := []rune(word)
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = unicode.ToUpper(runes[0])
+		words[index] = string(runes)
+	}
+	return strings.Join(words, " ")
+}
+
+func dashboardSemanticModelAvailable(options []dashboardSemanticModelOption, selected string) bool {
+	selected = strings.TrimSpace(selected)
+	for _, option := range options {
+		if strings.TrimSpace(option.ID) == selected {
+			return true
+		}
+	}
+	return false
 }
 
 // DashboardDraftFork renders and executes the browser fork action. Forks use
@@ -317,6 +372,10 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	if err != nil {
 		writeBuilderError(w, r, err)
+		return
+	}
+	if command.Archive != nil {
+		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{"builder": map[string]any{"redirectTo": "/"}})
 		return
 	}
 	// Re-project after a successful mutation so the browser receives the
@@ -689,6 +748,8 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 	switch action {
 	case "publish":
 		command.Publish = &authoring.PublishPayload{}
+	case "archive":
+		command.Archive = &authoring.ArchivePayload{}
 	case "set_visibility":
 		visibility := authoring.Visibility(strings.TrimSpace(s.Visibility))
 		if err := visibility.Validate(); err != nil {

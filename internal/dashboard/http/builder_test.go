@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"html"
 	nethttp "net/http"
 	"net/http/httptest"
 	"strings"
@@ -104,8 +103,8 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }, CSRFToken: func(*nethttp.Request) string { return "csrf" }}
 	getCreate := httptest.NewRecorder()
 	handler.DashboardDraftCreate(getCreate, httptest.NewRequest(nethttp.MethodGet, "/dashboards/new", nil))
-	if getCreate.Code != nethttp.StatusOK || !strings.Contains(getCreate.Body.String(), `action="/dashboards/new"`) || !strings.Contains(getCreate.Body.String(), "Governed semantic model") || !strings.Contains(getCreate.Body.String(), `name="gorilla.csrf.Token" value="csrf"`) || !strings.Contains(getCreate.Body.String(), `name="idempotencyKey" value="req_`) {
-		t.Fatalf("create page = %d %s", getCreate.Code, getCreate.Body.String())
+	if getCreate.Code != nethttp.StatusSeeOther || getCreate.Header().Get("Location") != "/?create=dashboard" {
+		t.Fatalf("create entry redirect = %d %q", getCreate.Code, getCreate.Header().Get("Location"))
 	}
 	getFork := httptest.NewRecorder()
 	getForkRequest := withBuilderURLParams(httptest.NewRequest(nethttp.MethodGet, "/dashboards/revenue/fork", nil), "sales", "revenue")
@@ -146,9 +145,39 @@ func TestDashboardDraftCreateOffersAndPreselectsGovernedModels(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	request := httptest.NewRequest(nethttp.MethodGet, "/dashboards/new?semanticModel=semantic%3Acustomers", nil)
 	handler.DashboardDraftCreate(recorder, request)
-	body := html.UnescapeString(recorder.Body.String())
-	if recorder.Code != nethttp.StatusOK || !strings.Contains(body, `<option value="semantic:customers" selected>Customers</option>`) {
-		t.Fatalf("new dashboard model selection = %d body=%s", recorder.Code, body)
+	if recorder.Code != nethttp.StatusSeeOther || recorder.Header().Get("Location") != "/?create=dashboard&semanticModel=semantic%3Acustomers" {
+		t.Fatalf("new dashboard model selection redirect = %d location=%q", recorder.Code, recorder.Header().Get("Location"))
+	}
+}
+
+func TestDashboardDataModelOptionsUseReadableTitles(t *testing.T) {
+	handler := Handler{Metrics: semanticCatalogMetrics{}}
+	options := handler.dashboardSemanticModelOptions()
+	if len(options) != 2 || options[0].Title != "Customers" || options[1].Title != "Orders" {
+		t.Fatalf("data model options = %#v", options)
+	}
+	if got := humanizeDashboardDataModelTitle("sales_orders"); got != "Sales Orders" {
+		t.Fatalf("humanized data model title = %q", got)
+	}
+}
+
+func TestDashboardDraftCreateRejectsADataModelOutsideThePicker(t *testing.T) {
+	fake := &builderAuthoringFake{createResult: browserDraftResult(t, "dashboard-created")}
+	handler := Handler{
+		Authoring:          fake,
+		Metrics:            semanticCatalogMetrics{},
+		ProjectID:          "sales",
+		CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" },
+	}
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/new", strings.NewReader("title=Sales&semanticModel=semantic%3Aunknown&idempotencyKey=create-form-unknown"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	recorder := httptest.NewRecorder()
+	handler.DashboardDraftCreate(recorder, request)
+	if recorder.Code != nethttp.StatusBadRequest || !strings.Contains(recorder.Body.String(), "select an available data model") {
+		t.Fatalf("unknown data model response = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if fake.createRequest.SemanticModel != "" {
+		t.Fatalf("unknown data model reached authoring service: %#v", fake.createRequest)
 	}
 }
 
@@ -615,6 +644,32 @@ func TestDashboardBuilderCommandTranslatesPublishWithExactRevision(t *testing.T)
 	}
 }
 
+func TestDashboardBuilderCommandArchivesAndRedirectsToCatalog(t *testing.T) {
+	fake := &builderAuthoringFake{}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{
+		"builderCommand": map[string]any{
+			"dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1",
+			"revisionNumber": "7", "revisionContentHash": "sha256:" + strings.Repeat("a", 64), "action": "archive",
+		},
+	})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "archive-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK || fake.executed.Archive == nil || fake.executed.ID != "archive-1" {
+		t.Fatalf("archive response = %d command=%#v body=%s", recorder.Code, fake.executed, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	patches := ssetest.PatchSignals(t, body)
+	if len(patches) != 1 || patches[0]["builder"].(map[string]any)["redirectTo"] != "/" {
+		t.Fatalf("archive did not signal a catalog redirect: %#v body=%s", patches, body)
+	}
+	if fake.builderReq.DashboardID != "" {
+		t.Fatalf("archive attempted to re-project an archived builder: %#v", fake.builderReq)
+	}
+}
+
 func TestDashboardBuilderCommandRejectsUnsupportedAndMissingClaims(t *testing.T) {
 	fake := &builderAuthoringFake{}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
@@ -887,6 +942,12 @@ func TestDashboardBuilderGETPropagatesPageSelectionAndPageBaseHref(t *testing.T)
 		t.Fatalf("builder selection request = %#v", fake.builderReq)
 	}
 	body := rec.Body.String()
+	if !strings.Contains(body, `back-href="/"`) {
+		t.Fatalf("builder back link must return to dashboard catalog: %s", body)
+	}
+	if strings.Contains(body, `fork-href=`) {
+		t.Fatalf("instance dashboard builder exposed an invalid project-source copy action: %s", body)
+	}
 	if !strings.Contains(body, `page-base-href="/dashboards/revenue/edit?draft=draft-1"`) {
 		t.Fatalf("page base href missing from shell: %s", body)
 	}

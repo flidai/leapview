@@ -85,8 +85,8 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 		t.Fatalf("viewer dashboard create status = %d, want 403", got)
 	}
 	createPage := request(http.MethodGet, "/dashboards/new", operatorToken, "")
-	if createPage.Code != http.StatusOK || !strings.Contains(createPage.Body.String(), `action="/dashboards/new"`) || !strings.Contains(createPage.Body.String(), `name="idempotencyKey"`) {
-		t.Fatalf("operator dashboard create page = %d body=%s", createPage.Code, createPage.Body.String())
+	if createPage.Code != http.StatusSeeOther || createPage.Header().Get("Location") != "/?create=dashboard" {
+		t.Fatalf("operator dashboard create entry = %d location=%q", createPage.Code, createPage.Header().Get("Location"))
 	}
 	forkPage := request(http.MethodGet, "/dashboards/executive-sales/fork", operatorToken, "")
 	if forkPage.Code != http.StatusOK || !strings.Contains(forkPage.Body.String(), `action="/dashboards/executive-sales/fork"`) || !strings.Contains(forkPage.Body.String(), `name="idempotencyKey"`) {

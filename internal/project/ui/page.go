@@ -41,7 +41,7 @@ func CatalogPageForCatalogs(catalogs []catalog.Catalog, providers ...webpage.Pro
 }
 
 func CatalogPageForQuery(catalog catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
-	return catalogPageDocument(catalog, catalogPageSignal(catalog, query), "", false, providers...)
+	return catalogPageDocument(catalog, catalogPageSignal(catalog, query), "", CatalogListOptions{}, providers...)
 }
 
 func CatalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string, providers ...webpage.Provider) g.Node {
@@ -69,24 +69,31 @@ type CatalogDashboardItem struct {
 }
 
 type CatalogListOptions struct {
-	Query          string
-	ProjectFilter  string
-	Metadata       map[string]CatalogDashboardMetadata
-	Dashboards     []CatalogDashboardItem
-	CanCreateDraft bool
+	Query                         string
+	ProjectFilter                 string
+	Metadata                      map[string]CatalogDashboardMetadata
+	Dashboards                    []CatalogDashboardItem
+	CanCreateDraft                bool
+	CreateDashboardModels         []CatalogDashboardModelOption
+	CreateDashboardIdempotencyKey string
+}
+
+type CatalogDashboardModelOption struct {
+	ID    string `json:"id"`
+	Title string `json:"title"`
 }
 
 func CatalogPageForCatalogsWithOptions(catalogs []catalog.Catalog, options CatalogListOptions, csrfToken string, providers ...webpage.Provider) g.Node {
 	if len(catalogs) == 0 {
-		return catalogPageDocument(catalog.Catalog{}, catalogPageForCatalogs(catalogs, options), csrfToken, options.CanCreateDraft, providers...)
+		return catalogPageDocument(catalog.Catalog{}, catalogPageForCatalogs(catalogs, options), csrfToken, options, providers...)
 	}
 	// A serving process owns one active project. Keep this helper for callers
 	// that still pass a slice, but render only the server-bound catalog and do
 	// not expose a project picker in the page signal.
-	return catalogPageDocument(catalogs[0], catalogPageForCatalogs(catalogs[:1], options), csrfToken, options.CanCreateDraft, providers...)
+	return catalogPageDocument(catalogs[0], catalogPageForCatalogs(catalogs[:1], options), csrfToken, options, providers...)
 }
 
-func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, canCreateDraft bool, providers ...webpage.Provider) g.Node {
+func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSignal, csrfToken string, options CatalogListOptions, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), catalogLayoutContext(catalog))
 	catalogUpdatesURL := updatesURL(uisignals.RouteKindCatalog, "q", uisignals.ValueOrZero(page.ListQuery))
 	title := "Dashboards"
@@ -97,8 +104,14 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 		g.Attr("slot", "page"),
 		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Get("/catalog/search", "entityListQuery", "entityListFilter")),
 	}
-	if canCreateDraft {
-		content = append(content, g.Attr("create-draft-href", "/dashboards/new"))
+	if options.CanCreateDraft {
+		models, _ := json.Marshal(options.CreateDashboardModels)
+		content = append(content,
+			g.Attr("create-draft-href", "/dashboards/new"),
+			g.Attr("create-draft-models", string(models)),
+			g.Attr("create-draft-csrf-token", csrfToken),
+			g.Attr("create-draft-idempotency-key", options.CreateDashboardIdempotencyKey),
+		)
 	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: title, CSRFToken: csrfToken, Scripts: []string{"/static/catalog-page.js"},

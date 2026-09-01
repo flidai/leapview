@@ -211,8 +211,12 @@ func (s *Service) capabilities(ctx context.Context, actorID string, projectID gr
 	if err != nil {
 		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
 	}
+	archive, err := s.authorize(ctx, actorID, projectID, lifecycle, authoring.AuthorizationActionArchive)
+	if err != nil {
+		return uisignals.DashboardBuilderCapabilitiesSignal{}, err
+	}
 	return uisignals.DashboardBuilderCapabilitiesSignal{
-		CanEdit: canEdit, CanShare: canEdit, CanPublish: publish, CanPreview: canEdit,
+		CanEdit: canEdit, CanShare: canEdit, CanPublish: publish, CanArchive: archive, CanPreview: canEdit,
 		CanExport: export, CanAddPage: canEdit, CanAddVisual: canEdit,
 	}, nil
 }

@@ -22,6 +22,7 @@ import (
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -341,6 +342,18 @@ func (h *BrowserHandler) Insights(w stdhttp.ResponseWriter, r *stdhttp.Request) 
 	}
 	canCreateDraft := h.dashboardCreationAllowed(r)
 	options.CanCreateDraft = canCreateDraft
+	if canCreateDraft {
+		options.CreateDashboardIdempotencyKey = httptransport.NewRequestID()
+		options.CreateDashboardModels = make([]projectui.CatalogDashboardModelOption, 0, len(catalog.SemanticModels))
+		for _, model := range catalog.SemanticModels {
+			id := strings.TrimSpace(model.ID)
+			if id == "" {
+				continue
+			}
+			title := browserFirstNonEmpty(model.Title, id)
+			options.CreateDashboardModels = append(options.CreateDashboardModels, projectui.CatalogDashboardModelOption{ID: id, Title: title})
+		}
+	}
 	writeDocument(w, projectui.CatalogPageForCatalogsWithOptions([]projectnavigation.Catalog{catalog}, options, h.csrf(r), h.layout(r)))
 }
 
