@@ -27,7 +27,6 @@ import (
 	"github.com/creachadair/jrpc2/handler"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
-	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/stretchr/testify/require"
 )
 
@@ -83,75 +82,8 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	if err := command.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(output.String(), "--bundle") || !strings.Contains(output.String(), "--require-release-transition") {
+	if !strings.Contains(output.String(), "--bundle") {
 		t.Fatalf("installed-candidate help = %s", output.String())
-	}
-}
-
-func TestInstalledReleaseQualificationRequiresPreviousImageBeforeMutation(t *testing.T) {
-	root := t.TempDir()
-	controller, err := New(Options{Root: root, Stdout: &bytes.Buffer{}, Stderr: &bytes.Buffer{}})
-	require.NoError(t, err)
-	err = controller.QualifyInstalledCandidate(t.Context(), QualificationInstalledOptions{
-		RequireReleaseTransition: true,
-	})
-	if err == nil || !strings.Contains(err.Error(), "--previous-image") {
-		t.Fatalf("missing predecessor error = %v", err)
-	}
-	entries, readErr := os.ReadDir(root)
-	require.NoError(t, readErr)
-	if len(entries) != 0 {
-		t.Fatalf("missing predecessor qualification mutated root: %#v", entries)
-	}
-}
-
-func TestQualificationTransitionStateRejectsApplicationMutationDespiteUnchangedMarker(t *testing.T) {
-	marker := filepath.Join(t.TempDir(), "qualification-transition-state")
-	require.NoError(t, os.WriteFile(marker, []byte("unchanged-marker\n"), 0o600))
-	markerBefore, err := os.ReadFile(marker)
-	require.NoError(t, err)
-
-	expected := qualificationTransitionState{
-		InstanceID: "lvinst_qualification", Environment: "evaluation", CanonicalOrigin: "https://localhost",
-		PrincipalID: "principal_admin", PrincipalKind: "user", PrincipalEmail: "admin@localhost", PrincipalName: "Admin",
-	}
-	actual := expected
-	actual.PrincipalEmail = "mutated@localhost"
-	if err := verifyQualificationTransitionState(expected, actual); err == nil {
-		t.Fatal("application state mutation was accepted")
-	}
-	markerAfter, err := os.ReadFile(marker)
-	require.NoError(t, err)
-	if !bytes.Equal(markerBefore, markerAfter) {
-		t.Fatal("legacy marker changed during application-state regression test")
-	}
-}
-
-func TestQualificationPredecessorIdentityRequiresReviewedRuntimeProvenance(t *testing.T) {
-	clean, released := false, false
-	expected := compatibility.ReleaseIdentity{
-		Version: "0.2.0-rc.1", SourceRevision: strings.Repeat("a", 40),
-		Image: "ghcr.io/" + "yacobolo" + "/leapview@sha256:" + strings.Repeat("b", 64),
-	}
-	actual := qualificationReleaseIdentity{
-		Version: expected.Version, Revision: expected.SourceRevision, Dirty: &clean, Development: &released,
-	}
-	if err := verifyQualificationPredecessorIdentity(expected, actual); err != nil {
-		t.Fatalf("valid predecessor provenance: %v", err)
-	}
-	for name, mutate := range map[string]func(*qualificationReleaseIdentity){
-		"version":     func(identity *qualificationReleaseIdentity) { identity.Version = "0.2.0-rc.2" },
-		"revision":    func(identity *qualificationReleaseIdentity) { identity.Revision = strings.Repeat("c", 40) },
-		"dirty":       func(identity *qualificationReleaseIdentity) { value := true; identity.Dirty = &value },
-		"development": func(identity *qualificationReleaseIdentity) { value := true; identity.Development = &value },
-	} {
-		t.Run(name, func(t *testing.T) {
-			candidate := actual
-			mutate(&candidate)
-			if err := verifyQualificationPredecessorIdentity(expected, candidate); err == nil {
-				t.Fatal("qualification accepted mismatched predecessor provenance")
-			}
-		})
 	}
 }
 
@@ -1254,30 +1186,5 @@ func TestVerifyQualificationChecksumsRejectsPathsOutsideRelease(t *testing.T) {
 	if err := verifyQualificationChecksums(root); err == nil ||
 		!strings.Contains(err.Error(), "escapes the release root") {
 		t.Fatalf("path traversal error = %v", err)
-	}
-}
-
-func TestQualificationReleaseIdentityRejectsUnknownProvenance(t *testing.T) {
-	clean := false
-	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
-	valid := qualificationReleaseIdentity{
-		Version: "1.0.0", Revision: strings.Repeat("b", 40), Image: image,
-		Dirty: &clean, Development: &clean,
-	}
-	if _, err := valid.transitionIdentity(image, "linux/amd64"); err != nil {
-		t.Fatalf("valid identity: %v", err)
-	}
-	for _, test := range []struct {
-		name     string
-		identity qualificationReleaseIdentity
-	}{
-		{name: "missing provenance", identity: qualificationReleaseIdentity{Version: valid.Version, Revision: valid.Revision, Image: image}},
-		{name: "mismatched admitted image", identity: qualificationReleaseIdentity{Version: valid.Version, Revision: valid.Revision, Image: "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("c", 64), Dirty: &clean, Development: &clean}},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := test.identity.transitionIdentity(image, "linux/amd64"); err == nil {
-				t.Fatal("unknown release provenance was accepted")
-			}
-		})
 	}
 }

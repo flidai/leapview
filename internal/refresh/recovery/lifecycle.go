@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -14,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -22,8 +20,6 @@ import (
 
 const (
 	EvidenceTransitionQualification = "transition-qualification"
-	EvidenceBackupManifestV2        = "backup-manifest-v2"
-	EvidenceRestorePreflight        = "restore-preflight"
 )
 
 type ScenarioOutcome struct {
@@ -393,11 +389,6 @@ func (publisher FileEvidencePublisher) Publish(_ context.Context, occurrence Occ
 func validateScenarioArtifacts(occurrence Occurrence, inputs []EvidenceArtifact) ([]validatedEvidenceArtifact, error) {
 	required := map[string]int{}
 	switch occurrence.Operation {
-	case OperationBackup:
-		required[EvidenceBackupManifestV2] = 1
-	case OperationRestore:
-		required[EvidenceBackupManifestV2] = 1
-		required[EvidenceRestorePreflight] = 1
 	case OperationUpgrade, OperationRollback:
 		required[EvidenceTransitionQualification] = 1
 	default:
@@ -418,27 +409,6 @@ func validateScenarioArtifacts(occurrence Occurrence, inputs []EvidenceArtifact)
 		}
 		seen[input.Kind] = true
 		validated = append(validated, artifact)
-	}
-	if occurrence.Operation == OperationRestore {
-		var manifestDocument, planDocument []byte
-		for _, artifact := range validated {
-			switch artifact.reference.Kind {
-			case EvidenceBackupManifestV2:
-				manifestDocument = artifact.contents
-			case EvidenceRestorePreflight:
-				planDocument = artifact.contents
-			}
-		}
-		_, manifest, err := platform.ValidateInstanceRestorePreflightDocument(planDocument, manifestDocument, platform.InstanceBackupEvidenceExpectation{
-			ArtifactIdentity: occurrence.ArtifactIdentity, PolicyVersion: occurrence.PolicyVersion,
-			PolicySHA256: occurrence.PolicySHA256, TargetScope: occurrence.TargetScope,
-		})
-		if err != nil {
-			return nil, err
-		}
-		for index := range validated {
-			validated[index].recoveryPointAt = manifest.CompletedAt
-		}
 	}
 	return validated, nil
 }
@@ -509,25 +479,6 @@ func readUBDRArtifact(kind, path string, expected Occurrence) (validatedEvidence
 		digest := hex.EncodeToString(sum[:])
 		uri := (&url.URL{Scheme: "artifact", Host: "qualification", Path: "/" + kind + "/" + digest + ".json"}).String()
 		return validatedEvidenceArtifact{reference: EvidenceReference{Kind: kind, URI: uri, SHA256: digest}, contents: contents, recoveryPointAt: report.RecoveryPointAt}, nil
-	case EvidenceBackupManifestV2:
-		manifest, err := platform.ValidateInstanceBackupManifestDocument(contents, platform.InstanceBackupEvidenceExpectation{
-			ArtifactIdentity: expected.ArtifactIdentity, PolicyVersion: expected.PolicyVersion,
-			PolicySHA256: expected.PolicySHA256, TargetScope: expected.TargetScope,
-		})
-		if err != nil {
-			return validatedEvidenceArtifact{}, err
-		}
-		sum := sha256.Sum256(contents)
-		digest := hex.EncodeToString(sum[:])
-		uri := (&url.URL{Scheme: "artifact", Host: "qualification", Path: "/" + kind + "/" + digest + ".json"}).String()
-		return validatedEvidenceArtifact{reference: EvidenceReference{Kind: kind, URI: uri, SHA256: digest}, contents: contents, recoveryPointAt: manifest.CompletedAt}, nil
-	case EvidenceRestorePreflight:
-		var plan platform.InstanceRestorePreflightPlan
-		if err := json.Unmarshal(contents, &plan); err != nil || plan.SchemaVersion != 1 || !plan.Allowed ||
-			plan.ReasonCode != platform.RestorePreflightAllowed || plan.BackupID == "" ||
-			!validSHA256(plan.ManifestSHA256) || !validSHA256(plan.ArchiveSHA256) || !plan.ExclusiveLockVerified {
-			return validatedEvidenceArtifact{}, fmt.Errorf("restore preflight evidence is incomplete")
-		}
 	default:
 		return validatedEvidenceArtifact{}, fmt.Errorf("unsupported recovery qualification evidence kind %q", kind)
 	}

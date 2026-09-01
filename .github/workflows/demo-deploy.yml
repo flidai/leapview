@@ -9,15 +9,10 @@ on:
 permissions:
   contents: read
   id-token: write
-  packages: read
-  attestations: read
 
 concurrency:
   group: leapview-hosted-demo
   cancel-in-progress: false
-
-env:
-  IMAGE_REPOSITORY: ghcr.io/flidai/leapview
 
 jobs:
   deploy:
@@ -51,51 +46,6 @@ jobs:
           path: ~/.cache/leapview
           key: olist-v2-967e41e04fc306fe604e2a693f488995a8b41e5047418f8a5c8e4abd6deca784
 
-      - name: Log in to GitHub Container Registry
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Resolve the qualified immutable image
-        id: resolve
-        run: |
-          set -euo pipefail
-          [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]]
-          image_tag="${IMAGE_REPOSITORY}:main-${SOURCE_REVISION}"
-          docker pull "$image_tag"
-          demo_image="$(docker image inspect "$image_tag" --format '{{json .RepoDigests}}' |
-            jq -r '.[] | select(startswith("ghcr.io/flidai/leapview@sha256:"))' |
-            head -n 1)"
-          [[ "$demo_image" =~ ^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$ ]]
-          echo "DEMO_IMAGE=$demo_image" >> "$GITHUB_ENV"
-          echo "image=$demo_image" >> "$GITHUB_OUTPUT"
-          printf 'Qualified demo image: `%s`\n' "$demo_image" >> "$GITHUB_STEP_SUMMARY"
-
-      - name: Admit the exact hosted-demo image
-        id: admission
-        uses: ./.github/actions/oci-admission
-        with:
-          image: ${{ steps.resolve.outputs.image }}
-          repository: ${{ env.IMAGE_REPOSITORY }}
-          expected-workflow: flidai/leapview/.github/workflows/artifacts.yml
-          source-revision: ${{ env.SOURCE_REVISION }}
-
-      - name: Pin the admitted hosted-demo image
-        run: echo "DEMO_IMAGE=${{ steps.admission.outputs.image }}" >> "$GITHUB_ENV"
-
-      - name: Fetch Hetzner infrastructure credentials
-        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
-        with:
-          method: oidc
-          identity-id: 6aac9c3e-4f33-45b5-aa4e-884839b950a7
-          oidc-audience: https://github.com/flidai
-          domain: https://us.infisical.com
-          project-slug: leapview
-          env-slug: prod
-          secret-path: /hetzner-qualification/infrastructure
-
       - name: Fetch demo deployment credentials
         uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
         with:
@@ -107,14 +57,7 @@ jobs:
           env-slug: prod
           secret-path: /demo/deployment
 
-      - name: Resolve temporary runner access
-        run: |
-          set -euo pipefail
-          runner_ip="$(curl -4fsS --connect-timeout 5 --max-time 10 https://api.ipify.org)"
-          [[ "$runner_ip" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]
-          echo "DEMO_RUNNER_IP=$runner_ip" >> "$GITHUB_ENV"
-
-      - name: Upgrade and deploy the canonical Olist showcase
+      - name: Publish the canonical Olist showcase
         env:
           DEMO_SOURCE_REVISION: ${{ env.SOURCE_REVISION }}
           DEMO_TARGET: https://demo.leapview.dev

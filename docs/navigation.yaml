@@ -257,12 +257,12 @@ sections:
       - slug: guides/operate/backup-restore
         title: Backup and restore
         type: how-to
-        summary: Create, validate, and restore consistent instance backups.
+        summary: Coordinate external PostgreSQL PITR and DuckLake/object-store recovery; LeapView provides no backup archive.
         source: articles/operate/backup-restore.md
       - slug: guides/operate/upgrades
         title: Upgrades and migrations
         type: how-to
-        summary: Upgrade binaries and persistent state with rollback boundaries.
+        summary: Plan provider-managed image upgrades and persistent-state migrations with explicit rollback boundaries.
         source: articles/operate/upgrades.md
       - slug: guides/operate/plan-build-publish
         title: Operate the plan → build → publish delivery contract
@@ -270,9 +270,9 @@ sections:
         summary: Bootstrap an admitted physical pool and operate immutable target-bound delivery.
         source: articles/operate/plan-build-publish.md
       - slug: guides/operate/delivery-recovery
-        title: Delivery reachability audit and bounded repair
-        type: how-to
-        summary: Audit immutable delivery roots offline and apply a fail-closed quarantine repair.
+        title: Delivery reachability and recovery boundaries
+        type: explanation
+        summary: Inspect delivery state and understand the provider-native recovery boundary.
         source: articles/operate/delivery-recovery.md
       - slug: guides/operate/troubleshooting
         title: Operational troubleshooting

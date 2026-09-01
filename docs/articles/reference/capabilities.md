@@ -20,7 +20,7 @@ Connection kinds include managed data and supported object, HTTP, database, and 
 
 Managed data supports local planning, immutable content-addressed revisions, resumable local-backend upload, direct multipart object-storage upload, staged revision inspection, and atomic activation with a project deployment.
 
-Model tables materialize source transformations into DuckLake-managed analytical state. Refresh builds isolated replacement state and changes the active serving pointer only after success. Storage cleanup reconciles active snapshots and query leases before deletion.
+Model tables materialize source transformations into DuckLake-managed analytical state. Refresh builds isolated replacement state and changes the active serving pointer only after success. PostgreSQL and DuckLake retain the authoritative lifecycle evidence needed by native maintenance and recovery tooling.
 
 ## Semantic and BI surfaces
 
@@ -42,9 +42,9 @@ Authorization includes project-resource roles, explicit grants on securable obje
 
 ## Operations
 
-The CLI and API support project validation, target-aware planning, atomic deployment, refresh runs, backup/restore, bounded history maintenance, storage cleanup dry-run/apply, readiness checks, and managed revision inspection.
+The CLI and API support project validation, target-aware planning, atomic deployment, refresh runs, bounded history maintenance, readiness checks, and managed revision inspection. PostgreSQL backup/PITR and DuckLake/object-store recovery are provider-native operational responsibilities.
 
-The supported Hetzner module provides a single-node production topology with Caddy, restricted SSH, local persistent state, scheduled backups, and health-checked image upgrade/rollback. It is not a high-availability deployment contract.
+The supported Hetzner module provides a single-node production topology with Caddy, restricted SSH, and health-checked image lifecycle operations. It is not a high-availability deployment or backup contract.
 
 ## Integrations
 

@@ -75,10 +75,10 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
 - [Self-hosting](/docs/guides/operate/self-hosting): Build and run a supported single-node deployment.
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.
-- [Backup and restore](/docs/guides/operate/backup-restore): Create, validate, and restore consistent instance backups.
-- [Upgrades and migrations](/docs/guides/operate/upgrades): Upgrade binaries and persistent state with rollback boundaries.
+- [Backup and restore](/docs/guides/operate/backup-restore): Coordinate external PostgreSQL PITR and DuckLake/object-store recovery; LeapView provides no backup archive.
+- [Upgrades and migrations](/docs/guides/operate/upgrades): Plan provider-managed image upgrades and persistent-state migrations with explicit rollback boundaries.
 - [Operate the plan → build → publish delivery contract](/docs/guides/operate/plan-build-publish): Bootstrap an admitted physical pool and operate immutable target-bound delivery.
-- [Delivery reachability audit and bounded repair](/docs/guides/operate/delivery-recovery): Audit immutable delivery roots offline and apply a fail-closed quarantine repair.
+- [Delivery reachability and recovery boundaries](/docs/guides/operate/delivery-recovery): Inspect delivery state and understand the provider-native recovery boundary.
 - [Operational troubleshooting](/docs/guides/operate/troubleshooting): Diagnose deployment and runtime failures systematically.
 
 ### Security and administration

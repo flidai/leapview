@@ -41,12 +41,6 @@ const (
 	defaultEventRetention = 365 * 24 * time.Hour
 )
 
-// ErrNativeStorageCleanupUnavailable is returned when production Admin is
-// asked to clean serving-state or DuckLake storage before a native physical
-// cleanup owner has been composed. Keeping this as a stable sentinel prevents
-// the embedded offline adapter from being selected accidentally.
-var ErrNativeStorageCleanupUnavailable = errors.New("PostgreSQL native storage cleanup is unavailable")
-
 // Native is the small execution surface needed by this CLI adapter. Keeping
 // it separate from postgresmaintenance.Native makes preview/apply selection
 // directly injectable in unit tests.
@@ -105,10 +99,9 @@ type Dependencies struct {
 	Now             func() time.Time
 }
 
-// Operations preserves every existing offline Admin operation and overrides
-// Maintenance and StorageCleanup. This keeps non-production behavior
-// byte-for-byte on the legacy path while production operations use native
-// owners or fail closed until one is composed.
+// Operations preserves the retained offline Admin operations and overrides
+// Maintenance. This keeps non-production behavior on the legacy path while
+// production operations use native owners.
 type Operations struct {
 	appadminoffline.Operations
 	Dependencies Dependencies
@@ -167,22 +160,6 @@ func (d Dependencies) withDefaults() Dependencies {
 // callers can use Operations{} and receive the real dependencies.
 func New(dependencies Dependencies) Operations {
 	return Operations{Dependencies: dependencies.withDefaults()}
-}
-
-// StorageCleanup keeps the legacy SQLite/catalog-file cleanup adapter out of
-// production Admin. A native physical cleanup owner is not composed yet, so
-// production requests fail closed with a stable error. Non-production and
-// isolated evaluation environments retain the existing offline behavior.
-func (o Operations) StorageCleanup(ctx context.Context, request adminoffline.StorageCleanupRequest, out io.Writer) error {
-	deps := o.Dependencies.withDefaults()
-	cfg, err := deps.LoadConfig()
-	if err != nil {
-		return err
-	}
-	if cfg.Production && !cfg.EvaluationMode {
-		return ErrNativeStorageCleanupUnavailable
-	}
-	return o.Operations.StorageCleanup(ctx, request, out)
 }
 
 // Maintenance executes native PostgreSQL retention in production. Preview is

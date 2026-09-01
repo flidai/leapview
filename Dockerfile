@@ -199,7 +199,6 @@ COPY --from=build /out/leapviewctl /usr/local/share/leapview/deployment/leapview
 COPY --from=extension-supply /out/extension-supply /usr/local/share/leapview/extensions
 COPY deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/deployment.env.example deploy/compose/leapview.env.example deploy/compose/README.md deploy/compose/QUALIFICATION.md /usr/local/share/leapview/deployment/
 COPY deploy/compose/qualification /usr/local/share/leapview/deployment/qualification
-COPY internal/platform/compatibility/release-transition-policy.json /usr/local/share/leapview/deployment/release-transition-policy.json
 COPY deploy/host/files/ /usr/local/share/leapview/deployment/
 COPY --from=web /src/static ./static
 COPY --from=build /src/schemas ./schemas
@@ -208,8 +207,7 @@ COPY dashboards ./dashboards
 COPY evaluation ./evaluation
 
 RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
-      /usr/local/share/leapview/deployment/leapviewctl-wrapper \
-      /usr/local/share/leapview/deployment/leapview-backup-hook && \
+      /usr/local/share/leapview/deployment/leapviewctl-wrapper && \
     find /usr/local/share/leapview/extensions -type d -exec chmod 0555 {} + && \
     find /usr/local/share/leapview/extensions -type f -exec chmod 0444 {} + && \
     chmod 0400 /usr/local/share/leapview/deployment/compose.yaml \
@@ -219,13 +217,7 @@ RUN chmod 0500 /usr/local/share/leapview/deployment/leapviewctl \
       /usr/local/share/leapview/deployment/leapview.env.example \
       /usr/local/share/leapview/deployment/README.md \
       /usr/local/share/leapview/deployment/QUALIFICATION.md \
-      /usr/local/share/leapview/deployment/qualification/* \
-      /usr/local/share/leapview/deployment/leapview-backup.service \
-      /usr/local/share/leapview/deployment/leapview-backup.timer \
-      /usr/local/share/leapview/deployment/leapview-backup-maintenance.service \
-      /usr/local/share/leapview/deployment/leapview-backup-maintenance.timer \
-      /usr/local/share/leapview/deployment/leapview-recovery-qualification.service \
-      /usr/local/share/leapview/deployment/leapview-recovery-qualification.timer && \
+      /usr/local/share/leapview/deployment/qualification/* && \
     mkdir -p /var/lib/leapview && \
     chown -R leapview:leapview /var/lib/leapview /app
 

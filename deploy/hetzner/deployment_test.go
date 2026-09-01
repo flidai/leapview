@@ -13,7 +13,6 @@ func TestTerraformProductionContracts(t *testing.T) {
 	main := readFile(t, "main.tf")
 	cloudInit := readFile(t, filepath.Join("..", "host", "cloud-init.yaml.tftpl"))
 	requireContains(t, variables, `variable "leapview_image"`)
-	requireContains(t, variables, `variable "release_transition_policy_path"`)
 	requireContains(t, variables, `@sha256:`)
 	requireContains(t, variables, `variable "ssh_allowed_cidrs"`)
 	if strings.Contains(variables, `default     = ["0.0.0.0/0", "::/0"]`) {
@@ -44,7 +43,7 @@ func TestHetznerConsumesGenericComposeLifecycle(t *testing.T) {
 	}
 	for _, forbidden := range []string{
 		"compose_b64", "compose_https_b64", "caddyfile_b64", "leapviewctl_wrapper_b64",
-		"backup_hook_b64", "provision_b64", "docker compose", "leapviewctl init", "leapviewctl start",
+		"provision_b64", "docker compose", "leapviewctl init", "leapviewctl start",
 	} {
 		if strings.Contains(main, forbidden) {
 			t.Fatalf("provider provisioning maintains lifecycle fragment %q", forbidden)
@@ -177,12 +176,11 @@ func assertDockerfileImagesPinned(t *testing.T, name, dockerfile string) {
 	}
 }
 
-func TestEphemeralDeploymentExercisesPublicAndBackupContracts(t *testing.T) {
+func TestEphemeralDeploymentExercisesPublicContracts(t *testing.T) {
 	workflow := readFile(t, filepath.Join("..", "..", ".github", "workflows", "hetzner-deploy.yml"))
 	for _, fragment := range []string{
 		"workflow_dispatch:", "environment: leapview-ephemeral-qualification", "terraform apply",
-		"public_ready=false", "--connect-timeout 5", "leapviewctl backup", "leapviewctl restore",
-		"leapview-backup-hook --init", "restic restore latest", "leapview-backup-hook --maintain",
+		"public_ready=false", "--connect-timeout 5", "leapviewctl status", "leapviewctl logs caddy",
 		`.publisherToken`, "if: always()", "terraform destroy",
 		"id-token: write",
 		"attestations: read",
@@ -190,8 +188,7 @@ func TestEphemeralDeploymentExercisesPublicAndBackupContracts(t *testing.T) {
 		"uses: ./.github/actions/oci-admission",
 		"expected-workflow: flidai/leapview/.github/workflows/artifacts.yml",
 		"source-revision: ${{ inputs.source_revision }}",
-			"TF_VAR_leapview_image=${{ steps.admission.outputs.image }}",
-			"TF_VAR_release_transition_policy_path",
+		"TF_VAR_leapview_image=${{ steps.admission.outputs.image }}",
 		"Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16",
 		`method: "oidc"`,
 		`identity-id: "6aac9c3e-4f33-45b5-aa4e-884839b950a7"`,
@@ -209,6 +206,10 @@ func TestEphemeralDeploymentExercisesPublicAndBackupContracts(t *testing.T) {
 	for _, forbidden := range []string{
 		"environment: hetzner-deployment",
 		"secrets.HCLOUD_TOKEN",
+		"leapviewctl backup",
+		"leapviewctl restore",
+		"leapview-backup-hook",
+		"restic restore",
 	} {
 		if strings.Contains(workflow, forbidden) {
 			t.Errorf("ephemeral deployment workflow contains forbidden fragment %q", forbidden)

@@ -129,26 +129,7 @@ jobs:
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
           EVIDENCE_ROOT: ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}
         run: |
-          previous_image="$(
-            jq -r --arg platform "linux/${{ matrix.arch }}" '
-              .candidateRelease as $candidate |
-              first(
-                .transitions[]? |
-                select(.operation == "upgrade" and .to == $candidate and .decision.allowed == true and (.platforms | index($platform))) |
-                .from as $previous |
-                .releases[] |
-                select(.id == $previous) |
-                .artifacts[] |
-                select(.platform == $platform) |
-                .image
-              ) // ""
-            ' "$PACKAGE_ROOT/release-transition-policy.json"
-          )"
-          test -n "$previous_image" || {
-            echo "candidate policy has no reviewed predecessor transition for linux/${{ matrix.arch }}" >&2
-            exit 1
-          }
-          args=(qualify installed-candidate --require-release-transition --previous-image "$previous_image" --evidence-dir "$EVIDENCE_ROOT")
+          args=(qualify installed-candidate --evidence-dir "$EVIDENCE_ROOT")
           env -u GH_TOKEN -u GITHUB_TOKEN \
             "$PACKAGE_ROOT/leapviewctl" "${args[@]}"
 

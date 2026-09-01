@@ -80,50 +80,6 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 			return controller.FirstLogin()
 		},
 	}
-	backup := &cobra.Command{
-		Use:   "backup [archive-name]",
-		Short: "Create a validated full-instance backup",
-		Args:  cobra.MaximumNArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			name := ""
-			if len(args) == 1 {
-				name = args[0]
-			}
-			return controller.Backup(ctx, name)
-		},
-	}
-	restore := &cobra.Command{
-		Use:   "restore <archive>",
-		Short: "Restore a validated full-instance backup",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return controller.Restore(ctx, args[0])
-		},
-	}
-	upgradePolicy := ""
-	upgrade := &cobra.Command{
-		Use:   "upgrade <image-digest>",
-		Short: "Upgrade with paired image and state rollback",
-		Args:  cobra.ExactArgs(1),
-		RunE: func(_ *cobra.Command, args []string) error {
-			return controller.UpgradeWithPolicy(ctx, args[0], upgradePolicy)
-		},
-	}
-	upgrade.Flags().StringVar(&upgradePolicy, "transition-policy", "", "candidate-bound release-transition policy")
-	_ = upgrade.MarkFlagRequired("transition-policy")
-	rollbackConfirmed := false
-	rollbackPolicy := ""
-	rollback := &cobra.Command{
-		Use:   "rollback",
-		Short: "Restore the previous paired image and state checkpoint",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return controller.RollbackWithPolicy(ctx, rollbackConfirmed, rollbackPolicy)
-		},
-	}
-	rollback.Flags().BoolVar(&rollbackConfirmed, "confirm", false, "confirm that post-upgrade state will be discarded")
-	rollback.Flags().StringVar(&rollbackPolicy, "transition-policy", "", "candidate-bound release-transition policy used for the upgrade")
-	_ = rollback.MarkFlagRequired("transition-policy")
 
 	imageQualification := QualificationImageOptions{}
 	qualifyImage := &cobra.Command{
@@ -160,18 +116,8 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	}
 	qualifyInstalled.Flags().StringVar(&installedQualification.Bundle, "bundle", "", "extracted immutable release bundle (defaults to this leapviewctl directory)")
 	qualifyInstalled.Flags().StringVar(&installedQualification.EvidenceDir, "evidence-dir", "", "directory for bounded qualification evidence")
-	qualifyInstalled.Flags().StringVar(&installedQualification.PreviousImage, "previous-image", "", "optional previous immutable image used to qualify upgrade and rollback")
-	qualifyInstalled.Flags().BoolVar(&installedQualification.RequireReleaseTransition, "require-release-transition", false, "fail unless a previous immutable release is qualified through upgrade and rollback")
 	qualifyInstalled.Flags().BoolVar(&installedQualification.AllowLocal, "allow-local-image", false, "allow a local immutable registry reference during development")
 	qualifyInstalled.Flags().Int64Var(&installedQualification.MinFreeBytes, "minimum-free-bytes", 0, "local-only managed-data free-space override")
-	qualifyScheduledRecovery := &cobra.Command{
-		Use:   "scheduled-recovery",
-		Short: "Run due owner-validated recovery qualifications on an installed host",
-		Args:  cobra.NoArgs,
-		RunE: func(_ *cobra.Command, _ []string) error {
-			return controller.RunScheduledRecoveryQualification(ctx)
-		},
-	}
 	v010Qualification := QualificationV010Options{}
 	qualifyV010 := &cobra.Command{
 		Use:   "v0.1-preservation",
@@ -228,8 +174,8 @@ func Command(ctx context.Context, controller *Controller) *cobra.Command {
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.Project, "project", "", "qualification project")
 	qualifyClientWorker.Flags().StringVar(&clientWorkerOptions.SourceRevision, "source-revision", "", "staged source revision")
 
-	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyScheduledRecovery, qualifyV010ArtifactReview, qualifyV010, qualifyClientWorker)
+	qualify.AddCommand(qualifyImage, qualifySiteImage, qualifyInstalled, qualifyV010ArtifactReview, qualifyV010, qualifyClientWorker)
 
-	root.AddCommand(version, initialize, start, status, logs, firstLogin, backup, restore, upgrade, rollback, qualify)
+	root.AddCommand(version, initialize, start, status, logs, firstLogin, qualify)
 	return root
 }

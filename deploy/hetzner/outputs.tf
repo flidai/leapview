@@ -19,6 +19,6 @@ output "initial_local_user_command" {
 }
 
 output "operations_command" {
-  description = "SSH prefix for status, logs, backup, restore, upgrade, and rollback operations."
+  description = "SSH prefix for status and logs operations."
   value       = "ssh${local.ssh_identity_arg} root@${hcloud_primary_ip.leapview.ip_address} leapviewctl"
 }

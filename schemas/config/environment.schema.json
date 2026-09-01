@@ -3307,60 +3307,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_BUNDLE": {
-      "default": "/app/release",
-      "description": "Absolute path to the admitted immutable release bundle consumed by transition qualification.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_CONTROLLER": {
-      "default": "/app/leapviewctl",
-      "description": "Absolute path to the release controller used for isolated scheduled transition qualification.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_CRON": {
-      "default": "0 3 * * *",
-      "description": "Cron schedule for each production recovery qualification owner.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED": {
-      "default": "false",
-      "description": "Run scheduled owner-qualified backup, restore, upgrade, and rollback journeys and retain their evidence.",
-      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_EXECUTION_ENVIRONMENT": {
-      "default": "host",
-      "description": "Supported execution owner for scheduled recovery qualification; released Compose deployments use the host controller.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_EVIDENCE": {
-      "description": "Absolute path to the canonical FAI-515 external-evidence JSON used by scheduled S3 restore qualification.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_RECOVERY_POINTS": {
-      "description": "Absolute path to the canonical FAI-515 external recovery-points JSON used by scheduled S3 qualification.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_RECOVERY_QUALIFICATION_WORK_DIR": {
-      "description": "Private staging root outside LEAPVIEW_HOME for scheduled backup and transition qualification.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_REFRESH_JOB_LEASE_TIMEOUT": {
       "default": "2m",
       "description": "Lease duration before an abandoned refresh job may be reclaimed.",

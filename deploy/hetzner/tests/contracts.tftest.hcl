@@ -4,7 +4,6 @@ variables {
   hcloud_token                   = "test-token"
   admin_email                    = "admin@example.com"
   leapview_image                 = "ghcr.io/flidai/leapview@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-  release_transition_policy_path = "../../internal/platform/compatibility/release-transition-policy.json"
   ssh_allowed_cidrs              = ["203.0.113.10/32"]
   ssh_public_key_path            = ""
   ssh_key_ids                    = ["existing-key"]

@@ -66,19 +66,14 @@ type qualificationRecoveryReport struct {
 		DeploymentActivation bool `json:"deploymentActivation"`
 		RefreshRecovery      bool `json:"refreshRecovery"`
 		QueryStreamReconnect bool `json:"queryStreamReconnect"`
-		BackupInterruption   bool `json:"backupInterruption"`
-		RestorePreflight     bool `json:"restorePreflight"`
 		BoundedDisk          bool `json:"boundedDisk"`
 	} `json:"assertions"`
 	BoundedState struct {
-		DiskBeforeKiB          int64 `json:"diskBeforeKiB"`
-		DiskAfterKiB           int64 `json:"diskAfterKiB"`
-		DiskGrowthKiB          int64 `json:"diskGrowthKiB"`
-		DiskGrowthLimitKiB     int64 `json:"diskGrowthLimitKiB"`
-		StaleRecoveryEntries   int64 `json:"staleRecoveryEntries"`
-		StaleRestoreEntries    int64 `json:"staleRestoreEntries"`
-		StaleBackupEntries     int64 `json:"staleBackupEntries"`
-		StaleCheckpointEntries int64 `json:"staleCheckpointEntries"`
+		DiskBeforeKiB        int64 `json:"diskBeforeKiB"`
+		DiskAfterKiB         int64 `json:"diskAfterKiB"`
+		DiskGrowthKiB        int64 `json:"diskGrowthKiB"`
+		DiskGrowthLimitKiB   int64 `json:"diskGrowthLimitKiB"`
+		StaleRecoveryEntries int64 `json:"staleRecoveryEntries"`
 	} `json:"boundedState"`
 }
 
@@ -673,127 +668,6 @@ func (c *Controller) runQualificationRecovery(
 	if err := phases.Finish(nil); err != nil {
 		return report, err
 	}
-	report.Stage = "backup interruption"
-	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", "0.25", options.ContainerID); err != nil {
-		return report, err
-	}
-	for _, name := range []string{"interrupted.tar.gz", "interrupted.tar.gz.sha256"} {
-		_ = os.Remove(filepath.Join(options.BundleRoot, "backups", name))
-	}
-	backupCommand, err := startQualificationControllerCommand(
-		ctx,
-		options.BundleRoot,
-		filepath.Join(options.EvidenceDir, "recovery-backup-interruption.log"),
-		"backup", "interrupted.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	backupOneoff, err := c.waitForQualificationComposeOneoff(
-		ctx, options.ComposeProject, "admin", "backup",
-	)
-	if err != nil {
-		_ = backupCommand.Stop()
-		return report, err
-	}
-	_ = backupCommand.Stop()
-	backupContainer := c.qualificationContainers.Existing(backupOneoff)
-	_, _ = backupContainer.Kill(ctx, "KILL")
-	_, _ = backupContainer.Remove(ctx)
-	if _, statErr := os.Stat(filepath.Join(options.BundleRoot, "backups", "interrupted.tar.gz")); !os.IsNotExist(statErr) {
-		return report, fmt.Errorf("interrupted backup produced a completed archive")
-	}
-	if _, err := c.qualificationDocker(ctx, nil, "update", "--cpus", qualificationRecoveryFullCPUs, options.ContainerID); err != nil {
-		return report, err
-	}
-	recoveryController, err := New(Options{
-		Root:      options.BundleRoot,
-		DockerBin: c.dockerBin,
-		Stdout:    io.Discard,
-		Stderr:    c.stderr,
-		Now:       c.now,
-		Sleep:     c.sleep,
-	})
-	if err != nil {
-		return report, err
-	}
-	if err := recoveryController.Start(ctx); err != nil {
-		return report, err
-	}
-	if err := recoveryController.Backup(ctx, "recovered.tar.gz"); err != nil {
-		return report, err
-	}
-	options.ContainerID, err = recoveryController.containerID(ctx)
-	if err != nil {
-		return report, err
-	}
-	if err := c.waitQualificationHealthy(ctx, options.ContainerID, report.Stage); err != nil {
-		return report, err
-	}
-	temporaryBackups, err := filepath.Glob(filepath.Join(options.BundleRoot, "backups", ".leapview-backup-*.tmp"))
-	if err != nil || len(temporaryBackups) != 0 {
-		return report, fmt.Errorf("interrupted backup left temporary archives")
-	}
-	report.Assertions.BackupInterruption = true
-
-	if err := phases.Finish(nil); err != nil {
-		return report, err
-	}
-	report.Stage = "restore preflight interruption"
-	ctx = phases.Begin(rootContext, report.Stage, 15*time.Minute)
-	restoreCommand, err := startQualificationControllerCommand(
-		ctx,
-		options.BundleRoot,
-		filepath.Join(options.EvidenceDir, "recovery-restore-preflight.log"),
-		"restore", "backups/recovered.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	restoreOneoff, err := c.waitForQualificationComposeOneoff(
-		ctx, options.ComposeProject, "admin", "restore",
-	)
-	if err != nil {
-		_ = restoreCommand.Stop()
-		return report, err
-	}
-	_ = restoreCommand.Stop()
-	restoreContainer := c.qualificationContainers.Existing(restoreOneoff)
-	_, _ = restoreContainer.Kill(ctx, "KILL")
-	_, _ = restoreContainer.Remove(ctx)
-	if err := recoveryController.Start(ctx); err != nil {
-		return report, err
-	}
-	if err := recoveryController.Restore(ctx, "backups/recovered.tar.gz"); err != nil {
-		return report, err
-	}
-	options.ContainerID, err = recoveryController.containerID(ctx)
-	if err != nil {
-		return report, err
-	}
-	if err := c.waitQualificationHealthy(ctx, options.ContainerID, report.Stage); err != nil {
-		return report, err
-	}
-	postRestoreOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.WorkloadToken,
-		"leapview", "api", "call", "querySemanticModel",
-		"--path", "model=semantic-model:sales", "--body-json", mustQualificationJSON(queryBody),
-	)
-	if err != nil {
-		return report, err
-	}
-	var postRestore struct {
-		Rows []json.RawMessage `json:"rows"`
-	}
-	if err := json.Unmarshal(postRestoreOutput, &postRestore); err != nil || len(postRestore.Rows) != 4 {
-		return report, fmt.Errorf("post-restore governed query failed")
-	}
-	report.Assertions.RestorePreflight = true
-
-	if err := phases.Finish(nil); err != nil {
-		return report, err
-	}
 	report.Stage = "bounded recovery state"
 	ctx = phases.Begin(rootContext, report.Stage, 10*time.Minute)
 	_, _ = c.qualificationDocker(ctx, nil, "update", "--cpus", qualificationRecoveryFullCPUs, options.ContainerID)
@@ -803,37 +677,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	report.BoundedState.DiskAfterKiB = diskAfter
 	report.BoundedState.DiskGrowthKiB = diskAfter - diskBefore
-	report.BoundedState.StaleRestoreEntries, err = c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", ".leapview-restore-*",
-	)
-	if err != nil {
-		return report, err
-	}
-	report.BoundedState.StaleBackupEntries, err = c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", ".leapview-instance-backup-*",
-	)
-	if err != nil {
-		return report, err
-	}
-	firstCheckpoints, err := c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", ".leapview-current-backup-*.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	secondCheckpoints, err := c.countQualificationContainerPaths(
-		ctx, options.ContainerID, "/var/lib/leapview", "leapview-current-backup-*.tar.gz",
-	)
-	if err != nil {
-		return report, err
-	}
-	report.BoundedState.StaleCheckpointEntries = firstCheckpoints + secondCheckpoints
-	report.BoundedState.StaleRecoveryEntries =
-		report.BoundedState.StaleRestoreEntries +
-			report.BoundedState.StaleBackupEntries +
-			report.BoundedState.StaleCheckpointEntries
-	if report.BoundedState.DiskGrowthKiB > qualificationRecoveryDiskLimitKiB ||
-		report.BoundedState.StaleRecoveryEntries != 0 {
+	if report.BoundedState.DiskGrowthKiB > qualificationRecoveryDiskLimitKiB {
 		return report, fmt.Errorf("recovery state is unbounded")
 	}
 	report.Assertions.BoundedDisk = true
@@ -1260,32 +1104,6 @@ func (c *Controller) waitForQualificationActivationBarrier(
 	})
 }
 
-func startQualificationControllerCommand(
-	ctx context.Context,
-	bundleRoot string,
-	logPath string,
-	arguments ...string,
-) (*qualificationRunningCommand, error) {
-	output, err := os.OpenFile(logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return nil, err
-	}
-	command := exec.CommandContext(
-		ctx,
-		filepath.Join(bundleRoot, "leapviewctl"),
-		arguments...,
-	)
-	command.Dir = bundleRoot
-	command.Env = os.Environ()
-	command.Stdout = output
-	command.Stderr = output
-	if err := command.Start(); err != nil {
-		_ = output.Close()
-		return nil, err
-	}
-	return newQualificationRunningCommand(command, output), nil
-}
-
 func (c *Controller) killAndRecoverQualificationCandidate(
 	ctx context.Context,
 	containerID string,
@@ -1662,52 +1480,6 @@ func (c *Controller) countQualificationContainerPaths(
 	return count, nil
 }
 
-func (c *Controller) waitForQualificationComposeOneoff(
-	ctx context.Context,
-	project string,
-	commandParts ...string,
-) (string, error) {
-	waitCtx, cancel := qualificationContext(ctx, time.Minute)
-	defer cancel()
-	var found string
-	err := qualificationWait(waitCtx, 50*time.Millisecond, func(requestCtx context.Context) (bool, error) {
-		output, listErr := c.qualificationDocker(
-			requestCtx, nil,
-			"ps",
-			"--filter", "label=com.docker.compose.project="+project,
-			"--filter", "label=com.docker.compose.oneoff=True",
-			"--quiet",
-		)
-		if listErr != nil {
-			return false, nil
-		}
-		for _, candidate := range strings.Fields(string(output)) {
-			commandOutput, inspectErr := c.qualificationContainers.Existing(candidate).
-				Inspect(requestCtx, "{{json .Config.Cmd}}")
-			if inspectErr != nil {
-				continue
-			}
-			var command []string
-			if err := json.Unmarshal(bytes.TrimSpace(commandOutput), &command); err != nil {
-				continue
-			}
-			joined := strings.Join(command, "\x00")
-			match := true
-			for _, part := range commandParts {
-				if !strings.Contains(joined, part) {
-					match = false
-				}
-			}
-			if match {
-				found = candidate
-				return true, nil
-			}
-		}
-		return false, nil
-	})
-	return found, err
-}
-
 func expandQualificationEventTimeline(operation string) []qualificationRecoveryEvent {
 	return []qualificationRecoveryEvent{
 		{Operation: operation, Status: "attempted"},
@@ -1726,12 +1498,6 @@ func qualificationRecoveryTimeline() []qualificationRecoveryEvent {
 		"refreshRecovery",
 	} {
 		result = append(result, expandQualificationEventTimeline(operation)...)
-	}
-	for _, operation := range []string{"backupInterruption", "restorePreflight"} {
-		result = append(result,
-			qualificationRecoveryEvent{Operation: operation, Status: "interrupted"},
-			qualificationRecoveryEvent{Operation: operation, Status: "completed"},
-		)
 	}
 	return result
 }

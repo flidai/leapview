@@ -351,7 +351,7 @@ jobs:
             mkdir -p "dist/$package"
             CGO_ENABLED=0 GOOS="$os" GOARCH="$arch" go build -trimpath -ldflags="$build_ldflags" -o "dist/$package/leapviewctl" ./cmd/leapviewctl
             cp deploy/compose/compose.yaml deploy/compose/compose.https.yaml deploy/compose/Caddyfile deploy/compose/README.md deploy/compose/QUALIFICATION.md "dist/$package/"
-            cp deploy/host/files/leapviewctl-wrapper deploy/host/files/leapview-backup-hook deploy/host/files/leapview-backup.service deploy/host/files/leapview-backup.timer deploy/host/files/leapview-backup-maintenance.service deploy/host/files/leapview-backup-maintenance.timer deploy/host/files/leapview-recovery-qualification.service deploy/host/files/leapview-recovery-qualification.timer "dist/$package/"
+            cp deploy/host/files/leapviewctl-wrapper "dist/$package/"
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
@@ -487,26 +487,7 @@ jobs:
       - name: Run installed-candidate journey
         run: |
           cd "$PACKAGE_ROOT"
-          previous_image="$(
-            jq -r --arg platform "linux/${{ matrix.arch }}" '
-              .candidateRelease as $candidate |
-              first(
-                .transitions[]? |
-                select(.operation == "upgrade" and .to == $candidate and .decision.allowed == true and (.platforms | index($platform))) |
-                .from as $previous |
-                .releases[] |
-                select(.id == $previous) |
-                .artifacts[] |
-                select(.platform == $platform) |
-                .image
-              ) // ""
-            ' release-transition-policy.json
-          )"
-          test -n "$previous_image" || {
-            echo "candidate policy has no reviewed predecessor transition for linux/${{ matrix.arch }}" >&2
-            exit 1
-          }
-          args=(qualify installed-candidate --require-release-transition --previous-image "$previous_image" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
+          args=(qualify installed-candidate --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
           ./leapviewctl "${args[@]}"
 
       - name: Restore least-privilege GHCR access for historical qualification

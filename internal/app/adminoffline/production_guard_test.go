@@ -31,39 +31,9 @@ func TestProductionRejectsEveryLegacyAdminOperationBeforeOpeningState(t *testing
 			},
 		},
 		{
-			name: "storage cleanup",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).StorageCleanup(ctx, adminoffline.StorageCleanupRequest{}, out)
-			},
-		},
-		{
 			name: "maintenance",
 			call: func(ctx context.Context, out io.Writer) error {
 				return (Operations{}).Maintenance(ctx, adminoffline.MaintenanceRequest{}, out)
-			},
-		},
-		{
-			name: "audit outbox",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).AuditOutbox(ctx, adminoffline.AuditOutboxRequest{}, out)
-			},
-		},
-		{
-			name: "recovery ledger status",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).RecoveryLedgerStatus(ctx, out)
-			},
-		},
-		{
-			name: "backup",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).Backup(ctx, adminoffline.BackupRequest{Out: filepath.Join(t.TempDir(), "backup.tar.gz")}, out)
-			},
-		},
-		{
-			name: "restore",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).Restore(ctx, adminoffline.RestoreRequest{}, nil, out)
 			},
 		},
 		{
@@ -76,18 +46,6 @@ func TestProductionRejectsEveryLegacyAdminOperationBeforeOpeningState(t *testing
 			name: "bootstrap qualification pool",
 			call: func(ctx context.Context, out io.Writer) error {
 				return (Operations{}).BootstrapQualificationLocalPhysicalPool(ctx, out)
-			},
-		},
-		{
-			name: "audit delivery roots",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).AuditDeliveryRoots(ctx, adminoffline.DeliveryAuditRequest{PhysicalPoolID: "pool"}, out)
-			},
-		},
-		{
-			name: "repair delivery root",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).RepairDeliveryRoot(ctx, adminoffline.DeliveryRepairRequest{}, out)
 			},
 		},
 	}

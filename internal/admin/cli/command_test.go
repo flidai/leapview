@@ -3,8 +3,6 @@ package cli
 import (
 	"context"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -12,21 +10,8 @@ import (
 )
 
 type fakeOperations struct {
-	called                string
-	options               Options
-	requeueEvent          string
-	recoveryPoints        []adminoffline.ExternalRecoveryPoint
-	currentRecoveryPoints []adminoffline.ExternalRecoveryPoint
-	externalEvidence      map[string]string
-}
-
-func (operations *fakeOperations) AuditOutbox(_ context.Context, request adminoffline.AuditOutboxRequest, _ io.Writer) error {
-	operations.called, operations.requeueEvent, operations.options.Apply = "audit-outbox", request.RequeueEventID, request.Apply
-	return nil
-}
-func (operations *fakeOperations) RecoveryLedgerStatus(context.Context, io.Writer) error {
-	operations.called = "recovery-status"
-	return nil
+	called  string
+	options Options
 }
 
 func (operations *fakeOperations) Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error {
@@ -37,10 +22,6 @@ func (operations *fakeOperations) AcknowledgeInitialCredentials(context.Context)
 	operations.called = "acknowledge"
 	return nil
 }
-func (operations *fakeOperations) StorageCleanup(_ context.Context, request adminoffline.StorageCleanupRequest, _ io.Writer) error {
-	operations.called, operations.options.Apply = "cleanup", request.Apply
-	return nil
-}
 func (operations *fakeOperations) Maintenance(_ context.Context, request adminoffline.MaintenanceRequest, _ io.Writer) error {
 	operations.called = "maintenance"
 	operations.options = Options{
@@ -49,35 +30,12 @@ func (operations *fakeOperations) Maintenance(_ context.Context, request adminof
 	}
 	return nil
 }
-func (operations *fakeOperations) Backup(_ context.Context, request adminoffline.BackupRequest, _ io.Writer) error {
-	operations.called = "backup"
-	operations.options.BackupOut, operations.options.DatabaseOnly = request.Out, request.DatabaseOnly
-	operations.recoveryPoints = request.ExternalRecoveryPoints
-	return nil
-}
-func (operations *fakeOperations) Restore(_ context.Context, request adminoffline.RestoreRequest, _ io.Reader, _ io.Writer) error {
-	operations.called = "restore"
-	operations.options.RestoreFrom, operations.options.RestoreBefore = request.From, request.CurrentBackup
-	operations.options.ConfirmRestore, operations.options.DatabaseOnly = request.Confirm, request.DatabaseOnly
-	operations.options.PreflightOnly = request.PreflightOnly
-	operations.externalEvidence = request.ExternalEvidence
-	operations.currentRecoveryPoints = request.CurrentExternalRecoveryPoints
-	return nil
-}
 func (operations *fakeOperations) BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error {
 	operations.called = "pool-bootstrap"
 	return nil
 }
 func (operations *fakeOperations) BootstrapQualificationLocalPhysicalPool(context.Context, io.Writer) error {
 	operations.called = "qualification-local-pool-bootstrap"
-	return nil
-}
-func (operations *fakeOperations) RepairDeliveryRoot(context.Context, adminoffline.DeliveryRepairRequest, io.Writer) error {
-	operations.called = "delivery-repair"
-	return nil
-}
-func (operations *fakeOperations) AuditDeliveryRoots(context.Context, adminoffline.DeliveryAuditRequest, io.Writer) error {
-	operations.called = "delivery-audit"
 	return nil
 }
 
@@ -97,33 +55,9 @@ func TestCommandOwnsMaintenanceFlags(t *testing.T) {
 	}
 }
 
-func TestCommandRoutesRecoveryLedgerStatus(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"recovery", "status"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "recovery-status" {
-		t.Fatalf("called = %q", operations.called)
-	}
-}
-
-func TestCommandOwnsAuditOutboxRecoveryFlags(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"audit-outbox", "--requeue-event", "audit-event-1", "--apply"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "audit-outbox" || operations.requeueEvent != "audit-event-1" || !operations.options.Apply {
-		t.Fatalf("audit outbox call = %q %q apply=%v", operations.called, operations.requeueEvent, operations.options.Apply)
-	}
-}
-
 func TestCommandRequiresOperations(t *testing.T) {
 	command := Command(context.Background(), nil)
-	command.SetArgs([]string{"backup", "--out", "-"})
+	command.SetArgs([]string{"initialize"})
 	err := command.Execute()
 	if err == nil || !strings.Contains(err.Error(), "operations are required") {
 		t.Fatalf("error = %v", err)
@@ -141,74 +75,6 @@ func TestCommandRejectsInvalidNestedSubcommandsWithoutUsage(t *testing.T) {
 	}
 	if strings.Contains(output.String(), "Usage:") {
 		t.Fatalf("invalid command emitted usage: %q", output.String())
-	}
-}
-
-func TestCommandRoutesRestorePreflightWithoutConfirmation(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "restore" || !operations.options.PreflightOnly || operations.options.ConfirmRestore {
-		t.Fatalf("restore options = %#v", operations.options)
-	}
-}
-
-func TestCommandLoadsExternalRecoveryInputs(t *testing.T) {
-	dir := t.TempDir()
-	recoveryPath := filepath.Join(dir, "recovery.json")
-	if err := os.WriteFile(recoveryPath, []byte(`[{"role":"managed-data","recoveryPoint":"version-42","evidenceKey":"managed-data-version"}]`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	evidencePath := filepath.Join(dir, "evidence.json")
-	if err := os.WriteFile(evidencePath, []byte(`{"managed-data-version":"version-42"}`), 0o600); err != nil {
-		t.Fatal(err)
-	}
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"backup", "--out", "backup.tar.gz", "--external-recovery-points", recoveryPath})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if len(operations.recoveryPoints) != 1 || operations.recoveryPoints[0].RecoveryPoint != "version-42" {
-		t.Fatalf("external recovery points = %#v", operations.recoveryPoints)
-	}
-	command = Command(context.Background(), operations)
-	command.SetArgs([]string{"restore", "--from", "backup.tar.gz", "--preflight-only", "--external-evidence", evidencePath, "--current-external-recovery-points", recoveryPath})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.externalEvidence["managed-data-version"] != "version-42" {
-		t.Fatalf("external evidence = %#v", operations.externalEvidence)
-	}
-	if len(operations.currentRecoveryPoints) != 1 || operations.currentRecoveryPoints[0].RecoveryPoint != "version-42" {
-		t.Fatalf("current external recovery points = %#v", operations.currentRecoveryPoints)
-	}
-}
-
-func TestCommandRoutesBoundedDeliveryRepair(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"delivery", "repair", "--pool-id", "pool", "--kind", "candidate", "--source-id", "candidate", "--catalog-digest", "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "--object-key", "catalogs/a.ducklake", "--created-at", "2026-08-17T12:00:00Z", "--apply"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "delivery-repair" {
-		t.Fatalf("called = %q", operations.called)
-	}
-}
-
-func TestCommandRoutesReadOnlyDeliveryAudit(t *testing.T) {
-	operations := &fakeOperations{}
-	command := Command(context.Background(), operations)
-	command.SetArgs([]string{"delivery", "audit", "--pool-id", "pool"})
-	if err := command.Execute(); err != nil {
-		t.Fatal(err)
-	}
-	if operations.called != "delivery-audit" {
-		t.Fatalf("operations called = %q", operations.called)
 	}
 }
 

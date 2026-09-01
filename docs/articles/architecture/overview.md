@@ -24,7 +24,7 @@ All capability modules are peers. Some—especially `access`, `analytics`, `proj
 
 `admin` is an interface module over capability-owned reads and mutations rather than a separate domain owner. Product HTTP, API, UI, worker, and persistence adapters live with the capability whose language they express. Generic protocol mechanics live in `platform`; global dispatch and application assembly live in `app`.
 
-Offline initialization, retention, analytical cleanup, backup, and restore are Admin-owned use cases under `internal/admin/offline`. They depend on explicit Access, instance-state, retention, storage, archive, locking, and credential-recovery ports. `internal/app/adminoffline` only translates process configuration and wires those ports to concrete capability adapters and platform mechanisms.
+Initialization, retention, and physical-pool bootstrap are Admin-owned use cases under `internal/admin/offline`. They depend on explicit Access, instance-state, retention, locking, credential-recovery, and pool-admission ports. `internal/app/adminoffline` only translates process configuration and wires the retained local/evaluation adapters; production uses PostgreSQL-native adapters.
 
 `cmd/leapview` starts the application and CLI. Transport adapters parse HTTP or Datastar commands and invoke capability use cases. Capability code enforces authorization and lifecycle invariants through explicit ports. Capability-owned adapters implement SQLite, DuckLake, object-storage, filesystem, and external-connector behavior.
 

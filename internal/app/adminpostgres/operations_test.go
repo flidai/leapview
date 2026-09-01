@@ -4,8 +4,6 @@ import (
 	"bytes"
 	"context"
 	"errors"
-	"io"
-	"os"
 	"strings"
 	"testing"
 	"time"
@@ -44,41 +42,6 @@ type testNative struct {
 	run     bool
 	policy  postgresmaintenance.Policy
 	result  postgresmaintenance.Result
-}
-
-func TestProductionStorageCleanupFailsClosedBeforeOfflineSQLite(t *testing.T) {
-	home := t.TempDir()
-	// Keep process configuration non-production so an accidentally promoted
-	// offline method would proceed far enough to create the SQLite catalog.
-	t.Setenv("LEAPVIEW_HOME", home)
-	t.Setenv("LEAPVIEW_PRODUCTION", "0")
-	t.Setenv("LEAPVIEW_ENVIRONMENT", "dev")
-	loaded := false
-	ops := New(Dependencies{
-		LoadConfig: func() (config.Config, error) {
-			loaded = true
-			return config.Config{Production: true}, nil
-		},
-	})
-
-	err := ops.StorageCleanup(t.Context(), adminoffline.StorageCleanupRequest{Apply: true}, io.Discard)
-	if !errors.Is(err, ErrNativeStorageCleanupUnavailable) {
-		t.Fatalf("production storage cleanup error = %v, want %v", err, ErrNativeStorageCleanupUnavailable)
-	}
-	if !loaded {
-		t.Fatal("production storage cleanup did not evaluate the production guard")
-	}
-	entries, readErr := os.ReadDir(home)
-	if readErr != nil {
-		t.Fatalf("read home after rejected cleanup: %v", readErr)
-	}
-	if len(entries) != 0 {
-		names := make([]string, 0, len(entries))
-		for _, entry := range entries {
-			names = append(names, entry.Name())
-		}
-		t.Fatalf("rejected production cleanup created offline state: %v", names)
-	}
 }
 
 func (n *testNative) Preview(_ context.Context, policy postgresmaintenance.Policy) (postgresmaintenance.Result, error) {

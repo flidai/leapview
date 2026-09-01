@@ -13,9 +13,9 @@ executable form of the same journey.
 | Five-minute sample | Stage the bundled synthetic data, deploy the bundled evaluation project, sign in, change the password, open **Five-minute Sales Evaluation**, select State `SP`, and verify KPI and governed table results. | Starting from the installation guide, time the same journey from the first pull through the filtered dashboard. Record the total without recording credentials. |
 | Governed access | Execute a governed semantic query, verify an unauthenticated query is denied, then use the deliberately restricted bootstrap publisher token against the project grants endpoint and require the denial to appear as `authorization.denied` in the project audit stream. | Inspect the access/query audit surfaces for the successful and denied attempts and retain only IDs/timestamps. |
 | Performance and resources | Against the exact installed digest, collect three restart-cold dashboard samples, five warm dashboard samples, eight filter interactions, six governed table-sort interactions, ten governed queries, three refresh runs, and an eight-reader concurrency wave. Enforce p95 latency, zero-error, CPU, RSS, temporary-disk, goroutine, and DuckDB-connection budgets from `qualification/performance-policy.json`. | Compare `performance-report.json` with the last accepted candidate. Investigate any material regression even when it remains under the absolute ceiling. |
-| Interruption recovery | At API-observed boundaries, send `SIGKILL` to the exact candidate during a resumable managed upload, release finalization, deployment activation, refresh/materialization claim, active query/SSE traffic, backup creation, and restore preflight. Require each durable operation to resume or end in an explicit recoverable state; require the prior revision/generation to remain visible until atomic activation; then repeat query/SSE reconnects and verify bounded goroutines, temporary files, and disk growth. | While following the same managed upload, deployment activation, refresh, query/SSE, backup, and restore preflight sequence, confirm the UI and event history name the attempted, interrupted, resumed, failed, and completed states without exposing credentials. |
-| Operations | Verify readiness, authenticated metrics, bounded structured logs, candidate identity, restart persistence, a validated backup, and restore into an isolated instance using the original separately managed secret configuration. | Inspect the restored dashboard and confirm the active serving state and managed data are unchanged. |
-| Upgrade safety | Require the candidate to reject a released v0.1.0 `libredash.db` marker before creating `leapview.db`. v0.1.0 is explicitly fresh-install-only; only a later release explicitly declared compatible may be supplied through `--previous-image` for upgrade and confirmed rollback. | Confirm the v0.1.0 export/reprovision runbook is clear before retiring its preserved state. |
+| Interruption recovery | At API-observed boundaries, send `SIGKILL` to the exact candidate during a resumable managed upload, release finalization, deployment activation, refresh/materialization claim, and active query/SSE traffic. Require each durable operation to resume or end in an explicit recoverable state; require the prior revision/generation to remain visible until atomic activation; then repeat query/SSE reconnects and verify bounded goroutines, temporary files, and disk growth. Provider-native PostgreSQL/DuckLake recovery is outside this qualification. | While following the same managed upload, deployment activation, refresh, and query/SSE sequence, confirm the UI and event history name the attempted, interrupted, resumed, failed, and completed states without exposing credentials. |
+| Operations | Verify readiness, authenticated metrics, bounded structured logs, candidate identity, and restart persistence using the original separately managed secret configuration. Production backup/PITR and DuckLake/object-store recovery require the separate native runbook. | Inspect the running dashboard and confirm the active serving state and managed data are unchanged. |
+| Fresh-install migration | Require the candidate to reject a released v0.1.0 `libredash.db` marker before creating `leapview.db`; v0.1.0 is explicitly fresh-install-only. | Confirm the v0.1.0 export/reprovision runbook is clear before retiring its preserved state. |
 
 ## Run from an extracted release
 
@@ -83,21 +83,16 @@ supersession, table delivery, and browser/network correctness against the same
 dashboard runtime, while the installed Olist gate owns shipped-artifact and
 process-resource budgets.
 
-The release workflows require `--previous-image` and resolve it directly from
-an allowed upgrade in the distributed candidate-bound policy. A missing
-reviewed predecessor transition fails qualification before instance mutation.
-The real predecessor image
-initializes the volume, the candidate controller upgrades it, and rollback must
-restore the retained state checksum before the candidate is applied again.
-`transition-qualification.json` retains both immutable identities, the policy
-digest, state checksums, and upgrade/rollback results. The
-released v0.1.0 image
+The installed-candidate workflow runs this fresh-install journey independently
+on every release architecture. The separate v0.1 preservation gate below
+validates the historical artifact and the candidate's rejection of preserved
+state before publication. The released v0.1.0 image
 `ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153`
 is fresh-install-only because it uses `libredash.db`, a different container and
 configuration namespace, and an incompatible backup manifest. Preserve it with
-its own `admin backup`, then provision a fresh LeapView instance and redeploy
-authored projects. Pass `--evidence-dir` to redirect the bounded report and
-failure screenshot.
+the v0.1 release's own documented export procedure, then provision a fresh
+LeapView instance and redeploy authored projects. Pass `--evidence-dir` to
+redirect the bounded report and failure screenshot.
 
 ## v0.1 preservation release gate
 
@@ -227,7 +222,7 @@ bounded redacted Compose logs, and the failure screenshot when present. Never re
 `initial-credentials.json`, `leapview.env`, browser storage state, cookies, or
 API tokens. The five-minute budget applies to the sample evaluator journey;
 the destructive interruption matrix is recorded separately because it
-deliberately repeats restarts, backup, and restore.
+deliberately repeats restarts and recovery-boundary checks.
 
 ## Incident ownership
 

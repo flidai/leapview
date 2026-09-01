@@ -1,20 +1,16 @@
 package app
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"os"
 	"path/filepath"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -49,7 +45,6 @@ import (
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
-	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/filesystem"
 	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
 	idempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
@@ -490,162 +485,6 @@ func authorizeSealedPublication(
 func requestLocalDevelopmentAuthorization(ctx context.Context, actorID string) bool {
 	principal, ok := accessmodule.PrincipalFromContext(ctx)
 	return ok && principal.DevBypass && strings.TrimSpace(principal.ID) == strings.TrimSpace(actorID)
-}
-
-func productionRecoveryLifecycle(cfg config.Config, _ buildinfo.Identity, _, _ string) (*refreshmodule.RecoveryLifecycle, error) {
-	if !cfg.Production || !cfg.RecoveryQualificationEnabled {
-		return nil, nil
-	}
-	executionEnvironment := strings.TrimSpace(cfg.RecoveryQualificationExecutionEnvironment)
-	if executionEnvironment == "" || executionEnvironment == "host" {
-		return nil, nil
-	}
-	return nil, fmt.Errorf("unsupported recovery qualification execution environment %q; released composition requires host", executionEnvironment)
-}
-
-// BuildProductionRecoveryLifecycle builds the owner-validated lifecycle for a
-// supported execution host. The web composition delegates to the installed
-// host controller by default so Docker authority is not exposed to the server.
-func BuildProductionRecoveryLifecycle(cfg config.Config, build buildinfo.Identity, environment, instanceID string) (*refreshmodule.RecoveryLifecycle, error) {
-	return BuildProductionRecoveryLifecycleWithContainerRuntime(cfg, build, environment, instanceID, "docker")
-}
-
-// BuildProductionRecoveryLifecycleWithContainerRuntime binds the lifecycle to
-// the exact host container runtime selected by the installed controller.
-func BuildProductionRecoveryLifecycleWithContainerRuntime(cfg config.Config, build buildinfo.Identity, environment, instanceID, containerRuntime string) (*refreshmodule.RecoveryLifecycle, error) {
-	if build.Development || build.Dirty || build.Version == buildinfo.DevelopmentVersion || build.Revision == buildinfo.UnknownValue {
-		return nil, fmt.Errorf("scheduled recovery qualification requires exact released build provenance")
-	}
-	const managedPolicyPath = "/run/leapview/release-transition-policy.json"
-	policyPath := filepath.Join(strings.TrimSpace(cfg.RecoveryQualificationBundle), "release-transition-policy.json")
-	if strings.TrimSpace(cfg.RecoveryQualificationBundle) == "" {
-		policyPath = managedPolicyPath
-	}
-	if _, statErr := os.Stat(policyPath); os.IsNotExist(statErr) && policyPath != managedPolicyPath {
-		policyPath = managedPolicyPath
-	} else if statErr != nil {
-		return nil, statErr
-	}
-	policy, policyDocument, err := compatibility.LoadPolicy(policyPath)
-	if err != nil {
-		return nil, fmt.Errorf("load managed recovery qualification policy: %w", err)
-	}
-	policyDigest := sha256.Sum256(policyDocument)
-	policySHA256 := hex.EncodeToString(policyDigest[:])
-	template, err := compatibility.EmbeddedCandidateTransitionTemplate()
-	if err != nil {
-		return nil, err
-	}
-	predecessor, ok := policy.ReleaseByID(template.PredecessorRelease)
-	if !ok {
-		return nil, fmt.Errorf("scheduled recovery qualification predecessor %q is absent from the managed policy", template.PredecessorRelease)
-	}
-	platformName := runtime.GOOS + "/" + runtime.GOARCH
-	releaseID := "v" + strings.TrimPrefix(build.Version, "v")
-	releaseIdentity := compatibility.ReleaseIdentity{
-		ReleaseID: releaseID, Version: strings.TrimPrefix(build.Version, "v"), SourceRevision: build.Revision,
-		Image: strings.TrimSpace(cfg.Image), Distribution: "public", Platform: platformName,
-	}
-	admittedRelease, ok := policy.ReleaseByID(releaseID)
-	if !ok || admittedRelease.IdentityForPlatform(platformName) != releaseIdentity {
-		return nil, fmt.Errorf("scheduled recovery qualification requires the managed policy bound to the running immutable release")
-	}
-	workRoot := strings.TrimSpace(cfg.RecoveryQualificationWorkDir)
-	if workRoot == "" {
-		workRoot = filepath.Join(os.TempDir(), "leapview-recovery-qualification-"+instanceID)
-	}
-	workRoot, err = filepath.Abs(workRoot)
-	if err != nil {
-		return nil, err
-	}
-	evidenceRoot, err := filepath.Abs(filepath.Join(cfg.ArtifactDir(), "recovery-qualification"))
-	if err != nil {
-		return nil, err
-	}
-	for _, directory := range []string{workRoot, evidenceRoot} {
-		if err := securefs.EnsurePrivateDir(directory); err != nil {
-			return nil, err
-		}
-	}
-	storageEvidence := productionRecoveryStorageEvidence(cfg)
-	initialStorage, err := storageEvidence(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	qualification := refreshmodule.ProductionRecoveryQualificationConfig{
-		HomeDir: cfg.HomeDir, DBPath: cfg.DBPath(), InstanceID: instanceID, Environment: environment,
-		BuildIdentity:   build,
-		ReleaseIdentity: releaseIdentity, StorageTopology: initialStorage.Topology, StorageEvidence: storageEvidence,
-		TransitionPolicy: policy, PolicySHA256: policySHA256, WorkRoot: workRoot, EvidenceRoot: evidenceRoot,
-		ControllerPath: cfg.RecoveryQualificationController, BundleRoot: cfg.RecoveryQualificationBundle,
-		ContainerRuntime: containerRuntime,
-		PredecessorImage: predecessor.IdentityForPlatform(platformName).Image,
-		Cron:             cfg.RecoveryQualificationCron, Timezone: "UTC", StaleAfter: 36 * time.Hour,
-	}
-	return refreshmodule.NewProductionRecoveryLifecycle(qualification), nil
-}
-
-func productionRecoveryStorageEvidence(cfg config.Config) refreshmodule.RecoveryStorageEvidenceProvider {
-	return func(context.Context) (refreshmodule.RecoveryStorageQualificationEvidence, error) {
-		var points []adminmodule.ExternalRecoveryPoint
-		evidence := map[string]string{}
-		if strings.TrimSpace(cfg.ManagedDataBackend) == "s3" {
-			if err := readRecoveryQualificationJSON(cfg.RecoveryQualificationExternalRecoveryPoints, &points); err != nil {
-				return refreshmodule.RecoveryStorageQualificationEvidence{}, fmt.Errorf("read scheduled external recovery points: %w", err)
-			}
-			if err := readRecoveryQualificationJSON(cfg.RecoveryQualificationExternalEvidence, &evidence); err != nil {
-				return refreshmodule.RecoveryStorageQualificationEvidence{}, fmt.Errorf("read scheduled external recovery evidence: %w", err)
-			}
-		}
-		topology, err := adminmodule.BuildRecoveryStorageTopology(adminmodule.RecoveryStorageConfig{
-			ManagedDataBackend: cfg.ManagedDataBackend, ManagedDataS3Endpoint: cfg.ManagedDataS3Endpoint,
-			ManagedDataS3Region: cfg.ManagedDataS3Region, ManagedDataS3Bucket: cfg.ManagedDataS3Bucket,
-			ManagedDataS3Prefix: cfg.ManagedDataS3Prefix,
-		}, points, true)
-		if err != nil {
-			return refreshmodule.RecoveryStorageQualificationEvidence{}, err
-		}
-		return refreshmodule.RecoveryStorageQualificationEvidence{
-			Topology: topology, ExternalEvidence: evidence,
-		}, nil
-	}
-}
-
-func readRecoveryQualificationJSON(path string, destination any) error {
-	path = strings.TrimSpace(path)
-	if path == "" || !filepath.IsAbs(path) {
-		return fmt.Errorf("an absolute JSON evidence path is required")
-	}
-	info, err := os.Lstat(path)
-	if err != nil || !info.Mode().IsRegular() || info.Mode()&os.ModeSymlink != 0 || info.Size() > 1<<20 {
-		return fmt.Errorf("JSON evidence must be a regular non-symlink file no larger than 1 MiB")
-	}
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-	openedInfo, err := file.Stat()
-	if err != nil || !openedInfo.Mode().IsRegular() || openedInfo.Size() > 1<<20 || !os.SameFile(info, openedInfo) {
-		return fmt.Errorf("JSON evidence path changed before validation")
-	}
-	document, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
-	if err != nil {
-		return err
-	}
-	if len(document) > 1<<20 {
-		return fmt.Errorf("JSON evidence must be no larger than 1 MiB")
-	}
-	decoder := json.NewDecoder(bytes.NewReader(document))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(destination); err != nil {
-		return err
-	}
-	var trailing any
-	if err := decoder.Decode(&trailing); !errors.Is(err, io.EOF) {
-		return fmt.Errorf("JSON evidence contains trailing data")
-	}
-	return nil
 }
 
 func (r projectCatalogSubjectResolver) AuthorizationSubjects(ctx context.Context, principalID string) ([]access.SubjectRef, error) {
@@ -1305,18 +1144,11 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		return fail(err)
 	}
 	identity := buildinfo.Current()
-	recoveryLifecycle, err := productionRecoveryLifecycle(cfg, identity, string(environment), instanceID)
-	if err != nil {
-		return fail(err)
-	}
 	refreshPersistence, err := refreshmodule.NewSQLitePersistence(refreshmodule.SQLitePersistenceConfig{
 		Database: store.SQLDB(), Workflow: jobModule, Audit: auditRuntime.recorder,
 	})
 	if err != nil {
 		return fail(err)
-	}
-	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil {
-		recoveryLifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(store.SQLDB(), *recoveryLifecycle)
 	}
 	{
 		// The canonical adapter is assembled only after the runtime binding
@@ -1925,7 +1757,6 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			),
 			PublishedVersion:        canonicalPublishedDataVersion(sealedDelivery, instanceID),
 			EnableRefreshDispatcher: true,
-			RecoveryLifecycle:       recoveryLifecycle,
 			RecoveryInterval:        time.Minute,
 			DeploymentConfig:        deploymentConfig,
 		},

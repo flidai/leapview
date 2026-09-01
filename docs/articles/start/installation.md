@@ -30,7 +30,7 @@ that will run `leapviewctl`:
 Install Docker Engine. The five-minute path below needs no source checkout,
 registry login, Go, Bun, Task, manual YAML, or external dataset. A public
 production instance additionally needs Docker Compose, a DNS name, HTTPS,
-durable secret storage, and off-host backups.
+durable secret storage, and provider-native recovery storage.
 
 ## Run the five-minute evaluation
 
@@ -136,8 +136,9 @@ activates the exact candidate without a separate enterprise approver; durable
 production targets retain protected approval and activation. To connect real
 data, start with [Connect a data source](/docs/guides/build/connect-data). For
 a durable or externally reachable instance, use the versioned Compose release
-below; it adds immutable image pinning, HTTPS, backups, and state-aware
-upgrades.
+below; it adds immutable image pinning and HTTPS. Set up PostgreSQL/PITR and
+DuckLake/object-store protection separately with the native provider runbook;
+LeapView does not provide a Compose backup or upgrade controller.
 
 For an isolated one-shot private preview of the evaluator project, you may use
 the optional `dev` loop against the same loopback target:
@@ -155,8 +156,10 @@ publication still follows the `plan`, `build`, and `publish` commands above.
 
 The released Compose package is the recommended operations layer around the
 same public image. It is not a separate LeapView distribution. It supplies
-hardened container settings, generated production secrets, optional Caddy
-HTTPS, validated backup and restore, and paired image-and-state rollback.
+hardened container settings, generated production secrets, and optional Caddy
+HTTPS. Production PostgreSQL/DuckLake backup and restore remain provider-native
+operations that require a separate runbook and ADR; Compose does not provide
+image-and-state upgrade or rollback.
 
 1. Select, download, verify, and extract the current platform archive:
 
@@ -215,12 +218,12 @@ Before adoption, run `./leapviewctl qualify installed-candidate` from the
 extracted archive.
 `QUALIFICATION.md` maps every automated assertion to the corresponding human
 check, including anonymous distribution, the five-minute sample, audited
-authorization denial, restart persistence, and an isolated restore using the
-separately managed secret configuration.
+authorization denial, restart persistence, and recovery-readiness checks using
+the separately managed secret configuration.
 
 Initialization treats `--domain` as the canonical public hostname and derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain from it. It also generates production secrets, creates the persistent volume, validates the resulting production configuration, and atomically creates a forced-change local administrator plus a restricted publisher token. `first-login` prints and deletes that one-time credential file.
 
-`leapviewctl` is an optional production operations controller, not a prerequisite for pulling or running LeapView. It invokes the installed Docker Compose CLI and does not require Bash or direct access to the Docker socket API. You may manage the image with your existing container platform if it preserves the same single-process, persistent-home, initialization, backup, and environment contracts.
+`leapviewctl` is an optional production operations controller, not a prerequisite for pulling or running LeapView. It invokes the installed Docker Compose CLI and does not require Bash or direct access to the Docker socket API. You may manage the image with your existing container platform if it preserves the same single-process, persistent-home, initialization, provider-native recovery, and environment contracts.
 
 Operators integrating the image directly must set the documented production
 environment first. The initialization command authenticates the dedicated
@@ -255,22 +258,28 @@ The Caddy overlay is enabled by default. Pass `--no-https` only when an existing
 
 ## Understand the instance boundary
 
-All application-owned local state is under `/var/lib/leapview` in one named volume. External customer sources such as S3 remain external and are not included in instance backups. Local managed uploads are included; S3-backed managed uploads require bucket-native backup and versioning.
+Production authority is the PostgreSQL control plane and PostgreSQL-backed
+DuckLake catalog, with Parquet and managed objects protected in their configured
+object stores. The local volume contains runtime state and caches; it is not a
+PostgreSQL recovery artifact. Use provider-native PostgreSQL backup/PITR and
+DuckLake/object-store versioning or replication, coordinated to one recovery
+point.
 
 Use separate Compose project directories and names for development, staging, and production. Never scale one project to multiple application containers or point two processes at the same volume.
 
-Common operations are:
+The controller exposes only basic lifecycle operations:
 
 ```sh
 ./leapviewctl status
 ./leapviewctl logs
-./leapviewctl backup
-./leapviewctl restore backups/leapview-<timestamp>.tar.gz
-./leapviewctl upgrade --transition-policy release-transition-policy.json ghcr.io/flidai/leapview@sha256:<digest>
-./leapviewctl rollback --transition-policy release-transition-policy.json --confirm
+./leapviewctl start
 ```
 
-The candidate archive's `release-transition-policy.json` is generated only after image admission and is bound to the exact digest in `image-reference.txt`; both upgrade and rollback require that same document. Upgrades create a state checkpoint. A failed health check restores both the previous image and state; manual rollback requires confirmation because it discards state created after the checkpoint.
+Use the container platform's immutable image rollout and change-management
+workflow for upgrades or host rollback. The target-level `leapview rollback`
+command remains available for a retained serving generation, but it does not
+restore PostgreSQL, DuckLake, object-store, or Compose state. Those recovery
+operations are external and require the separate native runbook and ADR.
 
 ## Contributor installation
 
@@ -327,7 +336,7 @@ identity.
 
 ## Verify
 
-Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Then create a backup with `./leapviewctl backup` and confirm that both the archive and its checksum exist in `backups/`.
+Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Verify the instance identity and readiness through the authenticated capabilities endpoint; follow the provider-native recovery runbook separately for PostgreSQL/DuckLake protection.
 
 ## Troubleshooting
 

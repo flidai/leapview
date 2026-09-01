@@ -14,7 +14,7 @@ leapview healthcheck \
 
 Use liveness for process restart decisions and readiness for traffic admission. Keep both inexpensive; they should not execute a full dashboard query. Use separate synthetic probes for end-to-end analytical behavior.
 
-The unauthenticated readiness response contains only stable check names and fixed states. Reviewed delivery-startup diagnostics may expose documented non-secret codes; platform, analytics, runtime, lease, and arbitrary custom-check errors collapse to `failed`, and active project identifiers are not returned. Use restricted application logs, metrics, and offline operator commands for internal error details rather than widening the readiness payload.
+The unauthenticated readiness response contains only stable check names and fixed states. Reviewed delivery-startup diagnostics may expose documented non-secret codes; platform, analytics, runtime, lease, and arbitrary custom-check errors collapse to `failed`, and active project identifiers are not returned. Use restricted application logs, metrics, and authorized operator interfaces for internal error details rather than widening the readiness payload.
 
 ## Metrics
 
@@ -24,7 +24,7 @@ Monitor at least process resource use, request rate and latency, error status, r
 
 ### Baseline health alerts
 
-The repository-owned rule file at `deploy/observability/prometheus/leapview-alerts.yaml` provides portable alerts for an unavailable scrape target, sustained application 5xx responses, fatal process-owned DuckDB health, recovery qualification freshness, and dashboard refresh error-budget burn. The rules assume that Prometheus assigns LeapView targets the stable scrape label `job="leapview"`; `instance` must identify the bounded scrape target. Alert identity is limited to those scrape labels plus the static `service` and `severity` labels. Operation, publication state, occurrence, schedule, artifact, target, request or trace identities, principals, projects, and resource identifiers are aggregated away and never become alert labels.
+The repository-owned rule file at `deploy/observability/prometheus/leapview-alerts.yaml` provides portable alerts for an unavailable scrape target, sustained application 5xx responses, fatal process-owned DuckDB health, and dashboard refresh error-budget burn. The rules assume that Prometheus assigns LeapView targets the stable scrape label `job="leapview"`; `instance` must identify the bounded scrape target. Alert identity is limited to those scrape labels plus the static `service` and `severity` labels. Operation, publication state, occurrence, schedule, artifact, target, request or trace identities, principals, projects, and resource identifiers are aggregated away and never become alert labels.
 
 Validate the syntax, PromQL behavior, firing delay, labels, and annotations with the pinned Prometheus toolchain:
 
@@ -44,9 +44,7 @@ rule_files:
 
 Reload Prometheus only after validation succeeds. The target-unavailable rule relies on Prometheus's standard `up` metric and therefore requires the target to remain present in Prometheus service discovery; a target omitted from the scrape configuration cannot alert. The 5xx rule uses `leapview_http_requests_total`, aggregates method, route, and status dimensions down to `job` and `instance`, and requires a positive five-minute error rate continuously for ten minutes. `leapview_duckdb_fatal_health` is present only when LeapView owns a process-local DuckDB environment.
 
-Recovery alerts use current-state ledger projections. `leapview_recovery_qualification_scrape_error` clears after a successful ledger collection. `leapview_recovery_qualification_overdue` is recalculated from each active schedule's staleness policy and current occurrences, so ordinary missing or due work does not alert before its policy deadline. `leapview_recovery_qualification_evidence{state="failed"}` represents unresolved publication failures, remains retryable with persisted backoff, and clears after publication succeeds. The retained terminal-history gauge `leapview_recovery_qualification_failed` is deliberately not used for alerting because a later successful qualification does not remove old failures. Hold windows of five, ten, and fifteen minutes respectively absorb transient collection, reconciliation, and publication retry conditions.
-
-Every alert carries a `runbook_url` for its canonical response procedure. The baseline alerts link directly to [target-unavailable response](/docs/guides/operate/troubleshooting#target-unavailable-alert-fires), [sustained HTTP 5xx response](/docs/guides/operate/troubleshooting#sustained-http-5xx-alert-fires), and [DuckDB fatal-health response](/docs/guides/operate/troubleshooting#duckdb-fatal-health-alert-fires). Recovery qualification and dashboard refresh burn alerts likewise deep-link to their alert-specific procedures. Use the [correlated incident investigation workflow](/docs/guides/operate/troubleshooting#correlated-incident-investigation-workflow) to move from their bounded alert identity into metrics, request logs, optional upstream trace identity, domain evidence, and an objective recovery record. These links define evidence collection, safe mitigation, and recovery checks; they do not perform remediation. Configure routing and receivers in the operator-owned Alertmanager deployment.
+Every alert carries a `runbook_url` for its canonical response procedure. The baseline alerts link directly to [target-unavailable response](/docs/guides/operate/troubleshooting#target-unavailable-alert-fires), [sustained HTTP 5xx response](/docs/guides/operate/troubleshooting#sustained-http-5xx-alert-fires), and [DuckDB fatal-health response](/docs/guides/operate/troubleshooting#duckdb-fatal-health-alert-fires). Dashboard refresh burn alerts likewise deep-link to their alert-specific procedures. Use the [correlated incident investigation workflow](/docs/guides/operate/troubleshooting#correlated-incident-investigation-workflow) to move from their bounded alert identity into metrics, request logs, optional upstream trace identity, domain evidence, and an objective recovery record. These links define evidence collection, safe mitigation, and recovery checks; they do not perform remediation. Configure routing and receivers in the operator-owned Alertmanager deployment.
 
 ### Dashboard refresh reliability SLI and SLO
 
@@ -227,110 +225,20 @@ After deployment or upgrade, run a small authenticated sequence:
 
 Keep the synthetic principal read-only and scoped to the test project. This verifies routing, auth, active project state, and analytical execution without granting deployment privilege.
 
-## Recovery qualification ledger
+## Recovery and retention boundaries
 
-Scheduled backup, restore, upgrade, and rollback qualifications use one durable
-occurrence identity derived from the schedule, planned UTC time, scenario,
-policy version, and target scope. Scheduler retries therefore attach to the
-same occurrence instead of creating a second drill. Each attempt is protected
-by a renewable generation fence; an expired worker cannot heartbeat, complete,
-or publish evidence after another worker reclaims the occurrence.
+LeapView exposes readiness, delivery, refresh, query, and audit evidence for
+diagnosis. It does not schedule or execute production backup, restore, image
+upgrade, host rollback, or recovery-qualification drills. PostgreSQL backup and
+point-in-time recovery, DuckLake catalog protection, and object-store
+versioning, replication, and restore are external provider operations. Keep
+their evidence and encryption-key procedures in a separate native runbook and
+ADR; do not infer recovery from application metrics or object listings.
 
-Inspect the bounded operator projection with the service stopped or from the
-same controlled maintenance environment used for other offline Admin commands:
-
-```sh
-leapview admin recovery status
-```
-
-The JSON response distinguishes an unconfigured system from configured
-schedules, scheduled runs that were never materialized, overdue work, expired
-execution or publication leases, running and failed work, and evidence
-publication state. This projection is passive: scheduler and worker failure is
-visible without requiring another worker to mutate the ledger. It also reports
-recovered leases, last-success age, recovery-point age, and the latest restore,
-readiness, and end-to-end qualification durations for the fixed operation set. The
-same aggregate values are exported on the protected Prometheus endpoint under
-`leapview_recovery_qualification_*`. Labels are limited to operation and
-publication state—occurrence, schedule, artifact, scenario, and target
-identifiers are never metric labels.
-
-Terminal records retain the exact immutable artifact identity, measured
-timestamps and durations, result, bounded content-digested evidence references,
-and a redacted failure reason. Evidence upload has its own retryable lease, so
-an upload outage does not rerun a destructive recovery drill. Never store raw
-logs, archives, credentials, signed URLs, or secret-bearing query strings in a
-ledger evidence reference.
-Failed, canceled, or expired work that produced no owner evidence is terminal
-with `evidenceStatus: "none"`; only a failed publication of real evidence is
-retried, using persisted backoff.
-
-Schedule definitions are immutable revisions. Changing artifact identity,
-policy, target, scenario, cadence, or staleness closes the prior revision only
-after its due occurrences are materialized, then creates a new revision
-boundary. A catch-up run therefore cannot be relabeled as qualification of a
-newer artifact.
-
-The application recovery lifecycle reconciles definitions, enqueues due work,
-claims one fenced logical occurrence, calls the operation owner's adapter, and
-publishes the exact existing transition qualification, backup-manifest-v2, or
-restore-preflight bytes after retaining and verifying them in the private
-content-addressed evidence store. Ledger references use bounded
-`artifact://qualification/...` identities rather than host filesystem paths, so
-node topology is not copied into durable records. Evidence
-publication and retention remain separate from scenario execution. If no
-reviewed definitions and adapters are configured, status reports
-`unconfigured: true`; an empty ledger must not be interpreted as successful
-qualification.
-
-Production composition registers the four owner adapters when
-`LEAPVIEW_RECOVERY_QUALIFICATION_ENABLED=true`. Supply the exact released
-`LEAPVIEW_IMAGE`, the admitted candidate bundle with its candidate-bound policy
-through `LEAPVIEW_RECOVERY_QUALIFICATION_BUNDLE`, and its `leapviewctl` through
-`LEAPVIEW_RECOVERY_QUALIFICATION_CONTROLLER`. The work directory must be an
-absolute private path outside `LEAPVIEW_HOME`; evidence is retained beneath the
-instance artifact directory and excluded from subsequent qualification
-backups. `LEAPVIEW_RECOVERY_QUALIFICATION_CRON` controls the reviewed schedule.
-Startup fails closed if the managed policy is not bound to the running image or
-does not contain the exact predecessor identity. Every schedule revision and
-occurrence stores the SHA-256 of that exact policy; a different policy with the
-same policy version is rejected. The controller must execute the isolated
-release qualification environment available to the service account; the
-ledger never substitutes synthetic reports when it is unavailable.
-
-For `LEAPVIEW_MANAGED_DATA_BACKEND=s3`, configure both canonical FAI-515 input
-files. `LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_RECOVERY_POINTS` is an absolute
-path to a JSON array such as:
-
-```json
-[{"role":"managed-data","recoveryPoint":"version-42","evidenceKey":"managed-data-version"}]
-```
-
-`LEAPVIEW_RECOVERY_QUALIFICATION_EXTERNAL_EVIDENCE` is an absolute path to the
-operator evidence map used by both restore preflight and restore:
-
-```json
-{"managed-data-version":"version-42"}
-```
-
-The resulting owner manifest retains the canonical provider, endpoint, region,
-bucket, prefix, recovery point, and evidence key. Both files must be regular,
-non-symlink JSON files; startup and each scheduled run fail closed if they are
-missing or invalid.
-
-Backup and restore adapters call the platform backup, preflight, and restore
-owners against an isolated restore target. Upgrade and rollback adapters call
-the installed-candidate transition owner with the immutable predecessor and
-candidate bundle. Recovery points are read from those validated owner reports;
-restore and readiness durations are derived only from ledger-owned persisted
-start and completion phases. Time spent before or after those phases affects
-only the separately reported end-to-end qualification duration. A reclaimed
-occurrence uses a new fenced run-directory generation and removes only its own
-superseded, no-longer-leased generations.
-
-Persisted failures use bounded machine codes and credential-scrubbed summaries.
-Full owner errors belong only in restricted transient logs. URL credentials,
-DSNs, JSON secrets, signed URL parameters, provider credentials, and multiline
-error bodies must never be copied into the ledger.
+For an incident, preserve readiness responses, authenticated metrics,
+credential-scrubbed logs, deployment identifiers, and the provider's recovery
+point evidence. Keep traffic stopped until the provider-native recovery is
+complete and the active deployment, authorization, managed-data revisions, and
+representative governed queries have been verified.
 
 See [Operational troubleshooting](/docs/guides/operate/troubleshooting), [Audit events](/docs/security/audit), and the [environment reference](/docs/configuration).

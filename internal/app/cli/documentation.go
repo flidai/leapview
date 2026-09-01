@@ -32,16 +32,10 @@ func annotateCommandDocumentation(root *cobra.Command) {
 
 var documentedCommandSafety = map[string]commandSafety{
 	"leapview":                                 {effect: "local-write", confirmation: "never"},
-	"leapview admin backup":                    {effect: "local-write", confirmation: "never"},
 	"leapview admin initialize":                {effect: "write", confirmation: "never"},
 	"leapview admin maintenance":               {effect: "destructive", confirmation: "conditional"},
-	"leapview admin audit-outbox":              {effect: "dynamic", confirmation: "conditional"},
-	"leapview admin restore":                   {effect: "destructive", confirmation: "required"},
-	"leapview admin storage cleanup":           {effect: "destructive", confirmation: "conditional"},
 	"leapview admin delivery pool bootstrap":   {effect: "write", confirmation: "required"},
 	"leapview admin delivery pool qualify":     {effect: "write", confirmation: "required"},
-	"leapview admin delivery audit":            {effect: "read", confirmation: "never"},
-	"leapview admin delivery repair":           {effect: "destructive", confirmation: "conditional"},
 	"leapview agent ask":                       {effect: "write", confirmation: "never"},
 	"leapview agent conversations":             {effect: "read", confirmation: "never"},
 	"leapview agent tools":                     {effect: "read", confirmation: "never"},

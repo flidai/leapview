@@ -778,8 +778,6 @@ func TestOfflineAdminUseCasesAreCapabilityOwned(t *testing.T) {
 			"json.Marshal(",
 			"fmt.Fprintf(",
 			"retention days must be zero or greater",
-			"admin restore requires --confirm",
-			"admin backup requires --out",
 		} {
 			if strings.Contains(file.body, forbidden) {
 				t.Errorf("%s retains offline Admin product behavior %q", file.path, forbidden)

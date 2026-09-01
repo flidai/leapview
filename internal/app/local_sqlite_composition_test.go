@@ -27,19 +27,20 @@ func TestLocalSQLiteCompositionUsesSQLiteBootstrapPersistence(t *testing.T) {
 }
 
 func TestLocalSQLiteCompositionUsesExplicitSQLiteAuditStore(t *testing.T) {
-	for _, path := range []string{"audit_runtime.go", "adminoffline/adapters.go"} {
-		contents, err := os.ReadFile(path)
-		if err != nil {
-			t.Fatalf("read %s: %v", path, err)
-		}
-		source := string(contents)
-		if !strings.Contains(source, "accessmodule.NewSQLiteAuditStore(") {
-			t.Fatalf("%s is missing the explicit SQLite audit-store constructor", path)
-		}
-		genericConstructor := "accessmodule.New" + "AuditStore("
-		if strings.Contains(source, genericConstructor) {
-			t.Fatalf("%s retains the generic access audit-store constructor", path)
-		}
+	contents, err := os.ReadFile("audit_runtime.go")
+	if err != nil {
+		t.Fatalf("read audit_runtime.go: %v", err)
+	}
+	source := string(contents)
+	if !strings.Contains(source, "accessmodule.NewSQLiteAuditStore(") {
+		t.Fatal("audit_runtime.go is missing the explicit SQLite audit-store constructor")
+	}
+	// The legacy admin/offline adapter no longer owns audit composition. Its
+	// SQLite audit-store wiring was removed with the pre-live admin surface;
+	// app auditRuntime is the sole local SQLite audit authority.
+	genericConstructor := "accessmodule.New" + "AuditStore("
+	if strings.Contains(source, genericConstructor) {
+		t.Fatal("audit_runtime.go retains the generic access audit-store constructor")
 	}
 }
 

@@ -2,8 +2,8 @@
 
 This is the production operations package for the public LeapView image. It
 runs exactly one application process with one named state volume and one
-configured environment, and adds hardened defaults, HTTPS, backups, and paired
-image-and-state rollback. The included `leapviewctl` is a standalone Go
+configured environment, and adds hardened defaults and HTTPS. The included
+`leapviewctl` is a standalone Go
 operations binary for the archive's operating system and architecture.
 
 ```sh
@@ -22,9 +22,10 @@ the Caddy overlay but preserves the HTTPS public URL and secure cookies.
 
 Pulling and running the public image does not require this package or the
 controller; see the installation guide for the localhost evaluation path. For
-production, `leapviewctl` provides the supported initialization, backup,
-restore, upgrade, and rollback workflow. Run `./leapviewctl help` for its
-commands.
+production, `leapviewctl` provides the supported initialization and health
+lifecycle. Production backup/PITR and DuckLake/object-store recovery use
+provider-native tooling and a separate runbook/ADR. Run `./leapviewctl help`
+for the current lifecycle commands.
 
 The same archive also carries the provider-neutral Ubuntu bootstrap and host
 operations assets. VPS adapters use the matching payload embedded in the
@@ -38,21 +39,20 @@ The released image
 `ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153`
 uses the `LIBREDASH_*` configuration namespace, `/var/lib/libredash`,
 `libredash.db`, and a `libredash-backup.json` archive contract. Do not point
-this Compose package at that volume or pass the image to `leapviewctl upgrade`.
-The server and controller reject those paths before changing instance state.
+this Compose package at that volume. The server rejects those paths before
+changing instance state.
 The historical package requires authentication and contains only a
 `linux/amd64` runtime.
 
-Release archives also contain `release-transition-policy.json`. It is generated
-after OCI admission, names the exact candidate digest, and must be supplied to
-both `leapviewctl upgrade --transition-policy release-transition-policy.json`
-and `leapviewctl rollback --transition-policy release-transition-policy.json`.
+Release archives also contain `release-transition-policy.json` for the separate
+v0.1 preservation qualification. It is generated after OCI admission and names
+the exact candidate digest.
 
-Use the v0.1.0 image's `admin backup` command to preserve the old instance,
-then provision a fresh LeapView volume, redeploy project source, reload source
-data, and reprovision identities and grants. Keep the old image, archive,
-checksum, configuration, and volume until the new instance is accepted. The
-full command sequence is in the installed documentation under
+Preserve the old v0.1.0 instance with that release's documented export
+procedure, then provision a fresh LeapView volume, redeploy project source,
+reload source data, and reprovision identities and grants. Keep the old image,
+export, checksum, configuration, and volume until the new instance is accepted.
+The full procedure is in the installed documentation under
 `/docs/guides/operate/upgrades#move-from-v010`.
 
 ## Qualify the exact installed candidate
@@ -62,7 +62,7 @@ Before publishing or adopting a release, follow the bundled
 journey validates the archive checksums, anonymous immutable image pull,
 initialization, browser-approved enterprise authoring and protected publish,
 five-minute sample, governed access and denial auditing, restart persistence,
-backup, and isolated restore:
+and recovery-readiness checks:
 
 ```sh
 ./leapviewctl qualify installed-candidate

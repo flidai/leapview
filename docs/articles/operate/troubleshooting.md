@@ -83,13 +83,12 @@ Do not increase concurrency until CPU, memory, disk, and catalog write capacity 
 
 ## Disk usage grows
 
-Identify whether growth is backups, managed upload staging, managed objects, DuckLake catalog, analytical Parquet, logs, or runtime cache. Run storage cleanup without `--apply` first:
-
-```sh
-leapview admin storage cleanup
-```
-
-Review protected serving states and query leases, then use `--apply` only under the approved maintenance procedure. Do not delete catalog rows or Parquet objects manually.
+Identify whether growth is managed-upload staging, managed objects, DuckLake
+catalog data, analytical Parquet, logs, or runtime cache. The removed offline
+storage-cleanup command is not available; do not delete catalog rows or
+Parquet/object-store data manually. Use provider-native retention and garbage
+collection procedures only after confirming active serving snapshots and query
+leases, and record the procedure in the operations runbook.
 
 ## Dashboard refresh fast-burn alert fires
 
@@ -107,27 +106,31 @@ Inspect the bounded refresh outcome metric and application logs for sustained `p
 
 Mitigate the underlying refresh failure through the normal deployment, data, or runtime recovery path. Do not change the 99% objective, reclassify outcomes, or exclude eligible traffic merely to silence the warning. Confirm recovery when the 30-minute burn rate falls below `6` and the alert resolves after the next rule evaluation. Continue to inspect the rolling 30-day error-budget recordings because recovery stops new excessive consumption but does not restore budget already spent.
 
-## Recovery qualification freshness alerts fire
+## Provider recovery or catalog drift
 
-Inspect the bounded ledger projection with the service stopped or from the same controlled maintenance environment used for other offline Admin commands:
+LeapView does not schedule or execute production backup, restore, image
+upgrade, host rollback, or recovery-qualification drills. If PostgreSQL,
+DuckLake, or object-store state is unavailable or inconsistent, stop writes and
+preserve readiness, metrics, deployment identifiers, and credential-scrubbed
+logs. Use the provider's native backup/PITR, catalog snapshot, versioning,
+replication, or restore procedure; the complete workflow belongs in a separate
+native runbook and ADR. Do not edit control-plane rows, catalog metadata, or
+Parquet/object-store objects by hand.
 
-```sh
-leapview admin recovery status
-```
-
-For a ledger scrape failure, check the application logs for ledger read errors or the two-second collection timeout and confirm the protected metrics endpoint still scrapes successfully. For an overdue qualification, distinguish a schedule occurrence that was not materialized from pending work or an expired execution lease; the configured staleness policy has already elapsed. For failed evidence publication, check the private evidence destination, service-account access, capacity, and retry worker without printing credentials, signed URLs, evidence content, or failure payloads.
-
-Correct the underlying scheduler, worker, ledger, or publication dependency and let normal reconciliation or persisted publication backoff recover the current state. Do not delete ledger rows or rerun a destructive recovery scenario merely to clear an alert. Preserve occurrence and evidence identities in the restricted incident record, then confirm `leapview_recovery_qualification_scrape_error`, `leapview_recovery_qualification_overdue`, or `leapview_recovery_qualification_evidence{state="failed"}` returns to zero and the alert resolves on the next rule evaluation.
+After provider recovery, verify instance identity, active deployment pointers,
+authorization, managed-data revisions, and representative governed queries
+before reopening traffic. Keep the failed state and provider evidence until
+the incident is closed.
 
 ## Correlated incident investigation workflow
 
-Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [dashboard refresh fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [recovery qualification freshness](#recovery-qualification-freshness-alerts-fire). It defines evidence pivots and recovery records; it does not authorize remediation.
+Use this workflow with the specific response for [target unavailability](#target-unavailable-alert-fires), [sustained HTTP 5xx responses](#sustained-http-5xx-alert-fires), [DuckDB fatal health](#duckdb-fatal-health-alert-fires), [dashboard refresh fast burn](#dashboard-refresh-fast-burn-alert-fires), [dashboard refresh slow burn](#dashboard-refresh-slow-burn-alert-fires), or [provider recovery or catalog drift](#provider-recovery-or-catalog-drift). It defines evidence pivots and recovery records; it does not authorize remediation.
 
 ### 1. Record alert intake
 
 Preserve the alert name, first observed firing time, current evaluation time, `job`, `instance`, severity, summary, and affected component before changing the service or monitoring configuration. The alert firing time follows any configured hold duration and Prometheus evaluation interval, so record the earliest independently observed symptom separately rather than treating the firing time as the incident start. Keep the original labels and annotations with the incident record and confirm which deployed rule revision produced them.
 
-Use the alert-specific procedure to identify the first reported boundary: scrape path for target unavailability, application HTTP handling for sustained 5xx responses, the process-owned analytical runtime for fatal DuckDB health, dashboard refresh reliability for burn alerts, or recovery scheduling, execution, ledger collection, and evidence publication for recovery alerts. `job` and `instance` identify the bounded alert target; they do not identify a user, project, request, or root cause.
+Use the alert-specific procedure to identify the first reported boundary: scrape path for target unavailability, application HTTP handling for sustained 5xx responses, the process-owned analytical runtime for fatal DuckDB health, dashboard refresh reliability for burn alerts, or the provider's recovery boundary for catalog or object-store drift. `job` and `instance` identify the bounded alert target; they do not identify a user, project, request, or root cause.
 
 ### 2. Inspect metrics and reliability context
 
@@ -157,6 +160,6 @@ Request and correlation IDs are not currently propagated through every refresh o
 
 Record impact, UTC timestamps and time-zone source, alert details, last known good deployment, image and revision, Prometheus expressions and values, observed symptoms, relevant request, correlation, upstream trace, refresh, generation, and serving-state identifiers, evidence locations, actions taken, and whether active state changed. Separate observed facts from inferences. Redact secrets and sensitive payloads, retain only the minimum principal, project, or resource metadata required, and store restricted evidence according to its sensitivity and retention policy.
 
-Use the objective recovery criteria in the alert-specific procedure. Record the time source metrics returned to their expected state, the alert resolved, and representative liveness, readiness, request, analytical, or qualification checks succeeded as applicable. Alert resolution alone does not prove user-visible recovery, and repeated restarts, manual pointer edits, deleted active state, relaxed thresholds, or reclassified outcomes are not recovery evidence.
+Use the objective recovery criteria in the alert-specific procedure. Record the time source metrics returned to their expected state, the alert resolved, and representative liveness, readiness, request, or analytical checks succeeded as applicable. Alert resolution alone does not prove user-visible recovery, and repeated restarts, manual pointer edits, deleted active state, relaxed thresholds, or reclassified outcomes are not recovery evidence.
 
 Use the generated [environment variable reference](/docs/configuration), [`config` CLI reference](/docs/cli/config), [`admin` CLI reference](/docs/cli/admin), and [API reference](/docs/api) when confirming exact names, flags, and operations during diagnosis.

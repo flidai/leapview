@@ -10,12 +10,10 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-// InstallSnapshot installs an already graph-bound immutable snapshot. Runtime
-// assembly owns portable manifest decoding and exact ServingIdentity binding.
-func InstallSnapshot(ctx context.Context, tx transaction.Transaction, snapshot accesssnapshot.AuthorizationSnapshot) error {
-	return accesssqlite.InstallAuthorizationSnapshotTx(ctx, tx, snapshot)
-}
-
+// ActivateDashboardPublicationPrincipal is the narrow local SQLite activation
+// port retained for the development/evaluation composition. Native production
+// composition uses ActivateDashboardPublicationThroughPersistence instead,
+// which dispatches through the configured authority bundle.
 func ActivateDashboardPublicationPrincipal(ctx context.Context, tx transaction.Transaction, projectID projectgraph.ResourceID, name string) error {
 	return accesssqlite.ActivateDashboardPublicationPrincipalTx(ctx, tx, projectID, name)
 }

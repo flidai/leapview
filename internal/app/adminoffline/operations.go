@@ -4,14 +4,12 @@ package adminoffline
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -22,7 +20,6 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
-	recovery "github.com/flidai/leapview/internal/refresh/module"
 )
 
 type Operations struct{}
@@ -51,34 +48,6 @@ func loadNonProductionConfig() (config.Config, error) {
 	return cfg, nil
 }
 
-func (Operations) RecoveryLedgerStatus(ctx context.Context, out io.Writer) error {
-	cfg, err := loadNonProductionConfig()
-	if err != nil {
-		return err
-	}
-	if out == nil {
-		return fmt.Errorf("recovery ledger status output is required")
-	}
-	store, err := platform.Open(ctx, cfg.DBPath())
-	if err != nil {
-		return err
-	}
-	defer store.Close()
-	repository := recovery.NewSQLiteRecoveryRepository(store.SQLDB())
-	snapshot, err := repository.Status(ctx, time.Now().UTC())
-	if err != nil {
-		return err
-	}
-	response := struct {
-		SchemaVersion int                     `json:"schemaVersion"`
-		Status        recovery.StatusSnapshot `json:"status"`
-		Metrics       []recovery.Metric       `json:"metrics"`
-	}{SchemaVersion: 1, Status: snapshot, Metrics: snapshot.Metrics()}
-	encoder := json.NewEncoder(out)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(response)
-}
-
 func (Operations) Initialize(ctx context.Context, request adminoffline.InitializeRequest, out io.Writer) error {
 	service, err := newService()
 	if err != nil {
@@ -95,28 +64,12 @@ func (Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 	return service.AcknowledgeInitialCredentials(ctx)
 }
 
-func (Operations) StorageCleanup(ctx context.Context, request adminoffline.StorageCleanupRequest, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.StorageCleanup(ctx, request, out)
-}
-
 func (Operations) Maintenance(ctx context.Context, request adminoffline.MaintenanceRequest, out io.Writer) error {
 	service, err := newService()
 	if err != nil {
 		return err
 	}
 	return service.Maintenance(ctx, request, out)
-}
-
-func (Operations) AuditOutbox(ctx context.Context, request adminoffline.AuditOutboxRequest, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.AuditOutbox(ctx, request, out)
 }
 
 func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest, out io.Writer) error {
@@ -197,38 +150,6 @@ func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, o
 	}, out)
 }
 
-func (Operations) RepairDeliveryRoot(ctx context.Context, request adminoffline.DeliveryRepairRequest, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.RepairDeliveryRoot(ctx, request, out)
-}
-
-func (Operations) AuditDeliveryRoots(ctx context.Context, request adminoffline.DeliveryAuditRequest, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.AuditDeliveryRoots(ctx, request, out)
-}
-
-func (Operations) Backup(ctx context.Context, request adminoffline.BackupRequest, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.Backup(ctx, request, out)
-}
-
-func (Operations) Restore(ctx context.Context, request adminoffline.RestoreRequest, in io.Reader, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.Restore(ctx, request, in, out)
-}
-
 func newService() (*adminoffline.Service, error) {
 	cfg, err := loadNonProductionConfig()
 	if err != nil {
@@ -243,21 +164,11 @@ func newService() (*adminoffline.Service, error) {
 		extensionAdmission = supply
 	}
 	normalized := adminoffline.Config{
-		HomeDir:               cfg.HomeDir,
-		DBPath:                cfg.DBPath(),
-		Environment:           cfg.Environment,
-		Production:            cfg.Production,
-		BootstrapEmail:        cfg.BootstrapEmail,
-		DuckLakeCatalog:       cfg.DuckLakeCatalogPath(),
-		DuckLakeData:          cfg.DuckLakeDataDir(),
-		ArtifactDir:           cfg.ArtifactDir(),
-		RuntimeDir:            cfg.RuntimeDir(),
-		ManagedDataDir:        cfg.ManagedDataDir,
-		ManagedDataBackend:    cfg.ManagedDataBackend,
-		ManagedDataS3Endpoint: cfg.ManagedDataS3Endpoint,
-		ManagedDataS3Region:   cfg.ManagedDataS3Region,
-		ManagedDataS3Bucket:   cfg.ManagedDataS3Bucket,
-		ManagedDataS3Prefix:   cfg.ManagedDataS3Prefix,
+		HomeDir:        cfg.HomeDir,
+		DBPath:         cfg.DBPath(),
+		Environment:    cfg.Environment,
+		Production:     cfg.Production,
+		BootstrapEmail: cfg.BootstrapEmail,
 	}
 	return adminoffline.New(normalized, adminoffline.Dependencies{
 		Locker:      instanceLocker{home: cfg.HomeDir},
@@ -266,23 +177,11 @@ func newService() (*adminoffline.Service, error) {
 		Recovery: credentialRecovery{
 			path: filepath.Join(cfg.HomeDir, adminoffline.CredentialRecoveryFileName),
 		},
-		Retention:   operationalRetention{dbPath: cfg.DBPath()},
-		AuditOutbox: auditOutboxControl{dbPath: cfg.DBPath()},
-		Storage: storageCleaner{
-			dbPath: cfg.DBPath(), home: cfg.HomeDir,
-			catalogPath: cfg.DuckLakeCatalogPath(), dataPath: cfg.DuckLakeDataDir(),
-			extensionAdmission: extensionAdmission,
-		},
+		Retention: operationalRetention{dbPath: cfg.DBPath()},
 		PhysicalPool: physicalPoolBootstrap{dbPath: cfg.DBPath(), s3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
 			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionAdmission,
 		}},
-		DeliveryRepair: deliveryRepair{dbPath: cfg.DBPath(), home: cfg.HomeDir, stagingRoot: cfg.RuntimeDir(), s3: gcadapter.S3Config{
-			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
-			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
-			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionAdmission,
-		}},
-		Archive: instanceArchive{home: cfg.HomeDir, dbPath: cfg.DBPath()},
 	}), nil
 }

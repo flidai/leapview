@@ -87,6 +87,5 @@ resource "hcloud_server" "leapview" {
       https         = true
     }))
     image_b64  = base64encode("${var.leapview_image}\n")
-    policy_b64 = base64encode(file(var.release_transition_policy_path))
   })
 }

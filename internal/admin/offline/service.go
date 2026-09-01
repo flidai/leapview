@@ -8,7 +8,6 @@ import (
 	"io"
 	"net/mail"
 	"os"
-	"sort"
 	"strings"
 	"time"
 
@@ -110,22 +109,6 @@ func (service *Service) AcknowledgeInitialCredentials(ctx context.Context) error
 	return nil
 }
 
-func (service *Service) StorageCleanup(ctx context.Context, request StorageCleanupRequest, out io.Writer) error {
-	release, err := service.acquireIf(ctx, request.Apply)
-	if err != nil {
-		return err
-	}
-	defer release.Release()
-	environment, err := service.resolveEnvironment(ctx)
-	if err != nil {
-		return err
-	}
-	if err := service.deps.Storage.Cleanup(ctx, environment, !request.Apply, out); err != nil {
-		return fmt.Errorf("storage cleanup: %w", err)
-	}
-	return nil
-}
-
 func (service *Service) Maintenance(ctx context.Context, request MaintenanceRequest, out io.Writer) error {
 	if request.AuditDays < 0 || request.QueryDays < 0 || request.ArchivedAgentDays < 0 || request.AuthStateDays < 0 {
 		return fmt.Errorf("retention days must be zero or greater")
@@ -158,43 +141,6 @@ func (service *Service) Maintenance(ctx context.Context, request MaintenanceRequ
 	fmt.Fprintf(out, "stale sessions: %d\n", result.StaleSessionsDeleted)
 	fmt.Fprintf(out, "stale api tokens: %d\n", result.StaleAPITokensDeleted)
 	fmt.Fprintf(out, "stale service principal secrets: %d\n", result.StaleServicePrincipalSecretsDeleted)
-	return nil
-}
-
-func (service *Service) AuditOutbox(ctx context.Context, request AuditOutboxRequest, out io.Writer) error {
-	if service == nil || service.deps.AuditOutbox == nil {
-		return fmt.Errorf("audit outbox control is unavailable")
-	}
-	eventID := strings.TrimSpace(request.RequeueEventID)
-	if eventID != "" {
-		if !request.Apply {
-			return fmt.Errorf("--apply is required to requeue an audit intent")
-		}
-		lock, err := service.acquire(ctx)
-		if err != nil {
-			return err
-		}
-		defer lock.Release()
-		request.RequeueEventID = eventID
-		if err := service.deps.AuditOutbox.RequeueExact(ctx, request); err != nil {
-			return fmt.Errorf("requeue audit intent: %w", err)
-		}
-		fmt.Fprintf(out, "requeued event: %s\n", eventID)
-	}
-	status, err := service.deps.AuditOutbox.Status(ctx)
-	if err != nil {
-		return fmt.Errorf("inspect audit outbox: %w", err)
-	}
-	fmt.Fprintf(out, "pending: %d\nretry: %d\nleased: %d\ndelivered: %d\npoison: %d\nquarantined: %d\nattempts: %d\ncapacity: %d\ncapacity remaining: %d\noldest undelivered: %s\n",
-		status.Pending, status.Retry, status.Leased, status.Delivered, status.Poison, status.Quarantined,
-		status.AttemptCount, status.Capacity, status.CapacityRemaining, status.OldestUndeliveredAge.Round(time.Second))
-	for _, terminal := range status.Terminals {
-		fmt.Fprintf(out, "terminal event: %s\nstate: %s\nattempts: %d\nfailure_code: %s\npayload_digest: %s\ncreated_at: %s\n",
-			terminal.EventID, terminal.State, terminal.AttemptCount, terminal.LastErrorCode, terminal.PayloadDigest, terminal.CreatedAt.Format(time.RFC3339Nano))
-	}
-	if status.TerminalsTruncated {
-		fmt.Fprintf(out, "terminal events: truncated at %d; rerun after resolving earlier rows\n", len(status.Terminals))
-	}
 	return nil
 }
 
@@ -238,86 +184,6 @@ func (service *Service) BootstrapPhysicalPool(ctx context.Context, request Physi
 		return fmt.Errorf("physical-pool bootstrap: %w", err)
 	}
 	return writePoolBootstrapResult(out, result)
-}
-
-// RepairDeliveryRoot verifies the durable root and immutable physical closure
-// before applying one bounded control-plane action. Dry-run still performs
-// every verification but never acquires the destructive lock or mutates rows.
-func (service *Service) RepairDeliveryRoot(ctx context.Context, request DeliveryRepairRequest, out io.Writer) error {
-	if service == nil || service.deps.DeliveryRepair == nil {
-		return fmt.Errorf("delivery repair is unavailable")
-	}
-	if request.Action != "quarantine" {
-		return fmt.Errorf("unsupported delivery repair action %q", request.Action)
-	}
-	release, err := service.acquireIf(ctx, request.Apply)
-	if err != nil {
-		return err
-	}
-	defer release.Release()
-	if err := service.deps.DeliveryRepair.RepairDeliveryRoot(ctx, request, out); err != nil {
-		return fmt.Errorf("delivery repair: %w", err)
-	}
-	if out != nil {
-		_, err := fmt.Fprintf(out, "verified root: %s/%s\naction: %s\napplied: %t\n", request.Root.Kind, request.Root.SourceID, request.Action, request.Apply)
-		if err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// AuditDeliveryRoots enumerates and verifies every durable root for one
-// physical pool. The audit is read-only: unlike repair it must not acquire
-// the destructive offline lock or mutate control rows.
-func (service *Service) AuditDeliveryRoots(ctx context.Context, request DeliveryAuditRequest, out io.Writer) error {
-	if service == nil || service.deps.DeliveryRepair == nil {
-		return fmt.Errorf("delivery audit is unavailable")
-	}
-	auditor, ok := service.deps.DeliveryRepair.(DeliveryReachabilityAuditor)
-	if !ok {
-		return fmt.Errorf("delivery audit is unavailable")
-	}
-	if strings.TrimSpace(request.PhysicalPoolID) == "" {
-		return fmt.Errorf("delivery audit requires a physical-pool identity")
-	}
-	result, err := auditor.AuditDeliveryRoots(ctx, request)
-	if err != nil {
-		return fmt.Errorf("delivery audit: %w", err)
-	}
-	if result.PhysicalPoolID != request.PhysicalPoolID {
-		return fmt.Errorf("delivery audit: result belongs to physical pool %q, not %q", result.PhysicalPoolID, request.PhysicalPoolID)
-	}
-	if out == nil {
-		return nil
-	}
-	sort.Slice(result.Roots, func(i, j int) bool {
-		left, right := result.Roots[i].Root, result.Roots[j].Root
-		if left.Kind == right.Kind {
-			return left.SourceID < right.SourceID
-		}
-		return left.Kind < right.Kind
-	})
-	if _, err := fmt.Fprintf(out, "mode: audit\npool_id: %s\nroot_revision: %d\nroot_count: %d\n", result.PhysicalPoolID, result.RootRevision, len(result.Roots)); err != nil {
-		return err
-	}
-	for _, item := range result.Roots {
-		root := item.Root
-		if _, err := fmt.Fprintf(out, "root: %s/%s\nstatus: %s\ncatalog_digest: %s\nobject_key: %s\ncreated_at: %s\n", root.Kind, root.SourceID, root.Status, root.CatalogDigest, root.ObjectKey, root.CreatedAt.Format(time.RFC3339Nano)); err != nil {
-			return err
-		}
-		if _, err := fmt.Fprintf(out, "candidate_id: %s\ngeneration_id: %s\nlease_id: %s\nexpires_at: %s\ndata_files: %d\ndelete_files: %d\nverification: passed\n", root.CandidateID, root.GenerationID, root.LeaseID, formatAuditTime(root.ExpiresAt), item.DataFiles, item.DeleteFiles); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func formatAuditTime(value time.Time) string {
-	if value.IsZero() {
-		return ""
-	}
-	return value.Format(time.RFC3339Nano)
 }
 
 func writePoolBootstrapResult(out io.Writer, result PhysicalPoolBootstrapResult) error {

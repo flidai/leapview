@@ -1282,44 +1282,6 @@ tasks:
         -run 'V010'
         -count=1
 
-  test:ubdr:transition-policy:
-    desc: Validate the versioned release-transition policy and pre-mutation denial contract
-    deps:
-      - db:generate
-      - api:generate
-    cmds:
-      - >-
-        go test
-        ./deploy/compose
-        ./internal/app/tools/transitionpolicy
-        ./internal/platform/compatibility
-        ./internal/app/cli/hostinstall
-        ./internal/app/cli/composectl
-        ./internal/platform
-        -run 'Bind|Predecessor|Transition|Upgrade|Rollback|Legacy|ReleasePolicy|V010'
-        -count=1
-      - >-
-        go run ./internal/app/tools/transitionpolicy
-        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/transition-policy
-
-  test:ubdr:backup-manifest-v2:
-    desc: Validate backup manifest v2, bounded restore preflight, and non-mutation evidence
-    deps:
-      - db:generate
-      - api:generate
-    cmds:
-      - >-
-        go test
-        ./internal/platform
-        ./internal/admin/offline
-        ./internal/admin/cli
-        ./internal/app/adminoffline
-        -run 'Backup|Restore|Manifest|Preflight'
-        -count=1
-      - >-
-        go run ./internal/app/tools/backupmanifestv2
-        --evidence-dir {{.ROOT_DIR}}/.tmp/qualification/ubdr/backup-manifest-v2
-
   test:ubdr:recovery-ledger:
     desc: Validate the durable scheduled recovery ledger, fencing, restart, evidence publication, and retention contracts
     deps:
