@@ -1725,6 +1725,46 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
   }
 })
 
+test('dashboard builder edits the dashboard icon and color from the title bar', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot!
+      const trigger = root.querySelector<HTMLButtonElement>('[data-builder-action="appearance"]')!
+      const initial = {
+        label: trigger.getAttribute('aria-label'),
+        expanded: trigger.getAttribute('aria-expanded'),
+        color: trigger.getAttribute('data-appearance-color'),
+        hasIcon: Boolean(trigger.querySelector('svg')),
+      }
+      trigger.click()
+      await element.updateComplete
+      const picker = root.querySelector('lv-dashboard-icon-picker') as any
+      await picker.updateComplete
+      let command: Record<string, unknown> | undefined
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => { command = event.detail }, { once: true })
+      picker.shadowRoot!.querySelector<HTMLButtonElement>('.color.color-orange')!.click()
+      return {
+        initial,
+        pickerLabel: picker.label,
+        pickerIcon: picker.icon,
+        pickerColor: picker.color,
+        command,
+      }
+    })
+    expect(state.initial).toEqual({ label: 'Change dashboard icon and color', expanded: 'false', color: 'purple', hasIcon: true })
+    expect(state.pickerLabel).toBe('Revenue draft')
+    expect(state.pickerIcon).toBe('chart-no-axes-combined')
+    expect(state.pickerColor).toBe('purple')
+    expect(state.command).toMatchObject({ action: 'update_appearance', icon: 'chart-no-axes-combined', color: 'orange' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder archives an owned dashboard from More without an extra confirmation step', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -2510,6 +2550,7 @@ function testDocument(): string {
       projectId: 'sales', dashboardId: 'revenue', draftId: 'draft-7',
       revision: { id: 'rev-7', number: 7, contentHash: 'sha256:abc' },
       title: 'Revenue draft', lifecycle: 'draft', visibility: 'private', hasUnpublishedChanges: true,
+      appearance: { icon: 'chart-no-axes-combined', color: 'purple' },
       origin: { kind: 'file', label: 'Project file', sourcePath: 'dashboards/revenue.yaml' },
       sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7' },
       semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', dataType: 'string' }, { id: 'orders.total', label: 'Total', kind: 'metric', dataType: 'decimal' }] }] },

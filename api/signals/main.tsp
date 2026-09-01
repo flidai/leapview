@@ -64,6 +64,7 @@ model DashboardBuilderSignal {
   `draftId`: string;
   `revision`: DashboardBuilderRevisionSignal;
   `title`: string;
+  `appearance`: DashboardBuilderAppearanceSignal;
   `lifecycle`: "draft" | "published" | "archived";
   `visibility`: "private" | "restricted" | "organization";
   `hasUnpublishedChanges`: boolean;
@@ -80,6 +81,11 @@ model DashboardBuilderSignal {
   `preview`: DashboardBuilderPreviewStateSignal;
   `save`: DashboardBuilderSaveStateSignal;
   `redirectTo`?: string;
+}
+
+model DashboardBuilderAppearanceSignal {
+  `icon`: string;
+  `color`: string;
 }
 
 model DashboardBuilderRevisionSignal {

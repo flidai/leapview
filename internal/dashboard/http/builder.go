@@ -14,6 +14,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/builderview"
@@ -677,6 +678,8 @@ type dashboardBuilderCommandSignal struct {
 	FormatKey                 string                            `json:"formatKey"`
 	FormatValue               *string                           `json:"formatValue,omitempty"`
 	Visibility                string                            `json:"visibility"`
+	Icon                      string                            `json:"icon"`
+	Color                     string                            `json:"color"`
 	Placement                 *document.DashboardPlacement      `json:"placement,omitempty"`
 	Placements                []dashboardBuilderPlacementSignal `json:"placements,omitempty"`
 	Column                    int32                             `json:"column,omitempty"`
@@ -756,6 +759,13 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 			return authoring.Command{}, err
 		}
 		command.SetVisibility = &authoring.SetVisibilityPayload{Visibility: visibility}
+	case "update_appearance":
+		icon, color := strings.TrimSpace(s.Icon), strings.TrimSpace(s.Color)
+		if err := dashboardappearance.ValidatePatch(dashboardappearance.Patch{Icon: &icon, Color: &color}); err != nil {
+			return authoring.Command{}, err
+		}
+		documentColor := document.DashboardAppearanceColor(color)
+		command.Metadata = &authoring.MetadataPatch{Appearance: &document.DashboardAppearance{Icon: &icon, Color: &documentColor}}
 	case "add_page":
 		command.AddPage = &authoring.AddPagePayload{PageID: strings.TrimSpace(s.PageID), Title: strings.TrimSpace(s.Title)}
 	case "rename_page":
