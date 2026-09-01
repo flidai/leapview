@@ -5031,9 +5031,9 @@
                 },
                 "targets": {
                   "items": {
-                    "maxLength": 128,
+                    "maxLength": 257,
                     "minLength": 1,
-                    "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                    "pattern": "^[A-Za-z_][A-Za-z0-9_-]*(?:/[A-Za-z_][A-Za-z0-9_-]*)?$",
                     "type": "string"
                   },
                   "type": "array"
