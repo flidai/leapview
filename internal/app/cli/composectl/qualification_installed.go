@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -99,8 +100,9 @@ func (c *Controller) QualifyInstalledCandidate(
 	}
 
 	cleanup := qualificationCleanup{}
-	var primaryStarted bool
 	var primaryProject string
+	var nativeTopology *qualificationNativePostgresTopology
+	var nativeComposeLifecycle bool
 	var browserContainer string
 	credentialsPath := filepath.Join(c.root, ".qualification-credentials.json")
 	defer func() {
@@ -141,10 +143,16 @@ func (c *Controller) QualifyInstalledCandidate(
 		_, err := c.qualificationContainers.Existing(browserContainer).Remove(cleanupCtx)
 		return ignoreQualificationNotFound(err)
 	})
+	// Native PostgreSQL cleanup is deliberately one sequential step.  The
+	// application and Caddy containers must be removed before the sidecar, and
+	// the Compose project (including its network and volumes) is torn down last.
+	// Registering this as one closure also runs the ordering on failures before
+	// the primary application has been started.
 	cleanup.Add(func(cleanupCtx context.Context) error {
-		if !primaryStarted {
+		if !nativeComposeLifecycle && nativeTopology == nil {
 			return nil
 		}
+		var result error
 		logs, _ := c.qualificationCompose(
 			cleanupCtx, c.root, "logs", "--no-color", "--tail", "500",
 		)
@@ -153,10 +161,23 @@ func (c *Controller) QualifyInstalledCandidate(
 			redactQualificationLog(logs, 500),
 			0o600,
 		)
-		_, err := c.qualificationCompose(
-			cleanupCtx, c.root, "down", "--volumes", "--remove-orphans",
-		)
-		return ignoreQualificationNotFound(err)
+		if nativeComposeLifecycle {
+			_, removeErr := c.qualificationCompose(
+				cleanupCtx, c.root, "rm", "--force", "--stop", "leapview", "caddy",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
+		}
+		if nativeTopology != nil {
+			result = errors.Join(result, nativeTopology.Remove(cleanupCtx))
+			nativeTopology = nil
+		}
+		if nativeComposeLifecycle {
+			_, downErr := c.qualificationCompose(
+				cleanupCtx, c.root, "down", "--volumes", "--remove-orphans",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(downErr))
+		}
+		return result
 	})
 
 	for _, path := range []string{
@@ -226,6 +247,29 @@ func (c *Controller) QualifyInstalledCandidate(
 	}); err != nil {
 		return err
 	}
+	if err := c.seedQualificationNativePostgresEnvironment(); err != nil {
+		return err
+	}
+	nativeComposeLifecycle = true
+	nativeNetwork, err := c.prepareQualificationNativePostgresNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	nativeTopology, err = c.startQualificationNativePostgresTopology(ctx, qualificationNativePostgresTopologyOptions{
+		ComposeProject: primaryProject,
+		ComposeNetwork: nativeNetwork,
+		BundleRoot:     c.root,
+	})
+	if err != nil {
+		return err
+	}
+	if err := c.writeQualificationNativePostgresEnvironment(nativeTopology); err != nil {
+		return err
+	}
+	artifacts, err := c.prepareQualificationNativePhysicalPool(ctx, evidenceDir)
+	if err != nil {
+		return err
+	}
 	if err := c.Initialize(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
@@ -250,14 +294,11 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
-	if err := c.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
+	if err := c.applyQualificationNativePhysicalPool(ctx, nativeTopology, artifacts); err != nil {
 		return err
 	}
-	if !primaryStarted {
-		primaryStarted = true
-		if err := c.startQualificationBootstrap(ctx); err != nil {
-			return err
-		}
+	if err := c.startQualificationBootstrap(ctx); err != nil {
+		return err
 	}
 	var credentialsOutput bytes.Buffer
 	originalOutput := c.stdout
@@ -484,58 +525,6 @@ func isQualificationLowerHex(value string) bool {
 		}
 	}
 	return true
-}
-
-func (c *Controller) bootstrapQualificationLocalPhysicalPool(ctx context.Context) error {
-	output, err := c.qualificationCompose(
-		ctx,
-		c.root,
-		"run", "--rm", "--no-deps", "leapview",
-		"admin", "delivery", "pool", "qualify", "--apply",
-	)
-	if err != nil {
-		return fmt.Errorf("bootstrap installed-candidate physical pool: %w", err)
-	}
-	poolID, compatibilityDigest, err := parseQualificationPoolBootstrapResult(output)
-	if err != nil {
-		return err
-	}
-	for _, entry := range []struct {
-		key   string
-		value string
-	}{
-		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID", value: poolID},
-		{key: "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST", value: compatibilityDigest},
-	} {
-		if err := appendOrReplaceQualificationEnv(c.path(appEnvName), entry.key, entry.value); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func parseQualificationPoolBootstrapResult(output []byte) (string, string, error) {
-	values := make(map[string]string)
-	for _, line := range strings.Split(string(output), "\n") {
-		key, value, ok := strings.Cut(strings.TrimSpace(line), ": ")
-		if ok {
-			values[key] = strings.TrimSpace(value)
-		}
-	}
-	poolID := values["pool_id"]
-	compatibilityDigest := values["compatibility_digest"]
-	validDigest := func(value string) bool {
-		raw := strings.TrimPrefix(value, "sha256:")
-		if len(raw) != 64 || raw == value {
-			return false
-		}
-		_, err := hex.DecodeString(raw)
-		return err == nil
-	}
-	if values["applied"] != "true" || !validDigest(poolID) || !validDigest(compatibilityDigest) {
-		return "", "", fmt.Errorf("qualification physical-pool bootstrap returned incomplete durable evidence")
-	}
-	return poolID, compatibilityDigest, nil
 }
 
 func (c *Controller) startQualificationBootstrap(ctx context.Context) error {

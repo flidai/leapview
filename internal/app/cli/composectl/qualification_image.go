@@ -283,11 +283,13 @@ func (c *Controller) QualifyImage(
 	if err != nil {
 		return err
 	}
-	instanceStarted := false
+	var nativeTopology *qualificationNativePostgresTopology
+	var nativeComposeLifecycle bool
 	cleanup.Add(func(cleanupCtx context.Context) error {
-		if !instanceStarted {
+		if !nativeComposeLifecycle && nativeTopology == nil {
 			return nil
 		}
+		var result error
 		logOutput, _ := c.qualificationCompose(
 			cleanupCtx,
 			bundleRoot,
@@ -298,17 +300,58 @@ func (c *Controller) QualifyImage(
 			redactQualificationLog(logOutput, 500),
 			0o600,
 		)
-		_, downErr := c.qualificationCompose(
-			cleanupCtx,
-			bundleRoot,
-			"down", "--volumes", "--remove-orphans",
-		)
-		return ignoreQualificationNotFound(downErr)
+		// Remove the application and Caddy before detaching the native
+		// PostgreSQL sidecar.  Compose owns the network, so it is torn down
+		// only after the sidecar has been removed.
+		if nativeComposeLifecycle {
+			_, removeErr := c.qualificationCompose(
+				cleanupCtx,
+				bundleRoot,
+				"rm", "--force", "--stop", "leapview", "caddy",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
+		}
+		if nativeTopology != nil {
+			result = errors.Join(result, nativeTopology.Remove(cleanupCtx))
+			nativeTopology = nil
+		}
+		if nativeComposeLifecycle {
+			_, downErr := c.qualificationCompose(
+				cleanupCtx,
+				bundleRoot,
+				"down", "--volumes", "--remove-orphans",
+			)
+			result = errors.Join(result, ignoreQualificationNotFound(downErr))
+		}
+		return result
 	})
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
 	ctx = phases.Begin(rootContext, "target bootstrap", 20*time.Minute)
+	if err := instanceController.seedQualificationNativePostgresEnvironment(); err != nil {
+		return err
+	}
+	nativeComposeLifecycle = true
+	nativeNetwork, err := instanceController.prepareQualificationNativePostgresNetwork(ctx)
+	if err != nil {
+		return err
+	}
+	nativeTopology, err = instanceController.startQualificationNativePostgresTopology(ctx, qualificationNativePostgresTopologyOptions{
+		ComposeProject: composeProject,
+		ComposeNetwork: nativeNetwork,
+		BundleRoot:     bundleRoot,
+	})
+	if err != nil {
+		return err
+	}
+	if err := instanceController.writeQualificationNativePostgresEnvironment(nativeTopology); err != nil {
+		return err
+	}
+	artifacts, err := instanceController.prepareQualificationNativePhysicalPool(ctx, evidenceDir)
+	if err != nil {
+		return err
+	}
 	if err := instanceController.Initialize(ctx, InitOptions{
 		AdminEmail:  "admin@localhost",
 		Domain:      "localhost",
@@ -323,8 +366,7 @@ func (c *Controller) QualifyImage(
 	}); err != nil {
 		return err
 	}
-	instanceStarted = true
-	if err := instanceController.bootstrapQualificationLocalPhysicalPool(ctx); err != nil {
+	if err := instanceController.applyQualificationNativePhysicalPool(ctx, nativeTopology, artifacts); err != nil {
 		return err
 	}
 	if err := instanceController.startQualificationBootstrap(ctx); err != nil {

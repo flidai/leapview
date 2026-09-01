@@ -691,31 +691,6 @@ func TestQualificationComposeBuildsExactDockerArguments(t *testing.T) {
 	}
 }
 
-func TestParseQualificationPoolBootstrapResult(t *testing.T) {
-	poolID := "sha256:" + strings.Repeat("a", 64)
-	compatibility := "sha256:" + strings.Repeat("b", 64)
-	gotPool, gotCompatibility, err := parseQualificationPoolBootstrapResult([]byte(
-		"pool_id: " + poolID + "\n" +
-			"compatibility_digest: " + compatibility + "\n" +
-			"evidence_digest: sha256:" + strings.Repeat("c", 64) + "\n" +
-			"conformance_version: lea-406/v1\n" +
-			"applied: true\n",
-	))
-	require.NoError(t, err)
-	if gotPool != poolID || gotCompatibility != compatibility {
-		t.Fatalf("parsed bootstrap = %q/%q", gotPool, gotCompatibility)
-	}
-	for _, invalid := range [][]byte{
-		[]byte("pool_id: " + poolID + "\ncompatibility_digest: " + compatibility + "\napplied: false\n"),
-		[]byte("pool_id: invalid\ncompatibility_digest: " + compatibility + "\napplied: true\n"),
-		[]byte("pool_id: " + poolID + "\ncompatibility_digest: invalid\napplied: true\n"),
-	} {
-		if _, _, err := parseQualificationPoolBootstrapResult(invalid); err == nil {
-			t.Fatalf("accepted invalid bootstrap output %q", invalid)
-		}
-	}
-}
-
 func TestQualificationDiskUsageExcludesTransientSQLiteSidecars(t *testing.T) {
 	root := t.TempDir()
 	executor := &recordingQualificationExecutor{output: []byte("39996109\t/var/lib/leapview\n")}

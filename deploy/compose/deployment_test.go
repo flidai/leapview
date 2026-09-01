@@ -434,12 +434,12 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("typed installed-candidate controller missing %q", required)
 		}
 	}
-	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", `"pool", "qualify"`, "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
+	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "startQualificationBootstrap", "waitQualificationBootstrapLiveness", `"up", "-d", "--no-deps", "caddy"`, "waitQualificationReadiness"} {
 		if !strings.Contains(installed, required) {
 			t.Errorf("installed qualification missing sealed-delivery bootstrap contract %q", required)
 		}
 	}
-	for _, required := range []string{"bootstrapQualificationLocalPhysicalPool", "startQualificationBootstrap", "waitQualificationReadiness"} {
+	for _, required := range []string{"prepareQualificationNativePostgresNetwork", "startQualificationNativePostgresTopology", "prepareQualificationNativePhysicalPool", "applyQualificationNativePhysicalPool", "startQualificationBootstrap", "waitQualificationReadiness"} {
 		if !strings.Contains(imageQualification, required) {
 			t.Errorf("production-image qualification missing sealed-delivery bootstrap contract %q", required)
 		}

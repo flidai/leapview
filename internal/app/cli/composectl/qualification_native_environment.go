@@ -13,7 +13,7 @@ import (
 )
 
 // seedQualificationNativeEnvironment copies the packaged application
-// environment example into the qualification workspace.  Compose resolves
+// environment example into the qualification bundle. Compose resolves
 // leapview.env while creating the network, so this seed must exist before the
 // network preparation phase.  The destination is always written atomically
 // with private permissions; no values are synthesized here.
