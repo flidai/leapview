@@ -57,6 +57,23 @@ func TestProductionPhysicalPoolBootstrapDryRunStaysReadOnly(t *testing.T) {
 	}
 }
 
+func TestProductionPhysicalPoolBootstrapRejectsIncompleteDeliveryOwnership(t *testing.T) {
+	for _, field := range []string{"tenant", "region"} {
+		t.Run(field, func(t *testing.T) {
+			request := testNativePoolBootstrapRequest(t, false)
+			switch field {
+			case "tenant":
+				request.Pool.Tenant = ""
+			case "region":
+				request.Pool.Region = ""
+			}
+			if _, _, err := validatePhysicalPoolBootstrap(request); err == nil {
+				t.Fatalf("missing %s unexpectedly accepted", field)
+			}
+		})
+	}
+}
+
 func TestProductionPhysicalPoolBootstrapApplyUsesNativeOwner(t *testing.T) {
 	request := testNativePoolBootstrapRequest(t, true)
 	pool, compatibilityDigest, err := validatePhysicalPoolBootstrap(request)

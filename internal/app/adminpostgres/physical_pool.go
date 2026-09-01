@@ -72,6 +72,17 @@ func validatePhysicalPoolBootstrap(request adminoffline.PhysicalPoolBootstrapReq
 	if err := request.Pool.Validate(); err != nil {
 		return physicalpool.PhysicalPool{}, "", fmt.Errorf("physical-pool identity: %w", err)
 	}
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "tenant", value: request.Pool.Tenant},
+		{name: "region", value: request.Pool.Region},
+	} {
+		if field.value == "" || field.value != strings.TrimSpace(field.value) {
+			return physicalpool.PhysicalPool{}, "", fmt.Errorf("physical-pool identity: %s is required and must be canonical", field.name)
+		}
+	}
 	if err := request.Evidence.Verify(); err != nil {
 		return physicalpool.PhysicalPool{}, "", fmt.Errorf("physical-pool conformance evidence: %w", err)
 	}
