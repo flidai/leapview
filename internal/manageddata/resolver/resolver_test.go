@@ -276,9 +276,9 @@ func TestResolveRejectsManifestAndRevisionFileMetadataDisagreement(t *testing.T)
 			revision.Digest = "sha256:" + strings.Repeat("a", 64)
 			repo.revisions["revision-1"] = revision
 		}},
-		{name: "manifest is not canonical JSON", mutate: func(repo *fakeRepository) {
+		{name: "manifest has trailing JSON value", mutate: func(repo *fakeRepository) {
 			revision := repo.revisions["revision-1"]
-			revision.ManifestJSON = " " + revision.ManifestJSON
+			revision.ManifestJSON += "{}"
 			repo.revisions["revision-1"] = revision
 		}},
 		{name: "manifest has unknown metadata", mutate: func(repo *fakeRepository) {
@@ -329,6 +329,32 @@ func TestResolveRejectsManifestAndRevisionFileMetadataDisagreement(t *testing.T)
 				}
 			}
 		})
+	}
+}
+
+func TestResolveAcceptsJSONBFormattedReorderedManifest(t *testing.T) {
+	manifest, blobs := testManifest(map[string]string{"data.csv": "data"})
+	revision := testRevision("revision-1", "collection-1", manifest, manageddata.RevisionStatusReady)
+	revision.ManifestJSON = fmt.Sprintf(
+		`{ "files" : [ { "sha256" : %q, "size" : %d, "path" : %q } ] }`,
+		manifest.Files[0].SHA256,
+		manifest.Files[0].Size,
+		manifest.Files[0].Path,
+	)
+	repo := &fakeRepository{
+		bindings:    []manageddata.ServingStateBinding{{Identity: testIdentity, CollectionID: "collection-1", RevisionID: "revision-1"}},
+		collections: map[string]manageddata.Collection{"collection-1": {ID: "collection-1", ProjectID: "project_sales", ConnectionID: "warehouse"}},
+		revisions:   map[string]manageddata.Revision{"revision-1": revision},
+		files:       map[string][]manageddata.RevisionFile{"revision-1": testRevisionFiles("revision-1", manifest)},
+	}
+	resolver := testResolver(t, repo, &memoryBlobStore{blobs: blobs})
+	resolution, err := resolver.ResolveManagedData(t.Context(), testIdentity)
+	if err != nil {
+		t.Fatalf("ResolveManagedData() error = %v, want nil", err)
+	}
+	t.Cleanup(func() { _ = resolution.Lifetime.Release() })
+	if resolution.Revisions["warehouse"] != manifest.RevisionID() {
+		t.Fatalf("resolved manifest digest = %q, want %q", resolution.Revisions["warehouse"], manifest.RevisionID())
 	}
 }
 

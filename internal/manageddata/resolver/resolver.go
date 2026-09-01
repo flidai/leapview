@@ -2,7 +2,6 @@
 package resolver
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -333,12 +332,8 @@ func validateRevisionManifest(revision manageddata.Revision) (manageddata.Manife
 	if err := requireJSONEnd(decoder); err != nil {
 		return manageddata.Manifest{}, invalidMetadata("stored manifest is invalid")
 	}
-	canonical, err := manifest.CanonicalJSON()
-	if err != nil {
+	if _, err := manifest.CanonicalJSON(); err != nil {
 		return manageddata.Manifest{}, invalidMetadata("stored manifest is invalid")
-	}
-	if !bytes.Equal(canonical, []byte(revision.ManifestJSON)) {
-		return manageddata.Manifest{}, invalidMetadata("stored manifest is not canonical")
 	}
 	if revision.Digest != manifest.RevisionID() {
 		return manageddata.Manifest{}, invalidMetadata("stored manifest digest does not match revision")
