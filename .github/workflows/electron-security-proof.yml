@@ -248,12 +248,12 @@ jobs:
         run: |
           docker build \
             --file internal/app/testing/maliciousinstance/electron/Dockerfile.linux \
-            --tag leapview-electron-security-proof:43.2.0 .
+            --tag leapview-electron-security-proof:44.0.0 .
 
       - name: Run complete malicious-instance proof
         run: |
           docker run --rm --cap-add=SYS_ADMIN \
-            leapview-electron-security-proof:43.2.0
+            leapview-electron-security-proof:44.0.0
 
   gate:
     name: Electron gate
