@@ -105,14 +105,15 @@ func (h Handler) Navigate(w nethttp.ResponseWriter, r *nethttp.Request) {
 			definitions[component.Visual] = visual
 		}
 	}
+	catalog := h.catalogWithDashboardAppearance(r.Context(), metrics.Catalog(), dashboardID)
 	bootstrap := reportui.BootstrapSignalsWithRouteScope(
-		h.RouteScope, clientID, streamInstanceID, metrics.Catalog(), definition, model, definitions,
+		h.RouteScope, clientID, streamInstanceID, catalog, definition, model, definitions,
 		definition.Pages, targetPage, initialFilters,
 	)
 	if presentation, public := publicPresentationFromContext(r.Context()); public {
 		bootstrap = reportui.PublicBootstrapSignals(
 			clientID, streamInstanceID, presentation.PublicID, presentation.Presentation,
-			metrics.Catalog(), definition, model, definitions, definition.Pages, targetPage, initialFilters,
+			catalog, definition, model, definitions, definition.Pages, targetPage, initialFilters,
 		)
 	}
 	patch := pagestream.SignalPatch{}

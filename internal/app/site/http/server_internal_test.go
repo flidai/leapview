@@ -624,11 +624,9 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 		`<lv-site-flow-background class="site-hero-background" aria-hidden="true"></lv-site-flow-background>`,
 		`<section id="main-content" class="site-hero">`,
 		`<div class="site-hero-layout">`,
+		`<figure class="site-product-frame"><div class="site-product-stage">`,
 		`<img class="site-product-screenshot site-product-screenshot-light" src="/static/product-dashboard-light.png"`,
 		`<img class="site-product-screenshot site-product-screenshot-dark" src="/static/product-dashboard-dark.png"`,
-		`<aside class="site-agent-preview" aria-label="Verified AI agent answer">`,
-		`Why did revenue fall in October?`,
-		`Verified against the sales semantic model`,
 		`<div class="site-proof-strip">`,
 		`<svg class="site-stack-edges site-stack-edges-desktop"`,
 		`<li class="site-stack-stage site-stack-node site-stack-product-node">`,
@@ -658,6 +656,9 @@ func TestSiteHomeRendersPageStreamDocument(t *testing.T) {
 	}
 	if strings.Contains(body, "site-capabilities-section") {
 		t.Error("home page still renders the redundant capabilities section")
+	}
+	if strings.Contains(body, "site-agent-preview") || strings.Contains(body, "Why did revenue fall in October?") {
+		t.Error("home page still renders the fabricated agent preview")
 	}
 }
 

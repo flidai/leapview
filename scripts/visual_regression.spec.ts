@@ -58,7 +58,10 @@ for (const state of states) {
 async function openStableDashboard(page: Page, url: string, heading: string): Promise<void> {
   const response = await page.goto(url, { waitUntil: 'domcontentloaded' })
   expect(response?.ok(), `${url} should return a successful response`).toBe(true)
-  await page.getByRole('heading', { name: heading, exact: true }).waitFor()
+  await page
+    .getByRole('navigation', { name: 'Breadcrumb' })
+    .getByText(heading, { exact: true })
+    .waitFor()
   await page.waitForFunction(() => {
     const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & {
       status?: { loading?: boolean }

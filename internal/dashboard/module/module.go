@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard/api"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	dashboardauthoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
@@ -84,25 +85,26 @@ type Config struct {
 }
 
 type HTTPConfig struct {
-	Metrics               queryruntime.Metrics
-	ProjectID             projectgraph.ResourceID
-	ResolveProjectID      func(context.Context) (projectgraph.ResourceID, error)
-	Admission             workload.Admitter
-	Broker                SignalBroker
-	Logger                *slog.Logger
-	Telemetry             DashboardTelemetry
-	CurrentPrincipalID    func(*http.Request) string
-	CurrentUsagePrincipal func(*http.Request) (string, bool)
-	AuthorizeListResource func(context.Context, string, access.ResourceRef, access.Capability) (bool, error)
-	CSRFToken             func(*http.Request) string
-	Layout                func(*http.Request) webpage.Provider
-	Environment           func(*http.Request) string
-	DataRefreshedAt       func(context.Context, string, string, string) string
-	QueryFreshness        func(context.Context, string, string, string) (api.QueryFreshness, bool)
-	AgentBootstrap        func(*http.Request, string) dashboardui.AgentBootstrap
-	AgentCommands         dashboardui.AgentCommandBindings
-	Presentation          dashboardui.Presentation
-	Assets                staticasset.Resolver
+	Metrics                    queryruntime.Metrics
+	ProjectID                  projectgraph.ResourceID
+	ResolveProjectID           func(context.Context) (projectgraph.ResourceID, error)
+	ResolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardappearance.Value, error)
+	Admission                  workload.Admitter
+	Broker                     SignalBroker
+	Logger                     *slog.Logger
+	Telemetry                  DashboardTelemetry
+	CurrentPrincipalID         func(*http.Request) string
+	CurrentUsagePrincipal      func(*http.Request) (string, bool)
+	AuthorizeListResource      func(context.Context, string, access.ResourceRef, access.Capability) (bool, error)
+	CSRFToken                  func(*http.Request) string
+	Layout                     func(*http.Request) webpage.Provider
+	Environment                func(*http.Request) string
+	DataRefreshedAt            func(context.Context, string, string, string) string
+	QueryFreshness             func(context.Context, string, string, string) (api.QueryFreshness, bool)
+	AgentBootstrap             func(*http.Request, string) dashboardui.AgentBootstrap
+	AgentCommands              dashboardui.AgentCommandBindings
+	Presentation               dashboardui.Presentation
+	Assets                     staticasset.Resolver
 }
 
 type SemanticConfig struct {
@@ -193,10 +195,11 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	telemetry := config.HTTP.Telemetry
 	handler := dashboardhttp.Handler{
-		Metrics:          config.HTTP.Metrics,
-		ProjectID:        config.HTTP.ProjectID,
-		ResolveProjectID: config.HTTP.ResolveProjectID,
-		Authoring:        config.Authoring,
+		Metrics:                    config.HTTP.Metrics,
+		ProjectID:                  config.HTTP.ProjectID,
+		ResolveProjectID:           config.HTTP.ResolveProjectID,
+		ResolveDashboardAppearance: config.HTTP.ResolveDashboardAppearance,
+		Authoring:                  config.Authoring,
 		AnalyticalContext: func(ctx context.Context) context.Context {
 			return workload.WithAdmitter(ctx, config.HTTP.Admission)
 		},
