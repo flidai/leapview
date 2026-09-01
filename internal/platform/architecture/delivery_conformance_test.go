@@ -3,7 +3,6 @@ package architecture
 import (
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -14,8 +13,11 @@ import (
 // as adversarial inputs without making them reachable.
 func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	root := repoRoot(t)
+	// build.go dispatches production to postgres_build.go. The legacy
+	// composition.go path is intentionally excluded: it remains the explicit
+	// SQLite development/evaluation fixture used by local tests.
 	productionRoots := []string{
-		"internal/deployment", "internal/app/runtimefactory", "internal/app/composition.go",
+		"internal/deployment", "internal/app/runtimefactory", "internal/app/build.go", "internal/app/postgres_build.go",
 		"internal/analytics/candidatecatalog", "internal/analytics/sealedcatalog",
 	}
 	forbidden := []string{
@@ -84,40 +86,53 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 			t.Errorf("production sealed factory missing fail-closed boundary %q", required)
 		}
 	}
-	composition, err := os.ReadFile(filepath.Join(root, "internal/app/composition.go"))
+	productionBuild, err := os.ReadFile(filepath.Join(root, "internal/app/build.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	compositionText := string(composition)
-	for _, required := range []string{"NewSQLiteSealedFactory", "LegacyServingPathEnabled: false", "ValidateDeliveryStartup"} {
-		if !strings.Contains(compositionText, required) {
-			t.Errorf("production composition missing sealed delivery/startup gate %q", required)
+	productionBuildText := string(productionBuild)
+	for _, required := range []string{"BuildProduction", "buildPostgresProductionTarget"} {
+		if !strings.Contains(productionBuildText, required) {
+			t.Errorf("production entrypoint missing PostgreSQL delivery gate %q", required)
 		}
+	}
+	if strings.Contains(productionBuildText, "NewSQLiteSealedFactory") {
+		t.Error("production entrypoint retains the legacy NewSQLiteSealedFactory")
+	}
+
+	postgresBuild, err := os.ReadFile(filepath.Join(root, "internal/app/postgres_build.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	postgresBuildText := string(postgresBuild)
+	for _, required := range []string{"NewPostgresSealedFactory", "RequireSealedCatalog: true", "ResolveSealedActiveState"} {
+		if !strings.Contains(postgresBuildText, required) {
+			t.Errorf("PostgreSQL production composition missing sealed delivery/startup gate %q", required)
+		}
+	}
+	if strings.Contains(postgresBuildText, "NewSQLiteSealedFactory") {
+		t.Error("PostgreSQL production composition retains the legacy NewSQLiteSealedFactory")
 	}
 }
 
 // TestLEA414ProductionUsesSealedCanonicalPath keeps the cutover boundary
-// explicit. Production composition must select the target-owned sealed
-// delivery factory (SQLite or native PostgreSQL), and source-only
-// synchronization cannot create a physical candidate around that boundary.
+// explicit. Production composition must select the target-owned PostgreSQL
+// sealed delivery factory; the SQLite adapter remains outside this path for
+// development/evaluation fixtures only.
 func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 	root := repoRoot(t)
-	compositionBytes, err := os.ReadFile(filepath.Join(root, "internal/app/composition.go"))
+	productionBuildBytes, err := os.ReadFile(filepath.Join(root, "internal/app/build.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	composition := string(compositionBytes)
-	for _, required := range []string{
-		"canonicalDeliveryRequired := true",
-		"NewSQLiteSealedFactory",
-		"LegacyServingPathEnabled: false",
-	} {
-		if !strings.Contains(composition, required) {
-			t.Errorf("production composition missing LEA-414 gate %q", required)
+	productionBuild := string(productionBuildBytes)
+	for _, required := range []string{"BuildProduction", "buildPostgresProductionTarget"} {
+		if !strings.Contains(productionBuild, required) {
+			t.Errorf("production entrypoint missing FAI-575 gate %q", required)
 		}
 	}
-	if !regexp.MustCompile(`RequireCanonicalDelivery:\s+canonicalDeliveryRequired`).MatchString(composition) {
-		t.Error("production composition does not require canonical delivery")
+	if strings.Contains(productionBuild, "NewSQLiteSealedFactory") {
+		t.Error("production entrypoint selects the legacy NewSQLiteSealedFactory")
 	}
 
 	postgresBuildBytes, err := os.ReadFile(filepath.Join(root, "internal/app/postgres_build.go"))
@@ -125,10 +140,13 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	postgresBuild := string(postgresBuildBytes)
-	for _, required := range []string{"NewPostgresSealedFactory", "RequireSealedCatalog: true", "ResolveSealedActiveState"} {
+	for _, required := range []string{"NewPostgresSealedFactory", "RequireSealedCatalog: true", "ResolveSealedActiveState", "NativeDeliveryMutations: nativeDelivery", "NativeDeliveryReader:    nativeDeliveryReader"} {
 		if !strings.Contains(postgresBuild, required) {
-			t.Errorf("native PostgreSQL composition missing sealed target contract %q", required)
+			t.Errorf("native PostgreSQL composition missing FAI-575 target contract %q", required)
 		}
+	}
+	if strings.Contains(postgresBuild, "NewSQLiteSealedFactory") {
+		t.Error("native PostgreSQL composition selects the legacy NewSQLiteSealedFactory")
 	}
 
 	syncBytes, err := os.ReadFile(filepath.Join(root, "internal/deployment/module/candidate_sync.go"))

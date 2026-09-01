@@ -668,9 +668,14 @@ func (p projectCatalogLeaseProvider) Acquire(ctx context.Context) (projectcatalo
 	return catalogLease, nil
 }
 
-// assemble constructs the complete process exactly once. CLI and other process
-// entrypoints provide configuration but never construct capability adapters.
-func assemble(ctx context.Context, cfg config.Config) (http.Handler, Lifecycle, cleanupFunc, error) {
+// assembleLocalSQLite constructs the explicitly local development/evaluation
+// process graph exactly once. CLI and other process entrypoints provide
+// configuration but never construct capability adapters. Non-evaluation
+// production must enter buildPostgresProductionTarget instead.
+func assembleLocalSQLite(ctx context.Context, cfg config.Config) (http.Handler, Lifecycle, cleanupFunc, error) {
+	if err := guardSQLiteAuthorityComposition(cfg.Production, cfg.EvaluationMode); err != nil {
+		return nil, nil, nil, err
+	}
 	production := cfg.Production
 	environment := servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(cfg.Environment))
 	if strings.TrimSpace(cfg.Environment) == "" {
@@ -680,10 +685,16 @@ func assemble(ctx context.Context, cfg config.Config) (http.Handler, Lifecycle, 
 			environment = servingstatemodule.DefaultEnvironment
 		}
 	}
-	return buildRuntime(ctx, cfg, production, environment)
+	return buildLocalSQLiteRuntime(ctx, cfg, production, environment)
 }
 
-func buildRuntime(ctx context.Context, cfg config.Config, production bool, environment servingstatemodule.Environment) (http.Handler, Lifecycle, cleanupFunc, error) {
+func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production bool, environment servingstatemodule.Environment) (http.Handler, Lifecycle, cleanupFunc, error) {
+	// Keep the guard on the lower-level builder as well: this function is the
+	// local graph's concrete assembly boundary and must remain safe if a future
+	// caller bypasses assembleLocalSQLite.
+	if err := guardSQLiteAuthorityComposition(production || cfg.Production, cfg.EvaluationMode); err != nil {
+		return nil, nil, nil, err
+	}
 	assets := applicationAssets(cfg, production)
 	dashboardAssets, err := dashboardmodule.BuildAssets(ctx, cfg.MapAssetDir)
 	if err != nil {
@@ -1099,7 +1110,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if err != nil {
 				return fmt.Errorf("resolve physical-pool GC project: %w", err)
 			}
-			return appruntimefactory.RunSQLiteProductionGC(gcCtx, appruntimefactory.ProductionGCRunConfig{
+			return appruntimefactory.RunSQLiteGC(gcCtx, appruntimefactory.SQLiteGCRunConfig{
 				Database: store.SQLDB(), TargetID: instanceID, ProjectID: gcProjectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
 				StagingRoot:   filepath.Join(cfg.RuntimeDir(), "gc"),
 				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
@@ -1112,7 +1123,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	}
 	{
 		var factoryErr error
-		servingFactory, factoryErr = appruntimefactory.NewSQLiteSealedFactory(appruntimefactory.ProductionSealedFactoryConfig{
+		servingFactory, factoryErr = appruntimefactory.NewSQLiteSealedFactory(appruntimefactory.SQLiteSealedFactoryConfig{
 			Database: store.SQLDB(), TargetID: instanceID, CatalogObjectRoot: cfg.ArtifactDir(),
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,

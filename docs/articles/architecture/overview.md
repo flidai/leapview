@@ -51,9 +51,17 @@ Project deployment compiles validated candidates into immutable artifacts and se
 
 ## Analytical storage
 
-The platform SQLite database owns application state: identities, grants, environments, deployments, jobs, audit history, and active serving pointers.
+Production application state lives in PostgreSQL: identities, grants,
+environments, deployments, jobs, audit history, and active serving pointers.
+SQLite remains an explicit adapter for local/evaluation fixtures; the
+documentation site's SQLite search index is separate and unchanged.
 
-One process-owned DuckDB instance is the sole client of a DuckDB-backed DuckLake catalog. DuckLake owns analytical table metadata, snapshots, schema evolution, statistics, and physical-file manifests; Parquet holds analytical data. Runtime generations produce snapshot-qualified plans and share bounded DuckDB connections for materialization and governed BI queries.
+One process-owned DuckDB instance is the sole client of the PostgreSQL-backed
+DuckLake catalog in production. Local/evaluation fixtures may use a local
+DuckLake catalog file. DuckLake owns analytical table metadata, snapshots,
+schema evolution, statistics, and physical-file manifests; Parquet holds
+analytical data. Runtime generations produce snapshot-qualified plans and
+share bounded DuckDB connections for materialization and governed BI queries.
 
 The active pointer is a LeapView concern; snapshot and file ownership are DuckLake concerns. Cleanup reconciles both before expiring metadata or deleting physical files.
 

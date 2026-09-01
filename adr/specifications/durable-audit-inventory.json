@@ -115,10 +115,10 @@
       "kind": "query-audit",
       "events": ["governed query execution and diagnostics"],
       "guarantee": "best-effort",
-      "failureBehavior": "Query results are returned; a query-event append is redacted, bounded to the local store, and its error is not allowed to change the result.",
-      "implementation": ["internal/analytics/dataquery/audit.go", "internal/dashboard/module/audited_metrics.go", "internal/analytics/queryaudit/sqlite/repository.go"],
+      "failureBehavior": "Query results are returned; the bounded, redacted PostgreSQL query-event append is durable when it succeeds, and its error is not allowed to change the result.",
+      "implementation": ["internal/analytics/dataquery/audit.go", "internal/dashboard/module/audited_metrics.go", "internal/analytics/queryaudit/postgres/repository.go"],
       "contractSources": ["internal/analytics/queryaudit/queryaudit.go"],
-      "evidence": ["internal/analytics/dataquery/audit_test.go", "internal/analytics/queryaudit/sqlite/repository_test.go"]
+      "evidence": ["internal/analytics/dataquery/audit_test.go", "internal/analytics/queryaudit/postgres/repository_test.go"]
     },
     {
       "id": "connection.binding-administration",

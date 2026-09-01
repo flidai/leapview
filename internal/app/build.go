@@ -2,9 +2,27 @@ package app
 
 import (
 	"context"
+	"errors"
 
 	"github.com/flidai/leapview/internal/app/config"
 )
+
+// errSQLiteAuthorityProduction identifies an attempt to enter the local
+// SQLite application graph for a non-evaluation production instance. Native
+// PostgreSQL composition is the only supported production graph; development
+// and the explicitly isolated evaluation profile retain local authority.
+var errSQLiteAuthorityProduction = errors.New("SQLite application authority is unavailable for non-evaluation production")
+
+// guardSQLiteAuthorityComposition is the structural admission gate for the
+// local application graph. Keep this guard at the graph boundary so
+// callers cannot accidentally open a SQLite store (or create local state)
+// before production has been rejected.
+func guardSQLiteAuthorityComposition(production, evaluation bool) error {
+	if production && !evaluation {
+		return errSQLiteAuthorityProduction
+	}
+	return nil
+}
 
 // Build is the sole process assembly entrypoint. Capability construction is
 // exposed through module surfaces; Application retains only the final HTTP
@@ -13,7 +31,7 @@ func Build(ctx context.Context, cfg config.Config) (*Application, error) {
 	if cfg.Production && !cfg.EvaluationMode {
 		return BuildProduction(ctx, cfg)
 	}
-	handler, lifecycle, cleanup, err := assemble(ctx, cfg)
+	handler, lifecycle, cleanup, err := assembleLocalSQLite(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}

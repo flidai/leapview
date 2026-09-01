@@ -1,7 +1,7 @@
 package app
 
 // Native PostgreSQL process composition.  This file intentionally keeps the
-// graph assembly separate from the legacy SQLite buildRuntime path: a
+// graph assembly separate from the local SQLite buildLocalSQLiteRuntime path: a
 // production process must never open database/sql or infer a fallback store.
 
 import (

@@ -280,6 +280,9 @@ func (c Config) ValidatePostgresProduction() error {
 	if !c.Production {
 		return nil
 	}
+	if strings.TrimSpace(c.DuckLakeCatalog) != "" {
+		return errors.New("production serve rejects LEAPVIEW_DUCKLAKE_CATALOG_PATH; DuckLake catalog authority is PostgreSQL")
+	}
 	if strings.TrimSpace(c.PostgresControlURL) == "" {
 		return errors.New("production serve requires LEAPVIEW_POSTGRES_CONTROL_URL")
 	}

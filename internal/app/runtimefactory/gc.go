@@ -19,7 +19,7 @@ import (
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 )
 
-type ProductionGCRunConfig struct {
+type SQLiteGCRunConfig struct {
 	Database      *sql.DB
 	TargetID      string
 	ProjectID     string
@@ -34,13 +34,14 @@ type ProductionGCRunConfig struct {
 	ReaderGrace   time.Duration
 }
 
-// RunSQLiteProductionGC resolves the currently active delivery root and runs
+// RunSQLiteGC resolves the currently active delivery root for an explicitly
+// local development/evaluation target and runs
 // one global mark-and-sweep pass for its admitted physical pool. A missing
 // active generation is a normal pre-deployment no-op; all storage and catalog
 // errors are returned for degraded health and retry.
-func RunSQLiteProductionGC(ctx context.Context, config ProductionGCRunConfig) error {
+func RunSQLiteGC(ctx context.Context, config SQLiteGCRunConfig) error {
 	if config.Database == nil || config.TargetID == "" || config.Environment == "" || config.OwnerID == "" || config.HolderID == "" {
-		return fmt.Errorf("production GC database, target, scope, and holder are required")
+		return fmt.Errorf("SQLite GC database, target, scope, and holder are required")
 	}
 	delivery := deploymentsqlite.NewRepositoryWithHooks(config.Database, deploymentsqlite.ActivationHooks{})
 	pools := physicalpoolsqlite.NewRepository(config.Database)

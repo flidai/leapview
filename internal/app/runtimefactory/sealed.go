@@ -1,9 +1,10 @@
 package runtimefactory
 
-// Production sealed-catalog serving adapter. This file deliberately keeps
-// delivery persistence behind a callback: composition owns the SQLite
-// repository and object-store credentials, while this package only receives
-// one exact immutable root and opens it read-only.
+// Local SQLite sealed-catalog serving adapter. This file deliberately keeps
+// delivery persistence behind a callback: development/evaluation composition
+// owns the SQLite repository and object-store credentials, while this package
+// only receives one exact immutable root and opens it read-only. Production
+// serving uses the PostgreSQL adapter in postgres.go.
 
 import (
 	"context"
@@ -118,11 +119,11 @@ type SealedAuthorizationInput struct {
 	OwnerID      string
 }
 
-// ProductionSealedFactoryConfig contains composition-owned capabilities for
-// the SQLite-backed production adapter. Keeping this constructor here avoids
-// making the process composition root depend directly on deployment and
-// physical-pool storage packages.
-type ProductionSealedFactoryConfig struct {
+// SQLiteSealedFactoryConfig contains composition-owned capabilities for the
+// local SQLite adapter. Keeping this constructor here avoids making
+// development/evaluation composition depend directly on deployment and
+// physical-pool storage packages; production uses PostgresSealedFactoryConfig.
+type SQLiteSealedFactoryConfig struct {
 	Database              *sql.DB
 	TargetID              string
 	CatalogObjectRoot     string
@@ -137,12 +138,13 @@ type ProductionSealedFactoryConfig struct {
 	ActivationEvidence    ActivationEvidenceSource
 }
 
-// NewSQLiteSealedFactory builds the fail-closed production serving factory
-// from durable delivery and physical-pool repositories. No process-wide
-// mutable DuckLake environment is opened by this adapter.
-func NewSQLiteSealedFactory(config ProductionSealedFactoryConfig) (runtimehost.RuntimeFactory, error) {
+// NewSQLiteSealedFactory builds the fail-closed local serving factory from
+// durable delivery and physical-pool repositories. It is available only to
+// development/evaluation composition; production uses NewPostgresSealedFactory.
+// No process-wide mutable DuckLake environment is opened by this adapter.
+func NewSQLiteSealedFactory(config SQLiteSealedFactoryConfig) (runtimehost.RuntimeFactory, error) {
 	if config.Database == nil || config.TargetID == "" || config.ProjectRuntimeFactory == nil || config.Authorize == nil {
-		return nil, fmt.Errorf("sealed serving production database, target, project runtime factory, and authorization are required")
+		return nil, fmt.Errorf("SQLite sealed serving database, target, project runtime factory, and authorization are required")
 	}
 	delivery := deploymentsqlite.NewRepositoryWithHooks(config.Database, deploymentsqlite.ActivationHooks{})
 	pools := physicalpoolsqlite.NewRepository(config.Database)

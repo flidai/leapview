@@ -1398,7 +1398,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/access/sqlite/accessdb",
 		"internal/admin/sqlite/retentiondb",
 		"internal/agent/sqlite/agentdb",
-		"internal/analytics/queryaudit/sqlite/querydb",
 		"internal/deployment/sqlite/deploymentdb",
 		"internal/manageddata/sqlite/manageddb",
 		"internal/refresh/sqlite/materializedb",
@@ -2194,10 +2193,9 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 		"internal/project/sqlite":               true,
 	}
 	generatedOnlyFiles := map[string]bool{
-		"internal/access/sqlite/api_symmetry.go":             true,
-		"internal/access/sqlite/authorization.go":            true,
-		"internal/refresh/sqlite/runs.go":                    true,
-		"internal/analytics/queryaudit/sqlite/repository.go": true,
+		"internal/access/sqlite/api_symmetry.go":  true,
+		"internal/access/sqlite/authorization.go": true,
+		"internal/refresh/sqlite/runs.go":         true,
 	}
 	for _, file := range productionGoFiles(t) {
 		if !generatedOnly[file.pkgDir] && !generatedOnlyFiles[file.path] {
@@ -2315,7 +2313,7 @@ func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
 	require.NoError(t, err)
 	config := string(body)
 	start := strings.Index(config, `queries: "internal/platform/db/queries"`)
-	end := strings.Index(config, `"internal/analytics/queryaudit/sqlite/queries"`)
+	end := strings.Index(config, `queries: "internal/admin/sqlite/queries"`)
 	if start < 0 || end < 0 || end <= start {
 		t.Fatal("platform sqlc generation block is missing")
 	}
@@ -2349,7 +2347,6 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/refresh/sqlite/runqueries/materialization.sql",
 		"internal/platform/jobs/sqlite/queries/async_job.sql",
 		"internal/platform/db/queries/platform.sql",
-		"internal/analytics/queryaudit/sqlite/queries/query_history.sql",
 		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
 		"internal/release/sqlite/queries/release.sql",
 		"internal/servingstate/sqlite/queries/serving_state.sql",
@@ -4402,9 +4399,10 @@ func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 	}
 	text := string(spec)
 	for _, want := range []string{
+		"Production deployments use one PostgreSQL control plane",
 		"one process-owned DuckDB `DatabaseInstance`",
-		"leapview.db               # node-local control-plane state",
-		"ducklake/catalog.duckdb   # DuckDB-backed DuckLake metadata catalog",
+		"leapview.db               # local/evaluation SQLite control-plane fixture",
+		"ducklake/catalog.duckdb   # local DuckDB-backed DuckLake metadata catalog",
 		"Every physical relation in a serving plan",
 		"AT (VERSION => 42)",
 		"Runtime retirement closes generation-scoped cache state",
@@ -4414,6 +4412,7 @@ func TestStorageArchitectureSpecDocumentsProcessOwnedDuckDB(t *testing.T) {
 		}
 	}
 	for _, forbidden := range []string{
+		"ducklake/catalog.sqlite",
 		"ducklake:sqlite:",
 		"PostgreSQL as the server/multi-user DuckLake catalog backend",
 		"one DuckDB file per semantic model",

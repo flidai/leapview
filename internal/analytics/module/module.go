@@ -46,9 +46,9 @@ type Config struct {
 	// authority injected through ConnectionBindings.
 	LegacySQLite bool
 	Production   bool
-	// QueryAuditStore is the explicit capability-owned query-audit
-	// authority. SQLite fixtures may wrap their database and pass that adapter;
-	// production wiring supplies the native PostgreSQL repository.
+	// QueryAuditStore is the explicit capability-owned query-audit authority.
+	// Test fixtures may inject an in-memory implementation; production wiring
+	// supplies the native PostgreSQL repository.
 	QueryAuditStore queryaudit.Store
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port
 	// consumed by connection-binding SQLite mutations.
@@ -89,7 +89,7 @@ type postgresConnectionBindingAuthority interface {
 }
 
 // postgresQueryAuditAuthority is the production query-audit seam. The
-// storage-neutral queryaudit.Store remains available to SQLite fixtures, but
+// storage-neutral queryaudit.Store remains available to test fixtures, but
 // native analytics composition must prove that its implementation is the
 // configured PostgreSQL authority.
 type postgresQueryAuditAuthority interface {
