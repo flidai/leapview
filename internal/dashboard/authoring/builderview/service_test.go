@@ -121,6 +121,29 @@ func TestBuildHidesArchiveWhenManageAuthorizationIsDenied(t *testing.T) {
 	}
 }
 
+func TestBuildProjectsAuthoredDashboardAppearance(t *testing.T) {
+	f := newBuilderFixture(t)
+	doc := f.revision.Document
+	icon := "chart-no-axes-combined"
+	color := document.DashboardAppearanceColorOrange
+	doc.Spec.Appearance = &document.DashboardAppearance{Icon: &icon, Color: &color}
+	revision, err := authoring.NewRevision("revision-appearance", "sales", 7, f.revision.CreatedAt, doc, f.revision.Provenance)
+	if err != nil {
+		t.Fatal(err)
+	}
+	f.revision = revision
+	f.repository.lifecycle.Draft.Revision = revision.Token()
+	f.repository.revisions = map[authoring.RevisionID]authoring.Revision{revision.ID: revision}
+
+	signal, err := f.service.Build(t.Context(), Request{ProjectID: "project", ActorID: "actor", DashboardID: "sales"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signal.Appearance.Icon != icon || signal.Appearance.Color != "orange" {
+		t.Fatalf("appearance = %#v", signal.Appearance)
+	}
+}
+
 func TestCanonicalSlotsIncludesPivotRowsAndColumns(t *testing.T) {
 	row, column, metric := "category", "purchase_month", "revenue"
 	slots, err := canonicalSlots(document.DashboardQuery{Value: &document.PivotDashboardQuery{

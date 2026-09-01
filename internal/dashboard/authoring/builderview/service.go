@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	"github.com/flidai/leapview/internal/dashboard/authoring"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
@@ -250,7 +251,7 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 	}
 	signal := uisignals.DashboardBuilderSignal{
 		DashboardID: lifecycle.ID.String(), DraftID: draftID,
-		Revision: revisionValue, Title: lifecycle.Title, Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
+		Revision: revisionValue, Title: lifecycle.Title, Appearance: projectAppearance(revision.Document), Lifecycle: string(lifecycle.Status), Visibility: string(lifecycle.Visibility),
 		HasUnpublishedChanges: dirty, Origin: originSignal(revision.Provenance), SourceEvidence: sourceEvidence,
 		SemanticModel: semantic, VisualCatalog: projectVisualCatalog(), Filters: projectFilters(revision.Document), Pages: pages, Capabilities: capabilities, Diagnostics: diagnostics,
 		Preview: uisignals.DashboardBuilderPreviewStateSignal{Active: false, Mode: "draft", Loading: false},
@@ -263,6 +264,19 @@ func project(request Request, lifecycle authoring.DashboardLifecycle, revision a
 		signal.SelectedVisualID = &selectedVisualID
 	}
 	return signal, nil
+}
+
+func projectAppearance(document dashboarddocument.DashboardDocument) uisignals.DashboardBuilderAppearanceSignal {
+	appearance := dashboardappearance.Default()
+	if authored := document.Spec.Appearance; authored != nil {
+		if authored.Icon != nil && strings.TrimSpace(*authored.Icon) != "" {
+			appearance.Icon = strings.TrimSpace(*authored.Icon)
+		}
+		if authored.Color != nil && strings.TrimSpace(string(*authored.Color)) != "" {
+			appearance.Color = strings.TrimSpace(string(*authored.Color))
+		}
+	}
+	return uisignals.DashboardBuilderAppearanceSignal{Icon: appearance.Icon, Color: appearance.Color}
 }
 
 func projectFilters(authored dashboarddocument.DashboardDocument) []uisignals.DashboardBuilderFilterSignal {

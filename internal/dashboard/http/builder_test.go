@@ -19,6 +19,7 @@ import (
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	"github.com/flidai/leapview/internal/dashboard/authoring/sourceadapter"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
+	"github.com/flidai/leapview/internal/dashboard/document"
 	dashboardfilter "github.com/flidai/leapview/internal/dashboard/filter"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
@@ -424,6 +425,44 @@ func TestDashboardBuilderCommandTranslatesSmartVisualField(t *testing.T) {
 	}
 	if fake.executed.AddVisual == nil || fake.executed.AddVisual.Type != "kpi" || fake.executed.AddVisual.FieldID != "revenue" || fake.executed.AddVisual.Role != authoring.FieldRoleMetric {
 		t.Fatalf("smart visual command = %#v", fake.executed)
+	}
+}
+
+func TestDashboardBuilderCommandTranslatesDashboardAppearanceAsAuthoredMetadata(t *testing.T) {
+	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"action": "update_appearance", "icon": "chart-no-axes-combined", "color": "orange",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "appearance-1")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusOK {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
+	}
+	if fake.executeCalls != 1 || fake.intentCalls != 0 || fake.executed.Metadata == nil || fake.executed.Metadata.Appearance == nil {
+		t.Fatalf("dispatch calls=%d/%d command=%#v", fake.executeCalls, fake.intentCalls, fake.executed)
+	}
+	appearance := fake.executed.Metadata.Appearance
+	if appearance.Icon == nil || *appearance.Icon != "chart-no-axes-combined" || appearance.Color == nil || *appearance.Color != document.DashboardAppearanceColorOrange {
+		t.Fatalf("appearance = %#v", appearance)
+	}
+}
+
+func TestDashboardBuilderCommandRejectsInvalidDashboardAppearance(t *testing.T) {
+	handler := Handler{Authoring: &builderAuthoringFake{}, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
+		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": "sha256:" + strings.Repeat("a", 64),
+		"action": "update_appearance", "icon": "not-a-real-icon", "color": "ultraviolet",
+	}})
+	req.Header.Set("X-LeapView-Operation-ID", dashboardBuilderOperationID)
+	req.Header.Set("X-Request-ID", "appearance-invalid")
+	recorder := httptest.NewRecorder()
+	handler.DashboardBuilderCommand(recorder, withBuilderURLParams(req, "sales", "revenue"))
+	if recorder.Code != nethttp.StatusBadRequest {
+		t.Fatalf("status = %d body = %s", recorder.Code, recorder.Body.String())
 	}
 }
 

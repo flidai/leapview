@@ -28,6 +28,7 @@ import type {
 } from '../../generated/signals'
 import type { VisualizationEnvelope } from '../../generated/visualization'
 import { DatastarLit } from '../shared/datastar-lit'
+import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 import { lucideIcon } from '../shared/lucide-icons'
 import { checkSignalContract } from '../shared/signal-contract'
 import { browserCommandFailure, ownsBrowserCommandFetch, type BrowserCommandFailure } from '../shared/command-failure'
@@ -37,6 +38,7 @@ import { renderVisualTypeIcon } from './visual-type-icon'
 import './filters/filter-control'
 import { DashboardFilterController } from './filters/filter-controller'
 import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/filter-control'
+import '../app/dashboard-icon-picker'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -153,6 +155,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private interactionEffectOverrides: Record<string, BuilderInteractionEffect> = {}
   @state() private terminalFailure: BrowserCommandFailure | null = null
   @state() private collapsedPanes: Record<BuilderPane, boolean> = { ...defaultCollapsedPanes }
+  @state() private appearanceOpen = false
   private commandPending = false
   private activeCommandAction = ''
   private interactionOverridesRevision = ''
@@ -294,6 +297,40 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       margin-right: auto;
     }
 
+    .appearance-control {
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .appearance-trigger {
+      display: grid;
+      width: var(--control-medium-size);
+      min-height: var(--control-medium-size);
+      place-items: center;
+      padding: 0;
+      border-color: var(--display-purple-borderColor-muted, var(--lv-border-muted));
+      background: var(--display-purple-bgColor-muted, var(--lv-bg-panel-muted));
+      color: var(--display-purple-fgColor, var(--lv-fg-default));
+    }
+
+    .appearance-trigger.appearance-color-gray { border-color: var(--display-gray-borderColor-muted, var(--lv-border-muted)); background: var(--display-gray-bgColor-muted); color: var(--display-gray-fgColor); }
+    .appearance-trigger.appearance-color-blue { border-color: var(--display-blue-borderColor-muted, var(--lv-border-muted)); background: var(--display-blue-bgColor-muted); color: var(--display-blue-fgColor); }
+    .appearance-trigger.appearance-color-green { border-color: var(--display-green-borderColor-muted, var(--lv-border-muted)); background: var(--display-green-bgColor-muted); color: var(--display-green-fgColor); }
+    .appearance-trigger.appearance-color-yellow { border-color: var(--display-yellow-borderColor-muted, var(--lv-border-muted)); background: var(--display-yellow-bgColor-muted); color: var(--display-yellow-fgColor); }
+    .appearance-trigger.appearance-color-orange { border-color: var(--display-orange-borderColor-muted, var(--lv-border-muted)); background: var(--display-orange-bgColor-muted); color: var(--display-orange-fgColor); }
+    .appearance-trigger.appearance-color-red { border-color: var(--display-red-borderColor-muted, var(--lv-border-muted)); background: var(--display-red-bgColor-muted); color: var(--display-red-fgColor); }
+    .appearance-trigger.appearance-color-purple { border-color: var(--display-purple-borderColor-muted, var(--lv-border-muted)); background: var(--display-purple-bgColor-muted); color: var(--display-purple-fgColor); }
+    .appearance-trigger.appearance-color-pink { border-color: var(--display-pink-borderColor-muted, var(--lv-border-muted)); background: var(--display-pink-bgColor-muted); color: var(--display-pink-fgColor); }
+    .appearance-trigger.appearance-color-coral { border-color: var(--display-coral-borderColor-muted, var(--lv-border-muted)); background: var(--display-coral-bgColor-muted); color: var(--display-coral-fgColor); }
+
+    .appearance-popover {
+      position: absolute;
+      z-index: 5;
+      top: calc(100% + var(--base-size-8));
+      left: 0;
+      width: min(22.5rem, calc(100vw - var(--base-size-16)));
+    }
+
     .title {
       margin: 0;
       overflow: hidden;
@@ -334,6 +371,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       display: flex;
       align-items: center;
       gap: 0.4rem;
+    }
+
+    @media (max-width: 640px) {
+      .appearance-popover {
+        position: fixed;
+        top: calc(var(--control-medium-size) + var(--base-size-16));
+        right: var(--base-size-8);
+        left: var(--base-size-8);
+        width: auto;
+      }
     }
 
     .icon-action,
@@ -2715,9 +2762,27 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         ? previewValidation
       : !builder.hasUnpublishedChanges ? 'This revision is already published' : 'Publish this dashboard revision'
     const hasMoreActions = builder.capabilities.canShare || builder.capabilities.canExport || builder.capabilities.canArchive || Boolean(this.forkHref)
+    const appearanceColor = dashboardAppearanceColor(builder.appearance.color)
     return html`
       <header class="toolbar">
         ${this.backHref ? html`<a class="back" href=${this.backHref} aria-label="Back to dashboards">Back</a>` : html`<span class="back" aria-label="Back to dashboards">Back</span>`}
+        <div class="appearance-control">
+          <button
+            type="button"
+            class=${`appearance-trigger appearance-color-${appearanceColor}`}
+            data-builder-action="appearance"
+            data-appearance-color=${appearanceColor}
+            aria-label="Change dashboard icon and color"
+            aria-expanded=${this.appearanceOpen}
+            ?disabled=${!builder.capabilities.canEdit || this.commandPending}
+            @click=${() => { this.appearanceOpen = !this.appearanceOpen }}
+          >${lucideIcon(lucideIconByCanonicalName(builder.appearance.icon), { size: 17, strokeWidth: 1.8 })}</button>
+          ${this.appearanceOpen ? html`
+            <div class="appearance-popover" @lv-dashboard-appearance-select=${this.updateDashboardAppearance}>
+              <lv-dashboard-icon-picker .icon=${builder.appearance.icon} .color=${builder.appearance.color} .label=${builder.title}></lv-dashboard-icon-picker>
+            </div>
+          ` : nothing}
+        </div>
         <div class="title-wrap">
           <h1 class="title">${builder.title}</h1>
           <div class="meta" data-state=${builder.hasUnpublishedChanges || saveState === 'dirty' ? 'dirty' : saveState} aria-label="Dashboard draft status" aria-live="polite" title=${`${builder.origin.label} · Revision ${builder.revision.number} · ${builder.revision.id}`}>
@@ -3916,6 +3981,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!builder?.capabilities.canShare) return
     this.emitCommand('set_visibility', { visibility: builder.visibility === 'organization' ? 'private' : 'organization' })
   }
+
+  private updateDashboardAppearance = (event: CustomEvent<{ icon?: string; color?: string }>): void => {
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit || this.commandPending) return
+    const reset = event.detail.icon === 'default' || event.detail.color === 'default'
+    const icon = reset ? 'layout-dashboard' : event.detail.icon ?? builder.appearance.icon
+    const color = reset ? 'purple' : event.detail.color ?? builder.appearance.color
+    if (icon === builder.appearance.icon && color === builder.appearance.color) return
+    this.visualActionMessage = 'Saving dashboard icon and color.'
+    this.emitCommand('update_appearance', { icon, color })
+  }
+
   private publish = (): void => {
     const builder = this.builder
     if (!builder?.capabilities.canPublish || !builder.hasUnpublishedChanges || builder.diagnostics.some((item) => item.severity === 'error') || this.previewValidationMessage(builder) || this.commandPending) return
@@ -4931,6 +5008,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private titleCase(value: string): string {
     return value.length === 0 ? value : `${value[0].toUpperCase()}${value.slice(1)}`
   }
+}
+
+function dashboardAppearanceColor(value: string): string {
+  return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'
 }
 
 if (!customElements.get('lv-dashboard-builder')) customElements.define('lv-dashboard-builder', LeapViewDashboardBuilder)
