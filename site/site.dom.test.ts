@@ -90,12 +90,7 @@ test('site explains the product, its workflow, and where it fits in the data sta
     expect(await lightProductScreenshot.isVisible()).toBe(true)
     expect(await darkProductScreenshot.isVisible()).toBe(false)
     expect(await page.locator('.site-product-caption').count()).toBe(0)
-    const agentPreview = page.locator('.site-agent-preview')
-    expect(await agentPreview.count()).toBe(1)
-    expect(await agentPreview.getByText('Why did revenue fall in October?', { exact: true }).count()).toBe(1)
-    expect(await agentPreview.getByText('21.4%', { exact: true }).count()).toBe(1)
-    expect(await agentPreview.getByText('Verified against the sales semantic model', { exact: true }).count()).toBe(1)
-    expect(await agentPreview.locator('.site-agent-evidence li').count()).toBe(3)
+    expect(await page.locator('.site-agent-preview').count()).toBe(0)
     const productFrameCenter = await page.locator('.site-product-frame').evaluate((element) => {
       const rect = element.getBoundingClientRect()
       return { frame: rect.left + rect.width / 2, viewport: window.innerWidth / 2 }

@@ -3,7 +3,6 @@ import { state } from 'lit/decorators.js'
 import {
   ArrowLeft,
   BookOpen,
-  ChevronRight,
   ExternalLink,
   RefreshCw,
   Search,
@@ -28,6 +27,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { loadDatastarRuntime } from '../shared/datastar-runtime'
 import { lucideIcon } from '../shared/lucide-icons'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
+import { breadcrumbStyles, renderBreadcrumb, type BreadcrumbItem } from '../shared/breadcrumb'
 import '../shared/entity-list'
 import '../shared/loading-spinner'
 import '../shared/record-table'
@@ -110,7 +110,7 @@ class LeapViewProjectPage extends DatastarLit(LitElement) {
   private lastPageKey = ''
 
   static get styles() {
-    return [pageHeaderStyles, projectStyles]
+    return [pageHeaderStyles, projectStyles, breadcrumbStyles]
   }
 
   updated(): void {
@@ -166,7 +166,7 @@ class LeapViewProjectPage extends DatastarLit(LitElement) {
 
 class LeapViewConnectionsPage extends DatastarLit(LitElement) {
   static get styles() {
-    return [pageHeaderStyles, projectStyles]
+    return [pageHeaderStyles, projectStyles, breadcrumbStyles]
   }
 
   updated(): void {
@@ -235,7 +235,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   private pushedAssetVersionDrawerEntry = false
 
   static get styles() {
-    return [projectStyles]
+    return [projectStyles, breadcrumbStyles]
   }
 
   override connectedCallback(): void {
@@ -956,31 +956,24 @@ function renderRecordTableSection(title: string, table?: RecordTableSignal) {
 }
 
 function renderAssetBreadcrumb(page: ResourceAssetPageSignal) {
-  return html`
-    <nav aria-label="Breadcrumb">
-      <ol>
-        ${page.breadcrumbs.map((crumb, index) => html`
-          ${index > 0 ? html`
-            <li class="breadcrumb-separator" aria-hidden="true">
-              ${lucideIcon(ChevronRight, { size: 14, strokeWidth: 1.75 })}
-            </li>
-          ` : nothing}
-          <li>
-            ${crumb.current
-              ? html`<h1>${assetTypeGlyph(page.asset.type, 'breadcrumb')}<span>${crumb.label}</span></h1>`
-              : html`<a href=${crumb.href}>${crumb.label}</a>`}
-          </li>
-        `)}
-      </ol>
-    </nav>
-  `
+  return renderBreadcrumb(page.breadcrumbs.flatMap<BreadcrumbItem>((crumb) => {
+    if (crumb.current) {
+      return [{
+        label: crumb.label,
+        current: true as const,
+        prefix: assetTypeGlyph(page.asset.type, 'breadcrumb'),
+      }]
+    }
+    if (!crumb.href) return []
+    return [{ label: crumb.label, href: crumb.href }]
+  }))
 }
 
 function assetTypeGlyph(type: string, size: 'table' | 'inline' | 'breadcrumb' = 'table') {
   const presentation = assetPresentation(type)
   const iconSize = size === 'inline' ? 14 : 16
   return html`
-    <span class=${`asset-glyph asset-kind-${presentation.token} ${size === 'table' ? '' : size}`} aria-hidden="true">
+    <span class=${`asset-glyph asset-kind-${presentation.token} ${size === 'table' ? '' : size}${size === 'breadcrumb' ? ' breadcrumb-glyph' : ''}`} aria-hidden="true">
       ${lucideIcon(presentation.icon, { size: iconSize, strokeWidth: 1.75 })}
     </span>
   `
@@ -1360,13 +1353,6 @@ const projectStyles = css`
     height: var(--base-size-20);
   }
 
-  .asset-glyph.breadcrumb {
-    width: var(--base-size-16);
-    height: var(--base-size-16);
-    border: 0;
-    background: transparent;
-  }
-
   .asset-kind-catalog {
     background: var(--lv-asset-catalog-bg, var(--lv-bg-panel-muted));
     border-color: var(--lv-asset-catalog-border, var(--lv-line-muted));
@@ -1442,44 +1428,6 @@ const projectStyles = css`
   .empty {
     color: var(--lv-fg-muted);
     padding: var(--base-size-12);
-    font: var(--lv-type-body);
-  }
-
-  .breadcrumb-header ol {
-    display: flex;
-    min-width: 0;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: var(--base-size-4);
-    margin: 0;
-    padding: 0;
-    list-style: none;
-    font: var(--lv-type-body);
-  }
-
-  .breadcrumb-header ol > li {
-    display: inline-flex;
-    min-width: 0;
-    align-items: center;
-  }
-
-  .breadcrumb-separator {
-    display: inline-flex;
-    align-items: center;
-    color: var(--lv-fg-muted);
-  }
-
-  .breadcrumb-header nav a {
-    color: var(--lv-fg-default);
-    text-decoration: none;
-  }
-
-  .breadcrumb-header h1 {
-    display: inline-flex;
-    min-width: 0;
-    align-items: center;
-    gap: var(--base-size-8);
-    color: var(--lv-fg-default);
     font: var(--lv-type-body);
   }
 

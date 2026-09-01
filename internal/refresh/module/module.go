@@ -39,6 +39,17 @@ type Scheduler interface {
 	DispatchDue(context.Context) error
 }
 
+// PublishedDataVersion is the durable data snapshot established by the
+// canonical publication that activated one serving generation. It provides
+// the baseline freshness before that generation has completed a later
+// semantic-model refresh.
+type PublishedDataVersion struct {
+	SnapshotID  int64
+	RefreshedAt time.Time
+}
+
+type PublishedDataVersionResolver func(context.Context, projectgraph.ServingIdentity) (PublishedDataVersion, bool, error)
+
 type Config struct {
 	Database            *sql.DB
 	ApplyAccessSnapshot func(context.Context, transaction.Transaction, string) error
@@ -51,6 +62,7 @@ type Config struct {
 	Admission           workload.Admitter
 	LeaseTimeout        time.Duration
 	ResolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
+	PublishedVersion    PublishedDataVersionResolver
 	WorkloadStats       func() workload.Stats
 	RunFinished         func(context.Context, refreshrun.RunRecord)
 	Events              EventStore
@@ -105,6 +117,7 @@ type Module struct {
 	durableAudit       bool
 	refreshExecution   apigencommand.AsyncExecutionContract
 	resolveIdentity    func(context.Context) (projectgraph.ServingIdentity, error)
+	publishedVersion   PublishedDataVersionResolver
 	recoveryLifecycle  *RecoveryLifecycle
 	recoveryInterval   time.Duration
 
@@ -160,6 +173,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		durableAudit:      config.AuditIntentRecorder != nil,
 		refreshExecution:  refreshExecution,
 		resolveIdentity:   config.ResolveIdentity,
+		publishedVersion:  config.PublishedVersion,
 		recoveryLifecycle: config.RecoveryLifecycle, recoveryInterval: recoveryInterval,
 	}
 	m.handler.CurrentPrincipal = func(r *http.Request) (materializehttp.Principal, bool) {
@@ -422,7 +436,7 @@ func (m *Module) DataVersion(ctx context.Context, projectID, environment, modelI
 	if err != nil {
 		return AssetDataVersion{}, false, err
 	}
-	version, found, err := m.schedules.DataVersion(ctx, identity, model)
+	version, found, err := m.dataVersionForIdentity(ctx, identity, model)
 	if err != nil || !found {
 		return AssetDataVersion{}, found, err
 	}
@@ -472,7 +486,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	if ok {
 		state.LatestSuccessful = assetRefreshRun(latest)
 	}
-	if m.schedules == nil || m.service.ServingStates == nil {
+	if m.schedules == nil {
 		return state, nil
 	}
 	identity, err := m.activeServingIdentity(ctx, projectID, environment)
@@ -490,7 +504,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	if err := modelID.Validate(); err != nil {
 		return state, err
 	}
-	if version, ok, err := m.schedules.DataVersion(ctx, identity, modelID); err != nil {
+	if version, ok, err := m.dataVersionForIdentity(ctx, identity, modelID); err != nil {
 		return state, err
 	} else if ok {
 		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
@@ -578,15 +592,62 @@ func (m *Module) SemanticModelRefreshState(ctx context.Context, projectID projec
 	if ok {
 		state.LatestSuccessful = assetRefreshRun(latest)
 	}
+	if m.schedules == nil {
+		return state, nil
+	}
+	identity, err := m.activeServingIdentity(ctx, projectID, environment)
+	if err != nil {
+		return state, err
+	}
+	if version, found, err := m.dataVersionForIdentity(ctx, identity, semanticModelID); err != nil {
+		return state, err
+	} else if found {
+		state.DataVersion = AssetDataVersion{SnapshotID: version.SnapshotID, ServingStateID: version.Identity.GenerationID, RefreshedAt: version.RefreshedAt, Source: version.Source}
+	}
 	return state, nil
 }
 
 func (m *Module) activeServingIdentity(ctx context.Context, projectID projectgraph.ResourceID, environment string) (projectgraph.ServingIdentity, error) {
+	if m.resolveIdentity != nil {
+		identity, err := m.resolveIdentity(ctx)
+		if err != nil {
+			return projectgraph.ServingIdentity{}, err
+		}
+		if identity.ProjectID != projectID || identity.Environment != environment {
+			return projectgraph.ServingIdentity{}, fmt.Errorf("active refresh identity does not match requested scope")
+		}
+		return identity, nil
+	}
+	if m.service.ServingStates == nil {
+		return projectgraph.ServingIdentity{}, errors.New("active serving state is unavailable")
+	}
 	state, _, err := m.service.ServingStates.ActiveArtifact(ctx, projectID, servingstate.Environment(environment))
 	if err != nil {
 		return projectgraph.ServingIdentity{}, err
 	}
 	return projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
+}
+
+func (m *Module) dataVersionForIdentity(ctx context.Context, identity projectgraph.ServingIdentity, modelID projectgraph.ResourceID) (refreshschedule.DataVersion, bool, error) {
+	if m == nil || m.schedules == nil {
+		return refreshschedule.DataVersion{}, false, nil
+	}
+	version, found, err := m.schedules.DataVersion(ctx, identity, modelID)
+	if err != nil || found || m.publishedVersion == nil {
+		return version, found, err
+	}
+	published, found, err := m.publishedVersion(ctx, identity)
+	if err != nil || !found {
+		return refreshschedule.DataVersion{}, found, err
+	}
+	if published.SnapshotID <= 0 || published.RefreshedAt.IsZero() {
+		return refreshschedule.DataVersion{}, false, errors.New("canonical publication data version is incomplete")
+	}
+	return refreshschedule.DataVersion{
+		Identity: identity, SemanticModelID: modelID,
+		SnapshotID: published.SnapshotID, RefreshedAt: published.RefreshedAt.UTC(),
+		Source: refreshschedule.DataVersionSourcePublish,
+	}, true, nil
 }
 
 func assetRefreshRun(run refreshrun.RunRecord) AssetRefreshRun {
