@@ -515,6 +515,9 @@ tests:
       - eval_time: 6h
         alertname: LeapViewDashboardRefreshSlowBurn
         exp_alerts: []
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts: []
 
   - name: missing dashboard refresh traffic does not fire
     interval: 1m
@@ -526,3 +529,241 @@ tests:
       - eval_time: 6h
         alertname: LeapViewDashboardRefreshSlowBurn
         exp_alerts: []
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts: []
+
+  - name: healthy dashboard refresh latency does not alert
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0+5x60'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+5x60'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 0
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts: []
+
+  - name: dashboard refresh latency five-minute spike alone does not fire
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0+10x60'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+10x56 573+13x3'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m >= bool 14.4'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h < bool 14.4'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{instance="app:8080",job="leapview"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts: []
+
+  - name: dashboard refresh latency fast burn recovers when only one-hour degradation remains
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0+4x55 225+5x4'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+5x60'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m < bool 14.4'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h >= bool 14.4'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{instance="app:8080",job="leapview"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 55m
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView dashboard refresh latency on app:8080 is burning error budget rapidly"
+              description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 completed refreshes in the 1-hour window."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-fast-burn-alert-fires"
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts: []
+
+  - name: sustained dashboard refresh latency fast burn fires with bounded labels
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5",route="/dashboards/{dashboard}",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0+2x60'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete",route="/dashboards/{dashboard}",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0+3x60'
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="select",outcome="complete",le="5",route="/updates",request_id="req-other",trace_id="trace-other",user_id="user-other",project_id="project-other",resource_id="resource-other"}'
+        values: '0+2x60'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="select",outcome="complete",route="/updates",request_id="req-other",trace_id="trace-other",user_id="user-other",project_id="project-other",resource_id="resource-other"}'
+        values: '0+2x60'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_1h",instance="app:8080",job="leapview"}'
+            value: 300
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_1h'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_1h",instance="app:8080",job="leapview"}'
+            value: 60
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 20
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView dashboard refresh latency on app:8080 is burning error budget rapidly"
+              description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 completed refreshes in the 1-hour window."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-fast-burn-alert-fires"
+
+  - name: dashboard refresh latency fast burn fires at the exact threshold
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0+214x60'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+250x60'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_5m",instance="app:8080",job="leapview"}'
+            value: 14.4
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_1h",instance="app:8080",job="leapview"}'
+            value: 14.4
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView dashboard refresh latency on app:8080 is burning error budget rapidly"
+              description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 completed refreshes in the 1-hour window."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-fast-burn-alert-fires"
+
+  - name: dashboard refresh latency fast burn fires at the exact traffic floor
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0x55 0 4 4 4 4 8 8 8 8'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0x55 0 5 5 5 5 10 10 10 10'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        eval_time: 1h3m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_1h",instance="app:8080",job="leapview"}'
+            value: 10
+    alert_rule_test:
+      - eval_time: 1h3m
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView dashboard refresh latency on app:8080 is burning error budget rapidly"
+              description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 completed refreshes in the 1-hour window."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-fast-burn-alert-fires"
+
+  - name: one slow dashboard refresh below the traffic floor does not fire
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0x55 0 3 3 3 3 4'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0x55 0 4 4 4 4 5'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_1h",instance="app:8080",job="leapview"}'
+            value: 4
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_5m >= bool 14.4'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{instance="app:8080",job="leapview"}'
+            value: 1
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_1h >= bool 14.4'
+        eval_time: 1h
+        exp_samples:
+          - labels: '{instance="app:8080",job="leapview"}'
+            value: 1
+    alert_rule_test:
+      - eval_time: 1h
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts: []
+
+  - name: counter resets preserve dashboard refresh latency fast burn
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0 4 8 12 16 20 24 0 4 8 12'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0 5 10 15 20 25 30 0 5 10 15'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: LeapViewDashboardRefreshLatencyFastBurn
+        exp_alerts:
+          - exp_labels:
+              instance: app:8080
+              job: leapview
+              service: leapview
+              severity: critical
+            exp_annotations:
+              summary: "LeapView dashboard refresh latency on app:8080 is burning error budget rapidly"
+              description: "Slow completed dashboard refreshes on app:8080 meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 completed refreshes in the 1-hour window."
+              runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-fast-burn-alert-fires"
