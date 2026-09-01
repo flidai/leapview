@@ -3732,7 +3732,7 @@ func TestLeapViewDeclaresGitHubHostedCIContract(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read package manifest: %v", err)
 	}
-	if !strings.Contains(string(packageJSON), `"typescript": "5.9.3"`) {
+	if !strings.Contains(string(packageJSON), `"typescript": "7.0.2"`) {
 		t.Fatal("LeapView must pin the TypeScript compiler used by its remote test contract")
 	}
 	setup, err := os.ReadFile(filepath.Join(root, ".github", "actions", "setup-ci", "action.yml"))
