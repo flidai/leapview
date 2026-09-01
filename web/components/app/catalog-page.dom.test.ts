@@ -189,6 +189,40 @@ test('dashboard tabs filter by ownership without hiding managed dashboards from 
   }
 })
 
+test('dashboard lifecycle statuses use distinct semantic icons and tones', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const statuses = ['published', 'private_draft', 'unpublished_changes', 'published']
+      mergePatch({ page: { ...element.page, dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({ ...dashboard, status: statuses[index] })) } })
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      return Array.from(list.querySelectorAll('.entity-list-status')).map((status: Element) => ({
+        className: status.className,
+        label: status.textContent?.trim(),
+        icon: status.querySelector('.entity-list-status-icon')?.innerHTML,
+      }))
+    })
+
+    expect(state.map(({ label, className }) => ({ label, className }))).toEqual([
+      { label: 'Published', className: 'entity-list-status is-success' },
+      { label: 'Private draft', className: 'entity-list-status is-muted' },
+      { label: 'Unpublished changes', className: 'entity-list-status is-attention' },
+      { label: 'Published', className: 'entity-list-status is-success' },
+    ])
+    expect(state[1].icon).toContain('cx="12" cy="16" r="1"')
+    expect(state[2].icon).toContain('M14.364 13.634')
+    expect(state[0].icon).not.toEqual(state[1].icon)
+    expect(state[1].icon).not.toEqual(state[2].icon)
+  } finally {
+    await page.close()
+  }
+})
+
 test('updated sorting uses timestamps rather than relative labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
