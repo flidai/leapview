@@ -2,6 +2,7 @@ package adminpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -277,6 +278,24 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	}
 	if _, _, err := ducklakepostgres.BootstrapCatalog(ctx, tx, identity, runtimeCompatibility); err != nil {
 		return result, err
+	}
+	beginEvidence, err := json.Marshal(map[string]any{
+		"backup_verified": true, "bootstrap": true, "conformance_evidence_digest": request.Evidence.Digest, "drain_verified": true,
+	})
+	if err != nil {
+		return result, err
+	}
+	completionEvidence, err := json.Marshal(map[string]any{
+		"bootstrap": true, "catalog_registration_verified": true, "conformance_evidence_digest": request.Evidence.Digest,
+	})
+	if err != nil {
+		return result, err
+	}
+	if _, err := ducklakepostgres.QualifyCatalogBootstrap(ctx, tx, ducklakepostgres.CatalogBootstrapQualificationInput{
+		PhysicalPoolID: identity.PhysicalPoolID, CatalogID: identity.CatalogID, OwnerID: ownerID,
+		Compatibility: runtimeCompatibility, BeginEvidence: beginEvidence, CompletionEvidence: completionEvidence,
+	}); err != nil {
+		return result, fmt.Errorf("qualify initial PostgreSQL-backed DuckLake catalog: %w", err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return result, err
