@@ -101,7 +101,7 @@ func TestPostgresAuthoringProjectIDResolverFreshClaimedAndCorruptStates(t *testi
 		{name: "claim and active scope disagree", claim: projectClaimRepositoryStub{claim: claim}, states: authoringServingStateReaderStub{scopes: []servingstatemodule.ActiveScope{{ProjectID: "marketing", Environment: "prod"}}}, wantErr: "disagrees"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			resolver := postgresAuthoringProjectIDResolver(test.claim, test.states, "prod")
+			resolver := postgresAuthoringProjectIDResolver(test.claim, test.states, "instance", "prod")
 			got, err := resolver(t.Context())
 			if test.wantErr == "" {
 				if err != nil || got != test.want {
@@ -119,13 +119,47 @@ func TestPostgresAuthoringProjectIDResolverFreshClaimedAndCorruptStates(t *testi
 	}
 }
 
+func TestPostgresAuthoringProjectIDResolverIgnoresUnrelatedActiveTargets(t *testing.T) {
+	claim := deployment.ProjectClaim{ProjectID: "finance", Environment: "prod", ClaimedBy: "principal", ClaimedAt: time.Now().UTC()}
+	reader := targetScopedAuthoringServingStateReader{scopes: map[string]servingstatemodule.ActiveScope{
+		"stale-target": {ProjectID: "marketing", Environment: "prod"},
+	}}
+	resolver := postgresAuthoringProjectIDResolver(projectClaimRepositoryStub{claim: claim}, reader, "instance", "prod")
+	if got, err := resolver(t.Context()); err != nil || got != claim.ProjectID {
+		t.Fatalf("resolver() = %q, %v, want %q despite unrelated active target", got, err, claim.ProjectID)
+	}
+}
+
 type authoringServingStateReaderStub struct {
 	scopes []servingstatemodule.ActiveScope
 	err    error
 }
 
+type targetScopedAuthoringServingStateReader struct {
+	scopes map[string]servingstatemodule.ActiveScope
+	err    error
+}
+
+func (s targetScopedAuthoringServingStateReader) ActiveScopeForTarget(_ context.Context, targetID string) (servingstatemodule.ActiveScope, bool, error) {
+	if s.err != nil {
+		return servingstatemodule.ActiveScope{}, false, s.err
+	}
+	scope, ok := s.scopes[targetID]
+	return scope, ok, nil
+}
+
 func (s authoringServingStateReaderStub) ListActiveScopes(context.Context) ([]servingstatemodule.ActiveScope, error) {
 	return s.scopes, s.err
+}
+
+func (s authoringServingStateReaderStub) ActiveScopeForTarget(context.Context, string) (servingstatemodule.ActiveScope, bool, error) {
+	if s.err != nil {
+		return servingstatemodule.ActiveScope{}, false, s.err
+	}
+	if len(s.scopes) == 0 {
+		return servingstatemodule.ActiveScope{}, false, nil
+	}
+	return s.scopes[0], true, nil
 }
 
 func TestResolveDeliveryStartupProjectIDReadsLiveClaim(t *testing.T) {

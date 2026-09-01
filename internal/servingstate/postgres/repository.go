@@ -531,6 +531,44 @@ func (r *Repository) ListActiveScopes(ctx context.Context) ([]servingstate.Activ
 	}
 	return out, nil
 }
+
+// ActiveScopeForTarget resolves the active serving scope selected for one
+// exact delivery target. Unlike ListActiveScopes, this method never scans
+// pointers belonging to other targets, so stale or unrelated deployment
+// records cannot influence the process-bound instance identity.
+//
+// The boolean reports a clean absence of an active pointer. A present row is
+// validated before returning; malformed project/environment evidence is an
+// authority error and must fail closed at the caller.
+func (r *Repository) ActiveScopeForTarget(ctx context.Context, targetID string) (servingstate.ActiveScope, bool, error) {
+	if targetID == "" || targetID != strings.TrimSpace(targetID) {
+		return servingstate.ActiveScope{}, false, errors.New("serving-state target id is required")
+	}
+	db, err := r.dbOrErr()
+	if err != nil {
+		return servingstate.ActiveScope{}, false, err
+	}
+	row, err := querySet(db).GetActiveScopeForTarget(contextOrBackground(ctx), targetID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return servingstate.ActiveScope{}, false, nil
+	}
+	if err != nil {
+		return servingstate.ActiveScope{}, false, err
+	}
+	if row.TargetID != targetID {
+		return servingstate.ActiveScope{}, false, fmt.Errorf("active serving scope target %q does not match requested target %q", row.TargetID, targetID)
+	}
+	projectID, err := projectgraph.NewResourceID(row.ProjectID)
+	if err != nil {
+		return servingstate.ActiveScope{}, false, fmt.Errorf("active serving scope project %q is invalid: %w", row.ProjectID, err)
+	}
+	environment := servingstate.Environment(row.Environment)
+	if err := servingstate.ValidateEnvironment(environment); err != nil {
+		return servingstate.ActiveScope{}, false, fmt.Errorf("active serving scope environment %q is invalid: %w", row.Environment, err)
+	}
+	return servingstate.ActiveScope{ProjectID: projectID, Environment: environment}, true, nil
+}
+
 func (r *Repository) CreateQuerySnapshotLease(ctx context.Context, in servingstate.SnapshotLeaseInput) (string, error) {
 	db, err := r.dbOrErr()
 	if err != nil {

@@ -14,6 +14,8 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -47,6 +49,23 @@ func refreshTestDB(t *testing.T) (*postgrestest.Database, *pgxpool.Pool) {
 	}
 	return db, admin
 }
+
+func TestRepositoryConfiguredRejectsTypedNilDBTX(t *testing.T) {
+	var db *typedNilDBTX
+	if refresh := New(db); refresh.Configured() {
+		t.Fatal("refresh repository accepted a typed-nil DBTX")
+	}
+}
+
+type typedNilDBTX struct{}
+
+func (*typedNilDBTX) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
+	return pgconn.CommandTag{}, nil
+}
+
+func (*typedNilDBTX) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
+
+func (*typedNilDBTX) QueryRow(context.Context, string, ...any) pgx.Row { return nil }
 
 func seedRefreshJob(t *testing.T, db *pgxpool.Pool, id, runID, project, environment, principal string) {
 	t.Helper()

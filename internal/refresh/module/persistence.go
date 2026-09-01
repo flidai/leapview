@@ -112,7 +112,8 @@ func (p Persistence) Validate() error {
 		if !runsOK || runs == nil || runs.repository != p.nativeRepository ||
 			!schedulesOK || schedules == nil || schedules.repository != p.nativeRepository ||
 			!publicationOK || publication == nil || publication.repository != p.nativeRepository ||
-			!recoveryOK || recovery == nil || recovery.Refresh != p.nativeRepository {
+			!recoveryOK || recovery == nil || recovery.Refresh != p.nativeRepository ||
+			validatePostgresQueueAuthority(p.nativeRepository, recovery.Jobs) != nil {
 			return errors.New("PostgreSQL refresh persistence surfaces do not match the configured native authority")
 		}
 		return nil

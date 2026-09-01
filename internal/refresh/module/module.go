@@ -216,6 +216,12 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if err := persistence.Validate(); err != nil {
 		return nil, err
 	}
+	if config.Production {
+		publication, ok := persistence.Publication.(*postgresPublicationPersistence)
+		if !ok || publication == nil || isNilPostgresCapability(publication.nativeFinalizer) {
+			return nil, errors.New("production refresh module requires a native finalizer")
+		}
+	}
 	if config.RecoveryLifecycle != nil && persistence.Recovery == nil {
 		return nil, errors.New("refresh recovery persistence is required when recovery lifecycle is configured")
 	}

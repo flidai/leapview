@@ -13,6 +13,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -79,9 +80,33 @@ type Attempt struct {
 
 var _ jobs.Repository = (*Repository)(nil)
 
+// DB exposes the configured native PostgreSQL handle to composition-owned
+// adapters for authority provenance checks. Mutations must still use the
+// caller-owned transaction passed to the Tx methods.
+func (r *Repository) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 // Configured reports whether the repository has a native PostgreSQL query
-// authority. It lets composition reject zero-value repositories at startup.
-func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+// authority. Interface values can contain a typed nil pointer, so a plain
+// interface comparison is not sufficient for admission.
+func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
+
+func nativeDBConfigured(db DBTX) bool {
+	if db == nil {
+		return false
+	}
+	value := reflect.ValueOf(db)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
+	}
+}
 
 // MaxAttempts is the bounded retry ceiling for jobs created through this
 // adapter. EnqueueInput predates retry policy, so one explicit default is

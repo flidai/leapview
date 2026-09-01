@@ -4,23 +4,28 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
+type postgresAuthoringServingStateReader interface {
+	ActiveScopeForTarget(context.Context, string) (servingstate.ActiveScope, bool, error)
+}
+
 // postgresAuthoringProjectIDResolver binds authoring OAuth to durable
-// bootstrap/serving evidence. A target with neither a project claim nor an
-// active serving scope is genuinely fresh and returns an empty identity so a
-// browser-approved login can precede the first claim/plan. Any active scope
-// without a claim, a claim/scope disagreement, malformed evidence, or a read
-// failure is treated as an authority error and fails closed.
+// bootstrap/serving evidence for the process-bound delivery target. A target
+// with neither a project claim nor an active serving scope is genuinely fresh
+// and returns an empty identity so a browser-approved login can precede the
+// first claim/plan. Any active scope without a claim, a claim/scope
+// disagreement, malformed evidence, or a read failure is treated as an
+// authority error and fails closed.
 func postgresAuthoringProjectIDResolver(
 	claims deploymentmodule.ProjectClaimReader,
-	serving interface {
-		ListActiveScopes(context.Context) ([]servingstate.ActiveScope, error)
-	},
+	serving postgresAuthoringServingStateReader,
+	targetID string,
 	environment servingstate.Environment,
 ) func(context.Context) (projectgraph.ResourceID, error) {
 	return func(ctx context.Context) (projectgraph.ResourceID, error) {
@@ -30,6 +35,9 @@ func postgresAuthoringProjectIDResolver(
 		if serving == nil {
 			return "", errors.New("authoring serving-state reader is required")
 		}
+		if targetID == "" || targetID != strings.TrimSpace(targetID) {
+			return "", errors.New("authoring serving-state target id is required")
+		}
 
 		claimed, found, err := readClaimedProject(claims, environment)(ctx)
 		if err != nil {
@@ -38,23 +46,19 @@ func postgresAuthoringProjectIDResolver(
 		// Always read serving scopes, including when a durable claim exists. A
 		// state read failure must not be hidden by a claim and a disagreement
 		// between the two authorities is corruption, not a fresh target.
-		scopes, err := serving.ListActiveScopes(ctx)
+		activeScope, activeFound, err := serving.ActiveScopeForTarget(ctx, targetID)
 		if err != nil {
-			return "", fmt.Errorf("read active authoring serving scopes: %w", err)
+			return "", fmt.Errorf("read active authoring serving scope for target %q: %w", targetID, err)
 		}
-
 		var active projectgraph.ResourceID
-		for _, scope := range scopes {
-			if scope.Environment != environment {
-				continue
+		if activeFound {
+			if err := activeScope.ProjectID.Validate(); err != nil {
+				return "", fmt.Errorf("active authoring serving scope project %q is invalid: %w", activeScope.ProjectID, err)
 			}
-			if err := scope.ProjectID.Validate(); err != nil {
-				return "", fmt.Errorf("active authoring serving scope project %q is invalid: %w", scope.ProjectID, err)
+			if activeScope.Environment != environment {
+				return "", fmt.Errorf("active authoring serving scope environment %q does not match configured environment %q", activeScope.Environment, environment)
 			}
-			if active != "" && active != scope.ProjectID {
-				return "", fmt.Errorf("active authoring serving scopes disagree on project %q and %q", active, scope.ProjectID)
-			}
-			active = scope.ProjectID
+			active = activeScope.ProjectID
 		}
 
 		if found {

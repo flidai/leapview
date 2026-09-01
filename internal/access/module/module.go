@@ -283,9 +283,16 @@ func bootstrapTokenAllowsCapability(capabilities []access.Capability, required a
 // AuthorizeAuthoringBootstrapRequest admits an already-issued human/workload
 // authoring credential for the narrow project control-plane operations that
 // may race the serving-generation cutover. Unlike API-token bootstrap, this
-// path relies on the immutable authoring scope plus the current RBAC
-// projection; it never grants a credential authority it does not already
-// carry.
+// path relies on the immutable authoring scope plus durable platform
+// administration; it never grants a credential authority it does not already
+// carry. The generated API authorizer invokes this method only after its
+// bootstrap policy has proved that no active serving generation exists.
+//
+// A fresh PostgreSQL target has no active authorization snapshot yet. The
+// durable authoring-project resolver is therefore consulted first. An empty
+// result admits the first plan; a matching claimed project admits the upload,
+// retain, and commit steps that follow before activation. Resolver errors,
+// malformed state, and project disagreement fail closed.
 func (m *Module) AuthorizeAuthoringBootstrapRequest(ctx context.Context, r *http.Request, projectID string, required access.Capability) (bool, error) {
 	if m == nil || r == nil || m.auth == nil {
 		return false, nil
@@ -295,14 +302,93 @@ func (m *Module) AuthorizeAuthoringBootstrapRequest(ctx context.Context, r *http
 		return false, nil
 	}
 	credential, ok := m.auth.APICredential(r)
-	if !ok || credential.Authoring == nil || credential.Authoring.Scope.ProjectID.String() != strings.TrimSpace(projectID) {
+	if !ok || credential.Authoring == nil {
 		return false, nil
 	}
-	effective, err := m.RequestEffectiveCapabilities(ctx, r, principal.ID)
-	if err != nil {
-		return false, err
+	authoring := credential.Authoring
+	if err := validateAuthoringBootstrapCredential(credential, *authoring, principal, projectID); err != nil {
+		return false, nil
 	}
-	return bootstrapTokenAllowsCapability(effective, required), nil
+	if targetID := m.authoringInstanceID(); targetID != "" && authoring.Scope.TargetID != targetID {
+		return false, nil
+	}
+	if m.authoringProjectID == nil {
+		return false, fmt.Errorf("authoring bootstrap durable project resolver is unavailable")
+	}
+	boundProjectID, err := m.authoringProjectID(ctx)
+	if err != nil {
+		return false, fmt.Errorf("resolve authoring bootstrap project: %w", err)
+	}
+	if boundProjectID != "" {
+		if err := boundProjectID.Validate(); err != nil {
+			return false, fmt.Errorf("resolve authoring bootstrap project: %w", err)
+		}
+		if boundProjectID.String() != strings.TrimSpace(projectID) {
+			return false, nil
+		}
+	}
+	if !bootstrapTokenAllowsCapability(authoring.Scope.Capabilities, required) {
+		return false, nil
+	}
+	// Project authorization snapshots do not exist until activation. Durable
+	// platform administration is therefore the non-project authority for the
+	// complete first-sync sequence, including the claim-only interval between
+	// plan and commit.
+	return m.IsPlatformAdmin(ctx, principal.ID)
+}
+
+func (m *Module) authoringInstanceID() string {
+	if m == nil {
+		return ""
+	}
+	if m.authoringAuth != nil {
+		return strings.TrimSpace(m.authoringAuth.InstanceID())
+	}
+	if m.auth != nil && m.auth.authoringAuth != nil {
+		return strings.TrimSpace(m.auth.authoringAuth.InstanceID())
+	}
+	return ""
+}
+
+// validateAuthoringBootstrapCredential checks the fields that the auth
+// middleware normally obtains from the authoring credential repository. The
+// bootstrap path also accepts context-injected credentials in tests and in
+// adapters, so it must not assume those fields were validated elsewhere.
+func validateAuthoringBootstrapCredential(credential access.APICredential, authoring access.AuthoringSession, principal Principal, projectID string) error {
+	requestedProjectID, err := projectgraph.NewResourceID(projectID)
+	if err != nil || requestedProjectID.String() != projectID {
+		return access.ErrAuthoringScopeDenied
+	}
+	if strings.TrimSpace(principal.ID) != principal.ID || authoring.PrincipalID == "" || authoring.PrincipalID != principal.ID {
+		return access.ErrAuthoringScopeDenied
+	}
+	if credential.Principal.ID == "" || credential.Principal.ID != principal.ID || credential.Principal.Kind != principal.Kind || credential.Principal.AccessDisabled() {
+		return access.ErrAuthoringScopeDenied
+	}
+	if authoring.ID == "" || strings.TrimSpace(authoring.ID) != authoring.ID || authoring.Scope.TargetID == "" || authoring.ClientID == "" || !authoring.RevokedAt.IsZero() {
+		return access.ErrAuthoringScopeDenied
+	}
+	switch authoring.Kind {
+	case access.AuthoringSessionHumanCLI:
+		if authoring.ClientID != access.AuthoringCLIClientID || principal.Kind != access.PrincipalKindUser {
+			return access.ErrAuthoringScopeDenied
+		}
+	case access.AuthoringSessionWorkload:
+		if authoring.ClientID != principal.ID || principal.Kind != access.PrincipalKindServicePrincipal {
+			return access.ErrAuthoringScopeDenied
+		}
+	default:
+		return access.ErrAuthoringScopeDenied
+	}
+	validatedScope, err := access.NewAuthoringScope(authoring.Scope.TargetID, authoring.Scope.ProjectID, authoring.Scope.Capabilities)
+	if err != nil || validatedScope.TargetID != authoring.Scope.TargetID || validatedScope.ProjectID != requestedProjectID {
+		return access.ErrAuthoringScopeDenied
+	}
+	// A REST request may carry an authoring credential resolved by the module's
+	// authoring service. When that service is present, bind the opaque scope to
+	// this instance as well; a missing service is retained for lightweight
+	// adapters, but the durable project resolver is still mandatory above.
+	return nil
 }
 
 func (m *Module) requestCredential(r *http.Request) (access.APICredential, bool) {

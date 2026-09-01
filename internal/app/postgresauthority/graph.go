@@ -538,6 +538,9 @@ func (g *PostgresAuthorityGraph) Validate() error {
 	if !refreshJobsMatches(g.Jobs, g.Refresh, g.RefreshJobs) {
 		return errors.New("PostgreSQL authority graph refresh jobs adapter does not preserve sibling repository identity")
 	}
+	if !g.RefreshJobs.Configured() {
+		return errors.New("PostgreSQL authority graph refresh jobs adapter is not configured")
+	}
 	if !refreshCancelAuditMatches(g.AccessAudit, g.RefreshCancelAudit) {
 		return errors.New("PostgreSQL authority graph refresh cancellation audit adapter does not preserve access audit identity")
 	}

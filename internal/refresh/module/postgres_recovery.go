@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"reflect"
 	"time"
 
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
@@ -20,15 +21,51 @@ type PostgresTerminalRecovery struct {
 var _ TerminalRunRecovery = (*PostgresTerminalRecovery)(nil)
 
 func NewPostgresTerminalRecovery(refresh *refreshpostgres.Repository, jobs PostgresQueueRecovery) (*PostgresTerminalRecovery, error) {
-	if refresh == nil || jobs == nil {
-		return nil, errors.New("refresh and canonical jobs recovery authorities are required")
+	if err := validatePostgresQueueAuthority(refresh, jobs); err != nil {
+		return nil, err
 	}
 	return &PostgresTerminalRecovery{Refresh: refresh, Jobs: jobs}, nil
 }
 
+func validatePostgresQueueAuthority(refresh *refreshpostgres.Repository, jobs PostgresQueueRecovery) error {
+	if refresh == nil || !refresh.Configured() {
+		return errors.New("configured refresh PostgreSQL repository is required")
+	}
+	if isNilPostgresCapability(jobs) {
+		return errors.New("canonical PostgreSQL jobs recovery authority is required")
+	}
+	authority, ok := jobs.(postgresQueueAuthority)
+	if !ok {
+		return errors.New("canonical PostgreSQL jobs recovery authority provenance is required")
+	}
+	if !authority.Configured() {
+		return errors.New("configured canonical PostgreSQL jobs recovery authority is required")
+	}
+	if !authority.MatchesRefreshRepository(refresh) {
+		return errors.New("canonical PostgreSQL jobs recovery authority does not match refresh repository")
+	}
+	return nil
+}
+
+func isNilPostgresCapability(value any) bool {
+	if value == nil {
+		return true
+	}
+	v := reflect.ValueOf(value)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return v.IsNil()
+	default:
+		return false
+	}
+}
+
 func (r *PostgresTerminalRecovery) FailRunsForTerminalServingStates(ctx context.Context, environment, message string) error {
-	if r == nil || r.Refresh == nil || r.Jobs == nil {
+	if r == nil {
 		return errors.New("PostgreSQL terminal recovery is unavailable")
+	}
+	if err := validatePostgresQueueAuthority(r.Refresh, r.Jobs); err != nil {
+		return fmt.Errorf("PostgreSQL terminal recovery is unavailable: %w", err)
 	}
 	if environment == "" {
 		return errors.New("PostgreSQL terminal recovery environment is required")

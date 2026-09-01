@@ -220,7 +220,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		return fail(fmt.Errorf("build native project source reader: %w", err))
 	}
 	readClaim := readClaimedProject(graph.DeploymentRepository, environment)
-	authoringProject := postgresAuthoringProjectIDResolver(graph.DeploymentRepository, graph.ServingState, environment)
+	authoringProject := postgresAuthoringProjectIDResolver(graph.DeploymentRepository, graph.ServingState, instanceID, environment)
 	claimedProject, found, err := readClaim(ctx)
 	if err != nil {
 		return fail(err)

@@ -209,6 +209,12 @@ FROM delivery.delivery_active_pointer ap
 JOIN delivery.delivery_target t ON t.target_id = ap.target_id
 ORDER BY t.project_id, t.environment;
 
+-- name: GetActiveScopeForTarget :one
+SELECT ap.target_id, t.project_id, t.environment
+FROM delivery.delivery_active_pointer ap
+JOIN delivery.delivery_target t ON t.target_id = ap.target_id
+WHERE ap.target_id = $1;
+
 -- name: GuardReaderSnapshotRetention :one
 SELECT serving_state.guard_reader_snapshot_retention($1::uuid, $2);
 

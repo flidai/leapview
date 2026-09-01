@@ -88,7 +88,8 @@ type PostgresPersistenceConfig struct {
 	CanonicalVerifier PostgresCanonicalVerifier
 	// NativeFinalizer is deliberately separate from the verifier. The
 	// verifier proves the refresh result; the finalizer composes native
-	// publication/activation into the same caller-owned transaction.
+	// publication/activation into the same caller-owned transaction. It is
+	// required by production module admission; evaluation fixtures may omit it.
 	NativeFinalizer   PostgresNativeRefreshFinalizer
 	CancelAuditWriter PostgresCancelAuditWriter
 }
@@ -107,8 +108,18 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 	if config.PublicationIdentityResolver == nil {
 		return Persistence{}, ErrPublicationIdentityUnavailable
 	}
-	if config.Jobs == nil {
+	if isNilPostgresCapability(config.Jobs) {
 		return Persistence{}, errors.New("PostgreSQL canonical jobs authority is required")
+	}
+	queueAuthority, queueOK := config.Jobs.(postgresQueueAuthority)
+	if !queueOK {
+		return Persistence{}, errors.New("PostgreSQL canonical jobs authority provenance is required")
+	}
+	if !queueAuthority.Configured() {
+		return Persistence{}, errors.New("configured PostgreSQL canonical jobs authority is required")
+	}
+	if !queueAuthority.MatchesRefreshRepository(repository) {
+		return Persistence{}, errors.New("PostgreSQL canonical jobs authority does not match refresh repository")
 	}
 	if config.CanonicalVerifier == nil {
 		return Persistence{}, errors.New("PostgreSQL canonical refresh verifier is required")

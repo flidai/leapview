@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -154,10 +155,33 @@ func int64Ptr(v int64) *int64    { return &v }
 
 func New(db DBTX) *Repository { return &Repository{db: db} }
 
+// DB exposes the configured native PostgreSQL handle to composition-owned
+// adapters. The handle is only an identity/provenance value; callers must use
+// the transaction passed to *Tx methods for mutations.
+func (r *Repository) DB() DBTX {
+	if r == nil {
+		return nil
+	}
+	return r.db
+}
+
 // Configured reports whether the repository has a native PostgreSQL query
-// authority. Composition uses this marker to reject a typed but nil-backed
-// repository before any refresh surface is mounted.
-func (r *Repository) Configured() bool { return r != nil && r.db != nil }
+// authority. Interface values can contain a typed nil pointer, so a plain
+// interface comparison is not sufficient for admission.
+func (r *Repository) Configured() bool { return r != nil && nativeDBConfigured(r.db) }
+
+func nativeDBConfigured(db DBTX) bool {
+	if db == nil {
+		return false
+	}
+	value := reflect.ValueOf(db)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !value.IsNil()
+	default:
+		return true
+	}
+}
 
 // NewRepository is an explicit constructor alias used by composition roots
 // that name capability repositories uniformly.
@@ -168,7 +192,7 @@ func NewRepository(db DBTX) *Repository { return New(db) }
 func (r *Repository) WithTx(tx Tx) *Repository { return New(tx) }
 
 func (r *Repository) requireDB() error {
-	if r == nil || r.db == nil {
+	if r == nil || !nativeDBConfigured(r.db) {
 		return ErrInvalid
 	}
 	return nil

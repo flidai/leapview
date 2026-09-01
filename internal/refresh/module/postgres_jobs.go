@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -31,6 +32,59 @@ type PostgresJobsAdapter struct {
 
 func NewPostgresJobsAdapter(jobsRepository *jobspostgres.Repository, refreshRepository *refreshpostgres.Repository) *PostgresJobsAdapter {
 	return &PostgresJobsAdapter{Jobs: jobsRepository, Refresh: refreshRepository}
+}
+
+// postgresQueueAuthority is the provenance-bearing native queue contract.
+// The unexported marker prevents another package from presenting an arbitrary
+// queue implementation as the canonical PostgreSQL authority. Test wrappers
+// that embed PostgresJobsAdapter retain the marker and provenance methods.
+type postgresQueueAuthority interface {
+	PostgresQueueRecovery
+	Configured() bool
+	MatchesRefreshRepository(*refreshpostgres.Repository) bool
+	postgresQueueAuthorityMarker()
+}
+
+// postgresQueueAuthorityMarker marks the concrete adapter as the canonical
+// platform-jobs bridge. It intentionally has no runtime behavior.
+func (*PostgresJobsAdapter) postgresQueueAuthorityMarker() {}
+
+// Configured reports whether both sibling repositories are initialized and
+// backed by the same native database handle. A refresh repository pointer
+// alone is not enough: callers could otherwise pair it with a jobs repository
+// connected to a different PostgreSQL database.
+func (a *PostgresJobsAdapter) Configured() bool {
+	return a != nil && a.Jobs != nil && a.Refresh != nil &&
+		a.Jobs.Configured() && a.Refresh.Configured() &&
+		sameNativeDB(a.Jobs.DB(), a.Refresh.DB())
+}
+
+// MatchesRefreshRepository verifies both object provenance and the underlying
+// database identity against the canonical refresh authority.
+func (a *PostgresJobsAdapter) MatchesRefreshRepository(refresh *refreshpostgres.Repository) bool {
+	return a != nil && refresh != nil && a.Refresh == refresh && a.Configured()
+}
+
+func sameNativeDB(left, right any) bool {
+	if left == nil || right == nil {
+		return false
+	}
+	lv, rv := reflect.ValueOf(left), reflect.ValueOf(right)
+	if lv.Type() != rv.Type() {
+		return false
+	}
+	switch lv.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Map, reflect.Pointer, reflect.Slice, reflect.UnsafePointer:
+		if lv.IsNil() || rv.IsNil() {
+			return false
+		}
+		return lv.Pointer() == rv.Pointer()
+	default:
+		if lv.Type().Comparable() {
+			return lv.Interface() == rv.Interface()
+		}
+		return false
+	}
 }
 
 var _ PostgresQueue = (*PostgresJobsAdapter)(nil)
