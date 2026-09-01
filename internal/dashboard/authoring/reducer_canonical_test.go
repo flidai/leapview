@@ -36,6 +36,23 @@ func TestCanonicalVisualTypeSwitchMatrixAuthorsTargetQueryFamily(t *testing.T) {
 				if reflect.TypeOf(switched.Query.Value) != reflect.TypeOf(expected.Query.Value) {
 					t.Fatalf("switched query family = %T, want %T", switched.Query.Value, expected.Query.Value)
 				}
+				if source.Type == target.Type {
+					return
+				}
+				resolved := canonicalVisualSwitchBindings(switched.Query)
+				counts := map[string]int{
+					string(FieldRoleDimension): len(resolved.Dimensions),
+					string(FieldRoleMetric):    len(resolved.Metrics),
+					string(FieldRoleDetail):    len(resolved.Details),
+				}
+				for _, limit := range CanonicalVisualRoleLimits(target.Type) {
+					if int32(counts[limit.Role]) < limit.Minimum {
+						t.Fatalf("switched %s fields = %d, want at least %d", limit.Role, counts[limit.Role], limit.Minimum)
+					}
+					if limit.Maximum > 0 && int32(counts[limit.Role]) > limit.Maximum {
+						t.Fatalf("switched %s fields = %d, want at most %d", limit.Role, counts[limit.Role], limit.Maximum)
+					}
+				}
 			})
 		}
 	}

@@ -108,6 +108,15 @@ type BuilderHistorySnapshot = {
   redo: BuilderRevisionReference[]
 }
 
+type BuilderVisualTypeSwitch = {
+  pageID: string
+  visualID: string
+  fromType: BuilderVisualType
+  toType: BuilderVisualType
+  fromRevision: BuilderRevisionReference
+  toRevision?: BuilderRevisionReference
+}
+
 type BuilderClipboard = {
   pageId: string
   visualId: string
@@ -148,6 +157,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private activeCommandAction = ''
   private interactionOverridesRevision = ''
   private pendingHistorySnapshot: BuilderHistorySnapshot | null = null
+  private pendingVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
+  private reversibleVisualTypeSwitch: BuilderVisualTypeSwitch | null = null
   private copiedVisual: BuilderClipboard | null = null
   private readonly visualizationDecoder = new DashboardVisualizationSignalDecoder()
   private builderFilterStateFingerprint = ''
@@ -2327,6 +2338,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       save: 'required',
     })
     this.reconcileVisualTypeOverrides(builder)
+    this.reconcileVisualTypeSwitch(builder)
     this.reconcileInteractionEffectOverrides(builder)
     this.selectPendingAddedPage(builder)
     this.reconcilePendingRemovedPage(builder)
@@ -2770,6 +2782,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.pendingHistorySnapshot = null
     }
     this.visualTypeOverrides = {}
+    this.pendingVisualTypeSwitch = null
+    this.reversibleVisualTypeSwitch = null
     this.interactionEffectOverrides = {}
     this.interactionOverridesRevision = ''
     this.pendingAddPage = null
@@ -4099,6 +4113,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     if (!builder?.capabilities.canEdit || !page || this.commandPending) return
     const currentType = this.visualTypeForRender(visual)
+    const currentRevision = this.currentRevisionReference()
+    const switchBack = this.reversibleVisualTypeSwitch
+    const undoTarget = this.undoStack.at(-1)
+    if (currentType !== type && currentRevision && switchBack?.toRevision
+      && switchBack.pageID === page.id && switchBack.visualID === visual.id
+      && switchBack.fromType === type && switchBack.toType === currentType
+      && this.sameRevisionReference(switchBack.toRevision, currentRevision)
+      && undoTarget && this.sameRevisionReference(switchBack.fromRevision, undoTarget)) {
+      this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
+      this.pendingVisualTypeSwitch = null
+      this.reversibleVisualTypeSwitch = null
+      this.undo()
+      return
+    }
     const acceptedRoles = new Set(this.visualCatalogEntry(type, builder)?.roles ?? [])
     const legacyQueryMismatch = visual.slots.some((slot) => !acceptedRoles.has(this.slotRole(slot)))
       || (visual.previewError ?? '').toLowerCase().includes('incompatible with')
@@ -4109,7 +4137,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.visualActionMessage = currentType === type
       ? `Repairing ${visual.title} as a ${this.visualLabel(type, builder)} visual.`
       : `Changing ${visual.title} to a ${this.visualLabel(type, builder)} visual.`
-    if (currentType !== type) this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
+    if (currentType !== type) {
+      this.visualTypeOverrides = { ...this.visualTypeOverrides, [visual.id]: type }
+      if (currentRevision) {
+        this.pendingVisualTypeSwitch = { pageID: page.id, visualID: visual.id, fromType: currentType, toType: type, fromRevision: currentRevision }
+      }
+      this.reversibleVisualTypeSwitch = null
+    }
     this.emitCommand('set_visual_type', { pageId: page.id, visualId: visual.id, type })
   }
 
@@ -4125,6 +4159,25 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return visual !== undefined && visual.type.toLowerCase() !== type
     })) as Record<string, BuilderVisualType>
     if (Object.keys(next).length !== Object.keys(this.visualTypeOverrides).length) this.visualTypeOverrides = next
+  }
+
+  private reconcileVisualTypeSwitch(builder: DashboardBuilderSignal | null): void {
+    const pending = this.pendingVisualTypeSwitch
+    if (!builder || !pending) return
+    const current = this.currentRevisionReference()
+    if (!current || this.sameRevisionReference(current, pending.fromRevision)) return
+    const page = builder.pages.find((candidate) => candidate.id === pending.pageID)
+    const visual = page?.visuals.find((candidate) => candidate.id === pending.visualID)
+    if (!visual || visual.type.toLowerCase() !== pending.toType) {
+      this.pendingVisualTypeSwitch = null
+      return
+    }
+    this.reversibleVisualTypeSwitch = { ...pending, toRevision: current }
+    this.pendingVisualTypeSwitch = null
+  }
+
+  private sameRevisionReference(left: BuilderRevisionReference, right: BuilderRevisionReference): boolean {
+    return left.id === right.id && left.number === right.number && left.contentHash === right.contentHash
   }
 
   private reconcileInteractionEffectOverrides(builder: DashboardBuilderSignal | null): void {
@@ -4671,6 +4724,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private emitCommand(action: string, detail: Record<string, unknown> = {}, recordHistory = true): void {
     if (this.commandPending) return
+    if (action !== 'set_visual_type') {
+      this.pendingVisualTypeSwitch = null
+      this.reversibleVisualTypeSwitch = null
+    }
     if (recordHistory && action !== 'publish' && action !== 'set_visibility') {
       const current = this.currentRevisionReference()
       if (current) {

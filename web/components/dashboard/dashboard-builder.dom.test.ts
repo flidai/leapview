@@ -325,6 +325,116 @@ test('dashboard builder changes the selected visual type without creating a visu
   }
 })
 
+test('dashboard builder can select every catalog visual type through the same command path', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const catalogTypes = element.builder.visualCatalog.map((entry: any) => entry.type)
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      for (const type of catalogTypes) {
+        if (type === 'bar') continue
+        ;(root.querySelector(`button[data-visual-picker-type="${type}"]`) as HTMLButtonElement).click()
+        await element.updateComplete
+        document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+        await element.updateComplete
+      }
+      return {
+        catalogTypes,
+        commandTypes: commands.filter((command) => command.action === 'set_visual_type').map((command) => command.type),
+        visualCount: root.querySelectorAll('.visual').length,
+      }
+    })
+    expect(state.commandTypes).toEqual(state.catalogTypes.filter((type: string) => type !== 'bar'))
+    expect(state.visualCount).toBe(1)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder restores the exact prior revision when immediately switching back', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const sourcePage = element.builder.pages[0]
+      mergePatch({ builder: {
+        pages: [{ ...sourcePage, visuals: sourcePage.visuals.map((visual: any) => visual.id === 'sales-chart' ? { ...visual, type: 'line' } : visual) }, element.builder.pages[1]],
+        revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' },
+      } })
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelector('button[data-visual-picker-type="bar"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { commands, selectedType: root.querySelector('.visual-picker-button[aria-pressed="true"]')?.getAttribute('data-visual-type') }
+    })
+    expect(state.commands[0]).toMatchObject({ action: 'set_visual_type', type: 'line' })
+    expect(state.commands[1]).toMatchObject({
+      action: 'restore_revision',
+      targetRevisionId: 'rev-7',
+      targetRevisionNumber: '7',
+      targetRevisionContentHash: 'sha256:abc',
+    })
+    expect(state.selectedType).toBe('bar')
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder remaps normally after an intervening edit instead of rolling it back', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const commands = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const received: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => received.push(event.detail))
+      ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const sourcePage = element.builder.pages[0]
+      mergePatch({ builder: {
+        pages: [{ ...sourcePage, visuals: sourcePage.visuals.map((visual: any) => visual.id === 'sales-chart' ? { ...visual, type: 'line' } : visual) }, element.builder.pages[1]],
+        revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' },
+      } })
+      await element.updateComplete
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelector('[data-inspector-tab="format"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const legend = root.querySelector('[data-format-control="legend"]') as HTMLSelectElement
+      legend.value = 'bottom'
+      legend.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      ;(root.querySelector('[data-inspector-tab="build"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      ;(root.querySelector('button[data-visual-picker-type="bar"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return received
+    })
+    expect(commands.map((command) => command.action)).toEqual(['set_visual_type', 'update_visual_format', 'set_visual_type'])
+    expect(commands.at(-1)).toMatchObject({ action: 'set_visual_type', type: 'bar' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder reselects a legacy mismatched type to repair its query family', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
