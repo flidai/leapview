@@ -1008,7 +1008,7 @@ tests:
         alertname: LeapViewDashboardRefreshLatencySlowBurn
         exp_alerts: []
 
-  - name: missing and canceled dashboard refresh traffic does not latency slow-burn
+  - name: missing and canceled dashboard refresh traffic does not trigger latency slow-burn
     interval: 1m
     input_series:
       - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="filter_change",outcome="canceled",le="5"}'
