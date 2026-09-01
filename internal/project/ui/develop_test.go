@@ -6,6 +6,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
@@ -676,6 +677,36 @@ func TestSemanticModelRefreshesSectionIncludesRunHistory(t *testing.T) {
 		}
 	}
 	t.Fatalf("semantic model tabs = %#v, want active Refreshes tab", page.Tabs)
+}
+
+func TestSemanticModelDetailsUseCanonicalDataVersionFreshness(t *testing.T) {
+	asset := projectview.DevelopAssetView{ID: "semantic-model:visuals", Type: string(projectview.AssetTypeSemanticModel), Key: "visuals", Title: "Visuals"}
+	refreshedAt := time.Date(2026, 8, 31, 12, 15, 56, 123000000, time.UTC)
+	refresh := AssetRefreshState{
+		LatestSuccessful: AssetRefreshRun{Status: "succeeded", FinishedAt: "2026-08-31T12:16:10Z"},
+		DataVersion: AssetDataVersion{
+			SnapshotID: 84, ServingStateID: "state-active",
+			RefreshedAt: refreshedAt, Source: refreshschedule.DataVersionSourceRefresh,
+		},
+	}
+	details := assetDetailModelForAssetWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, refresh)
+	if got := detailFactValue(details.Overview, "Last refreshed"); got != refreshedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("last refreshed = %q, want canonical data-version time", got)
+	}
+	if got := detailFactValue(details.Overview, "Refresh status"); got != "succeeded" {
+		t.Fatalf("refresh status = %q, want succeeded", got)
+	}
+
+	published := refresh
+	published.LatestSuccessful = AssetRefreshRun{}
+	published.DataVersion.Source = refreshschedule.DataVersionSourcePublish
+	details = assetDetailModelForAssetWithRefresh(projectview.DevelopView{ID: "project:test"}, asset, []projectview.DevelopAssetView{asset}, nil, published)
+	if got := detailFactValue(details.Overview, "Refresh status"); got != "succeeded" {
+		t.Fatalf("published refresh status = %q, want succeeded", got)
+	}
+	if got := detailFactValue(details.Overview, "Last refreshed"); got != refreshedAt.Format(time.RFC3339Nano) {
+		t.Fatalf("published last refreshed = %q, want canonical publication time", got)
+	}
 }
 
 func TestSourceAndPipelineDetailsConsumeTypedAssetProjections(t *testing.T) {

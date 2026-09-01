@@ -94,10 +94,6 @@ func sitePage(metadata sitePageMetadata) g.Node {
 						siteHomepageActions(),
 					),
 					g.El("figure", h.Class("site-product-frame"),
-						h.Div(h.Class("site-product-frame-bar"),
-							h.Span(h.Class("site-product-frame-dots"), g.Attr("aria-hidden", "true"), h.I(), h.I(), h.I()),
-							h.Span(g.Text("Dashboard + agent · Revenue overview")),
-						),
 						h.Div(h.Class("site-product-stage"),
 							h.Div(h.Class("site-product-dashboard"),
 								h.Img(
@@ -116,7 +112,6 @@ func sitePage(metadata sitePageMetadata) g.Node {
 									g.Attr("height", "900"),
 								),
 							),
-							siteAgentPreview(),
 						),
 					),
 				),
@@ -439,38 +434,6 @@ func siteHTMLAttrs() []g.Node {
 		g.Attr("data-light-theme", "light"),
 		g.Attr("data-dark-theme", "dark"),
 	}
-}
-
-func siteAgentPreview() g.Node {
-	return h.Aside(
-		h.Class("site-agent-preview"),
-		g.Attr("aria-label", "Verified AI agent answer"),
-		h.Div(h.Class("site-agent-preview-header"),
-			h.Div(h.Class("site-agent-preview-title"),
-				siteFeatureIcon("agent"),
-				h.Strong(g.Text("Ask "+siteBrandName)),
-			),
-			h.Span(h.Class("site-agent-status"), g.Text("Verified")),
-		),
-		h.Div(h.Class("site-agent-question"),
-			h.Span(g.Attr("aria-hidden", "true"), g.Text("You")),
-			h.P(g.Text("Why did revenue fall in October?")),
-		),
-		h.Div(h.Class("site-agent-answer"),
-			h.P(h.Class("site-agent-answer-label"), g.Text("Revenue change")),
-			h.Div(h.Class("site-agent-metric"),
-				h.Strong(g.Text("21.4%")),
-				h.Span(g.Text("lower month over month")),
-			),
-			h.P(g.Text("Delivered order volume drove most of the decline. The revenue metric and active access policy were applied automatically.")),
-			h.Ul(h.Class("site-agent-evidence"),
-				h.Li(g.Text("Metric · revenue")),
-				h.Li(g.Text("Filter · October")),
-				h.Li(g.Text("Policy · sales.read")),
-			),
-		),
-		h.P(h.Class("site-agent-verified"), g.Text("Verified against the sales semantic model")),
-	)
 }
 
 func siteWorkflowArtifact() g.Node {
