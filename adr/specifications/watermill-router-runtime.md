@@ -1,8 +1,8 @@
 # FAI-593 canonical Watermill Router/subscriber runtime
 
-Status: accepted mutable companion specification
+Status: accepted mutable companion specification (adapter selected; no production consumer admitted)
 
-Last updated: 2026-08-31
+Last updated: 2026-09-01
 
 Governing decision: [ADR-0016](../0016-adopt-a-postgresql-centered-target-data-architecture.md)
 
@@ -32,10 +32,29 @@ defined by FAI-592. Metadata is exactly `{topic}`; handlers and middleware
 must not add, rewrite, or derive metadata (including correlation or delay
 metadata).
 
-## Subscriber and claim protocol
+## Admission gate and current release
 
-The production adapter is a custom Watermill `message.Subscriber` over the
-canonical tables. It must satisfy all of the following:
+The canonical PostgreSQL `event_log`/`event_delivery` authority and this
+Watermill core Router/custom Subscriber adapter remain selected for the target.
+Production enrollment is conditional on a named product-owned, bounded,
+idempotent effect with explicit identity, authorization, retention, and
+recovery evidence. As of the current PostgreSQL target release, no real
+consumer is admitted. A topic, producer, framework dependency, read-model
+projection, or export is not a consumer effect and must not be invented as a
+placeholder to justify enrollment.
+
+Owner projections remain synchronous in their source transaction. Until a
+consumer is admitted, this package is a qualification boundary only: no
+production Router process, consumer readiness signal, backlog/lag or
+dead-letter operations, restore drill, or event-specific runbook is required.
+Those obligations become release gates only for the first explicitly admitted
+consumer.
+
+## Subscriber and claim protocol (when a consumer is admitted)
+
+The selected production adapter is a custom Watermill `message.Subscriber`
+over the canonical tables. It is enabled only for an admitted consumer and
+must satisfy all of the following:
 
 - Registry-fenced append, enrollment, backfill, and retirement transactions
   use PostgreSQL `READ COMMITTED`. The canonical repository rejects stronger
@@ -72,7 +91,7 @@ but correctness always comes from reconciling `event_log` and
 `event_delivery`. A transaction is never held across message emission,
 handler execution, or Router middleware.
 
-## Router and middleware boundary
+## Router and middleware boundary (when a consumer is admitted)
 
 Use the Watermill core `Router` and only the mature, explicitly configured
 `Retry`, `Recoverer`, `Timeout`, handler-level `Prometheus`, and `slog`
@@ -94,7 +113,7 @@ retry window. Watermill's Timeout cancels the message context; the completion
 boundary also rejects a handler that ignores cancellation and returns a late
 nil result, so a deadline-expired effect cannot become `Complete`/`Ack`.
 
-The runtime is an application lifecycle component. Fatal monitoring starts
+When admitted, the runtime is an application lifecycle component. Fatal monitoring starts
 before startup pre-subscribes every canonical Subscriber and verifies its
 persisted enrollment. A subscriber failure during a later subscriber's
 enrollment therefore cancels preflight and cannot be reported as Router
@@ -128,7 +147,8 @@ The following are prohibited in the canonical path:
 
 ## Bounded operation and failure semantics
 
-`max_in_flight` is a positive, bounded per-subscriber/router limit. Poll,
+For an admitted consumer, `max_in_flight` is a positive, bounded
+per-subscriber/router limit. Poll,
 retry/backoff, handler, acknowledgement, claim-lease, recovery, and shutdown
 deadlines are explicit and positive, with bounded batch/resend values. The
 configuration records an inequality such as
@@ -166,14 +186,17 @@ through PostgreSQL event delivery or the Router.
 
 ## Observability and conformance
 
-Watermill Prometheus and `slog` instrumentation covers Router, subscriber,
+After admission, Watermill Prometheus and `slog` instrumentation covers Router, subscriber,
 handler, Ack/Nack, failure, timeout, and latency. LeapView metrics additionally
 expose backlog, in-flight count, claim/lease age, fence rejects, lease
 recoveries, attempts, dead letters, replay roots, and retention-floor blockers.
 
-Conformance must demonstrate claim-before-emit and no transaction-through-handler,
-exact worker/generation fencing, fresh claim after Nack, Complete-commit-before-
-Ack, lost-process lease recovery, bounded in-flight/deadlines, dead-letter
-retention blocking, replay identity, shutdown drain, and absence of every
-prohibited Watermill transport/middleware path. A lane not run is unsupported;
-implementation status belongs in Linear.
+Current qualification demonstrates claim-before-emit and no
+transaction-through-handler, exact worker/generation fencing, fresh claim
+after Nack, Complete-commit-before-Ack, bounded in-flight/deadlines, and the
+absence of every prohibited Watermill transport/middleware path in isolated
+fixtures. Once a consumer is admitted, its release qualification must add
+lost-process lease recovery, dead-letter retention blocking, replay identity,
+shutdown drain, multi-node takeover and lag, backup/restore, and operator
+runbooks. A not-yet-admitted lane is deferred rather than unsupported for the
+current PostgreSQL target.

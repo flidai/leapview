@@ -25,17 +25,21 @@ in the same caller-owned PostgreSQL transaction. `event.event_delivery`,
 consumer enrollment, attempts, leases, fences, terminal status, replay roots,
 and retention floors are durable delivery state for that integration authority;
 they are not a product history and never become one by being projected into
-Watermill. The canonical event is projected deterministically into a Watermill
-message only after its delivery is claimable. Watermill is router/handler
+Watermill. Delivery rows are created only for an explicitly admitted consumer.
+The canonical event is projected deterministically into a Watermill message
+only after that delivery is claimable. Watermill is router/handler
 orchestration, not an event log, checkpoint authority, or product-history
 store. See [FAI-592](watermill-canonical-envelope.md) and
 [FAI-593](watermill-router-runtime.md).
 
 No capability may dual-write the same history into `event.event_log`, a
 framework-owned SQL table, and a product table and then choose whichever copy
-is easiest to read. A capability may retain a domain projection linked to a
-canonical event ID, but that projection remains authoritative for its own API
-and business semantics.
+is easiest to read. Owner projections remain synchronous in their source
+transaction. A future asynchronous projection is allowed only as a separately
+admitted concrete bounded, idempotent effect with its own owner and evidence;
+no placeholder read model or export is admitted for the current target. A
+capability may retain a domain projection linked to a canonical event ID, but
+that projection remains authoritative for its own API and business semantics.
 
 ## Authority, identity, ACL, order, and cursor rules
 
@@ -57,11 +61,11 @@ and business semantics.
   generation, lease owner, or other transport identity. The same rule applies
   to public IDs. A canonical UUIDv7 `event_id` is valid because it is the
   domain event identity, not because Watermill has a message UUID.
-- A product history row may be produced in the same transaction as its
-  canonical event, or may be an idempotent consumer projection. In either
-  case, `event.event_delivery` completion/acknowledgement proves only
-  integration progress; it does not replace the history owner’s commit or
-  ACL.
+- An owner projection is produced in the same transaction as its canonical
+  event by default. If a future admitted consumer produces a projection, it
+  must be an idempotent concrete effect; `event.event_delivery`
+  completion/acknowledgement proves only integration progress and never
+  replaces the history owner’s commit or ACL.
 
 ## Retained product-history inventory
 
@@ -117,14 +121,15 @@ evidence is itself retained as history.
 The boundaries below are mandatory:
 
 1. A canonical producer appends one finalized row to `event.event_log` (and
-   enrolled delivery rows) in the source transaction. The Watermill adapter
-   reconstructs a byte-identical message from that row. Watermill retries,
+   delivery rows for admitted consumers) in the source transaction. The
+   Watermill adapter reconstructs a byte-identical message from that row. Watermill retries,
    `Ack`/`Nack`, topics, offsets, and middleware metrics are transport
    mechanics only.
-2. A Watermill handler may make an idempotent domain mutation or append a
-   product projection, then complete the durable delivery before `Ack`. It
-   must not use a topic, attempt, offset, or delivery identity as the
-   projection’s public ID or cursor.
+2. A handler for an admitted Watermill consumer may make an idempotent domain
+   mutation or append a separately approved product projection, then complete
+   the durable delivery before `Ack`. It must not use a topic, attempt, offset,
+   or delivery identity as the projection’s public ID or cursor. No such
+   consumer currently exists.
 3. Pagestream is the browser SSE transport. Public stream/session IDs are
    product-owned domain IDs, and the stream registry/CAS is the durable
    authority for registration and command state. SSE delivery is not a
@@ -200,10 +205,13 @@ condition of the narrow relay deletion.
 
 Conformance is demonstrated by repository inspection and focused tests:
 
-- canonical event identity, append/fan-out, delivery fencing, lost-ack
-  recovery, and absence of Watermill SQL authority in
+- canonical event identity, append/fan-out, delivery fencing, and absence of
+  Watermill SQL authority in
   [`internal/platform/events`](../../internal/platform/events) and the
   [FAI-592/593 specifications](watermill-canonical-envelope.md);
+- selected-adapter conformance is qualification-only until a concrete consumer
+  is admitted. Multi-node/lag, dead-letter, restore, and runbook evidence is a
+  release gate only for that admitted consumer, not for the current target;
 - each owner’s schema/ACL/immutability/retention tests for the inventory above,
   with unresolved retention rows tracked as follow-up work rather than silent
   defaults;

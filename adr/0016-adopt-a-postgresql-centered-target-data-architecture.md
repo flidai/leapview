@@ -487,10 +487,28 @@ another explicit version row. `MAX(sequence) + 1` is prohibited. A global
 identity or commit position may support scanning, but it does not imply
 business order across aggregates.
 
-Durable broadcast delivery uses rows keyed by `(consumer_id, event_id)` and a
-consumer lifecycle of `backfilling`, `enabled`, `paused`, and `retired`.
-`Backfilling`, `enabled`, and `paused` consumers receive new delivery rows;
-`retired` consumers do not. Event-producing transactions use `READ COMMITTED`.
+The target selects the canonical PostgreSQL event log/delivery authority and
+the mature Watermill Router plus custom Subscriber adapter, but production
+consumer enrollment is conditional. A consumer may be admitted only when a
+named product capability owns a bounded, idempotent effect with a reviewed
+identity, authorization, retention, and recovery contract. As of this target
+release no real production consumer is admitted. Do not invent a placeholder
+consumer, read-model sink, or export merely to exercise Watermill. Owner
+projections (including lineage, cache, audit, and product histories) remain
+synchronous in their source transaction unless a later admission explicitly
+proves an asynchronous effect.
+
+Until that admission exists, the event log and producer-side event contract
+are production concerns, while the Router/subscriber runtime, readiness,
+backlog/lag/dead-letter metrics, restore exercises, and operator runbooks are
+qualification-only. No production event runtime is started or advertised as
+ready for an unadmitted consumer.
+
+When a consumer is admitted, durable broadcast delivery uses rows keyed by
+`(consumer_id, event_id)` and a consumer lifecycle of `backfilling`,
+`enabled`, `paused`, and `retired`. `Backfilling`, `enabled`, and `paused`
+consumers receive new delivery rows; `retired` consumers do not.
+Event-producing transactions use `READ COMMITTED`.
 The event repository rejects registry-fenced append, enrollment, backfill, and
 retirement operations under stronger transaction isolation before performing
 event work; their transaction-wide snapshots cannot satisfy this protocol.
@@ -540,8 +558,9 @@ dispatcher consumer rather than unbounded `event × consumer` rows.
 Compliance audit events are inserted directly and immutably through the source
 mutation's transaction. The runtime role receives append-only access and
 cannot update or delete audit history. Consumer delivery state is introduced
-only when an audit export or another asynchronous sink exists; it is not
-required to make an audit event visible inside the same database.
+only when an approved asynchronous effect exists (for example, an audit
+export); it is not required to make an owner projection or audit event visible
+inside the same database. No such consumer is currently admitted.
 
 `LISTEN`/`NOTIFY` is only a low-latency wake-up mechanism. A notification
 contains an opaque event or reconciliation key, never the authoritative event
@@ -588,20 +607,22 @@ tables and defaults do not redefine LeapView's durable contracts.
 
 | Concern | Target owner | Framework role |
 | --- | --- | --- |
-| source mutation, aggregate version, canonical event envelope, and immutable product history | capability-owned PostgreSQL schema | the canonical producer appends once; a deterministic projection presents the finalized row as a Watermill message |
-| delivery claim, attempt, acknowledgement, dead-letter state, replay root, and retention floor | canonical event-delivery schema | Watermill subscriber and router drive the existing fenced transitions through a LeapView adapter |
-| handler orchestration, approved retry/recovery/timeout middleware, and handler metrics | Watermill router | LeapView supplies bounded policy and idempotent domain handlers; canonical correlation remains envelope data, not mutable Watermill metadata |
-| compliance audit | append-only audit schema and audit writer | outside Watermill unless an explicit asynchronous export consumer is enrolled |
-| lineage and cache projections | lineage and cache capability schemas, when separately admitted | no Watermill topic or concrete consumer is implied; any such projection remains outside message transport authority |
+| source mutation, aggregate version, canonical event envelope, and immutable product history | capability-owned PostgreSQL schema | the canonical producer appends once; owner projections stay synchronous in that transaction; an admitted consumer may receive a deterministic Watermill projection |
+| delivery claim, attempt, acknowledgement, dead-letter state, replay root, and retention floor | canonical event-delivery schema | only an admitted consumer's Watermill Subscriber and Router drive the existing fenced transitions through the selected adapter |
+| handler orchestration, approved retry/recovery/timeout middleware, and handler metrics | Watermill router, when admitted | LeapView supplies bounded policy and idempotent domain handlers; no production runtime/readiness/ops burden exists before admission; canonical correlation remains envelope data, not mutable Watermill metadata |
+| compliance audit | append-only audit schema and audit writer | synchronous in the source transaction; outside Watermill unless a separately admitted asynchronous export effect exists |
+| lineage and cache projections | lineage and cache capability schemas | synchronous owner projections in the source transaction; no Watermill topic, placeholder, or concrete consumer is implied |
 | long-running commands and scheduled work | capability-owned PostgreSQL jobs tables and runner; River only for a future kind admitted by FAI-595 | never executed as a Watermill message handler |
 | browser signal delivery | Pagestream and the instance-local SSE fan-out | outside Watermill; durable events only wake or reconcile application state |
 
-[Watermill](https://watermill.io/docs/) is the standard application-level
-Router and handler orchestration boundary. Domain code consumes typed LeapView
-events through Watermill rather than a second product-owned router, while the
-canonical PostgreSQL `event_log`, `event_delivery`, and persisted
-aggregate-filtered consumer records remain the sole authority for claims,
-attempts, acknowledgement state, retries, replay, dead letters, and retention.
+[Watermill](https://watermill.io/docs/) is the selected standard
+application-level Router and handler orchestration boundary for a future
+admitted consumer. Domain code will consume typed LeapView events through
+Watermill rather than a second product-owned router once a concrete bounded
+idempotent effect is admitted. The canonical PostgreSQL `event_log`,
+`event_delivery`, and persisted aggregate-filtered consumer records remain the
+sole authority for claims, attempts, acknowledgement state, retries, replay,
+dead letters, and retention.
 The canonical event row, aggregate version, consumer enrollment fence, replay
 root, delivery attempt, dead-letter state, and retention decision remain in
 LeapView-owned PostgreSQL schemas.
@@ -615,9 +636,9 @@ offset log with transaction-ID caveats. That default is not evidence for
 LeapView's UUIDv7 event identities, aggregate-scoped order, per-consumer fenced
 deliveries, backfill roots, poison resolution, or retention floor. It is not
 the production transport. The target uses the canonical producer adapter for
-the one transactional append and a small Watermill `Subscriber` over the
-canonical delivery tables; it does not create a second Watermill-owned event
-authority.
+the one transactional append and, only after admission, a small Watermill
+`Subscriber` over the canonical delivery tables; it does not create a second
+Watermill-owned event authority.
 
 The [FAI-591 qualification](specifications/watermill-postgresql-proof.md)
 qualifies Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5` for package
@@ -625,10 +646,11 @@ and caller-owned transaction integration only. Its PostgreSQL 18 proof records
 that the stock SQL tables and integer offsets are unsuitable as an event
 authority. The [FAI-592 envelope decision](specifications/watermill-canonical-envelope.md)
 admits the strict message projection and canonical producer boundary, but not
-the subscriber/router path. The selected target is the Watermill core Router
-with a deterministic canonical-event message projection and a custom
+production consumer enrollment. The selected target is the Watermill core
+Router with a deterministic canonical-event message projection and a custom
 `message.Subscriber` over `event_log`/`event_delivery` and persisted
-aggregate-filtered consumers; the stock SQL transport remains
+aggregate-filtered consumers when a concrete effect is admitted; the stock SQL
+transport remains
 qualification-only. The [FAI-593 runtime specification](specifications/watermill-router-runtime.md)
 fixes claim-before-emit, exact worker/claim-generation fencing, fresh claims after
 `Nack`, approved middleware, bounded deadlines, lease recovery, and terminal
@@ -641,10 +663,11 @@ The stock Watermill SQL publisher `AutoInitializeSchema` and subscriber
 `InitializeSchema` are always disabled, including tests outside the framework
 qualification fixture.
 The SQL adapter's documented runtime initialization is therefore not a
-production DDL path. The current topics are exactly the allowlisted capability
-families `agent`, `dashboard`, `delivery`, and `release`; they are not
-conceptual control, lineage, or cache topics. Consumer identities are stable
-migration-owned records, never per-process UUIDs.
+production DDL path. The current topic vocabulary is exactly the allowlisted
+capability families `agent`, `dashboard`, `delivery`, and `release`; they are
+not conceptual control, lineage, or cache topics. No topic currently has a
+production consumer. When one is admitted, its identity is a stable
+migration-owned record, never a per-process UUID.
 
 The message UUID is the canonical domain event UUID. Its versioned envelope
 contains only event identity, scope, aggregate identity and version, event type
@@ -659,9 +682,9 @@ Its interface has no transaction parameter, while event ID, aggregate version,
 occurrence time, and stored JSONB payload are finalized inside the caller-owned
 PostgreSQL transaction. Binding a shared publisher to a transaction or
 dispatching an in-memory message before commit would weaken the boundary. The
-canonical producer instead appends the event and delivery rows once, then the
-subscriber reconstructs the byte-identical Watermill message from that durable
-row after it is claimable.
+canonical producer instead appends the event and any delivery rows for
+admitted consumers once, then the selected Subscriber reconstructs the
+byte-identical Watermill message from that durable row after it is claimable.
 
 Capability-owned `jobs.event` progress records and Agent-local conversation/run
 history are product read models, not message transports. They have separate API
@@ -670,9 +693,9 @@ not acknowledge canonical deliveries. Their ownership and any genuinely
 duplicate projections are audited by FAI-594; their existence does not create
 a second asynchronous event authority.
 
-Watermill `Ack` occurs only after the handler's idempotent domain effect and
-terminal `Complete` transition have committed. `Nack` and process loss may
-redeliver, consistent with Watermill's documented
+For an admitted consumer, Watermill `Ack` occurs only after the handler's
+idempotent domain effect and terminal `Complete` transition have committed.
+`Nack` and process loss may redeliver, consistent with Watermill's documented
 [at-least-once model](https://watermill.io/docs/pub-sub/#at-least-once-delivery);
 each retry starts with a fresh durable claim, and process loss is handled by
 lease recovery. The existing consumer lifecycle, replay, dead-letter, and pruning
@@ -685,11 +708,12 @@ interfaces.
 The transactional flows are:
 
 1. A command locks its aggregate/version authority, writes the mutation and
-   canonical event envelope, creates the delivery rows required by the fenced
-   consumer registry, and commits them through the caller-owned pgx
+   canonical event envelope, keeps owner projections in that same transaction,
+   and, when a consumer is admitted, creates the delivery rows required by the
+   fenced consumer registry. All rows commit through the caller-owned pgx
    transaction. The canonical producer adapter uses that exact transaction;
    no framework-owned row is committed separately.
-2. A subscriber claims one consumer-specific delivery with exact worker and
+2. When a consumer is admitted, its Subscriber claims one consumer-specific delivery with exact worker and
    claim-generation fences, commits that claim before emitting the message,
    reconstructs the Watermill message from the canonical event, and invokes
    the router without holding the claim transaction. The handler commits its
@@ -700,16 +724,17 @@ The transactional flows are:
    enter visible dead-letter state; pruning remains blocked until resolution or an
    audited waiver.
 
-Poll interval, resend interval, handler and acknowledgement deadlines, batch
-size, positive bounded `max_in_flight`, claim lease, recovery grace, and retry
-backoff are explicit bounded configuration with production metrics. Deadlines
-are positive and the lease must outlive the acknowledgement and recovery
-window (for example, `handler_deadline < acknowledgement_deadline <
-claim_lease - recovery_margin`); zero values cannot silently disable these
-protections. Watermill handlers must keep their transaction short; long work
-persists a request in the capability-owned jobs runner and acknowledges only
-that admission transaction. A future River request is allowed only after one
-job kind passes FAI-595; no current production handler assumes River.
+For an admitted consumer, poll interval, resend interval, handler and
+acknowledgement deadlines, batch size, positive bounded `max_in_flight`, claim
+lease, recovery grace, and retry backoff are explicit bounded configuration
+with production metrics. Deadlines are positive and the lease must outlive the
+acknowledgement and recovery window (for example,
+`handler_deadline < acknowledgement_deadline < claim_lease -
+recovery_margin`); zero values cannot silently disable these protections.
+Watermill handlers must keep their transaction short; long work persists a
+request in the capability-owned jobs runner and acknowledges only that
+admission transaction. A future River request is allowed only after one job
+kind passes FAI-595; no current production handler assumes River.
 The Router uses only the mature `Retry`, `Recoverer`, `Timeout`, `Prometheus`,
 and `slog` middleware; metadata-mutating `CorrelationID` and `Delay`,
 `PoisonQueue`, `InstantAck`, and `IgnoreErrors` are not part of the canonical
@@ -1080,12 +1105,14 @@ publication, shared-cache manifests and physical garbage collection must retain
 the same create-before-reference, immutable identity, orphan tolerance,
 fencing, and reconciliation discipline already required by ADR-0009.
 
-At-least-once events create duplicate-delivery and retention obligations.
-Consumers must be idempotent, poison or stalled delivery must be visible, and
-notification health must not be confused with durable backlog health. Logical
-decoding, if later enabled, adds replication-slot retention and failover
-operations. Transactional delivery fan-out also adds one row per durable
-consumer and therefore intentionally supports only a bounded consumer set.
+When a consumer is admitted, at-least-once delivery creates duplicate-delivery
+and retention obligations. That consumer must be idempotent, poison or stalled
+delivery must be visible, and notification health must not be confused with
+durable backlog health. Logical decoding, if later enabled, adds
+replication-slot retention and failover operations. Transactional delivery
+fan-out also adds one row per durable consumer and therefore intentionally
+supports only a bounded consumer set. These consumer-specific operations are
+not part of the current PostgreSQL target release.
 
 Catalog isolation limits snapshot-retention coupling and security blast radius
 at the cost of more catalogs and possible duplication when a future generation
@@ -1117,21 +1144,23 @@ Linear; this ADR records the destination and its invariants.
   compare-and-swap transitions, concurrent claims, lease fencing, idempotency,
   restart, and transaction rollback for every durable capability currently
   backed by SQLite.
-- Audit and domain-event tests prove mutation/event atomicity, at-least-once
-  idempotency, listener startup reconciliation, disconnect recovery, duplicate
-  notification tolerance, terminal delivery visibility, payload redaction,
-  replay retention, and poison-delivery handling. Concurrent enrollment tests
-  prove that events committed before, during, and after backfill receive exactly
-  one delivery row, including when a producer's fence statement blocks behind
-  enrollment and resumes after its commit. Tests also prove that backfill pins
-  its replay interval, that its frontier conveys no event ordering, that
-  unresolved dead letters prevent pruning, and that retirement closes the
-  fan-out boundary.
+- Audit and domain-event tests prove source mutation/event atomicity, owner
+  projection synchronicity, canonical envelope encoding, and absence of a
+  Watermill SQL authority. Adapter/conformance tests also cover the selected
+  subscriber's claim and completion protocol in qualification fixtures. Once a
+  concrete consumer is admitted, its acceptance suite must additionally prove
+  at-least-once idempotency, listener startup reconciliation, disconnect
+  recovery, duplicate notification tolerance, terminal delivery visibility,
+  replay retention, poison/dead-letter handling, and concurrent enrollment
+  backfill fences; those tests are not a blocker for the current target.
 - Multi-node tests prove that durable workers do not execute one lease
   concurrently, stale owners cannot publish, and active serving transitions
-  converge after a missed notification or node restart.
-- Framework conformance runs the event invariants through the Watermill
-  adapter. A River candidate is tested separately, one job kind at a time,
+  converge after a missed notification or node restart. Event-consumer
+  multi-node/lag, backup-restore, and operator-runbook drills are required only
+  after a consumer admission.
+- Framework conformance currently runs the adapter and canonical envelope
+  invariants without admitting a production consumer. A future consumer must
+  additionally pass the event runtime gates. A River candidate is tested separately, one job kind at a time,
   against the [FAI-595 gates](specifications/fai-595-river-job-admission.md):
   caller-owned enqueue/completion rollback, stable identity and digest,
   admission/fairness, cancellation and stale-worker fencing, retry/recovery,

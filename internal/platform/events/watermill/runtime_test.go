@@ -1,3 +1,6 @@
+// These tests exercise the selected Router/subscriber adapter in qualification
+// fixtures only. They do not enroll a production consumer or make event
+// runtime readiness an application release requirement.
 package watermill
 
 import (

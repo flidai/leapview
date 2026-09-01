@@ -60,12 +60,14 @@ identity, history, authorization, and terminal evidence.
 
 ## Watermill-not-jobs boundary
 
-Watermill is the in-process router and handler boundary for canonical
-`event.event_log` deliveries. The canonical event and enrolled delivery rows
-are written in the source transaction; a subscriber claims a delivery and
-projects a deterministic message. Watermill `Ack` follows the handler's
-idempotent domain effect and durable delivery completion. Watermill topics,
-offsets, attempts, and acknowledgements are transport mechanics only.
+Watermill is the selected in-process router and handler boundary for canonical
+`event.event_log` deliveries when a consumer is admitted. The canonical event
+and any admitted consumer's delivery rows are written in the source
+transaction; a subscriber claims a delivery and projects a deterministic
+message. Watermill `Ack` follows the handler's idempotent domain effect and
+durable delivery completion. Watermill topics, offsets, attempts, and
+acknowledgements are transport mechanics only. No current production consumer
+is admitted; Watermill must not be used to invent a job, read model, or export.
 
 Jobs are not Watermill messages. A Watermill handler that needs long-running
 work may enqueue a capability-owned job and acknowledge only after that

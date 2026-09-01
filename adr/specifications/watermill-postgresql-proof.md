@@ -1,6 +1,6 @@
 # FAI-591 Watermill PostgreSQL qualification
 
-Status: package/transaction integration qualified; canonical adapter not admitted
+Status: package/transaction integration qualified; production consumer not admitted
 
 Date: 2026-08-31
 
@@ -8,11 +8,13 @@ Related: [ADR-0016](../0016-adopt-a-postgresql-centered-target-data-architecture
 
 ## Decision
 
-Pin Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5`.  Use Watermill
-for the application message/router boundary, while keeping LeapView's
-PostgreSQL event log and consumer-delivery tables authoritative.  A future
-adapter may project the finalized canonical event as a Watermill message; the
-stock SQL transport must not become a second event log.
+Pin Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5`. Use Watermill for
+the application message/router boundary, while keeping LeapView's PostgreSQL
+event log and consumer-delivery tables authoritative. The mature core Router
+and custom PostgreSQL Subscriber adapter are selected for a future admitted
+consumer; enrollment is conditional on a concrete product-owned bounded,
+idempotent effect. No real consumer is admitted for the current PostgreSQL
+target release, and the stock SQL transport must not become a second event log.
 
 ## Evidence
 
@@ -46,8 +48,10 @@ from the adapter's generated SQL.
 ## Consequence
 
 The proof confirms transaction integration and package compatibility only. It
-does not claim lost-ack, poison/replay, or router adapter acceptance (those are
-FAI-592/FAI-593).  It does not authorize production Watermill tables, dual
-writes, or replacement of the canonical event repository.  Migrations continue
-to own every transport table and both Watermill schema-initialization flags
-remain disabled in production and tests.
+does not admit a production consumer or event runtime, and it does not make
+multi-node consumer, lag/DLQ, restore, or runbook qualification a blocker for
+the current PostgreSQL target. Those gates become required when a concrete
+consumer is admitted under FAI-593. The proof does not authorize production
+Watermill tables, dual writes, Watermill jobs, or replacement of the canonical
+event repository. Migrations continue to own every transport table and both
+Watermill schema-initialization flags remain disabled in production and tests.

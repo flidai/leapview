@@ -1,6 +1,6 @@
 # FAI-592 canonical Watermill envelope
 
-Status: envelope and canonical producer boundary admitted; producer migration in progress
+Status: envelope and canonical producer boundary admitted; consumer enrollment conditional
 
 Date: 2026-08-31
 
@@ -10,9 +10,17 @@ Related: [ADR-0016](../0016-adopt-a-postgresql-centered-target-data-architecture
 
 The canonical PostgreSQL event repository is the only producer authority. A
 producer supplies the exact caller-owned transaction to the Watermill boundary,
-which appends one event and the enrolled consumers' delivery rows. The stored
-event is projected deterministically into a Watermill message; no Watermill SQL
-table, generic transport offset, second publish, or pre-commit dispatch exists.
+which appends one event and, only for explicitly admitted consumers, their
+delivery rows. The stored event is projected deterministically into a
+Watermill message; no Watermill SQL table, generic transport offset, second
+publish, or pre-commit dispatch exists.
+
+Production consumer enrollment is conditional on a concrete product-owned,
+bounded, idempotent effect. No real consumer is admitted for the current
+PostgreSQL target release. Do not invent a placeholder read model or export to
+exercise the adapter. Owner projections remain synchronous in the source
+transaction; the Router/subscriber runtime and its readiness/operations burden
+begin only after a consumer admission.
 
 Watermill's `message.Publisher` is deliberately not used for this write. Its
 interface has no transaction parameter, while PostgreSQL finalizes the UUIDv7
@@ -22,7 +30,8 @@ canonical delivery is claimable.
 
 ## Envelope contract
 
-- Four allowlisted topics group agent, dashboard, delivery, and release events.
+- Four allowlisted topics group agent, dashboard, delivery, and release events;
+  topic vocabulary does not itself enroll a consumer.
 - `message.UUID` is the canonical lowercase UUIDv7 event identity.
 - Envelope version, scope, aggregate identity and version, event type and
   schema version, UTC occurrence time, optional canonical correlation UUID, and
@@ -39,8 +48,9 @@ canonical delivery is claimable.
 exactly one authority call, deterministic encoding/decoding, topic and metadata
 rejection, size bounds, rollback atomicity, UUIDv7 identity, idempotent replay,
 conflict detection, canonical fan-out, and absence of `watermill_*` tables on
-PostgreSQL 18. The production constructor accepts only the concrete canonical
-event repository.
+PostgreSQL 18. The producer constructor accepts only the concrete canonical
+event repository. Subscriber/router conformance is qualification-only until a
+concrete effect is admitted.
 
 The PostgreSQL event authority independently enforces UUIDv7 at the repository
 and table boundaries and returns the stored JSONB representation. This prevents
@@ -58,6 +68,8 @@ duplicate rather than a distinct product projection.
 
 FAI-592 remains open until every canonical deployment, release, dashboard,
 agent, and approval producer uses this boundary and its mutation/event rollback
-test passes. FAI-593 owns the Watermill Subscriber and Router path over fenced
-delivery claims, including acknowledgement, lost-ack redelivery, retry,
-dead-letter, replay, retention, shutdown, and observability conformance.
+test passes. FAI-593 owns adapter conformance over fenced delivery claims.
+Lost-ack redelivery, retry, dead-letter, replay, retention, shutdown,
+multi-node/lag, restore, and runbook gates become required only when a concrete
+consumer is admitted; they are not blockers for the current PostgreSQL target
+release.
