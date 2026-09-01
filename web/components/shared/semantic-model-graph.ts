@@ -258,41 +258,51 @@ function modelNodePosition(node: SemanticModelGraphNodeSignal, graph: SemanticMo
     .filter((candidate) => (ranks.get(candidate.id) ?? 0) === rank)
     .sort((left, right) => left.id.localeCompare(right.id))
   const row = rankNodes.findIndex((candidate) => candidate.id === node.id)
+  const precedingHeight = rankNodes
+    .slice(0, Math.max(0, row))
+    .reduce((height, candidate) => height + nodeHeight(candidate) + NODE_GAP_Y, 0)
   return {
-    x: NODE_OFFSET_X + (rank + minRankOffset(ranks)) * NODE_GAP_X,
-    y: NODE_OFFSET_Y + Math.max(0, row) * (NODE_GAP_Y + nodeHeight(node)),
+    x: NODE_OFFSET_X + rank * NODE_GAP_X,
+    y: NODE_OFFSET_Y + precedingHeight,
   }
 }
 
 function modelNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
-	const ranks = new Map<string, number>()
-	const roots = (graph.datasets ?? []).filter((dataset) => graph.nodes.some((node) => node.id === dataset))
-	if (!roots.length && graph.nodes[0]?.id) roots.push(graph.nodes[0].id)
-	if (!roots.length) return ranks
-	for (const root of roots) ranks.set(root, 0)
-	const queue = [...roots]
+  const ranks = new Map<string, number>()
+  const nodeIDs = new Set(graph.nodes.map((node) => node.id))
+  const incoming = new Map(graph.nodes.map((node) => [node.id, 0]))
+  const outgoing = new Map(graph.nodes.map((node) => [node.id, [] as string[]]))
+
+  for (const edge of graph.edges) {
+    if (!nodeIDs.has(edge.source) || !nodeIDs.has(edge.target) || edge.source === edge.target) continue
+    outgoing.get(edge.source)?.push(edge.target)
+    incoming.set(edge.target, (incoming.get(edge.target) ?? 0) + 1)
+  }
+
+  const queue = graph.nodes
+    .filter((node) => (incoming.get(node.id) ?? 0) === 0)
+    .map((node) => node.id)
+    .sort((left, right) => left.localeCompare(right))
+  for (const root of queue) ranks.set(root, 0)
+
   while (queue.length) {
     const current = queue.shift() ?? ''
     const currentRank = ranks.get(current) ?? 0
-    for (const edge of graph.edges) {
-      const next = edge.source === current ? edge.target : edge.target === current ? edge.source : ''
-      if (!next || ranks.has(next)) continue
-      const direction = edge.source === current ? 1 : -1
-      ranks.set(next, currentRank + direction)
-      queue.push(next)
+    for (const next of outgoing.get(current) ?? []) {
+      ranks.set(next, Math.max(ranks.get(next) ?? 0, currentRank + 1))
+      const remaining = (incoming.get(next) ?? 1) - 1
+      incoming.set(next, remaining)
+      if (remaining === 0) queue.push(next)
     }
   }
+
+  // Cyclic components have no topological root. Keep them together in the
+  // first rank so the layout remains bounded and users can separate them by
+  // dragging without an unbounded rank walk.
   for (const node of graph.nodes) {
     if (!ranks.has(node.id)) ranks.set(node.id, 0)
   }
   return ranks
-}
-
-function minRankOffset(ranks: Map<string, number>): number {
-  const values = Array.from(ranks.values())
-  if (!values.length) return 0
-  const min = Math.min(...values)
-  return min < 0 ? Math.abs(min) : 0
 }
 
 function nodeHeight(node: SemanticModelGraphNodeSignal): number {
@@ -374,7 +384,7 @@ function relationshipEndpointMarkers(cardinality: string): [string, string] {
 function graphLayoutKey(graph: SemanticModelGraphSignal, storageKey: string): string {
   const nodePart = graph.nodes.map((node) => `${node.id}:${node.fields.map((field) => field.name).join(',')}`).join('|')
   const edgePart = graph.edges.map((edge) => `${edge.id}:${edge.source}.${edge.sourceField}->${edge.target}.${edge.targetField}:${edge.cardinality}`).join('|')
-  return `leapview:semantic-model-graph:v2:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
+  return `leapview:semantic-model-graph:v3:${storageKey || (graph.datasets ?? []).join(',') || 'model'}:${nodePart}:${edgePart}`
 }
 
 function loadLayout(key: string): Map<string, NodePosition> {
