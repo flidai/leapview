@@ -371,6 +371,12 @@ SELECT owner_id,fencing_epoch,lease_expires_at FROM ducklake.migration_fence WHE
 -- name: RegisterCatalogRuntimeCompatibility :exec
 SELECT ducklake.register_catalog_runtime_compatibility(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(duckdb_runtime),sqlc.arg(ducklake_extension),sqlc.arg(catalog_format),sqlc.arg(compatibility_digest),sqlc.arg(catalog_schema_version),sqlc.arg(owner_id),sqlc.arg(pool_fencing_epoch),sqlc.arg(global_fencing_epoch));
 
+-- name: InsertInitialCatalogRuntimeCompatibility :exec
+INSERT INTO ducklake.catalog_runtime_compatibility
+(physical_pool_id,catalog_id,duckdb_runtime,ducklake_extension,catalog_format,compatibility_digest,catalog_schema_version)
+VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(duckdb_runtime),sqlc.arg(ducklake_extension),sqlc.arg(catalog_format),sqlc.arg(compatibility_digest),sqlc.arg(catalog_schema_version))
+ON CONFLICT (physical_pool_id) DO NOTHING;
+
 -- name: GetCatalogRuntimeCompatibility :one
 SELECT physical_pool_id,catalog_id,duckdb_runtime,ducklake_extension,catalog_format,compatibility_digest,catalog_schema_version,CAST(COALESCE(current_migration_id::text,'') AS text) AS current_migration_id,updated_at
 FROM ducklake.catalog_runtime_compatibility WHERE physical_pool_id=sqlc.arg(physical_pool_id);

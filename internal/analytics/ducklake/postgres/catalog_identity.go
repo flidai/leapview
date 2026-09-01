@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	dbgen "github.com/flidai/leapview/internal/analytics/ducklake/postgres/internal/db"
 	"github.com/google/uuid"
 )
 
@@ -17,6 +18,49 @@ const catalogIdentitySeedPrefix = "leapview/ducklake/catalog/v1\x00"
 type CatalogRegistrationEvidence struct {
 	CatalogDatabase      string
 	CatalogSchemaVersion string
+}
+
+// BootstrapCatalog registers the first catalog identity and runtime tuple in
+// one caller-owned control transaction. It is intentionally separate from
+// fenced catalog upgrades: bootstrap can only insert a missing exact row or
+// replay the existing one; it cannot change either identity.
+func BootstrapCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity, compatibility RuntimeCompatibility) (CatalogIdentity, CatalogRuntimeCompatibility, error) {
+	if tx == nil || validateCatalog(identity) != nil || compatibility.validate() != nil ||
+		identity.CompatibilityDigest != compatibility.CompatibilityDigest ||
+		identity.CatalogSchemaVersion != compatibility.CatalogSchemaVersion {
+		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	catalog, err := RegisterCatalog(ctx, tx, identity)
+	if err != nil {
+		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, err
+	}
+	initial := CatalogRuntimeCompatibility{
+		PhysicalPoolID:       identity.PhysicalPoolID,
+		CatalogID:            identity.CatalogID,
+		RuntimeCompatibility: compatibility,
+	}
+	if err := querygen(tx).InsertInitialCatalogRuntimeCompatibility(ctx, dbgen.InsertInitialCatalogRuntimeCompatibilityParams{
+		PhysicalPoolID:       initial.PhysicalPoolID,
+		CatalogID:            initial.CatalogID,
+		DuckdbRuntime:        initial.DuckDBRuntime,
+		DucklakeExtension:    initial.DuckLakeExtension,
+		CatalogFormat:        initial.CatalogFormat,
+		CompatibilityDigest:  initial.CompatibilityDigest,
+		CatalogSchemaVersion: initial.CatalogSchemaVersion,
+	}); err != nil {
+		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, err
+	}
+	registered, err := LoadCatalogRuntimeCompatibility(ctx, tx, identity.PhysicalPoolID)
+	if err != nil {
+		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, err
+	}
+	if registered.PhysicalPoolID != initial.PhysicalPoolID || registered.CatalogID != initial.CatalogID || !sameRuntimeCompatibility(registered.RuntimeCompatibility, initial.RuntimeCompatibility) {
+		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, fmt.Errorf("%w: physical pool %q runtime compatibility", ErrConflict, identity.PhysicalPoolID)
+	}
+	return catalog, registered, nil
 }
 
 // DeriveCatalogIdentity constructs the application-owned stable identity for

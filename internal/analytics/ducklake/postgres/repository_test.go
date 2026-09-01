@@ -52,9 +52,24 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	r := New(p)
 	const poolID, catalogID = "pool-1", "catalog-1"
 	identity := CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}
-	registered, err := r.RegisterCatalog(t.Context(), identity)
+	compatibility := RuntimeCompatibility{RuntimeTuple: RuntimeTuple{DuckDBRuntime: "duckdb:1.5.4", DuckLakeExtension: "ducklake:1.0.0", CatalogFormat: "ducklake:1.0"}, CompatibilityDigest: identity.CompatibilityDigest, CatalogSchemaVersion: identity.CatalogSchemaVersion}
+	registered, registeredCompatibility, err := BootstrapCatalog(t.Context(), p, identity, compatibility)
 	if err != nil {
 		t.Fatal(err)
+	}
+	if replayCatalog, replayCompatibility, replayErr := BootstrapCatalog(t.Context(), p, identity, compatibility); replayErr != nil || !sameCatalog(replayCatalog, registered) || !sameRuntimeCompatibility(replayCompatibility.RuntimeCompatibility, registeredCompatibility.RuntimeCompatibility) {
+		t.Fatalf("exact catalog bootstrap replay = catalog %#v runtime %#v err %v", replayCatalog, replayCompatibility, replayErr)
+	}
+	for label, mutate := range map[string]func(*RuntimeCompatibility){
+		"DuckDB runtime":     func(v *RuntimeCompatibility) { v.DuckDBRuntime = "duckdb:1.6.0" },
+		"DuckLake extension": func(v *RuntimeCompatibility) { v.DuckLakeExtension = "ducklake:1.1.0" },
+		"catalog format":     func(v *RuntimeCompatibility) { v.CatalogFormat = "ducklake:1.1" },
+	} {
+		conflict := compatibility
+		mutate(&conflict)
+		if _, _, conflictErr := BootstrapCatalog(t.Context(), p, identity, conflict); !errors.Is(conflictErr, ErrConflict) {
+			t.Fatalf("changed bootstrap %s error = %v, want ErrConflict", label, conflictErr)
+		}
 	}
 	loaded, err := r.LoadCatalog(t.Context(), poolID)
 	if err != nil {
