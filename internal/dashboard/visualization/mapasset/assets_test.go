@@ -35,6 +35,16 @@ func TestResolveReturnsImmutableSameOriginManifest(t *testing.T) {
 	}
 }
 
+func TestStyleDigestMatchesAuthoredAsset(t *testing.T) {
+	contents, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "static", "map-assets", "leapview-streets", "style.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := fmt.Sprintf("%x", sha256.Sum256(contents)); got != StyleSHA256 {
+		t.Fatalf("authored style digest = %s, want %s", got, StyleSHA256)
+	}
+}
+
 func TestStreetsBasemapIncludesRegionalBusinessDetail(t *testing.T) {
 	asset, err := Resolve("streets")
 	if err != nil {

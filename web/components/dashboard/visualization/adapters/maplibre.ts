@@ -11,7 +11,7 @@ import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer } from './maplibre/layers'
 import { clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
-import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
+import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
 
@@ -274,7 +274,10 @@ class MapLibreHandle implements RendererHandle {
   }
   resize(): void { this.map.resize() }
   async snapshot(): Promise<Blob> {
-    await waitForMapIdle(this.map)
+    // Capture the current rendered frame. Waiting for global `idle` would also
+    // wait for every basemap tile and can stall an otherwise useful export when
+    // an optional tile or sprite is unavailable.
+    await waitForMapRender(this.map)
     const canvas = this.map.getCanvas()
     return new Promise((resolve, reject) => canvas.toBlob((blob) => blob ? resolve(blob) : reject(new Error('MapLibre snapshot failed')), 'image/png'))
   }
@@ -416,7 +419,11 @@ class MapLibreHandle implements RendererHandle {
 		if (!this.map.getLayer(update.id)) return
 		if (update.filter) this.map.setFilter(update.id, update.filter as never)
 		if (update.minzoom !== undefined && update.maxzoom !== undefined) this.map.setLayerZoomRange(update.id, update.minzoom, update.maxzoom)
-		for (const [property, value] of Object.entries(update.paint ?? {})) this.map.setPaintProperty(update.id, property, value)
+		for (const property of Object.keys(update.paint ?? {})) {
+			if (!update.paint || !hasTiledPaintProperty(update.paint, property)) continue
+			const value = update.paint[property]
+			if (value !== undefined) this.map.setPaintProperty(update.id, property, value)
+		}
 	}
 
   private updateSelectionData(envelope: VisualizationEnvelope): FeatureCollection[] {
@@ -761,7 +768,14 @@ class MapLibreHandle implements RendererHandle {
 
 }
 
-type TiledLayerStyleUpdate = { id: string; paint?: Record<string, unknown>; filter?: unknown[]; minzoom?: number; maxzoom?: number }
+type TiledPaintPropertyName = Parameters<MapLibreMap['setPaintProperty']>[1]
+type TiledPaintPropertyValue = Parameters<MapLibreMap['setPaintProperty']>[2]
+type TiledPaintProperties = Partial<Record<TiledPaintPropertyName, TiledPaintPropertyValue>>
+type TiledLayerStyleUpdate = { id: string; paint?: TiledPaintProperties; filter?: unknown[]; minzoom?: number; maxzoom?: number }
+
+function hasTiledPaintProperty(paint: TiledPaintProperties, property: string): property is keyof TiledPaintProperties {
+	return Object.hasOwn(paint, property)
+}
 
 export function tiledRawPrecisionVisible(zoom: number, rawMinimumZoom: number): boolean {
 	return zoom >= rawMinimumZoom
