@@ -1700,6 +1700,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
       return {
         badgeCount: root.querySelectorAll('.meta .badge').length,
         metadataLines: root.querySelectorAll('.meta > span').length,
+        metadata: root.querySelector('.meta > span')?.textContent?.trim(),
         topLevelActions: Array.from(toolbar.children).map((child) => child.localName === 'details' ? 'more' : child.textContent?.trim()),
         moreLabel: root.querySelector('.more-actions summary')?.textContent?.trim(),
         moreAriaLabel: root.querySelector('.more-actions summary')?.getAttribute('aria-label'),
@@ -1708,6 +1709,8 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     })
     expect(state.badgeCount).toBe(0)
     expect(state.metadataLines).toBe(1)
+    expect(state.metadata).toContain('Saving changes…')
+    expect(state.metadata).not.toContain('Unsaved')
     expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'Preview', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')

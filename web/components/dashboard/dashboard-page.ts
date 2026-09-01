@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, GitFork, PencilLine, SlidersHorizontal } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -83,6 +83,8 @@ type DashboardRefreshProgress = {
 class LeapViewDashboardPage extends DatastarLit(LitElement) {
   @property({ type: String, reflect: true }) presentation: 'app' | 'public' | 'embed' = 'app'
   @property({ type: Boolean, reflect: true, attribute: 'read-only' }) readOnly = false
+  @property({ attribute: 'authoring-action-label' }) authoringActionLabel = ''
+  @property({ attribute: 'authoring-action-href' }) authoringActionHref = ''
   @state() private unsupportedKinds = new Set<string>()
   @state() private optimisticSelections: CanonicalInteractionSelection[] | null = null
   @state() private optimisticSpatialSelections: VisualizationSpatialSelectionState[] | null = null
@@ -380,6 +382,41 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     `,
     dashboardPageInteractionStyles,
     css`
+    .authoring-action {
+      display: inline-flex;
+      height: var(--control-medium-size);
+      box-sizing: border-box;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-6);
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-default);
+      padding: 0 var(--base-size-12);
+      text-decoration: none;
+      white-space: nowrap;
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-medium);
+    }
+
+    .authoring-action:hover,
+    .authoring-action:focus-visible {
+      background: var(--lv-bg-control-hover);
+      outline: 0;
+    }
+
+    .authoring-action:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .authoring-action svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+      flex: 0 0 auto;
+    }
+
     @media (max-width: 640px) {
       .route,
 			.route.agent-open,
@@ -446,13 +483,15 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-toggle,
-      :host(:not([presentation='embed'])) .agent-toggle {
+      :host(:not([presentation='embed'])) .agent-toggle,
+      :host(:not([presentation='embed'])) .authoring-action {
         width: var(--control-medium-size);
         padding-inline: 0;
       }
 
       :host(:not([presentation='embed'])) .mobile-filter-label,
-      :host(:not([presentation='embed'])) .agent-toggle span {
+      :host(:not([presentation='embed'])) .agent-toggle span,
+      :host(:not([presentation='embed'])) .authoring-action span {
         display: none;
       }
 
@@ -797,6 +836,17 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 						], 'Breadcrumb')}
 						<div class="actions">
 							${this.renderMobilePageMenu(page)}
+							${this.authoringActionLabel && this.authoringActionHref ? html`
+							<a
+								class="authoring-action"
+								href=${this.authoringActionHref}
+								aria-label=${this.authoringActionLabel}
+								title=${this.authoringActionLabel}
+							>
+								${this.authoringActionLabel === 'Fork as draft' ? lucideIcon(GitFork) : lucideIcon(PencilLine)}
+								<span>${this.authoringActionLabel}</span>
+							</a>
+							` : nothing}
 							<button
 								type="button"
 								class="icon-button mobile-filter-toggle"
@@ -1258,7 +1308,9 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const selections = this.optimisticSelections ?? this.interactionSelections
     const spatialSelections = this.optimisticSpatialSelections ?? this.spatialSelections
     const spatialSelection = [...spatialSelections].reverse().find((selection) => selection.visualID === visual.visualID)
-    const highlights = visualizationHighlightStates(visual, visualMap, selections, spatialSelections)
+    const highlights = this.optimisticSelections !== null || this.optimisticSpatialSelections !== null
+      ? visualizationHighlightStates(visual, visualMap, selections, spatialSelections)
+      : visual.highlights
     return {
       ...visual,
       selection: visualizationSelectionEntries(visual, selections),
@@ -1442,14 +1494,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (command.action === 'set' && (!command.geometry || command.geometry.kind !== command.gesture)) return
 
     const current = [...(this.optimisticSpatialSelections ?? this.spatialSelections)]
-    if (command.action === 'clear') {
-      for (let index = current.length - 1; index >= 0; index--) {
-        const selection = current[index]!
-        if (selection.visualID === command.visualID && selection.interactionID === command.interactionID) current.splice(index, 1)
-      }
-    } else if (command.geometry) {
-      current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
-    }
+      .filter((selection) => selection.visualID !== command.visualID || selection.interactionID !== command.interactionID)
+    if (command.action === 'set' && command.geometry) current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
     this.optimisticController.setSpatialSelections(current, this.status.generation)
   }
 

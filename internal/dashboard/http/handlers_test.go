@@ -12,6 +12,8 @@ import (
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard"
+	"github.com/flidai/leapview/internal/dashboard/authoring"
+	"github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/catalog"
 	"github.com/flidai/leapview/internal/dashboard/consumer"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
@@ -24,6 +26,16 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/go-chi/chi/v5"
 )
+
+type dashboardEntryAuthoringFake struct {
+	*builderAuthoringFake
+	draft    application.DraftRead
+	draftErr error
+}
+
+func (f *dashboardEntryAuthoringFake) Draft(context.Context, application.DraftRequest) (application.DraftRead, error) {
+	return f.draft, f.draftErr
+}
 
 type fakeMetrics struct{}
 
@@ -53,6 +65,19 @@ func (fakeDashboardResolver) Resolve(dashboardID projectgraph.ResourceID) (dashb
 		return dashboardresolver.Resolved{}, err
 	}
 	return dashboardresolver.Resolved{Definition: definition, Model: model, Source: dashboardresolver.SourceMetadata{Kind: dashboardresolver.SourceProject, Identity: projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: "generation"}}}, nil
+}
+
+type instanceMetrics struct{ fakeMetrics }
+
+func (instanceMetrics) Resolver() dashboardresolver.Resolver { return instanceDashboardResolver{} }
+
+type instanceDashboardResolver struct{}
+
+func (instanceDashboardResolver) Resolve(dashboardID projectgraph.ResourceID) (dashboardresolver.Resolved, error) {
+	resolved, err := (fakeDashboardResolver{}).Resolve(dashboardID)
+	resolved.Source.Kind = dashboardresolver.SourceInstance
+	resolved.Source.AuthoredRevision = dashboardresolver.AuthoredRevisionEvidence{ID: "revision-7", Number: 7, ContentHash: "sha256:" + strings.Repeat("a", 64)}
+	return resolved, err
 }
 func (fakeMetrics) DefaultFilters(string) dashboard.Filters {
 	return dashboard.Filters{}.WithDefaults()
@@ -123,6 +148,46 @@ func TestPageSetsClientCookieAndRendersReport(t *testing.T) {
 	}
 	if strings.Contains(body, `<lv-report-canvas`) {
 		t.Fatalf("page rendered dashboard internals in Go shell:\n%s", body)
+	}
+}
+
+func TestPublishedDashboardUsesContextualAuthoringEntryAction(t *testing.T) {
+	provenance := authoring.Provenance{Origin: authoring.OriginUI, ActorID: "alice"}
+	publishedToken := authoring.RevisionToken{RevisionID: "revision-7", Number: 7, ContentHash: "sha256:" + strings.Repeat("a", 64)}
+	draftToken := authoring.RevisionToken{RevisionID: "revision-8", Number: 8, ContentHash: "sha256:" + strings.Repeat("b", 64)}
+	lifecycle, err := authoring.NewDashboardLifecycle(authoring.NewDashboardLifecycleInput{
+		ProjectID: "project", ID: "dash", OwnerPrincipalID: "alice", Slug: "dashboard", Title: "Dashboard", SemanticModel: "model",
+		Visibility: authoring.VisibilityPrivate,
+		Draft:      &authoring.Draft{ID: "draft-7", DashboardID: "dash", Revision: draftToken, Provenance: provenance},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lifecycle.Status = authoring.LifecycleStatusPublished
+	lifecycle.Published = &authoring.Published{Revision: publishedToken, Compilation: authoring.CompiledRevisionToken{AuthoredRevision: publishedToken, DefinitionHash: "sha256:" + strings.Repeat("c", 64), SemanticModelID: "model", SemanticIdentity: projectgraph.ServingIdentity{ProjectID: "project", Environment: "dev", GenerationID: "generation"}}, PublishedAt: time.Date(2026, 9, 1, 1, 0, 0, 0, time.UTC), Provenance: provenance}
+	entry := &dashboardEntryAuthoringFake{
+		builderAuthoringFake: &builderAuthoringFake{},
+		draft:                application.DraftRead{Lifecycle: lifecycle},
+	}
+	handler := Handler{Metrics: instanceMetrics{}, ProjectID: "project", Authoring: entry, CurrentPrincipalID: func(*nethttp.Request) string { return "alice" }}
+	rec := httptest.NewRecorder()
+	handler.RenderPage(rec, httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash/pages/overview", nil), "dash", "overview")
+	body := html.UnescapeString(rec.Body.String())
+	if !strings.Contains(body, `authoring-action-label="Continue editing"`) || !strings.Contains(body, `authoring-action-href="/dashboards/dash/edit?draft=draft-7&page=overview"`) {
+		t.Fatalf("missing contextual continue action: %s", body)
+	}
+}
+
+func TestProjectDashboardUsesForkEntryAction(t *testing.T) {
+	entry := &dashboardEntryAuthoringFake{
+		builderAuthoringFake: &builderAuthoringFake{},
+	}
+	handler := Handler{Metrics: fakeMetrics{}, ProjectID: "project", Authoring: entry, CurrentPrincipalID: func(*nethttp.Request) string { return "viewer" }}
+	rec := httptest.NewRecorder()
+	handler.RenderPage(rec, httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash/pages/overview", nil), "dash", "overview")
+	body := html.UnescapeString(rec.Body.String())
+	if !strings.Contains(body, `authoring-action-label="Fork as draft"`) || !strings.Contains(body, `authoring-action-href="/dashboards/dash/fork"`) {
+		t.Fatalf("missing contextual fork action: %s", body)
 	}
 }
 

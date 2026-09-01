@@ -4890,8 +4890,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private saveLabel(builder: DashboardBuilderSignal): string {
     if (builder.save.state === 'saving') return 'Saving…'
     if (builder.save.state === 'error') return builder.save.message || 'Save failed'
-    if (builder.save.state === 'dirty') return 'Unsaved changes'
-    if (builder.hasUnpublishedChanges) return 'Unpublished draft'
+    if (builder.save.state === 'dirty') return 'Saving changes…'
+    if (builder.hasUnpublishedChanges) return 'Saved · Unpublished'
     return builder.save.message || 'Saved'
   }
 

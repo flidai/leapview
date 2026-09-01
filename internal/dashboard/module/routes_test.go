@@ -54,7 +54,8 @@ func TestMountAuthenticatedRegistersDashboardBuilderBrowserSurface(t *testing.T)
 		access.CapabilityResourceRead,
 		access.CapabilityResourceEdit,
 		access.CapabilityResourceEdit,
-		access.CapabilityResourceEdit,
+		// Forking requires VIEW of the source and EDIT on the target project.
+		access.CapabilityResourceRead,
 		access.CapabilityResourceEdit,
 	} {
 		if capabilities[index] != wantCapability {

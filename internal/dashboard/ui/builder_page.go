@@ -93,14 +93,44 @@ func DashboardDraftCreatePage(projectID, csrfToken, action string, providers ...
 // DashboardDraftCreatePageWithKey renders the create form with a stable
 // idempotency key so a retry or double submit returns the original result.
 func DashboardDraftCreatePageWithKey(projectID, csrfToken, action, idempotencyKey string, providers ...webpage.Provider) g.Node {
-	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionTitle: "Dashboards", PageTitle: "Create draft", Compact: true})
+	return DashboardDraftCreatePageWithModelsAndKey(projectID, csrfToken, action, idempotencyKey, nil, "", providers...)
+}
+
+type DashboardSemanticModelOption struct {
+	ID    string
+	Title string
+}
+
+// DashboardDraftCreatePageWithModelsAndKey renders governed models as a
+// bounded choice. The text input fallback keeps focused tests and installations
+// without a loaded catalog recoverable rather than presenting an empty select.
+func DashboardDraftCreatePageWithModelsAndKey(projectID, csrfToken, action, idempotencyKey string, models []DashboardSemanticModelOption, selectedModel string, providers ...webpage.Provider) g.Node {
+	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionTitle: "Dashboards", PageTitle: "New dashboard", Compact: true})
+	modelField := g.Node(h.Input(h.ID("dashboard-semantic-model"), h.Name("semanticModel"), h.Required(), h.AutoComplete("off")))
+	if len(models) > 0 {
+		options := make([]g.Node, 0, len(models))
+		for _, model := range models {
+			id := strings.TrimSpace(model.ID)
+			if id == "" {
+				continue
+			}
+			title := strings.TrimSpace(model.Title)
+			if title == "" {
+				title = id
+			}
+			options = append(options, h.Option(h.Value(id), g.If(id == strings.TrimSpace(selectedModel), h.Selected()), g.Text(title)))
+		}
+		if len(options) > 0 {
+			modelField = h.Select(g.Group{h.ID("dashboard-semantic-model"), h.Name("semanticModel"), h.Required()}, g.Group(options))
+		}
+	}
 	return webpage.Render(layout, webpage.Spec{
-		Title: "Create dashboard draft", CSRFToken: csrfToken,
+		Title: "New dashboard", CSRFToken: csrfToken,
 		UpdatesURL: "/updates?route=dashboard_builder",
 		MainAttrs:  []g.Node{h.ID("dashboard-draft-create"), h.Class(webpage.RootClass)},
-		Content: draftForm("Create dashboard draft", "Start a private dashboard draft", action, csrfToken, idempotencyKey,
+		Content: draftForm("New dashboard", "Start with a private draft.", action, csrfToken, idempotencyKey,
 			g.Group{h.Label(h.For("dashboard-title"), g.Text("Title")), h.Input(h.ID("dashboard-title"), h.Name("title"), h.Required(), h.AutoComplete("off"))},
-			g.Group{h.Label(h.For("dashboard-semantic-model"), g.Text("Governed semantic model")), h.Input(h.ID("dashboard-semantic-model"), h.Name("semanticModel"), h.Required(), h.AutoComplete("off"))},
+			g.Group{h.Label(h.For("dashboard-semantic-model"), g.Text("Governed semantic model")), modelField},
 			g.Group{h.Label(h.For("dashboard-slug"), g.Text("Slug (optional)")), h.Input(h.ID("dashboard-slug"), h.Name("slug"), h.AutoComplete("off"))},
 		),
 	})
