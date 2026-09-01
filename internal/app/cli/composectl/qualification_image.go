@@ -234,6 +234,13 @@ func (c *Controller) QualifyImage(
 	); err != nil {
 		return err
 	}
+	if err := copyQualificationFile(
+		filepath.Join(c.root, "..", "postgres", "init.sh"),
+		filepath.Join(bundleRoot, "qualification", "postgres-init.sh"),
+		0o755,
+	); err != nil {
+		return fmt.Errorf("copy canonical PostgreSQL qualification init script: %w", err)
+	}
 	executable, err := os.Executable()
 	if err != nil {
 		return err

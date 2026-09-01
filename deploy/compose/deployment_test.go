@@ -396,9 +396,28 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
 
-	for _, required := range []string{"cp -R deploy/compose/qualification", "args=(qualify installed-candidate", "gh release create", "needs: [image, qualify, minio-conformance, plan-gc-conformance]"} {
+	for _, required := range []string{
+		"cp -R deploy/compose/qualification",
+		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
+		"args=(qualify installed-candidate",
+		"gh release create",
+		"needs: [image, qualify, minio-conformance, plan-gc-conformance]",
+	} {
 		if !strings.Contains(release, required) {
 			t.Errorf("release workflow missing %q", required)
+		}
+	}
+	canonicalInit := filepath.Join(root, "deploy", "postgres", "init.sh")
+	if info, err := os.Stat(canonicalInit); err != nil || !info.Mode().IsRegular() {
+		t.Fatalf("canonical PostgreSQL init script is not a regular file: %s", canonicalInit)
+	}
+	for _, required := range []string{
+		`filepath.Join(c.root, "..", "postgres", "init.sh")`,
+		`filepath.Join(bundleRoot, "qualification", "postgres-init.sh")`,
+		"copy canonical PostgreSQL qualification init script",
+	} {
+		if !strings.Contains(imageQualification, required) {
+			t.Errorf("production-image qualification missing canonical PostgreSQL init asset contract %q", required)
 		}
 	}
 	gate := strings.Index(release, "args=(qualify installed-candidate")

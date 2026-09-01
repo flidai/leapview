@@ -354,6 +354,7 @@ jobs:
             cp deploy/host/files/leapviewctl-wrapper "dist/$package/"
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
+            cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
             cp image-reference.txt release-identity.json release-transition-policy.json predecessor-verification.json "dist/$package/"
