@@ -55,7 +55,7 @@ test('markdown view renders sanitized markdown with default and compact typograp
       const markdown = [
         '# Hello darkness',
         '',
-        'A paragraph with **strong**, _emphasis_, ~~strike~~, `inline code`, and https://example.com.',
+        'A paragraph with **strong**, _emphasis_, ~~strike~~, `inline code`, https://example.com, and example.org.',
         '',
         '## Section',
         '',
@@ -111,7 +111,7 @@ test('markdown view renders sanitized markdown with default and compact typograp
         hasStrong: Boolean(compactRoot.querySelector('strong')),
         hasEmphasis: Boolean(compactRoot.querySelector('em')),
         hasStrike: Boolean(compactRoot.querySelector('s')),
-        hasAutolink: compactRoot.querySelector('a')?.getAttribute('href'),
+        autolinks: Array.from(compactRoot.querySelectorAll('a'), (link: HTMLAnchorElement) => link.getAttribute('href')),
         hasNestedList: Boolean(compactRoot.querySelector('li ul')),
         blockquoteBorder: getComputedStyle(blockquote).borderLeftWidth,
         inlineCodeBackground: getComputedStyle(inlineCode).backgroundColor,
@@ -134,7 +134,7 @@ test('markdown view renders sanitized markdown with default and compact typograp
     expect(state.hasStrong).toBe(true)
     expect(state.hasEmphasis).toBe(true)
     expect(state.hasStrike).toBe(true)
-    expect(state.hasAutolink).toBe('https://example.com')
+    expect(state.autolinks).toEqual(['https://example.com', 'http://example.org'])
     expect(state.hasNestedList).toBe(true)
     expect(state.blockquoteBorder).toBe('3px')
     expect(state.inlineCodeBackground).toBe('rgb(246, 248, 250)')
