@@ -42,7 +42,7 @@ func TestPostgresCatalogSQLReferencesSecretAndPinsOptions(t *testing.T) {
 	}
 	for _, required := range []string{
 		"METADATA_SCHEMA 'leapview_catalog'", "AUTOMATIC_MIGRATION false",
-		"DATA_PATH 's3://bucket/lake'", "CREATE_IF_NOT_EXISTS true",
+		"DATA_INLINING_ROW_LIMIT 0", "DATA_PATH 's3://bucket/lake'", "CREATE_IF_NOT_EXISTS true",
 	} {
 		if !strings.Contains(attach, required) {
 			t.Fatalf("attach SQL missing %q: %s", required, attach)
@@ -62,7 +62,7 @@ func TestPostgresCatalogServingRequiresExactReadOnlySnapshot(t *testing.T) {
 	}
 	for _, required := range []string{
 		"METADATA_SCHEMA 'leapview_catalog'", "AUTOMATIC_MIGRATION false",
-		"READ_ONLY", "CREATE_IF_NOT_EXISTS false", "SNAPSHOT_VERSION 42",
+		"DATA_INLINING_ROW_LIMIT 0", "READ_ONLY", "CREATE_IF_NOT_EXISTS false", "SNAPSHOT_VERSION 42",
 	} {
 		if !strings.Contains(attach, required) {
 			t.Fatalf("serving attach missing %q: %s", required, attach)
@@ -99,11 +99,22 @@ func TestPostgresCatalogMigrationModeIsExplicitAndRuntimeCannotEnableIt(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(statements) != 2 || !strings.Contains(statements[1], "AUTOMATIC_MIGRATION true") || !strings.Contains(statements[1], "CREATE_IF_NOT_EXISTS false") || !strings.Contains(statements[1], "METADATA_SCHEMA '"+MetadataSchemaForPool(migrate.PhysicalPoolID)+"'") {
+	if len(statements) != 2 || !strings.Contains(statements[1], "AUTOMATIC_MIGRATION true") || !strings.Contains(statements[1], "DATA_INLINING_ROW_LIMIT 0") || !strings.Contains(statements[1], "CREATE_IF_NOT_EXISTS false") || !strings.Contains(statements[1], "METADATA_SCHEMA '"+MetadataSchemaForPool(migrate.PhysicalPoolID)+"'") {
 		t.Fatalf("migration statements = %#v", statements)
 	}
 	if _, err := validPostgresCatalogConfig(PostgresCatalogWriter).MigrationStatements(); err == nil {
 		t.Fatal("writer mode unexpectedly enabled migration statements")
+	}
+}
+
+func TestPostgresCatalogWriterDisablesDataInliningAtAttachScope(t *testing.T) {
+	writer := validPostgresCatalogConfig(PostgresCatalogWriter)
+	attach, err := writer.AttachSQL()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(attach, "DATA_INLINING_ROW_LIMIT 0") {
+		t.Fatalf("writer attach does not disable data inlining: %s", attach)
 	}
 }
 

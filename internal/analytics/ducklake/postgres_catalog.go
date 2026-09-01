@@ -197,6 +197,7 @@ func (c PostgresCatalogConfig) AttachSQL() (string, error) {
 	options := []string{
 		fmt.Sprintf("METADATA_SCHEMA '%s'", sqlLiteral(c.MetadataSchema)),
 		"AUTOMATIC_MIGRATION false",
+		"DATA_INLINING_ROW_LIMIT 0",
 	}
 	if strings.TrimSpace(c.DataPath) != "" {
 		options = append(options, fmt.Sprintf("DATA_PATH '%s'", sqlLiteral(c.DataPath)))
@@ -232,7 +233,7 @@ func (c PostgresCatalogConfig) MigrationStatements() ([]string, error) {
 	if err != nil {
 		return nil, err
 	}
-	attach := fmt.Sprintf("ATTACH 'ducklake:%s' AS %s (METADATA_SCHEMA '%s', AUTOMATIC_MIGRATION true, CREATE_IF_NOT_EXISTS false)", sqlLiteral(c.DuckLakeSecret), quoteCatalogIdentifier(catalogAlias), sqlLiteral(c.MetadataSchema))
+	attach := fmt.Sprintf("ATTACH 'ducklake:%s' AS %s (METADATA_SCHEMA '%s', AUTOMATIC_MIGRATION true, DATA_INLINING_ROW_LIMIT 0, CREATE_IF_NOT_EXISTS false)", sqlLiteral(c.DuckLakeSecret), quoteCatalogIdentifier(catalogAlias), sqlLiteral(c.MetadataSchema))
 	return []string{secret, attach}, nil
 }
 
