@@ -372,12 +372,12 @@ func TestSourceSchemaRoleBoundaryAndImmutableRows(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var runtimeUpdate, runtimeDelete, maintenanceSelect bool
-	if err := admin.QueryRow(t.Context(), `SELECT has_table_privilege('leapview_control_runtime','project.source_blob','UPDATE'), has_table_privilege('leapview_control_runtime','project.source_blob','DELETE'), has_table_privilege('leapview_control_maintenance','project.source_blob','SELECT')`).Scan(&runtimeUpdate, &runtimeDelete, &maintenanceSelect); err != nil {
+	var runtimeUpdate, runtimeDelete, maintenanceSelect, runtimeSnapshotStateUpdate, runtimeSnapshotSealedAtUpdate bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_table_privilege('leapview_control_runtime','project.source_blob','UPDATE'), has_table_privilege('leapview_control_runtime','project.source_blob','DELETE'), has_table_privilege('leapview_control_maintenance','project.source_blob','SELECT'), has_column_privilege('leapview_control_runtime','project.source_snapshot','state','UPDATE'), has_column_privilege('leapview_control_runtime','project.source_snapshot','sealed_at','UPDATE')`).Scan(&runtimeUpdate, &runtimeDelete, &maintenanceSelect, &runtimeSnapshotStateUpdate, &runtimeSnapshotSealedAtUpdate); err != nil {
 		t.Fatal(err)
 	}
-	if runtimeUpdate || runtimeDelete || maintenanceSelect {
-		t.Fatalf("source privileges runtime update=%v delete=%v maintenance select=%v", runtimeUpdate, runtimeDelete, maintenanceSelect)
+	if runtimeUpdate || runtimeDelete || maintenanceSelect || !runtimeSnapshotStateUpdate || !runtimeSnapshotSealedAtUpdate {
+		t.Fatalf("source privileges runtime update=%v delete=%v snapshot state update=%v sealed-at update=%v maintenance select=%v", runtimeUpdate, runtimeDelete, runtimeSnapshotStateUpdate, runtimeSnapshotSealedAtUpdate, maintenanceSelect)
 	}
 	runtimeDB, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
 	if err != nil {
@@ -428,6 +428,46 @@ func TestSourceSchemaRoleBoundaryAndImmutableRows(t *testing.T) {
 	if _, err := runtimeTx.Exec(t.Context(), "SELECT 1"); err != nil {
 		_ = runtimeTx.Rollback(t.Context())
 		t.Fatalf("runtime source sync-plan transaction after lock: %v", err)
+	}
+	if err := runtimeTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	runtimeTx, err = runtimeDB.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeRepo.InsertSourceBlobTx(t.Context(), runtimeTx, SourceBlobInput{
+		ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain,
+		Digest: entries[0].Digest, SizeBytes: entries[0].SizeBytes,
+		ObjectKey:   "sources/" + strings.TrimPrefix(entries[0].Digest, "sha256:"),
+		ContentType: "text/plain", MetadataDigest: sourceTestDigest("d"),
+		PlanID: plan.PlanID, OwnerID: plan.OwnerID,
+	}); err != nil {
+		_ = runtimeTx.Rollback(t.Context())
+		t.Fatalf("runtime source blob insertion: %v", err)
+	}
+	if err := runtimeTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	attestationPayload := []byte(`{"sourceDigest":"` + plan.SourceDigest + `"}`)
+	runtimeTx, err = runtimeDB.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = runtimeRepo.CommitSnapshotTx(t.Context(), runtimeTx, CommitSnapshotInput{
+		PlanID: plan.PlanID, OwnerID: plan.OwnerID, SnapshotID: uuid.New(),
+		ProjectID: plan.ProjectID, StorageSecurityDomain: plan.StorageSecurityDomain,
+		SourceDigest: plan.SourceDigest, ProjectFile: plan.ProjectFile,
+		ProjectDigest: sourceTestDigest("e"), ProjectArtifactObjectKey: "artifacts/project.json",
+		ProjectArtifactDigest: sourceTestDigest("f"), ProjectArtifactSizeBytes: 10,
+		ManifestObjectKey: "manifests/source.json", ManifestObjectDigest: sourceTestDigest("1"),
+		ManifestObjectSizeBytes: 20, CompilerVersion: "compiler:v1", SchemaVersion: 1,
+		Entries:     []SourceSnapshotEntryInput{{Path: entries[0].Path, Digest: entries[0].Digest, SizeBytes: entries[0].SizeBytes}},
+		Attestation: SourceAttestationInput{AttestationID: uuid.New(), SourceDigest: plan.SourceDigest, AttestationDigest: sha256Identity(attestationPayload), Payload: attestationPayload},
+	})
+	if err != nil {
+		_ = runtimeTx.Rollback(t.Context())
+		t.Fatalf("runtime source snapshot commit: %v", err)
 	}
 	if err := runtimeTx.Commit(t.Context()); err != nil {
 		t.Fatal(err)

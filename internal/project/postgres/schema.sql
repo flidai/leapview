@@ -330,6 +330,9 @@ REVOKE ALL ON FUNCTION project.reject_source_immutable_mutation(), project.guard
 DO $$
 DECLARE role_name text;
 BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        EXECUTE 'REVOKE UPDATE, DELETE ON project.source_blob, project.source_snapshot, project.source_snapshot_entry, project.source_attestation, project.source_sync_plan_entry FROM leapview_control_runtime';
+    END IF;
     FOREACH role_name IN ARRAY ARRAY['leapview_control_owner','leapview_control_migrator','leapview_control_runtime','leapview_control_readonly','leapview_control_backup'] LOOP
         IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = role_name) THEN
             EXECUTE format('GRANT USAGE ON SCHEMA project TO %I', role_name);
@@ -345,7 +348,6 @@ BEGIN
         END IF;
     END LOOP;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
-        EXECUTE 'REVOKE UPDATE, DELETE ON project.source_blob, project.source_snapshot, project.source_snapshot_entry, project.source_attestation, project.source_sync_plan_entry FROM leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION project.guard_source_sync_plan_mutation() TO leapview_control_runtime';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN

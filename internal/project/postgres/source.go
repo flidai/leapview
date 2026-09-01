@@ -578,14 +578,14 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 			return SourceSnapshot{}, ErrSourceConflict
 		}
 	} else if insertErr != nil {
-		return SourceSnapshot{}, insertErr
+		return SourceSnapshot{}, fmt.Errorf("insert source snapshot: %w", insertErr)
 	} else {
 		snapshot = snapshotFromInsert(row)
 	}
 	if inserted {
 		for _, entry := range entries {
 			if err := q.InsertSourceSnapshotEntry(ctx, projectdb.InsertSourceSnapshotEntryParams{SnapshotID: dbUUID(snapshot.SnapshotID), ProjectID: n.ProjectID, StorageSecurityDomain: n.StorageSecurityDomain, Path: entry.Path, Digest: entry.Digest, SizeBytes: entry.SizeBytes, Ordinal: int32(entry.Ordinal)}); err != nil {
-				return SourceSnapshot{}, err
+				return SourceSnapshot{}, fmt.Errorf("insert source snapshot entry %q: %w", entry.Path, err)
 			}
 		}
 	}
@@ -598,7 +598,7 @@ func (r *Repository) CommitSnapshotTx(ctx context.Context, tx SourceTx, input Co
 	if inserted {
 		changed, err := q.TransitionSourceSnapshotSealed(ctx, dbUUID(snapshot.SnapshotID))
 		if err != nil {
-			return SourceSnapshot{}, err
+			return SourceSnapshot{}, fmt.Errorf("seal source snapshot: %w", err)
 		}
 		if changed != 1 {
 			return SourceSnapshot{}, ErrSourceConflict
