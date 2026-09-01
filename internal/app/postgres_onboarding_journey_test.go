@@ -3,10 +3,12 @@ package app
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -14,8 +16,11 @@ import (
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	"github.com/flidai/leapview/internal/app/adminpostgres"
+	apigenapi "github.com/flidai/leapview/internal/app/api/gen"
 	"github.com/flidai/leapview/internal/app/config"
+	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	extensionfixture "github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -24,7 +29,9 @@ import (
 // TestPostgres18ProductionOnboardingJourney is the executable operator
 // contract for a clean target: migrate, initialize, admit the exact physical
 // pool and catalog, then start the PostgreSQL-only production graph. Replays
-// must converge without recovering acknowledged credential material.
+// must converge without recovering acknowledged credential material. A
+// second build/start against the same target proves restart persistence for
+// the native authority, pool admission, and baseline state.
 func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	h := postgrestest.StartTLS(t)
 	roles := provisionPostgresOnboardingRoles(t, h)
@@ -101,6 +108,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	}
 	cfg.DeliveryPhysicalPoolID = pool.ID.String()
 	cfg.DeliveryPhysicalPoolCompatibilityDigest = compatibilityDigest
+	originalConfig := cfg
 
 	target, err := BuildProduction(t.Context(), cfg)
 	if err != nil {
@@ -109,6 +117,60 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if err := target.Start(t.Context()); err != nil {
 		t.Fatalf("start production application after native onboarding: %v", err)
 	}
+	firstInstance := assertPostgresOnboardingTarget(t, target, credentials.PublisherToken)
+	if err := target.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown onboarded production application: %v", err)
+	}
+	if matches, err := filepath.Glob(filepath.Join(cfg.HomeDir, "*.db*")); err != nil || len(matches) != 0 {
+		t.Fatalf("production onboarding created SQLite authority files: matches=%v err=%v", matches, err)
+	}
+	firstPersistence := capturePostgresOnboardingPersistence(t, cfg, control, catalog, roles, pool.ID, tuple)
+	if firstPersistence.InstanceID != firstInstance.Id {
+		t.Fatalf("first target instance identity = %q, persistence identity = %q", firstInstance.Id, firstPersistence.InstanceID)
+	}
+
+	// BuildProduction consumes the same initialized databases, admitted pool
+	// evidence, home directory, and config. A successful second start must not
+	// synthesize a new target identity or alter those durable records.
+	if cfg != originalConfig {
+		t.Fatal("production target build mutated the onboarding config")
+	}
+	secondTarget, err := BuildProduction(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("rebuild production application after native onboarding restart: %v", err)
+	}
+	if err := secondTarget.Start(t.Context()); err != nil {
+		t.Fatalf("start rebuilt production application after native onboarding restart: %v", err)
+	}
+	secondInstance := assertPostgresOnboardingTarget(t, secondTarget, credentials.PublisherToken)
+	if secondInstance != firstInstance {
+		t.Fatalf("restart changed instance API identity: first=%#v second=%#v", firstInstance, secondInstance)
+	}
+	if err := secondTarget.Shutdown(context.Background()); err != nil {
+		t.Fatalf("shutdown rebuilt production application: %v", err)
+	}
+	secondPersistence := capturePostgresOnboardingPersistence(t, cfg, control, catalog, roles, pool.ID, tuple)
+	if secondPersistence.InstanceID != firstPersistence.InstanceID {
+		t.Fatalf("restart changed PostgreSQL instance identity: first=%q second=%q", firstPersistence.InstanceID, secondPersistence.InstanceID)
+	}
+	if !reflect.DeepEqual(secondPersistence.Contract, firstPersistence.Contract) {
+		t.Fatalf("restart changed admitted physical-pool contract: first=%#v second=%#v", firstPersistence.Contract, secondPersistence.Contract)
+	}
+	if cfg != originalConfig {
+		t.Fatal("rebuilt production target mutated the onboarding config")
+	}
+	if matches, err := filepath.Glob(filepath.Join(cfg.HomeDir, "*.db*")); err != nil || len(matches) != 0 {
+		t.Fatalf("production onboarding restart created SQLite authority files: matches=%v err=%v", matches, err)
+	}
+}
+
+type postgresOnboardingPersistenceSnapshot struct {
+	InstanceID string
+	Contract   physicalpool.AdmissionContract
+}
+
+func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisherToken string) apigenapi.InstanceResponse {
+	t.Helper()
 	requestHTTP := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	requestHTTP.Host = "localhost"
 	response := httptest.NewRecorder()
@@ -116,12 +178,83 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("onboarded production readiness = %d; body=%s", response.Code, response.Body.String())
 	}
-	if err := target.Shutdown(context.Background()); err != nil {
-		t.Fatalf("shutdown onboarded production application: %v", err)
+
+	instanceRequest := httptest.NewRequest(http.MethodGet, "/api/v1/instance", nil)
+	instanceRequest.Host = "localhost"
+	instanceResponse := httptest.NewRecorder()
+	target.Handler().ServeHTTP(instanceResponse, instanceRequest)
+	if instanceResponse.Code != http.StatusOK {
+		t.Fatalf("onboarded production instance API = %d; body=%s", instanceResponse.Code, instanceResponse.Body.String())
 	}
-	if matches, err := filepath.Glob(filepath.Join(cfg.HomeDir, "*.db*")); err != nil || len(matches) != 0 {
-		t.Fatalf("production onboarding created SQLite authority files: matches=%v err=%v", matches, err)
+	var instance apigenapi.InstanceResponse
+	if err := json.NewDecoder(instanceResponse.Body).Decode(&instance); err != nil {
+		t.Fatalf("decode onboarded production instance API: %v", err)
 	}
+	if strings.TrimSpace(instance.Id) == "" || instance.Environment != "prod" || instance.CanonicalOrigin != "https://localhost" {
+		t.Fatalf("onboarded production instance API = %#v", instance)
+	}
+
+	// A publisher token is an initialized, read-only credential smoke through
+	// the public API. Governed semantic-model/dashboard reads are intentionally
+	// not attempted: clean onboarding has no claimed project or active serving
+	// generation, and creating that fixture would broaden this restart proof.
+	meRequest := httptest.NewRequest(http.MethodGet, "/api/v1/me", nil)
+	meRequest.Host = "localhost"
+	meRequest.Header.Set("Authorization", "Bearer "+publisherToken)
+	meResponse := httptest.NewRecorder()
+	target.Handler().ServeHTTP(meResponse, meRequest)
+	if meResponse.Code != http.StatusOK {
+		t.Fatalf("onboarded production current-principal API = %d; body=%s", meResponse.Code, meResponse.Body.String())
+	}
+	var principal struct {
+		Email string `json:"email"`
+	}
+	if err := json.NewDecoder(meResponse.Body).Decode(&principal); err != nil {
+		t.Fatalf("decode onboarded production current-principal API: %v", err)
+	}
+	if principal.Email != "admin@example.com" {
+		t.Fatalf("onboarded production current-principal email = %q", principal.Email)
+	}
+	return instance
+}
+
+func capturePostgresOnboardingPersistence(t *testing.T, cfg config.Config, control, catalog *postgrestest.Database, roles postgresOnboardingRoles, poolID physicalpool.PoolID, tuple physicalpool.Compatibility) postgresOnboardingPersistenceSnapshot {
+	t.Helper()
+	lifecycle, err := openPostgresControlPlane(t.Context(), cfg)
+	if err != nil {
+		t.Fatalf("reopen PostgreSQL authorities for restart persistence proof: %v", err)
+	}
+	defer func() {
+		if err := lifecycle.Stop(context.Background()); err != nil {
+			t.Errorf("close PostgreSQL authorities after restart persistence proof: %v", err)
+		}
+	}()
+	if err := lifecycle.Start(t.Context()); err != nil {
+		t.Fatalf("start PostgreSQL authorities for restart persistence proof: %v", err)
+	}
+	assertProductionAdmissionPoolIdentity(t, lifecycle.RuntimePool(), control.Name, roles.controlRuntime.Name)
+	assertProductionAdmissionPoolIdentity(t, lifecycle.MaintenancePool(), control.Name, roles.controlMaintenance.Name)
+	assertProductionAdmissionPoolIdentity(t, lifecycle.DuckLakePool(), catalog.Name, roles.catalogRuntime.Name)
+	if lifecycle.pools.Readonly == nil {
+		t.Fatal("reopened PostgreSQL authorities omitted configured readonly pool")
+	}
+	assertProductionAdmissionPoolIdentity(t, lifecycle.pools.Readonly, control.Name, roles.controlReadonly.Name)
+
+	instanceID, err := postgresauthority.ResolveInstanceIdentity(t.Context(), lifecycle.RuntimePool(), cfg.Environment)
+	if err != nil {
+		t.Fatalf("resolve PostgreSQL instance identity after restart: %v", err)
+	}
+	contract, err := physicalpoolpostgres.New(lifecycle.RuntimePool()).LoadAdmissionContract(t.Context(), poolID, tuple)
+	if err != nil {
+		t.Fatalf("load admitted PostgreSQL physical-pool contract after restart: %v", err)
+	}
+	if contract.Pool.ID != poolID || contract.Admission.PoolID != poolID || contract.Admission.CompatibilityDigest == "" || contract.Admission.EvidenceDigest == "" {
+		t.Fatalf("incomplete admitted PostgreSQL physical-pool contract after restart: %#v", contract)
+	}
+	if err := physicalpool.VerifyAdmission(contract.Pool, tuple, contract.Admission, contract.Evidence); err != nil {
+		t.Fatalf("verify admitted PostgreSQL physical-pool contract after restart: %v", err)
+	}
+	return postgresOnboardingPersistenceSnapshot{InstanceID: instanceID, Contract: contract}
 }
 
 type postgresOnboardingRoles struct {
