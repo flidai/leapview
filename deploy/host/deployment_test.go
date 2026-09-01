@@ -261,7 +261,7 @@ func TestBackupHookMigratesPR368InstallationThroughRealController(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer store.Close()
-	occurrences, err := refreshmodule.NewRecoveryRepository(store.SQLDB()).Occurrences(t.Context())
+	occurrences, err := refreshmodule.NewSQLiteRecoveryRepository(store.SQLDB()).Occurrences(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}

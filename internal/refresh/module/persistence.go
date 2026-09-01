@@ -148,5 +148,5 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 		InitialState: config.Execution.InitialState,
 	}, config.Audit)
 	schedules := refreshsqlite.NewRepository(config.Database)
-	return Persistence{Runs: runs, Schedules: schedules, Publication: refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot), Recovery: newSQLiteRepository(config.Database), TerminalRecovery: runs}, nil
+	return Persistence{Runs: runs, Schedules: schedules, Publication: refreshsqlite.NewPublicationUnitOfWork(config.Database, config.ApplyAccessSnapshot), Recovery: NewSQLiteRecoveryRepository(config.Database), TerminalRecovery: runs}, nil
 }

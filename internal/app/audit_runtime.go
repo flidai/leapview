@@ -8,9 +8,10 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 )
 
-// auditRuntime is the app-owned durable audit composition for one platform
-// database. The underlying store is constructed exactly once; consumers are
-// handed only the narrow facet they require.
+// auditRuntime is the app-owned durable audit composition for the local
+// SQLite platform database. The underlying store is constructed exactly once;
+// consumers are handed only the narrow facet they require. PostgreSQL
+// composition supplies audit facets from its native authority instead.
 type auditRuntime struct {
 	recorder access.AuditIntentRecorder
 	delivery access.AuditOutboxDeliveryStore
@@ -22,7 +23,7 @@ func newAuditRuntime(database *sql.DB) (*auditRuntime, error) {
 	if database == nil {
 		return nil, fmt.Errorf("audit runtime database is required")
 	}
-	store := accessmodule.NewAuditStore(database)
+	store := accessmodule.NewSQLiteAuditStore(database)
 	if store == nil {
 		return nil, fmt.Errorf("audit runtime store is required")
 	}

@@ -74,16 +74,26 @@ const (
 	EvidenceRestorePreflight        = refreshrecovery.EvidenceRestorePreflight
 )
 
-func NewRecoveryRepository(database *sql.DB) RecoveryRepository {
-	return newSQLiteRepository(database)
+// NewSQLiteRecoveryRepository constructs the local SQLite recovery ledger.
+// Production composition injects a capability-owned repository instead of
+// passing a database handle through this module boundary.
+func NewSQLiteRecoveryRepository(database *sql.DB) RecoveryRepository {
+	if database == nil {
+		return nil
+	}
+	return refreshsqlite.NewRepository(database)
 }
 
-func NewRecoveryMetricsCollector(database *sql.DB, clock Clock) prometheus.Collector {
-	return refreshrecovery.NewMetricsCollector(NewRecoveryRepository(database), clock)
+// NewSQLiteRecoveryMetricsCollector constructs recovery metrics for the local
+// SQLite adapter. Native production composition owns its metrics source.
+func NewSQLiteRecoveryMetricsCollector(database *sql.DB, clock Clock) prometheus.Collector {
+	return refreshrecovery.NewMetricsCollector(NewSQLiteRecoveryRepository(database), clock)
 }
 
-func NewRecoveryLifecycle(database *sql.DB, lifecycle RecoveryLifecycle) *RecoveryLifecycle {
-	lifecycle.Repository = NewRecoveryRepository(database)
+// NewSQLiteRecoveryLifecycle binds a local SQLite ledger to a lifecycle
+// definition. Production callers must inject a repository into the lifecycle.
+func NewSQLiteRecoveryLifecycle(database *sql.DB, lifecycle RecoveryLifecycle) *RecoveryLifecycle {
+	lifecycle.Repository = NewSQLiteRecoveryRepository(database)
 	return &lifecycle
 }
 
@@ -99,8 +109,4 @@ func NewProductionRecoveryLifecycle(config ProductionRecoveryQualificationConfig
 
 func RedactFailure(err error) string {
 	return refreshrecovery.RedactFailure(err)
-}
-
-func newSQLiteRepository(database *sql.DB) *refreshsqlite.Repository {
-	return refreshsqlite.NewRepository(database)
 }

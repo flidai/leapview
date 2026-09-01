@@ -10,7 +10,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func TestApplyAppearancePatchesSharesBrowserAppearancePersistence(t *testing.T) {
+func TestApplySQLiteAppearancePatchesSharesBrowserAppearancePersistence(t *testing.T) {
 	store, err := platform.Open(t.Context(), t.TempDir()+"/control.sqlite")
 	if err != nil {
 		t.Fatal(err)
@@ -26,7 +26,7 @@ func TestApplyAppearancePatchesSharesBrowserAppearancePersistence(t *testing.T) 
 		"dashboard:executive": json.RawMessage(`{"icon":"` + icon + `","color":"` + color + `"}`),
 	}
 	projectID := projectgraph.ResourceID("project:test")
-	if err := dashboardmodule.ApplyAppearancePatches(t.Context(), tx, projectID, "principal:deploy", encoded); err != nil {
+	if err := dashboardmodule.ApplySQLiteAppearancePatches(t.Context(), tx, projectID, "principal:deploy", encoded); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}
@@ -34,7 +34,7 @@ func TestApplyAppearancePatchesSharesBrowserAppearancePersistence(t *testing.T) 
 		t.Fatal(err)
 	}
 
-	rows, err := dashboardmodule.NewAppearanceStore(store.SQLDB()).ListProject(t.Context(), projectID)
+	rows, err := dashboardmodule.NewSQLiteAppearanceStore(store.SQLDB()).ListProject(t.Context(), projectID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -44,5 +44,11 @@ func TestApplyAppearancePatchesSharesBrowserAppearancePersistence(t *testing.T) 
 	}
 	if resolved := dashboardappearance.Resolve(row.Value); resolved.Icon != icon || resolved.Color != color {
 		t.Fatalf("resolved appearance = %#v", resolved)
+	}
+}
+
+func TestNewSQLiteAppearanceStoreRequiresDatabase(t *testing.T) {
+	if store := dashboardmodule.NewSQLiteAppearanceStore(nil); store != nil {
+		t.Fatalf("nil database returned appearance store %T", store)
 	}
 }

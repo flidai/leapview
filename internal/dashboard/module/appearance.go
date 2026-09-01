@@ -24,13 +24,20 @@ func ResolveAppearance(value Appearance) Appearance {
 	return dashboardappearance.Resolve(value)
 }
 
-func NewAppearanceStore(database *sql.DB) dashboardappearance.Store {
+// NewSQLiteAppearanceStore constructs the local development/evaluation SQLite
+// dashboard appearance authority. Native production composition injects the
+// validated PostgreSQL repository through NativePersistence instead of
+// calling this constructor.
+func NewSQLiteAppearanceStore(database *sql.DB) dashboardappearance.Store {
+	if database == nil {
+		return nil
+	}
 	return appearancesqlite.NewRepository(database)
 }
 
 // NewNativeAppearanceStore accepts the capability-owned native repository.
-// SQLite remains explicit through NewAppearanceStore for legacy development
-// and tests.
+// SQLite remains explicit through NewSQLiteAppearanceStore for local
+// development, evaluation, and tests.
 func NewNativeAppearanceStore(repository dashboardappearance.Store) (dashboardappearance.Store, error) {
 	if repository == nil {
 		return nil, fmt.Errorf("dashboard appearance native store is required")
@@ -70,10 +77,11 @@ func ApplyAppearancePatchesPostgres(ctx context.Context, repository *appearancep
 	return nil
 }
 
-// ApplyAppearancePatches applies only fields explicitly authored in a
-// deployment. Omitted fields retain the last UI value; "default" clears a
-// stored override so the product default is used.
-func ApplyAppearancePatches(ctx context.Context, tx transaction.Transaction, projectID projectgraph.ResourceID, actorID string, encoded map[string]json.RawMessage) error {
+// ApplySQLiteAppearancePatches applies only fields explicitly authored in a
+// local SQLite deployment. Omitted fields retain the last UI value; "default"
+// clears a stored override so the product default is used. Native production
+// deployment composition must use ApplyAppearancePatchesPostgres instead.
+func ApplySQLiteAppearancePatches(ctx context.Context, tx transaction.Transaction, projectID projectgraph.ResourceID, actorID string, encoded map[string]json.RawMessage) error {
 	if err := projectID.Validate(); err != nil {
 		return fmt.Errorf("project ID: %w", err)
 	}

@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+func TestNewSQLiteAuditStoreRequiresDatabase(t *testing.T) {
+	if store := NewSQLiteAuditStore(nil); store != nil {
+		t.Fatal("NewSQLiteAuditStore(nil) returned a store")
+	}
+}
+
 func TestBuildProductionRequiresInjectedPostgreSQLPersistence(t *testing.T) {
 	for name, config := range map[string]Config{
 		"missing authority": {Production: true},

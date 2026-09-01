@@ -26,6 +26,23 @@ func TestLocalSQLiteCompositionUsesSQLiteBootstrapPersistence(t *testing.T) {
 	}
 }
 
+func TestLocalSQLiteCompositionUsesExplicitSQLiteAuditStore(t *testing.T) {
+	for _, path := range []string{"audit_runtime.go", "adminoffline/adapters.go"} {
+		contents, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		source := string(contents)
+		if !strings.Contains(source, "accessmodule.NewSQLiteAuditStore(") {
+			t.Fatalf("%s is missing the explicit SQLite audit-store constructor", path)
+		}
+		genericConstructor := "accessmodule.New" + "AuditStore("
+		if strings.Contains(source, genericConstructor) {
+			t.Fatalf("%s retains the generic access audit-store constructor", path)
+		}
+	}
+}
+
 func TestLocalSQLiteAssemblyRejectsNonEvaluationProductionBeforeState(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Config{

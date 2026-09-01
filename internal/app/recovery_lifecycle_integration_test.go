@@ -114,7 +114,7 @@ func TestProductionCompositionRetainsValidS3BackupRestoreEvidence(t *testing.T) 
 	// into the following hour materializes exactly one occurrence per owner.
 	now := time.Now().UTC().Truncate(time.Hour).Add(2*time.Hour + 5*time.Minute)
 	lifecycle.Clock = recoveryLifecycleClock{now: now}
-	lifecycle = refreshmodule.NewRecoveryLifecycle(store.SQLDB(), *lifecycle)
+	lifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(store.SQLDB(), *lifecycle)
 	definitions, err := lifecycle.Definitions(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -232,7 +232,7 @@ func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testi
 	evidence := writeRecoveryLifecycleEvidence(t, t.TempDir(), artifact, now)
 	retainedEvidence := filepath.Join(t.TempDir(), "retained")
 	definitions := recoveryLifecycleDefinitions(artifact)
-	repository := refreshmodule.NewRecoveryRepository(store.SQLDB())
+	repository := refreshmodule.NewSQLiteRecoveryRepository(store.SQLDB())
 	for _, definition := range definitions {
 		if err := repository.ReconcileSchedule(ctx, definition, now.Add(-35*time.Minute)); err != nil {
 			t.Fatal(err)
@@ -258,7 +258,7 @@ func TestProductionCompositionRunsDurableRecoveryQualificationLifecycle(t *testi
 		t.Fatal(err)
 	}
 	defer store.Close()
-	repository = refreshmodule.NewRecoveryRepository(store.SQLDB())
+	repository = refreshmodule.NewSQLiteRecoveryRepository(store.SQLDB())
 
 	adapters := map[string]refreshmodule.RecoveryScenarioAdapter{}
 	for operation, artifactOutputs := range map[string][]refreshmodule.RecoveryEvidenceArtifact{

@@ -95,7 +95,7 @@ func run(ctx context.Context, evidenceDir string) error {
 	if err != nil {
 		return err
 	}
-	repository := recovery.NewRecoveryRepository(store.SQLDB())
+	repository := recovery.NewSQLiteRecoveryRepository(store.SQLDB())
 	now := time.Date(2026, 8, 25, 5, 23, 0, 0, time.UTC)
 	backupInput := ledgerInput("weekly-backup", "managed-instance", recovery.OperationBackup, now)
 	created := 0
@@ -171,7 +171,7 @@ func run(ctx context.Context, evidenceDir string) error {
 		return err
 	}
 	defer store.Close()
-	repository = recovery.NewRecoveryRepository(store.SQLDB())
+	repository = recovery.NewSQLiteRecoveryRepository(store.SQLDB())
 	reclaimed, ok, err := repository.ClaimNext(ctx, recovery.ClaimInput{
 		WorkerID: "restart-worker", Actor: "scheduled-qualification", Now: now.Add(2 * time.Minute), Lease: 5 * time.Minute,
 	})

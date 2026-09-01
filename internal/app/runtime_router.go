@@ -816,7 +816,7 @@ func buildApplicationSurfaces(
 		platform.asyncJobs = platform.jobModule
 	}
 	if data.Database != nil {
-		telemetry.Register(refreshmodule.NewRecoveryMetricsCollector(data.Database, nil))
+		telemetry.Register(refreshmodule.NewSQLiteRecoveryMetricsCollector(data.Database, nil))
 		var err error
 		if platform.jobModule == nil {
 			platform.jobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
@@ -917,7 +917,7 @@ func buildApplicationSurfaces(
 	if data.Database != nil {
 		// SQLite is an explicit development compatibility path. Native
 		// composition supplies the browser store from the authority graph below.
-		dashboardAppearances = dashboardmodule.NewAppearanceStore(data.Database)
+		dashboardAppearances = dashboardmodule.NewSQLiteAppearanceStore(data.Database)
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
@@ -1360,7 +1360,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					return dashboardAppearanceResolver(definitionReader, appearanceStore)(ctx, projectID, dashboardID)
 				}
 			} else if database != nil {
-				appearanceStore = dashboardmodule.NewAppearanceStore(database)
+				appearanceStore = dashboardmodule.NewSQLiteAppearanceStore(database)
 				resolveDashboardAppearance = dashboardAppearanceResolver(definitionReader, appearanceStore)
 			}
 		}

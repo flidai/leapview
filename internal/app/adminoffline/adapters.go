@@ -423,7 +423,7 @@ func (control auditOutboxControl) Status(ctx context.Context) (adminoffline.Audi
 		return adminoffline.AuditOutboxStatus{}, err
 	}
 	defer store.Close()
-	operator := access.AuditOutboxOperator(accessmodule.NewAuditStore(store.SQLDB()))
+	operator := access.AuditOutboxOperator(accessmodule.NewSQLiteAuditStore(store.SQLDB()))
 	inspection, err := operator.InspectAuditOutbox(ctx, time.Now().UTC(), access.MaxAuditOutboxInspectionRows)
 	if err != nil {
 		return adminoffline.AuditOutboxStatus{}, err
@@ -453,7 +453,7 @@ func (control auditOutboxControl) RequeueExact(ctx context.Context, request admi
 	}
 	defer store.Close()
 	attempts := request.ExpectedAttempts
-	operator := access.AuditOutboxOperator(accessmodule.NewAuditStore(store.SQLDB()))
+	operator := access.AuditOutboxOperator(accessmodule.NewSQLiteAuditStore(store.SQLDB()))
 	return operator.RequeueAuditIntentExact(ctx, access.AuditOutboxRequeueRequest{
 		EventID: request.RequeueEventID, ExpectedState: access.AuditIntentState(request.ExpectedState),
 		ExpectedAttempts: attempts, ExpectedFailureCode: request.ExpectedFailureCode,

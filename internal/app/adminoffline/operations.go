@@ -64,7 +64,7 @@ func (Operations) RecoveryLedgerStatus(ctx context.Context, out io.Writer) error
 		return err
 	}
 	defer store.Close()
-	repository := recovery.NewRecoveryRepository(store.SQLDB())
+	repository := recovery.NewSQLiteRecoveryRepository(store.SQLDB())
 	snapshot, err := repository.Status(ctx, time.Now().UTC())
 	if err != nil {
 		return err

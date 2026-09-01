@@ -39,9 +39,12 @@ type Config struct {
 	AvatarBlobs                  avatar.BlobStore
 }
 
-// NewAuditStore is retained for explicit legacy SQLite callers. PostgreSQL
-// callers inject a transaction-bound audit recorder from their authority.
-func NewAuditStore(database *sql.DB) access.AuditStore {
+// NewSQLiteAuditStore constructs the local development/evaluation SQLite
+// audit store. It is intentionally named for its backend so PostgreSQL
+// composition cannot accidentally select a database/sql audit authority.
+// PostgreSQL callers inject a transaction-bound audit recorder from their
+// authority.
+func NewSQLiteAuditStore(database *sql.DB) access.AuditStore {
 	if database == nil {
 		return nil
 	}

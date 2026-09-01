@@ -73,7 +73,7 @@ func (c *Controller) runScheduledRecoveryQualification(ctx context.Context, buil
 		if err != nil {
 			return err
 		}
-		lifecycle = refreshmodule.NewRecoveryLifecycle(store.SQLDB(), *lifecycle)
+		lifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(store.SQLDB(), *lifecycle)
 		lifecycle.Clock = scheduledRecoveryClock{now: c.now}
 		return lifecycle.RunOnce(ctx)
 	})

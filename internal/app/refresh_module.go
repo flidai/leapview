@@ -72,7 +72,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	}
 	recoveryLifecycle := workflow.recoveryLifecycle
 	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil && database != nil {
-		recoveryLifecycle = refreshmodule.NewRecoveryLifecycle(database, *recoveryLifecycle)
+		recoveryLifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(database, *recoveryLifecycle)
 	}
 	refreshPersistence := persistence.refreshPersistence
 	if refreshPersistence == nil && database != nil {
