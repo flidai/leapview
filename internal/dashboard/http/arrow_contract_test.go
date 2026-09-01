@@ -25,7 +25,6 @@ import (
 )
 
 const (
-	dashboardNativeArrowContract      = "native-v1"
 	dashboardNativeArrowQueryID       = "query-contract-1"
 	dashboardNativeArrowSnapshot      = "snapshot-contract-1"
 	dashboardNativeArrowSchemaVersion = "7"
@@ -201,13 +200,16 @@ func TestDashboardNativeArrowContractPaginationUsesCompletionTrailer(t *testing.
 	if _, err := strconv.Atoi(cursor); err == nil {
 		t.Fatalf("cursor %q is a client-visible numeric offset", cursor)
 	}
-	if offset, err := decodeIndexCursor(cursor, "scope-a", dashboardNativeArrowSnapshot); err != nil || offset != 22 {
-		t.Fatalf("decode next cursor = (%d, %v), want offset 22", offset, err)
+	scope := dashboardNativeArrowContractCursorScope(2, "scope-a")
+	if state, err := decodeDashboardNativeArrowCursor(cursor, scope, time.Now()); err != nil || state.NextOffset != 22 {
+		t.Fatalf("decode next cursor = (%#v, %v), want offset 22", state, err)
 	}
-	if _, err := decodeIndexCursor(cursor, "scope-b", dashboardNativeArrowSnapshot); err == nil {
+	if _, err := decodeDashboardNativeArrowCursor(cursor, dashboardNativeArrowContractCursorScope(2, "scope-b"), time.Now()); err == nil {
 		t.Fatal("cursor was accepted for a different normalized query scope")
 	}
-	if _, err := decodeIndexCursor(cursor, "scope-a", "snapshot-other"); !errors.Is(err, errDashboardCursorSnapshot) {
+	otherSnapshot := scope
+	otherSnapshot.ServingSnapshot = "snapshot-other"
+	if _, err := decodeDashboardNativeArrowCursor(cursor, otherSnapshot, time.Now()); !errors.Is(err, errDashboardCursorSnapshot) {
 		t.Fatalf("snapshot-mismatched cursor error = %v", err)
 	}
 }
@@ -241,7 +243,7 @@ func TestDashboardNativeArrowContractErrorsRespectCommitBoundary(t *testing.T) {
 			if got := response.Header.Get("Content-Type"); got != "application/problem+json" {
 				t.Fatalf("content type = %q", got)
 			}
-			if got := response.Header.Get("X-LeapView-Arrow-Contract"); got != "" {
+			if got := response.Header.Get(dashboardNativeArrowContractHeader); got != "" {
 				t.Fatalf("problem response claimed Arrow contract %q", got)
 			}
 			var problem httptransport.ProblemDetails
@@ -258,7 +260,7 @@ func TestDashboardNativeArrowContractErrorsRespectCommitBoundary(t *testing.T) {
 		complete := dashboardNativeArrowContractBody(t, false, 3)
 		recorder := httptest.NewRecorder()
 		recorder.Header().Set("Content-Type", "application/vnd.apache.arrow.stream")
-		recorder.Header().Set("X-LeapView-Arrow-Contract", dashboardNativeArrowContract)
+		recorder.Header().Set(dashboardNativeArrowContractHeader, dashboardNativeArrowContract)
 		recorder.Header().Set("Trailer", "X-Next-Cursor")
 		recorder.WriteHeader(stdhttp.StatusOK)
 		_, _ = recorder.Write(complete[:len(complete)/2])
@@ -306,7 +308,7 @@ func TestDashboardNativeArrowContractRejectsRuntimeNullabilityMismatch(t *testin
 		if got := response.Header.Get("Content-Type"); got != "application/problem+json" {
 			t.Fatalf("content type = %q, want problem JSON", got)
 		}
-		if got := response.Header.Get("X-LeapView-Arrow-Contract"); got != "" {
+		if got := response.Header.Get(dashboardNativeArrowContractHeader); got != "" {
 			t.Fatalf("pre-commit mismatch claimed Arrow contract %q", got)
 		}
 		if got := response.Trailer.Get("X-Next-Cursor"); got != "" {
@@ -387,20 +389,49 @@ func TestDashboardNativeArrowContractChargesSchemaAndPaginationProbeToBudgets(t 
 
 func dashboardNativeArrowContractResponse(t testing.TB, limit, offset int, scope string, empty bool) *stdhttp.Response {
 	t.Helper()
+	plan, err := planDashboardNativeArrowPage(offset, limit)
+	if err != nil {
+		t.Fatalf("plan native Arrow page: %v", err)
+	}
 	recorder := httptest.NewRecorder()
 	recorder.Header().Set("Content-Type", "application/vnd.apache.arrow.stream")
 	recorder.Header().Set("Cache-Control", "no-store")
 	recorder.Header().Set("X-Query-ID", dashboardNativeArrowQueryID)
 	recorder.Header().Set("X-Serving-Snapshot", dashboardNativeArrowSnapshot)
-	recorder.Header().Set("X-LeapView-Arrow-Contract", dashboardNativeArrowContract)
-	recorder.Header().Set("Trailer", "X-Next-Cursor")
+	recorder.Header().Set(dashboardNativeArrowContractHeader, dashboardNativeArrowContract)
+	if err := declareDashboardNativeArrowCursorTrailer(recorder); err != nil {
+		t.Fatalf("declare native Arrow cursor trailer: %v", err)
+	}
 	recorder.WriteHeader(stdhttp.StatusOK)
-	body := dashboardNativeArrowContractBody(t, empty, limit)
+	body := dashboardNativeArrowContractBody(t, empty, plan.EmitLimit)
 	_, _ = recorder.Write(body)
-	if !empty && limit < 3 {
-		recorder.Header().Set("X-Next-Cursor", encodeIndexCursor(offset+limit, scope, dashboardNativeArrowSnapshot))
+	observedRows := 0
+	if !empty {
+		observedRows = min(3, plan.QueryLimit)
+	}
+	cursor, err := dashboardNativeArrowCompletionCursor(dashboardNativeArrowContractCursorScope(limit, scope), plan, observedRows, nil, time.Now())
+	if err != nil {
+		t.Fatalf("complete native Arrow page: %v", err)
+	}
+	if err := publishDashboardNativeArrowCursor(recorder, cursor); err != nil {
+		t.Fatalf("publish native Arrow cursor trailer: %v", err)
 	}
 	return recorder.Result()
+}
+
+func dashboardNativeArrowContractCursorScope(limit int, scope string) dashboardNativeArrowCursorScope {
+	digest := func(value string) string { return "sha256:" + sha256String(value) }
+	return dashboardNativeArrowCursorScope{
+		DashboardID:                "sales",
+		PageID:                     "main",
+		VisualID:                   "orders",
+		NormalizedFiltersDigest:    digest(scope),
+		NormalizedSelectionsDigest: digest("selections-a"),
+		EffectiveSortingDigest:     digest("sorting-a"),
+		RequestedLimit:             limit,
+		EffectivePolicyIdentity:    digest("policy-a"),
+		ServingSnapshot:            dashboardNativeArrowSnapshot,
+	}
 }
 
 func dashboardNativeArrowContractBody(t testing.TB, empty bool, limit int) []byte {
@@ -593,7 +624,7 @@ func (s *dashboardNativeArrowNullabilityContractSink) WriteRecord(record arrow.R
 		s.w.Header().Set("Cache-Control", "no-store")
 		s.w.Header().Set("X-Query-ID", dashboardNativeArrowQueryID)
 		s.w.Header().Set("X-Serving-Snapshot", dashboardNativeArrowSnapshot)
-		s.w.Header().Set("X-LeapView-Arrow-Contract", dashboardNativeArrowContract)
+		s.w.Header().Set(dashboardNativeArrowContractHeader, dashboardNativeArrowContract)
 		s.w.Header().Set("Trailer", "X-Next-Cursor")
 		s.writer = ipc.NewWriter(s.w, ipc.WithSchema(s.schema))
 	}
@@ -651,12 +682,12 @@ func validateDashboardNativeArrowMetadata(metadata arrow.Metadata, allowlist map
 func assertDashboardNativeArrowHeaders(t testing.TB, response *stdhttp.Response) {
 	t.Helper()
 	want := map[string]string{
-		"Content-Type":              "application/vnd.apache.arrow.stream",
-		"Cache-Control":             "no-store",
-		"X-Query-ID":                dashboardNativeArrowQueryID,
-		"X-Serving-Snapshot":        dashboardNativeArrowSnapshot,
-		"X-LeapView-Arrow-Contract": dashboardNativeArrowContract,
-		"Trailer":                   "X-Next-Cursor",
+		"Content-Type":                     "application/vnd.apache.arrow.stream",
+		"Cache-Control":                    "no-store",
+		"X-Query-ID":                       dashboardNativeArrowQueryID,
+		"X-Serving-Snapshot":               dashboardNativeArrowSnapshot,
+		dashboardNativeArrowContractHeader: dashboardNativeArrowContract,
+		"Trailer":                          "X-Next-Cursor",
 	}
 	for header, expected := range want {
 		if got := response.Header.Get(header); got != expected {
