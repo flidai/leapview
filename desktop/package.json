@@ -37,7 +37,7 @@
     "node-gyp": "12.4.0",
     "rxjs": "7.8.2",
     "tailwindcss": "4.3.1",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "trustedDependencies": [
     "@bitdisaster/exe-icon-extractor",
