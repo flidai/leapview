@@ -573,6 +573,11 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker missing %q", required)
 		}
 	}
+	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", "getByLabel('Password').fill(password)"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must complete a fresh sign-in after temporary-password rotation: missing %q", required)
+		}
+	}
 	if !strings.Contains(worker, "new URL(administratorPage.url())") || strings.Contains(worker, "/dashboards/sales-overview") {
 		t.Error("browser worker must follow the candidate preview's canonical dashboard redirect")
 	}
