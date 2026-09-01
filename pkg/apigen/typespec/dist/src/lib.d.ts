@@ -48,7 +48,7 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
         readonly default: "The APIGen emitter option 'output-file' is required.";
     };
 }, Record<string, any>, never>;
-export declare const reportDiagnostic: <C extends "unsupported-type" | "unsupported-response-status" | "unsupported-response-content" | "unsupported-cookie" | "unsupported-shared-route" | "unsupported-auth" | "multiple-services" | "reserved-extension" | "invalid-extension-key" | "invalid-extension-value" | "invalid-command" | "invalid-operation-kind" | "invalid-property-names" | "invalid-min-properties" | "unnamed-schema" | "missing-output-file", M extends keyof {
+export declare const reportDiagnostic: <C extends "invalid-command" | "invalid-extension-key" | "invalid-extension-value" | "invalid-min-properties" | "invalid-operation-kind" | "invalid-property-names" | "missing-output-file" | "multiple-services" | "reserved-extension" | "unnamed-schema" | "unsupported-auth" | "unsupported-cookie" | "unsupported-response-content" | "unsupported-response-status" | "unsupported-shared-route" | "unsupported-type", M extends keyof {
     "unsupported-type": {
         readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
     };
