@@ -26,12 +26,29 @@ func testQualificationArtifacts(t *testing.T) QualificationPoolArtifacts {
 	return QualificationPoolArtifacts{
 		SchemaVersion: QualificationPoolArtifactsSchemaVersion,
 		Pool: physicalpool.PoolIdentity{
-			StorageLocation: "/var/lib/leapview/data", StorageNamespace: "delivery", EncryptionDomain: "local",
+			StorageLocation: "/var/lib/leapview/data", StorageNamespace: "delivery", Region: "local", Tenant: "qualification", EncryptionDomain: "local",
 			IsolationBoundary: "qualification", RetentionAuthority: "qualification",
 			RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600},
 			Compatibility:   compatibility,
 		},
 		Evidence: physicalpool.EvidenceArtifact{SchemaVersion: physicalpool.EvidenceArtifactSchemaVersion, Evidence: evidence},
+	}
+}
+
+func TestQualificationPoolArtifactsRequiresDeliveryOwnershipIdentity(t *testing.T) {
+	for _, field := range []string{"tenant", "region"} {
+		t.Run(field, func(t *testing.T) {
+			artifacts := testQualificationArtifacts(t)
+			switch field {
+			case "tenant":
+				artifacts.Pool.Tenant = ""
+			case "region":
+				artifacts.Pool.Region = ""
+			}
+			if _, err := MarshalQualificationPoolArtifacts(artifacts); err == nil {
+				t.Fatalf("missing %s unexpectedly accepted", field)
+			}
+		})
 	}
 }
 

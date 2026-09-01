@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
@@ -33,6 +34,9 @@ func MarshalQualificationPoolArtifacts(artifacts QualificationPoolArtifacts) ([]
 	}
 	if err := artifacts.Pool.Validate(); err != nil {
 		return nil, fmt.Errorf("qualification pool identity: %w", err)
+	}
+	if err := validateQualificationPoolDeliveryIdentity(artifacts.Pool); err != nil {
+		return nil, err
 	}
 	if artifacts.Evidence.SchemaVersion != physicalpool.EvidenceArtifactSchemaVersion {
 		return nil, fmt.Errorf("unsupported physical-pool evidence schema version %d", artifacts.Evidence.SchemaVersion)
@@ -69,6 +73,9 @@ func UnmarshalQualificationPoolArtifacts(encoded []byte) (QualificationPoolArtif
 	if err := artifacts.Pool.Validate(); err != nil {
 		return QualificationPoolArtifacts{}, fmt.Errorf("qualification pool identity: %w", err)
 	}
+	if err := validateQualificationPoolDeliveryIdentity(artifacts.Pool); err != nil {
+		return QualificationPoolArtifacts{}, err
+	}
 	if artifacts.Evidence.SchemaVersion != physicalpool.EvidenceArtifactSchemaVersion {
 		return QualificationPoolArtifacts{}, fmt.Errorf("unsupported physical-pool evidence schema version %d", artifacts.Evidence.SchemaVersion)
 	}
@@ -79,4 +86,24 @@ func UnmarshalQualificationPoolArtifacts(encoded []byte) (QualificationPoolArtif
 		return QualificationPoolArtifacts{}, fmt.Errorf("qualification pool identity and evidence compatibility differ")
 	}
 	return artifacts, nil
+}
+
+// A qualification envelope is consumed by native delivery, whose immutable
+// snapshot seals require explicit target ownership and locality. PoolIdentity
+// permits these fields to be absent for non-delivery consumers, so enforce the
+// stronger contract at this transport boundary before admission can persist an
+// unusable target-owned pool.
+func validateQualificationPoolDeliveryIdentity(identity physicalpool.PoolIdentity) error {
+	for _, field := range []struct {
+		name  string
+		value string
+	}{
+		{name: "tenant", value: identity.Tenant},
+		{name: "region", value: identity.Region},
+	} {
+		if field.value == "" || field.value != strings.TrimSpace(field.value) {
+			return fmt.Errorf("qualification pool identity: %s is required and must be canonical", field.name)
+		}
+	}
+	return nil
 }

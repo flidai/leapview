@@ -75,6 +75,8 @@ func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminofflin
 const (
 	qualificationIsolationBoundary  = "qualification"
 	qualificationRetentionAuthority = "qualification"
+	qualificationTenant             = "qualification"
+	qualificationRegion             = "local"
 )
 
 // QualificationPoolArtifacts runs the complete local shared-pool conformance
@@ -110,7 +112,8 @@ func (Operations) QualificationPoolArtifacts(ctx context.Context) (adminoffline.
 		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("resolve qualification pool storage: %w", err)
 	}
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
-		StorageLocation: storageLocation, StorageNamespace: "delivery", EncryptionDomain: "local",
+		StorageLocation: storageLocation, StorageNamespace: "delivery", Region: qualificationRegion,
+		Tenant: qualificationTenant, EncryptionDomain: "local",
 		IsolationBoundary: qualificationIsolationBoundary, RetentionAuthority: qualificationRetentionAuthority,
 		RetentionPolicy: physicalpool.RetentionPolicy{
 			ReaderGracePeriodSeconds: 1800,
