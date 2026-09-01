@@ -16,11 +16,14 @@ Horizontal application replicas and an independently writable DuckLake catalog a
 
 For a localhost evaluation, follow the pull-and-run flow in [Installation](/docs/installation). For production, use the platform-specific versioned Compose archive attached to the application release. It consumes the same public image, embeds its immutable digest, and includes a native Go `leapviewctl` binary that invokes Docker Compose.
 
-1. Copy the deployment template and review its image digest, localhost bind, domain, and memory limit.
+1. Copy the deployment and application templates. Review the image digest,
+   localhost bind, domain, and memory limit, then fill in the external
+   PostgreSQL URLs/roles and target delivery-pool identities in `leapview.env`.
 2. Initialize the persistent volume and offline administrator:
 
 ```sh
 cp deployment.env.example deployment.env
+cp leapview.env.example leapview.env
 ./leapviewctl init --admin-email admin@example.com --domain dash.example.com
 ```
 
@@ -31,7 +34,13 @@ cp deployment.env.example deployment.env
 ./leapviewctl first-login
 ```
 
-Initialization derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain from the validated `--domain` hostname. For an existing reverse proxy, pass `--no-https`, keep the application bound to localhost, and forward the original HTTPS scheme and host from that trusted proxy. `--no-https` disables only the bundled Caddy overlay; it does not make the public origin HTTP. Do not expose the unencrypted application port publicly.
+Initialization derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain from the validated `--domain` hostname. It preserves the explicitly supplied PostgreSQL and delivery settings and reports actionable missing-variable errors; it never provisions a bundled PostgreSQL service. For an existing reverse proxy, pass `--no-https`, keep the application bound to localhost, and forward the original HTTPS scheme and host from that trusted proxy. `--no-https` disables only the bundled Caddy overlay; it does not make the public origin HTTP. Do not expose the unencrypted application port publicly.
+
+For a fresh target, run pool bootstrap without `--apply` to derive its stable
+ID and compatibility digest, place those values in `leapview.env`, run
+`leapviewctl init`, and only then repeat bootstrap with `--apply`. Inject the
+DuckLake migrator credential into that one operation; do not retain it in the
+serving environment.
 
 The controller is optional if an existing container platform already provides equivalent secret management, health checks, and graceful shutdown. Those contracts remain required even when Compose is not used.
 

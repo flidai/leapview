@@ -40,14 +40,6 @@ type InitializeRequest struct {
 	Format string
 }
 
-type MaintenanceRequest struct {
-	Apply             bool
-	AuditDays         int
-	QueryDays         int
-	ArchivedAgentDays int
-	AuthStateDays     int
-}
-
 type ExternalRecoveryPoint struct {
 	Role          string `json:"role"`
 	RecoveryPoint string `json:"recoveryPoint"`
@@ -115,29 +107,6 @@ type Locker interface {
 	Acquire(context.Context) (Lock, error)
 }
 
-type RetentionPolicy struct {
-	AuditEventsMaxAge             time.Duration
-	QueryEventsMaxAge             time.Duration
-	ArchivedAgentConversationsAge time.Duration
-	AuthStateMaxAge               time.Duration
-	DryRun                        bool
-}
-
-type RetentionResult struct {
-	AuditEventsDeleted                  int64
-	DeliveredAuditIntentsDeleted        int64
-	QueryEventsDeleted                  int64
-	ArchivedAgentConversationsDeleted   int64
-	ExpiredOAuthStatesDeleted           int64
-	StaleSessionsDeleted                int64
-	StaleAPITokensDeleted               int64
-	StaleServicePrincipalSecretsDeleted int64
-}
-
-type Retention interface {
-	Prune(context.Context, RetentionPolicy) (RetentionResult, error)
-}
-
 type PhysicalPoolBootstrap interface {
 	Bootstrap(context.Context, PhysicalPoolBootstrapRequest) (PhysicalPoolBootstrapResult, error)
 }
@@ -172,7 +141,6 @@ type Dependencies struct {
 	State        InstanceState
 	Initializer  Initializer
 	Recovery     CredentialRecovery
-	Retention    Retention
 	PhysicalPool PhysicalPoolBootstrap
 	Now          func() time.Time
 }

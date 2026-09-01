@@ -11,9 +11,12 @@ import (
 	"strings"
 	"testing"
 
+	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/app/config"
+	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	projectsource "github.com/flidai/leapview/internal/app/projectsource"
 	"github.com/flidai/leapview/internal/deployment"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/internal/servingstate"
@@ -168,6 +171,33 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 	}
 }
 
+func TestPostgresBuildWiresNativeAgentSettingsAuthority(t *testing.T) {
+	contents, err := os.ReadFile("postgres_build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	if !strings.Contains(source, "workflowAssemblyInputs{AgentSettings: graph.Settings") {
+		t.Fatal("PostgreSQL composition does not pass the graph-owned settings authority to workflow assembly")
+	}
+	if strings.Contains(source, "AgentSettings: store") {
+		t.Fatal("PostgreSQL composition falls back to the local SQLite settings store")
+	}
+}
+
+func TestPostgresSettingsAuthoritySatisfiesAgentSettingsPortAndPreservesIdentity(t *testing.T) {
+	settingsRepository := platformbootstrappostgres.New(nil)
+	graph := &postgresauthority.PostgresAuthorityGraph{Settings: settingsRepository}
+
+	var settings agentmodule.Settings = graph.Settings
+	if settings == nil {
+		t.Fatal("native PostgreSQL settings authority was converted to a nil agent settings port")
+	}
+	if settings != settingsRepository {
+		t.Fatalf("agent settings authority identity changed: got %T, want exact PostgreSQL settings repository", settings)
+	}
+}
+
 func TestBuildProductionFailsClosedBeforeLegacySQLiteComposition(t *testing.T) {
 	_, err := BuildProduction(context.Background(), config.Config{Production: true})
 	if err == nil {
@@ -190,7 +220,7 @@ func TestBuildProductionRejectsSecurityBypassBeforeConnecting(t *testing.T) {
 		PostgresDuckLakeMaintenanceURL:          "postgres://ducklake-maintenance:secret@localhost/ducklake?sslmode=require",
 		PostgresControlRuntimeRole:              "runtime",
 		PostgresControlMigratorRole:             "migrator",
-		PostgresControlMaintenanceRole:          "maintenance",
+		PostgresControlMaintenanceRole:          "leapview_control_maintenance",
 		PostgresDuckLakeRuntimeRole:             "ducklake",
 		PostgresDuckLakeMaintenanceRole:         "ducklake-maintenance",
 		DeliveryPhysicalPoolID:                  "pool-prod",

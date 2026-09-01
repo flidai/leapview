@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	adminoffline "github.com/flidai/leapview/internal/admin/offline"
+	admincli "github.com/flidai/leapview/internal/admin/cli"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/app/postgresmaintenance"
@@ -53,9 +53,21 @@ func (n *testNative) Run(_ context.Context, policy postgresmaintenance.Policy) (
 	return n.result, nil
 }
 
+func validProductionMaintenanceConfig() config.Config {
+	return config.Config{
+		Production: true, PostgresRequireTLS: true,
+		PostgresControlURL:             "postgres://runtime:secret@control/leapview?sslmode=require",
+		PostgresControlMigratorURL:     "postgres://migrator:secret@control/leapview?sslmode=require",
+		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@control/leapview?sslmode=require",
+		PostgresDuckLakeURL:            "postgres://ducklake:secret@ducklake/leapview?sslmode=require",
+		PostgresDuckLakeMaintenanceURL: "postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=require",
+		DeliveryPhysicalPoolID:         "pool-prod", DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+}
+
 func TestMapMaintenanceRequestUsesExplicitBoundedDefaults(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 123, time.FixedZone("PDT", -7*60*60))
-	policy, err := MapMaintenanceRequest(adminoffline.MaintenanceRequest{AuditDays: 10, QueryDays: 11, ArchivedAgentDays: 12, AuthStateDays: 13}, now)
+	policy, err := MapMaintenanceRequest(admincli.MaintenanceRequest{AuditDays: 10, QueryDays: 11, ArchivedAgentDays: 12, AuthStateDays: 13}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -76,7 +88,7 @@ func TestMapMaintenanceRequestUsesExplicitBoundedDefaults(t *testing.T) {
 
 func TestMapMaintenanceRequestZeroDisablesOnlyRequestedEvidence(t *testing.T) {
 	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
-	policy, err := MapMaintenanceRequest(adminoffline.MaintenanceRequest{AuditDays: 0, QueryDays: 0, ArchivedAgentDays: 7, AuthStateDays: 0}, now)
+	policy, err := MapMaintenanceRequest(admincli.MaintenanceRequest{AuditDays: 0, QueryDays: 0, ArchivedAgentDays: 7, AuthStateDays: 0}, now)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -111,7 +123,7 @@ func TestProductionMaintenanceUsesOnePoolBaselineAndPreviewOrApply(t *testing.T)
 			var constructed postgresmaintenance.NativeDB
 			ops := New(Dependencies{
 				LoadConfig: func() (config.Config, error) {
-					return config.Config{Production: true, PostgresControlMaintenanceURL: "postgres://maintenance/control"}, nil
+					return validProductionMaintenanceConfig(), nil
 				},
 				OpenMaintenance: func(_ context.Context, cfg platformpostgres.Config) (MaintenancePool, error) {
 					opened = cfg
@@ -128,11 +140,11 @@ func TestProductionMaintenanceUsesOnePoolBaselineAndPreviewOrApply(t *testing.T)
 				Now: func() time.Time { return now },
 			})
 			var out bytes.Buffer
-			err := ops.Maintenance(t.Context(), adminoffline.MaintenanceRequest{Apply: test.apply, AuditDays: 10, QueryDays: 11, ArchivedAgentDays: 12, AuthStateDays: 13}, &out)
+			err := ops.Maintenance(t.Context(), admincli.MaintenanceRequest{Apply: test.apply, AuditDays: 10, QueryDays: 11, ArchivedAgentDays: 12, AuthStateDays: 13}, &out)
 			if err != nil {
 				t.Fatal(err)
 			}
-			if opened.URL != "postgres://maintenance/control" || opened.MinConns != 1 || opened.MaxConns != 1 || opened.Intent != platformpostgres.IntentReadWrite {
+			if opened.URL != validProductionMaintenanceConfig().PostgresControlMaintenanceURL || opened.MinConns != 1 || opened.MaxConns != 1 || opened.Intent != platformpostgres.IntentReadWrite {
 				t.Fatalf("opened maintenance config = %#v", opened)
 			}
 			if !verified || constructed == nil || !pool.closed {
@@ -157,7 +169,7 @@ func TestProductionMaintenanceBaselineMismatchFailsClosed(t *testing.T) {
 	constructed := false
 	ops := New(Dependencies{
 		LoadConfig: func() (config.Config, error) {
-			return config.Config{Production: true, PostgresControlMaintenanceURL: "postgres://maintenance/control"}, nil
+			return validProductionMaintenanceConfig(), nil
 		},
 		OpenMaintenance: func(context.Context, platformpostgres.Config) (MaintenancePool, error) { return pool, nil },
 		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return errors.New("baseline mismatch") },
@@ -167,7 +179,7 @@ func TestProductionMaintenanceBaselineMismatchFailsClosed(t *testing.T) {
 		},
 		Now: func() time.Time { return time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC) },
 	})
-	err := ops.Maintenance(t.Context(), adminoffline.MaintenanceRequest{}, &bytes.Buffer{})
+	err := ops.Maintenance(t.Context(), admincli.MaintenanceRequest{}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "baseline") {
 		t.Fatalf("baseline mismatch error = %v", err)
 	}
@@ -182,11 +194,72 @@ func TestMaintenanceRejectsNegativeRetentionBeforeLoadingProductionConfig(t *tes
 		loaded = true
 		return config.Config{Production: true}, nil
 	}}}
-	err := ops.Maintenance(t.Context(), adminoffline.MaintenanceRequest{QueryDays: -1}, &bytes.Buffer{})
+	err := ops.Maintenance(t.Context(), admincli.MaintenanceRequest{QueryDays: -1}, &bytes.Buffer{})
 	if err == nil || !strings.Contains(err.Error(), "zero or greater") {
 		t.Fatalf("negative retention error = %v", err)
 	}
 	if loaded {
 		t.Fatal("negative retention loaded production config")
+	}
+}
+
+func TestMaintenanceRejectsOverflowingRetentionBeforeLoadingProductionConfig(t *testing.T) {
+	loaded := false
+	ops := Operations{Dependencies: Dependencies{LoadConfig: func() (config.Config, error) {
+		loaded = true
+		return validProductionMaintenanceConfig(), nil
+	}}}
+	err := ops.Maintenance(t.Context(), admincli.MaintenanceRequest{AuditDays: maxRetentionDays + 1}, &bytes.Buffer{})
+	if err == nil || !strings.Contains(err.Error(), "must not exceed") {
+		t.Fatalf("overflowing retention error = %v", err)
+	}
+	if loaded {
+		t.Fatal("overflowing retention loaded production config")
+	}
+}
+
+func TestMaintenanceRejectsInsecureOrAliasedProductionConfigurationBeforeOpeningPool(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*config.Config)
+	}{
+		{name: "TLS disabled", mutate: func(cfg *config.Config) { cfg.PostgresRequireTLS = false }},
+		{name: "maintenance aliases runtime", mutate: func(cfg *config.Config) { cfg.PostgresControlMaintenanceURL = cfg.PostgresControlURL }},
+		{name: "unsupported maintenance role", mutate: func(cfg *config.Config) { cfg.PostgresControlMaintenanceRole = "provider_maintenance" }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := validProductionMaintenanceConfig()
+			test.mutate(&cfg)
+			opened := false
+			ops := New(Dependencies{
+				LoadConfig: func() (config.Config, error) { return cfg, nil },
+				OpenMaintenance: func(context.Context, platformpostgres.Config) (MaintenancePool, error) {
+					opened = true
+					return &testMaintenancePool{}, nil
+				},
+			})
+			err := ops.Maintenance(t.Context(), admincli.MaintenanceRequest{}, &bytes.Buffer{})
+			if err == nil || !strings.Contains(err.Error(), "validate production PostgreSQL") {
+				t.Fatalf("invalid production maintenance error = %v", err)
+			}
+			if opened {
+				t.Fatal("invalid production maintenance opened the pool")
+			}
+		})
+	}
+}
+
+func TestMaintenanceRejectsLocalTargetsWithoutOpeningSQLite(t *testing.T) {
+	loaded := false
+	ops := New(Dependencies{LoadConfig: func() (config.Config, error) {
+		loaded = true
+		return config.Config{Production: false}, nil
+	}})
+	err := ops.Maintenance(t.Context(), admincli.MaintenanceRequest{}, &bytes.Buffer{})
+	if !errors.Is(err, ErrNativeMaintenanceUnavailable) {
+		t.Fatalf("local maintenance error = %v, want ErrNativeMaintenanceUnavailable", err)
+	}
+	if !loaded {
+		t.Fatal("local maintenance did not load configuration")
 	}
 }

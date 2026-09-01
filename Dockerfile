@@ -85,7 +85,6 @@ COPY --from=sourcegen /src/internal/app/cli/gen ./internal/app/cli/gen
 COPY --from=sourcegen /src/internal/app/config/config_gen.go ./internal/app/config/config_gen.go
 COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/config/spec/names_gen.go
 COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db
-COPY --from=sourcegen /src/internal/admin/internal/db ./internal/admin/internal/db
 COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db
 COPY --from=sourcegen /src/internal/analytics/internal/db ./internal/analytics/internal/db
 COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db

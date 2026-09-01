@@ -77,6 +77,18 @@ func TestComposeSingleInstanceContract(t *testing.T) {
 		"LEAPVIEW_PUBLIC_URL=https://dash.example.com",
 		"LEAPVIEW_ALLOWED_HOSTS=dash.example.com",
 		"LEAPVIEW_TRUST_PROXY_HEADERS=true",
+		"LEAPVIEW_POSTGRES_CONTROL_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE=leapview_control_migrator",
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=leapview_control_runtime",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE=leapview_control_maintenance",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=leapview_ducklake_runtime",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE=leapview_ducklake_maintenance",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=",
 	} {
 		if !strings.Contains(appEnvironment, required) {
 			t.Fatalf("leapview.env.example missing %q", required)
@@ -719,6 +731,7 @@ func TestControllerInitializationGeneratesValidPublicOrigin(t *testing.T) {
 			root := t.TempDir()
 			buildController(t, root)
 			copyDeploymentFile(t, root, "deployment.env.example", 0o600)
+			copyConfiguredApplicationFile(t, root)
 			fakeDocker := filepath.Join(root, "fake-docker")
 			script := fmt.Sprintf(`#!/usr/bin/env bash
 set -euo pipefail
@@ -917,6 +930,7 @@ func TestControllerInitializationIsRetryableAndRequiresPinnedProxy(t *testing.T)
 		buildController(t, root)
 		buildConfigValidator(t, root)
 		copyDeploymentFile(t, root, "deployment.env.example", 0o600)
+		copyConfiguredApplicationFile(t, root)
 		fakeDocker := filepath.Join(root, "fake-docker")
 		if err := os.WriteFile(fakeDocker, []byte(`#!/usr/bin/env bash
 set -euo pipefail
@@ -944,10 +958,11 @@ fi
 		if output, err := runControllerResult(root, fakeDocker, "", "init", "--admin-email", "admin@example.com", "--domain", "dash.example.com", "--image", image); err == nil || !strings.Contains(output, "initialization can be retried") {
 			t.Fatalf("failed initialization = %v, %s", err, output)
 		}
-		for _, name := range []string{"leapview.env", "initial-credentials.json"} {
-			if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
-				t.Fatalf("partial initialization retained %s: %v", name, err)
-			}
+		if contents, err := os.ReadFile(filepath.Join(root, "leapview.env")); err != nil || !strings.Contains(string(contents), "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=require\n") {
+			t.Fatalf("operator application environment was not preserved after validation failure: %v\n%s", err, contents)
+		}
+		if _, err := os.Stat(filepath.Join(root, "initial-credentials.json")); !os.IsNotExist(err) {
+			t.Fatalf("partial initialization retained initial credentials: %v", err)
 		}
 		if err := os.Remove(filepath.Join(root, "fail-validation")); err != nil {
 			t.Fatal(err)
@@ -980,6 +995,28 @@ func copyDeploymentFile(t *testing.T, targetDir, name string, mode os.FileMode) 
 	contents, err := os.ReadFile(name)
 	require.NoError(t, err)
 	if err := os.WriteFile(filepath.Join(targetDir, name), contents, mode); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func copyConfiguredApplicationFile(t *testing.T, targetDir string) {
+	t.Helper()
+	contents, err := os.ReadFile("leapview.env.example")
+	require.NoError(t, err)
+	replacements := map[string]string{
+		"LEAPVIEW_POSTGRES_CONTROL_URL=":                        "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=require",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=":               "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgres://migrator:secret@control/leapview?sslmode=require",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=":            "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=postgres://maintenance:secret@control/leapview?sslmode=require",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=":                       "LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://ducklake:secret@ducklake/leapview?sslmode=require",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=":           "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=require",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=":                   "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-prod",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=": "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64),
+	}
+	text := string(contents)
+	for from, to := range replacements {
+		text = strings.Replace(text, from, to, 1)
+	}
+	if err := os.WriteFile(filepath.Join(targetDir, "leapview.env"), []byte(text), 0o600); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
-	adminsqlite "github.com/flidai/leapview/internal/admin/sqlite"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	physicalpoolsqlite "github.com/flidai/leapview/internal/analytics/physicalpool/sqlite"
@@ -214,33 +213,4 @@ func (recovery credentialRecovery) Write(contents []byte) error {
 
 func (recovery credentialRecovery) Remove() error {
 	return os.Remove(recovery.path)
-}
-
-type operationalRetention struct {
-	dbPath string
-}
-
-func (retention operationalRetention) Prune(ctx context.Context, policy adminoffline.RetentionPolicy) (adminoffline.RetentionResult, error) {
-	store, err := platform.Open(ctx, retention.dbPath)
-	if err != nil {
-		return adminoffline.RetentionResult{}, err
-	}
-	defer store.Close()
-	result, err := adminsqlite.PruneOperationalHistory(ctx, store.SQLDB(), adminsqlite.RetentionOptions{
-		AuditEventsMaxAge:             policy.AuditEventsMaxAge,
-		QueryEventsMaxAge:             policy.QueryEventsMaxAge,
-		ArchivedAgentConversationsAge: policy.ArchivedAgentConversationsAge,
-		AuthStateMaxAge:               policy.AuthStateMaxAge,
-		DryRun:                        policy.DryRun,
-	})
-	return adminoffline.RetentionResult{
-		AuditEventsDeleted:                  result.AuditEventsDeleted,
-		DeliveredAuditIntentsDeleted:        result.DeliveredAuditIntentsDeleted,
-		QueryEventsDeleted:                  result.QueryEventsDeleted,
-		ArchivedAgentConversationsDeleted:   result.ArchivedAgentConversationsDeleted,
-		ExpiredOAuthStatesDeleted:           result.ExpiredOAuthStatesDeleted,
-		StaleSessionsDeleted:                result.StaleSessionsDeleted,
-		StaleAPITokensDeleted:               result.StaleAPITokensDeleted,
-		StaleServicePrincipalSecretsDeleted: result.StaleServicePrincipalSecretsDeleted,
-	}, err
 }

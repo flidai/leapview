@@ -66,11 +66,10 @@ leapview admin maintenance \
   --query-days 90
 ```
 
-Review the dry-run output, preservation requirements, and external archive before applying deletion. A value of zero disables pruning for that category; it does not automatically satisfy storage or compliance needs.
+Maintenance is a production PostgreSQL operation. Local and evaluation SQLite
+fixtures do not expose a second retention implementation.
 
-The audit window also prunes delivered outbox handoff rows after their final
-audit events age out. Non-delivered and terminal rows are never removed by
-routine retention.
+Review the dry-run output, preservation requirements, and external archive before applying deletion. A value of zero disables pruning for that category; it does not automatically satisfy storage or compliance needs.
 
 Export or forward events to an approved security system when organizational retention exceeds the operational database window. Protect integrity and access to the export.
 

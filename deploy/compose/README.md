@@ -8,12 +8,29 @@ operations binary for the archive's operating system and architecture.
 
 ```sh
 cp deployment.env.example deployment.env
+cp leapview.env.example leapview.env
+# Configure the external PostgreSQL URLs and roles in leapview.env.
+# Run pool bootstrap without --apply; the database-free result contains the
+# deterministic pool_id and compatibility_digest. Copy them into leapview.env.
 ./leapviewctl init --admin-email admin@example.com --domain dash.example.com
+# Initialization has now applied the control baseline. Inject the operation-only
+# DuckLake migrator credential and repeat the exact bootstrap with --apply.
+# Do not store that owner-capable credential in leapview.env.
 ./leapviewctl start
 ./leapviewctl first-login
 ```
 
-Set the released `LEAPVIEW_IMAGE` digest before initialization. HTTPS is
+Set the released `LEAPVIEW_IMAGE` digest before initialization. Production
+requires provider-owned PostgreSQL control and DuckLake URLs, distinct
+migrator/runtime/maintenance roles, and the exact target delivery pool ID and
+compatibility digest. Edit those values in `leapview.env`; initialization
+preserves them and fails with the missing variable name when they are absent.
+The pre-initialization pool command must be a dry run. Apply the same reviewed
+pool/evidence pair only after `init`, because durable admission verifies the
+control baseline created during initialization. Inject the DuckLake migrator
+URL only into that apply command through the target secret manager; ordinary
+serving must not receive it.
+LeapView does not provision a PostgreSQL container in this bundle. HTTPS is
 enabled by default through the Caddy overlay. Initialization derives
 `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain
 from the validated `--domain` hostname. Use `--no-https` only when a trusted

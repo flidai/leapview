@@ -107,18 +107,6 @@ func (initializer *fakeInitializer) Initialize(
 	return initializer.result, initializer.err
 }
 
-type fakeRetention struct {
-	calls  int
-	policy RetentionPolicy
-	result RetentionResult
-}
-
-func (retention *fakeRetention) Prune(_ context.Context, policy RetentionPolicy) (RetentionResult, error) {
-	retention.calls++
-	retention.policy = policy
-	return retention.result, nil
-}
-
 func TestInitializeOwnsValidationRecoveryAndAccessSequencing(t *testing.T) {
 	now := time.Date(2026, 7, 29, 7, 0, 0, 0, time.UTC)
 	locker := &fakeLocker{}
@@ -195,44 +183,6 @@ func TestInitializeReportsCredentialCleanupFailureAfterMutationFailure(t *testin
 	}
 	if recovery.removed != 2 || len(recovery.contents) == 0 {
 		t.Fatalf("failed cleanup evidence removed=%d contents=%q", recovery.removed, recovery.contents)
-	}
-}
-
-func TestMaintenanceOwnsPolicyAndExclusiveApplySemantics(t *testing.T) {
-	locker := &fakeLocker{}
-	retention := &fakeRetention{result: RetentionResult{
-		AuditEventsDeleted: 1, DeliveredAuditIntentsDeleted: 8, QueryEventsDeleted: 2, ArchivedAgentConversationsDeleted: 3,
-		ExpiredOAuthStatesDeleted: 4, StaleSessionsDeleted: 5,
-		StaleAPITokensDeleted: 6, StaleServicePrincipalSecretsDeleted: 7,
-	}}
-	service := New(Config{}, Dependencies{Locker: locker, Retention: retention})
-	var out bytes.Buffer
-	request := MaintenanceRequest{AuditDays: 10, QueryDays: 11, ArchivedAgentDays: 12, AuthStateDays: 13}
-	if err := service.Maintenance(context.Background(), request, &out); err != nil {
-		t.Fatal(err)
-	}
-	if locker.acquired != 0 || !retention.policy.DryRun ||
-		retention.policy.AuditEventsMaxAge != 10*24*time.Hour ||
-		retention.policy.AuthStateMaxAge != 13*24*time.Hour {
-		t.Fatalf("dry-run policy = %#v lock=%d", retention.policy, locker.acquired)
-	}
-	if !strings.Contains(out.String(), "mode: dry-run") || !strings.Contains(out.String(), "delivered audit intents: 8") || !strings.Contains(out.String(), "stale service principal secrets: 7") {
-		t.Fatalf("maintenance output = %q", out.String())
-	}
-	request.Apply = true
-	if err := service.Maintenance(context.Background(), request, io.Discard); err != nil {
-		t.Fatal(err)
-	}
-	if locker.acquired != 1 || locker.lock.released != 1 || retention.policy.DryRun {
-		t.Fatalf("apply policy = %#v lock=%d/%d", retention.policy, locker.acquired, locker.lock.released)
-	}
-}
-
-func TestMaintenanceRejectsNegativeRetentionBeforeDependencies(t *testing.T) {
-	service := New(Config{}, Dependencies{})
-	err := service.Maintenance(context.Background(), MaintenanceRequest{AuditDays: -1}, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "zero or greater") {
-		t.Fatalf("maintenance error = %v", err)
 	}
 }
 

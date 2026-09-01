@@ -1,7 +1,6 @@
 package adminoffline
 
 import (
-	"bytes"
 	"context"
 	"errors"
 	"io"
@@ -28,12 +27,6 @@ func TestProductionRejectsEveryLegacyAdminOperationBeforeOpeningState(t *testing
 			name: "acknowledge initial credentials",
 			call: func(ctx context.Context, _ io.Writer) error {
 				return (Operations{}).AcknowledgeInitialCredentials(ctx)
-			},
-		},
-		{
-			name: "maintenance",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).Maintenance(ctx, adminoffline.MaintenanceRequest{}, out)
 			},
 		},
 		{
@@ -103,15 +96,6 @@ func TestNonProductionServiceConstructorRemainsAvailable(t *testing.T) {
 		t.Fatal("newService returned nil service")
 	}
 
-	// Keep a representative operation on the legacy path to demonstrate that
-	// the guard is scoped to production rather than disabling offline Admin.
-	var out bytes.Buffer
-	if err := service.Maintenance(context.Background(), adminoffline.MaintenanceRequest{}, &out); err != nil {
-		t.Fatalf("maintenance on non-production service: %v", err)
-	}
-	if !bytes.Contains(out.Bytes(), []byte("mode: dry-run")) {
-		t.Fatalf("maintenance output = %q", out.String())
-	}
 }
 
 func TestEvaluationModeRetainsIsolatedOfflineAuthority(t *testing.T) {

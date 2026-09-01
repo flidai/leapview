@@ -35,7 +35,6 @@ operational categories:
 | Category | What it answers | Lifecycle owner |
 | --- | --- | --- |
 | Audit events | Which principal or service performed an administrative/security action? | Security and operations |
-| Delivered audit intents | Which durable handoff identities have already materialized? | Security and operations, aligned to audit-event retention |
 | Query events | Which governed analytical operation ran, with what status and context? | Data platform and operations |
 | Archived agent conversations | What was retained from an explicitly archived agent run? | Product owner and privacy/security |
 | Authentication state | Which expired or revoked sessions, OAuth states, API tokens, and service-principal secrets can be removed? | Identity/platform operations |

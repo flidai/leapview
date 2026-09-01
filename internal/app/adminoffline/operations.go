@@ -64,14 +64,6 @@ func (Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 	return service.AcknowledgeInitialCredentials(ctx)
 }
 
-func (Operations) Maintenance(ctx context.Context, request adminoffline.MaintenanceRequest, out io.Writer) error {
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.Maintenance(ctx, request, out)
-}
-
 func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest, out io.Writer) error {
 	service, err := newService()
 	if err != nil {
@@ -177,7 +169,6 @@ func newService() (*adminoffline.Service, error) {
 		Recovery: credentialRecovery{
 			path: filepath.Join(cfg.HomeDir, adminoffline.CredentialRecoveryFileName),
 		},
-		Retention: operationalRetention{dbPath: cfg.DBPath()},
 		PhysicalPool: physicalPoolBootstrap{dbPath: cfg.DBPath(), s3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,

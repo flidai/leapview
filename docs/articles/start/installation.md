@@ -197,14 +197,22 @@ fi
 image reference, the base Compose stack, an optional Caddy HTTPS overlay, and
 the native Go `leapviewctl` operations binary.
 
-3. Copy the deployment template and initialize the instance:
+3. Copy the deployment and application templates. Before initialization,
+   provision or select the external PostgreSQL provider, then fill in the
+   control/DuckLake URLs, distinct roles, and target delivery-pool identities
+in `leapview.env`:
 
 ```sh
 cp deployment.env.example deployment.env
+cp leapview.env.example leapview.env
+# Run pool bootstrap without --apply and copy its deterministic pool_id and
+# compatibility_digest into leapview.env before init.
 ./leapviewctl init \
   --admin-email admin@example.com \
   --domain dash.example.com \
   --environment prod
+# Now inject the operation-only DuckLake migrator credential and repeat the
+# exact pool bootstrap command with --apply before starting the service.
 ```
 
 4. Start the instance and consume the one-time credentials:
@@ -222,6 +230,14 @@ authorization denial, restart persistence, and recovery-readiness checks using
 the separately managed secret configuration.
 
 Initialization treats `--domain` as the canonical public hostname and derives `LEAPVIEW_PUBLIC_URL=https://<domain>`, the allowed host, and the Caddy domain from it. It also generates production secrets, creates the persistent volume, validates the resulting production configuration, and atomically creates a forced-change local administrator plus a restricted publisher token. `first-login` prints and deletes that one-time credential file.
+
+The Compose bundle does not include PostgreSQL. Initialization preserves the
+operator-supplied PostgreSQL and delivery-pool settings and fails with the
+missing variable name when the clean-slate production contract is incomplete.
+The pool-bootstrap dry run precedes initialization only to derive identities;
+the applying run follows initialization because it verifies the newly applied
+control baseline. Do not store the operation-only DuckLake migrator credential
+in the serving `leapview.env`.
 
 `leapviewctl` is an optional production operations controller, not a prerequisite for pulling or running LeapView. It invokes the installed Docker Compose CLI and does not require Bash or direct access to the Docker socket API. You may manage the image with your existing container platform if it preserves the same single-process, persistent-home, initialization, provider-native recovery, and environment contracts.
 

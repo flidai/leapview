@@ -11,9 +11,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
+	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 	instancelock "github.com/flidai/leapview/internal/platform/locking"
 	"github.com/flidai/leapview/internal/platform/ociref"
@@ -152,13 +154,6 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 		_, err := fmt.Fprintln(c.stdout, "initialization acknowledgement completed; run ./leapviewctl start")
 		return err
 	}
-	if appExists {
-		if err := c.captureInitialCredentials(ctx); err != nil {
-			return err
-		}
-		_, err := fmt.Fprintln(c.stdout, "initialization completed; run ./leapviewctl start")
-		return err
-	}
 	if credentialsExist {
 		return fmt.Errorf("credential file exists without instance configuration; move it aside before retrying")
 	}
@@ -198,16 +193,26 @@ func (c *Controller) Initialize(ctx context.Context, options InitOptions) error 
 	if err != nil {
 		return err
 	}
-	appEnvironment := fmt.Sprintf("LEAPVIEW_PRODUCTION=1\nLEAPVIEW_ENVIRONMENT=%s\nLEAPVIEW_ADDR=:8080\n", options.Environment) +
-		"LEAPVIEW_HOME=/var/lib/leapview/home\nLEAPVIEW_MANAGED_DATA_BACKEND=local\nLEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data\n" +
-		"LEAPVIEW_LOCAL_AUTH=1\nLEAPVIEW_COOKIE_SECURE=true\nLEAPVIEW_TRUST_PROXY_HEADERS=true\n" +
-		fmt.Sprintf("LEAPVIEW_PUBLIC_URL=https://%s\nLEAPVIEW_ALLOWED_HOSTS=%s\nLEAPVIEW_BOOTSTRAP_ADMIN_EMAIL=%s\n", options.Domain, options.Domain, options.AdminEmail) +
-		fmt.Sprintf("LEAPVIEW_CSRF_KEY=%s\nLEAPVIEW_METRICS_BEARER_TOKEN=%s\n", csrfKey, metricsToken)
+	var originalAppEnvironment []byte
+	if appExists {
+		originalAppEnvironment, err = os.ReadFile(c.path(appEnvName))
+		if err != nil {
+			return err
+		}
+	}
+	appEnvironment, err := initializationEnvironment(originalAppEnvironment, options, csrfKey, metricsToken)
+	if err != nil {
+		return err
+	}
 	if err := securefs.WritePrivateFileAtomic(c.path(appEnvName), []byte(appEnvironment)); err != nil {
 		return err
 	}
 	cleanupInitialization := func() {
-		_ = os.Remove(c.path(appEnvName))
+		if appExists {
+			_ = securefs.WritePrivateFileAtomic(c.path(appEnvName), originalAppEnvironment)
+		} else {
+			_ = os.Remove(c.path(appEnvName))
+		}
 		_ = os.Remove(c.path(credentialsName))
 	}
 	if err := c.compose(ctx, nil, c.stdout, c.stderr, "pull", "leapview"); err != nil {
@@ -330,7 +335,7 @@ func (c *Controller) captureInitialCredentials(ctx context.Context) error {
 		return err
 	}
 	if err := c.compose(ctx, nil, tmp, c.stderr, "run", "--rm", "--no-deps", "leapview", "admin", "initialize", "--format", "json"); err != nil {
-		return fmt.Errorf("offline initialization did not deliver credentials; initialization can be retried: %w", err)
+		return fmt.Errorf("instance initialization did not deliver credentials; initialization can be retried: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
 		return err
@@ -340,7 +345,17 @@ func (c *Controller) captureInitialCredentials(ctx context.Context) error {
 		return err
 	}
 	if info.Size() == 0 {
-		return fmt.Errorf("offline initialization returned empty credentials; initialization can be retried")
+		return fmt.Errorf("instance initialization returned empty credentials; initialization can be retried")
+	}
+	if _, err := tmp.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	credentials, err := io.ReadAll(tmp)
+	if err != nil {
+		return err
+	}
+	if _, err := adminoffline.DecodeInitialCredentials(credentials); err != nil {
+		return fmt.Errorf("instance initialization returned invalid credentials; initialization can be retried: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
 		return err
@@ -515,6 +530,94 @@ func validateEnvLineValue(label, value string) error {
 		return fmt.Errorf("%s must be a single environment-file value", label)
 	}
 	return nil
+}
+
+// initializationEnvironment merges controller-owned defaults into an
+// operator-provided application environment. In particular, PostgreSQL URLs,
+// role names, and delivery-pool admission identities are never synthesized or
+// replaced by Compose initialization. The controller only creates the local
+// secrets it owns when they are absent (or still carry the example marker),
+// while canonical public-address fields continue to follow init arguments.
+func initializationEnvironment(existing []byte, options InitOptions, csrfKey, metricsToken string) (string, error) {
+	contents := string(existing)
+	values := environmentValues(contents)
+	controllerOwned := map[string]string{
+		"LEAPVIEW_PRODUCTION":           "1",
+		"LEAPVIEW_ENVIRONMENT":          options.Environment,
+		"LEAPVIEW_ADDR":                 ":8080",
+		"LEAPVIEW_HOME":                 "/var/lib/leapview/home",
+		"LEAPVIEW_MANAGED_DATA_BACKEND": "local",
+		"LEAPVIEW_MANAGED_DATA_DIR":     "/var/lib/leapview/home/managed-data",
+		"LEAPVIEW_LOCAL_AUTH":           "1",
+		"LEAPVIEW_COOKIE_SECURE":        "true",
+		"LEAPVIEW_TRUST_PROXY_HEADERS":  "true",
+	}
+	for key, value := range controllerOwned {
+		values[key] = value
+	}
+	// These values are derived from the validated init arguments. They are
+	// intentionally refreshed when an operator pre-populates leapview.env.
+	values["LEAPVIEW_PUBLIC_URL"] = "https://" + options.Domain
+	values["LEAPVIEW_ALLOWED_HOSTS"] = options.Domain
+	values["LEAPVIEW_BOOTSTRAP_ADMIN_EMAIL"] = options.AdminEmail
+	for key, generated := range map[string]string{
+		"LEAPVIEW_CSRF_KEY":             csrfKey,
+		"LEAPVIEW_METRICS_BEARER_TOKEN": metricsToken,
+	} {
+		current := strings.TrimSpace(values[key])
+		if current != "" && !strings.Contains(current, "<generated") {
+			continue
+		}
+		values[key] = generated
+	}
+
+	// Preserve the operator's original ordering and comments. Missing
+	// controller-owned keys are appended in stable order; every pre-existing
+	// operator-owned key, including PostgreSQL and delivery settings, remains
+	// untouched. Controller-owned runtime and security invariants are replaced
+	// with their canonical values above.
+	lines := strings.Split(contents, "\n")
+	found := make(map[string]bool)
+	for index, line := range lines {
+		name, _, present := strings.Cut(line, "=")
+		if !present {
+			continue
+		}
+		if value, ok := values[name]; ok {
+			lines[index] = name + "=" + value
+			found[name] = true
+		}
+	}
+	missing := make([]string, 0)
+	for name := range values {
+		if !found[name] {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	// Split leaves a synthetic trailing line for a final newline. Remove it
+	// while appending, then restore the newline below for deterministic files.
+	if len(lines) > 0 && lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	for _, name := range missing {
+		if err := validateEnvLineValue(name, values[name]); err != nil {
+			return "", err
+		}
+		lines = append(lines, name+"="+values[name])
+	}
+	return strings.Join(lines, "\n") + "\n", nil
+}
+
+func environmentValues(contents string) map[string]string {
+	values := make(map[string]string)
+	for _, line := range strings.Split(contents, "\n") {
+		name, value, present := strings.Cut(line, "=")
+		if present && name != "" {
+			values[name] = value
+		}
+	}
+	return values
 }
 
 func canonicalPublicDomain(raw string) (string, error) {

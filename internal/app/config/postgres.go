@@ -11,6 +11,8 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
+const postgresControlMaintenanceRole = "leapview_control_maintenance"
+
 // postgresCredentialAlias compares only the credential identity carried by a
 // PostgreSQL URL. Query ordering, TLS options, and an omitted default port do
 // not create a new credential, so they must not evade production role
@@ -233,7 +235,7 @@ func (c Config) PostgresDuckLakeUpgradeConfig() (platformpostgres.Config, platfo
 func (c Config) PostgresControlMaintenanceConfig() platformpostgres.Config {
 	role := strings.TrimSpace(c.PostgresControlMaintenanceRole)
 	if role == "" {
-		role = "leapview_control_maintenance"
+		role = postgresControlMaintenanceRole
 	}
 	return platformpostgres.Config{
 		URL: c.PostgresControlMaintenanceURL, ExpectedMajor: c.PostgresExpectedMajor,
@@ -330,6 +332,9 @@ func (c Config) ValidatePostgresProduction() error {
 	}
 	if control.Maintenance.RuntimeRole == control.Runtime.RuntimeRole || control.Maintenance.RuntimeRole == control.Migrator.RuntimeRole {
 		return errors.New("production control maintenance role must be distinct from runtime and migrator roles")
+	}
+	if control.Maintenance.RuntimeRole != postgresControlMaintenanceRole {
+		return fmt.Errorf("production control maintenance role must be %q because the baseline grants only that fixed least-privilege role", postgresControlMaintenanceRole)
 	}
 	if postgresCredentialAlias(control.Maintenance.URL, control.Runtime.URL) || postgresCredentialAlias(control.Maintenance.URL, control.Migrator.URL) {
 		return errors.New("production control maintenance URL must use distinct credentials")

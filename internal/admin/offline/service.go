@@ -9,7 +9,6 @@ import (
 	"net/mail"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 )
@@ -106,41 +105,6 @@ func (service *Service) AcknowledgeInitialCredentials(ctx context.Context) error
 	if err := service.deps.Recovery.Remove(); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("acknowledge initialization credentials: %w", err)
 	}
-	return nil
-}
-
-func (service *Service) Maintenance(ctx context.Context, request MaintenanceRequest, out io.Writer) error {
-	if request.AuditDays < 0 || request.QueryDays < 0 || request.ArchivedAgentDays < 0 || request.AuthStateDays < 0 {
-		return fmt.Errorf("retention days must be zero or greater")
-	}
-	release, err := service.acquireIf(ctx, request.Apply)
-	if err != nil {
-		return err
-	}
-	defer release.Release()
-	result, err := service.deps.Retention.Prune(ctx, RetentionPolicy{
-		AuditEventsMaxAge:             days(request.AuditDays),
-		QueryEventsMaxAge:             days(request.QueryDays),
-		ArchivedAgentConversationsAge: days(request.ArchivedAgentDays),
-		AuthStateMaxAge:               days(request.AuthStateDays),
-		DryRun:                        !request.Apply,
-	})
-	if err != nil {
-		return fmt.Errorf("operational maintenance: %w", err)
-	}
-	mode := "dry-run"
-	if request.Apply {
-		mode = "apply"
-	}
-	fmt.Fprintf(out, "mode: %s\n", mode)
-	fmt.Fprintf(out, "audit events: %d\n", result.AuditEventsDeleted)
-	fmt.Fprintf(out, "delivered audit intents: %d\n", result.DeliveredAuditIntentsDeleted)
-	fmt.Fprintf(out, "query events: %d\n", result.QueryEventsDeleted)
-	fmt.Fprintf(out, "archived agent conversations: %d\n", result.ArchivedAgentConversationsDeleted)
-	fmt.Fprintf(out, "expired oauth states: %d\n", result.ExpiredOAuthStatesDeleted)
-	fmt.Fprintf(out, "stale sessions: %d\n", result.StaleSessionsDeleted)
-	fmt.Fprintf(out, "stale api tokens: %d\n", result.StaleAPITokensDeleted)
-	fmt.Fprintf(out, "stale service principal secrets: %d\n", result.StaleServicePrincipalSecretsDeleted)
 	return nil
 }
 
@@ -264,13 +228,6 @@ func (service *Service) acquireIf(ctx context.Context, required bool) (Lock, err
 		return noopLock{}, nil
 	}
 	return service.acquire(ctx)
-}
-
-func days(value int) time.Duration {
-	if value <= 0 {
-		return 0
-	}
-	return time.Duration(value) * 24 * time.Hour
 }
 
 func writeAll(out io.Writer, contents []byte) error {

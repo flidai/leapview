@@ -682,7 +682,6 @@ func TestCapabilityAPIPackagesOptIntoTypedClientGeneration(t *testing.T) {
 func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	forbiddenImports := map[string]bool{
 		modulePath + "/internal/access/sqlite":       true,
-		modulePath + "/internal/admin/sqlite":        true,
 		modulePath + "/internal/analytics/ducklake":  true,
 		modulePath + "/internal/servingstate/sqlite": true,
 	}
@@ -706,9 +705,8 @@ func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	}
 	for _, required := range []string{
 		modulePath + "/internal/admin/cli",
-		// Non-production Admin commands remain delegated to this compatibility
-		// composition while production maintenance is selected by the native
-		// wrapper below.
+		// Initialization and local pool qualification remain delegated to this
+		// compatibility composition; maintenance is native-only.
 		modulePath + "/internal/app/adminoffline",
 		modulePath + "/internal/app/adminpostgres",
 	} {
@@ -740,7 +738,6 @@ func TestOfflineAdminUseCasesAreCapabilityOwned(t *testing.T) {
 
 	forbiddenImports := map[string]bool{
 		modulePath + "/internal/access/sqlite":          true,
-		modulePath + "/internal/admin/sqlite":           true,
 		modulePath + "/internal/analytics/ducklake":     true,
 		modulePath + "/internal/app/config":             true,
 		modulePath + "/internal/platform":               true,
@@ -1376,7 +1373,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	config := string(body)
 	for _, output := range []string{
 		"internal/access/internal/db",
-		"internal/admin/internal/db",
 		"internal/agent/internal/db",
 		"internal/analytics/internal/db",
 		"internal/dashboard/internal/db",
@@ -1394,7 +1390,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	}
 	for _, legacy := range []string{
 		"internal/access/sqlite/accessdb",
-		"internal/admin/sqlite/retentiondb",
 		"internal/agent/sqlite/agentdb",
 		"internal/deployment/sqlite/deploymentdb",
 		"internal/manageddata/sqlite/manageddb",
@@ -2311,7 +2306,7 @@ func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
 	require.NoError(t, err)
 	config := string(body)
 	start := strings.Index(config, `queries: "internal/platform/db/queries"`)
-	end := strings.Index(config, `queries: "internal/admin/sqlite/queries"`)
+	end := strings.Index(config, `queries: "internal/access/sqlite/queries"`)
 	if start < 0 || end < 0 || end <= start {
 		t.Fatal("platform sqlc generation block is missing")
 	}
@@ -2320,21 +2315,9 @@ func TestPlatformSQLCOmitsUnusedCapabilityModels(t *testing.T) {
 	}
 }
 
-func TestFixedOperationalRetentionQueriesUseSQLC(t *testing.T) {
-	for _, file := range productionGoFiles(t) {
-		if file.path != "internal/admin/sqlite/retention.go" {
-			continue
-		}
-		if strings.Contains(file.body, "DELETE FROM api_async_events") {
-			t.Fatalf("%s embeds the fixed async-event retention query instead of using sqlc", file.path)
-		}
-	}
-}
-
 func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 	root := repoRoot(t)
 	for _, domain := range []string{
-		"internal/admin/sqlite/queries/retention.sql",
 		"internal/access/sqlite/queries/access.sql",
 		"internal/agent/sqlite/queries/agent.sql",
 		"internal/platform/http/idempotency/sqlite/queries/idempotency.sql",
@@ -4075,7 +4058,6 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"./scripts/generate_build_sources.sh",
 			"FROM go-deps AS build",
 			"COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db",
-			"COPY --from=sourcegen /src/internal/admin/internal/db ./internal/admin/internal/db",
 			"COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db",
 			"COPY --from=sourcegen /src/internal/analytics/internal/db ./internal/analytics/internal/db",
 			"COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db",

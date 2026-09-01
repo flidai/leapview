@@ -22,7 +22,7 @@ func (operations *fakeOperations) AcknowledgeInitialCredentials(context.Context)
 	operations.called = "acknowledge"
 	return nil
 }
-func (operations *fakeOperations) Maintenance(_ context.Context, request adminoffline.MaintenanceRequest, _ io.Writer) error {
+func (operations *fakeOperations) Maintenance(_ context.Context, request MaintenanceRequest, _ io.Writer) error {
 	operations.called = "maintenance"
 	operations.options = Options{
 		Apply: request.Apply, AuditDays: request.AuditDays, QueryDays: request.QueryDays,

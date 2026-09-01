@@ -1,8 +1,6 @@
 // Package adminpostgres adapts production Admin commands to native PostgreSQL
 // control-plane authorities. Operations without a native owner remain
-// delegated to the legacy offline implementation until they are migrated,
-// except storage cleanup, which fails closed until a native physical cleanup
-// owner is composed.
+// delegated to the retained offline initialization and pool paths.
 package adminpostgres
 
 import (
@@ -16,6 +14,7 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	admincli "github.com/flidai/leapview/internal/admin/cli"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	appadminoffline "github.com/flidai/leapview/internal/app/adminoffline"
 	"github.com/flidai/leapview/internal/app/config"
@@ -35,6 +34,9 @@ const (
 	defaultJobRetention    = 30 * 24 * time.Hour
 	defaultCacheRetention  = 24 * time.Hour
 	defaultUploadRetention = 30 * 24 * time.Hour
+	// Prevent integer-to-duration overflow from turning an old-data cutoff into
+	// a future cutoff. Zero remains the explicit way to disable a category.
+	maxRetentionDays = int((1<<63 - 1) / int64(24*time.Hour))
 	// Event-log replay roots are independent of access-audit classes. When an
 	// operator disables audit evidence pruning, retain the event log for the
 	// normal audit default rather than disabling this safety boundary too.
@@ -99,9 +101,8 @@ type Dependencies struct {
 	Now             func() time.Time
 }
 
-// Operations preserves the retained offline Admin operations and overrides
-// Maintenance. This keeps non-production behavior on the legacy path while
-// production operations use native owners.
+// Operations preserves the retained offline Admin operations and owns the
+// native PostgreSQL maintenance command.
 type Operations struct {
 	appadminoffline.Operations
 	Dependencies Dependencies
@@ -162,11 +163,15 @@ func New(dependencies Dependencies) Operations {
 	return Operations{Dependencies: dependencies.withDefaults()}
 }
 
-// Maintenance executes native PostgreSQL retention in production. Preview is
-// the default and always rolls back; --apply invokes the committing runner.
-// Non-production and isolated evaluation targets delegate to the legacy
-// SQLite-backed service.
-func (o Operations) Maintenance(ctx context.Context, request adminoffline.MaintenanceRequest, out io.Writer) error {
+// ErrNativeMaintenanceUnavailable indicates that the native PostgreSQL
+// maintenance command is not available on a local SQLite/evaluation target.
+// Those targets no longer expose the retired cross-domain SQLite retention
+// implementation.
+var ErrNativeMaintenanceUnavailable = errors.New("native PostgreSQL admin maintenance is unavailable outside production")
+
+// Maintenance executes native PostgreSQL retention. Preview is the default
+// and always rolls back; --apply invokes the committing runner.
+func (o Operations) Maintenance(ctx context.Context, request admincli.MaintenanceRequest, out io.Writer) error {
 	if err := validateRetentionDays(request); err != nil {
 		return err
 	}
@@ -176,7 +181,10 @@ func (o Operations) Maintenance(ctx context.Context, request adminoffline.Mainte
 		return err
 	}
 	if !cfg.Production || cfg.EvaluationMode {
-		return o.Operations.Maintenance(ctx, request, out)
+		return ErrNativeMaintenanceUnavailable
+	}
+	if err := cfg.ValidatePostgresProduction(); err != nil {
+		return fmt.Errorf("validate production PostgreSQL maintenance configuration: %w", err)
 	}
 	if out == nil {
 		return errors.New("admin maintenance output is required")
@@ -245,7 +253,7 @@ func nilMaintenancePool(pool MaintenancePool) bool {
 // MapMaintenanceRequest translates CLI retention flags to every native
 // owner explicitly. A zero value disables only its requested evidence class;
 // operational safety cleanup remains enabled with conservative defaults.
-func MapMaintenanceRequest(request adminoffline.MaintenanceRequest, now time.Time) (postgresmaintenance.Policy, error) {
+func MapMaintenanceRequest(request admincli.MaintenanceRequest, now time.Time) (postgresmaintenance.Policy, error) {
 	if err := validateRetentionDays(request); err != nil {
 		return postgresmaintenance.Policy{}, err
 	}
@@ -280,9 +288,12 @@ func MapMaintenanceRequest(request adminoffline.MaintenanceRequest, now time.Tim
 	}, nil
 }
 
-func validateRetentionDays(request adminoffline.MaintenanceRequest) error {
+func validateRetentionDays(request admincli.MaintenanceRequest) error {
 	if request.AuditDays < 0 || request.QueryDays < 0 || request.ArchivedAgentDays < 0 || request.AuthStateDays < 0 {
 		return errors.New("retention days must be zero or greater")
+	}
+	if request.AuditDays > maxRetentionDays || request.QueryDays > maxRetentionDays || request.ArchivedAgentDays > maxRetentionDays || request.AuthStateDays > maxRetentionDays {
+		return fmt.Errorf("retention days must not exceed %d", maxRetentionDays)
 	}
 	return nil
 }

@@ -1,4 +1,4 @@
-// Package cli owns command-line adapters for offline Admin operations.
+// Package cli owns command-line adapters for Admin operations.
 package cli
 
 import (
@@ -20,7 +20,18 @@ const (
 	defaultAuthStateRetentionDays     = 30
 )
 
-// Options are the values accepted by offline Admin operations.
+// MaintenanceRequest contains the bounded retention windows accepted by the
+// native PostgreSQL maintenance command. It lives with the command adapter so
+// no offline/Admin use-case package needs to expose a SQLite retention port.
+type MaintenanceRequest struct {
+	Apply             bool
+	AuditDays         int
+	QueryDays         int
+	ArchivedAgentDays int
+	AuthStateDays     int
+}
+
+// Options are the values accepted by Admin operations.
 type Options struct {
 	Apply             bool
 	AuditDays         int
@@ -29,18 +40,18 @@ type Options struct {
 	AuthStateDays     int
 }
 
-// Operations are the offline administrative use cases exposed by the CLI.
+// Operations are the administrative use cases exposed by the CLI.
 // Application composition implements this contract because it owns process
 // configuration and construction of cross-capability resources.
 type Operations interface {
 	Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error
 	AcknowledgeInitialCredentials(context.Context) error
-	Maintenance(context.Context, adminoffline.MaintenanceRequest, io.Writer) error
+	Maintenance(context.Context, MaintenanceRequest, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
 	BootstrapQualificationLocalPhysicalPool(context.Context, io.Writer) error
 }
 
-// Command constructs the offline Admin command tree.
+// Command constructs the Admin command tree.
 func Command(ctx context.Context, operations Operations) *cobra.Command {
 	values := Options{}
 	parent := adminGroupCommand("admin", "Administrative utilities")
@@ -67,7 +78,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	initialize.Flags().BoolVar(&acknowledgeCredentials, "acknowledge-credentials", false, "remove the recoverable initialization credential bundle after it has been stored safely")
 
 	maintenance := operationCommand(operations, "maintenance", "Prune bounded operational history", func(command *cobra.Command) error {
-		return operations.Maintenance(ctx, adminoffline.MaintenanceRequest{
+		return operations.Maintenance(ctx, MaintenanceRequest{
 			Apply: values.Apply, AuditDays: values.AuditDays, QueryDays: values.QueryDays,
 			ArchivedAgentDays: values.ArchivedAgentDays, AuthStateDays: values.AuthStateDays,
 		}, command.OutOrStdout())

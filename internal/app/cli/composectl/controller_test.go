@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -60,6 +61,30 @@ func TestFirstLoginRetainsCredentialsUntilOutputSucceeds(t *testing.T) {
 	}
 }
 
+func TestCaptureInitialCredentialsRejectsMalformedOutputBeforeAcknowledgement(t *testing.T) {
+	root := t.TempDir()
+	acknowledged := false
+	controller := &Controller{root: root, stderr: &bytes.Buffer{}}
+	controller.composeOverride = func(_ context.Context, _ io.Reader, stdout, _ io.Writer, args ...string) error {
+		if strings.Contains(strings.Join(args, " "), "--acknowledge-credentials") {
+			acknowledged = true
+			return nil
+		}
+		_, err := io.WriteString(stdout, "not-json\n")
+		return err
+	}
+	err := controller.captureInitialCredentials(t.Context())
+	if err == nil || !strings.Contains(err.Error(), "invalid credentials") {
+		t.Fatalf("malformed credential capture error = %v", err)
+	}
+	if acknowledged {
+		t.Fatal("malformed credential output was acknowledged")
+	}
+	if _, statErr := os.Stat(filepath.Join(root, credentialsName)); !os.IsNotExist(statErr) {
+		t.Fatalf("malformed credential file was retained: %v", statErr)
+	}
+}
+
 func TestUpdateEnvFileIsPrivateAndRejectsMissingContractKeys(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "deployment.env")
 	if err := os.WriteFile(path, []byte("LEAPVIEW_IMAGE=old\nCOMPOSE_HTTPS=1\n"), 0o644); err != nil {
@@ -90,6 +115,41 @@ func TestEnvironmentLineValuesRejectConfigurationInjection(t *testing.T) {
 	}
 	if err := validateEnvLineValue("domain", "dash.example.com"); err != nil {
 		t.Fatalf("ordinary value rejected: %v", err)
+	}
+}
+
+func TestInitializationEnvironmentPreservesProviderSettingsAndGeneratesMissingSecrets(t *testing.T) {
+	existing := []byte("LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=require\n" +
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=provider_runtime\n" +
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-provider\n" +
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64) + "\n" +
+		"LEAPVIEW_CSRF_KEY=<generated-by-leapviewctl>\n" +
+		"LEAPVIEW_METRICS_BEARER_TOKEN=operator-metrics-token\n" +
+		"LEAPVIEW_PRODUCTION=0\n" +
+		"LEAPVIEW_COOKIE_SECURE=false\n" +
+		"LEAPVIEW_HOME=/unsafe/operator/path\n")
+	got, err := initializationEnvironment(existing, InitOptions{
+		AdminEmail: "admin@example.com", Domain: "dash.example.com", Environment: "prod",
+	}, "generated-csrf", "generated-metrics")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=require\n",
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=provider_runtime\n",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-provider\n",
+		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64) + "\n",
+		"LEAPVIEW_CSRF_KEY=generated-csrf\n",
+		"LEAPVIEW_METRICS_BEARER_TOKEN=operator-metrics-token\n",
+		"LEAPVIEW_PUBLIC_URL=https://dash.example.com\n",
+		"LEAPVIEW_ALLOWED_HOSTS=dash.example.com\n",
+		"LEAPVIEW_PRODUCTION=1\n",
+		"LEAPVIEW_COOKIE_SECURE=true\n",
+		"LEAPVIEW_HOME=/var/lib/leapview/home\n",
+	} {
+		if !strings.Contains(got, required) {
+			t.Errorf("merged environment missing %q:\n%s", required, got)
+		}
 	}
 }
 
