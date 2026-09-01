@@ -23,6 +23,7 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 			{Source: "/host/read-only", Target: "/qualification", ReadOnly: true},
 			{Source: "/host/evidence", Target: "/evidence"},
 		},
+		Tmpfs: []string{"/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m"},
 		Environment: map[string]string{
 			"QUALIFICATION_URL":        "https://localhost",
 			"QUALIFICATION_PROJECT_ID": "evaluation",
@@ -38,6 +39,7 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 		"--network", "host",
 		"--volume", "/host/read-only:/qualification:ro",
 		"--volume", "/host/evidence:/evidence",
+		"--tmpfs", "/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m",
 		"--env", "QUALIFICATION_PROJECT_ID=evaluation",
 		"--env", "QUALIFICATION_URL=https://localhost",
 		"browser:stable", "sleep", "infinity",

@@ -23,6 +23,7 @@ type qualificationContainerRequest struct {
 	Image       string
 	NetworkMode string
 	Volumes     []qualificationContainerVolume
+	Tmpfs       []string
 	Environment map[string]string
 	Entrypoint  []string
 	Command     []string
@@ -125,6 +126,12 @@ func (runtime *dockerCLIQualificationRuntime) Start(
 			value += ":ro"
 		}
 		arguments = append(arguments, "--volume", value)
+	}
+	for _, mount := range request.Tmpfs {
+		if strings.TrimSpace(mount) == "" {
+			return nil, fmt.Errorf("qualification container tmpfs mount is required")
+		}
+		arguments = append(arguments, "--tmpfs", strings.TrimSpace(mount))
 	}
 	environment := make([]string, 0, len(request.Environment))
 	for name, value := range request.Environment {

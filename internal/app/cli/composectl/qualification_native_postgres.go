@@ -1,0 +1,456 @@
+package composectl
+
+import (
+	"context"
+	cryptorand "crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/pem"
+	"errors"
+	"fmt"
+	"math/big"
+	"net/url"
+	"os"
+	"path/filepath"
+	"regexp"
+	"strings"
+	"time"
+)
+
+// qualificationPostgreSQL18Image is intentionally kept with the
+// qualification code. The image is an evidence input and must not float with
+// the development Compose file or a test dependency.
+const qualificationPostgreSQL18Image = "docker.io/library/postgres:18-alpine@sha256:63bdc97d67b5133bf0e5ebd500bec6d046fa851dc81340d838f0347e616107e8"
+
+const (
+	qualificationNativePostgresControlDatabase  = "leapview_control"
+	qualificationNativePostgresDuckLakeDatabase = "leapview_ducklake"
+	qualificationNativePostgresBootstrapRole    = "leapview_bootstrap"
+
+	qualificationNativePostgresControlRuntimeRole      = "leapview_control_runtime"
+	qualificationNativePostgresControlReadonlyRole     = "leapview_control_readonly"
+	qualificationNativePostgresControlMigratorRole     = "leapview_control_migrator"
+	qualificationNativePostgresControlUpgradeRole      = "leapview_control_upgrade_coordinator"
+	qualificationNativePostgresControlMaintenanceRole  = "leapview_control_maintenance"
+	qualificationNativePostgresDuckLakeRuntimeRole     = "leapview_ducklake_runtime"
+	qualificationNativePostgresDuckLakeMigratorRole    = "leapview_ducklake_migrator"
+	qualificationNativePostgresDuckLakeMaintenanceRole = "leapview_ducklake_maintenance"
+
+	qualificationNativePostgresReadyTimeout = 2 * time.Minute
+)
+
+var qualificationNativePostgresIdentifier = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
+
+// qualificationNativePostgresTopologyOptions identifies the already-running
+// Compose project that the sidecar must join. The sidecar never creates or
+// tears down this network: the caller owns the primary Compose lifecycle.
+type qualificationNativePostgresTopologyOptions struct {
+	ComposeProject string
+	ComposeNetwork string
+	BundleRoot     string
+	// InitScript is an optional explicit path used by source-tree tests and
+	// packaging checks. Installed bundles default to qualification/postgres-init.sh.
+	InitScript    string
+	ContainerName string
+}
+
+// qualificationNativePostgresOptions is retained as a concise alias for
+// callers that do not need to mention the topology implementation detail.
+type qualificationNativePostgresOptions = qualificationNativePostgresTopologyOptions
+
+// qualificationNativePostgresTopology contains the disposable sidecar and
+// the exact credentials used to configure the production-shaped application.
+// URLs are intentionally returned only to the in-process caller; diagnostics
+// always pass through the qualification redactors.
+type qualificationNativePostgresTopology struct {
+	Container      qualificationContainer
+	ContainerName  string
+	ComposeProject string
+	ComposeNetwork string
+
+	ControlURL                   string
+	ControlReadonlyURL           string
+	ControlMaintenanceURL        string
+	ControlMigratorURL           string
+	ControlUpgradeCoordinatorURL string
+	DuckLakeURL                  string
+	DuckLakeMaintenanceURL       string
+	DuckLakeMigratorURL          string
+
+	ControlRuntimeRole            string
+	ControlReadonlyRole           string
+	ControlMaintenanceRole        string
+	ControlMigratorRole           string
+	ControlUpgradeCoordinatorRole string
+	DuckLakeRuntimeRole           string
+	DuckLakeMaintenanceRole       string
+	DuckLakeMigratorRole          string
+
+	secretDir string
+}
+
+// Remove tears down only the sidecar and its private certificate directory.
+// It is safe to call repeatedly, including after a partial startup.
+func (topology *qualificationNativePostgresTopology) Remove(ctx context.Context) error {
+	if topology == nil {
+		return nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	var result error
+	if topology.Container != nil {
+		_, err := topology.Container.Remove(ctx)
+		result = ignoreQualificationNotFound(err)
+		if result == nil {
+			topology.Container = nil
+		}
+	}
+	if topology.secretDir != "" {
+		result = errors.Join(result, os.RemoveAll(topology.secretDir))
+		topology.secretDir = ""
+	}
+	return result
+}
+
+// newQualificationNativePostgresTopology starts one TLS-enabled PostgreSQL
+// 18 sidecar on an existing Compose network. It deliberately does not alter
+// QualifyInstalledCandidate; wiring belongs to the next qualification slice.
+func newQualificationNativePostgresTopology(
+	ctx context.Context,
+	runtime qualificationContainerRuntime,
+	options qualificationNativePostgresTopologyOptions,
+) (*qualificationNativePostgresTopology, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := validateQualificationNativePostgresTopologyOptions(options); err != nil {
+		return nil, err
+	}
+	if runtime == nil {
+		return nil, errors.New("qualification PostgreSQL container runtime is required")
+	}
+
+	initScript, err := qualificationNativePostgresInitScript(options)
+	if err != nil {
+		return nil, err
+	}
+	containerName := strings.TrimSpace(options.ContainerName)
+	if containerName == "" {
+		containerName = normalizedQualificationName(options.ComposeProject + "-postgres")
+	}
+	if err := validateQualificationNativePostgresIdentifier(containerName, "qualification PostgreSQL container name"); err != nil {
+		return nil, err
+	}
+	secretDir, tlsFiles, err := createQualificationNativePostgresTLSFiles()
+	if err != nil {
+		return nil, err
+	}
+	topology := &qualificationNativePostgresTopology{
+		ContainerName: containerName, ComposeProject: strings.TrimSpace(options.ComposeProject),
+		ComposeNetwork: strings.TrimSpace(options.ComposeNetwork), secretDir: secretDir,
+		ControlRuntimeRole:            qualificationNativePostgresControlRuntimeRole,
+		ControlReadonlyRole:           qualificationNativePostgresControlReadonlyRole,
+		ControlMaintenanceRole:        qualificationNativePostgresControlMaintenanceRole,
+		ControlMigratorRole:           qualificationNativePostgresControlMigratorRole,
+		ControlUpgradeCoordinatorRole: qualificationNativePostgresControlUpgradeRole,
+		DuckLakeRuntimeRole:           qualificationNativePostgresDuckLakeRuntimeRole,
+		DuckLakeMaintenanceRole:       qualificationNativePostgresDuckLakeMaintenanceRole,
+		DuckLakeMigratorRole:          qualificationNativePostgresDuckLakeMigratorRole,
+	}
+	credentials, err := newQualificationNativePostgresCredentials()
+	if err != nil {
+		_ = topology.Remove(context.Background())
+		return nil, err
+	}
+	request := qualificationContainerRequest{
+		Name: containerName, Image: qualificationPostgreSQL18Image,
+		NetworkMode: topology.ComposeNetwork,
+		Volumes: []qualificationContainerVolume{
+			{Source: initScript, Target: "/docker-entrypoint-initdb.d/10-leapview-roles.sh", ReadOnly: true},
+			{Source: tlsFiles.ca, Target: "/run/secrets/leapview-postgres-ca.pem", ReadOnly: true},
+			{Source: tlsFiles.cert, Target: "/run/secrets/leapview-postgres-server.pem", ReadOnly: true},
+			{Source: tlsFiles.key, Target: "/run/secrets/leapview-postgres-server.key", ReadOnly: true},
+		},
+		Tmpfs: []string{
+			"/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m",
+			"/tmp:rw,nosuid,nodev,mode=1777,size=64m",
+		},
+		Environment: map[string]string{
+			"POSTGRES_DB":       "postgres",
+			"POSTGRES_USER":     qualificationNativePostgresBootstrapRole,
+			"POSTGRES_PASSWORD": credentials.bootstrap,
+			"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD":             credentials.controlRuntime,
+			"LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD":            credentials.controlReadonly,
+			"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD":            credentials.duckLakeRuntime,
+			"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD":            credentials.controlMigrator,
+			"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD": credentials.controlUpgrade,
+			"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD":         credentials.controlMaintenance,
+			"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD":           credentials.duckLakeMigrator,
+			"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD":        credentials.duckLakeMaintenance,
+		},
+		Entrypoint: []string{"sh"},
+		Command:    []string{"-ec", qualificationNativePostgresEntrypointScript},
+		NoHealth:   true,
+	}
+	container, err := runtime.Start(ctx, request)
+	if err != nil {
+		_ = topology.Remove(context.Background())
+		return nil, fmt.Errorf("start qualification PostgreSQL sidecar: %w", err)
+	}
+	if container == nil {
+		_ = topology.Remove(context.Background())
+		return nil, errors.New("start qualification PostgreSQL sidecar returned a nil container")
+	}
+	topology.Container = container
+	host := containerName
+	topology.ControlURL = qualificationNativePostgresURL(host, qualificationNativePostgresControlDatabase, topology.ControlRuntimeRole, credentials.controlRuntime)
+	topology.ControlReadonlyURL = qualificationNativePostgresURL(host, qualificationNativePostgresControlDatabase, topology.ControlReadonlyRole, credentials.controlReadonly)
+	topology.ControlMaintenanceURL = qualificationNativePostgresURL(host, qualificationNativePostgresControlDatabase, topology.ControlMaintenanceRole, credentials.controlMaintenance)
+	topology.ControlMigratorURL = qualificationNativePostgresURL(host, qualificationNativePostgresControlDatabase, topology.ControlMigratorRole, credentials.controlMigrator)
+	topology.ControlUpgradeCoordinatorURL = qualificationNativePostgresURL(host, qualificationNativePostgresControlDatabase, topology.ControlUpgradeCoordinatorRole, credentials.controlUpgrade)
+	topology.DuckLakeURL = qualificationNativePostgresURL(host, qualificationNativePostgresDuckLakeDatabase, topology.DuckLakeRuntimeRole, credentials.duckLakeRuntime)
+	topology.DuckLakeMaintenanceURL = qualificationNativePostgresURL(host, qualificationNativePostgresDuckLakeDatabase, topology.DuckLakeMaintenanceRole, credentials.duckLakeMaintenance)
+	topology.DuckLakeMigratorURL = qualificationNativePostgresURL(host, qualificationNativePostgresDuckLakeDatabase, topology.DuckLakeMigratorRole, credentials.duckLakeMigrator)
+
+	if err := waitQualificationNativePostgresTopology(ctx, topology.Container, credentials); err != nil {
+		operationErr := qualificationContainerOperationError(ctx, topology.Container, "wait for qualification PostgreSQL final-role readiness", err)
+		cleanupErr := topology.Remove(context.Background())
+		return nil, errors.Join(operationErr, cleanupErr)
+	}
+	return topology, nil
+}
+
+// startQualificationNativePostgresTopology is the Controller seam used by
+// future installed-candidate wiring. Keeping the runtime injected preserves
+// deterministic unit tests and avoids testcontainers in production code.
+func (c *Controller) startQualificationNativePostgresTopology(
+	ctx context.Context,
+	options qualificationNativePostgresTopologyOptions,
+) (*qualificationNativePostgresTopology, error) {
+	if c == nil {
+		return nil, errors.New("controller is required")
+	}
+	if strings.TrimSpace(options.BundleRoot) == "" {
+		options.BundleRoot = c.root
+	}
+	return newQualificationNativePostgresTopology(ctx, c.qualificationContainers, options)
+}
+
+type qualificationNativePostgresCredentials struct {
+	bootstrap, controlRuntime, controlReadonly, duckLakeRuntime string
+	controlMigrator, controlUpgrade, controlMaintenance         string
+	duckLakeMigrator, duckLakeMaintenance                       string
+}
+
+func newQualificationNativePostgresCredentials() (qualificationNativePostgresCredentials, error) {
+	values := make([]*string, 9)
+	credentials := qualificationNativePostgresCredentials{}
+	values[0], values[1], values[2], values[3] = &credentials.bootstrap, &credentials.controlRuntime, &credentials.controlReadonly, &credentials.duckLakeRuntime
+	values[4], values[5], values[6] = &credentials.controlMigrator, &credentials.controlUpgrade, &credentials.controlMaintenance
+	values[7], values[8] = &credentials.duckLakeMigrator, &credentials.duckLakeMaintenance
+	for _, value := range values {
+		secret, err := qualificationRandomHex(24)
+		if err != nil {
+			return qualificationNativePostgresCredentials{}, err
+		}
+		*value = secret
+	}
+	return credentials, nil
+}
+
+func validateQualificationNativePostgresTopologyOptions(options qualificationNativePostgresTopologyOptions) error {
+	if err := validateQualificationNativePostgresIdentifier(options.ComposeProject, "qualification Compose project"); err != nil {
+		return err
+	}
+	if err := validateQualificationNativePostgresIdentifier(options.ComposeNetwork, "qualification Compose network"); err != nil {
+		return err
+	}
+	bundleRoot := strings.TrimSpace(options.BundleRoot)
+	if bundleRoot == "" {
+		return errors.New("qualification PostgreSQL bundle root is required")
+	}
+	bundleRoot, err := filepath.Abs(bundleRoot)
+	if err != nil {
+		return fmt.Errorf("resolve qualification PostgreSQL bundle root: %w", err)
+	}
+	info, err := os.Stat(bundleRoot)
+	if err != nil {
+		return fmt.Errorf("stat qualification PostgreSQL bundle root: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("qualification PostgreSQL bundle root %q is not a directory", bundleRoot)
+	}
+	initScript, err := qualificationNativePostgresInitScript(options)
+	if err != nil {
+		return err
+	}
+	initInfo, err := os.Stat(initScript)
+	if err != nil {
+		return fmt.Errorf("qualification PostgreSQL canonical init script: %w", err)
+	}
+	if !initInfo.Mode().IsRegular() {
+		return fmt.Errorf("qualification PostgreSQL canonical init script %q is not a regular file", initScript)
+	}
+	return nil
+}
+
+func qualificationNativePostgresInitScript(options qualificationNativePostgresTopologyOptions) (string, error) {
+	bundleRoot := strings.TrimSpace(options.BundleRoot)
+	if bundleRoot == "" {
+		return "", errors.New("qualification PostgreSQL bundle root is required")
+	}
+	bundleRoot, err := filepath.Abs(bundleRoot)
+	if err != nil {
+		return "", fmt.Errorf("resolve qualification PostgreSQL bundle root: %w", err)
+	}
+	initScript := strings.TrimSpace(options.InitScript)
+	if initScript == "" {
+		initScript = filepath.Join(bundleRoot, "qualification", "postgres-init.sh")
+	} else {
+		initScript, err = filepath.Abs(initScript)
+		if err != nil {
+			return "", fmt.Errorf("resolve qualification PostgreSQL init script: %w", err)
+		}
+	}
+	return initScript, nil
+}
+
+func validateQualificationNativePostgresIdentifier(value, label string) error {
+	value = strings.TrimSpace(value)
+	if !qualificationNativePostgresIdentifier.MatchString(value) {
+		return fmt.Errorf("%s must match %s", label, qualificationNativePostgresIdentifier.String())
+	}
+	return nil
+}
+
+func qualificationNativePostgresURL(host, database, role, password string) string {
+	connectionURL := &url.URL{Scheme: "postgres", Host: host, Path: "/" + database, RawQuery: "sslmode=require"}
+	connectionURL.User = url.UserPassword(role, password)
+	return connectionURL.String()
+}
+
+const qualificationNativePostgresEntrypointScript = `set -eu
+mkdir -p /tmp/leapview-postgres-tls
+cp /run/secrets/leapview-postgres-ca.pem /tmp/leapview-postgres-tls/ca.pem
+cp /run/secrets/leapview-postgres-server.pem /tmp/leapview-postgres-tls/server.pem
+cp /run/secrets/leapview-postgres-server.key /tmp/leapview-postgres-tls/server.key
+chown -R postgres:postgres /tmp/leapview-postgres-tls
+chmod 0644 /tmp/leapview-postgres-tls/ca.pem /tmp/leapview-postgres-tls/server.pem
+chmod 0600 /tmp/leapview-postgres-tls/server.key
+exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/leapview-postgres-tls/ca.pem -c ssl_cert_file=/tmp/leapview-postgres-tls/server.pem -c ssl_key_file=/tmp/leapview-postgres-tls/server.key`
+
+type qualificationNativePostgresTLSFiles struct{ ca, cert, key string }
+
+func createQualificationNativePostgresTLSFiles() (string, qualificationNativePostgresTLSFiles, error) {
+	dir, err := os.MkdirTemp("", "leapview-qualification-postgres-")
+	if err != nil {
+		return "", qualificationNativePostgresTLSFiles{}, fmt.Errorf("create qualification PostgreSQL TLS directory: %w", err)
+	}
+	removeOnError := func(err error) (string, qualificationNativePostgresTLSFiles, error) {
+		_ = os.RemoveAll(dir)
+		return "", qualificationNativePostgresTLSFiles{}, err
+	}
+	caKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		return removeOnError(fmt.Errorf("generate qualification PostgreSQL CA key: %w", err))
+	}
+	caSerial, err := qualificationNativePostgresSerial()
+	if err != nil {
+		return removeOnError(fmt.Errorf("generate qualification PostgreSQL CA serial: %w", err))
+	}
+	caTemplate := &x509.Certificate{
+		SerialNumber: caSerial,
+		Subject:      pkix.Name{CommonName: "leapview-qualification-postgres-ca"},
+		IsCA:         true, BasicConstraintsValid: true,
+		NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour),
+		KeyUsage: x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+	}
+	caDER, err := x509.CreateCertificate(cryptorand.Reader, caTemplate, caTemplate, &caKey.PublicKey, caKey)
+	if err != nil {
+		return removeOnError(fmt.Errorf("create qualification PostgreSQL CA certificate: %w", err))
+	}
+	serverKey, err := rsa.GenerateKey(cryptorand.Reader, 2048)
+	if err != nil {
+		return removeOnError(fmt.Errorf("generate qualification PostgreSQL server key: %w", err))
+	}
+	serverSerial, err := qualificationNativePostgresSerial()
+	if err != nil {
+		return removeOnError(fmt.Errorf("generate qualification PostgreSQL server serial: %w", err))
+	}
+	serverTemplate := &x509.Certificate{
+		SerialNumber: serverSerial,
+		Subject:      pkix.Name{CommonName: "postgres"},
+		DNSNames:     []string{"postgres", "localhost"},
+		NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour),
+		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
+		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+	}
+	serverDER, err := x509.CreateCertificate(cryptorand.Reader, serverTemplate, caTemplate, &serverKey.PublicKey, caKey)
+	if err != nil {
+		return removeOnError(fmt.Errorf("create qualification PostgreSQL server certificate: %w", err))
+	}
+	files := qualificationNativePostgresTLSFiles{
+		ca: filepath.Join(dir, "ca.pem"), cert: filepath.Join(dir, "server.pem"), key: filepath.Join(dir, "server.key"),
+	}
+	for _, file := range []struct {
+		path string
+		data []byte
+		mode os.FileMode
+	}{
+		{files.ca, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: caDER}), 0o644},
+		{files.cert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: serverDER}), 0o644},
+		{files.key, pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(serverKey)}), 0o600},
+	} {
+		if err := os.WriteFile(file.path, file.data, file.mode); err != nil {
+			return removeOnError(fmt.Errorf("write qualification PostgreSQL TLS file: %w", err))
+		}
+	}
+	return dir, files, nil
+}
+
+func qualificationNativePostgresSerial() (*big.Int, error) {
+	serial, err := cryptorand.Int(cryptorand.Reader, new(big.Int).Lsh(big.NewInt(1), 120))
+	if err != nil {
+		return nil, err
+	}
+	return serial, nil
+}
+
+func waitQualificationNativePostgresTopology(
+	ctx context.Context,
+	container qualificationContainer,
+	credentials qualificationNativePostgresCredentials,
+) error {
+	if container == nil {
+		return errors.New("qualification PostgreSQL container is missing")
+	}
+	waitCtx, cancel := qualificationContext(ctx, qualificationNativePostgresReadyTimeout)
+	defer cancel()
+	var lastErr error
+	err := qualificationWait(waitCtx, time.Second, func(requestCtx context.Context) (bool, error) {
+		for _, probe := range []struct {
+			database string
+			role     string
+			password string
+		}{
+			{qualificationNativePostgresControlDatabase, qualificationNativePostgresControlRuntimeRole, credentials.controlRuntime},
+			{qualificationNativePostgresDuckLakeDatabase, qualificationNativePostgresDuckLakeRuntimeRole, credentials.duckLakeRuntime},
+		} {
+			if _, probeErr := container.Exec(requestCtx, nil, "sh", "-ec", qualificationNativePostgresProbe(probe.database, probe.role, probe.password)); probeErr != nil {
+				lastErr = probeErr
+				return false, nil
+			}
+		}
+		return true, nil
+	})
+	if err != nil {
+		return errors.Join(err, lastErr)
+	}
+	return lastErr
+}
+
+func qualificationNativePostgresProbe(database, role, password string) string {
+	return fmt.Sprintf("PGSSLMODE=require PGPASSWORD=%s psql --host 127.0.0.1 --port 5432 --username %s --dbname %s --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command 'SELECT 1'", password, role, database)
+}
