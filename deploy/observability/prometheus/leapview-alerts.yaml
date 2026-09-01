@@ -70,6 +70,76 @@ groups:
           description: "At least one recovery qualification on {{ $labels.instance }} has remained in failed evidence publication state for more than 15 minutes."
           runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#recovery-qualification-freshness-alerts-fire"
 
+      - alert: LeapViewAuditOutboxMetricsCollectionFailure
+        expr: |
+          max by (job, instance) (
+            leapview_audit_outbox_scrape_error{job="leapview"}
+          ) > 0
+          or
+          (
+            max by (job, instance) (up{job="leapview"}) == 1
+            unless on (job, instance)
+            max by (job, instance) (leapview_audit_outbox_scrape_error{job="leapview"})
+          )
+        for: 5m
+        labels:
+          service: leapview
+          severity: critical
+        annotations:
+          summary: "LeapView audit-outbox telemetry on {{ $labels.instance }} is unavailable"
+          description: "Audit-outbox aggregate metrics on {{ $labels.instance }} have failed collection or remained absent from an otherwise scrapeable target for more than 5 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-metrics-collection-failure-alert-fires"
+
+      - alert: LeapViewAuditOutboxTerminalIntents
+        expr: |
+          sum by (job, instance) (
+            leapview_audit_outbox_intents{job="leapview",state=~"poison|quarantined"}
+          ) > 0
+        for: 5m
+        labels:
+          service: leapview
+          severity: critical
+        annotations:
+          summary: "LeapView audit outbox on {{ $labels.instance }} contains terminal intents"
+          description: "At least one poison or quarantined audit intent has remained on {{ $labels.instance }} for more than 5 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-terminal-intents-alert-fires"
+
+      - alert: LeapViewAuditOutboxExcessiveBacklog
+        expr: |
+          sum by (job, instance) (
+            leapview_audit_outbox_intents{job="leapview",state=~"pending|retry|leased|poison|quarantined"}
+          ) > 10000
+          or
+          max by (job, instance) (
+            leapview_audit_outbox_oldest_undelivered_age_seconds{job="leapview"}
+          ) > 3600
+        for: 10m
+        labels:
+          service: leapview
+          severity: warning
+        annotations:
+          summary: "LeapView audit outbox on {{ $labels.instance }} has an excessive undelivered backlog"
+          description: "The audit-outbox backlog on {{ $labels.instance }} has remained beyond a code-owned readiness boundary (more than 10,000 undelivered intents or an oldest age greater than 1 hour) for more than 10 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-excessive-backlog-alert-fires"
+
+      - alert: LeapViewAuditOutboxCapacityExhausted
+        expr: |
+          max by (job, instance) (
+            leapview_audit_outbox_capacity{job="leapview"}
+          ) > 0
+          and on (job, instance)
+          max by (job, instance) (
+            leapview_audit_outbox_capacity_remaining{job="leapview"}
+          ) <= 0
+        for: 5m
+        labels:
+          service: leapview
+          severity: critical
+        annotations:
+          summary: "LeapView audit outbox on {{ $labels.instance }} has exhausted undelivered capacity"
+          description: "Configured audit-outbox undelivered capacity on {{ $labels.instance }} has remained exhausted for more than 5 minutes."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#audit-outbox-capacity-exhausted-alert-fires"
+
       - alert: LeapViewDashboardRefreshFastBurn
         expr: |
           (leapview:dashboard_refresh_reliability:burn_rate_5m >= 14.4)
