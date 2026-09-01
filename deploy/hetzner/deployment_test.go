@@ -192,7 +192,7 @@ func TestEphemeralDeploymentExercisesPublicAndBackupContracts(t *testing.T) {
 		"source-revision: ${{ inputs.source_revision }}",
 			"TF_VAR_leapview_image=${{ steps.admission.outputs.image }}",
 			"TF_VAR_release_transition_policy_path",
-		"Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16",
+		"Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17",
 		`method: "oidc"`,
 		`identity-id: "6aac9c3e-4f33-45b5-aa4e-884839b950a7"`,
 		`oidc-audience: "https://github.com/flidai"`,
