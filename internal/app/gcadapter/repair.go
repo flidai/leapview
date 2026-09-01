@@ -12,18 +12,18 @@ import (
 
 var (
 	ErrRepairUnavailable = errors.New("delivery repair is unavailable")
-	ErrRepairRootDrift   = errors.New("delivery repair root is not the durable SQLite root")
+	ErrRepairRootDrift   = errors.New("delivery repair root is not the durable control-plane root")
 )
 
 // RootReader is the read-only control-plane half of an operational repair.
-// The production SQLite adapter satisfies this through gc.ControlPlane; the
+// The target control-plane adapter satisfies this through gc.ControlPlane; the
 // narrower interface keeps repair tests from needing mutation capabilities.
 type RootReader interface {
 	EnumerateRoots(context.Context, string, time.Time) (deployment.RootSet, error)
 }
 
 // RepairTool is an intentionally narrow, fail-closed repair seam. It first
-// resolves the exact root from durable SQLite, then asks the target-owned
+// resolves the exact root from the durable control plane, then asks the target-owned
 // inspector to verify immutable artifact bytes/digest and DuckLake closure.
 // Only after both checks pass is the caller's control-plane mutation invoked.
 // No object-store or DuckLake mutation capability is exposed here.
@@ -47,7 +47,7 @@ func (r *RepairTool) now() time.Time {
 	return time.Now().UTC()
 }
 
-// VerifyAndMutateAtRevision proves the exact SQLite root, immutable artifact
+// VerifyAndMutateAtRevision proves the exact durable root, immutable artifact
 // bytes, and DuckLake file closure before permitting one bounded mutation. It
 // hands the durable root revision observed before inspection to the callback;
 // repository adapters must compare-and-swap that revision in the same

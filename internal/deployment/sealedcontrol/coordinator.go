@@ -4,7 +4,7 @@
 // the caller supplied one exact verified seal, invokes the durable control
 // plane, and relies on that store's compare-and-swap transaction for the
 // active-generation pointer. This keeps retries and stale-base failures in
-// SQLite rather than in process-local state.
+// the durable control plane rather than in process-local state.
 package sealedcontrol
 
 import (
@@ -23,9 +23,9 @@ var (
 	ErrActivationProtocol = errors.New("sealed control activation protocol violated")
 )
 
-// PublicationStore is implemented by the SQLite delivery repository. Both
-// methods are durable, idempotent operations; ActivatePublication performs
-// the target revision and active-generation CAS.
+// PublicationStore is implemented by the delivery repository. Both methods
+// are durable, idempotent operations; ActivatePublication performs the target
+// revision and active-generation CAS.
 type PublicationStore interface {
 	RequestPublication(context.Context, deployment.PublicationIntent, ...deployment.CatalogRoot) (deployment.PublicationIntent, error)
 	ActivatePublication(context.Context, string, time.Time) (deployment.PublicationIntent, error)
@@ -35,9 +35,9 @@ type committedPublicationReader interface {
 	DeliveryPublicationByRequest(context.Context, string, string) (deployment.PublicationIntent, error)
 }
 
-// RollbackStore performs one SQLite-only rollback transaction. It must select
-// the exact retained generation named by RollbackRequest and compare-and-swap
-// both its expected active generation and target revision.
+// RollbackStore performs one durable rollback transaction. It must select the
+// exact retained generation named by RollbackRequest and compare-and-swap both
+// its expected active generation and target revision.
 type RollbackStore interface {
 	Rollback(context.Context, deployment.RollbackRequest) (deployment.RollbackResult, error)
 }
@@ -66,9 +66,9 @@ type SealBinding struct {
 }
 
 // VerifiedSealVerifier is target-owned evidence validation. Implementations
-// normally resolve the seal from SQLite, verify it is verified, and verify the
-// exact object bytes/metadata before this coordinator is called. No storage
-// credentials are passed through the coordinator.
+// normally resolve the seal from the durable control plane, verify it is
+// verified, and verify the exact object bytes/metadata before this coordinator
+// is called. No storage credentials are passed through the coordinator.
 type VerifiedSealVerifier func(context.Context, SealBinding) error
 
 // Authorization is deliberately required at this boundary. Ownership of a
@@ -83,8 +83,8 @@ type ApprovalVerifier func(context.Context, SealBinding, deployment.PublicationI
 
 // ActivationApprovalAuthorizer is the narrow durable approval contract used
 // by the sealed publication boundary. Keeping this as an interface lets the
-// production deployment module expose its SQLite-backed service without
-// making the coordinator depend on module internals.
+// deployment module expose its durable service without making the coordinator
+// depend on module internals.
 type ActivationApprovalAuthorizer interface {
 	AuthorizeActivation(context.Context, deployment.ApprovalActivation) (deployment.Approval, error)
 }

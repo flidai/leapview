@@ -516,7 +516,7 @@ func (s *Service) ExpireUploads(ctx context.Context) (ExpireResult, error) {
 
 // terminalUploadLister is intentionally optional: adapters used by tests and
 // non-SQL control planes can continue to implement the core Repository port.
-// The production SQLite repository supplies this bounded scan, keeping
+// The durable control-plane repository may supply this bounded scan, keeping
 // terminal sessions discoverable until their transport staging is reclaimed.
 type terminalUploadLister interface {
 	ListUploadSessionsForCleanup(context.Context, int64) ([]manageddata.UploadSession, error)

@@ -572,7 +572,7 @@ func (m *Module) NativePersistence() *Persistence {
 
 // SealedApprovalVerifier returns the module's durable approval check for the
 // sealed publication boundary. Composition installs it on the coordinator
-// after Build, once the SQLite-backed approval service exists.
+// after Build, once the durable approval service exists.
 func (m *Module) SealedApprovalVerifier() sealedcontrol.ApprovalVerifier {
 	if m == nil {
 		return sealedcontrol.DurableApprovalVerifier(nil)
