@@ -2433,7 +2433,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 	}
 	text := string(dockerfile)
 	for _, want := range []string{
-		"FROM node:24-bookworm@sha256:",
+		"FROM node:26-bookworm@sha256:",
 		"FROM golang:1.25.14-bookworm@sha256:",
 		"AS go-deps",
 		"FROM go-deps AS sourcegen",
@@ -2648,7 +2648,7 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 	}
 	text := string(dockerfile)
 	for _, want := range []string{
-		"FROM node:24-bookworm@sha256:",
+		"FROM node:26-bookworm@sha256:",
 		"FROM golang:1.25.14-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
