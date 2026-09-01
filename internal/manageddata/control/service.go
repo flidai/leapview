@@ -1,6 +1,7 @@
 package control
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
@@ -18,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"golang.org/x/sync/errgroup"
 )
 
@@ -848,8 +850,21 @@ func decodeManifest(value string) (manageddata.Manifest, error) {
 
 func sameUpload(session manageddata.UploadSession, collectionID projectgraph.ResourceID, baseRevisionID manageddata.RevisionID, manifest manageddata.Manifest, backend string) bool {
 	canonical, err := manifest.CanonicalJSON()
+	if err != nil {
+		return false
+	}
+	// PostgreSQL stores manifests as jsonb, so the persisted representation may
+	// differ in object-key order and whitespace from the request's canonical
+	// bytes. Decode it strictly and compare canonical semantic bytes instead;
+	// this keeps unknown fields, trailing values, and invalid manifest entries
+	// on the integrity-failure path while making exact replays formatting-safe.
+	var stored manageddata.Manifest
+	if err := strictjson.Decode([]byte(session.ManifestJSON), &stored); err != nil {
+		return false
+	}
+	storedCanonical, err := stored.CanonicalJSON()
 	return err == nil && session.CollectionID == collectionID && session.BaseRevisionID == baseRevisionID &&
-		session.ManifestJSON == string(canonical) && session.StorageBackend == backend
+		bytes.Equal(storedCanonical, canonical) && session.StorageBackend == backend
 }
 
 func verifiedBlob(expected blobExpectation, actual storage.Blob) (storage.Blob, error) {
