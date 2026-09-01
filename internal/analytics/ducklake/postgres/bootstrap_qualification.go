@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 )
 
 const catalogBootstrapQualificationSeedPrefix = "leapview/ducklake/bootstrap-qualification/v1\x00"
@@ -29,7 +30,7 @@ type CatalogBootstrapQualificationInput struct {
 // exist at catalog bootstrap, but the lifecycle still proves the empty-reader
 // drain and the target-owned conformance/catalog evidence before attach is
 // admitted.
-func QualifyCatalogBootstrap(ctx context.Context, tx DBTX, in CatalogBootstrapQualificationInput) (CatalogRuntimeCompatibility, error) {
+func QualifyCatalogBootstrap(ctx context.Context, tx pgx.Tx, in CatalogBootstrapQualificationInput) (CatalogRuntimeCompatibility, error) {
 	if tx == nil || !validID(in.PhysicalPoolID) || !validID(in.CatalogID) || !validID(in.OwnerID) || in.Compatibility.validate() != nil {
 		return CatalogRuntimeCompatibility{}, ErrInvalid
 	}

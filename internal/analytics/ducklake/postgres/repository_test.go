@@ -60,7 +60,22 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	if _, err := r.CheckRuntimeAttachEligibility(t.Context(), RuntimeAttachInput{PhysicalPoolID: poolID, CatalogID: catalogID, Compatibility: compatibility}); !errors.Is(err, ErrRuntimeAttachIneligible) {
 		t.Fatalf("unqualified bootstrap attach error = %v, want ErrRuntimeAttachIneligible", err)
 	}
-	qualified, err := QualifyCatalogBootstrap(t.Context(), p, CatalogBootstrapQualificationInput{
+	qualifyBootstrap := func(input CatalogBootstrapQualificationInput) (CatalogRuntimeCompatibility, error) {
+		tx, err := p.Begin(t.Context())
+		if err != nil {
+			return CatalogRuntimeCompatibility{}, err
+		}
+		qualified, qualifyErr := QualifyCatalogBootstrap(t.Context(), tx, input)
+		if qualifyErr != nil {
+			_ = tx.Rollback(t.Context())
+			return CatalogRuntimeCompatibility{}, qualifyErr
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			return CatalogRuntimeCompatibility{}, err
+		}
+		return qualified, nil
+	}
+	qualified, err := qualifyBootstrap(CatalogBootstrapQualificationInput{
 		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "bootstrap-owner", Compatibility: compatibility,
 		BeginEvidence:      []byte(`{"bootstrap":true,"drain_verified":true,"backup_verified":true}`),
 		CompletionEvidence: []byte(`{"bootstrap":true,"catalog_registration_verified":true}`),
@@ -74,14 +89,14 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	if eligibility, err := r.CheckRuntimeAttachEligibility(t.Context(), RuntimeAttachInput{PhysicalPoolID: poolID, CatalogID: catalogID, Compatibility: compatibility}); err != nil || !eligibility.Eligible {
 		t.Fatalf("qualified bootstrap attach eligibility = %#v, err %v", eligibility, err)
 	}
-	if replay, err := QualifyCatalogBootstrap(t.Context(), p, CatalogBootstrapQualificationInput{
+	if replay, err := qualifyBootstrap(CatalogBootstrapQualificationInput{
 		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "bootstrap-owner", Compatibility: compatibility,
 		BeginEvidence:      []byte(`{"bootstrap":true,"drain_verified":true,"backup_verified":true}`),
 		CompletionEvidence: []byte(`{"bootstrap":true,"catalog_registration_verified":true}`),
 	}); err != nil || replay.CurrentMigrationID != qualified.CurrentMigrationID {
 		t.Fatalf("bootstrap qualification replay = %#v, err %v", replay, err)
 	}
-	if _, err := QualifyCatalogBootstrap(t.Context(), p, CatalogBootstrapQualificationInput{
+	if _, err := qualifyBootstrap(CatalogBootstrapQualificationInput{
 		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "bootstrap-owner", Compatibility: compatibility,
 		BeginEvidence:      []byte(`{"bootstrap":true,"drain_verified":true,"backup_verified":true}`),
 		CompletionEvidence: []byte(`{"bootstrap":true,"catalog_registration_verified":true,"changed":true}`),
