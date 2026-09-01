@@ -26,7 +26,7 @@ func assetRefreshSignal(refresh AssetRefreshState) uisignals.ResourceAssetRefres
 		Facts:          uisignals.OptionalSlice(definitionFactSignals(refreshOverviewFacts(refresh))),
 		Status:         status,
 		Running:        status == "queued" || status == "running",
-		LastSuccessful: refresh.LatestSuccessful.FinishedAt,
+		LastSuccessful: assetLastSuccessful(refresh),
 	}
 }
 
@@ -36,9 +36,19 @@ func assetRefreshStatus(refresh AssetRefreshState) string {
 		return "unavailable"
 	}
 	if status == "" {
+		if refresh.DataVersion.SnapshotID > 0 && !refresh.DataVersion.RefreshedAt.IsZero() {
+			return "succeeded"
+		}
 		return "not refreshed"
 	}
 	return status
+}
+
+func assetLastSuccessful(refresh AssetRefreshState) string {
+	if refresh.DataVersion.SnapshotID > 0 && !refresh.DataVersion.RefreshedAt.IsZero() {
+		return refresh.DataVersion.RefreshedAt.UTC().Format(time.RFC3339Nano)
+	}
+	return refresh.LatestSuccessful.FinishedAt
 }
 
 func modelRefreshSignal(asset projectview.DevelopAssetView) uisignals.ResourceAssetRefreshSignal {

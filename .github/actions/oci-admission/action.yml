@@ -18,6 +18,9 @@ inputs:
     description: Pinned container vulnerability policy JSON.
     required: false
     default: .github/security/container-vulnerability-policy.json
+  platform:
+    description: Optional target image platform for deterministic vulnerability scanning.
+    required: false
   mode:
     description: live performs registry verification; hermetic validates evidence.
     required: false
@@ -55,6 +58,7 @@ runs:
         EXPECTED_WORKFLOW: ${{ inputs.expected-workflow }}
         SOURCE_REVISION: ${{ inputs.source-revision }}
         POLICY: ${{ inputs.policy }}
+        PLATFORM: ${{ inputs.platform }}
         MODE: ${{ inputs.mode }}
         EVIDENCE: ${{ inputs.evidence }}
         ADMISSION_OUTPUT: ${{ inputs.output }}
@@ -66,12 +70,17 @@ runs:
           output_path="$RUNNER_TEMP/oci-admission.json"
         fi
         cd "$GITHUB_ACTION_PATH/../../.."
+        platform_args=()
+        if [[ -n "$PLATFORM" ]]; then
+          platform_args=(--platform "$PLATFORM")
+        fi
         go run ./internal/app/tools/ociadmission \
           --image "$IMAGE" \
           --repository "$OCI_REPOSITORY" \
           --expected-workflow "$EXPECTED_WORKFLOW" \
           --source-revision "$SOURCE_REVISION" \
           --policy "$POLICY" \
+          "${platform_args[@]}" \
           --mode "$MODE" \
           --evidence "$EVIDENCE" \
           --output "$output_path"

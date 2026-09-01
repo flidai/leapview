@@ -139,7 +139,7 @@ func refreshOverviewFacts(refresh AssetRefreshState) []definitionFact {
 	status := assetRefreshStatus(refresh)
 	facts := []definitionFact{
 		{Label: "Refresh status", Value: status},
-		{Label: "Last refreshed", Value: emptyDash(refresh.LatestSuccessful.FinishedAt)},
+		{Label: "Last refreshed", Value: emptyDash(assetLastSuccessful(refresh))},
 	}
 	if refresh.Unavailable {
 		facts = append(facts, definitionFact{
@@ -231,11 +231,8 @@ func semanticDatasetsTable(projectID string, parent projectview.DevelopAssetView
 	datasetDetails := metaMap(meta, "DatasetDetails")
 	metricCounts := semanticMetricCountsByDataset(metaMap(meta, "Metrics"))
 	rows := make([]map[string]any, 0, len(datasets))
-	lastRefreshed := emptyDash(refresh.LatestSuccessful.FinishedAt)
-	refreshStatus := "not refreshed"
-	if strings.TrimSpace(refresh.LatestSuccessful.Status) != "" {
-		refreshStatus = refresh.LatestSuccessful.Status
-	}
+	lastRefreshed := emptyDash(assetLastSuccessful(refresh))
+	refreshStatus := assetRefreshStatus(refresh)
 	for _, name := range sortedMapKeys(datasets) {
 		dataset := asMap(datasets[name])
 		details := asMap(datasetDetails[name])

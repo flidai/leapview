@@ -125,6 +125,7 @@ jobs:
           repository: ${{ env.IMAGE_NAME }}
           expected-workflow: flidai/leapview/.github/workflows/site-image.yml
           source-revision: ${{ needs.identity.outputs.revision }}
+          platform: linux/${{ matrix.arch }}
 
       - name: Record admitted native site image digest
         env:

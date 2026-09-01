@@ -20,6 +20,7 @@ import (
 	"github.com/apache/arrow-go/v18/arrow/memory"
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	httptransport "github.com/flidai/leapview/internal/platform/http/transport"
 )
 
@@ -272,6 +273,95 @@ func TestDashboardNativeArrowContractErrorsRespectCommitBoundary(t *testing.T) {
 	})
 }
 
+func TestDashboardNativeArrowContractRejectsRuntimeNullabilityMismatch(t *testing.T) {
+	descriptor := semanticquery.OutputSchemaDescriptor{Fields: []semanticquery.OutputFieldDescriptor{{
+		Alias: "order_id", LogicalType: "integer", Nullability: semanticquery.OutputDefinitelyNonNull,
+	}}}
+	physicalSchema := arrow.NewSchema([]arrow.Field{{Name: "order_id", Type: arrow.PrimitiveTypes.Int64, Nullable: true}}, nil)
+
+	t.Run("before commitment returns structured problem", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		native := &dashboardNativeArrowNullabilityContractSink{w: recorder}
+		sink, err := arrowquery.NewOutputSchemaSink(descriptor, native)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sink.WriteSchema(physicalSchema); err != nil {
+			t.Fatal(err)
+		}
+		invalid := dashboardNativeArrowNullabilityRecord(t, physicalSchema, false)
+		err = sink.WriteRecord(invalid)
+		invalid.Release()
+		var mismatch *arrowquery.NullabilityViolationError
+		if !errors.As(err, &mismatch) || mismatch.Alias != "order_id" {
+			t.Fatalf("nullability mismatch = %#v / %v", mismatch, err)
+		}
+		if native.committed() {
+			t.Fatal("invalid first batch committed an Arrow response")
+		}
+		request := httptest.NewRequest(stdhttp.MethodPost, "/api/v1/dashboards/sales/pages/main/visuals/orders/query", nil)
+		httptransport.WriteProblem(recorder, request, stdhttp.StatusInternalServerError, "NATIVE_ARROW_NULLABILITY_MISMATCH", "native Arrow nullability contract mismatch", nil)
+		response := recorder.Result()
+		defer response.Body.Close()
+		if got := response.Header.Get("Content-Type"); got != "application/problem+json" {
+			t.Fatalf("content type = %q, want problem JSON", got)
+		}
+		if got := response.Header.Get("X-LeapView-Arrow-Contract"); got != "" {
+			t.Fatalf("pre-commit mismatch claimed Arrow contract %q", got)
+		}
+		if got := response.Trailer.Get("X-Next-Cursor"); got != "" {
+			t.Fatalf("pre-commit mismatch exposed cursor %q", got)
+		}
+		var problem httptransport.ProblemDetails
+		if err := json.NewDecoder(response.Body).Decode(&problem); err != nil {
+			t.Fatal(err)
+		}
+		if problem.Code != "NATIVE_ARROW_NULLABILITY_MISMATCH" {
+			t.Fatalf("problem code = %q", problem.Code)
+		}
+	})
+
+	t.Run("after commitment terminates stream without cursor", func(t *testing.T) {
+		recorder := httptest.NewRecorder()
+		native := &dashboardNativeArrowNullabilityContractSink{w: recorder}
+		sink, err := arrowquery.NewOutputSchemaSink(descriptor, native)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := sink.WriteSchema(physicalSchema); err != nil {
+			t.Fatal(err)
+		}
+		valid := dashboardNativeArrowNullabilityRecord(t, physicalSchema, true)
+		if err := sink.WriteRecord(valid); err != nil {
+			valid.Release()
+			t.Fatal(err)
+		}
+		valid.Release()
+		if !native.committed() {
+			t.Fatal("valid first batch did not commit the Arrow response")
+		}
+		invalid := dashboardNativeArrowNullabilityRecord(t, physicalSchema, false)
+		err = sink.WriteRecord(invalid)
+		invalid.Release()
+		var mismatch *arrowquery.NullabilityViolationError
+		if !errors.As(err, &mismatch) {
+			t.Fatalf("second-batch mismatch = %v", err)
+		}
+		// A future transport must make the already-committed stream observably
+		// incomplete. This test-only marker models termination without changing
+		// the current native semantic response implementation.
+		_, _ = recorder.Write([]byte{0xff, 0xff, 0xff, 0xff, 0x04, 0x00, 0x00, 0x00, 0x42, 0x42})
+		response := recorder.Result()
+		defer response.Body.Close()
+		if err := consumeDashboardNativeArrow(response.Body); err == nil {
+			t.Fatal("post-commit nullability mismatch looked like a successful Arrow stream")
+		}
+		if got := response.Trailer.Get("X-Next-Cursor"); got != "" {
+			t.Fatalf("post-commit mismatch exposed success cursor %q", got)
+		}
+	})
+}
+
 func TestDashboardNativeArrowContractChargesSchemaAndPaginationProbeToBudgets(t *testing.T) {
 	allocator := memory.NewCheckedAllocator(memory.DefaultAllocator)
 	schema, record := newDashboardNativeArrowContractFixture(t, allocator)
@@ -459,6 +549,62 @@ func newDashboardNativeArrowContractFixture(t testing.TB, allocator memory.Alloc
 	}
 	return schema, record
 }
+
+func dashboardNativeArrowNullabilityRecord(t testing.TB, schema *arrow.Schema, valid bool) arrow.RecordBatch {
+	t.Helper()
+	builder := array.NewInt64Builder(memory.DefaultAllocator)
+	builder.AppendValues([]int64{101}, []bool{valid})
+	column := builder.NewArray()
+	builder.Release()
+	record := array.NewRecordBatch(schema, []arrow.Array{column}, 1)
+	column.Release()
+	return record
+}
+
+type dashboardNativeArrowNullabilityContractSink struct {
+	w      *httptest.ResponseRecorder
+	schema *arrow.Schema
+	writer *ipc.Writer
+}
+
+func (s *dashboardNativeArrowNullabilityContractSink) WriteSchema(schema *arrow.Schema) error {
+	if schema == nil {
+		return errors.New("native Arrow nullability fixture schema is required")
+	}
+	fields := schema.Fields()
+	for index := range fields {
+		fields[index].Metadata = arrow.NewMetadata(
+			append([]string(nil), fields[index].Metadata.Keys()...),
+			append([]string(nil), fields[index].Metadata.Values()...),
+		)
+	}
+	metadata := schema.Metadata()
+	metadata = arrow.NewMetadata(append([]string(nil), metadata.Keys()...), append([]string(nil), metadata.Values()...))
+	s.schema = arrow.NewSchema(fields, &metadata)
+	return nil
+}
+
+func (s *dashboardNativeArrowNullabilityContractSink) WriteRecord(record arrow.RecordBatch) error {
+	if s.schema == nil {
+		return errors.New("native Arrow nullability fixture schema must be written first")
+	}
+	if s.writer == nil {
+		s.w.Header().Set("Content-Type", "application/vnd.apache.arrow.stream")
+		s.w.Header().Set("Cache-Control", "no-store")
+		s.w.Header().Set("X-Query-ID", dashboardNativeArrowQueryID)
+		s.w.Header().Set("X-Serving-Snapshot", dashboardNativeArrowSnapshot)
+		s.w.Header().Set("X-LeapView-Arrow-Contract", dashboardNativeArrowContract)
+		s.w.Header().Set("Trailer", "X-Next-Cursor")
+		s.writer = ipc.NewWriter(s.w, ipc.WithSchema(s.schema))
+	}
+	return s.writer.Write(record)
+}
+
+func (s *dashboardNativeArrowNullabilityContractSink) committed() bool {
+	return s != nil && s.writer != nil
+}
+
+var _ arrowquery.Sink = (*dashboardNativeArrowNullabilityContractSink)(nil)
 
 func dashboardNativeArrowContractSchema(schema *arrow.Schema, logicalTypes map[string]string, queryID, snapshot string) *arrow.Schema {
 	metadata := publicDashboardNativeArrowMetadata(schema.Metadata(), nil, map[string]string{

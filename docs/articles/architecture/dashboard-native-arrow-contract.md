@@ -32,9 +32,10 @@ table schema. In particular:
 - Arrow physical types are preserved. Boolean and signed/unsigned integer
   widths, floating-point widths, dates, timestamps, UTF-8 strings, binary
   values, decimals, and dictionary encodings must not be projected to strings.
-- The field's nullable declaration and each array's validity bitmap are
-  preserved. A null must remain null; it must not become zero, `false`, an
-  empty string, or an empty byte slice.
+- The field's nullable declaration is the final governed effective nullability
+  described below. Each array's physical validity bitmap is preserved. A null
+  must remain null; it must not become zero, `false`, an empty string, or an
+  empty byte slice.
 - A decimal preserves its precision, scale, sign, and exact unscaled value.
 - A timestamp preserves its Arrow unit and timezone. A timestamp with timezone
   `UTC` represents the same UTC instant; a timezone-neutral timestamp remains
@@ -48,6 +49,66 @@ table schema. In particular:
   emitted. It must not expose generated SQL, physical connection or source
   identifiers, policy expressions, credentials, principals, or other internal
   state.
+
+### Nullability authority
+
+`native-v1` uses **governed effective nullability with conservative fallback**.
+The server-owned output schema descriptor for the final post-governance
+projection is authoritative; neither a source-column declaration nor the
+DuckDB Arrow field flag is independently authoritative.
+
+An emitted Arrow field has `Nullable=false` only when the final projected
+expression is proven incapable of producing SQL `NULL` after every governed
+transformation. A nullable, unknown, incomplete, or conflicting derivation is
+emitted as `Nullable=true`. In particular:
+
+- a source `NOT NULL` declaration does not by itself prove that the final
+  projection is non-null;
+- the nullable side of a left relationship traversal is nullable;
+- a column mask that can produce `NULL` makes the output nullable;
+- a calculation or derived expression is nullable unless its complete
+  operator and input semantics prove otherwise;
+- metric nullability includes its governed empty-set policy; and
+- filters or the values observed in one page, including a page with zero
+  nulls, never narrow the declared nullability.
+
+Unknown always maps to nullable. The rule is stable for empty results: an empty
+stream uses the same derived output schema descriptor as a non-empty execution
+of the same governed query. It must not infer nullability from the absence of
+record batches.
+
+Runtime validity bitmaps remain the authoritative physical statement about
+which values are null. The stream forwards them without null-to-value
+conversion. If a record contains a null for a field declared non-null, the
+execution has violated the governed output contract; Arrow encoder acceptance
+does not make that stream valid.
+
+### Implementation boundary
+
+The schema foundation represents each projected field with an internal
+`query.OutputFieldDescriptor` containing:
+
+- the final alias;
+- the public governed logical type;
+- effective nullability represented internally as proven non-null, nullable,
+  or unknown; and
+- internal derivation provenance sufficient to explain the decision without
+  exposing source, policy, SQL, or connection details on the wire.
+
+`query.Planner.DescribeOutputSchema` derives the descriptor before a response
+schema could be emitted from validated final PlanIR, including relationship
+traversal, column masks, metric empty-set policy, calculations, and derived
+expressions. Unknown derivations remain nullable. The descriptor is matched to
+the governed alias and projection order; it is not reconstructed from observed
+batches or client-authored metadata.
+
+`arrowquery.OutputSchemaSink` is the un-routed enforcement boundary. It
+reconciles only the Arrow field nullability declaration required by the
+descriptor, preserves physical Arrow types and validity buffers, respects
+borrowed-batch callback lifetimes, and validates every emitted record batch.
+Its internal provenance is opaque and is not serialized as response metadata.
+No production route currently constructs this sink; this foundation does not
+authorize a handler change or native streaming migration.
 
 An empty result is a valid Arrow IPC stream containing the full governed schema
 and zero record batches. It is not a schema-less stream and it is not a JSON
@@ -127,6 +188,12 @@ leases. If the connection remains writable and no bytes have been committed,
 the failure follows the normal problem mapping; a disconnected client may
 observe only connection termination.
 
+A runtime null in a field declared non-null is a native contract failure. If
+detected before response commitment, the server returns the normal structured
+JSON problem response and does not start an Arrow stream. If detected after
+commitment, the server terminates the Arrow stream, does not append a JSON
+fallback, and does not publish a successful `X-Next-Cursor` trailer value.
+
 After the Arrow response is committed, the server cannot switch formats. A
 query, IPC, cancellation, or transport failure terminates the stream. There is
 no JSON suffix or fallback, no successful completion signal, and no
@@ -171,6 +238,19 @@ shared governed execution boundaries.
 Only after those gates pass may an experiment compare the candidate with the
 current `api_direct` dashboard path using the same query and physical query
 behavior. Warm-cache measurements are a guardrail, not a comparable lane.
+
+Nullability qualification must cover, at minimum:
+
+- base `NOT NULL` and nullable fields;
+- aliases and projection ordering;
+- empty results;
+- fields on both sides of a left relationship traversal;
+- masks that preserve, replace, or introduce nulls;
+- metrics with null and zero empty-set policies;
+- calculations and derived expressions with proven and unknown semantics;
+- multiple record batches; and
+- non-null declaration mismatches detected both before and after response
+  commitment.
 
 ## Client compatibility and activation
 
