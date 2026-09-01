@@ -285,9 +285,26 @@ func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
 
 // isBootstrapDeliveryAPIGenOperation is the exact delivery allowlist needed to
 // establish and resolve a plan before the target has an active generation.
+// It includes reviewer approval so the REST-token path can run before the
+// first generation; authoring credentials use the narrower allowlist below to
+// preserve separation of duties.
 func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
 	switch operationID {
-	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview":
+	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
+		"requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval":
+		return true
+	default:
+		return false
+	}
+}
+
+// isAuthoringDeliveryBootstrapOperation is the exact delivery allowlist for
+// scoped authoring credentials. Publication approval remains reviewer-only;
+// an authoring credential may request approval but never approve its own
+// publication.
+func isAuthoringDeliveryBootstrapOperation(operationID string) bool {
+	switch operationID {
+	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval":
 		return true
 	default:
 		return false
@@ -338,7 +355,7 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 			// for its explicit allowlist. Its durable project/target/capability
 			// and platform-admin checks remain centralized in this validator; do
 			// not broaden the exception to other bootstrap operations.
-			if isBootstrapDeliveryAPIGenOperation(operationID) {
+			if isAuthoringDeliveryBootstrapOperation(operationID) {
 				if credential, found := a.module.requestCredential(r); found && credential.Authoring != nil {
 					authorized, err := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
 					if err != nil {
