@@ -59,6 +59,9 @@ type BuilderInteractionEffect = 'filter' | 'highlight' | 'none'
 
 const builderPaneStorageKey = 'leapview-dashboard-builder-collapsed-panes'
 const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false }
+const builderCanvasDesktopWidth = 1366
+const builderCanvasMinimumHeight = 768
+const builderCanvasRunwayRows = 3
 
 type BuilderCatalogField = {
   field: DashboardBuilderFieldSignal
@@ -168,6 +171,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private gridIsMobile = false
   private gridCommitQueued = false
   private viewportMediaQuery: MediaQueryList | null = null
+  private canvasResizeObserver: ResizeObserver | null = null
+  private canvasViewportElement: HTMLElement | null = null
 
   // Add-page uses server-generated identifiers. Keep the page set that was
   // visible when the intent was sent so the authoritative response can select
@@ -199,6 +204,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (typeof window !== 'undefined') window.removeEventListener('keydown', this.handleBuilderKeydown)
     this.viewportMediaQuery?.removeEventListener('change', this.handleViewportChange)
     this.viewportMediaQuery = null
+    this.destroyCanvasViewportObserver()
     this.destroyGridStack()
     super.disconnectedCallback()
   }
@@ -1192,17 +1198,28 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       padding: 0;
     }
 
-    .canvas {
+    .canvas-fit {
       position: relative;
-      width: max(100%, 38rem);
-      min-width: 38rem;
-      min-height: 30rem;
+      width: var(--builder-canvas-fitted-width, 100%);
+      height: var(--builder-canvas-fitted-height, 0);
+      margin-inline: auto;
+    }
+
+    .canvas {
+      position: absolute;
+      inset: 0 auto auto 0;
+      box-sizing: border-box;
+      width: ${builderCanvasDesktopWidth}px;
+      min-width: ${builderCanvasDesktopWidth}px;
+      min-height: ${builderCanvasMinimumHeight}px;
       border: 0;
       border-radius: 0;
       background-color: var(--lv-bg-panel);
       background-image: linear-gradient(to right, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px);
-      background-size: 8.333% 2.5rem;
+      background-size: calc(100% / var(--builder-grid-columns)) var(--builder-grid-row-pitch);
       box-shadow: none;
+      transform: scale(var(--builder-canvas-scale, 1));
+      transform-origin: top left;
     }
 
     .canvas[data-field-dragging='true'] {
@@ -2237,12 +2254,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
        * viewport-sized box instead of an off-screen slice of the desktop
        * canvas. The surface stays full-bleed; the canvas scroller remains the
        * only overflow container. */
+      .canvas-fit {
+        width: 100% !important;
+        height: auto !important;
+      }
+
       .canvas {
+        position: relative;
+        inset: auto;
         display: grid;
         width: 100%;
         min-width: 0;
         min-height: 0;
         aspect-ratio: auto !important;
+        transform: none !important;
         grid-template-columns: minmax(0, 1fr) !important;
         grid-auto-rows: auto;
         gap: var(--base-size-12);
@@ -2309,7 +2334,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectPendingAddedFilter(builder)
     this.selectPendingAddedFilterComponent(builder)
     this.reconcileBuilderFilterController()
-    this.syncGridStack(builder, builder ? this.selectedPage(builder) : undefined)
+    const page = builder ? this.selectedPage(builder) : undefined
+    this.syncGridStack(builder, page)
+    this.syncCanvasViewport(page)
   }
 
   private readonly handleViewportChange = (): void => {
@@ -2339,7 +2366,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.gridIsMobile = mobile
       this.gridStack = GridStack.init({
         column: Math.max(1, page.grid.columns || 12),
-        cellHeight: Math.max(1, page.grid.rowHeight || 48),
+        // GridStack's cell height is the row pitch. Runtime canvas geometry
+        // defines that pitch as the authored row plus its following gap.
+        cellHeight: Math.max(1, (page.grid.rowHeight || 48) + (page.grid.gap || 0)),
         margin: Math.max(0, Math.round((page.grid.gap || 16) / 2)),
         animate: false,
         float: true,
@@ -2351,6 +2380,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       if (this.gridStack) {
         this.gridStack.on('dragstop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element))
         this.gridStack.on('resizestop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element))
+        this.gridStack.on('drag', () => this.syncCanvasViewport(page))
+        this.gridStack.on('resize', () => this.syncCanvasViewport(page))
         this.gridStack.on('change', (event: Event, nodes: GridStackNode[]) => this.onGridChange(event, nodes))
       }
     }
@@ -2377,7 +2408,64 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private onGridChange(_event: Event, _nodes: GridStackNode[]): void {
+    this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
     this.scheduleGridCommit()
+  }
+
+  private syncCanvasViewport(page: DashboardBuilderPageSignal | undefined): void {
+    const scroll = this.shadowRoot?.querySelector('.canvas-scroll') as HTMLElement | null
+    const fit = this.shadowRoot?.querySelector('.canvas-fit') as HTMLElement | null
+    const canvas = this.shadowRoot?.querySelector('.canvas') as HTMLElement | null
+    if (!scroll || !fit || !canvas || !page || this.isMobileViewport()) {
+      this.destroyCanvasViewportObserver()
+      fit?.style.removeProperty('--builder-canvas-fitted-width')
+      fit?.style.removeProperty('--builder-canvas-fitted-height')
+      canvas?.style.removeProperty('--builder-canvas-scale')
+      canvas?.style.removeProperty('min-height')
+      return
+    }
+    if (scroll !== this.canvasViewportElement && typeof ResizeObserver !== 'undefined') {
+      this.destroyCanvasViewportObserver()
+      this.canvasViewportElement = scroll
+      this.canvasResizeObserver = new ResizeObserver(() => this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined))
+      this.canvasResizeObserver.observe(scroll)
+    }
+    const availableWidth = scroll.clientWidth
+    if (availableWidth <= 0) return
+    const scale = Math.min(1, availableWidth / builderCanvasDesktopWidth)
+    const occupiedRows = this.canvasOccupiedRows(page)
+    const workingRows = occupiedRows + builderCanvasRunwayRows
+    const rowHeight = Math.max(1, page.grid.rowHeight || 48)
+    const gap = Math.max(0, page.grid.gap || 0)
+    const padding = Math.max(0, page.grid.padding || 0)
+    const contentHeight = workingRows > 0
+      ? padding * 2 + workingRows * rowHeight + Math.max(0, workingRows - 1) * gap
+      : padding * 2
+    const logicalHeight = Math.max(builderCanvasMinimumHeight, contentHeight)
+    fit.style.setProperty('--builder-canvas-fitted-width', `${builderCanvasDesktopWidth * scale}px`)
+    fit.style.setProperty('--builder-canvas-fitted-height', `${logicalHeight * scale}px`)
+    canvas.style.setProperty('--builder-canvas-scale', String(scale))
+    canvas.style.setProperty('--builder-grid-columns', String(Math.max(1, page.grid.columns || 12)))
+    canvas.style.setProperty('--builder-grid-row-pitch', `${rowHeight + gap}px`)
+    canvas.style.minHeight = `${logicalHeight}px`
+  }
+
+  private canvasOccupiedRows(page: DashboardBuilderPageSignal): number {
+    if (this.gridStack) {
+      return this.gridStack.getGridItems().reduce((maximum, item) => {
+        const node = item.gridstackNode
+        return Math.max(maximum, (node?.y ?? 0) + (node?.h ?? 1))
+      }, 0)
+    }
+    return [...page.visuals, ...(page.filterComponents ?? [])].reduce((maximum, component) => (
+      Math.max(maximum, Math.max(1, component.placement.row) - 1 + Math.max(1, component.placement.rowSpan))
+    ), 0)
+  }
+
+  private destroyCanvasViewportObserver(): void {
+    this.canvasResizeObserver?.disconnect()
+    this.canvasResizeObserver = null
+    this.canvasViewportElement = null
   }
 
   private scheduleGridCommit(): void {
@@ -3030,11 +3118,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
           <p id="dashboard-builder-grid-help" class="sr-only">Focus a canvas component. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
-          <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`aspect-ratio: ${page.canvas.width || 16} / ${page.canvas.height || 9}; grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
-            ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
-            ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0
-              ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
-              : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}`}
+          <div class="canvas-fit">
+            <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
+              ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
+              ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0
+                ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
+                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}`}
+            </div>
           </div>
           <div class="sr-only" aria-live="polite">${this.gridInteractionMessage}</div>
         </div>

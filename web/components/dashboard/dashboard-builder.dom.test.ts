@@ -903,6 +903,95 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
   }
 })
 
+test('dashboard builder fits a stable desktop canvas and grows a drop runway below occupied rows', async () => {
+  const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const scroll = root.querySelector('.canvas-scroll') as HTMLElement
+      const fit = root.querySelector('.canvas-fit') as HTMLElement
+      const canvas = root.querySelector('.canvas') as HTMLElement & { gridstack?: any }
+      const visual = root.querySelector('.visual') as HTMLElement
+      const initialCanvasBox = canvas.getBoundingClientRect()
+      const initialFitBox = fit.getBoundingClientRect()
+      const initialLogicalHeight = canvas.offsetHeight
+      const initialScale = initialCanvasBox.width / canvas.offsetWidth
+      canvas.gridstack.update(visual, { y: 14 })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const grownCanvasBox = canvas.getBoundingClientRect()
+      const grownFitBox = fit.getBoundingClientRect()
+      return {
+        scrollWidth: scroll.clientWidth,
+        logicalWidth: canvas.offsetWidth,
+        logicalHeight: initialLogicalHeight,
+        fittedWidth: initialCanvasBox.width,
+        fittedHeight: initialFitBox.height,
+        scale: initialScale,
+        cellHeight: canvas.gridstack.opts.cellHeight,
+        grownLogicalHeight: canvas.offsetHeight,
+        grownFittedHeight: grownFitBox.height,
+        grownCanvasHeight: grownCanvasBox.height,
+      }
+    })
+    expect(state.logicalWidth).toBe(1366)
+    expect(state.logicalHeight).toBeGreaterThanOrEqual(768)
+    expect(state.scale).toBeGreaterThan(0)
+    expect(state.scale).toBeLessThanOrEqual(1)
+    expect(state.fittedWidth).toBeLessThanOrEqual(state.scrollWidth + 1)
+    expect(state.fittedHeight).toBeCloseTo(state.logicalHeight * state.scale, 0)
+    expect(state.cellHeight).toBe(64)
+    expect(state.grownLogicalHeight).toBeGreaterThan(state.logicalHeight)
+    expect(state.grownFittedHeight).toBeCloseTo(state.grownCanvasHeight, 0)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder preserves pointer drag placement on the fitted canvas', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const element = page.locator('lv-dashboard-builder')
+    const initial = await element.evaluate(async (builder: any) => {
+      await builder.updateComplete
+      const root = builder.shadowRoot
+      ;(window as any).__builderPlacementCommands = []
+      builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
+        if (event.detail?.action === 'set_placements') (window as any).__builderPlacementCommands.push(event.detail)
+      })
+      return {
+        fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
+        scale: (root.querySelector('.canvas') as HTMLElement).getBoundingClientRect().width / (root.querySelector('.canvas') as HTMLElement).offsetWidth,
+      }
+    })
+    const handle = element.locator('.visual-drag-header')
+    const box = await handle.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2 + 8 * 64 * initial.scale, { steps: 12 })
+    await page.mouse.up()
+    await page.waitForTimeout(30)
+    const state = await element.evaluate((builder: any) => {
+      const root = builder.shadowRoot
+      const commands = (window as any).__builderPlacementCommands as any[]
+      return {
+        command: commands.at(-1),
+        fittedHeight: (root.querySelector('.canvas-fit') as HTMLElement).getBoundingClientRect().height,
+      }
+    })
+    expect(state.command).toBeDefined()
+    expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
+    expect(state.fittedHeight).toBeGreaterThan(initial.fittedHeight)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder emits one canonical atomic placement command after a GridStack change', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
