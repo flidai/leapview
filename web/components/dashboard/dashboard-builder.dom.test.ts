@@ -877,6 +877,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
       const visual = root.querySelector('.visual') as HTMLElement & { gridstackNode?: { id?: string } }
       return {
         hasGridStack: Boolean(canvas?.gridstack),
+        floating: canvas?.gridstack?.getFloat(),
         nodeID: visual.gridstackNode?.id,
         visualID: visual.getAttribute('gs-id'),
         contentWrapper: Boolean(visual.querySelector('.grid-stack-item-content')),
@@ -888,6 +889,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
     })
     expect(state).toEqual({
       hasGridStack: true,
+      floating: true,
       nodeID: 'sales-chart',
       visualID: 'sales-chart',
       contentWrapper: true,
@@ -920,7 +922,7 @@ test('dashboard builder emits one canonical atomic placement command after a Gri
     expect(command).toMatchObject({
       action: 'set_placements',
       pageId: 'overview',
-      placements: [{ componentId: 'sales-chart', placement: { column: 3, row: 1, columnSpan: 5, rowSpan: 6 } }],
+      placements: [{ componentId: 'sales-chart', placement: { column: 3, row: 4, columnSpan: 5, rowSpan: 6 } }],
     })
   } finally {
     await page.close()

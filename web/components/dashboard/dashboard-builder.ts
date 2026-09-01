@@ -2342,7 +2342,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         cellHeight: Math.max(1, page.grid.rowHeight || 48),
         margin: Math.max(0, Math.round((page.grid.gap || 16) / 2)),
         animate: false,
-        float: false,
+        float: true,
         disableDrag: !builder?.capabilities.canEdit || this.commandPending,
         disableResize: !builder?.capabilities.canEdit || this.commandPending,
         draggable: { handle: '.component-drag-handle' },
