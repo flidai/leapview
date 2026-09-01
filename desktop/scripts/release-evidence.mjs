@@ -454,7 +454,7 @@ async function generate() {
   const packageDocument = JSON.parse(packageText);
   const policy = JSON.parse(policyText);
   const packageVerification = JSON.parse(verificationText);
-  parseBunLock(lockText);
+  const parsedLock = parseBunLock(lockText);
   validateReleasePolicy(policy, packageDocument);
   assertPackageVerification(packageVerification, policy);
 
