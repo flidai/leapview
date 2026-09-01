@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { ChartColumn, ChevronLeft, ChevronRight, Copy, Database, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Trash2, Undo2 } from 'lucide'
+import { ChartColumn, ChevronLeft, ChevronRight, Copy, Database, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Trash2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -2816,6 +2816,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 data-page-id=${item.id}
                 data-page-dragging=${this.draggedPageID === item.id}
                 data-page-drop=${this.pageDropTargetID === item.id}
+                @click=${(event: MouseEvent) => { if (item.id === page?.id) this.openPageSettings(item, event) }}
                 @dragstart=${(event: DragEvent) => this.startPageDrag(event, item.id)}
                 @dragover=${(event: DragEvent) => this.dragPageOver(event, item.id)}
                 @dragleave=${() => this.leavePageDrop(item.id)}
@@ -2847,6 +2848,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <details class="page-actions">
             <summary aria-label=${`Actions for ${page.title}`} title=${`Actions for ${page.title}`}>${lucideIcon(MoreHorizontal, { size: 16, strokeWidth: 2 })}</summary>
             <div class="page-actions-menu" role="menu" aria-label=${`${page.title} page actions`}>
+              <button type="button" role="menuitem" data-page-action="settings" @click=${(event: Event) => this.openPageSettings(page, event)}>${lucideIcon(Settings2, { size: 14, strokeWidth: 2 })}<span>Page settings</span></button>
               <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex <= 0} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex - 1)}>${lucideIcon(ChevronLeft, { size: 14, strokeWidth: 2 })}<span>Move earlier</span></button>
               <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex < 0 || pageIndex >= builder.pages.length - 1} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex + 1)}>${lucideIcon(ChevronRight, { size: 14, strokeWidth: 2 })}<span>Move later</span></button>
               <button type="button" role="menuitem" ?disabled=${this.commandPending} @click=${(event: Event) => this.duplicatePage(event, page)}>${lucideIcon(Copy, { size: 14, strokeWidth: 2 })}<span>Duplicate page</span></button>
@@ -3222,6 +3224,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               <span class="pane-title-icon">${lucideIcon(ChartColumn, { size: 16, strokeWidth: 2 })}</span>
               <h2 class="pane-title">${collapsed ? 'Visuals' : visual ? visual.title : formattingPage ? page?.title : page ? 'Add a visual' : 'Visual builder'}</h2>
               ${visual && !collapsed ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}
+              ${formattingPage && !collapsed ? html`<span class="visual-type-badge">Page</span>` : nothing}
             </div>
             ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
           </div>
@@ -4483,11 +4486,37 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private selectPage(pageID: string): void {
+    const builder = this.builder
+    const currentPage = builder ? this.selectedPage(builder) : undefined
+    if (currentPage?.id === pageID) {
+      this.openPageSettings(currentPage)
+      return
+    }
     this.localPageID = pageID
     this.localVisualID = ''
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.emit('lv-builder-page-select', { ...this.commandDetail(), pageId: pageID })
+  }
+
+  private openPageSettings(page: DashboardBuilderPageSignal, event?: Event): void {
+    event?.preventDefault()
+    event?.stopPropagation()
+    const details = event?.currentTarget instanceof HTMLElement ? event.currentTarget.closest('details') : null
+    if (details instanceof HTMLDetailsElement) details.open = false
+    const builder = this.builder
+    const selectedVisual = builder ? this.effectiveVisualID(builder, page) : ''
+    this.localPageID = page.id
+    this.localVisualID = ''
+    this.selectedFilterID = ''
+    this.selectedFilterComponentID = ''
+    this.inspectorTab = 'format'
+    if (this.collapsedPanes.visuals) {
+      this.collapsedPanes = { ...this.collapsedPanes, visuals: false }
+      this.persistCollapsedPanes()
+    }
+    this.visualActionMessage = `Editing settings for ${page.title}.`
+    if (selectedVisual) this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
   }
 
   private pageHref(pageID: string): string {
