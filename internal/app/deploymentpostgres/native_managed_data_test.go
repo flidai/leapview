@@ -13,7 +13,6 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	"github.com/flidai/leapview/internal/release"
-	"github.com/flidai/leapview/internal/runtimehost"
 )
 
 func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedModels(t *testing.T) {
@@ -44,9 +43,9 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 		Compiler: release.CandidateCompilerEvidence{Artifact: artifact, Manifest: artifact.Manifest()},
 	}
 	lifetime := &recordingManagedDataLifetime{}
-	resolver := &recordingNativeManagedDataResolver{resolution: runtimehost.ManagedDataResolution{
-		Roots:     map[string]string{"connection:sample": "/managed/sample/revision"},
-		Revisions: map[string]string{"connection:sample": "sha256:revision"},
+	resolver := &recordingNativeManagedDataResolver{resolution: manageddataresolver.Resolution{
+		Roots:     map[projectgraph.ResourceID]string{"connection:sample": "/managed/sample/revision"},
+		Revisions: map[projectgraph.ResourceID]string{"connection:sample": "sha256:revision"},
 		Lifetime:  lifetime,
 	}}
 	request, gotLifetime, err := prepareNativeMaterializationRequest(t.Context(), resolver, artifacts, deploymentmodule.NativeDeliveryBuildRequest{
@@ -55,8 +54,8 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 	if err != nil {
 		t.Fatal(err)
 	}
-	if resolver.identity != (projectgraph.ServingIdentity{ProjectID: "project:managed", Environment: "prod", GenerationID: "generation:1"}) {
-		t.Fatalf("resolved identity = %#v", resolver.identity)
+	if resolver.projectID != "project:managed" || resolver.pins["connection:sample"] != "sha256:revision" {
+		t.Fatalf("resolved project/pins = %q, %#v", resolver.projectID, resolver.pins)
 	}
 	if gotLifetime != lifetime {
 		t.Fatal("managed-data lifetime was not propagated")
@@ -71,9 +70,9 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 
 func TestPrepareNativeMaterializationRequestRejectsRevisionDriftAndReleasesLease(t *testing.T) {
 	lifetime := &recordingManagedDataLifetime{}
-	resolver := &recordingNativeManagedDataResolver{resolution: runtimehost.ManagedDataResolution{
-		Roots:     map[string]string{"connection:sample": "/managed/sample/other"},
-		Revisions: map[string]string{"connection:sample": "sha256:other"},
+	resolver := &recordingNativeManagedDataResolver{resolution: manageddataresolver.Resolution{
+		Roots:     map[projectgraph.ResourceID]string{"connection:sample": "/managed/sample/other"},
+		Revisions: map[projectgraph.ResourceID]string{"connection:sample": "sha256:other"},
 		Lifetime:  lifetime,
 	}}
 	_, _, err := prepareNativeMaterializationRequest(t.Context(), resolver, release.CandidateArtifactSet{
@@ -109,13 +108,15 @@ func TestPrepareNativeMaterializationRequestLeavesResolverOutageRetryable(t *tes
 }
 
 type recordingNativeManagedDataResolver struct {
-	resolution runtimehost.ManagedDataResolution
-	identity   projectgraph.ServingIdentity
+	resolution manageddataresolver.Resolution
+	projectID  projectgraph.ResourceID
+	pins       map[projectgraph.ResourceID]string
 	err        error
 }
 
-func (r *recordingNativeManagedDataResolver) ResolveManagedDataForIdentity(_ context.Context, identity projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error) {
-	r.identity = identity
+func (r *recordingNativeManagedDataResolver) ResolveCandidateManagedData(_ context.Context, projectID projectgraph.ResourceID, pins map[projectgraph.ResourceID]string) (manageddataresolver.Resolution, error) {
+	r.projectID = projectID
+	r.pins = pins
 	return r.resolution, r.err
 }
 

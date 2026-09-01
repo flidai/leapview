@@ -617,7 +617,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		ArtifactRecovery:      release,
 		BindingEvidence:       candidateConnections,
 		Connections:           candidateConnections,
-		ManagedData:           managedResolver,
+		ManagedData:           managedData.RuntimeResolution(),
 		ContractAuthority:     contractAuthority,
 		PhysicalPoolID:        physicalPoolID,
 		CompatibilityDigest:   compatibilityDigest,

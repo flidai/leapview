@@ -32,7 +32,6 @@ import (
 	project "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
-	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -61,6 +60,13 @@ type NativeBuildContractResolver interface {
 	Resolve(context.Context, NativeBuildContractRequest) (NativeBuildContract, error)
 }
 
+// NativeCandidateManagedDataResolver materializes exact immutable revision
+// pins before a native serving-state row exists. Activated runtimes use the
+// separate serving-state binding resolver after generation admission.
+type NativeCandidateManagedDataResolver interface {
+	ResolveCandidateManagedData(context.Context, projectgraph.ResourceID, map[projectgraph.ResourceID]string) (manageddataresolver.Resolution, error)
+}
+
 // NativeBuildHeartbeatRunner renews every lease protecting an admitted build.
 // NativeBuildHeartbeat is the production implementation; tests and embedders
 // may provide a value-only runner with the same atomic renewal contract.
@@ -77,7 +83,7 @@ type NativeBuildConfig struct {
 	ArtifactRecovery    release.CandidateArtifactRecovery
 	BindingEvidence     deploymentdomain.CandidateConnectionEvidenceResolver
 	Connections         deploymentdomain.CandidateConnectionLeaser
-	ManagedData         runtimehost.ManagedDataResolver
+	ManagedData         NativeCandidateManagedDataResolver
 	Contract            NativeBuildContractResolver
 	ContractAuthority   *NativeBuildContractAuthority
 	PhysicalPoolID      string
@@ -117,7 +123,7 @@ type NativeBuildCoordinator struct {
 	artifactRecovery                    release.CandidateArtifactRecovery
 	bindingEvidence                     deploymentdomain.CandidateConnectionEvidenceResolver
 	connections                         deploymentdomain.CandidateConnectionLeaser
-	managedData                         runtimehost.ManagedDataResolver
+	managedData                         NativeCandidateManagedDataResolver
 	contract                            NativeBuildContractResolver
 	physicalPoolID, compatibilityDigest string
 	operations                          deploymentmodule.NativeBuildOperationAuthority
@@ -826,30 +832,49 @@ func nativeMaterializationRequest(artifacts release.CandidateArtifactSet, reques
 
 func prepareNativeMaterializationRequest(
 	ctx context.Context,
-	resolver runtimehost.ManagedDataResolver,
+	resolver NativeCandidateManagedDataResolver,
 	artifacts release.CandidateArtifactSet,
 	request deploymentmodule.NativeDeliveryBuildRequest,
 	generationID, candidateID, namespace string,
 	plan deploymentdomain.DeliveryPlan,
-) (analyticsmaterialization.Request, runtimehost.ManagedDataLifetime, error) {
+) (analyticsmaterialization.Request, manageddataresolver.Lifetime, error) {
 	if nativeBuildAuthorityNil(resolver) {
 		return analyticsmaterialization.Request{}, nil, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	materialization := nativeMaterializationRequest(artifacts, request, generationID, candidateID, namespace, plan)
-	resolution, err := resolver.ResolveManagedDataForIdentity(ctx, materialization.Identity)
+	pins := make(map[projectgraph.ResourceID]string, len(artifacts.Generation.ManagedDataPins))
+	for _, pin := range artifacts.Generation.ManagedDataPins {
+		connectionID, err := projectgraph.NewResourceID(pin.ConnectionID)
+		if err != nil || strings.TrimSpace(pin.RevisionID) == "" || strings.TrimSpace(pin.RevisionID) != pin.RevisionID {
+			return analyticsmaterialization.Request{}, nil, fmt.Errorf("%w: native candidate managed-data pin is invalid", deploymentdomain.ErrDeliveryConflict)
+		}
+		if _, duplicate := pins[connectionID]; duplicate {
+			return analyticsmaterialization.Request{}, nil, fmt.Errorf("%w: native candidate managed-data pin %q is duplicated", deploymentdomain.ErrDeliveryConflict, connectionID)
+		}
+		pins[connectionID] = pin.RevisionID
+	}
+	resolution, err := resolver.ResolveCandidateManagedData(ctx, request.ProjectID, pins)
 	if err != nil {
 		if errors.Is(err, manageddataresolver.ErrInvalidMetadata) || errors.Is(err, manageddataresolver.ErrRevisionNotReady) || errors.Is(err, manageddataresolver.ErrAmbiguousConnection) {
 			err = errors.Join(deploymentdomain.ErrDeliveryConflict, err)
 		}
 		return analyticsmaterialization.Request{}, nil, fmt.Errorf("resolve native candidate managed-data roots: %w", err)
 	}
-	if err := validateNativeManagedDataResolution(artifacts.Generation.ManagedDataPins, resolution.Revisions, resolution.Roots); err != nil {
+	revisions := make(map[string]string, len(resolution.Revisions))
+	for connectionID, revision := range resolution.Revisions {
+		revisions[connectionID.String()] = revision
+	}
+	roots := make(map[string]string, len(resolution.Roots))
+	for connectionID, root := range resolution.Roots {
+		roots[connectionID.String()] = root
+	}
+	if err := validateNativeManagedDataResolution(artifacts.Generation.ManagedDataPins, revisions, roots); err != nil {
 		if resolution.Lifetime != nil {
 			_ = resolution.Lifetime.Release()
 		}
 		return analyticsmaterialization.Request{}, nil, err
 	}
-	if err := analyticsmodule.BindCandidateManagedDataRoots(materialization.Models, artifacts.Compiler.Artifact.Manifest().NameIndex.Connections, resolution.Roots); err != nil {
+	if err := analyticsmodule.BindCandidateManagedDataRoots(materialization.Models, artifacts.Compiler.Artifact.Manifest().NameIndex.Connections, roots); err != nil {
 		if resolution.Lifetime != nil {
 			_ = resolution.Lifetime.Release()
 		}

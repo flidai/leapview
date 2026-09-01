@@ -388,6 +388,7 @@ func (m *Module) BindingValidation() BindingValidation {
 
 type RuntimeResolver interface {
 	ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error)
+	ResolveCandidateManagedData(context.Context, projectgraph.ResourceID, map[projectgraph.ResourceID]string) (manageddataresolver.Resolution, error)
 }
 
 func (m *Module) RuntimeResolution() RuntimeResolver {
@@ -406,6 +407,10 @@ func (m *Module) RuntimeResolution() RuntimeResolver {
 type disabledRuntimeResolver struct{}
 
 func (disabledRuntimeResolver) ResolveManagedData(context.Context, projectgraph.ServingIdentity) (manageddataresolver.Resolution, error) {
+	return manageddataresolver.Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
+}
+
+func (disabledRuntimeResolver) ResolveCandidateManagedData(context.Context, projectgraph.ResourceID, map[projectgraph.ResourceID]string) (manageddataresolver.Resolution, error) {
 	return manageddataresolver.Resolution{Roots: map[projectgraph.ResourceID]string{}}, nil
 }
 

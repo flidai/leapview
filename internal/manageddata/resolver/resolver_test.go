@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -83,6 +84,120 @@ func TestResolveManagedDataJoinsAndMaterializesMultipleBindingsDeterministically
 		if reordered.Roots[name] != root {
 			t.Fatalf("reused root %q = %q, want %q", name, reordered.Roots[name], root)
 		}
+	}
+}
+
+func TestResolveCandidateManagedDataUsesExactPinsWithoutServingState(t *testing.T) {
+	ordersOld, oldBlobs := testManifest(map[string]string{"orders.csv": "order_id\n1\n"})
+	ordersCurrent, currentBlobs := testManifest(map[string]string{"orders.csv": "order_id\n2\n"})
+	customers, customerBlobs := testManifest(map[string]string{"customers.csv": "customer_id\n1\n"})
+	repo := &fakeRepository{
+		stateErr: errors.New("serving-state lookup must not run"),
+		collections: map[string]manageddata.Collection{
+			"orders":    {ID: "orders", ProjectID: "project_sales", ConnectionID: "orders", Status: manageddata.CollectionStatusActive},
+			"customers": {ID: "customers", ProjectID: "project_sales", ConnectionID: "customers", Status: manageddata.CollectionStatusActive},
+		},
+		revisions: map[string]manageddata.Revision{
+			"orders-old":     testRevision("orders-old", "orders", ordersOld, manageddata.RevisionStatusReady),
+			"orders-current": testRevision("orders-current", "orders", ordersCurrent, manageddata.RevisionStatusReady),
+			"customers-r1":   testRevision("customers-r1", "customers", customers, manageddata.RevisionStatusReady),
+		},
+		files: map[string][]manageddata.RevisionFile{
+			"orders-old":     testRevisionFiles("orders-old", ordersOld),
+			"orders-current": testRevisionFiles("orders-current", ordersCurrent),
+			"customers-r1":   testRevisionFiles("customers-r1", customers),
+		},
+	}
+	resolver := testResolver(t, repo, &memoryBlobStore{blobs: mergeBlobs(oldBlobs, currentBlobs, customerBlobs)})
+
+	got, err := resolver.ResolveCandidateManagedData(t.Context(), "project_sales", map[projectgraph.ResourceID]string{
+		"orders": ordersCurrent.RevisionID(), "customers": customers.RevisionID(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = got.Lifetime.Release() })
+	wantRevisionID := aggregateForTest([]aggregateForTestInput{
+		{project: "project_sales", connection: "customers", digest: customers.RevisionID()},
+		{project: "project_sales", connection: "orders", digest: ordersCurrent.RevisionID()},
+	})
+	if got.RevisionID != wantRevisionID {
+		t.Fatalf("RevisionID = %q, want %q", got.RevisionID, wantRevisionID)
+	}
+	if got.Revisions["orders"] != ordersCurrent.RevisionID() || got.Revisions["customers"] != customers.RevisionID() {
+		t.Fatalf("Revisions = %#v, want exact candidate pins", got.Revisions)
+	}
+	assertFileContent(t, got.Roots["orders"], "orders.csv", "order_id\n2\n")
+	assertFileContent(t, got.Roots["customers"], "customers.csv", "customer_id\n1\n")
+}
+
+func TestResolveCandidateManagedDataRejectsInvalidOrUnavailablePins(t *testing.T) {
+	manifest, blobs := testManifest(map[string]string{"data.csv": "data"})
+	revision := testRevision("revision-1", "collection-1", manifest, manageddata.RevisionStatusReady)
+	valid := func() *fakeRepository {
+		return &fakeRepository{
+			collections: map[string]manageddata.Collection{
+				"collection-1": {ID: "collection-1", ProjectID: "project_sales", ConnectionID: "warehouse", Status: manageddata.CollectionStatusActive},
+			},
+			revisions: map[string]manageddata.Revision{"revision-1": revision},
+			files:     map[string][]manageddata.RevisionFile{"revision-1": testRevisionFiles("revision-1", manifest)},
+		}
+	}
+	tests := []struct {
+		name    string
+		project projectgraph.ResourceID
+		pins    map[projectgraph.ResourceID]string
+		mutate  func(*fakeRepository)
+		want    error
+	}{
+		{name: "invalid project", project: "bad project", pins: map[projectgraph.ResourceID]string{"warehouse": manifest.RevisionID()}, want: ErrInvalidMetadata},
+		{name: "invalid connection", pins: map[projectgraph.ResourceID]string{"bad connection": manifest.RevisionID()}, want: ErrInvalidMetadata},
+		{name: "invalid digest", pins: map[projectgraph.ResourceID]string{"warehouse": "revision-1"}, want: ErrInvalidMetadata},
+		{name: "missing digest", pins: map[projectgraph.ResourceID]string{"warehouse": "sha256:" + strings.Repeat("a", 64)}, want: ErrInvalidMetadata},
+		{name: "non-ready digest", pins: map[projectgraph.ResourceID]string{"warehouse": manifest.RevisionID()}, mutate: func(repo *fakeRepository) {
+			revision := repo.revisions["revision-1"]
+			revision.Status = manageddata.RevisionStatusPending
+			repo.revisions["revision-1"] = revision
+		}, want: ErrRevisionNotReady},
+		{name: "ready digest wins over non-ready duplicate", pins: map[projectgraph.ResourceID]string{"warehouse": manifest.RevisionID()}, mutate: func(repo *fakeRepository) {
+			pending := revision
+			pending.ID = "revision-pending"
+			pending.Status = manageddata.RevisionStatusPending
+			repo.revisions[pending.ID.String()] = pending
+		}, want: nil},
+		{name: "duplicate ready digest", pins: map[projectgraph.ResourceID]string{"warehouse": manifest.RevisionID()}, mutate: func(repo *fakeRepository) {
+			duplicate := revision
+			duplicate.ID = "revision-duplicate"
+			repo.revisions[duplicate.ID.String()] = duplicate
+		}, want: ErrInvalidMetadata},
+		{name: "archived collection", pins: map[projectgraph.ResourceID]string{"warehouse": manifest.RevisionID()}, mutate: func(repo *fakeRepository) {
+			collection := repo.collections["collection-1"]
+			collection.Status = manageddata.CollectionStatusArchived
+			repo.collections["collection-1"] = collection
+		}, want: ErrInvalidMetadata},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := valid()
+			if test.mutate != nil {
+				test.mutate(repo)
+			}
+			resolver := testResolver(t, repo, &memoryBlobStore{blobs: blobs})
+			project := test.project
+			if project == "" {
+				project = "project_sales"
+			}
+			_, err := resolver.ResolveCandidateManagedData(t.Context(), project, test.pins)
+			if test.want == nil {
+				if err != nil {
+					t.Fatalf("ResolveCandidateManagedData() error = %v, want nil", err)
+				}
+				return
+			}
+			if !errors.Is(err, test.want) {
+				t.Fatalf("ResolveCandidateManagedData() error = %v, want %v", err, test.want)
+			}
+		})
 	}
 }
 
@@ -430,12 +545,35 @@ func (r *fakeRepository) CollectionByID(_ context.Context, id projectgraph.Resou
 	return collection, nil
 }
 
+func (r *fakeRepository) CollectionByProjectConnection(_ context.Context, projectID, connectionID projectgraph.ResourceID) (manageddata.Collection, error) {
+	for _, collection := range r.collections {
+		if collection.ProjectID == projectID && collection.ConnectionID == connectionID {
+			return collection, nil
+		}
+	}
+	return manageddata.Collection{}, manageddata.ErrNotFound
+}
+
 func (r *fakeRepository) RevisionByID(_ context.Context, id manageddata.RevisionID) (manageddata.Revision, error) {
 	revision, ok := r.revisions[id.String()]
 	if !ok {
 		return manageddata.Revision{}, manageddata.ErrNotFound
 	}
 	return revision, nil
+}
+
+func (r *fakeRepository) ListRevisions(_ context.Context, collectionID projectgraph.ResourceID) ([]manageddata.Revision, error) {
+	revisions := make([]manageddata.Revision, 0)
+	for _, revision := range r.revisions {
+		if revision.CollectionID == collectionID {
+			revisions = append(revisions, revision)
+		}
+	}
+	if len(revisions) == 0 {
+		return nil, manageddata.ErrNotFound
+	}
+	sort.Slice(revisions, func(i, j int) bool { return revisions[i].ID < revisions[j].ID })
+	return revisions, nil
 }
 
 func (r *fakeRepository) ListRevisionFiles(_ context.Context, revisionID manageddata.RevisionID) ([]manageddata.RevisionFile, error) {
