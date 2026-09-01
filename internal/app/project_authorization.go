@@ -17,6 +17,7 @@ import (
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -340,6 +341,86 @@ func activeProjectResource(_ *http.Request, projectID projectgraph.ResourceID) [
 		return nil
 	}
 	return []access.ResourceRef{resource}
+}
+
+// protectCandidateProjectResources keeps candidate preview owner checks on
+// their durable candidate/runtime path while retaining the normal immutable
+// project authorization whenever a canonical serving generation exists. A
+// fresh target has no serving-state snapshot yet, so requiring one here would
+// prevent candidatePreview/candidateDashboard from reaching
+// ResolveOwnedCandidate and EnsureNativeCandidateRuntime. The candidate
+// handlers remain responsible for proving owner identity and candidate scope.
+func protectCandidateProjectResources(
+	accessModule canonicalAccessModule,
+	runtimeHost canonicalRuntimeHost,
+	capability access.Capability,
+	resolve func(*http.Request, projectgraph.ResourceID) []access.ResourceRef,
+	next http.HandlerFunc,
+) http.HandlerFunc {
+	if accessModule == nil || runtimeHost == nil || resolve == nil {
+		return func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+		}
+	}
+	return accessModule.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		principal, ok := accessModule.CurrentPrincipal(r)
+		if !ok {
+			http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)
+			return
+		}
+		if err := runtimeHost.ProjectID().Validate(); err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		active, err := candidatePreviewServingGenerationActive(r.Context(), runtimeHost)
+		if err != nil {
+			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+			return
+		}
+		if !active {
+			platformAdmin, ok := accessModule.(interface {
+				IsPlatformAdmin(context.Context, string) (bool, error)
+			})
+			if !ok {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			allowed, err := platformAdmin.IsPlatformAdmin(r.Context(), principal.ID)
+			if err != nil {
+				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+				return
+			}
+			if !allowed {
+				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
+				return
+			}
+			next(w, r)
+			return
+		}
+		// Delegate the active path to the canonical guard so project role,
+		// group, snapshot identity, and dev-bypass behavior remain identical
+		// to every other authenticated project route.
+		protectProjectResources(accessModule, runtimeHost, capability, resolve, next).ServeHTTP(w, r)
+	})).ServeHTTP
+}
+
+type candidatePreviewServingStateReader interface {
+	ActiveArtifact(context.Context) (servingstate.State, servingstate.Artifact, error)
+}
+
+func candidatePreviewServingGenerationActive(ctx context.Context, runtimeHost canonicalRuntimeHost) (bool, error) {
+	reader, ok := runtimeHost.(candidatePreviewServingStateReader)
+	if !ok {
+		return false, fmt.Errorf("runtime host does not expose canonical active serving-state lookup")
+	}
+	_, _, err := reader.ActiveArtifact(ctx)
+	if errors.Is(err, servingstate.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // protectManagedDataTransport authorizes each opaque resumable-upload request

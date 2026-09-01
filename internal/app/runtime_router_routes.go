@@ -133,7 +133,7 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 			})).ServeHTTP)
 		}
 		candidateProjectGuard := func(next http.HandlerFunc) http.HandlerFunc {
-			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, activeProjectResource, next)
+			return protectCandidateProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityProjectAdmin, activeProjectResource, next)
 		}
 		candidateReviewGuard := func(next http.HandlerFunc) http.HandlerFunc {
 			return protectProjectResources(dependencies.access, dependencies.runtimeHost, access.CapabilityResourceEdit, activeProjectResource, next)
