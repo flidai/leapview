@@ -482,12 +482,6 @@ func readUBDRArtifact(kind, path string, expected Occurrence) (validatedEvidence
 	default:
 		return validatedEvidenceArtifact{}, fmt.Errorf("unsupported recovery qualification evidence kind %q", kind)
 	}
-	sum := sha256.Sum256(contents)
-	digest := hex.EncodeToString(sum[:])
-	uri := (&url.URL{Scheme: "artifact", Host: "qualification", Path: "/" + kind + "/" + digest + ".json"}).String()
-	return validatedEvidenceArtifact{
-		reference: EvidenceReference{Kind: kind, URI: uri, SHA256: digest}, contents: contents,
-	}, nil
 }
 
 func retainUBDRArtifact(artifact validatedEvidenceArtifact, root string) (EvidenceReference, error) {
