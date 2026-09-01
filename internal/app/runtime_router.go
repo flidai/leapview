@@ -202,6 +202,7 @@ type workflowInputs struct {
 	refreshMaterializer      refreshrun.Materializer
 	refreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	publishedVersion         refreshmodule.PublishedDataVersionResolver
 	enableRefreshDispatcher  bool
 	recoveryLifecycle        *refreshmodule.RecoveryLifecycle
 	recoveryInterval         time.Duration
@@ -282,6 +283,7 @@ type workflowAssemblyInputs struct {
 	RefreshMaterializer      refreshrun.Materializer
 	RefreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	PublishedVersion         refreshmodule.PublishedDataVersionResolver
 	EnableRefreshDispatcher  bool
 	RecoveryLifecycle        *refreshmodule.RecoveryLifecycle
 	RecoveryInterval         time.Duration
@@ -604,6 +606,7 @@ func buildApplicationSurfaces(
 	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
 	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
+	moduleWorkflow.publishedVersion = workflow.PublishedVersion
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle
 	moduleWorkflow.recoveryInterval = workflow.RecoveryInterval

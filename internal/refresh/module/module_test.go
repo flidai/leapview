@@ -222,6 +222,9 @@ INSERT INTO refresh_job_runs (
 	if len(semanticState.Runs) != 1 || semanticState.Runs[0].ID != "run_1" || semanticState.LatestSuccessful.ID != "run_1" {
 		t.Fatalf("semantic model runs = %#v, latest successful = %#v", semanticState.Runs, semanticState.LatestSuccessful)
 	}
+	if semanticState.DataVersion.SnapshotID != 42 || !semanticState.DataVersion.RefreshedAt.Equal(now) {
+		t.Fatalf("semantic model data version = %#v", semanticState.DataVersion)
+	}
 }
 
 func TestAssetRefreshStateMarksMissingPersistenceUnavailable(t *testing.T) {
@@ -412,6 +415,59 @@ INSERT INTO semantic_model_data_versions (
 	}
 	if version.SnapshotID != 84 || version.ServingStateID != "state-new" || version.Source != refreshschedule.DataVersionSourceRefresh {
 		t.Fatalf("DataVersion() = %#v, want canonical runtime version", version)
+	}
+}
+
+func TestDataVersionFallsBackToCanonicalPublicationAndPrefersRefresh(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	identity := projectgraph.ServingIdentity{ProjectID: "sales", Environment: "prod", GenerationID: "state-new"}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('state-new', 'sales', 'prod', 'active')`); err != nil {
+		t.Fatal(err)
+	}
+	publishedAt := time.Date(2026, 8, 30, 10, 0, 0, 0, time.UTC)
+	module, err := Build(t.Context(), Config{
+		Database: store.SQLDB(), Workflow: testRefreshWorkflow, Authorization: testAuthorization(),
+		ResolveIdentity: func(context.Context) (projectgraph.ServingIdentity, error) { return identity, nil },
+		PublishedVersion: func(context.Context, projectgraph.ServingIdentity) (PublishedDataVersion, bool, error) {
+			return PublishedDataVersion{SnapshotID: 41, RefreshedAt: publishedAt}, true, nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, found, err := module.DataVersion(t.Context(), "sales", "prod", "orders")
+	if err != nil || !found {
+		t.Fatalf("published DataVersion() = %#v, %t, %v", version, found, err)
+	}
+	if version.SnapshotID != 41 || version.Source != refreshschedule.DataVersionSourcePublish || !version.RefreshedAt.Equal(publishedAt) {
+		t.Fatalf("published DataVersion() = %#v", version)
+	}
+	pipelineState, err := module.AssetRefreshState(t.Context(), "sales", "prod", "pipeline_daily", "orders")
+	if err != nil || pipelineState.DataVersion.SnapshotID != 41 || !pipelineState.DataVersion.RefreshedAt.Equal(publishedAt) {
+		t.Fatalf("pipeline published data version = %#v, %v", pipelineState.DataVersion, err)
+	}
+	semanticState, err := module.SemanticModelRefreshState(t.Context(), "sales", "prod", "orders")
+	if err != nil || semanticState.DataVersion.SnapshotID != 41 || !semanticState.DataVersion.RefreshedAt.Equal(publishedAt) {
+		t.Fatalf("semantic-model published data version = %#v, %v", semanticState.DataVersion, err)
+	}
+
+	refreshedAt := publishedAt.Add(time.Hour)
+	if err := module.schedules.SaveDataVersion(t.Context(), refreshschedule.DataVersion{
+		Identity: identity, SemanticModelID: "orders", SnapshotID: 84,
+		RefreshedAt: refreshedAt, Source: refreshschedule.DataVersionSourceRefresh,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	version, found, err = module.DataVersion(t.Context(), "sales", "prod", "orders")
+	if err != nil || !found {
+		t.Fatalf("refreshed DataVersion() = %#v, %t, %v", version, found, err)
+	}
+	if version.SnapshotID != 84 || version.Source != refreshschedule.DataVersionSourceRefresh || !version.RefreshedAt.Equal(refreshedAt) {
+		t.Fatalf("refreshed DataVersion() = %#v", version)
 	}
 }
 
