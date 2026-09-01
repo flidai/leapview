@@ -268,6 +268,45 @@ Cursor publication is ordered after successful IPC close. Cancellation,
 timeout, row/byte budget failure, admission failure, partial write, IPC write
 failure, or IPC close failure therefore cannot publish a successful cursor.
 
+## Direct-stream resource policy
+
+The unrouted FAI-602 lifecycle foundation defines bounded synchronous delivery
+for a future native-v1 route. It does not activate native dashboard serving.
+
+- Native streaming is disabled unless the analytical pool has at least two
+  connections. The initial limit is one stream per instance, one per principal,
+  and one per project. Future limits remain no greater than `pool size - 1` and
+  approximately 25 percent of the analytical pool, preserving at least one
+  ordinary-query connection.
+- Stream-capacity acquisition is non-queuing and occurs before workload
+  admission, serving-generation leasing, or database acquisition. A request
+  already holding another workload permit is rejected rather than nested or
+  queued.
+- The workload admission occupancy starts at its grant and spans planning,
+  execution, synchronous IPC delivery, IPC close, cursor publication decision,
+  and terminal audit recording.
+- The absolute lifetime is 30 seconds from admission grant. An earlier request,
+  workload, shutdown, or serving deadline wins. Every socket write has a
+  five-second no-progress deadline; forward progress refreshes only the idle
+  deadline and never extends the absolute lifetime.
+- Cleanup is synchronous and ordered: close the Arrow reader, release the
+  database connection, release workload admission, release native-stream
+  capacity, and finally release the serving-generation lease. The hard cleanup
+  bound is two seconds, with a one-second p95 target.
+- Result accounting includes the response schema, server-added metadata,
+  emitted rows, the `limit + 1` probe, retained batch bytes, and actual IPC bytes
+  accepted by the transport. A failure after commitment aborts the stream and
+  suppresses the successful cursor trailer.
+- Terminal observations record emitted and probe rows, IPC bytes, connection
+  hold time, admission occupancy, timeout reason, cancellation cleanup latency,
+  cleanup-bound violations, and post-commit aborts. Success is recorded only
+  after clean IPC close and a successful cursor publication decision, while all
+  lifecycle resources remain owned.
+
+The foundation requires the underlying analytical lease and Arrow reader to
+release synchronously. It measures cleanup-bound violations but does not add a
+second database pool, asynchronous buffering, or a production routing path.
+
 ## Security and governance invariants
 
 The native transport changes representation only. Before any schema or batch
