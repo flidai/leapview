@@ -9,6 +9,7 @@ const markdown = new MarkdownIt({
   linkify: true,
   typographer: false,
 })
+markdown.linkify.set({ fuzzyLink: true })
 
 class MarkdownView extends LitElement {
   @property({ type: String }) value = ''
