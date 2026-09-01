@@ -21,7 +21,9 @@ Supersedes:
 Related: [ADR-0005](0005-use-project-wide-resource-graph.md),
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md), the
 [storage architecture](../docs/storage-architecture-spec.md), and the
-[dependency-aware dashboard query cache](https://linear.app/flid/project/dependency-aware-dashboard-query-cache-e23514b5f578/overview)
+[dependency-aware dashboard query cache](https://linear.app/flid/project/dependency-aware-dashboard-query-cache-e23514b5f578/overview).
+The conditional River admission decision is recorded in the [FAI-595 River
+job admission specification](specifications/fai-595-river-job-admission.md).
 
 ## Context and problem statement
 
@@ -573,7 +575,13 @@ logical decoding when independent retention, throughput, stream processing,
 or cross-region consumers justify it. It does not replace the transactional
 event write.
 
-### Framework boundary: Watermill for messages, River for eligible jobs
+### Framework boundary: Watermill for messages; jobs remain capability-owned
+
+River is a preferred future generic runtime, not an immediate target or
+cutover requirement. No current production job kind is eligible for River.
+Until a kind passes the [FAI-595 admission specification](specifications/fai-595-river-job-admission.md),
+the capability-owned PostgreSQL jobs tables and runner remain its sole
+execution authority.
 
 The target is framework-first above the PostgreSQL authority, but framework
 tables and defaults do not redefine LeapView's durable contracts.
@@ -585,7 +593,7 @@ tables and defaults do not redefine LeapView's durable contracts.
 | handler orchestration, approved retry/recovery/timeout middleware, and handler metrics | Watermill router | LeapView supplies bounded policy and idempotent domain handlers; canonical correlation remains envelope data, not mutable Watermill metadata |
 | compliance audit | append-only audit schema and audit writer | outside Watermill unless an explicit asynchronous export consumer is enrolled |
 | lineage and cache projections | lineage and cache capability schemas, when separately admitted | no Watermill topic or concrete consumer is implied; any such projection remains outside message transport authority |
-| long-running commands and scheduled work | River for admitted job kinds, otherwise the capability-owned runner | never executed as a Watermill message handler |
+| long-running commands and scheduled work | capability-owned PostgreSQL jobs tables and runner; River only for a future kind admitted by FAI-595 | never executed as a Watermill message handler |
 | browser signal delivery | Pagestream and the instance-local SSE fan-out | outside Watermill; durable events only wake or reconcile application state |
 
 [Watermill](https://watermill.io/docs/) is the standard application-level
@@ -699,7 +707,9 @@ are positive and the lease must outlive the acknowledgement and recovery
 window (for example, `handler_deadline < acknowledgement_deadline <
 claim_lease - recovery_margin`); zero values cannot silently disable these
 protections. Watermill handlers must keep their transaction short; long work
-persists a River job request and acknowledges only that admission transaction.
+persists a request in the capability-owned jobs runner and acknowledges only
+that admission transaction. A future River request is allowed only after one
+job kind passes FAI-595; no current production handler assumes River.
 The Router uses only the mature `Retry`, `Recoverer`, `Timeout`, `Prometheus`,
 and `slog` middleware; metadata-mutating `CorrelationID` and `Delay`,
 `PoisonQueue`, `InstantAck`, and `IgnoreErrors` are not part of the canonical
@@ -714,40 +724,33 @@ boundary requires forwarding the canonical PostgreSQL outbox. Introducing it
 before that need would add another subscriber and operational path without
 changing local correctness; it never replaces the canonical event write.
 
-[River](https://github.com/riverqueue/river) is the target worker runtime for
-generic command jobs whose domain completion can be expressed through River's
-transactional enqueue, bounded attempts, scheduled execution, uniqueness,
-queue isolation, cancellation, and retry model. A job may be inserted in the
-same pgx transaction as its source mutation. River owns generic worker
-mechanics for admitted job kinds; the relevant capability still owns request
-identity, authorization, immutable publication or refresh evidence, fencing,
-and the domain terminal state.
+[River](https://github.com/riverqueue/river) remains the preferred future
+generic runtime for a single admitted job kind whose domain completion can be
+expressed through River's transactional enqueue, bounded attempts, scheduled
+execution, uniqueness, queue isolation, cancellation, and retry model. It is
+not the current worker target: no production kind has passed the candidate
+gates, and every current kind stays on the purpose-built PostgreSQL runner.
+The capability continues to own request identity, authorization, stable
+request digests, immutable publication or refresh evidence, fencing, product
+history, and terminal state. River may own generic execution mechanics only
+after a reviewed adapter proves those contracts without a second authority.
 
 River is not an event bus and does not replace broadcast consumer state. It
-also does not become the authority for refresh occurrences, refresh active
-pointers, deployment approvals, delivery publications, DuckLake build
-attempts, or retention roots. Those records may enqueue or be reconciled by a
-River job, but their capability schema remains authoritative. Job kinds whose
-correctness depends on a caller-owned multi-capability transaction, exact
-attempt evidence, fairness/admission semantics, or recovery behavior that the
-River adapter cannot prove remain on the purpose-built PostgreSQL runner.
+must not become the authority for refresh occurrences, refresh active pointers,
+deployment approvals, delivery publications, DuckLake build attempts, or
+retention roots. Those records remain capability-owned. A future candidate
+must preserve transactional enqueue and completion, stable product identity
+and canonical digest, workload admission and fairness, fencing/cancellation/
+recovery, and must delete more custom machinery than it adds as adapters. The
+complete candidate matrix and gates are in [FAI-595](specifications/fai-595-river-job-admission.md).
 
 Framework admission is a pass/fail confirmation gate, not an invitation to
-maintain two systems. The proof must cover transaction atomicity; stable IDs
-and canonical digests; leases, cancellation, and stale-worker fencing;
-fairness and workload admission; retries, poison and terminal evidence;
-event replay, enrollment and retention; refresh scheduling and recovery;
-multi-node behavior, observability, migrations, rollback, and licensing. The
-outcome is one authority and one runtime path per event consumer or job kind:
-
-- a passing Watermill adapter becomes the single message-delivery path over the
-  canonical event authority;
-- a passing River adapter replaces the generic queue/runner for the explicitly
-  admitted job kinds;
-- a failed invariant keeps the current purpose-built PostgreSQL component;
-  and
-- any result that requires durable dual-write authorities or more translation
-  code than the machinery it replaces is rejected.
+maintain two systems. There is one durable queue authority and one runtime
+path per kind: the current PostgreSQL jobs authority until admission, or a
+passing River adapter after an explicit cutover. Shadow writes, dual workers,
+durable fallback authorities, or a translation layer larger than the runner it
+replaces are rejected. A failed or unrun gate keeps the current
+purpose-built PostgreSQL component.
 
 ### Versioned resource and lineage graph
 
@@ -1127,13 +1130,14 @@ Linear; this ADR records the destination and its invariants.
 - Multi-node tests prove that durable workers do not execute one lease
   concurrently, stale owners cannot publish, and active serving transitions
   converge after a missed notification or node restart.
-- Framework conformance runs the same event and job invariants through the
-  proposed Watermill and River adapters. It proves caller-owned transaction
-  rollback, lost-ack redelivery, poison and replay retention, retry exhaustion,
-  cancellation and stale-worker fencing, queue admission, restart, and
-  multi-node takeover before either adapter becomes authoritative for a
-  consumer or job kind. The test also proves that no legacy authority is
-  written after cutover.
+- Framework conformance runs the event invariants through the Watermill
+  adapter. A River candidate is tested separately, one job kind at a time,
+  against the [FAI-595 gates](specifications/fai-595-river-job-admission.md):
+  caller-owned enqueue/completion rollback, stable identity and digest,
+  admission/fairness, cancellation and stale-worker fencing, retry/recovery,
+  restart, and multi-node takeover. No candidate is authoritative until every
+  gate passes, and tests prove that no second jobs authority is written after
+  cutover.
 - Lineage conformance reconstructs the canonical `ProjectGraph` from persisted
   nodes and edges, verifies its digest, tests upstream and downstream closure,
   rejects cycles where the resource contract requires a DAG, and binds the

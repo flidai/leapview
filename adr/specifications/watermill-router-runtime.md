@@ -153,8 +153,12 @@ root until its bounded backfill completes. Pruning `event_log` or
 or unresolved dead letter remains.
 
 Handlers keep transactions short. Work that may exceed the handler deadline is
-admitted as a River job and acknowledged only after that admission transaction
-commits; it is not executed as a long-running Watermill handler.
+enqueued through the capability-owned PostgreSQL jobs runner and acknowledged
+only after that admission transaction commits; it is not executed as a
+long-running Watermill handler. River is only a preferred future runtime: no
+current production job kind is admitted, and a future candidate must pass the
+[FAI-595 River job admission gates](fai-595-river-job-admission.md) before any
+cutover.
 
 Pagestream remains the browser SSE transport. Watermill events may wake or
 reconcile application state, but per-client Pagestream patches never travel

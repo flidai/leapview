@@ -49,6 +49,7 @@ historical records.
 - [Watermill PostgreSQL proof](specifications/watermill-postgresql-proof.md)
 - [Watermill Router/subscriber runtime](specifications/watermill-router-runtime.md)
 - [Product histories and canonical asynchronous events](specifications/fai-594-product-histories-and-canonical-events.md)
+- [FAI-595 River job admission](specifications/fai-595-river-job-admission.md)
 
 ## Conventions
 
