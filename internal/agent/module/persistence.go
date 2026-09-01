@@ -57,7 +57,9 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 }
 
 func (p *Persistence) isPostgres() bool { return p != nil && p.backend == backendPostgres }
-func (p *Persistence) isSQLite() bool   { return p != nil && p.backend == backendSQLite }
+func (p *Persistence) isSQLite() bool {
+	return p != nil && p.backend == backendSQLite && p.legacyDatabase != nil
+}
 
 func (p Persistence) validate() error {
 	if p.Repository == nil {

@@ -43,6 +43,22 @@ func TestLocalSQLiteCompositionUsesExplicitSQLiteAuditStore(t *testing.T) {
 	}
 }
 
+func TestLocalSQLiteCompositionUsesExplicitAPIProtocolAuthorities(t *testing.T) {
+	contents, err := os.ReadFile("composition.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, constructor := range []string{
+		"idempotencysqlite.NewStore(store.SQLDB())",
+		"cursorsigningsqlite.NewInitializer(store.SQLDB())",
+	} {
+		if !strings.Contains(source, constructor) {
+			t.Fatalf("local SQLite composition is missing explicit API protocol authority %q", constructor)
+		}
+	}
+}
+
 func TestLocalSQLiteAssemblyRejectsNonEvaluationProductionBeforeState(t *testing.T) {
 	home := t.TempDir()
 	cfg := config.Config{

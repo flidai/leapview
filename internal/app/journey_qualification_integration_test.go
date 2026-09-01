@@ -43,9 +43,12 @@ func TestJourneyQualificationAssembledRouter(t *testing.T) {
 	if err != nil {
 		t.Fatalf("build audit runtime: %v", err)
 	}
+	sqliteAuthoring, err := dashboardmodule.NewSQLiteAuthoringPersistence(store.SQLDB(), audit.recorder)
+	if err != nil {
+		t.Fatalf("build SQLite authoring persistence: %v", err)
+	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database:            store.SQLDB(),
-		AuditIntentRecorder: audit.recorder,
+		SQLitePersistence: sqliteAuthoring,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			return authorizeProjectResources(ctx, options.AccessModule, options.RuntimeHost, principalID, projectID, []access.ResourceRef{resource}, capability)
 		},

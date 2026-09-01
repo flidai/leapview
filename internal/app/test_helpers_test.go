@@ -244,8 +244,9 @@ type assemblyConfig struct {
 	PlatformHealth          platformHealth
 	AgentSettings           agentmodule.Settings
 	AgentPersistence        *agentmodule.Persistence
-	AdminDatabase           *sql.DB
+	AccessPersistence       *accessmodule.Persistence
 	ServingStateRepo        servingStateRepository
+	ServingStatePersistence *servingstatemodule.Persistence
 	StorageRetention        *servingstatemodule.Retention
 	ManagedDataValidation   refreshmodule.CandidateValidationHook
 	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
@@ -380,10 +381,16 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		publicURL = "http://localhost:8080"
 	}
 	if options.AccessModule == nil {
+		if options.AccessPersistence == nil && options.Database != nil {
+			persistence, err := accessmodule.NewSQLitePersistence(ctx, accessmodule.SQLitePersistenceConfig{Database: options.Database})
+			if err != nil {
+				return nil, err
+			}
+			options.AccessPersistence = &persistence
+		}
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database:     options.Database,
-			LegacySQLite: true,
+			Persistence:  options.AccessPersistence,
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
 			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})
@@ -410,8 +417,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 	}
 	routes, runtime, platform, policy, err := buildApplicationSurfaces(ctx, metrics,
 		dataAssemblyInputs{
-			Database: options.Database, PlatformHealth: options.PlatformHealth,
-			AdminDatabase: options.AdminDatabase, ServingStateRepo: options.ServingStateRepo,
+			PlatformHealth: options.PlatformHealth, ServingStateRepo: options.ServingStateRepo,
 			RefreshServingStateMutations: options.RefreshServingStateMutations,
 			StorageRetention:             options.StorageRetention,
 			AccessRepo:                   options.AccessRepo,

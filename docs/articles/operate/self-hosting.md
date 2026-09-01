@@ -8,9 +8,9 @@ Choose one environment, DNS name, Compose project name, and persistent-volume bo
 
 ## Topology
 
-One instance contains exactly one LeapView process, environment, control-plane SQLite database, global DuckLake catalog, and analytical data store. The Compose stack mounts all local authoritative state beneath `/var/lib/leapview` and binds the application port to localhost. The optional Caddy overlay publishes ports 80 and 443 with automatic HTTPS.
+One instance contains exactly one LeapView process and environment. Production authority lives in the PostgreSQL control plane and a PostgreSQL-backed DuckLake catalog; DuckDB executes bounded serving reads and refresh transactions over DuckLake-managed analytical data. The Compose stack binds the application port to localhost and mounts only the local state required by the configured storage topology. The optional Caddy overlay publishes ports 80 and 443 with automatic HTTPS.
 
-Horizontal replicas, a shared SQLite home, and a remote multi-writer DuckLake catalog are not supported in v1. Deploy another independent instance when you need another environment or capacity boundary.
+Horizontal application replicas and an independently writable DuckLake catalog are not supported in v1. SQLite is limited to development, evaluation, and offline tooling; it is not a production control-plane fallback. Deploy another independent instance when you need another environment or capacity boundary.
 
 ## Deploy Compose
 

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/platform"
@@ -26,9 +25,15 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 	options.Database = store.SQLDB()
 	options.PlatformHealth = store
 	options.AgentSettings = store
-	options.AdminDatabase = store.SQLDB()
+	if options.AccessPersistence == nil {
+		persistence, err := accessmodule.NewSQLitePersistence(context.Background(), accessmodule.SQLitePersistenceConfig{Database: store.SQLDB()})
+		if err != nil {
+			panic(err)
+		}
+		options.AccessPersistence = &persistence
+	}
 	if options.AccessRepo == nil {
-		options.AccessRepo = accesssqlite.NewRepository(store.SQLDB())
+		options.AccessRepo = options.AccessPersistence.Repository
 	}
 	if options.AccessModule == nil && options.Auth != nil {
 		publicURL := options.PublicURL
@@ -36,8 +41,7 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			publicURL = options.MCPOAuth.PublicURL
 		}
 		module, err := accessmodule.Build(context.Background(), accessmodule.Config{
-			Database:     store.SQLDB(),
-			LegacySQLite: true,
+			Persistence:  options.AccessPersistence,
 			ExistingAuth: options.Auth, PublicURL: publicURL,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
 		})
@@ -47,7 +51,14 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.AccessModule = module
 	}
 	if options.ServingStateRepo == nil {
-		states, err := servingstatemodule.Build(context.Background(), servingstatemodule.Config{Database: store.SQLDB()})
+		if options.ServingStatePersistence == nil {
+			persistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
+			if err != nil {
+				panic(err)
+			}
+			options.ServingStatePersistence = &persistence
+		}
+		states, err := servingstatemodule.Build(context.Background(), servingstatemodule.Config{Persistence: options.ServingStatePersistence})
 		if err != nil {
 			panic(err)
 		}

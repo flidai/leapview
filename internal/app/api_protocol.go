@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"net/http"
 	"strings"
@@ -12,14 +11,11 @@ import (
 	apiprotocol "github.com/flidai/leapview/internal/app/api/protocol"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
 	"github.com/flidai/leapview/internal/platform/http/idempotency"
-	idempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 )
 
 type apiProtocolPersistence struct {
-	Database        *sql.DB
 	Idempotency     idempotency.Store
 	CursorSigning   cursorsigning.Initializer
 	RequireExplicit bool
@@ -35,9 +31,9 @@ func (p apiProtocolPersistence) authorities() (idempotency.Store, cursorsigning.
 	if p.RequireExplicit {
 		return nil, nil, errors.New("production API protocol requires explicit durable authorities")
 	}
-	if p.Database != nil {
-		return idempotencysqlite.NewStore(p.Database), cursorsigningsqlite.NewInitializer(p.Database), nil
-	}
+	// Profile-only/test assemblies may intentionally use process-local
+	// authorities. Local application composition constructs and injects its
+	// SQLite authorities explicitly before entering this seam.
 	return idempotency.NewMemoryStore(), cursorsigning.NewEphemeralInitializer(), nil
 }
 
@@ -45,9 +41,8 @@ func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, pl
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	// Profile-only assemblies use explicit process-local capabilities. A fully
-	// configured runtime supplies the transitional SQLite fixture below;
-	// PostgreSQL callers inject native adapters at this composition boundary.
+	// Every durable runtime supplies explicit authorities. Profile-only
+	// assemblies may use the process-local defaults selected by authorities().
 	idempotencyStore, cursorInitializer, err := persistence.authorities()
 	if err != nil {
 		return err

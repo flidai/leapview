@@ -30,6 +30,10 @@ type Persistence struct {
 	Snapshot    SnapshotInstaller
 	Publication DashboardPublicationActivator
 	backend     persistenceBackend
+	// legacyDatabase is retained only by the explicit SQLite adapter for
+	// constructing the local MCP OAuth service. It is deliberately private so
+	// callers cannot inject a database through the module configuration.
+	legacyDatabase *sql.DB
 }
 
 type persistenceBackend uint8
@@ -156,7 +160,7 @@ func NewSQLitePersistence(ctx context.Context, config SQLitePersistenceConfig) (
 		return Persistence{}, err
 	}
 	repository := accesssqlite.NewRepository(config.Database)
-	p := Persistence{Repository: repository, backend: backendSQLiteLegacy}
+	p := Persistence{Repository: repository, backend: backendSQLiteLegacy, legacyDatabase: config.Database}
 	p.Snapshot, p.Publication = sqliteActivationPorts{}, sqliteActivationPorts{}
 	p.Authoring, _ = any(repository).(access.AuthoringAuthRepository)
 	p.Desktop, _ = any(repository).(access.DesktopSessionRepository)

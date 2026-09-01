@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 
@@ -20,32 +19,35 @@ func (nativeDashboardReconcilerStub) Reconcile(context.Context, dashboardPublica
 }
 
 func TestValidateDashboardAssemblyInputsPreservesLegacyOnlyWhenNativeIsAbsent(t *testing.T) {
-	legacy := dataAssemblyInputs{Database: &sql.DB{}, AdminDatabase: &sql.DB{}}
+	legacy := dataAssemblyInputs{DashboardSQLite: &dashboardmodule.SQLitePersistence{}}
 	if dashboardNativeInputsPresent(legacy) {
-		t.Fatal("legacy database inputs were classified as native dashboard authorities")
+		t.Fatal("explicit SQLite inputs were classified as native dashboard authorities")
 	}
 	if err := validateDashboardAssemblyInputs(legacy, capabilityAssemblyInputs{}); err != nil {
-		t.Fatalf("explicit legacy-only dashboard inputs were rejected: %v", err)
+		t.Fatalf("explicit SQLite-only dashboard inputs were rejected: %v", err)
 	}
 
-	native := dataAssemblyInputs{DashboardPublicationReconciler: nativeDashboardReconcilerStub{}}
+	native := dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}}
 	if !dashboardNativeInputsPresent(native) {
-		t.Fatal("native publication reconciler did not select native dashboard admission")
+		t.Fatal("native dashboard persistence did not select native dashboard admission")
 	}
 }
 
-func TestNativePersistenceInputsPresenceIncludesOpaqueCapabilityBundles(t *testing.T) {
+func TestNativePersistenceInputsPresenceRequiresDashboardBundle(t *testing.T) {
 	if nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{}) {
 		t.Fatal("empty assembly was classified as native persistence")
 	}
-	if !nativePersistenceInputsPresent(dataAssemblyInputs{RefreshPersistence: &refreshmodule.Persistence{}}, capabilityAssemblyInputs{}) {
-		t.Fatal("refresh persistence did not select native persistence admission")
+	if nativePersistenceInputsPresent(dataAssemblyInputs{RefreshPersistence: &refreshmodule.Persistence{}}, capabilityAssemblyInputs{}) {
+		t.Fatal("refresh persistence alone selected native dashboard admission")
 	}
-	if !nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{AgentPersistence: &agentmodule.Persistence{}}) {
-		t.Fatal("agent persistence did not select native persistence admission")
+	if nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{AgentPersistence: &agentmodule.Persistence{}}) {
+		t.Fatal("agent persistence alone selected native dashboard admission")
 	}
 	if nativePersistenceInputsPresent(dataAssemblyInputs{}, capabilityAssemblyInputs{JobModule: &jobsmodule.Module{}}) {
-		t.Fatal("opaque jobs module was incorrectly assumed to be native persistence")
+		t.Fatal("opaque jobs module selected native dashboard admission")
+	}
+	if !nativePersistenceInputsPresent(dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}}, capabilityAssemblyInputs{}) {
+		t.Fatal("dashboard persistence did not select native dashboard admission")
 	}
 }
 
@@ -74,13 +76,11 @@ func TestProductionRuntimeInputsRequireNativeDurableAuthorities(t *testing.T) {
 }
 
 func TestNativeRuntimeInputsRejectMixedSQLiteAuthorities(t *testing.T) {
-	capabilities := capabilityAssemblyInputs{AgentPersistence: &agentmodule.Persistence{}}
 	for _, data := range []dataAssemblyInputs{
-		{Database: &sql.DB{}},
-		{AdminDatabase: &sql.DB{}},
-		{AuditRuntime: &auditRuntime{}},
+		{DashboardPersistence: &dashboardmodule.NativePersistence{}, DashboardSQLite: &dashboardmodule.SQLitePersistence{}},
+		{DashboardPersistence: &dashboardmodule.NativePersistence{}, AuditRuntime: &auditRuntime{}},
 	} {
-		if err := validateProductionRuntimeInputs(data, capabilities, runtimeAssemblyInputs{}); err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
+		if err := validateProductionRuntimeInputs(data, capabilityAssemblyInputs{}, runtimeAssemblyInputs{}); err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
 			t.Fatalf("mixed native/SQLite inputs error = %v", err)
 		}
 	}
@@ -94,12 +94,12 @@ func TestValidateDashboardAssemblyInputsRejectsPartialOrMixedNativeAuthorities(t
 	}{
 		{
 			name: "sqlite mixing",
-			data: dataAssemblyInputs{Database: &sql.DB{}, DashboardPublicationReconciler: nativeDashboardReconcilerStub{}},
-			want: "rejects database/sql",
+			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}, DashboardSQLite: &dashboardmodule.SQLitePersistence{}},
+			want: "rejects SQLite persistence",
 		},
 		{
 			name: "legacy audit mixing",
-			data: dataAssemblyInputs{AuditRuntime: &auditRuntime{}, DashboardPublicationReconciler: nativeDashboardReconcilerStub{}},
+			data: dataAssemblyInputs{DashboardPersistence: &dashboardmodule.NativePersistence{}, AuditRuntime: &auditRuntime{}, DashboardPublicationReconciler: nativeDashboardReconcilerStub{}},
 			want: "legacy SQLite audit runtime",
 		},
 		{

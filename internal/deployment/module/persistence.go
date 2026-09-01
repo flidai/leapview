@@ -20,6 +20,18 @@ import (
 
 type ActivationHooks struct{}
 
+// SQLitePersistenceConfig contains the complete explicit local/evaluation
+// adapter construction inputs. Build never infers SQLite from a raw database
+// handle; callers must construct this bundle deliberately.
+type SQLitePersistenceConfig struct {
+	Database        *sql.DB
+	ActivationHooks ActivationHooks
+	Releases        ReleasePort
+	Workflow        jobplatform.WorkflowRecorder
+	CancelJob       jobplatform.WorkflowJobCanceller
+	Audit           access.AuditIntentRecorder
+}
+
 // NewSQLiteBootstrapPersistence constructs the durable bootstrap policy and
 // project claim ports owned by the deployment module. Callers receive
 // contracts only; the SQLite adapter never crosses the module boundary.
@@ -28,6 +40,33 @@ func NewSQLiteBootstrapPersistence(database *sql.DB) (BootstrapPersistence, erro
 		return nil, errors.New("SQLite deployment database is required")
 	}
 	return deploymentsqlite.NewRepositoryWithHooks(database, deploymentsqlite.ActivationHooks{}), nil
+}
+
+// NewSQLitePersistence constructs the full local/evaluation deployment
+// authority bundle. The concrete SQLite repositories remain private to this
+// module; Build consumes the typed bundle rather than selecting an adapter
+// from Config.Database/LegacySQLite flags.
+func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
+	if config.Database == nil {
+		return Persistence{}, errors.New("SQLite deployment database is required")
+	}
+	repository, activation, candidates, approvals := newPersistence(
+		config.Database, config.ActivationHooks, config.Releases, config.Workflow,
+		config.CancelJob, config.Audit,
+	)
+	return Persistence{
+		Candidates:       nil,
+		ProjectClaims:    nil,
+		DeliveryReader:   nil,
+		Activation:       nil,
+		legacyRepository: repository,
+		legacyActivation: activation,
+		legacyCandidates: candidates,
+		legacyApprovals:  approvals,
+		legacyDatabase:   config.Database,
+		legacyAudit:      config.Audit,
+		backend:          backendSQLite,
+	}, nil
 }
 
 func newPersistence(
@@ -79,6 +118,13 @@ type Persistence struct {
 
 	native  *deploymentpostgres.Repository
 	backend persistenceBackend
+
+	legacyRepository deployment.Repository
+	legacyActivation deployment.ActivationUnitOfWork
+	legacyCandidates deployment.CandidateRepository
+	legacyApprovals  deployment.ApprovalRepository
+	legacyDatabase   *sql.DB
+	legacyAudit      access.AuditIntentRecorder
 }
 
 // NativePersistenceCapabilities is the complete cross-capability dependency
@@ -272,6 +318,7 @@ type persistenceBackend uint8
 
 const (
 	backendUnknown persistenceBackend = iota
+	backendSQLite
 	backendPostgres
 )
 
@@ -372,7 +419,17 @@ func (p Persistence) isPostgres() bool {
 	return p.backend == backendPostgres && p.native != nil && p.Repository == p.native
 }
 
+func (p Persistence) isSQLite() bool {
+	return p.backend == backendSQLite && p.native == nil && p.legacyDatabase != nil && p.legacyRepository != nil
+}
+
 func (p Persistence) validate() error {
+	if p.isSQLite() {
+		if p.legacyActivation == nil || p.legacyCandidates == nil || p.legacyApprovals == nil {
+			return errors.New("SQLite deployment persistence surfaces are required")
+		}
+		return nil
+	}
 	if !p.isPostgres() {
 		return errors.New("deployment persistence backend is not configured as PostgreSQL")
 	}

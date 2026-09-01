@@ -23,14 +23,11 @@ func TestBuildRejectsUnmarkedOrLegacyAuthorityForProduction(t *testing.T) {
 	admitter := jobs.AdmitterFunc(func(context.Context, jobs.AdmissionRequest) (jobs.AdmissionLease, error) {
 		return nil, nil
 	})
-	if _, err := Build(t.Context(), Config{Database: &sql.DB{}, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "LegacySQLite") {
-		t.Fatalf("implicit SQLite build error = %v, want explicit LegacySQLite rejection", err)
+	if _, err := Build(t.Context(), Config{Admission: admitter}); err == nil || !strings.Contains(err.Error(), "persistence") {
+		t.Fatalf("missing authority build error = %v, want persistence rejection", err)
 	}
-	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: &sql.DB{}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
+	persistence := sqlitePersistence(t, &sql.DB{})
+	if _, err := Build(t.Context(), Config{Persistence: persistence, Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
 		t.Fatalf("legacy production build error = %v, want PostgreSQL rejection", err)
 	}
 	if _, err := Build(t.Context(), Config{Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "persistence") {
@@ -50,7 +47,7 @@ func TestModuleFailurePayloadOmitsHandlerErrorText(t *testing.T) {
 	}
 	defer admission.Close()
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission), PollInterval: time.Millisecond,
+		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission), PollInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -212,6 +209,15 @@ func testAdmission(controller workload.Admitter) jobs.Admitter {
 	})
 }
 
+func sqlitePersistence(t *testing.T, database *sql.DB) *Persistence {
+	t.Helper()
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: database})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return &persistence
+}
+
 func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
 	if err != nil {
@@ -225,7 +231,7 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	defer admission.Close()
 
 	first, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission),
+		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission),
 		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -276,7 +282,7 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	}
 
 	second, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission),
+		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission),
 		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -331,7 +337,7 @@ func TestModuleRejectsDuplicateKindsBeforeStarting(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -352,7 +358,7 @@ func TestModuleLifecycleIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +391,7 @@ func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
 	}
 	defer admission.Close()
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission), PollInterval: time.Millisecond,
+		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission), PollInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -467,7 +473,7 @@ func TestModuleRecordsTerminalEventWithoutRegisteredFollowupKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -506,7 +512,7 @@ func TestModuleCommitsWorkflowAtomically(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -540,7 +546,7 @@ func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -571,7 +577,7 @@ func TestModuleRejectsUnknownEnqueuedKind(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Database: store.SQLDB(), LegacySQLite: true, Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}

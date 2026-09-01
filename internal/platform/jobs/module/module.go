@@ -3,7 +3,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"log/slog"
 	"sync"
@@ -16,14 +15,9 @@ import (
 )
 
 type Config struct {
-	// Persistence is the preferred capability-owned authority bundle. It must
+	// Persistence is the capability-owned authority bundle. It must
 	// be constructed with NewPostgresPersistence for production composition.
-	Persistence *Persistence
-	// Database is retained only for explicit SQLite development/test callers.
-	Database *sql.DB
-	// LegacySQLite is an explicit opt-in for Database. Build never selects
-	// SQLite implicitly and production composition must leave this false.
-	LegacySQLite bool
+	Persistence  *Persistence
 	Production   bool
 	Admission    jobs.Admitter
 	LeaseTimeout time.Duration
@@ -43,22 +37,6 @@ type Module struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	if config.Persistence != nil && config.Database != nil {
-		return nil, errors.New("jobs persistence is mutually exclusive with database inputs")
-	}
-	if config.Production && config.Database != nil {
-		return nil, errors.New("production jobs build rejects SQLite database injection; use PostgreSQL persistence")
-	}
-	if config.Persistence == nil && config.Database != nil {
-		if !config.LegacySQLite {
-			return nil, errors.New("SQLite jobs build requires LegacySQLite=true; inject PostgreSQL persistence for production")
-		}
-		persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: config.Database})
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
-	}
 	if config.Persistence == nil {
 		return nil, errors.New("jobs build requires injected PostgreSQL persistence")
 	}
@@ -272,9 +250,6 @@ func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent)
 		return m.persistence.NativeCommitter.CommitWorkflow(ctx, intent)
 	}
 	database := m.persistence.legacyDatabase
-	if database == nil {
-		database = m.config.Database
-	}
 	if database == nil {
 		return jobs.ErrStoreRequired
 	}

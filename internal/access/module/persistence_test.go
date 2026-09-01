@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 )
@@ -15,8 +14,8 @@ func TestNewSQLiteAuditStoreRequiresDatabase(t *testing.T) {
 
 func TestBuildProductionRequiresInjectedPostgreSQLPersistence(t *testing.T) {
 	for name, config := range map[string]Config{
-		"missing authority": {Production: true},
-		"sqlite database":   {Production: true, Database: &sql.DB{}},
+		"missing authority":  {Production: true},
+		"sqlite persistence": {Production: true, Persistence: &Persistence{backend: backendSQLiteLegacy}},
 	} {
 		t.Run(name, func(t *testing.T) {
 			_, err := Build(context.Background(), config)

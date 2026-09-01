@@ -2,7 +2,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"net/http"
 
@@ -16,7 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/servingstate"
 )
 
-func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, database *sql.DB, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
+func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, ctx context.Context, persistence persistenceInputs, workflow workflowInputs, storage storageInputs) error {
 	if routes == nil || routes.refreshModule != nil {
 		return nil
 	}
@@ -24,7 +23,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		ctx = context.Background()
 	}
 	service, err := projectRefreshService(persistence, workflow, func() *dashboardmodule.Module { return routes.dashboardModule })
-	if err != nil && (database != nil || persistence.requireNativePersistence) {
+	if err != nil && (persistence.refreshPersistence != nil || persistence.requireNativePersistence) {
 		return fmt.Errorf("configure refresh service: %w", err)
 	}
 	if workflow.refreshMaterializer != nil {
@@ -71,20 +70,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		return identity, nil
 	}
 	recoveryLifecycle := workflow.recoveryLifecycle
-	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil && database != nil {
-		recoveryLifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(database, *recoveryLifecycle)
-	}
 	refreshPersistence := persistence.refreshPersistence
-	if refreshPersistence == nil && database != nil {
-		built, buildErr := refreshmodule.NewSQLitePersistence(refreshmodule.SQLitePersistenceConfig{
-			Database: database, Workflow: platform.jobModule,
-			Audit: persistence.auditRecorder,
-		})
-		if buildErr != nil {
-			return fmt.Errorf("configure refresh persistence: %w", buildErr)
-		}
-		refreshPersistence = &built
-	}
 	if refreshPersistence == nil && persistence.requireNativePersistence {
 		return fmt.Errorf("configure refresh persistence: native composition requires an injected persistence bundle")
 	}
@@ -149,7 +135,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 			}
 		},
 	}
-	if database != nil {
+	if persistence.auditRecorder != nil {
 		config.AuditIntentRecorder = persistence.auditRecorder
 	}
 	module, err := refreshmodule.Build(ctx, config)

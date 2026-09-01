@@ -7,7 +7,6 @@ package app
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -45,8 +44,6 @@ type workloadCapabilityBundle struct {
 type analyticsCapabilityConfig struct {
 	ConnectionBindings  connectionbinding.BindingCatalog
 	QueryAuditStore     analyticsmodule.QueryAuditStore
-	Database            *sql.DB
-	AuditIntentRecorder access.AuditIntentRecorder
 	Production          bool
 	CredentialMode      analyticsmodule.CredentialMode
 	CredentialTarget    string
@@ -70,7 +67,7 @@ type analyticsCapabilityConfig struct {
 }
 
 func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig) (analyticsCapabilityBundle, error) {
-	if cfg.Database == nil && cfg.ConnectionBindings == nil {
+	if cfg.ConnectionBindings == nil {
 		return analyticsCapabilityBundle{}, errors.New("analytics persistence is required")
 	}
 	if cfg.ExtensionSupply == nil {
@@ -78,8 +75,7 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 	}
 	module, err := analyticsmodule.Build(ctx, analyticsmodule.Config{
 		ConnectionBindings: cfg.ConnectionBindings, QueryAuditStore: cfg.QueryAuditStore,
-		Database: cfg.Database, AuditIntentRecorder: cfg.AuditIntentRecorder, CredentialMode: cfg.CredentialMode,
-		LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		CredentialMode: cfg.CredentialMode, Production: cfg.Production,
 		CredentialTargetID: cfg.CredentialTarget, CredentialProjectID: cfg.CredentialProject, CredentialEnvironment: cfg.Environment,
 		TargetCredentials: cfg.TargetCredentials,
 		RootDir:           cfg.RootDir, ExtensionAdmission: cfg.ExtensionSupply,
@@ -98,7 +94,6 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 
 type accessCapabilityConfig struct {
 	Persistence    *accessmodule.Persistence
-	Database       *sql.DB
 	Production     bool
 	Auth           accessmodule.AuthConfig
 	Assets         staticasset.Resolver
@@ -110,7 +105,7 @@ type accessCapabilityConfig struct {
 }
 
 func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (accessCapabilityBundle, error) {
-	if cfg.Database == nil && cfg.Persistence == nil {
+	if cfg.Persistence == nil {
 		return accessCapabilityBundle{}, errors.New("access persistence is required")
 	}
 	if cfg.CurrentProject == nil {
@@ -118,7 +113,7 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 	}
 	module, err := accessmodule.Build(ctx, accessmodule.Config{
 		Persistence: cfg.Persistence,
-		Database:    cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		Production:  cfg.Production,
 		Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID: cfg.CurrentProject,
@@ -141,14 +136,13 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 type workloadCapabilityConfig struct {
 	Persistence  *jobsmodule.Persistence
 	Workload     workloadmodule.Config
-	Database     *sql.DB
 	Production   bool
 	LeaseTimeout time.Duration
 	Logger       *slog.Logger
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
-	if cfg.Database == nil && cfg.Persistence == nil {
+	if cfg.Persistence == nil {
 		return workloadCapabilityBundle{}, errors.New("jobs persistence is required")
 	}
 	if cfg.Logger == nil {
@@ -160,7 +154,7 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 	}
 	jobs, err := jobsmodule.Build(ctx, jobsmodule.Config{
 		Persistence: cfg.Persistence,
-		Database:    cfg.Database, LegacySQLite: cfg.Database != nil && !cfg.Production, Production: cfg.Production,
+		Production:  cfg.Production,
 		Admission: workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
 	})
 	if err != nil {

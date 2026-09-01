@@ -2,13 +2,11 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"sync"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
 	analyticsduckdb "github.com/flidai/leapview/internal/analytics/duckdb"
 	analyticsducklake "github.com/flidai/leapview/internal/analytics/ducklake"
@@ -16,7 +14,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
-	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
 	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
@@ -40,19 +37,11 @@ type Config struct {
 	// Production composition injects this interface (normally backed by the
 	// native PostgreSQL repository) so analytics does not own a database handle.
 	ConnectionBindings connectionbinding.BindingCatalog
-	Database           *sql.DB
-	// LegacySQLite explicitly opts into the development/test SQLite adapter.
-	// A production build always rejects Database and requires a binding
-	// authority injected through ConnectionBindings.
-	LegacySQLite bool
-	Production   bool
+	Production         bool
 	// QueryAuditStore is the explicit capability-owned query-audit authority.
 	// Test fixtures may inject an in-memory implementation; production wiring
 	// supplies the native PostgreSQL repository.
 	QueryAuditStore queryaudit.Store
-	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port
-	// consumed by connection-binding SQLite mutations.
-	AuditIntentRecorder   access.AuditIntentRecorder
 	TargetCredentials     TargetCredentialConfig
 	CredentialMode        CredentialMode
 	CredentialTargetID    string
@@ -152,9 +141,6 @@ type Module struct {
 
 func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Production {
-		if config.Database != nil {
-			return nil, errors.New("production analytics build rejects SQLite database injection; use PostgreSQL connection binding authority")
-		}
 		if config.ConnectionBindings == nil {
 			return nil, errors.New("production analytics build requires PostgreSQL connection binding authority")
 		}
@@ -174,9 +160,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		if !ok || !queryAudit.Configured() {
 			return nil, errors.New("production analytics build requires configured native PostgreSQL query-audit authority")
 		}
-	}
-	if config.Database != nil && config.ConnectionBindings == nil && !config.LegacySQLite {
-		return nil, errors.New("SQLite analytics build requires LegacySQLite=true; inject PostgreSQL connection binding authority")
 	}
 	credentials, err := buildCredentialResolver(config)
 	if err != nil {
@@ -224,13 +207,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	queryAudit := config.QueryAuditStore
 	var connectionBindings connectionbinding.BindingCatalog = config.ConnectionBindings
-	if connectionBindings == nil && config.Database != nil {
-		if config.AuditIntentRecorder != nil {
-			connectionBindings = analyticssqlite.NewConnectionBindingRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
-		} else {
-			connectionBindings = analyticssqlite.NewConnectionBindingRepository(config.Database)
-		}
-	}
 	targetClass := connectionbinding.TargetProduction
 	if config.CredentialMode == CredentialModeDevelopmentEnvironment {
 		targetClass = connectionbinding.TargetDevelopment

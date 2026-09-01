@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	cryptorand "crypto/rand"
-	"database/sql"
 	"fmt"
 	"io"
 	"time"
@@ -15,7 +14,6 @@ import (
 	authoringcompileradapter "github.com/flidai/leapview/internal/dashboard/authoring/compileradapter"
 	authoringpostgres "github.com/flidai/leapview/internal/dashboard/authoring/postgres"
 	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
-	authoringsqlite "github.com/flidai/leapview/internal/dashboard/authoring/sqlite"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 )
@@ -39,12 +37,11 @@ type AuthorizeProjectCapability func(context.Context, string, projectgraph.Resou
 // behavior is injected as a function so dashboard authoring does not import
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
-	Database *sql.DB
 	// Persistence is the opaque native dashboard authority bundle. It is
-	// mutually exclusive with Database; the bundle owns the concrete authoring
-	// repository and uses UUIDv7 identity generators.
+	// mutually exclusive with SQLitePersistence; the bundle owns the concrete
+	// authoring repository and uses UUIDv7 identity generators.
 	Persistence                *NativePersistence
-	AuditIntentRecorder        access.AuditIntentRecorder
+	SQLitePersistence          *SQLiteAuthoringPersistence
 	AuthorizeResource          AuthorizeResource
 	AuthorizeProjectCapability AuthorizeProjectCapability
 	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
@@ -53,11 +50,11 @@ type AuthoringConfig struct {
 // BuildAuthoring constructs the complete dashboard authoring application and
 // its adapters behind the dashboard module surface.
 func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
-	if config.Database != nil && config.Persistence != nil {
+	if config.SQLitePersistence != nil && config.Persistence != nil {
 		return nil, fmt.Errorf("dashboard authoring cannot combine native PostgreSQL and SQLite repositories")
 	}
-	if config.Database == nil && config.Persistence == nil {
-		return nil, fmt.Errorf("dashboard authoring database is required")
+	if config.SQLitePersistence == nil && config.Persistence == nil {
+		return nil, fmt.Errorf("dashboard authoring persistence is required")
 	}
 	if config.Persistence != nil && !config.Persistence.valid() {
 		return nil, fmt.Errorf("dashboard authoring native persistence is not configured")
@@ -71,9 +68,6 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 	var repository authoring.Repository
 	ids := newAuthoringIDs(cryptorand.Reader)
 	if config.Persistence != nil {
-		if config.AuditIntentRecorder != nil {
-			return nil, fmt.Errorf("dashboard authoring native composition rejects SQLite audit recorder")
-		}
 		repository = config.Persistence.authoring
 		ids = authoringIDs{
 			dashboard: func() (authoring.DashboardID, error) { return authoringpostgres.NewDashboardID() },
@@ -81,10 +75,10 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 			revision:  func() (authoring.RevisionID, error) { return authoringpostgres.NewRevisionID() },
 		}
 	} else {
-		if config.AuditIntentRecorder == nil {
-			return nil, fmt.Errorf("dashboard authoring audit intent recorder is required")
+		if !config.SQLitePersistence.valid() {
+			return nil, fmt.Errorf("dashboard authoring SQLite persistence is not configured")
 		}
-		repository = authoringsqlite.NewRepositoryWithAudit(config.Database, config.AuditIntentRecorder)
+		repository = config.SQLitePersistence.repository
 	}
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.Options{
 		AuthorizeResource:          authoringaccessadapter.AuthorizeResource(config.AuthorizeResource),

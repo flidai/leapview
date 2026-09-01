@@ -47,8 +47,12 @@ func testAccessRepository(store *platform.Store) access.Repository {
 }
 
 func assembleSCIMTestHarness(_ fakeMetrics, config assemblyConfig) *scimTestHarness {
+	persistence, err := NewSQLitePersistence(context.Background(), SQLitePersistenceConfig{Database: config.store.SQLDB()})
+	if err != nil {
+		panic(err)
+	}
 	module, err := Build(context.Background(), Config{
-		Database: config.store.SQLDB(), LegacySQLite: true,
+		Persistence: &persistence,
 	})
 	if err != nil {
 		panic(err)

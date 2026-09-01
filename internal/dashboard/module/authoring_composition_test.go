@@ -171,11 +171,14 @@ func TestBuildAuthoringCreateUsesProjectRoleBeforeAllocatedDashboardExists(t *te
 	}
 	var authorized []access.ResourceRef
 	var projectCapabilities []access.Capability
+	sqlitePersistence, err := NewSQLiteAuthoringPersistence(store.SQLDB(), access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return nil
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
 	authoring, err := BuildAuthoring(AuthoringConfig{
-		Database: store.SQLDB(),
-		AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
-			return nil
-		}),
+		SQLitePersistence: sqlitePersistence,
 		AuthorizeResource: func(_ context.Context, _ string, _ projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			authorized = append(authorized, resource)
 			if resource.Kind() == projectgraph.KindSemanticModel && capability != access.CapabilityResourceRead {

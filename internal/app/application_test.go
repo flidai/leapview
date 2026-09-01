@@ -286,14 +286,18 @@ func (l LifecycleFunc) Stop(ctx context.Context) error  { return l.stop(ctx) }
 
 func TestAssembleRuntimeRejectsCapabilityBuildFailure(t *testing.T) {
 	store := testStore(t)
+	deploymentPersistence, err := deploymentmodule.NewSQLitePersistence(deploymentmodule.SQLitePersistenceConfig{Database: store.SQLDB()})
+	if err != nil {
+		t.Fatalf("build deployment persistence: %v", err)
+	}
 	options := testStoreOptions(store, assemblyConfig{
 
 		DeploymentConfig: deploymentmodule.Config{
-			Database: store.SQLDB(),
+			Persistence: &deploymentPersistence,
 		},
 	})
 
-	_, err := assembleRuntimeChecked(context.Background(), fakeMetrics{}, options)
+	_, err = assembleRuntimeChecked(context.Background(), fakeMetrics{}, options)
 	if err == nil {
 		t.Fatal("assembleRuntimeChecked accepted an incomplete deployment capability")
 	}

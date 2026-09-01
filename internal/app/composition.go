@@ -51,7 +51,10 @@ import (
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/filesystem"
+	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
+	idempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -725,6 +728,11 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	}
 	cleanup := &cleanupStack{}
 	cleanup.Push("sqlite", func(context.Context) error { return store.Close() })
+	// Local/evaluation composition owns its SQLite protocol authorities. The
+	// protocol builder receives these typed ports rather than inferring them
+	// from the platform database at a later routing seam.
+	apiIdempotency := idempotencysqlite.NewStore(store.SQLDB())
+	apiCursorSigning := cursorsigningsqlite.NewInitializer(store.SQLDB())
 	fail := func(err error) (http.Handler, Lifecycle, cleanupFunc, error) {
 		cleanupErr := cleanup.Close(context.WithoutCancel(ctx))
 		return nil, nil, nil, errors.Join(err, cleanupErr)
@@ -750,7 +758,11 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	if err != nil {
 		return fail(err)
 	}
-	servingStateRepo, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Database: store.SQLDB()})
+	servingStatePersistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
+	if err != nil {
+		return fail(err)
+	}
+	servingStateRepo, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Persistence: &servingStatePersistence})
 	if err != nil {
 		return fail(err)
 	}
@@ -780,8 +792,12 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	if !production {
 		credentialMode = analyticsmodule.CredentialModeDevelopmentEnvironment
 	}
+	analyticsBindings, err := analyticsmodule.NewSQLiteConnectionBindings(store.SQLDB(), auditRuntime.recorder)
+	if err != nil {
+		return fail(err)
+	}
 	analyticsBundle, err := buildAnalyticsCapability(ctx, analyticsCapabilityConfig{
-		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder, CredentialMode: credentialMode,
+		ConnectionBindings: analyticsBindings, CredentialMode: credentialMode,
 		CredentialTarget: instanceID, CredentialProject: projectID, Environment: string(environment),
 		TargetCredentials: analyticsmodule.TargetCredentialConfig{
 			InfisicalBaseURL: cfg.InfisicalBaseURL, InfisicalUniversalClientID: cfg.InfisicalUniversalClientID,
@@ -828,8 +844,12 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		}
 		return projectID, nil
 	}
+	accessPersistence, err := accessmodule.NewSQLitePersistence(ctx, accessmodule.SQLitePersistenceConfig{Database: store.SQLDB()})
+	if err != nil {
+		return fail(err)
+	}
 	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{
-		Database: store.SQLDB(), Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
+		Persistence: &accessPersistence, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
 		PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProjectID,
 	})
 	if err != nil {
@@ -843,7 +863,11 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			return fail(err)
 		}
 	}
-	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Workload: workloadmodule.Config{Policy: workloadConfig}, Database: store.SQLDB(), LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default()})
+	jobsPersistence, err := jobsmodule.NewSQLitePersistence(jobsmodule.SQLitePersistenceConfig{Database: store.SQLDB()})
+	if err != nil {
+		return fail(err)
+	}
+	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Workload: workloadmodule.Config{Policy: workloadConfig}, Persistence: &jobsPersistence, LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default()})
 	if err != nil {
 		return fail(err)
 	}
@@ -853,6 +877,10 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		return nil
 	})
 	jobModule := workloadBundle.Jobs
+	agentPersistence, err := agentmodule.NewSQLitePersistence(agentmodule.SQLitePersistenceConfig{Database: store.SQLDB(), Workflow: jobModule, AuditIntentRecorder: auditRuntime.recorder})
+	if err != nil {
+		return fail(err)
+	}
 	authorizationSnapshot := func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
 		if runtimeHostModule == nil {
 			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime host is unavailable")
@@ -893,8 +921,12 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		}
 		return hasActiveBootstrapServingState(ctx, runtimeHostModule, servingStateRepo, string(environment), sealedDelivery, instanceID, currentProjectID.String())
 	})
+	managedDataPersistence, err := manageddatamodule.NewSQLitePersistence(manageddatamodule.SQLitePersistenceConfig{Database: store.SQLDB(), Workflow: jobModule, AuditIntentRecorder: auditRuntime.recorder})
+	if err != nil {
+		return fail(err)
+	}
 	managedDataModule, err := manageddatamodule.Build(ctx, manageddatamodule.Config{
-		Database: store.SQLDB(), Product: managedDataProductConfig(cfg), ServingStates: servingStateRepo,
+		Persistence: &managedDataPersistence, Product: managedDataProductConfig(cfg), ServingStates: servingStateRepo,
 		Environment: string(environment),
 		CurrentPrincipal: func(r *http.Request) (manageddatamodule.Principal, bool) {
 			auth := accessModule.Auth()
@@ -918,8 +950,14 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	if err != nil {
 		return fail(err)
 	}
+	releasePersistence, err := releasemodule.NewSQLitePersistence(releasemodule.SQLitePersistenceConfig{
+		Database: store.SQLDB(), Workflow: jobModule, AuditIntentRecorder: auditRuntime.recorder,
+	})
+	if err != nil {
+		return fail(err)
+	}
 	releaseModule, err := releasemodule.Build(ctx, releasemodule.Config{
-		Database: store.SQLDB(), LegacySQLite: true, AuditIntentRecorder: auditRuntime.recorder,
+		Persistence: &releasePersistence, AuditIntentRecorder: auditRuntime.recorder,
 		States:          servingStateRepo,
 		ManagedDataPins: managedDataModule.BindingValidation(), ManagedDataHook: managedDataModule.BindingValidation(),
 		ExtensionPreparation: extensionSupply,
@@ -1199,8 +1237,16 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	authoringAcquireRuntime := func(ctx context.Context) (runtimehostmodule.Lease, error) {
 		return runtimeHostModule.Acquire(ctx)
 	}
+	authoringPersistence, err := dashboardmodule.NewSQLiteAuthoringPersistence(store.SQLDB(), auditRuntime.recorder)
+	if err != nil {
+		return fail(err)
+	}
+	dashboardPersistence, err := dashboardmodule.NewSQLitePersistence(store.SQLDB(), auditRuntime.recorder)
+	if err != nil {
+		return fail(err)
+	}
 	authoringApplication, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{
-		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder,
+		SQLitePersistence: authoringPersistence,
 		AuthorizeResource: func(ctx context.Context, principalID string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 			if authoringDevelopmentBypass(ctx, principalID) {
 				return true, nil
@@ -1262,6 +1308,15 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	recoveryLifecycle, err := productionRecoveryLifecycle(cfg, identity, string(environment), instanceID)
 	if err != nil {
 		return fail(err)
+	}
+	refreshPersistence, err := refreshmodule.NewSQLitePersistence(refreshmodule.SQLitePersistenceConfig{
+		Database: store.SQLDB(), Workflow: jobModule, Audit: auditRuntime.recorder,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	if recoveryLifecycle != nil && recoveryLifecycle.Repository == nil {
+		recoveryLifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(store.SQLDB(), *recoveryLifecycle)
 	}
 	{
 		// The canonical adapter is assembled only after the runtime binding
@@ -1674,8 +1729,15 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			Rollback: canonicalDelivery.Rollback,
 		}
 	}
+	deploymentPersistence, err := deploymentmodule.NewSQLitePersistence(deploymentmodule.SQLitePersistenceConfig{
+		Database: store.SQLDB(), Releases: releaseModule.DeploymentLinkage(), Workflow: jobModule, CancelJob: jobModule,
+		Audit: auditRuntime.recorder,
+	})
+	if err != nil {
+		return fail(err)
+	}
 	deploymentConfig := deploymentmodule.Config{
-		Database: store.SQLDB(), AuditIntentRecorder: auditRuntime.recorder, States: servingStateRepo, Runtime: deploymentRuntime,
+		Persistence: &deploymentPersistence, AuditIntentRecorder: auditRuntime.recorder, States: servingStateRepo, Runtime: deploymentRuntime,
 		DeliveryReader:     sealedDelivery,
 		ManagedData:        managedDataResolver,
 		BootstrapPolicies:  projectClaimRepository,
@@ -1833,14 +1895,17 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
 	routes, runtime, platformServices, policy, err := buildApplicationSurfaces(ctx, runtimeMetrics,
 		dataAssemblyInputs{
-			Database: store.SQLDB(), AuditRuntime: auditRuntime, PlatformHealth: store, AdminDatabase: store.SQLDB(),
+			AuditRuntime: auditRuntime, PlatformHealth: store,
+			RecoveryMetrics:  refreshmodule.NewSQLiteRecoveryMetricsCollector(store.SQLDB(), nil),
 			ServingStateRepo: servingStateRepo, RefreshServingStateMutations: servingStateRepo,
-			AccessRepo: accessRepo,
+			AccessRepo: accessRepo, RefreshPersistence: &refreshPersistence, DashboardSQLite: dashboardPersistence,
+			DashboardPublicationReconciler: newSQLiteDashboardPublicationReconciler(store.SQLDB()),
+			APIIdempotency:                 apiIdempotency, CursorSigning: apiCursorSigning,
 		},
 		capabilityAssemblyInputs{
 			AnalyticsModule: analyticsModule, DashboardAssets: dashboardAssets,
 			ReleaseModule: releaseModule, JobModule: jobModule,
-			AccessModule: accessModule, ManagedDataModule: managedDataModule,
+			AccessModule: accessModule, ManagedDataModule: managedDataModule, AgentPersistence: &agentPersistence,
 			ProjectCatalog: projectCatalog,
 			// Browser graph reads are pinned to the exact active runtime lease;
 			// canonical sealed publication no longer updates the legacy active
@@ -1866,7 +1931,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			DeploymentConfig:        deploymentConfig,
 		},
 		runtimeAssemblyInputs{
-			Production:           production,
+			Production:           production && !cfg.EvaluationMode,
 			RuntimeHost:          runtimeHostModule,
 			DeliveryTargetReader: sealedDelivery,
 			ProjectID:            projectID, ProjectIDResolver: projectIDResolver, ServingSnapshotResolver: servingSnapshotResolver,

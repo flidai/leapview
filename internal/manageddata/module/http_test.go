@@ -21,14 +21,22 @@ func TestBuildProductionFailsClosedWithoutNativePostgres(t *testing.T) {
 	}
 }
 
-func TestBuildProductionRejectsDatabaseSQLSQLite(t *testing.T) {
-	if _, err := Build(t.Context(), Config{Production: true, Database: new(sql.DB)}); err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
-		t.Fatalf("production SQLite build error = %v, want SQLite rejection", err)
+func TestBuildProductionRejectsSQLitePersistence(t *testing.T) {
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: new(sql.DB)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(t.Context(), Config{Production: true, Persistence: &persistence}); err == nil || !strings.Contains(err.Error(), "native PostgreSQL") {
+		t.Fatalf("production SQLite build error = %v, want native PostgreSQL requirement", err)
 	}
 }
 
 func TestBuildRejectsMissingCommandAuditSinkWhenEnabled(t *testing.T) {
-	if module, err := Build(t.Context(), Config{Database: new(sql.DB)}); module != nil || err == nil {
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: new(sql.DB)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if module, err := Build(t.Context(), Config{Persistence: &persistence}); module != nil || err == nil {
 		t.Fatalf("module = %v, err = %v", module, err)
 	}
 }

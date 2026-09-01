@@ -31,8 +31,14 @@ func TestFinalizeManagedDataUploadGeneratedExecutionContractEndToEnd(t *testing.
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	jobStore := jobssqlite.NewRepository(store.SQLDB())
 	managedRoot := filepath.Join(t.TempDir(), "managed")
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		Workflow:            jobStore,
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+	})
+	require.NoError(t, err)
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Jobs: jobStore, Workflow: jobStore, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+		Persistence: &persistence, Jobs: jobStore, Workflow: jobStore, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		CurrentPrincipal: func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
 		AuthorizeConnection: func(context.Context, string, string, string, access.Capability) (bool, error) {
 			return true, nil

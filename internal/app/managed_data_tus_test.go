@@ -55,7 +55,11 @@ func TestManagedDataTusRouteForwardsResumableOperations(t *testing.T) {
 		Capabilities: []access.Capability{access.CapabilityResourceEdit},
 	})
 	auth := testAuth(store, accessmodule.AuthConfig{APITokenOnly: true})
-	states, err := servingstatemodule.Build(context.Background(), servingstatemodule.Config{Database: store.SQLDB()})
+	statePersistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
+	if err != nil {
+		t.Fatalf("build serving-state persistence: %v", err)
+	}
+	states, err := servingstatemodule.Build(context.Background(), servingstatemodule.Config{Persistence: &statePersistence})
 	if err != nil {
 		t.Fatalf("build serving states: %v", err)
 	}
@@ -65,8 +69,15 @@ func TestManagedDataTusRouteForwardsResumableOperations(t *testing.T) {
 	}
 	base := testStoreOptions(store, assemblyConfig{Auth: auth, ProjectID: testProjectID, ServingStateRepo: states, RuntimeHost: host, DefaultEnvironment: "dev"})
 	root := t.TempDir()
+	managedDataPersistence, err := manageddatamodule.NewSQLitePersistence(manageddatamodule.SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+	})
+	if err != nil {
+		t.Fatalf("build managed-data persistence: %v", err)
+	}
 	managedData, err := manageddatamodule.Build(context.Background(), manageddatamodule.Config{
-		Database: store.SQLDB(), ServingStates: base.ServingStateRepo, Environment: base.DefaultEnvironment,
+		Persistence: &managedDataPersistence, ServingStates: base.ServingStateRepo, Environment: base.DefaultEnvironment,
 		Product:             manageddatamodule.ProductConfig{Backend: "local", Dir: root, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
 		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 	})

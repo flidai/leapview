@@ -56,6 +56,7 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
 )
 
 type QueryMetrics = dashboardmodule.Metrics
@@ -207,6 +208,7 @@ type persistenceInputs struct {
 	product                  *adminmodule.ProductService
 	productStatus            adminmodule.ProductStatus
 	dashboardPersistence     *dashboardmodule.NativePersistence
+	dashboardSQLite          *dashboardmodule.SQLitePersistence
 	requireNativeDashboard   bool
 }
 
@@ -262,10 +264,9 @@ func newCompositionSurfaces(
 }
 
 type dataAssemblyInputs struct {
-	Database         *sql.DB
 	AuditRuntime     *auditRuntime
 	PlatformHealth   platformHealth
-	AdminDatabase    *sql.DB
+	RecoveryMetrics  prometheus.Collector
 	ServingStateRepo servingStateRepository
 	// RefreshServingStateMutations is the explicit legacy SQLite mutation
 	// authority for candidate/activation refresh flows. Native PostgreSQL
@@ -275,13 +276,15 @@ type dataAssemblyInputs struct {
 	AccessRepo                   access.Repository
 	APIIdempotency               idempotency.Store
 	CursorSigning                cursorsigning.Initializer
-	// DashboardPublicationReconciler is the explicit native PostgreSQL
-	// activation path. When configured it takes precedence over Database;
-	// callers must not provide a SQLite handle as a production fallback.
+	// DashboardPublicationReconciler is the explicit activation projection for
+	// the selected dashboard authority.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
 	// DashboardPersistence is the complete native PostgreSQL dashboard
-	// authority bundle. It is mutually exclusive with Database/AdminDatabase.
+	// authority bundle. It is mutually exclusive with DashboardSQLite.
 	DashboardPersistence *dashboardmodule.NativePersistence
+	// DashboardSQLite is the explicit local/evaluation dashboard authority.
+	// It is mutually exclusive with DashboardPersistence.
+	DashboardSQLite *dashboardmodule.SQLitePersistence
 	// RefreshPersistence is the complete native PostgreSQL refresh authority.
 	// It is opaque at this composition boundary so the router cannot assemble
 	// a partial run/schedule/publication bundle or silently fall back to SQLite.
@@ -547,8 +550,7 @@ func validateQueryAuthorizationDependencies(metrics QueryMetrics, required bool,
 // the assembly bag. A partial native bundle must never silently fall back to
 // the legacy SQLite dashboard path.
 func dashboardNativeInputsPresent(data dataAssemblyInputs) bool {
-	return data.RequireNativeDashboard || data.DashboardPersistence != nil ||
-		data.DashboardPublicationReconciler != nil
+	return data.RequireNativeDashboard || data.DashboardPersistence != nil
 }
 
 // nativePersistenceInputsPresent identifies a clean-slate PostgreSQL
@@ -557,20 +559,19 @@ func dashboardNativeInputsPresent(data dataAssemblyInputs) bool {
 // admission path. A partial native graph must not silently construct a
 // stateless or SQLite refresh/agent module.
 func nativePersistenceInputsPresent(data dataAssemblyInputs, capabilities capabilityAssemblyInputs) bool {
-	return dashboardNativeInputsPresent(data) || data.RefreshPersistence != nil ||
-		capabilities.AgentPersistence != nil
+	return dashboardNativeInputsPresent(data)
 }
 
 func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capabilityAssemblyInputs, runtimeConfig runtimeAssemblyInputs) error {
 	native := nativePersistenceInputsPresent(data, capabilities)
-	if native && (data.Database != nil || data.AdminDatabase != nil || data.AuditRuntime != nil) {
-		return errors.New("native runtime composition rejects SQLite database and audit inputs")
+	if native && (data.AuditRuntime != nil || data.DashboardSQLite != nil) {
+		return errors.New("native runtime composition rejects SQLite authorities")
 	}
 	if !runtimeConfig.Production {
 		return nil
 	}
-	if data.Database != nil || data.AdminDatabase != nil || data.AuditRuntime != nil {
-		return errors.New("production runtime composition rejects SQLite database and audit inputs")
+	if data.AuditRuntime != nil || data.DashboardSQLite != nil {
+		return errors.New("production runtime composition rejects SQLite authorities")
 	}
 	if !dashboardNativeInputsPresent(data) {
 		return errors.New("production runtime composition requires native dashboard persistence")
@@ -599,8 +600,8 @@ func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capab
 	if !dashboardNativeInputsPresent(data) {
 		return nil
 	}
-	if data.Database != nil || data.AdminDatabase != nil {
-		return errors.New("native dashboard composition rejects database/sql (SQLite) inputs")
+	if data.DashboardSQLite != nil {
+		return errors.New("native dashboard composition rejects SQLite persistence")
 	}
 	if data.AuditRuntime != nil {
 		return errors.New("native dashboard composition rejects the legacy SQLite audit runtime")
@@ -638,7 +639,7 @@ func buildApplicationSurfaces(
 	if err := validateProductionRuntimeInputs(data, capabilities, runtimeConfig); err != nil {
 		return nil, nil, nil, nil, err
 	}
-	if data.Database == nil && data.RequireNativeDashboard && data.RefreshPersistence == nil {
+	if data.RequireNativeDashboard && data.RefreshPersistence == nil {
 		return nil, nil, nil, nil, errors.New("native composition requires refresh persistence")
 	}
 	requireNativeDashboard := dashboardNativeInputsPresent(data)
@@ -723,14 +724,7 @@ func buildApplicationSurfaces(
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
 	audit := data.AuditRuntime
-	if data.Database != nil && audit == nil {
-		var err error
-		audit, err = newAuditRuntime(data.Database)
-		if err != nil {
-			return fail(fmt.Errorf("build access audit runtime: %w", err))
-		}
-	}
-	if data.Database != nil && (audit == nil || audit.recorder == nil || audit.delivery == nil || audit.stats == nil || audit.operator == nil) {
+	if audit != nil && (audit.recorder == nil || audit.delivery == nil || audit.stats == nil || audit.operator == nil) {
 		return fail(errors.New("durable audit runtime facets are unavailable"))
 	}
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
@@ -739,6 +733,7 @@ func buildApplicationSurfaces(
 	persistence := persistenceInputs{}
 	persistence.agentPersistence = capabilities.AgentPersistence
 	persistence.dashboardPersistence = data.DashboardPersistence
+	persistence.dashboardSQLite = data.DashboardSQLite
 	persistence.refreshPersistence = data.RefreshPersistence
 	persistence.requireNativeDashboard = requireNativeDashboard
 	persistence.requireNativePersistence = nativePersistenceInputsPresent(data, capabilities)
@@ -796,7 +791,8 @@ func buildApplicationSurfaces(
 	// Persistence is capability-owned in production. A nil SQLite database is
 	// therefore not evidence that the runtime is stateless: native graph
 	// bundles and pre-built job modules are durable authorities too.
-	runtime.persistenceConfigured = data.Database != nil || nativePersistenceInputsPresent(data, capabilities)
+	runtime.persistenceConfigured = data.AuditRuntime != nil || data.RefreshPersistence != nil ||
+		capabilities.JobModule != nil || nativePersistenceInputsPresent(data, capabilities)
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
 	if audit != nil {
@@ -805,9 +801,8 @@ func buildApplicationSurfaces(
 	persistence.product = capabilities.Product
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
-	// A supplied jobs module is authoritative regardless of whether the legacy
-	// SQLite database is present. Development callers may still omit it and
-	// receive the explicit SQLite fallback below.
+	// The composition root owns persistence selection and supplies the complete
+	// jobs module. Runtime routing never infers SQLite from a raw database.
 	platform.jobModule = capabilities.JobModule
 	if platform.jobModule != nil {
 		// Avoid storing a typed nil *jobsmodule.Module in the jobs.Repository
@@ -815,34 +810,30 @@ func buildApplicationSurfaces(
 		// a genuinely nil queue to skip durable handler registration.
 		platform.asyncJobs = platform.jobModule
 	}
-	if data.Database != nil {
-		telemetry.Register(refreshmodule.NewSQLiteRecoveryMetricsCollector(data.Database, nil))
-		var err error
+	if audit != nil {
+		if data.RecoveryMetrics != nil {
+			telemetry.Register(data.RecoveryMetrics)
+		}
 		if platform.jobModule == nil {
-			platform.jobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
-				Database: data.Database, LegacySQLite: true, Admission: workloadmodule.JobAdmitter(runtime.workloads),
-				LeaseTimeout: httpConfig.JobLeaseTimeout, Logger: httpConfig.Logger,
-			})
-			if err != nil {
-				return fail(fmt.Errorf("build platform jobs module: %w", err))
-			}
+			return fail(errors.New("SQLite composition requires an explicit platform jobs module"))
 		}
 		platform.asyncJobs = platform.jobModule
 		// Access audit intents share the platform SQL database. Inject the narrow
 		// delivery and observability facets into lifecycle consumers.
 		platform.auditOutbox = audit.stats
-		platform.auditDispatcher, err = access.NewAuditDispatcher(access.AuditDispatcherConfig{
+		auditDispatcher, err := access.NewAuditDispatcher(access.AuditDispatcherConfig{
 			Store:  audit.delivery,
 			Logger: platform.logger,
 		})
 		if err != nil {
 			return fail(fmt.Errorf("build access audit dispatcher: %w", err))
 		}
+		platform.auditDispatcher = auditDispatcher
 		platform.telemetry.Register(newAuditOutboxCollector(platform.auditOutbox))
 	}
 	if platform.apiProtocol == nil {
 		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
-			Database: data.Database, Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
+			Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
 			RequireExplicit: data.RequireExplicitAPIProtocol,
 		}); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
@@ -914,10 +905,8 @@ func buildApplicationSurfaces(
 		projectAssetVersions = reader
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
-	if data.Database != nil {
-		// SQLite is an explicit development compatibility path. Native
-		// composition supplies the browser store from the authority graph below.
-		dashboardAppearances = dashboardmodule.NewSQLiteAppearanceStore(data.Database)
+	if data.DashboardSQLite != nil {
+		dashboardAppearances = data.DashboardSQLite.AppearanceStore()
 	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
@@ -1000,13 +989,13 @@ func buildApplicationSurfaces(
 	if httpConfig.Logger != nil {
 		platform.logger = httpConfig.Logger
 	}
-	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureRefreshModule(routes, runtime, platform, policy, ctx, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
 	}
-	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, data.Database, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
@@ -1030,7 +1019,7 @@ func buildApplicationSurfaces(
 	return routes, runtime, platform, policy, nil
 }
 
-func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, database *sql.DB, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
+func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
 	if routes == nil || runtime == nil || platform == nil || policy == nil {
 		return errors.New("runtime router is required")
 	}
@@ -1038,9 +1027,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		ctx = context.Background()
 	}
 	if persistence.requireNativeDashboard {
-		if database != nil {
-			return errors.New("native dashboard composition rejects database/sql (SQLite) inputs")
-		}
 		if persistence.dashboardPersistence == nil {
 			return errors.New("native dashboard composition requires a dashboard persistence bundle")
 		}
@@ -1055,7 +1041,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
-				AuditIntentRecorder: persistence.auditRecorder, RequireAuditIntent: database != nil,
+				AuditIntentRecorder: persistence.auditRecorder, RequireAuditIntent: persistence.auditRecorder != nil,
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
@@ -1231,18 +1217,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	var apiDispatcher *apiGenDispatcher
 	if routes.accessModule == nil {
-		var err error
-		routes.accessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Database: database, LegacySQLite: true, ExistingAuth: platform.auth,
-			InstanceID:       storage.instanceID,
-			PublicURL:        storage.publicURL,
-			CurrentProjectID: runtime.resolveProjectID,
-			Presentation:     webpage.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
-			Assets:           platform.assets,
-		})
-		if err != nil {
-			return fmt.Errorf("build access module: %w", err)
-		}
+		return errors.New("application composition requires an explicit access module")
 	}
 	if routes.deploymentModule == nil {
 		config := moduleWorkflow.deploymentConfig
@@ -1321,14 +1296,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				if priorAfterActivated != nil {
 					priorAfterActivated(ctx, activated)
 				}
-				var reconcileErr error
 				if runtime.dashboardPublicationReconciler != nil {
-					reconcileErr = runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated)
-				} else {
-					reconcileErr = reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated)
-				}
-				if err := reconcileErr; err != nil {
-					logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+					if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
+						logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
+					}
 				}
 			}
 		}
@@ -1340,10 +1311,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.dashboardModule == nil {
 		agentUICommands := routes.agentModule.UICommandBindings()
-		dashboardDatabase := database
-		if persistence.requireNativeDashboard {
-			dashboardDatabase = nil
-		}
 		var appearanceStore dashboardAppearanceReader
 		var resolveDashboardAppearance func(context.Context, projectgraph.ResourceID, projectgraph.ResourceID) (dashboardmodule.Appearance, error)
 		if runtime.runtimeHostModule != nil {
@@ -1359,24 +1326,19 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					return dashboardAppearanceResolver(definitionReader, appearanceStore)(ctx, projectID, dashboardID)
 				}
-			} else if database != nil {
-				appearanceStore = dashboardmodule.NewSQLiteAppearanceStore(database)
+			} else if persistence.dashboardSQLite != nil {
+				appearanceStore = persistence.dashboardSQLite.AppearanceStore()
 				resolveDashboardAppearance = dashboardAppearanceResolver(definitionReader, appearanceStore)
 			}
 		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			Database:                 dashboardDatabase,
+			SQLitePersistence:        persistence.dashboardSQLite,
 			NativePersistence:        persistence.dashboardPersistence,
 			RequireNativePersistence: persistence.requireNativeDashboard,
 			RequireAuthoring:         persistence.requireNativeDashboard,
 			RequirePublication:       persistence.requireNativeDashboard,
-			// Legacy dashboard authorities remain explicit for development and
-			// migration-only callers. Native production admission cannot infer or
-			// mix this fallback.
-			LegacySQLite:        !persistence.requireNativeDashboard && database != nil,
-			Authoring:           routes.dashboardAuthoring,
-			AuditIntentRecorder: persistence.auditRecorder,
+			Authoring:                routes.dashboardAuthoring,
 			HTTP: dashboardmodule.HTTPConfig{
 				Metrics:                    runtime.metrics,
 				ProjectID:                  runtime.projectID,
@@ -1522,15 +1484,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 		routes.projectBrowser.DashboardAppearances = routes.dashboardModule.AppearanceStore()
 	}
-	if routes.dashboardModule != nil && (database != nil || runtime.dashboardPublicationReconciler != nil) {
+	if routes.dashboardModule != nil && runtime.dashboardPublicationReconciler != nil {
 		if activated, err := startupDashboardPublicationActivation(ctx, runtime.runtimeHostModule, persistence.servingStateRepo, runtimeConfig.DeliveryTargetReader, runtimeConfig.SealedServing, runtimeConfig.InstanceID); err == nil {
-			var reconcileErr error
-			if runtime.dashboardPublicationReconciler != nil {
-				reconcileErr = runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated)
-			} else {
-				reconcileErr = reconcileActivatedDashboardPublications(ctx, database, persistence.servingStateRepo, activated)
-			}
-			if err := reconcileErr; err != nil {
+			if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
 				logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
 			}
 		} else if !errors.Is(err, servingstate.ErrNotFound) && !errors.Is(err, sql.ErrNoRows) && !errors.Is(err, deployment.ErrNotFound) {
@@ -1543,7 +1499,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			return err
 		}
 		agentConfig := agentmodule.Config{
-			Database: database, Persistence: persistence.agentPersistence, LegacySQLite: database != nil, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
+			Persistence: persistence.agentPersistence, Production: runtimeConfig.Production, Model: moduleWorkflow.agentConfig,
 			Service: moduleWorkflow.agent, Jobs: platform.asyncJobs,
 			AllowDevAuthBypass: runtimeConfig.AllowDevAuthBypass,
 			ProductName:        brand.Name,
@@ -1734,7 +1690,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 			},
 		}
-		if database != nil {
+		if persistence.auditRecorder != nil {
 			agentConfig.AuditIntentRecorder = persistence.auditRecorder
 		}
 		routes.agentModule, err = agentmodule.Build(ctx, agentConfig)
@@ -1743,7 +1699,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		}
 	}
 	if routes.refreshModule == nil {
-		if err := configureRefreshModule(routes, runtime, platform, policy, ctx, nil, persistence, moduleWorkflow, storage); err != nil {
+		if err := configureRefreshModule(routes, runtime, platform, policy, ctx, persistence, moduleWorkflow, storage); err != nil {
 			return err
 		}
 	}

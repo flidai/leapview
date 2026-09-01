@@ -309,10 +309,14 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
+	persistence, err := NewSQLitePersistence(t.Context(), SQLitePersistenceConfig{Database: store.SQLDB()})
+	if err != nil {
+		t.Fatalf("construct access persistence: %v", err)
+	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true,
-		InstanceID: desktopTestInstanceID,
-		PublicURL:  "https://analytics.company.com",
+		Persistence: &persistence,
+		InstanceID:  desktopTestInstanceID,
+		PublicURL:   "https://analytics.company.com",
 		Auth: AuthConfig{
 			DevBypass:    true,
 			CSRFKey:      "0123456789abcdef0123456789abcdef",

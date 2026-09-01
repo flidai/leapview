@@ -218,28 +218,44 @@ func TestBuildNativeDashboardUsesValidatedBundleWithoutSQLite(t *testing.T) {
 	}
 }
 
-func TestBuildLegacyDatabaseUsesMemoryDashboardSessions(t *testing.T) {
+func TestNewSQLitePersistenceRequiresDatabaseAndAudit(t *testing.T) {
 	audit := access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
 		return nil
 	})
+	if persistence, err := dashboardmodule.NewSQLitePersistence(nil, audit); err == nil || persistence != nil {
+		t.Fatalf("nil SQLite database constructor result = (%#v, %v), want an error", persistence, err)
+	}
+	if persistence, err := dashboardmodule.NewSQLitePersistence(&sql.DB{}, nil); err == nil || persistence != nil {
+		t.Fatalf("nil SQLite audit constructor result = (%#v, %v), want an error", persistence, err)
+	}
+}
+
+func TestBuildSQLitePersistenceUsesMemoryDashboardSessions(t *testing.T) {
+	audit := access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return nil
+	})
+	persistence, err := dashboardmodule.NewSQLitePersistence(&sql.DB{}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
 	module, err := dashboardmodule.Build(t.Context(), dashboardmodule.Config{
-		Database: &sql.DB{}, LegacySQLite: true, AuditIntentRecorder: audit,
+		SQLitePersistence: persistence,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, ok := module.HTTP().SessionStore.(*dashboardsession.MemoryStore); !ok {
-		t.Fatalf("legacy dashboard database selected session store %T, want *session.MemoryStore", module.HTTP().SessionStore)
+		t.Fatalf("SQLite dashboard persistence selected session store %T, want *session.MemoryStore", module.HTTP().SessionStore)
 	}
 	if module.HTTP().RecordDashboardView != nil {
-		t.Fatal("legacy dashboard database installed a usage recorder")
+		t.Fatal("SQLite dashboard persistence installed a usage recorder")
 	}
 	levels, err := module.Popularity(t.Context(), 10)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if levels != nil {
-		t.Fatalf("legacy dashboard database installed a usage reader: %#v", levels)
+		t.Fatalf("SQLite dashboard persistence installed a usage reader: %#v", levels)
 	}
 }
 
@@ -371,12 +387,17 @@ func TestBuildNativeDashboardMutationUsesNativeAudit(t *testing.T) {
 
 func TestBuildNativeDashboardRejectsLegacyOrForgedPersistence(t *testing.T) {
 	bundle := validNativePersistence(t)
+	audit := access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+		return nil
+	})
+	sqlitePersistence, err := dashboardmodule.NewSQLitePersistence(&sql.DB{}, audit)
+	if err != nil {
+		t.Fatal(err)
+	}
 	cases := []dashboardmodule.Config{
-		{RequireNativePersistence: true, NativePersistence: bundle, Database: &sql.DB{}},
-		{RequireNativePersistence: true, NativePersistence: bundle, LegacySQLite: true},
+		{RequireNativePersistence: true, NativePersistence: bundle, SQLitePersistence: sqlitePersistence},
 		{RequireNativePersistence: true, NativePersistence: &dashboardmodule.NativePersistence{}},
 		{RequireNativePersistence: true, NativePersistence: bundle, SessionStore: dashboardsession.NewMemoryStore()},
-		{RequireNativePersistence: true, NativePersistence: bundle, AuditIntentRecorder: access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error { return nil })},
 	}
 	for index, config := range cases {
 		if _, err := dashboardmodule.Build(t.Context(), config); err == nil {
@@ -385,9 +406,9 @@ func TestBuildNativeDashboardRejectsLegacyOrForgedPersistence(t *testing.T) {
 	}
 }
 
-func TestBuildRejectsUnmarkedDatabaseOutsideLegacyMode(t *testing.T) {
-	if _, err := dashboardmodule.Build(t.Context(), dashboardmodule.Config{Database: &sql.DB{}}); err == nil {
-		t.Fatal("dashboard build accepted a database without explicit LegacySQLite mode")
+func TestBuildRejectsIncompleteSQLitePersistence(t *testing.T) {
+	if _, err := dashboardmodule.Build(t.Context(), dashboardmodule.Config{SQLitePersistence: &dashboardmodule.SQLitePersistence{}}); err == nil {
+		t.Fatal("dashboard build accepted an incomplete SQLite persistence bundle")
 	}
 }
 

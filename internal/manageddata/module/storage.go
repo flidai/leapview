@@ -106,9 +106,10 @@ const (
 // SQLite is available through the explicitly named legacy constructor for
 // development and tests.
 type Persistence struct {
-	repository Repository
-	native     *manageddatapostgres.Repository
-	backend    persistenceBackend
+	repository     Repository
+	native         *manageddatapostgres.Repository
+	backend        persistenceBackend
+	legacyDatabase *sql.DB
 }
 
 func NewPostgresPersistence(repository *manageddatapostgres.Repository) (Persistence, error) {
@@ -132,10 +133,13 @@ func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
 		return Persistence{}, errors.New("SQLite managed-data database is required")
 	}
 	repository := manageddatasqlite.NewRepositoryWithWorkflowAndAudit(config.Database, config.Workflow, config.AuditIntentRecorder)
-	return Persistence{repository: repository, backend: backendSQLiteLegacy}, nil
+	return Persistence{repository: repository, backend: backendSQLiteLegacy, legacyDatabase: config.Database}, nil
 }
 
 func (p Persistence) isPostgres() bool { return p.backend == backendPostgres && p.native != nil }
+func (p Persistence) isSQLite() bool {
+	return p.backend == backendSQLiteLegacy && p.legacyDatabase != nil
+}
 
 func (p Persistence) validate() error {
 	if p.repository == nil {
@@ -151,7 +155,7 @@ func (p Persistence) validate() error {
 			return errors.New("managed-data PostgreSQL persistence repository identity mismatch")
 		}
 	case backendSQLiteLegacy:
-		if p.native != nil {
+		if p.native != nil || p.legacyDatabase == nil {
 			return errors.New("managed-data SQLite persistence cannot expose native PostgreSQL repository")
 		}
 	default:
@@ -177,12 +181,9 @@ type Principal struct {
 type ConnectionAuthorizer func(context.Context, string, string, string, access.Capability) (bool, error)
 
 type Config struct {
-	// Persistence is the preferred capability-owned authority bundle.
-	Persistence *Persistence
-	// Database is retained only for the explicit legacy SQLite development
-	// adapter. Production always rejects it.
-	Database            *sql.DB
-	LegacySQLite        bool
+	// Persistence is the capability-owned authority bundle consumed by active
+	// module builds. SQLite is selected only through NewSQLitePersistence.
+	Persistence         *Persistence
 	Production          bool
 	Disabled            bool
 	Product             ProductConfig
@@ -229,10 +230,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	// a miswired SQLite process fails with the capability error, even when an
 	// audit adapter has not yet been supplied by composition.
 	if cfg.Production && !cfg.Disabled {
-		if cfg.Database != nil || cfg.LegacySQLite {
-			return nil, errors.New("production managed-data module rejects SQLite database injection")
-		}
-		if cfg.Persistence == nil {
+		if cfg.Persistence == nil || !cfg.Persistence.isPostgres() {
 			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
 		}
 	}
@@ -265,26 +263,13 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		})
 		return module, nil
 	}
-	if cfg.Persistence != nil && cfg.Database != nil {
-		return nil, errors.New("managed-data persistence is mutually exclusive with database inputs")
-	}
 	if cfg.Production {
-		if cfg.Database != nil || cfg.LegacySQLite {
-			return nil, errors.New("production managed-data module rejects SQLite database injection")
-		}
 		if cfg.Persistence == nil || !cfg.Persistence.isPostgres() {
 			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
 		}
 	}
-	if cfg.Persistence == nil && cfg.Database == nil {
-		return nil, errors.New("managed-data persistence is required; choose native PostgreSQL repository or explicit SQLite database")
-	}
 	if cfg.Persistence == nil {
-		legacy, persistenceErr := NewSQLitePersistence(SQLitePersistenceConfig{Database: cfg.Database, Workflow: cfg.Workflow, AuditIntentRecorder: cfg.AuditIntentRecorder})
-		if persistenceErr != nil {
-			return nil, persistenceErr
-		}
-		cfg.Persistence = &legacy
+		return nil, errors.New("managed-data persistence is required; choose native PostgreSQL or explicit SQLite persistence")
 	}
 	if err := cfg.Persistence.validate(); err != nil {
 		return nil, err
@@ -304,7 +289,10 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	if cfg.Persistence.isPostgres() {
 		collector, err = newManagedDataCollectorPostgres(cfg.Persistence.native.DB(), services, cfg.Product)
 	} else {
-		collector, err = newManagedDataCollector(cfg.Database, services, cfg.Product)
+		if !cfg.Persistence.isSQLite() {
+			return nil, errors.New("managed-data persistence backend is not configured")
+		}
+		collector, err = newManagedDataCollector(cfg.Persistence.legacyDatabase, services, cfg.Product)
 	}
 	if err != nil {
 		return nil, err

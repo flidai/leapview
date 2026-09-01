@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 
@@ -14,13 +13,6 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
-
-func TestBuildProductionRejectsSQLiteConnectionBinding(t *testing.T) {
-	_, err := Build(context.Background(), Config{Production: true, Database: &sql.DB{}})
-	if err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
-		t.Fatalf("production SQLite build error = %v, want explicit rejection", err)
-	}
-}
 
 func TestBuildProductionRequiresInjectedConnectionBindingAuthority(t *testing.T) {
 	_, err := Build(context.Background(), Config{Production: true})

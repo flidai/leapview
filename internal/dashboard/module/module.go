@@ -67,7 +67,9 @@ type Module struct {
 }
 
 type Config struct {
-	Database *sql.DB
+	// SQLitePersistence is the explicit local/evaluation dashboard authority.
+	// Build never selects an adapter from a raw database handle.
+	SQLitePersistence *SQLitePersistence
 	// NativePersistence is the only accepted source of dashboard persistence
 	// when RequireNativePersistence is enabled. Its constructor checks that all
 	// authorities are the concrete PostgreSQL implementations, so callers cannot
@@ -80,7 +82,6 @@ type Config struct {
 	// retain explicit SQLite fallbacks for legacy tests.
 	SessionStore             dashboardsession.Store
 	AppearanceStore          dashboardappearance.Store
-	LegacySQLite             bool
 	RequireNativePersistence bool
 	RequireAuthoring         bool
 	RequirePublication       bool
@@ -95,13 +96,46 @@ type Config struct {
 	Logger          *slog.Logger
 	PublicURL       string
 	CurrentActor    func(*http.Request) string
-	// AuditIntentRecorder is the narrow Access-owned port used by publication
-	// SQLite transactions. It must be supplied whenever Database is configured.
-	AuditIntentRecorder access.AuditIntentRecorder
-	UsageRecorder       usage.Recorder
-	UsageReader         usage.Reader
-	UsageNow            func() time.Time
-	RuntimeMetrics      queryruntime.Metrics
+	UsageRecorder   usage.Recorder
+	UsageReader     usage.Reader
+	UsageNow        func() time.Time
+	RuntimeMetrics  queryruntime.Metrics
+}
+
+// SQLitePersistence is the opaque local/evaluation dashboard authority.
+type SQLitePersistence struct {
+	appearance   dashboardappearance.Store
+	publication  PublicationRepository
+	streams      publication.StreamRegistry
+	auditEnabled bool
+}
+
+// NewSQLitePersistence constructs the complete durable SQLite dashboard
+// authority used by local development and evaluation runtimes.
+func NewSQLitePersistence(database *sql.DB, audit access.AuditIntentRecorder) (*SQLitePersistence, error) {
+	if database == nil {
+		return nil, fmt.Errorf("SQLite dashboard database is required")
+	}
+	if audit == nil {
+		return nil, errPublicationCommandAuditUnavailable
+	}
+	return &SQLitePersistence{
+		appearance:   NewSQLiteAppearanceStore(database),
+		publication:  newSQLitePublicationRepository(database, audit),
+		streams:      newSQLitePublicationStreams(database),
+		auditEnabled: true,
+	}, nil
+}
+
+func (p *SQLitePersistence) valid() bool {
+	return p != nil && p.appearance != nil && p.publication != nil && p.streams != nil && p.auditEnabled
+}
+
+func (p *SQLitePersistence) AppearanceStore() dashboardappearance.Store {
+	if !p.valid() {
+		return nil
+	}
+	return p.appearance
 }
 
 // NativePersistence is an opaque, validated bundle of dashboard PostgreSQL
@@ -301,11 +335,8 @@ type Telemetry interface {
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RequireNativePersistence {
-		if config.Database != nil {
-			return nil, fmt.Errorf("dashboard native persistence rejects the legacy SQLite database handle")
-		}
-		if config.LegacySQLite {
-			return nil, fmt.Errorf("dashboard native persistence rejects LegacySQLite mode")
+		if config.SQLitePersistence != nil {
+			return nil, fmt.Errorf("dashboard native persistence rejects SQLite persistence")
 		}
 		if config.NativePersistence == nil {
 			return nil, fmt.Errorf("dashboard native persistence bundle is required")
@@ -313,13 +344,13 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if !config.NativePersistence.valid() {
 			return nil, fmt.Errorf("dashboard native persistence bundle is incomplete")
 		}
-		if config.SessionStore != nil || config.UsageRecorder != nil || config.UsageReader != nil || config.AppearanceStore != nil || config.AuditIntentRecorder != nil {
+		if config.SessionStore != nil || config.UsageRecorder != nil || config.UsageReader != nil || config.AppearanceStore != nil {
 			return nil, fmt.Errorf("dashboard native persistence rejects partial or legacy authority injection")
 		}
 	} else if config.NativePersistence != nil {
 		return nil, fmt.Errorf("dashboard native persistence bundle requires RequireNativePersistence")
-	} else if config.Database != nil && !config.LegacySQLite {
-		return nil, fmt.Errorf("dashboard database handle requires explicit LegacySQLite mode")
+	} else if config.SQLitePersistence != nil && !config.SQLitePersistence.valid() {
+		return nil, fmt.Errorf("dashboard SQLite persistence bundle is incomplete")
 	}
 	if config.RequireAuthoring && config.Authoring == nil {
 		return nil, fmt.Errorf("dashboard authoring authority is required")
@@ -338,10 +369,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			return nil, err
 		}
 		publicationAuditConfigured = true
-	} else if config.Database != nil {
-		if config.AuditIntentRecorder == nil {
-			return nil, errPublicationCommandAuditUnavailable
-		}
+	} else if config.SQLitePersistence != nil {
 		if err := validatePublicationCommandAuditContracts(); err != nil {
 			return nil, err
 		}
@@ -368,6 +396,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sessionStore = config.NativePersistence.session
 		usageRecorder, usageReader = config.NativePersistence.usage, config.NativePersistence.usage
 		appearanceStore = config.NativePersistence.appearance
+	} else if config.SQLitePersistence != nil {
+		appearanceStore = config.SQLitePersistence.appearance
 	}
 	if sessionStore == nil {
 		sessionStore = dashboardsession.NewMemoryStore()
@@ -504,10 +534,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		// revocation closes the durable native registry, never the memory default.
 		module.publications = config.NativePersistence.publication
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
-	} else if config.Database != nil {
-		// Legacy SQLite remains explicit and test/development-only.
-		module.publications = newSQLitePublicationRepository(config.Database, config.AuditIntentRecorder)
-		module.streams = newSQLitePublicationStreams(config.Database)
+	} else if config.SQLitePersistence != nil {
+		module.publications = config.SQLitePersistence.publication
+		module.streams = config.SQLitePersistence.streams
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
 	}
 	return module, nil

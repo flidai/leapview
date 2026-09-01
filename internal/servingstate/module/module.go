@@ -64,43 +64,94 @@ type NativePersistence interface {
 	Configured() bool
 }
 
+type persistenceBackend uint8
+
+const (
+	backendSQLite persistenceBackend = iota + 1
+	backendPostgres
+)
+
+// Persistence is the typed serving-state storage selection passed into Build.
+// Callers choose NewSQLitePersistence for local/evaluation or
+// NewPostgresPersistence for production; Build never infers an adapter from a
+// raw database handle or a legacy interface field.
+type Persistence struct {
+	legacy  LegacyPersistence
+	native  NativePersistence
+	backend persistenceBackend
+}
+
+// NewSQLitePersistence constructs the explicit local/evaluation serving-state
+// adapter.
+func NewSQLitePersistence(database *sql.DB) (Persistence, error) {
+	if database == nil {
+		return Persistence{}, errors.New("SQLite serving-state database is required")
+	}
+	return Persistence{legacy: servingstatesqlite.NewRepository(database), backend: backendSQLite}, nil
+}
+
+// NewPostgresPersistence wraps the configured immutable production authority.
+func NewPostgresPersistence(native NativePersistence) (Persistence, error) {
+	if native == nil {
+		return Persistence{}, errors.New("PostgreSQL serving-state persistence is required")
+	}
+	if !native.Configured() {
+		return Persistence{}, errors.New("PostgreSQL serving-state persistence is not configured")
+	}
+	return Persistence{native: native, backend: backendPostgres}, nil
+}
+
+func (p Persistence) isPostgres() bool {
+	return p.backend == backendPostgres && p.native != nil
+}
+
+func (p Persistence) isSQLite() bool {
+	return p.backend == backendSQLite && p.legacy != nil
+}
+
+func (p Persistence) validate() error {
+	switch {
+	case p.isPostgres():
+		if !p.native.Configured() {
+			return errors.New("PostgreSQL serving-state persistence is not configured")
+		}
+		return nil
+	case p.isSQLite():
+		return nil
+	default:
+		return errors.New("serving-state persistence backend is not configured")
+	}
+}
+
 type Module struct {
 	legacy LegacyPersistence
 	native NativePersistence
 }
 type Config struct {
-	Database   *sql.DB // explicit SQLite development adapter only
-	Native     NativePersistence
-	Legacy     LegacyPersistence
-	Production bool
+	Persistence *Persistence
+	Production  bool
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
+	if config.Persistence == nil {
+		return nil, errors.New("serving-state persistence is required; choose an explicit PostgreSQL or SQLite persistence bundle")
+	}
+	if err := config.Persistence.validate(); err != nil {
+		return nil, err
+	}
 	if config.Production {
-		if config.Database != nil || config.Legacy != nil {
-			return nil, errors.New("production serving-state module rejects SQLite database")
-		}
-		if config.Native == nil {
+		if !config.Persistence.isPostgres() {
 			return nil, errors.New("production serving-state module requires native PostgreSQL persistence")
 		}
-		if !config.Native.Configured() {
-			return nil, errors.New("production serving-state module requires configured native PostgreSQL persistence")
-		}
-		return &Module{native: config.Native}, nil
+		return &Module{native: config.Persistence.native}, nil
 	}
-	if config.Native != nil {
+	if config.Persistence.isPostgres() {
 		return nil, errors.New("native PostgreSQL persistence requires production serving-state mode")
 	}
-	if config.Legacy != nil {
-		if config.Database != nil {
-			return nil, errors.New("choose one explicit development serving-state persistence")
-		}
-		return &Module{legacy: config.Legacy}, nil
+	if !config.Persistence.isSQLite() {
+		return nil, errors.New("development serving-state module requires explicit SQLite persistence")
 	}
-	if config.Database == nil {
-		return nil, errors.New("serving-state persistence is required; choose native repository or explicit SQLite database")
-	}
-	return &Module{legacy: servingstatesqlite.NewRepository(config.Database)}, nil
+	return &Module{legacy: config.Persistence.legacy}, nil
 }
 func (m *Module) legacyOrErr() (LegacyPersistence, error) {
 	if m == nil || m.legacy == nil {

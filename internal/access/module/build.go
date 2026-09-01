@@ -20,12 +20,8 @@ import (
 )
 
 type Config struct {
-	// Persistence is the preferred capability-owned authority bundle.
-	Persistence *Persistence
-	Database    *sql.DB
-	// LegacySQLite is an explicit development/test opt-in for Database.
-	// Production composition must inject PostgreSQL Persistence instead.
-	LegacySQLite                 bool
+	// Persistence is the capability-owned authority bundle.
+	Persistence                  *Persistence
 	Production                   bool
 	Auth                         AuthConfig
 	ExistingAuth                 *Auth
@@ -52,16 +48,10 @@ func NewSQLiteAuditStore(database *sql.DB) access.AuditStore {
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
-	if config.Persistence != nil && config.Database != nil {
-		return nil, errors.New("access persistence is mutually exclusive with database inputs")
-	}
-	if config.Production && config.Database != nil {
-		return nil, errors.New("production access build rejects SQLite database injection; use PostgreSQL persistence")
-	}
 	if config.Production && config.Persistence == nil {
 		return nil, errors.New("production access build requires injected PostgreSQL persistence")
 	}
-	if config.Persistence == nil && config.Database == nil {
+	if config.Persistence == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
 			Persistence: config.Persistence,
@@ -74,16 +64,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			surface.CurrentCredential = auth.APICredential
 		}
 		return newSurface(surface)
-	}
-	if config.Persistence == nil {
-		if !config.LegacySQLite {
-			return nil, errors.New("SQLite access build requires LegacySQLite=true; inject PostgreSQL persistence for production")
-		}
-		persistence, err := NewSQLitePersistence(ctx, SQLitePersistenceConfig{Database: config.Database})
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
 	}
 	if config.Production && !config.Persistence.isPostgres() {
 		return nil, errors.New("production access build requires PostgreSQL persistence")
@@ -163,8 +143,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		module.oauthResource = oauth
 	} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
 		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
-	} else if config.Database != nil {
-		module.oauth, err = mcpoauth.New(config.Database, repository, mcpoauth.Config{
+	} else if database := config.Persistence.legacyDatabase; database != nil {
+		module.oauth, err = mcpoauth.New(database, repository, mcpoauth.Config{
 			IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
 		})
 		module.oauthResource = module.oauth

@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -15,7 +14,6 @@ import (
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -176,15 +174,11 @@ type SealedActivationMarker func(context.Context, deployment.ActivationInput) (d
 
 type Config struct {
 	// Persistence is the native clean-slate PostgreSQL delivery authority.
-	// It must be constructed with NewPostgresPersistence; the module never
-	// infers a native repository from a generic deployment interface.
+	// Production callers construct it with NewPostgresPersistence; local and
+	// evaluation callers use NewSQLitePersistence. The module never infers an
+	// adapter from a raw database handle.
 	Persistence *Persistence
-	Database    *sql.DB
-	// LegacySQLite is retained as documentation and an explicit composition
-	// signal for development/tests. Existing non-production callers that pass
-	// Database directly remain supported for compatibility.
-	LegacySQLite bool
-	Production   bool
+	Production  bool
 	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
 	// It is required whenever deployment SQLite persistence is configured.
 	AuditIntentRecorder       access.AuditIntentRecorder
@@ -264,9 +258,8 @@ type Config struct {
 	// transitions. Production must provide it whenever native persistence is
 	// enabled; no candidate-wide approval fallback is permitted.
 	NativeDeliveryApproval NativeDeliveryApprovalPort
-	// DeliveryReader is the durable, read-only plan/build/seal/operator port.
-	// When Database is configured, Build installs the SQLite repository by
-	// default; tests and alternate control stores may provide an implementation.
+	// DeliveryReader is the durable, read-only plan/build/seal/operator port for
+	// explicit local/evaluation persistence. Production uses NativeDeliveryReader.
 	DeliveryReader deployment.DeliveryReader
 	// NativeDeliveryReader is the clean-slate PostgreSQL read port. It is
 	// deliberately distinct from DeliveryReader so production handlers cannot
@@ -282,24 +275,21 @@ type Config struct {
 }
 
 func Build(_ context.Context, config Config) (*Module, error) {
-	if config.Persistence != nil && config.Database != nil {
-		return nil, errors.New("deployment persistence is mutually exclusive with database inputs")
+	if config.Persistence == nil {
+		return nil, errors.New("deployment persistence is required; choose an explicit PostgreSQL or SQLite persistence bundle")
+	}
+	if err := config.Persistence.validate(); err != nil {
+		return nil, err
 	}
 	if config.Production {
-		if config.Database != nil || config.LegacySQLite {
-			return nil, errors.New("production deployment module rejects SQLite database")
-		}
-		if config.Persistence == nil {
+		if !config.Persistence.isPostgres() {
 			return nil, errors.New("production deployment module requires native PostgreSQL persistence")
 		}
-		if err := config.Persistence.validate(); err != nil {
-			return nil, fmt.Errorf("production deployment persistence validation: %w", err)
-		}
 	}
-	if config.Persistence != nil && !config.Production {
+	if config.Persistence.isPostgres() && !config.Production {
 		return nil, errors.New("native PostgreSQL persistence requires production deployment mode")
 	}
-	if config.Production && config.Persistence != nil {
+	if config.Production && config.Persistence.isPostgres() {
 		if config.NativeDeliveryEvents == nil {
 			config.NativeDeliveryEvents = config.Persistence.Events
 		}
@@ -363,7 +353,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
 	var durableBootstrapPolicies BootstrapPolicyStore
-	if config.Persistence != nil {
+	if config.Persistence.isPostgres() {
 		// Native production HTTP requests are coordinated directly against the
 		// canonical PostgreSQL delivery authority. No legacy service or SQLite
 		// adapter is introduced on this path.
@@ -383,8 +373,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 				config.NativeDeliveryPublication = publicationPort
 			}
 		}
-	} else if config.Database != nil {
-		if config.AuditIntentRecorder == nil {
+	} else {
+		database := config.Persistence.legacyDatabase
+		if !config.Persistence.isSQLite() || database == nil {
+			return nil, errors.New("deployment persistence backend is unavailable")
+		}
+		audit := config.AuditIntentRecorder
+		if audit == nil {
+			audit = config.Persistence.legacyAudit
+		}
+		if audit == nil {
 			return nil, errors.New("deployment audit intent recorder is required")
 		}
 		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
@@ -395,9 +393,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 		if config.API.Workflow != nil {
 			ownedCommitter := workflowAuditCommitter{
-				database: config.Database,
+				database: database,
 				workflow: config.API.Workflow,
-				audit:    config.AuditIntentRecorder,
+				audit:    audit,
 			}
 			config.API.Committer = ownedCommitter
 			config.API.AuditedCommitter = ownedCommitter
@@ -411,18 +409,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.API.Committer == nil {
 			config.API.Committer = config.API.AuditedCommitter
 		}
-		cancelJob, cancelJobOK := config.API.Jobs.(jobplatform.WorkflowJobCanceller)
-		if config.API.Jobs != nil && !cancelJobOK {
-			return nil, errors.New("deployment transactional job canceller is required")
-		}
-		repository, activation, candidateRepository, approvalRepository := newPersistence(
-			config.Database,
-			config.ActivationHooks,
-			config.API.Releases,
-			config.API.Workflow,
-			cancelJob,
-			config.AuditIntentRecorder,
-		)
+		repository := config.Persistence.legacyRepository
+		activation := config.Persistence.legacyActivation
+		candidateRepository := config.Persistence.legacyCandidates
+		approvalRepository := config.Persistence.legacyApprovals
 		if config.DeliveryReader == nil {
 			if reader, ok := repository.(deployment.DeliveryReader); ok {
 				config.DeliveryReader = reader
@@ -513,7 +503,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
 		candidateSourceAudit:     config.CandidateSourceAudit,
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
-		logger:                   config.Logger, auditIntentConfigured: config.Database != nil && config.AuditIntentRecorder != nil,
+		logger:                   config.Logger, auditIntentConfigured: config.Persistence.isSQLite() && func() bool {
+			if config.AuditIntentRecorder != nil {
+				return true
+			}
+			return config.Persistence.legacyAudit != nil
+		}(),
 		jobs: jobs, api: config.API, protected: config.Protected,
 		instanceID: config.InstanceID, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
@@ -527,7 +522,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		nativeDeliveryReader: config.NativeDeliveryReader,
 		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
 		nativeDeliveryApproval: config.NativeDeliveryApproval,
-		persistence:            config.Persistence,
+		persistence: func() *Persistence {
+			if config.Persistence.isPostgres() {
+				return config.Persistence
+			}
+			return nil
+		}(),
 	}
 	if m.bootstrapPolicies == nil {
 		m.bootstrapPolicies = durableBootstrapPolicies

@@ -61,7 +61,11 @@ func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
 	}
 
 	store := testStore(t)
-	states, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Database: store.SQLDB()})
+	statePersistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
+	if err != nil {
+		t.Fatalf("build serving-state persistence: %v", err)
+	}
+	states, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Persistence: &statePersistence})
 	if err != nil {
 		t.Fatalf("build serving-state repository: %v", err)
 	}

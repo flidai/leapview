@@ -38,11 +38,19 @@ func TestCreateAgentRunGeneratedExecutionContractIsPersistedAtomically(t *testin
 		t.Fatal(err)
 	}
 	jobStore := jobsqlite.NewRepository(store.SQLDB())
-	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true, ProjectID: projectgraph.ResourceID("project:contract"),
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		Workflow:            jobStore,
 		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	module, err := Build(t.Context(), Config{
+		Persistence: &persistence, ProjectID: projectgraph.ResourceID("project:contract"),
 		Jobs:                jobStore,
 		Model:               ModelConfig{APIKey: "test", Model: "test"},
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		RecordAudit: func(context.Context, access.AuditEventInput) error {
 			return nil
 		},

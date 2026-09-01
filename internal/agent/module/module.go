@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"fmt"
 	"io/fs"
 	"log/slog"
@@ -84,12 +83,10 @@ func BuildAPIGenOperations(operationContracts map[string]APIGenOperationContract
 }
 
 type Config struct {
-	Database *sql.DB
 	// Persistence is the capability-owned storage selection. Production
-	// callers must provide a PostgreSQL persistence. LegacySQLite documents
-	// development/test use of the compatibility Database input.
+	// callers must provide a PostgreSQL persistence. Development and tests can
+	// opt into SQLite explicitly through NewSQLitePersistence.
 	Persistence         *Persistence
-	LegacySQLite        bool
 	Production          bool
 	Model               ModelConfig
 	Service             *agent.Service
@@ -186,24 +183,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 	}
 	workflow, durableWorkflow := config.Jobs.(jobplatform.WorkflowRecorder)
-	if config.Database != nil {
-		if config.Production {
-			return nil, fmt.Errorf("production agent persistence cannot use SQLite")
-		}
-		if !config.LegacySQLite {
-			return nil, fmt.Errorf("agent SQLite persistence requires LegacySQLite=true")
-		}
-		if config.Persistence != nil {
-			return nil, fmt.Errorf("agent database and persistence are mutually exclusive")
-		}
-		persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: config.Database, Workflow: workflow, AuditIntentRecorder: config.AuditIntentRecorder})
-		if err != nil {
-			return nil, err
-		}
-		config.Persistence = &persistence
-	} else if config.LegacySQLite {
-		return nil, fmt.Errorf("agent LegacySQLite requires a Database")
-	}
 	if config.Production {
 		if config.Persistence == nil || !config.Persistence.isPostgres() {
 			return nil, fmt.Errorf("agent production persistence must be PostgreSQL")
@@ -294,7 +273,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		resolveTurnContext = m.ResolveTurnContext
 	}
 	var buildAuditIntent func(context.Context, agenthttp.CommandAuditInput) (*access.AuditIntent, error)
-	if config.Database != nil {
+	// The generated transactional intent builder is only needed by the
+	// explicit SQLite adapter. Native PostgreSQL repositories construct and
+	// persist their own transaction-scoped audit intents.
+	if config.Persistence != nil && config.Persistence.isSQLite() {
 		buildAuditIntent = BuildAuditIntent
 	}
 	currentPrincipal := func(r *http.Request) (agenthttp.Principal, bool) {

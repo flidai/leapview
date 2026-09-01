@@ -14,7 +14,11 @@ func TestBuildRejectsIncompleteOwnedDeploymentComposition(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	if _, err := Build(t.Context(), Config{Database: store.SQLDB()}); err == nil {
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: store.SQLDB()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Build(t.Context(), Config{Persistence: &persistence}); err == nil {
 		t.Fatal("deployment module accepted a database without its required capability ports")
 	}
 }

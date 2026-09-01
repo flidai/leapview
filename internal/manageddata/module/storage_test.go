@@ -37,12 +37,23 @@ func TestBuildKeepsPersistencePrivateAndExposesNamedServices(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	states, err := servingstatemodule.Build(t.Context(), servingstatemodule.Config{Database: store.SQLDB()})
+	statePersistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
+	if err != nil {
+		t.Fatal(err)
+	}
+	states, err := servingstatemodule.Build(t.Context(), servingstatemodule.Config{Persistence: &statePersistence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), ServingStates: states, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+		Persistence: &persistence, ServingStates: states, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		AuthorizeConnection: allowAllConnectionAuthorization,
 		Product: ProductConfig{
 			Backend:          "local",
@@ -70,8 +81,16 @@ func TestModuleHTTPConcurrentCancelEmitsOneEventAndCleansTusState(t *testing.T) 
 	t.Cleanup(func() { _ = store.Close() })
 	jobs := jobssqlite.NewRepository(store.SQLDB())
 	managedRoot := filepath.Join(t.TempDir(), "managed")
+	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{
+		Database:            store.SQLDB(),
+		Workflow:            jobs,
+		AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), Jobs: jobs, Workflow: jobs, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
+		Persistence: &persistence, Jobs: jobs, Workflow: jobs, AuditIntentRecorder: accesssqlite.NewRepository(store.SQLDB()),
 		CurrentPrincipal:    func(*http.Request) (Principal, bool) { return Principal{ID: "principal-a"}, true },
 		AuthorizeConnection: allowAllConnectionAuthorization,
 		Product:             ProductConfig{Backend: "local", Dir: managedRoot, UploadSessionTTL: time.Hour, GCGracePeriod: time.Hour, MaxFiles: 10, MaxFileBytes: 1024, MaxRevisionBytes: 4096},
