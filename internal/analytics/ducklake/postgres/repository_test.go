@@ -67,8 +67,12 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 		t.Fatalf("registered catalog identity = %#v, want database/uuid %q/%q", registered, identity.CatalogDatabase, identity.CatalogUUID)
 	}
 	for label, mutate := range map[string]func(*CatalogIdentity){
-		"database": func(v *CatalogIdentity) { v.CatalogDatabase = "other_ducklake" },
-		"uuid":     func(v *CatalogIdentity) { v.CatalogUUID = "0198f2c0-7c7a-7f00-8a11-000000000099" },
+		"database":             func(v *CatalogIdentity) { v.CatalogDatabase = "other_ducklake" },
+		"catalog id":           func(v *CatalogIdentity) { v.CatalogID = "catalog-other" },
+		"uuid":                 func(v *CatalogIdentity) { v.CatalogUUID = "0198f2c0-7c7a-7f00-8a11-000000000099" },
+		"metadata schema":      func(v *CatalogIdentity) { v.MetadataSchema = "lake_other" },
+		"compatibility digest": func(v *CatalogIdentity) { v.CompatibilityDigest = digest('f') },
+		"catalog version":      func(v *CatalogIdentity) { v.CatalogSchemaVersion = "ducklake-v2" },
 	} {
 		conflict := identity
 		mutate(&conflict)
