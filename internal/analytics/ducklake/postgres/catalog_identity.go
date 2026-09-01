@@ -98,10 +98,10 @@ func ReadCatalogRegistrationEvidence(ctx context.Context, db DBTX, metadataSchem
 	if err != nil {
 		return CatalogRegistrationEvidence{}, err
 	}
-	// sqlc-exception:dynamic-schema-read -- deterministic validated per-pool schema.
 	query := `SELECT value,count(*) OVER () FROM ` + quoteSQLIdentifier(metadataSchema) + `.ducklake_metadata WHERE key='version' AND scope IS NULL AND scope_id IS NULL LIMIT 1`
 	var catalogSchemaVersion string
 	var matches int64
+	// sqlc-exception:dynamic-identifier -- deterministic validated per-pool schema.
 	if err := db.QueryRow(ctx, query).Scan(&catalogSchemaVersion, &matches); err != nil {
 		return CatalogRegistrationEvidence{}, fmt.Errorf("read DuckLake catalog format version: %w", err)
 	}

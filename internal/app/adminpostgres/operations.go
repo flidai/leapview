@@ -99,6 +99,7 @@ type Dependencies struct {
 	NewNative       func(postgresmaintenance.NativeDB) (Native, error)
 	NewAccess       func(AccessPool, []byte) (AccessInitializer, error)
 	NewBootstrap    func(AccessPool) Bootstrap
+	BootstrapPool   func(context.Context, config.Config, adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error)
 	AcquireLock     func(string) (adminoffline.Lock, error)
 	Now             func() time.Time
 }
@@ -143,6 +144,9 @@ func (d Dependencies) withDefaults() Dependencies {
 		d.NewBootstrap = func(pool AccessPool) Bootstrap {
 			return platformbootstrap.New(pool)
 		}
+	}
+	if d.BootstrapPool == nil {
+		d.BootstrapPool = bootstrapNativePhysicalPool
 	}
 	if d.AcquireLock == nil {
 		d.AcquireLock = func(home string) (adminoffline.Lock, error) {

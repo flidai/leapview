@@ -2,142 +2,37 @@ package app
 
 import (
 	"context"
-	"database/sql/driver"
-	"errors"
-	"fmt"
-	"net/url"
-	"path/filepath"
-	"strconv"
-	"strings"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	"github.com/flidai/leapview/internal/app/postgresducklake"
 	"github.com/flidai/leapview/internal/extension"
-	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 )
 
 // Production DuckDB secret names are process-owned and deliberately never
-// persisted in serving roots. Each connector receives a temporary PostgreSQL
-// secret before it attaches the relational DuckLake catalog.
+// persisted in serving roots.
 const (
-	postgresDuckLakeSecret   = "leapview_lake"
-	postgresConnectionSecret = "leapview_pg"
+	postgresDuckLakeSecret   = postgresducklake.DuckLakeSecret
+	postgresConnectionSecret = postgresducklake.PostgresSecret
 )
 
-// newPostgresDuckLakeCredentialBootstrapFactory keeps the DuckLake-specific
-// callback type out of the process composition file while preserving the
-// existing validation and per-connector credential bootstrap behavior.
 func newPostgresDuckLakeCredentialBootstrapFactory(cfg config.Config, extensionAdmission extension.Admission) func(context.Context, *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
 	return func(ctx context.Context, contract *ducklake.PoolContract) (ducklake.CredentialBootstrap, error) {
 		return newPostgresDuckLakeCredentialBootstrap(cfg, contract, extensionAdmission)
 	}
 }
 
-// newPostgresDuckLakeCredentialBootstrap validates the configured catalog URL
-// once and returns a per-connector callback. The callback receives only the
-// DuckDB executor capability; credentials are never placed in a runtime
-// configuration, log field, or durable root. If the admitted physical pool is
-// object-backed, the S3 bootstrap is run on the same connector as well.
 func newPostgresDuckLakeCredentialBootstrap(cfg config.Config, contract *ducklake.PoolContract, extensionAdmission extension.Admission) (ducklake.CredentialBootstrap, error) {
-	if extensionAdmission == nil {
-		return nil, errors.New("PostgreSQL DuckLake credential bootstrap requires extension admission")
-	}
-	parsed, err := url.Parse(strings.TrimSpace(cfg.PostgresDuckLakeURL))
-	if err != nil || parsed == nil || (parsed.Scheme != "postgres" && parsed.Scheme != "postgresql") || parsed.Hostname() == "" {
-		return nil, errors.New("PostgreSQL DuckLake URL is invalid")
-	}
-	if parsed.Fragment != "" {
-		return nil, errors.New("PostgreSQL DuckLake URL contains an invalid fragment")
-	}
-	for key, values := range parsed.Query() {
-		if key != "sslmode" {
-			return nil, fmt.Errorf("PostgreSQL DuckLake URL query option %q is unsupported", key)
-		}
-		if len(values) != 1 {
-			return nil, errors.New("PostgreSQL DuckLake URL sslmode must be specified once")
-		}
-	}
-	user := ""
-	password := ""
-	if parsed.User != nil {
-		user = parsed.User.Username()
-		password, _ = parsed.User.Password()
-	}
-	if user == "" || password == "" || strings.Trim(parsed.Path, "/") == "" {
-		return nil, errors.New("PostgreSQL DuckLake URL requires database, user, and password")
-	}
-	for name, value := range map[string]string{"host": parsed.Hostname(), "user": user, "password": password} {
-		if strings.ContainsAny(value, "\x00\r\n") {
-			return nil, fmt.Errorf("PostgreSQL DuckLake URL %s contains a control character", name)
-		}
-	}
-	port := 5432
-	if rawPort := parsed.Port(); rawPort != "" {
-		port, err = strconv.Atoi(rawPort)
-		if err != nil || port < 1 || port > 65535 {
-			return nil, errors.New("PostgreSQL DuckLake URL port is invalid")
-		}
-	}
-	database, err := url.PathUnescape(parsed.EscapedPath())
-	if err != nil || !strings.HasPrefix(database, "/") || strings.TrimPrefix(database, "/") == "" || strings.Contains(strings.TrimPrefix(database, "/"), "/") {
-		return nil, errors.New("PostgreSQL DuckLake URL database path is invalid")
-	}
-	database = strings.TrimPrefix(database, "/")
-	if strings.ContainsAny(database, "\x00\r\n") {
-		return nil, errors.New("PostgreSQL DuckLake database identity is invalid")
-	}
-	sslMode := "require"
-	if configured := strings.TrimSpace(parsed.Query().Get("sslmode")); configured != "" {
-		sslMode = configured
-	}
-	if sslMode != "require" && sslMode != "verify-ca" && sslMode != "verify-full" {
-		return nil, errors.New("PostgreSQL DuckLake credential bootstrap requires TLS")
-	}
-
-	var objectBootstrap ducklake.CredentialBootstrap
-	if contract != nil {
-		objectBootstrap, err = gcadapter.NewPoolCredentialBootstrap(contract, gcadapter.S3Config{
+	return postgresducklake.NewCredentialBootstrap(postgresducklake.CredentialConfig{
+		PostgresURL:        cfg.PostgresDuckLakeURL,
+		Contract:           contract,
+		ExtensionAdmission: extensionAdmission,
+		S3: gcadapter.S3Config{
 			Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID,
 			SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken,
 			Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle,
 			ExtensionAdmission: extensionAdmission,
-		})
-		if err != nil {
-			// The caller may not know the pool contract until an active sealed
-			// root is resolved. Keep this helper strict for configured S3 pools;
-			// local pools intentionally return a nil object bootstrap.
-			return nil, err
-		}
-	}
-	return func(ctx context.Context, execer driver.ExecerContext) error {
-		if execer == nil {
-			return errors.New("DuckDB credential bootstrap executor is nil")
-		}
-		admitted, err := extensionAdmission.AdmitExtension(ctx, "postgres")
-		if err != nil {
-			return fmt.Errorf("admit PostgreSQL DuckDB scanner: %w", err)
-		}
-		base := filepath.Base(admitted.Path)
-		stem := strings.TrimSuffix(base, ".duckdb_extension")
-		expectedStem := extension.ArtifactFilenameStem("postgres")
-		if admitted.Name != "postgres" || strings.TrimSpace(admitted.Identity) == "" || strings.TrimSpace(admitted.Version) == "" || strings.TrimSpace(admitted.Platform) == "" || platformdigest.ValidateSHA256Identity(admitted.Digest) != nil || !filepath.IsAbs(admitted.Path) || filepath.Clean(admitted.Path) != admitted.Path || !strings.HasSuffix(base, ".duckdb_extension") || (stem != expectedStem && !strings.HasPrefix(stem, expectedStem+"-")) {
-			return errors.New("PostgreSQL DuckDB scanner admission returned an invalid absolute artifact")
-		}
-		if _, err := execer.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'", nil); err != nil {
-			return fmt.Errorf("load PostgreSQL DuckDB scanner: %w", err)
-		}
-		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE '%s')", postgresConnectionSecret, sqlLiteral(parsed.Hostname()), port, sqlLiteral(database), sqlLiteral(user), sqlLiteral(password), sqlLiteral(sslMode))
-		if _, err := execer.ExecContext(ctx, statement, nil); err != nil {
-			return fmt.Errorf("create temporary PostgreSQL DuckDB secret: %w", err)
-		}
-		if objectBootstrap != nil {
-			if err := objectBootstrap(ctx, execer); err != nil {
-				return err
-			}
-		}
-		return nil
-	}, nil
+		},
+	})
 }
-
-func sqlLiteral(value string) string { return strings.ReplaceAll(value, "'", "''") }
