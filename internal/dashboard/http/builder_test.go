@@ -840,6 +840,18 @@ func TestDashboardBuilderErrorsDistinguishStaleAndForbidden(t *testing.T) {
 	}
 }
 
+func TestDashboardBuilderStrictCompilerDiagnosticsAreValidationErrors(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", nil)
+	writeBuilderError(recorder, request, errors.New(`strictly compile dashboard: compile dashboard filters: filter "category" must narrow targets explicitly`))
+	if recorder.Code != nethttp.StatusUnprocessableEntity {
+		t.Fatalf("status = %d, want %d, body = %s", recorder.Code, nethttp.StatusUnprocessableEntity, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "compile dashboard filters") {
+		t.Fatalf("compiler diagnostic was hidden: %s", recorder.Body.String())
+	}
+}
+
 func TestDashboardBuilderRejectsDraftURLMismatchAndCommandScopeSpoof(t *testing.T) {
 	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
 	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}

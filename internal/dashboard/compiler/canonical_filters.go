@@ -105,7 +105,7 @@ func cloneCanonicalBindings(values map[string]dashboardfilter.Binding) map[strin
 // to this seam; callers can compile visuals independently and pass the same
 // canonical document to the query compiler.
 func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
-	return compileCanonicalDashboardFilters(doc, model, true)
+	return compileCanonicalDashboardFilters(doc, model, canonicalFilterVisualValidationStrict)
 }
 
 // CompileCanonicalDashboardFilterContract compiles the governed filter state
@@ -113,10 +113,26 @@ func CompileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 // loading, where an unrelated in-progress visual must not block filter state
 // or static/distinct option metadata.
 func CompileCanonicalDashboardFilterContract(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
-	return compileCanonicalDashboardFilters(doc, model, false)
+	return compileCanonicalDashboardFilters(doc, model, canonicalFilterVisualValidationNone)
 }
 
-func compileCanonicalDashboardFilters(doc document.DashboardDocument, model *semanticmodel.Model, validateVisualQueries bool) (CanonicalFilterCompilation, error) {
+// CompileCanonicalDashboardBuilderFilters validates filter compatibility for
+// every visual query that can be lowered independently. Invalid in-progress
+// visuals are omitted by the builder preview, so they must not hide filter
+// validation errors on otherwise valid visual targets.
+func CompileCanonicalDashboardBuilderFilters(doc document.DashboardDocument, model *semanticmodel.Model) (CanonicalFilterCompilation, error) {
+	return compileCanonicalDashboardFilters(doc, model, canonicalFilterVisualValidationBestEffort)
+}
+
+type canonicalFilterVisualValidation uint8
+
+const (
+	canonicalFilterVisualValidationNone canonicalFilterVisualValidation = iota
+	canonicalFilterVisualValidationBestEffort
+	canonicalFilterVisualValidationStrict
+)
+
+func compileCanonicalDashboardFilters(doc document.DashboardDocument, model *semanticmodel.Model, visualValidation canonicalFilterVisualValidation) (CanonicalFilterCompilation, error) {
 	if model == nil {
 		return CanonicalFilterCompilation{}, fmt.Errorf("semantic model is required")
 	}
@@ -153,7 +169,7 @@ func compileCanonicalDashboardFilters(doc document.DashboardDocument, model *sem
 	if err := validateCanonicalOptionDependencies(doc.Spec.Filters, result.Definitions, model); err != nil {
 		return CanonicalFilterCompilation{}, err
 	}
-	pages, err := compileCanonicalFilterPages(doc, model, dashboardID, result.Definitions, result.Bindings, validateVisualQueries)
+	pages, err := compileCanonicalFilterPages(doc, model, dashboardID, result.Definitions, result.Bindings, visualValidation)
 	if err != nil {
 		return CanonicalFilterCompilation{}, err
 	}
@@ -406,7 +422,7 @@ func validateCanonicalOptionDependencies(filters []document.DashboardFilter, def
 	return nil
 }
 
-func compileCanonicalFilterPages(doc document.DashboardDocument, model *semanticmodel.Model, dashboardID string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, validateVisualQueries bool) ([]dashboard.Page, error) {
+func compileCanonicalFilterPages(doc document.DashboardDocument, model *semanticmodel.Model, dashboardID string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, visualValidation canonicalFilterVisualValidation) ([]dashboard.Page, error) {
 	authoredFilters := make(map[string]document.DashboardFilter, len(doc.Spec.Filters))
 	for _, filter := range doc.Spec.Filters {
 		authoredFilters[strings.TrimSpace(filter.ID)] = filter
@@ -562,7 +578,7 @@ func compileCanonicalFilterPages(doc document.DashboardDocument, model *semantic
 		}
 		pages = append(pages, page)
 	}
-	if err := resolveCanonicalFilterTargets(doc, model, dashboardID, definitions, bindings, pages, validateVisualQueries); err != nil {
+	if err := resolveCanonicalFilterTargets(doc, model, dashboardID, definitions, bindings, pages, visualValidation); err != nil {
 		return nil, err
 	}
 	return pages, nil
@@ -603,7 +619,7 @@ func canonicalFilterPresentation(control document.DashboardFilterControl) (dashb
 	return presentation, nil
 }
 
-func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semanticmodel.Model, _ string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, pages []dashboard.Page, validateVisualQueries bool) error {
+func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semanticmodel.Model, _ string, definitions map[string]dashboardfilter.Definition, bindings map[string]dashboardfilter.Binding, pages []dashboard.Page, visualValidation canonicalFilterVisualValidation) error {
 	for pageIndex := range pages {
 		page := &pages[pageIndex]
 		for _, component := range page.Visuals {
@@ -615,12 +631,15 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 				return fmt.Errorf("page %q component %q references unknown visual %q", page.ID, component.ID, component.Visual)
 			}
 			var datasets []string
-			if validateVisualQueries {
+			if visualValidation != canonicalFilterVisualValidationNone {
 				if lowered, err := LowerDashboardQuery(visual.Query, model, model.Name); err == nil {
 					datasets = append(datasets, lowered.Plan.Datasets...)
 					if len(datasets) == 0 {
 						datasets, err = canonicalQueryDatasets(visual.Query, model)
 						if err != nil {
+							if visualValidation == canonicalFilterVisualValidationBestEffort {
+								continue
+							}
 							return fmt.Errorf("visual %q query: %w", component.Visual, err)
 						}
 					}
@@ -628,13 +647,16 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 					var resolveErr error
 					datasets, resolveErr = canonicalQueryDatasets(visual.Query, model)
 					if resolveErr != nil {
+						if visualValidation == canonicalFilterVisualValidationBestEffort {
+							continue
+						}
 						return fmt.Errorf("visual %q query: %w", component.Visual, resolveErr)
 					}
 				}
 			}
 			for filterID, definition := range definitions {
 				if binding, exists := bindings[filterID]; exists {
-					if err := addCanonicalBindingTarget(&binding, definition, page.ID, component, datasets, model, validateVisualQueries); err != nil {
+					if err := addCanonicalBindingTarget(&binding, definition, page.ID, component, datasets, model, visualValidation != canonicalFilterVisualValidationNone); err != nil {
 						return fmt.Errorf("filter %q: %w", filterID, err)
 					}
 					bindings[filterID] = binding
@@ -643,7 +665,7 @@ func resolveCanonicalFilterTargets(doc document.DashboardDocument, model *semant
 					if binding.Filter != filterID {
 						continue
 					}
-					if err := addCanonicalBindingTarget(&binding, definition, page.ID, component, datasets, model, validateVisualQueries); err != nil {
+					if err := addCanonicalBindingTarget(&binding, definition, page.ID, component, datasets, model, visualValidation != canonicalFilterVisualValidationNone); err != nil {
 						return fmt.Errorf("filter %q page binding %q: %w", filterID, bindingID, err)
 					}
 					page.FilterBindings[bindingID] = binding

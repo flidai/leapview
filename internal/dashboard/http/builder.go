@@ -1093,6 +1093,8 @@ func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) 
 		status = nethttp.StatusConflict
 	case errors.Is(err, authoring.ErrConflict):
 		status = nethttp.StatusConflict
+	case err != nil && strings.Contains(err.Error(), "strictly compile dashboard:"):
+		status = nethttp.StatusUnprocessableEntity
 	case errors.Is(err, authoring.ErrInvalidAuthoring), errors.Is(err, authoring.ErrInvalidIdentifier), errors.Is(err, authoring.ErrInvalidPayload):
 		status = nethttp.StatusBadRequest
 	}
@@ -1112,6 +1114,10 @@ func writeBuilderError(w nethttp.ResponseWriter, r *nethttp.Request, err error) 
 			message = "dashboard builder conflict"
 		}
 	case nethttp.StatusBadRequest:
+		if err != nil {
+			message = err.Error()
+		}
+	case nethttp.StatusUnprocessableEntity:
 		if err != nil {
 			message = err.Error()
 		}

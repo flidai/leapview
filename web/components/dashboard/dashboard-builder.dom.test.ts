@@ -2433,7 +2433,14 @@ test('dashboard builder gates publishing on exact draft state and visible valida
       await element.updateComplete
       const details = root.querySelector<HTMLDetailsElement>('.secondary-details')!
       const blocked = { disabled: publish.disabled, title: publish.title, detailsOpen: details.open, summary: details.querySelector('summary')?.textContent?.trim(), previewLink: Boolean(root.querySelector('[data-builder-action="preview"]')) }
-      return { initial, publishing, published, blocked, commands }
+      mergePatch({ builder: { hasUnpublishedChanges: true, diagnostics: [], preview: { active: false, href: '', error: 'strictly compile dashboard draft: compile dashboard filters: filter "category": is visible on incompatible target "overview/sales-chart"; narrow targets explicitly' } } })
+      await element.updateComplete
+      const filterBlocked = {
+        disabled: publish.disabled,
+        title: publish.title,
+        filterMessage: root.querySelector('.filter-validation')?.textContent?.trim(),
+      }
+      return { initial, publishing, published, blocked, filterBlocked, commands }
     })
     expect(state.initial.disabled).toBe(false)
     expect(state.initial.label).toBe('Publish')
@@ -2445,6 +2452,9 @@ test('dashboard builder gates publishing on exact draft state and visible valida
     expect(state.blocked.detailsOpen).toBe(true)
     expect(state.blocked.summary).toBe('Fix 1 validation error')
     expect(state.blocked.previewLink).toBe(false)
+    expect(state.filterBlocked.disabled).toBe(true)
+    expect(state.filterBlocked.title).toContain('filter scope')
+    expect(state.filterBlocked.filterMessage).toBe('Choose a narrower filter scope for compatible visuals.')
     expect(state.commands.at(-1)).toMatchObject({ action: 'publish', revisionId: 'rev-7', revisionNumber: '7' })
   } finally {
     await page.close()

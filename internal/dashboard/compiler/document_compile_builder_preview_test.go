@@ -60,3 +60,31 @@ func TestCompileDocumentBuilderPreviewIsolatesInvalidVisual(t *testing.T) {
 		t.Fatal("strict compilation unexpectedly accepted invalid visual")
 	}
 }
+
+func TestCompileDocumentBuilderPreviewRejectsIncompatibleReportFilterTargets(t *testing.T) {
+	model := canonicalFilterTestModel()
+	model.Datasets["customers"] = semanticmodel.SemanticDatasetSpec{Model: "customers"}
+	model.Tables["customers"] = semanticmodel.Table{ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"name": {Field: "customers.name", Type: "string", Datatype: semanticmodel.DataTypeString}}}
+	model.Metrics["customer_count"] = semanticmodel.Metric{Type: "aggregate", Dataset: "customers", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "customers.name"}}
+	component := func(id, visual string, column int32) document.DashboardPageComponent {
+		return document.DashboardPageComponent{Value: &document.VisualDashboardPageComponent{
+			DashboardPageComponentBase: document.DashboardPageComponentBase{ID: id, Type: "visual", Placement: document.DashboardPlacement{Column: column, Row: 1, ColumnSpan: 6, RowSpan: 4}},
+			Type:                       "visual", Visual: visual,
+		}}
+	}
+	doc := document.DashboardDocument{
+		APIVersion: document.DashboardApiVersionLeapviewDevV1,
+		Kind:       document.DashboardResourceKindDashboard,
+		Metadata:   document.DashboardMetadata{ID: "dashboard:sales", Name: "sales"},
+		Spec: document.DashboardSpec{
+			SemanticModel: "sales",
+			Filters:       []document.DashboardFilter{{ID: "status", Label: "Status", Dimension: "status", Control: document.DashboardFilterControl{Value: &document.SingleSelectDashboardFilterControl{Type: "singleSelect"}}}},
+			Visuals:       map[string]document.DashboardVisual{"orders": canonicalVisual("order_count"), "customers": canonicalVisual("customer_count")},
+			Pages:         []document.DashboardPage{{ID: "overview", Title: "Overview", Components: []document.DashboardPageComponent{component("orders-card", "orders", 1), component("customers-card", "customers", 7)}}},
+		},
+	}
+
+	if _, err := CompileDocumentBuilderPreview(doc, map[string]*semanticmodel.Model{"sales": model}); err == nil || !strings.Contains(err.Error(), "narrow targets") {
+		t.Fatalf("builder preview accepted incompatible report filter targets: %v", err)
+	}
+}
