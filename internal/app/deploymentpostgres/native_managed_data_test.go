@@ -19,6 +19,7 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project:managed", Kind: projectgraph.KindProject, Name: "managed"},
 		{ID: "connection:sample", Kind: projectgraph.KindConnection, Name: "sample"},
+		{ID: "model:orders", Kind: projectgraph.KindModel, Name: "orders"},
 		{ID: "semantic-model:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
 	}, nil)
 	if err != nil {
@@ -30,7 +31,11 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 		SemanticModels: map[string]*semanticmodel.Model{
 			"semantic-model:sales": {Name: "sales", Connections: map[string]semanticmodel.Connection{"sample": {Kind: "managed"}}},
 		},
-		NameIndex: projectmanifest.NameIndex{Connections: map[string]string{"sample": "connection:sample"}},
+		Models: map[string]semanticmodel.Table{"model:orders": {
+			ModelName: "orders",
+			Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT 1"},
+		}},
+		NameIndex: projectmanifest.NameIndex{Connections: map[string]string{"sample": "connection:sample"}, Models: map[string]string{"orders": "model:orders"}},
 	}
 	artifact, err := projectartifact.NewProject(graph, manifest)
 	if err != nil {
@@ -62,6 +67,12 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 	}
 	if got := request.Models["semantic-model:sales"].Connections["sample"].Root; got != "/managed/sample/revision" {
 		t.Fatalf("bound managed root = %q", got)
+	}
+	if _, ok := request.ModelTables["orders"]; !ok || len(request.ModelTables) != 1 {
+		t.Fatalf("physical model tables = %#v, want authored name orders", request.ModelTables)
+	}
+	if len(request.Tables) != 1 || request.Tables[0] != "orders" {
+		t.Fatalf("physical materialization tables = %#v, want [orders]", request.Tables)
 	}
 	if got := artifact.Models()["semantic-model:sales"].Connections["sample"].Root; got != "" {
 		t.Fatalf("portable artifact managed root mutated to %q", got)

@@ -22,7 +22,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -818,13 +817,12 @@ func nativeBuildMarker(deliveryID, generationID, attemptID, requestDigest string
 }
 
 func nativeMaterializationRequest(artifacts release.CandidateArtifactSet, request deploymentmodule.NativeDeliveryBuildRequest, generationID, candidateID, namespace string, plan deploymentdomain.DeliveryPlan) analyticsmaterialization.Request {
-	manifest := artifacts.Compiler.Manifest
-	models := artifacts.Compiler.Artifact.Models()
-	modelTables := make(map[string]semanticmodel.Table, len(manifest.Models))
-	tables := make([]string, 0, len(manifest.Models))
-	for id, model := range manifest.Models {
-		modelTables[id] = model
-		tables = append(tables, id)
+	refreshDefinition := artifacts.Compiler.Artifact.RefreshDefinition()
+	models := refreshDefinition.Models
+	modelTables := refreshDefinition.ModelTables
+	tables := make([]string, 0, len(modelTables))
+	for name := range modelTables {
+		tables = append(tables, name)
 	}
 	sort.Strings(tables)
 	return analyticsmaterialization.Request{Models: models, ModelTables: modelTables, Identity: projectgraph.ServingIdentity{ProjectID: request.ProjectID, Environment: request.Environment, GenerationID: generationID}, CandidateID: candidateID, RelationNamespace: namespace, Environment: servingstate.Environment(request.Environment), TargetType: "deployment", TargetID: projectgraph.ResourceID(request.TargetID), SemanticDigest: plan.Execution.BindingDigest, ArtifactDigest: plan.SourceDigest, Tables: tables}
