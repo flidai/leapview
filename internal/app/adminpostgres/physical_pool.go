@@ -22,6 +22,8 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
+const assumeControlOwnerSQL = `SET LOCAL ROLE leapview_control_owner`
+
 // BootstrapPhysicalPool keeps the production command on native PostgreSQL and
 // PostgreSQL-backed DuckLake authorities. Evaluation and development retain
 // the isolated offline adapter.
@@ -162,6 +164,13 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 			_ = tx.Rollback(context.WithoutCancel(ctx))
 		}
 	}()
+	// The authenticated migrator is deliberately NOINHERIT. Assume its fixed
+	// owner capability only inside this caller-owned transaction so pool and
+	// catalog registration cannot leak owner authority to later operations.
+	// sqlc-exception: analyzer-incompatible. PostgreSQL SET LOCAL ROLE cannot be prepared by sqlc vet.
+	if _, err := tx.Exec(ctx, assumeControlOwnerSQL); err != nil {
+		return result, fmt.Errorf("assume PostgreSQL control owner role: %w", err)
+	}
 	ownerID, err := platformbootstrap.New(tx).InstanceID(ctx)
 	if err != nil {
 		return result, fmt.Errorf("read PostgreSQL instance identity: %w", err)
