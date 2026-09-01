@@ -35,12 +35,6 @@ func TestProductionRejectsEveryLegacyAdminOperationBeforeOpeningState(t *testing
 				return (Operations{}).BootstrapPhysicalPool(ctx, adminoffline.PhysicalPoolBootstrapRequest{}, out)
 			},
 		},
-		{
-			name: "bootstrap qualification pool",
-			call: func(ctx context.Context, out io.Writer) error {
-				return (Operations{}).BootstrapQualificationLocalPhysicalPool(ctx, out)
-			},
-		},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

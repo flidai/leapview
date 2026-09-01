@@ -35,7 +35,7 @@ var documentedCommandSafety = map[string]commandSafety{
 	"leapview admin initialize":                {effect: "write", confirmation: "never"},
 	"leapview admin maintenance":               {effect: "destructive", confirmation: "conditional"},
 	"leapview admin delivery pool bootstrap":   {effect: "write", confirmation: "required"},
-	"leapview admin delivery pool qualify":     {effect: "write", confirmation: "required"},
+	"leapview admin delivery pool qualify":     {effect: "local-write", confirmation: "never"},
 	"leapview agent ask":                       {effect: "write", confirmation: "never"},
 	"leapview agent conversations":             {effect: "read", confirmation: "never"},
 	"leapview agent tools":                     {effect: "read", confirmation: "never"},

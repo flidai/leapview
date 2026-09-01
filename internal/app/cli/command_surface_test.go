@@ -102,7 +102,7 @@ func TestDeliveryPoolBootstrapDocumentsWriteEffectAndExplicitConfirmation(t *tes
 	}
 }
 
-func TestQualificationLocalPoolBootstrapIsHiddenAndRequiresConfirmation(t *testing.T) {
+func TestQualificationLocalPoolArtifactExportIsHiddenAndReadOnly(t *testing.T) {
 	command := NewCommand(context.Background())
 	found, _, err := command.Find([]string{"admin", "delivery", "pool", "qualify"})
 	if err != nil {
@@ -111,14 +111,17 @@ func TestQualificationLocalPoolBootstrapIsHiddenAndRequiresConfirmation(t *testi
 	if !found.Hidden {
 		t.Fatal("qualification-only local pool bootstrap must stay hidden")
 	}
-	if got := found.Annotations[documentationEffectAnnotation]; got != "write" {
-		t.Fatalf("bootstrap effect = %q, want write", got)
+	if got := found.Annotations[documentationEffectAnnotation]; got != "local-write" {
+		t.Fatalf("qualification effect = %q, want local-write", got)
 	}
-	if got := found.Annotations[documentationConfirmationAnnotation]; got != "required" {
-		t.Fatalf("bootstrap confirmation = %q, want required", got)
+	if got := found.Annotations[documentationConfirmationAnnotation]; got != "never" {
+		t.Fatalf("qualification confirmation = %q, want never", got)
 	}
-	if found.Flags().Lookup("apply") == nil {
-		t.Fatal("qualification pool bootstrap missing --apply")
+	if found.Flags().Lookup("apply") != nil {
+		t.Fatal("qualification artifact export must not expose --apply")
+	}
+	if flags := found.NonInheritedFlags(); flags.HasFlags() {
+		t.Fatalf("qualification artifact export unexpectedly has flags: %s", flags.FlagUsages())
 	}
 }
 

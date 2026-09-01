@@ -18,8 +18,8 @@ import (
 	"github.com/flidai/leapview/internal/app/extensionsupplyloader"
 	"github.com/flidai/leapview/internal/app/gcadapter"
 	"github.com/flidai/leapview/internal/extension"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
+	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
 type Operations struct{}
@@ -72,37 +72,30 @@ func (Operations) BootstrapPhysicalPool(ctx context.Context, request adminofflin
 	return service.BootstrapPhysicalPool(ctx, request, out)
 }
 
-// BootstrapQualificationLocalPhysicalPool is the legacy installed-candidate
-// seam for the isolated evaluation target. The shared production admission
-// guard runs before its local conformance probe; production callers must use
-// reviewed native evidence instead of this SQLite-backed path.
-func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, out io.Writer) error {
-	cfg, err := loadNonProductionConfig()
+const (
+	qualificationIsolationBoundary  = "qualification"
+	qualificationRetentionAuthority = "qualification"
+)
+
+// QualificationPoolArtifacts runs the complete local shared-pool conformance
+// probe and returns only non-secret, content-addressed artifacts. It is safe
+// to invoke against a production-shaped/native configuration: this export
+// deliberately loads configuration and extension supply only, never opens the
+// legacy SQLite platform store, reads an instance ID, or applies admission.
+func (Operations) QualificationPoolArtifacts(ctx context.Context) (adminoffline.QualificationPoolArtifacts, error) {
+	cfg, err := config.Load()
 	if err != nil {
-		return err
+		return adminoffline.QualificationPoolArtifacts{}, err
 	}
-	if !cfg.Production || strings.TrimSpace(cfg.Environment) != "evaluation" {
-		return fmt.Errorf("qualification local physical-pool bootstrap requires the production evaluation environment")
+	if ctx == nil {
+		ctx = context.Background()
 	}
-	var extensionAdmission extension.Admission
-	if strings.TrimSpace(cfg.DuckDBExtensionSupplyPath) != "" {
-		supply, supplyErr := extensionsupplyloader.Load(ctx, cfg)
-		if supplyErr != nil {
-			return fmt.Errorf("load qualification extension supply: %w", supplyErr)
-		}
-		extensionAdmission = supply
-	}
-	store, err := platform.Open(ctx, cfg.DBPath())
+	// Qualification must execute with the target-reviewed extension supply. The
+	// loader selects the immutable packaged supply in production images and
+	// validates any explicit local supply before DuckDB is opened.
+	supply, err := extensionsupplyloader.Load(ctx, cfg)
 	if err != nil {
-		return err
-	}
-	instanceID, err := store.InstanceID(ctx)
-	closeErr := store.Close()
-	if err != nil {
-		return fmt.Errorf("read durable instance identity: %w", err)
-	}
-	if closeErr != nil {
-		return closeErr
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("load qualification extension supply: %w", err)
 	}
 	identity := buildinfo.Current()
 	tuple := physicalpool.Compatibility{
@@ -114,32 +107,51 @@ func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, o
 	}
 	storageLocation, err := filepath.Abs(cfg.DuckLakeDataDir())
 	if err != nil {
-		return fmt.Errorf("resolve qualification pool storage: %w", err)
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("resolve qualification pool storage: %w", err)
 	}
-	probeRoot := filepath.Join(cfg.RuntimeDir(), "qualification-delivery-conformance")
-	defer os.RemoveAll(probeRoot)
-	evidence, err := analyticsducklake.RunLocalPoolConformance(ctx, probeRoot, tuple, extensionAdmission)
-	if err != nil {
-		return fmt.Errorf("run qualification local physical-pool conformance: %w", err)
-	}
-	service, err := newService()
-	if err != nil {
-		return err
-	}
-	return service.BootstrapPhysicalPool(ctx, adminoffline.PhysicalPoolBootstrapRequest{
-		Pool: physicalpool.PoolIdentity{
-			StorageLocation: storageLocation, StorageNamespace: "delivery", EncryptionDomain: "local",
-			IsolationBoundary: instanceID, RetentionAuthority: instanceID,
-			RetentionPolicy: physicalpool.RetentionPolicy{
-				ReaderGracePeriodSeconds: 1800,
-				OrphanGracePeriodSeconds: 3600,
-				BuildGracePeriodSeconds:  3600,
-			},
-			Compatibility: tuple,
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
+		StorageLocation: storageLocation, StorageNamespace: "delivery", EncryptionDomain: "local",
+		IsolationBoundary: qualificationIsolationBoundary, RetentionAuthority: qualificationRetentionAuthority,
+		RetentionPolicy: physicalpool.RetentionPolicy{
+			ReaderGracePeriodSeconds: 1800,
+			OrphanGracePeriodSeconds: 3600,
+			BuildGracePeriodSeconds:  3600,
 		},
-		Evidence: evidence,
-		Apply:    true,
-	}, out)
+		Compatibility: tuple,
+	})
+	if err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("build qualification pool identity: %w", err)
+	}
+	// Keep probe state private and disposable. The configured runtime directory
+	// is target-local (/var/lib/leapview/... in the production image), while the
+	// generated identity points at the configured DuckLake data location.
+	if err := securefs.EnsurePrivateDir(cfg.RuntimeDir()); err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("prepare qualification runtime directory: %w", err)
+	}
+	probeRoot, err := os.MkdirTemp(cfg.RuntimeDir(), "qualification-delivery-conformance-")
+	if err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("create qualification conformance directory: %w", err)
+	}
+	defer os.RemoveAll(probeRoot)
+	evidence, err := analyticsducklake.RunLocalPoolConformance(ctx, probeRoot, tuple, supply)
+	if err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("run qualification local physical-pool conformance: %w", err)
+	}
+	if err := (analyticsducklake.SharedPoolConformance{Compatibility: tuple}).ValidateEvidence(evidence); err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("validate qualification conformance evidence: %w", err)
+	}
+	artifacts := adminoffline.QualificationPoolArtifacts{
+		SchemaVersion: adminoffline.QualificationPoolArtifactsSchemaVersion,
+		Pool:          pool.Identity,
+		Evidence: physicalpool.EvidenceArtifact{
+			SchemaVersion: physicalpool.EvidenceArtifactSchemaVersion,
+			Evidence:      evidence,
+		},
+	}
+	if _, err := adminoffline.MarshalQualificationPoolArtifacts(artifacts); err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, err
+	}
+	return artifacts, nil
 }
 
 func newService() (*adminoffline.Service, error) {
