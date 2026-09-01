@@ -16,8 +16,10 @@ import {
   Component,
   Database,
   Download,
+  FilePenLine,
   FileText,
   LayoutDashboard,
+  LockKeyhole,
   Plus,
   Plug,
   Play,
@@ -1168,6 +1170,10 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'healthy':
     case 'published':
       return { icon: CheckCircle2, tone: 'success' }
+    case 'private draft':
+      return { icon: LockKeyhole, tone: 'muted' }
+    case 'unpublished changes':
+      return { icon: FilePenLine, tone: 'attention' }
     case 'failed':
     case 'cancelled':
     case 'error':
@@ -1176,7 +1182,6 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'running':
     case 'prepared':
     case 'pending':
-    case 'unpublished changes':
       return { icon: Clock3, tone: 'attention' }
     default:
       return { icon: Circle, tone: 'muted' }
