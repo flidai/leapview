@@ -52,6 +52,30 @@ func TestQualificationCommandSurfaceBelongsToLeapviewctl(t *testing.T) {
 	}
 }
 
+func TestQualificationLoginKeepsDiagnosticsOutOfJSONEventStream(t *testing.T) {
+	bin := t.TempDir()
+	leapview := filepath.Join(bin, "leapview")
+	script := `#!/bin/sh
+printf '%s\n' 'retrying native credential storage' >&2
+printf '%s\n' '{"schemaVersion":1,"type":"deviceChallenge","verificationUrl":"https://example.test/device","userCode":"ABCD-EFGH"}'
+printf '%s\n' '{"schemaVersion":1,"type":"authenticated"}'
+`
+	require.NoError(t, os.WriteFile(leapview, []byte(script), 0o755))
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	var challenge qualificationLoginChallenge
+	err := runQualificationLogin(t.Context(), os.Environ(), QualificationClientWorkerOptions{
+		Target: "https://example.test", Project: "dashboards/leapview.yaml",
+	}, func(value qualificationLoginChallenge) error {
+		challenge = value
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, qualificationLoginChallenge{
+		VerificationURL: "https://example.test/device", UserCode: "ABCD-EFGH",
+	}, challenge)
+}
+
 func TestQualificationPlanEvidenceUsesSharedCandidateIdentityDomains(t *testing.T) {
 	candidate := QualificationCandidate{
 		PlanDigest: "sha256:plan", ArtifactDigest: "sha256:artifact",

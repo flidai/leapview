@@ -299,7 +299,10 @@ func runQualificationLogin(
 	var output bytes.Buffer
 	reader, writer := io.Pipe()
 	command.Stdout = io.MultiWriter(&output, writer)
-	command.Stderr = io.MultiWriter(&output, writer)
+	// JSON mode makes stdout a machine protocol. Keep stderr in the bounded
+	// diagnostic transcript, but never feed human diagnostics into the event
+	// decoder.
+	command.Stderr = &output
 	if err := command.Start(); err != nil {
 		_ = writer.Close()
 		return fmt.Errorf("start leapview login: %w", err)
