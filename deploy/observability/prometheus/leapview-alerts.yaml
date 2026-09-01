@@ -114,3 +114,18 @@ groups:
           summary: "LeapView dashboard refresh latency on {{ $labels.instance }} is burning error budget rapidly"
           description: "Slow completed dashboard refreshes on {{ $labels.instance }} meet or exceed the 14.4x burn-rate threshold over both 5 minutes and 1 hour, with at least 10 completed refreshes in the 1-hour window."
           runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-fast-burn-alert-fires"
+
+      - alert: LeapViewDashboardRefreshLatencySlowBurn
+        expr: |
+          (leapview:dashboard_refresh_latency:burn_rate_30m >= 6)
+          and on (job, instance)
+          (leapview:dashboard_refresh_latency:burn_rate_6h >= 6)
+          and on (job, instance)
+          (leapview:dashboard_refresh_latency:completed_events_6h >= 60)
+        labels:
+          service: leapview
+          severity: warning
+        annotations:
+          summary: "LeapView dashboard refresh latency on {{ $labels.instance }} is steadily consuming error budget"
+          description: "Slow completed dashboard refreshes on {{ $labels.instance }} meet or exceed the 6x burn-rate threshold over both 30 minutes and 6 hours, with at least 60 completed refreshes in the 6-hour window."
+          runbook_url: "https://leapview.dev/docs/guides/operate/troubleshooting#dashboard-refresh-latency-slow-burn-alert-fires"

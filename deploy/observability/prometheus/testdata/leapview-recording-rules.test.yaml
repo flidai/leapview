@@ -1128,3 +1128,121 @@ tests:
       - expr: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
         eval_time: 10m
         exp_samples: []
+
+  - name: latency slow-window recordings aggregate to bounded labels
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5",route="/dashboards/{dashboard}",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0+8x360'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete",route="/dashboards/{dashboard}",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
+        values: '0+8x360'
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="select",outcome="complete",le="5",route="/updates",request_id="req-other",trace_id="trace-other",user_id="user-other",project_id="project-other",resource_id="resource-other"}'
+        values: '0+1x360'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="select",outcome="complete",route="/updates",request_id="req-other",trace_id="trace-other",user_id="user-other",project_id="project-other",resource_id="resource-other"}'
+        values: '0+1x360'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="slow",outcome="complete",route="/updates",request_id="req-slow",trace_id="trace-slow",user_id="user-slow",project_id="project-slow",resource_id="resource-slow"}'
+        values: '0+1x360'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
+        values: '0+100x360'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30m'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_30m",instance="app:8080",job="leapview"}'
+            value: 300.00000000000006
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30m'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_30m",instance="app:8080",job="leapview"}'
+            value: 30
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_30m'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_30m",instance="app:8080",job="leapview"}'
+            value: 9.999999999999998
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_6h'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_6h",instance="app:8080",job="leapview"}'
+            value: 3600
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_6h'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_6h",instance="app:8080",job="leapview"}'
+            value: 360
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_6h'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_6h",instance="app:8080",job="leapview"}'
+            value: 10
+
+  - name: canceled-only traffic emits no latency slow-window recordings
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="filter_change",outcome="canceled",le="5"}'
+        values: '0+10x360'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
+        values: '0+10x360'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30m'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30m'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_30m'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_6h'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_6h'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_6h'
+        eval_time: 6h
+        exp_samples: []
+
+  - name: counter resets preserve latency slow-window recordings
+    interval: 1m
+    input_series:
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
+        values: '0+9x180 0+9x180'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
+        values: '0+9x180 0+9x180'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="slow",outcome="complete"}'
+        values: '0+1x180 0+1x180'
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_30m'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_30m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_6h'
+        eval_time: 6h
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:burn_rate_6h",instance="app:8080",job="leapview"}'
+            value: 10.000000000000002
+
+  - name: missing histogram traffic emits no latency slow-window recordings
+    interval: 1m
+    input_series: []
+    promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30m'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30m'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_30m'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_6h'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_6h'
+        eval_time: 6h
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:burn_rate_6h'
+        eval_time: 6h
+        exp_samples: []
