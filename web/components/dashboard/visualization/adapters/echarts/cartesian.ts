@@ -403,8 +403,13 @@ function chartLabel(envelope: VisualizationEnvelope, value: CartesianSpec['y'][n
   if (color) translated.label.color = color
   else if (authored !== 'outside' && ['bar', 'column', 'waterfall', 'histogram'].includes(spec.mark)) {
     translated.label.color = '#fff'
-    translated.label.textBorderColor = 'rgba(0, 0, 0, 0.55)'
-    translated.label.textBorderWidth = 2
+    if (context.theme === 'light') {
+      translated.label.textBorderColor = 'rgba(0, 0, 0, 0.55)'
+      translated.label.textBorderWidth = 2
+    } else {
+      translated.label.textBorderColor = 'rgba(255, 255, 255, 0.45)'
+      translated.label.textBorderWidth = 1
+    }
   }
   return translated
 }

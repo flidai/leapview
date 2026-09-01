@@ -212,6 +212,54 @@ groups:
 
   - name: leapview-dashboard-refresh-latency
     rules:
+      - record: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+          )
+          -
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[5m])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:completed_events_1h'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[1h])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:slow_completed_events_1h'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[1h])
+          )
+          -
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[1h])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+          )
+          -
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[30d])
+          )
+
       - record: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         expr: |
           (
@@ -247,3 +295,54 @@ groups:
               rate(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
             ) > 0
           )
+
+      - record: 'leapview:dashboard_refresh_latency:objective_ratio_30d'
+        expr: |
+          (leapview:dashboard_refresh_latency:timely_completed_ratio_30d * 0) + 0.99
+
+      - record: 'leapview:dashboard_refresh_latency:burn_rate_5m'
+        expr: |
+          (
+            leapview:dashboard_refresh_latency:slow_completed_events_5m * 100
+          )
+          /
+          (
+            leapview:dashboard_refresh_latency:completed_events_5m
+            *
+            (100 - (leapview:dashboard_refresh_latency:objective_ratio_30d * 100))
+          )
+          and on (job, instance)
+          (leapview:dashboard_refresh_latency:completed_events_5m > 0)
+
+      - record: 'leapview:dashboard_refresh_latency:burn_rate_1h'
+        expr: |
+          (
+            leapview:dashboard_refresh_latency:slow_completed_events_1h * 100
+          )
+          /
+          (
+            leapview:dashboard_refresh_latency:completed_events_1h
+            *
+            (100 - (leapview:dashboard_refresh_latency:objective_ratio_30d * 100))
+          )
+          and on (job, instance)
+          (leapview:dashboard_refresh_latency:completed_events_1h > 0)
+
+      - record: 'leapview:dashboard_refresh_latency:error_budget_consumption_30d'
+        expr: |
+          (
+            (
+              leapview:dashboard_refresh_latency:slow_completed_events_30d
+              /
+              leapview:dashboard_refresh_latency:completed_events_30d
+            )
+            * 100
+            /
+            (100 - (leapview:dashboard_refresh_latency:objective_ratio_30d * 100))
+          )
+          and on (job, instance)
+          (leapview:dashboard_refresh_latency:completed_events_30d > 0)
+
+      - record: 'leapview:dashboard_refresh_latency:error_budget_remaining_30d'
+        expr: |
+          1 - leapview:dashboard_refresh_latency:error_budget_consumption_30d

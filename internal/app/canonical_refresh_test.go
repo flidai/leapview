@@ -6,7 +6,9 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -25,7 +27,7 @@ func TestCanonicalRefreshExecutorBuildsRestatementFromExactActiveSource(t *testi
 		},
 	}
 	mutations := &canonicalRefreshMutationStub{planBaseGenerationID: "delivery-base"}
-	execute := canonicalRefreshExecutor(mutations, reader, "target-evaluation")
+	execute := canonicalRefreshExecutor(mutations, reader, "target-evaluation", false)
 	result, err := execute(t.Context(), refreshrun.JobRecord{
 		RunID: "run-refresh", PrincipalID: "principal-refresh", LeaseOwner: "worker-refresh", LeaseRevision: 2, TargetRevision: 3,
 		Identity: projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-active"},
@@ -50,7 +52,7 @@ func TestCanonicalRefreshExecutorBuildsRestatementFromExactActiveSource(t *testi
 func TestCanonicalRefreshExecutorRejectsChangedBase(t *testing.T) {
 	execute := canonicalRefreshExecutor(&canonicalRefreshMutationStub{}, canonicalRefreshReaderStub{
 		generation: deployment.DeliveryGeneration{ServingStateID: "state-new"},
-	}, "target-evaluation")
+	}, "target-evaluation", false)
 	_, err := execute(t.Context(), refreshrun.JobRecord{
 		RunID: "run-refresh", PrincipalID: "principal-refresh",
 		Identity: projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-old"},
@@ -86,6 +88,77 @@ func TestCanonicalRefreshSourceDigestRejectsChangedBase(t *testing.T) {
 	}
 }
 
+func TestCanonicalPublishedDataVersionUsesActiveSealedSnapshot(t *testing.T) {
+	activatedAt := time.Date(2026, 8, 31, 12, 15, 56, 123000000, time.UTC)
+	resolve := canonicalPublishedDataVersion(canonicalRefreshReaderStub{
+		generation: deployment.DeliveryGeneration{
+			ID: "delivery-active", CandidateID: "candidate-active", ServingStateID: "state-active",
+			Status: deployment.DeliveryGenerationActive, ActivatedAt: activatedAt,
+		},
+		candidates: map[string]deployment.DeliveryCandidate{
+			"candidate-active": {ID: "candidate-active", ServingStateID: "state-active", SealID: "seal-active"},
+		},
+		seals: map[string]deployment.CatalogSeal{
+			"seal-active": {ID: "seal-active", AttemptID: "attempt-active"},
+		},
+		attempts: map[string]deployment.DeliveryBuildAttempt{
+			"attempt-active": {
+				ID: "attempt-active", CandidateID: "candidate-active",
+				Status: deployment.DeliveryBuildSealed, QualifiedSnapshotID: 84,
+			},
+		},
+	}, "target-evaluation")
+	version, found, err := resolve(t.Context(), projectgraph.ServingIdentity{
+		ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-active",
+	})
+	if err != nil || !found {
+		t.Fatalf("resolve published data version = %#v, %t, %v", version, found, err)
+	}
+	if version.SnapshotID != 84 || !version.RefreshedAt.Equal(activatedAt) {
+		t.Fatalf("published data version = %#v", version)
+	}
+}
+
+func TestCanonicalRefreshExecutorRestoresLocalDevelopmentAuthorizationForWorker(t *testing.T) {
+	planID := deploymentmodule.CanonicalDeliveryPlanID("target-dev", "project:test", "dev", deployment.DeliveryOperationRestatement, "refresh-plan-run-refresh")
+	reader := canonicalRefreshReaderStub{
+		generation:          deployment.DeliveryGeneration{ID: "delivery-base", CandidateID: "candidate-base", ServingStateID: "state-active"},
+		publishedGeneration: deployment.DeliveryGeneration{PlanID: planID, ServingStateID: "state-refresh"},
+		candidate:           deployment.DeliveryCandidate{PlanID: "plan-base"},
+		plan: deployment.DeliveryPlan{
+			ActorID: "dev", SourceDigest: "sha256:source",
+			Provenance: deployment.DeliveryProvenance{AttestationDigest: "sha256:attestation"},
+		},
+	}
+	mutations := &canonicalRefreshMutationStub{planBaseGenerationID: "delivery-base"}
+	execute := canonicalRefreshExecutor(mutations, reader, "target-dev", true)
+	_, err := execute(t.Context(), refreshrun.JobRecord{
+		RunID: "run-refresh", PrincipalID: accessmodule.LocalDeveloperPrincipal().ID,
+		LeaseOwner: "worker-refresh", LeaseRevision: 2, TargetRevision: 3,
+		Identity: projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "dev", GenerationID: "state-active"},
+	})
+	if err != nil {
+		t.Fatalf("canonical local refresh: %v", err)
+	}
+	if mutations.publicationPrincipal != accessmodule.LocalDeveloperPrincipal() {
+		t.Fatalf("publication principal = %#v", mutations.publicationPrincipal)
+	}
+}
+
+func TestCanonicalPublishedDataVersionRejectsStaleServingIdentity(t *testing.T) {
+	resolve := canonicalPublishedDataVersion(canonicalRefreshReaderStub{
+		generation: deployment.DeliveryGeneration{
+			ServingStateID: "state-new", Status: deployment.DeliveryGenerationActive,
+			ActivatedAt: time.Now().UTC(),
+		},
+	}, "target-evaluation")
+	if _, _, err := resolve(t.Context(), projectgraph.ServingIdentity{
+		ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-old",
+	}); err == nil {
+		t.Fatal("published data version accepted a stale serving identity")
+	}
+}
+
 func TestCanonicalRefreshExecutorRecoversOwnCommittedRestatement(t *testing.T) {
 	job := refreshrun.JobRecord{RunID: "run-refresh", PrincipalID: "principal-refresh", Identity: projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-old"}}
 	planID := deploymentmodule.CanonicalDeliveryPlanID("target-evaluation", job.Identity.ProjectID, job.Identity.Environment, deployment.DeliveryOperationRestatement, "refresh-plan-"+job.RunID)
@@ -110,7 +183,7 @@ func TestCanonicalRefreshExecutorRecoversOwnCommittedRestatement(t *testing.T) {
 		attempts: map[string]deployment.DeliveryBuildAttempt{
 			"attempt-refresh": {ID: "attempt-refresh", PlanID: planID, CandidateID: candidateID, Status: deployment.DeliveryBuildSealed, QualifiedSnapshotID: 84},
 		},
-	}, "target-evaluation")
+	}, "target-evaluation", false)
 	result, err := execute(t.Context(), job)
 	if err != nil {
 		t.Fatalf("recover committed canonical refresh: %v", err)
@@ -129,7 +202,7 @@ func TestCanonicalRefreshExecutorRejectsBaseChangedDuringPlanning(t *testing.T) 
 			ActorID: "principal-source-owner", SourceDigest: "sha256:source",
 			Provenance: deployment.DeliveryProvenance{AttestationDigest: "sha256:attestation"},
 		},
-	}, "target-evaluation")
+	}, "target-evaluation", false)
 	_, err := execute(t.Context(), refreshrun.JobRecord{
 		RunID: "run-refresh", PrincipalID: "principal-refresh",
 		Identity: projectgraph.ServingIdentity{ProjectID: "project:test", Environment: "evaluation", GenerationID: "state-old"},
@@ -208,6 +281,7 @@ type canonicalRefreshMutationStub struct {
 	publishedCandidate   string
 	planBaseGenerationID string
 	refreshFence         deployment.RefreshPublicationFence
+	publicationPrincipal accessmodule.Principal
 }
 
 func (s *canonicalRefreshMutationStub) CreatePlan(_ context.Context, intent deploymentmodule.DeliveryPlanIntent, key string) (deployment.DeliveryPlan, error) {
@@ -225,9 +299,10 @@ func (s *canonicalRefreshMutationStub) PublishCandidate(_ context.Context, _, ca
 	return deployment.DeliveryPublication{GenerationID: "delivery-generation-refresh", Status: deployment.DeliveryPublicationCommitted}, nil
 }
 
-func (s *canonicalRefreshMutationStub) PublishCandidateFenced(_ context.Context, _, candidate, _, _ string, fence deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
+func (s *canonicalRefreshMutationStub) PublishCandidateFenced(ctx context.Context, _, candidate, _, _ string, fence deployment.RefreshPublicationFence) (deployment.DeliveryPublication, error) {
 	s.publishedCandidate = candidate
 	s.refreshFence = fence
+	s.publicationPrincipal, _ = accessmodule.PrincipalFromContext(ctx)
 	return deployment.DeliveryPublication{GenerationID: "delivery-generation-refresh", Status: deployment.DeliveryPublicationCommitted}, nil
 }
 

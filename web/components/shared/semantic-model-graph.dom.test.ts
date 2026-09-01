@@ -73,6 +73,8 @@ for (const viewport of [
         const resetButton = graph.querySelector('.semantic-model-reset-button') as HTMLButtonElement | null
         const flowRect = flow.getBoundingClientRect()
         const nodeRects = nodes.map((node) => node.getBoundingClientRect())
+        const ordersRect = nodes.find((node) => node.textContent?.includes('orders'))?.getBoundingClientRect()
+        const customersRect = nodes.find((node) => node.textContent?.includes('customers'))?.getBoundingClientRect()
         const overlap = nodeRects.length >= 2 && !(
           nodeRects[0].right <= nodeRects[1].left
           || nodeRects[1].right <= nodeRects[0].left
@@ -108,6 +110,7 @@ for (const viewport of [
           hasResetIcon: Boolean(resetButton?.querySelector('.semantic-model-reset-icon')),
           flowHeight: Math.round(flowRect.height),
           nodesInsideFlow: nodeRects.every((rect) => rect.width > 0 && rect.height > 0 && rect.top >= flowRect.top && rect.bottom <= flowRect.bottom),
+          connectedLeftToRight: Boolean(ordersRect && customersRect && ordersRect.right <= customersRect.left),
           overlap,
         }
       })
@@ -140,6 +143,7 @@ for (const viewport of [
       expect(state.hasResetIcon).toBe(true)
       expect(state.flowHeight).toBe(460)
       expect(state.nodesInsideFlow).toBe(true)
+      expect(state.connectedLeftToRight).toBe(true)
       expect(state.overlap).toBe(false)
     } finally {
       await page.close()
@@ -174,7 +178,7 @@ test('semantic model graph persists dragged node layout and resets it', async ()
     if (!afterSelect) throw new Error('orders node has no bounding box after selection')
     const persisted = await page.evaluate(() => {
       const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '')
-      const key = keys.find((candidate) => candidate.startsWith('leapview:semantic-model-graph:v2:'))
+      const key = keys.find((candidate) => candidate.startsWith('leapview:semantic-model-graph:v3:'))
       return {
         keyFound: Boolean(key),
         value: key ? localStorage.getItem(key) ?? '' : '',
@@ -187,7 +191,7 @@ test('semantic model graph persists dragged node layout and resets it', async ()
     expect(persisted.value).toContain('orders')
 
     await page.locator('lv-semantic-model-graph .semantic-model-reset-button').click()
-    const remaining = await page.evaluate(() => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '').filter((key) => key.startsWith('leapview:semantic-model-graph:v2:')).length)
+    const remaining = await page.evaluate(() => Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index) ?? '').filter((key) => key.startsWith('leapview:semantic-model-graph:v3:')).length)
     expect(remaining).toBe(0)
   } finally {
     await page.close()
@@ -281,7 +285,7 @@ function testDocument(): string {
         <script type="module" src="/semantic-model-graph-under-test.js"></script>
         <script type="module">
           const graph = {
-            datasets: ['orders'],
+            datasets: ['orders', 'customers'],
             nodes: [
               {
                 id: 'orders',
