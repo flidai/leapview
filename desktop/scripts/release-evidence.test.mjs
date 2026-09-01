@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   buildSpdxDocument,
   createReleaseManifest,
+  parseBunLock,
   validateReleasePolicy,
 } from "./release-evidence.mjs";
 import {
@@ -113,6 +114,19 @@ const policy = {
     evidenceContainsDiagnostics: false,
   },
 };
+
+test("bun lock parsing is independent of the TypeScript compiler API", async () => {
+  const lockText = await readFile(
+    new URL("../bun.lock", import.meta.url),
+    "utf8",
+  );
+  const parsed = parseBunLock(lockText);
+  assert.equal(parsed.lockfileVersion, 1);
+  assert.throws(
+    () => parseBunLock('{ "lockfileVersion": }'),
+    /could not parse bun\.lock/u,
+  );
+});
 
 const packageVerification = {
   schemaVersion: 2,

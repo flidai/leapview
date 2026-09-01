@@ -13,7 +13,7 @@ import {
 import { basename, join, relative, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
-import ts from "typescript";
+import { parse as parseJSONC, printParseErrorCode } from "jsonc-parser";
 
 import { verifyReleaseEvidence } from "./verify-release-evidence.mjs";
 
@@ -106,6 +106,24 @@ export function validateReleasePolicy(policy, packageDocument) {
       "release policy security or privacy requirements are invalid",
     );
   }
+}
+
+export function parseBunLock(lockText) {
+  const errors = [];
+  const parsed = parseJSONC(lockText, errors, { allowTrailingComma: true });
+  if (errors.length > 0) {
+    const details = errors
+      .map(
+        ({ error, offset }) =>
+          `${printParseErrorCode(error)} at byte offset ${offset}`,
+      )
+      .join(", ");
+    throw new Error(`could not parse bun.lock: ${details}`);
+  }
+  if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error("could not parse bun.lock: root must be an object");
+  }
+  return parsed;
 }
 
 export function buildSpdxDocument({
@@ -436,15 +454,7 @@ async function generate() {
   const packageDocument = JSON.parse(packageText);
   const policy = JSON.parse(policyText);
   const packageVerification = JSON.parse(verificationText);
-  const parsedLock = ts.parseConfigFileTextToJson(lockfilePath, lockText);
-  if (parsedLock.error !== undefined) {
-    throw new Error(
-      `could not parse bun.lock: ${ts.flattenDiagnosticMessageText(
-        parsedLock.error.messageText,
-        "\n",
-      )}`,
-    );
-  }
+  parseBunLock(lockText);
   validateReleasePolicy(policy, packageDocument);
   assertPackageVerification(packageVerification, policy);
 
