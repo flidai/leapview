@@ -794,8 +794,8 @@ func buildApplicationSurfaces(
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
-		DashboardAppearances: dashboardAppearances,
-		ResolveProjectID:     runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
+		DashboardAppearances: dashboardAppearances, DashboardCatalog: capabilities.Authoring,
+		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 		},

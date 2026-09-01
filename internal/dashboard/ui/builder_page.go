@@ -125,8 +125,9 @@ func DashboardDraftCreatePageWithModelsAndKey(projectID, csrfToken, action, idem
 		}
 	}
 	return webpage.Render(layout, webpage.Spec{
-		Title: "New dashboard", CSRFToken: csrfToken,
-		UpdatesURL: "/updates?route=dashboard_builder",
+		Title:      "New dashboard",
+		CSRFToken:  csrfToken,
+		UpdatesURL: "/updates?route=catalog",
 		MainAttrs:  []g.Node{h.ID("dashboard-draft-create"), h.Class(webpage.RootClass)},
 		Content: draftForm("New dashboard", "Start with a private draft.", action, csrfToken, idempotencyKey,
 			g.Group{h.Label(h.For("dashboard-title"), g.Text("Title")), h.Input(h.ID("dashboard-title"), h.Name("title"), h.Required(), h.AutoComplete("off"))},
@@ -141,12 +142,13 @@ func DashboardDraftForkPage(dashboardID, csrfToken, action string, providers ...
 }
 
 func DashboardDraftForkPageWithKey(dashboardID, csrfToken, action, idempotencyKey string, providers ...webpage.Provider) g.Node {
-	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionID: dashboardID, SectionTitle: dashboardID, PageTitle: "Fork draft", Compact: true})
+	layout := builderFocusLayout(firstProvider(providers), webpage.Context{Active: "dashboards", SectionID: dashboardID, SectionTitle: dashboardID, PageTitle: "Make a copy", Compact: true})
 	return webpage.Render(layout, webpage.Spec{
-		Title: "Fork dashboard draft", CSRFToken: csrfToken,
-		UpdatesURL: "/updates?route=dashboard_builder&dashboard=" + url.QueryEscape(dashboardID),
+		Title:      "Make a dashboard copy",
+		CSRFToken:  csrfToken,
+		UpdatesURL: "/updates?route=catalog",
 		MainAttrs:  []g.Node{h.ID("dashboard-draft-fork"), h.Class(webpage.RootClass)},
-		Content: draftForm("Fork dashboard as draft", "Create a private draft from the governed project source.", action, csrfToken, idempotencyKey,
+		Content: draftForm("Make a copy", "Create an editable copy in My dashboards.", action, csrfToken, idempotencyKey,
 			g.Group{h.Input(h.Type("hidden"), h.Name("dashboardId"), h.Value(dashboardID)), h.Label(h.For("fork-title"), g.Text("Title (optional)")), h.Input(h.ID("fork-title"), h.Name("title"), h.AutoComplete("off"))},
 			g.Group{h.Label(h.For("fork-slug"), g.Text("Slug (optional)")), h.Input(h.ID("fork-slug"), h.Name("slug"), h.AutoComplete("off"))},
 		),

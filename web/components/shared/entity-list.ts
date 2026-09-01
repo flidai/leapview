@@ -55,6 +55,7 @@ export type EntityListItem = {
   columnTitles?: Record<string, string>
   sortValues?: Record<string, string | number>
   badges?: EntityListBadge[]
+  labelBadges?: string[]
   actions?: EntityListRowAction[]
 }
 
@@ -552,6 +553,19 @@ const entityListStyles = `
     gap: var(--base-size-6);
   }
 
+  .entity-list-label-badge {
+    display: inline-flex;
+    min-width: 0;
+    align-items: center;
+    border: var(--lv-border-muted);
+    border-radius: var(--lv-radius-full);
+    color: var(--lv-fg-muted);
+    background: var(--lv-bg-panel-muted);
+    padding: 0 var(--base-size-6);
+    font: var(--lv-type-caption);
+    white-space: nowrap;
+  }
+
   .entity-list-badge {
     display: inline-grid;
     width: var(--base-size-16);
@@ -953,6 +967,7 @@ class EntityList extends LitElement {
       <span class="entity-list-copy">
         <span class="entity-list-title-row">
           <span class="entity-list-title">${item.title}</span>
+          ${(item.labelBadges ?? []).map((label) => html`<span class="entity-list-label-badge">${label}</span>`)}
           ${badgesColumn ? '' : (item.badges ?? []).map((badge) => this.renderBadge(badge))}
         </span>
         ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
@@ -1151,6 +1166,7 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'succeeded':
     case 'success':
     case 'healthy':
+    case 'published':
       return { icon: CheckCircle2, tone: 'success' }
     case 'failed':
     case 'cancelled':
@@ -1160,6 +1176,7 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'running':
     case 'prepared':
     case 'pending':
+    case 'unpublished changes':
       return { icon: Clock3, tone: 'attention' }
     default:
       return { icon: Circle, tone: 'muted' }

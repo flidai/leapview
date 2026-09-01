@@ -1,5 +1,5 @@
 import { LitElement, css, html } from 'lit'
-import { property } from 'lit/decorators.js'
+import { property, state } from 'lit/decorators.js'
 import type { CatalogPageSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
@@ -9,6 +9,7 @@ import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
 
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-href' }) createDraftHref = ''
+  @state() private catalogScope: 'all' | 'mine' | 'shared' = 'all'
   private freshnessTimer: number | undefined
   static styles = [pageHeaderStyles, css`
     :host {
@@ -40,6 +41,13 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
     .catalog-create-draft { display: inline-flex; align-items: center; min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); text-decoration: none; font: var(--lv-type-body-compact); }
 
+    .catalog-tabs { display: flex; align-items: center; gap: var(--base-size-4); border-bottom: var(--lv-border-muted); }
+    .catalog-tab { position: relative; min-height: var(--control-medium-size); border: 0; color: var(--lv-fg-muted); background: transparent; padding: 0 var(--base-size-12); cursor: pointer; font: var(--lv-type-body-compact); }
+    .catalog-tab:hover { color: var(--lv-fg-default); }
+    .catalog-tab[aria-selected='true'] { color: var(--lv-fg-default); font-weight: var(--base-text-weight-semibold); }
+    .catalog-tab[aria-selected='true']::after { position: absolute; right: var(--base-size-8); bottom: -1px; left: var(--base-size-8); height: 2px; border-radius: var(--lv-radius-full); background: var(--lv-fg-accent); content: ''; }
+    .catalog-tab:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+
   `]
 
   override connectedCallback(): void {
@@ -66,11 +74,17 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
+    const dashboards = page.dashboards.filter((dashboard) => this.catalogScope === 'all' || dashboard.catalogScope === this.catalogScope)
     return html`
       <section aria-label="LeapView dashboard catalog">
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref}>New dashboard</a>` : undefined)}
+        <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
+          ${this.renderCatalogTab('all', 'All dashboards')}
+          ${this.renderCatalogTab('mine', 'My dashboards')}
+          ${this.renderCatalogTab('shared', 'Shared with me')}
+        </nav>
         <lv-entity-list
-          .items=${page.dashboards.map((dashboard) => {
+          .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             return ({
             id: dashboard.id,
@@ -87,30 +101,38 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
+            labelBadges: dashboard.repositoryManaged ? ['Repository managed'] : [],
             columns: {
-              popularity: dashboard.popularity ? capitalize(dashboard.popularity) : '—',
-              lastRefreshed: formatLastRefreshed(dashboard.lastRefreshedAt),
+              owner: dashboard.owner || '—',
+              status: dashboardStatusLabel(dashboard.status),
+              updated: formatRelativeTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
             },
             sortValues: {
-              popularity: popularityRank(dashboard.popularity),
-              lastRefreshed: dashboard.lastRefreshedAt || '',
+              owner: dashboard.owner || '',
+              status: dashboardStatusRank(dashboard.status),
+              updated: dashboard.updatedAt || dashboard.lastRefreshedAt || '',
             },
             columnTitles: {
-              lastRefreshed: formatExactRefreshedAt(dashboard.lastRefreshedAt),
+              updated: formatExactTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
             },
           })})}
           .columns=${[
-            { id: 'name', label: 'Dashboard', width: '48%' },
-            { id: 'popularity', label: 'Popularity', width: '12%', render: 'badges' as const },
-            { id: 'lastRefreshed', label: 'Last refreshed', width: '18%' },
+            { id: 'name', label: 'Dashboard', width: '46%' },
+            { id: 'owner', label: 'Owner', width: '16%' },
+            { id: 'status', label: 'Status', width: '20%', render: 'status' as const },
+            { id: 'updated', label: 'Updated', width: '18%' },
           ]}
           initial-query=${page.listQuery ?? ''}
           active-filter=${page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
-          empty-text="No dashboards are available."
+          empty-text=${this.catalogScope === 'all' ? 'No dashboards are available.' : 'No dashboards in this view.'}
         ></lv-entity-list>
       </section>
     `
+  }
+
+  private renderCatalogTab(scope: 'all' | 'mine' | 'shared', label: string) {
+    return html`<button class="catalog-tab" type="button" role="tab" aria-selected=${String(this.catalogScope === scope)} @click=${() => { this.catalogScope = scope }}>${label}</button>`
   }
 }
 
@@ -125,11 +147,7 @@ function popularityLabel(level: 'low' | 'medium' | 'high'): string {
   return `${capitalize(level)} popularity — ${percentile} in the last 30 days`
 }
 
-function popularityRank(level: 'low' | 'medium' | 'high' | undefined): number {
-  return level === 'high' ? 3 : level === 'medium' ? 2 : level === 'low' ? 1 : 0
-}
-
-function formatLastRefreshed(value: string | undefined): string {
+function formatRelativeTime(value: string | undefined): string {
   if (!value) return '—'
   const refreshedAt = new Date(value)
   if (Number.isNaN(refreshedAt.getTime())) return '—'
@@ -146,11 +164,27 @@ function formatLastRefreshed(value: string | undefined): string {
   return formatRefreshedDate(refreshedAt)
 }
 
-function formatExactRefreshedAt(value: string | undefined): string {
+function formatExactTime(value: string | undefined): string {
   if (!value) return ''
   const refreshedAt = new Date(value)
   if (Number.isNaN(refreshedAt.getTime())) return ''
   return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(refreshedAt)
+}
+
+function dashboardStatusLabel(value: CatalogPageSignal['dashboards'][number]['status']): string {
+  switch (value) {
+    case 'private_draft': return 'Private draft'
+    case 'unpublished_changes': return 'Unpublished changes'
+    default: return 'Published'
+  }
+}
+
+function dashboardStatusRank(value: CatalogPageSignal['dashboards'][number]['status']): number {
+  switch (value) {
+    case 'unpublished_changes': return 3
+    case 'private_draft': return 2
+    default: return 1
+  }
 }
 
 function formatRefreshedDate(value: Date): string {

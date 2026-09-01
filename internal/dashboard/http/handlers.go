@@ -460,7 +460,7 @@ func (h Handler) dashboardAuthoringAction(r *nethttp.Request, dashboardID, pageI
 			return reportui.DashboardAuthoringAction{}
 		}
 	}
-	return reportui.DashboardAuthoringAction{Label: "Fork as draft", Href: dashboardBuilderBasePath(id.String()) + "/fork"}
+	return reportui.DashboardAuthoringAction{Label: "Make a copy", Href: dashboardBuilderBasePath(id.String()) + "/fork"}
 }
 
 func dashboardBuilderPageRoute(dashboardID, draftID, pageID string) string {

@@ -2725,7 +2725,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
               <div class="more-menu" aria-label="More dashboard actions">
-                ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Fork as draft</a>` : nothing}
+                ${this.forkHref ? html`<a class="button" href=${this.forkHref}>Make a copy</a>` : nothing}
                 ${builder.capabilities.canShare ? html`<button @click=${this.toggleVisibility} aria-label="Toggle dashboard visibility">${builder.visibility === 'organization' ? 'Make private' : 'Share with organization'}</button>` : nothing}
                 ${builder.capabilities.canExport
                   ? this.exportYAMLHref ? html`<a class="button" href=${this.exportYAMLHref} download>Export YAML</a>` : html`<button disabled title="YAML export is not available yet">Export YAML</button>`

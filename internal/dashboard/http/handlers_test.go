@@ -186,8 +186,8 @@ func TestProjectDashboardUsesForkEntryAction(t *testing.T) {
 	rec := httptest.NewRecorder()
 	handler.RenderPage(rec, httptest.NewRequest(nethttp.MethodGet, "/dashboards/dash/pages/overview", nil), "dash", "overview")
 	body := html.UnescapeString(rec.Body.String())
-	if !strings.Contains(body, `authoring-action-label="Fork as draft"`) || !strings.Contains(body, `authoring-action-href="/dashboards/dash/fork"`) {
-		t.Fatalf("missing contextual fork action: %s", body)
+	if !strings.Contains(body, `authoring-action-label="Make a copy"`) || !strings.Contains(body, `authoring-action-href="/dashboards/dash/fork"`) {
+		t.Fatalf("missing contextual copy action: %s", body)
 	}
 }
 

@@ -57,10 +57,23 @@ type CatalogDashboardMetadata struct {
 	LastRefreshedAt string
 }
 
+// CatalogDashboardItem is the source-neutral dashboard discovery projection.
+// The project HTTP boundary supplies already-authorized items from the
+// governed dashboard authoring catalog; UI code only shapes them for display.
+type CatalogDashboardItem struct {
+	ID, DashboardID, Title, Description, SemanticModel, Href string
+	Owner, Status, CatalogScope, UpdatedAt                   string
+	PageCount                                                int
+	Tags                                                     []string
+	Appearance                                               dashboardappearance.Value
+	RepositoryManaged                                        bool
+}
+
 type CatalogListOptions struct {
 	Query          string
 	ProjectFilter  string
 	Metadata       map[string]CatalogDashboardMetadata
+	Dashboards     []CatalogDashboardItem
 	CanCreateDraft bool
 }
 
@@ -109,6 +122,15 @@ func catalogPageForCatalogsQuery(catalogs []catalog.Catalog, query string) uisig
 }
 
 func catalogPageForCatalogs(catalogs []catalog.Catalog, options CatalogListOptions) uisignals.CatalogPageSignal {
+	if options.Dashboards != nil {
+		page := catalogPageBase(options.Query)
+		dashboards := make([]uisignals.CatalogDashboardSignal, 0, len(options.Dashboards))
+		for _, item := range options.Dashboards {
+			dashboards = append(dashboards, catalogDashboardItemSignal(item))
+		}
+		page.Dashboards = filterCatalogDashboards(dashboards, options.Query)
+		return page
+	}
 	if len(catalogs) == 0 {
 		page := catalogPageBase(options.Query)
 		return page
@@ -219,18 +241,34 @@ func catalogPageBase(query string) uisignals.CatalogPageSignal {
 func catalogDashboardSignal(_ catalog.Project, report catalog.Dashboard, id string, metadata CatalogDashboardMetadata) uisignals.CatalogDashboardSignal {
 	appearance := dashboardappearance.Resolve(report.Appearance)
 	return uisignals.CatalogDashboardSignal{
-		AppearanceColor: appearance.Color,
-		AppearanceIcon:  appearance.Icon,
-		DashboardID:     report.ID,
-		ID:              id,
-		Title:           report.Title,
-		Description:     uisignals.Optional(report.Description),
-		SemanticModel:   uisignals.Optional(report.SemanticModel),
-		PageCount:       int64(report.PageCount),
-		Popularity:      uisignals.Optional(metadata.Popularity),
-		LastRefreshedAt: uisignals.Optional(metadata.LastRefreshedAt),
-		Tags:            uisignals.OptionalSlice(report.Tags),
-		Href:            "/dashboards/" + url.PathEscape(report.ID),
+		AppearanceColor:   appearance.Color,
+		AppearanceIcon:    appearance.Icon,
+		CatalogScope:      "managed",
+		DashboardID:       report.ID,
+		ID:                id,
+		Title:             report.Title,
+		Description:       uisignals.Optional(report.Description),
+		SemanticModel:     uisignals.Optional(report.SemanticModel),
+		PageCount:         int64(report.PageCount),
+		Popularity:        uisignals.Optional(metadata.Popularity),
+		RepositoryManaged: true,
+		LastRefreshedAt:   uisignals.Optional(metadata.LastRefreshedAt),
+		Status:            "published",
+		Tags:              uisignals.OptionalSlice(report.Tags),
+		Href:              "/dashboards/" + url.PathEscape(report.ID),
+	}
+}
+
+func catalogDashboardItemSignal(item CatalogDashboardItem) uisignals.CatalogDashboardSignal {
+	appearance := dashboardappearance.Resolve(item.Appearance)
+	return uisignals.CatalogDashboardSignal{
+		AppearanceColor: appearance.Color, AppearanceIcon: appearance.Icon,
+		CatalogScope: item.CatalogScope, Description: uisignals.Optional(item.Description),
+		DashboardID: item.DashboardID, Href: item.Href, ID: item.ID,
+		Owner: uisignals.Optional(item.Owner), PageCount: int64(item.PageCount),
+		RepositoryManaged: item.RepositoryManaged, SemanticModel: uisignals.Optional(item.SemanticModel),
+		Status: item.Status, Tags: uisignals.OptionalSlice(item.Tags), Title: item.Title,
+		UpdatedAt: uisignals.Optional(item.UpdatedAt),
 	}
 }
 
@@ -245,6 +283,8 @@ func filterCatalogDashboards(dashboards []uisignals.CatalogDashboardSignal, quer
 			dashboard.Title,
 			uisignals.ValueOrZero(dashboard.Description),
 			uisignals.ValueOrZero(dashboard.SemanticModel),
+			uisignals.ValueOrZero(dashboard.Owner),
+			dashboard.Status,
 		}, " "))
 		if strings.Contains(haystack, query) {
 			filtered = append(filtered, dashboard)
