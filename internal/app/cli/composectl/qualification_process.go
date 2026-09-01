@@ -12,6 +12,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -125,6 +126,37 @@ func (c *Controller) qualificationCompose(
 		return nil, err
 	}
 	return c.qualificationDocker(ctx, nil, commandArgs...)
+}
+
+// qualificationComposeEnvironment supplies operation-only credentials to the
+// Compose process without persisting them in leapview.env or rendering their
+// values in command arguments. Callers pass `run --env NAME` so Compose copies
+// only the named value into the one-shot container.
+func (c *Controller) qualificationComposeEnvironment(
+	ctx context.Context,
+	root string,
+	environment map[string]string,
+	args ...string,
+) ([]byte, error) {
+	commandArgs, err := qualificationComposeArguments(root, args...)
+	if err != nil {
+		return nil, err
+	}
+	processEnvironment := append([]string(nil), os.Environ()...)
+	names := make([]string, 0, len(environment))
+	for name := range environment {
+		if strings.TrimSpace(name) == "" || strings.Contains(name, "=") {
+			return nil, fmt.Errorf("qualification operation environment name %q is invalid", name)
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	for _, name := range names {
+		processEnvironment = append(processEnvironment, name+"="+environment[name])
+	}
+	return qualificationProcess{
+		dir: c.root, executable: c.dockerBin, environment: processEnvironment,
+	}.Run(ctx, nil, c.qualificationExecutor, commandArgs...)
 }
 
 type qualificationJSONWorker struct {
