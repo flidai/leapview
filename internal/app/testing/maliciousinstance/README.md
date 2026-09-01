@@ -7,6 +7,11 @@ test the desktop client's browser-equivalent authority boundary.
 
 Electron 43.2.0 is the selected desktop framework.
 
+The security proof may certify the next Electron candidate before the desktop
+runtime migrates. Its exact candidate version is pinned in
+`electron/package.json`; merging that proof does not by itself change the
+desktop runtime.
+
 The remote LeapView window is an unprivileged Electron `BrowserWindow` with:
 
 - no preload script, Node integration, Electron API, or other native bridge;
@@ -59,9 +64,9 @@ Run the Linux integration proof with Chromium's namespace sandbox enabled:
 ```sh
 docker build \
   -f internal/app/testing/maliciousinstance/electron/Dockerfile.linux \
-  -t leapview-electron-security-proof:43.2.0 .
+  -t leapview-electron-security-proof:44.0.0 .
 docker run --rm --cap-add=SYS_ADMIN \
-  leapview-electron-security-proof:43.2.0
+  leapview-electron-security-proof:44.0.0
 ```
 
 Do not substitute Electron's `--no-sandbox` flag. It invalidates the proof.

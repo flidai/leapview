@@ -6,7 +6,7 @@
     "test": "node --test policy.test.mjs manifest-proof.test.mjs proof-lifecycle.test.mjs result-file.test.mjs"
   },
   "devDependencies": {
-    "electron": "43.2.0"
+    "electron": "44.0.0"
   },
   "trustedDependencies": [
     "electron"
