@@ -20,12 +20,12 @@ import (
 
 type ActivationHooks struct{}
 
-// NewBootstrapPersistence constructs the durable bootstrap policy and project
-// claim ports owned by the deployment module. Callers receive contracts only;
-// the SQLite adapter never crosses the module boundary.
-func NewBootstrapPersistence(database *sql.DB) (BootstrapPersistence, error) {
+// NewSQLiteBootstrapPersistence constructs the durable bootstrap policy and
+// project claim ports owned by the deployment module. Callers receive
+// contracts only; the SQLite adapter never crosses the module boundary.
+func NewSQLiteBootstrapPersistence(database *sql.DB) (BootstrapPersistence, error) {
 	if database == nil {
-		return nil, errors.New("deployment database is required")
+		return nil, errors.New("SQLite deployment database is required")
 	}
 	return deploymentsqlite.NewRepositoryWithHooks(database, deploymentsqlite.ActivationHooks{}), nil
 }

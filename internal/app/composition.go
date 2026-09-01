@@ -754,7 +754,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	if err != nil {
 		return fail(err)
 	}
-	projectClaimRepository, err := deploymentmodule.NewBootstrapPersistence(store.SQLDB())
+	projectClaimRepository, err := deploymentmodule.NewSQLiteBootstrapPersistence(store.SQLDB())
 	if err != nil {
 		return fail(err)
 	}

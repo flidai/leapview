@@ -4,11 +4,27 @@ import (
 	"context"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/flidai/leapview/internal/app/config"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
+
+func TestLocalSQLiteCompositionUsesSQLiteBootstrapPersistence(t *testing.T) {
+	contents, err := os.ReadFile("composition.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	if !strings.Contains(source, "deploymentmodule.NewSQLiteBootstrapPersistence(") {
+		t.Fatal("local SQLite composition is missing the explicit SQLite bootstrap persistence constructor")
+	}
+	genericConstructor := "deploymentmodule.New" + "BootstrapPersistence("
+	if strings.Contains(source, genericConstructor) {
+		t.Fatal("local SQLite composition retains the generic bootstrap persistence constructor")
+	}
+}
 
 func TestLocalSQLiteAssemblyRejectsNonEvaluationProductionBeforeState(t *testing.T) {
 	home := t.TempDir()
