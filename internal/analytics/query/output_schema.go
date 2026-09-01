@@ -411,11 +411,13 @@ func deriveExpressionNullability(expression planir.ScalarExpr, fields map[string
 			return OutputNullabilityUnknown
 		case "nullif", "safe_divide":
 			return OutputNullable
-		case "abs", "round":
+		case "abs":
 			if len(expression.Children) == 0 {
 				return OutputNullabilityUnknown
 			}
 			return deriveExpressionNullability(expression.Children[0], fields)
+		case "round":
+			return combineRequiredInputs(expression.Children, fields)
 		default:
 			return OutputNullabilityUnknown
 		}

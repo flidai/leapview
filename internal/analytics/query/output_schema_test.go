@@ -114,6 +114,28 @@ func TestDescribeOutputSchemaDerivesMetricAndCalculationNullability(t *testing.T
 	}
 }
 
+func TestDescribeOutputSchemaRoundRequiresNonNullOptionalDigits(t *testing.T) {
+	model := outputSchemaTestModel()
+	model.Metrics["nullable_digits"] = semanticmodel.Metric{
+		Type: "derived", Expression: "nullif(${order_count}, ${order_count})",
+	}
+	model.Metrics["rounded"] = semanticmodel.Metric{
+		Type: "derived", Expression: "round(${order_count}, ${nullable_digits})",
+	}
+	planner := mustNewCompiledPlanner(t, model)
+	plan, err := planner.Plan(Request{Metrics: []Field{{Field: "rounded"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	descriptor, err := planner.DescribeOutputSchema(plan)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := descriptor.Fields[0].Nullability; got != OutputNullable {
+		t.Fatalf("round with nullable digits nullability = %q, want %q", got, OutputNullable)
+	}
+}
+
 func TestDescribeOutputSchemaDoesNotInferFromPaginationOrExposeProvenance(t *testing.T) {
 	planner := mustNewCompiledPlanner(t, outputSchemaTestModel())
 	request := RowRequest{Dataset: "orders", Dimensions: []Field{{Field: "orders.order_id", Alias: "id"}, {Field: "orders.status", Alias: "status"}}}
