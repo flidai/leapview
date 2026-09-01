@@ -23,13 +23,16 @@ import (
 	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	analyticsmaterialize "github.com/flidai/leapview/internal/analytics/materialize"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	manageddataresolver "github.com/flidai/leapview/internal/manageddata/resolver"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	project "github.com/flidai/leapview/internal/project"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -74,6 +77,7 @@ type NativeBuildConfig struct {
 	ArtifactRecovery    release.CandidateArtifactRecovery
 	BindingEvidence     deploymentdomain.CandidateConnectionEvidenceResolver
 	Connections         deploymentdomain.CandidateConnectionLeaser
+	ManagedData         runtimehost.ManagedDataResolver
 	Contract            NativeBuildContractResolver
 	ContractAuthority   *NativeBuildContractAuthority
 	PhysicalPoolID      string
@@ -113,6 +117,7 @@ type NativeBuildCoordinator struct {
 	artifactRecovery                    release.CandidateArtifactRecovery
 	bindingEvidence                     deploymentdomain.CandidateConnectionEvidenceResolver
 	connections                         deploymentdomain.CandidateConnectionLeaser
+	managedData                         runtimehost.ManagedDataResolver
 	contract                            NativeBuildContractResolver
 	physicalPoolID, compatibilityDigest string
 	operations                          deploymentmodule.NativeBuildOperationAuthority
@@ -152,7 +157,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	if config.Repository == nil || !config.Repository.Configured() || !config.Repository.TransactionCapable() {
 		return nil, errors.New("native build requires a configured transaction-capable PostgreSQL repository")
 	}
-	if nativeBuildAuthorityNil(config.Sources) || nativeBuildAuthorityNil(config.Operations) || nativeBuildAuthorityNil(config.Heartbeat) || nativeBuildAuthorityNil(config.AttemptAdmission) || nativeBuildAuthorityNil(config.AttemptTermination) || nativeBuildAuthorityNil(config.GenerationAdmission) || nativeBuildAuthorityNil(config.PhysicalFactory) || nativeBuildAuthorityNil(config.QualificationFactory) {
+	if nativeBuildAuthorityNil(config.Sources) || nativeBuildAuthorityNil(config.ManagedData) || nativeBuildAuthorityNil(config.Operations) || nativeBuildAuthorityNil(config.Heartbeat) || nativeBuildAuthorityNil(config.AttemptAdmission) || nativeBuildAuthorityNil(config.AttemptTermination) || nativeBuildAuthorityNil(config.GenerationAdmission) || nativeBuildAuthorityNil(config.PhysicalFactory) || nativeBuildAuthorityNil(config.QualificationFactory) {
 		return nil, errors.New("native build source, operation, admission, and execution authorities are required")
 	}
 	if nativeBuildAuthorityNil(config.ObservationWriter) {
@@ -230,7 +235,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		return nil, fmt.Errorf("native build session identity: %w", err)
 	}
 	return &NativeBuildCoordinator{
-		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, contract: contract,
+		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, managedData: config.ManagedData, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
 		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
@@ -267,7 +272,7 @@ func NewNativeBuild(config NativeBuildConfig) (*NativeBuildCoordinator, error) {
 }
 
 func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest) (_ deploymentmodule.NativeDeliveryBuild, resultErr error) {
-	if c == nil || c.repository == nil || nativeBuildAuthorityNil(c.sources) || nativeBuildAuthorityNil(c.artifacts) || nativeBuildAuthorityNil(c.artifactRecovery) || nativeBuildAuthorityNil(c.contract) || nativeBuildAuthorityNil(c.operations) || nativeBuildAuthorityNil(c.heartbeat) || nativeBuildAuthorityNil(c.attemptAdmission) || nativeBuildAuthorityNil(c.attemptTermination) || nativeBuildAuthorityNil(c.generationAdmission) || nativeBuildAuthorityNil(c.physicalFactory) || nativeBuildAuthorityNil(c.observationWriter) || nativeBuildAuthorityNil(c.markerResolverFactory) || nativeBuildAuthorityNil(c.observationReader) || nativeBuildAuthorityNil(c.snapshotFactory) || nativeBuildAuthorityNil(c.qualificationFactory) || nativeBuildAuthorityNil(c.events) || nativeBuildAuthorityNil(c.audit) {
+	if c == nil || c.repository == nil || nativeBuildAuthorityNil(c.sources) || nativeBuildAuthorityNil(c.artifacts) || nativeBuildAuthorityNil(c.artifactRecovery) || nativeBuildAuthorityNil(c.managedData) || nativeBuildAuthorityNil(c.contract) || nativeBuildAuthorityNil(c.operations) || nativeBuildAuthorityNil(c.heartbeat) || nativeBuildAuthorityNil(c.attemptAdmission) || nativeBuildAuthorityNil(c.attemptTermination) || nativeBuildAuthorityNil(c.generationAdmission) || nativeBuildAuthorityNil(c.physicalFactory) || nativeBuildAuthorityNil(c.observationWriter) || nativeBuildAuthorityNil(c.markerResolverFactory) || nativeBuildAuthorityNil(c.observationReader) || nativeBuildAuthorityNil(c.snapshotFactory) || nativeBuildAuthorityNil(c.qualificationFactory) || nativeBuildAuthorityNil(c.events) || nativeBuildAuthorityNil(c.audit) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	ctx = contextOrBackground(ctx)
@@ -398,6 +403,19 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if bindingDigest != plan.Execution.BindingDigest {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: candidate connection evidence differs from planned binding identity", deploymentdomain.ErrDeliveryConflict)
 	}
+	materializationRequest, managedDataLifetime, err := prepareNativeMaterializationRequest(ctx, c.managedData, effective, normalized, generationID, candidateID, "", plan.DeliveryPlan)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	managedDataReleased := false
+	releaseManagedData := func() error {
+		if managedDataReleased || managedDataLifetime == nil {
+			return nil
+		}
+		managedDataReleased = true
+		return managedDataLifetime.Release()
+	}
+	defer func() { _ = releaseManagedData() }()
 
 	attemptID, err := nativeBuildConsequenceID(opID, "attempt")
 	if err != nil {
@@ -493,9 +511,13 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, settle(err, NativePhysicalFailureDeterministic, NativePhysicalBuildPhaseValidation, nil)
 	}
-	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: nativeMaterializationRequest(effective, normalized, generationID, candidateID, attemptAdmission.Attempt.Namespace, plan.DeliveryPlan)}
+	materializationRequest.RelationNamespace = attemptAdmission.Attempt.Namespace
+	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
 	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
 	physical, err := buildNativePhysicalWithCandidateBindings(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
+	if releaseErr := releaseManagedData(); releaseErr != nil {
+		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native candidate managed-data roots: %w", releaseErr)))
+	}
 	if err != nil {
 		classification, phase := NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseMaterialize
 		if failure, ok := NativePhysicalBuildFailureOf(err); ok {
@@ -791,10 +813,7 @@ func nativeBuildMarker(deliveryID, generationID, attemptID, requestDigest string
 
 func nativeMaterializationRequest(artifacts release.CandidateArtifactSet, request deploymentmodule.NativeDeliveryBuildRequest, generationID, candidateID, namespace string, plan deploymentdomain.DeliveryPlan) analyticsmaterialization.Request {
 	manifest := artifacts.Compiler.Manifest
-	models := make(map[string]*semanticmodel.Model, len(manifest.SemanticModels))
-	for id, model := range manifest.SemanticModels {
-		models[id] = model
-	}
+	models := artifacts.Compiler.Artifact.Models()
 	modelTables := make(map[string]semanticmodel.Table, len(manifest.Models))
 	tables := make([]string, 0, len(manifest.Models))
 	for id, model := range manifest.Models {
@@ -803,6 +822,74 @@ func nativeMaterializationRequest(artifacts release.CandidateArtifactSet, reques
 	}
 	sort.Strings(tables)
 	return analyticsmaterialization.Request{Models: models, ModelTables: modelTables, Identity: projectgraph.ServingIdentity{ProjectID: request.ProjectID, Environment: request.Environment, GenerationID: generationID}, CandidateID: candidateID, RelationNamespace: namespace, Environment: servingstate.Environment(request.Environment), TargetType: "deployment", TargetID: projectgraph.ResourceID(request.TargetID), SemanticDigest: plan.Execution.BindingDigest, ArtifactDigest: plan.SourceDigest, Tables: tables}
+}
+
+func prepareNativeMaterializationRequest(
+	ctx context.Context,
+	resolver runtimehost.ManagedDataResolver,
+	artifacts release.CandidateArtifactSet,
+	request deploymentmodule.NativeDeliveryBuildRequest,
+	generationID, candidateID, namespace string,
+	plan deploymentdomain.DeliveryPlan,
+) (analyticsmaterialization.Request, runtimehost.ManagedDataLifetime, error) {
+	if nativeBuildAuthorityNil(resolver) {
+		return analyticsmaterialization.Request{}, nil, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	materialization := nativeMaterializationRequest(artifacts, request, generationID, candidateID, namespace, plan)
+	resolution, err := resolver.ResolveManagedDataForIdentity(ctx, materialization.Identity)
+	if err != nil {
+		if errors.Is(err, manageddataresolver.ErrInvalidMetadata) || errors.Is(err, manageddataresolver.ErrRevisionNotReady) || errors.Is(err, manageddataresolver.ErrAmbiguousConnection) {
+			err = errors.Join(deploymentdomain.ErrDeliveryConflict, err)
+		}
+		return analyticsmaterialization.Request{}, nil, fmt.Errorf("resolve native candidate managed-data roots: %w", err)
+	}
+	if err := validateNativeManagedDataResolution(artifacts.Generation.ManagedDataPins, resolution.Revisions, resolution.Roots); err != nil {
+		if resolution.Lifetime != nil {
+			_ = resolution.Lifetime.Release()
+		}
+		return analyticsmaterialization.Request{}, nil, err
+	}
+	if err := analyticsmodule.BindCandidateManagedDataRoots(materialization.Models, artifacts.Compiler.Artifact.Manifest().NameIndex.Connections, resolution.Roots); err != nil {
+		if resolution.Lifetime != nil {
+			_ = resolution.Lifetime.Release()
+		}
+		return analyticsmaterialization.Request{}, nil, errors.Join(deploymentdomain.ErrDeliveryConflict, err)
+	}
+	return materialization, resolution.Lifetime, nil
+}
+
+func validateNativeManagedDataResolution(pins []release.ManagedDataPin, revisions, roots map[string]string) error {
+	expected := make(map[string]string, len(pins))
+	for _, pin := range pins {
+		connectionID, revisionID := strings.TrimSpace(pin.ConnectionID), strings.TrimSpace(pin.RevisionID)
+		if connectionID == "" || revisionID == "" || connectionID != pin.ConnectionID || revisionID != pin.RevisionID {
+			return fmt.Errorf("%w: native candidate managed-data pin is invalid", deploymentdomain.ErrDeliveryConflict)
+		}
+		if _, duplicate := expected[connectionID]; duplicate {
+			return fmt.Errorf("%w: native candidate managed-data pin %q is duplicated", deploymentdomain.ErrDeliveryConflict, connectionID)
+		}
+		expected[connectionID] = revisionID
+	}
+	if len(revisions) != len(expected) {
+		return fmt.Errorf("%w: resolved native candidate managed-data revision set differs from immutable pins", deploymentdomain.ErrDeliveryConflict)
+	}
+	if len(roots) != len(expected) {
+		return fmt.Errorf("%w: resolved native candidate managed-data root set differs from immutable pins", deploymentdomain.ErrDeliveryConflict)
+	}
+	for connectionID, revisionID := range revisions {
+		if strings.TrimSpace(connectionID) != connectionID || strings.TrimSpace(revisionID) != revisionID || expected[connectionID] != revisionID {
+			return fmt.Errorf("%w: resolved native candidate managed-data revision for %q differs from immutable pin", deploymentdomain.ErrDeliveryConflict, connectionID)
+		}
+	}
+	for connectionID, root := range roots {
+		if strings.TrimSpace(connectionID) != connectionID || strings.TrimSpace(root) == "" {
+			return fmt.Errorf("%w: resolved native candidate managed-data root for %q is invalid", deploymentdomain.ErrDeliveryConflict, connectionID)
+		}
+		if _, ok := expected[connectionID]; !ok {
+			return fmt.Errorf("%w: resolved native candidate managed-data root for %q has no immutable pin", deploymentdomain.ErrDeliveryConflict, connectionID)
+		}
+	}
+	return nil
 }
 
 func (c *NativeBuildCoordinator) completeNativeBuild(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest, requestDigest string, reservation NativeBuildOperationReservationResult, plan deploymentdomain.DeliveryPlan, assembled GenerationAdmissionInput, artifacts release.CandidateArtifactSet, admission CandidateBuildAttemptAdmissionResult, sealID, generationID string) (deploymentmodule.NativeDeliveryBuild, error) {

@@ -1,0 +1,127 @@
+package deploymentpostgres
+
+import (
+	"context"
+	"errors"
+	"testing"
+
+	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	deploymentdomain "github.com/flidai/leapview/internal/deployment"
+	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	manageddataresolver "github.com/flidai/leapview/internal/manageddata/resolver"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
+	"github.com/flidai/leapview/internal/release"
+	"github.com/flidai/leapview/internal/runtimehost"
+)
+
+func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedModels(t *testing.T) {
+	graph, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
+		{ID: "project:managed", Kind: projectgraph.KindProject, Name: "managed"},
+		{ID: "connection:sample", Kind: projectgraph.KindConnection, Name: "sample"},
+		{ID: "semantic-model:sales", Kind: projectgraph.KindSemanticModel, Name: "sales"},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifest := projectmanifest.Project{
+		ID: "project:managed", Name: "managed",
+		Connections: map[string]semanticmodel.Connection{"connection:sample": {Kind: "managed"}},
+		SemanticModels: map[string]*semanticmodel.Model{
+			"semantic-model:sales": {Name: "sales", Connections: map[string]semanticmodel.Connection{"sample": {Kind: "managed"}}},
+		},
+		NameIndex: projectmanifest.NameIndex{Connections: map[string]string{"sample": "connection:sample"}},
+	}
+	artifact, err := projectartifact.NewProject(graph, manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	artifacts := release.CandidateArtifactSet{
+		Generation: release.CandidateGenerationArtifact{
+			ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "connection:sample", RevisionID: "sha256:revision"}},
+		},
+		Compiler: release.CandidateCompilerEvidence{Artifact: artifact, Manifest: artifact.Manifest()},
+	}
+	lifetime := &recordingManagedDataLifetime{}
+	resolver := &recordingNativeManagedDataResolver{resolution: runtimehost.ManagedDataResolution{
+		Roots:     map[string]string{"connection:sample": "/managed/sample/revision"},
+		Revisions: map[string]string{"connection:sample": "sha256:revision"},
+		Lifetime:  lifetime,
+	}}
+	request, gotLifetime, err := prepareNativeMaterializationRequest(t.Context(), resolver, artifacts, deploymentmodule.NativeDeliveryBuildRequest{
+		ProjectID: "project:managed", Environment: "prod", TargetID: "target:prod",
+	}, "generation:1", "candidate:1", "candidate_namespace", deploymentdomain.DeliveryPlan{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolver.identity != (projectgraph.ServingIdentity{ProjectID: "project:managed", Environment: "prod", GenerationID: "generation:1"}) {
+		t.Fatalf("resolved identity = %#v", resolver.identity)
+	}
+	if gotLifetime != lifetime {
+		t.Fatal("managed-data lifetime was not propagated")
+	}
+	if got := request.Models["semantic-model:sales"].Connections["sample"].Root; got != "/managed/sample/revision" {
+		t.Fatalf("bound managed root = %q", got)
+	}
+	if got := artifact.Models()["semantic-model:sales"].Connections["sample"].Root; got != "" {
+		t.Fatalf("portable artifact managed root mutated to %q", got)
+	}
+}
+
+func TestPrepareNativeMaterializationRequestRejectsRevisionDriftAndReleasesLease(t *testing.T) {
+	lifetime := &recordingManagedDataLifetime{}
+	resolver := &recordingNativeManagedDataResolver{resolution: runtimehost.ManagedDataResolution{
+		Roots:     map[string]string{"connection:sample": "/managed/sample/other"},
+		Revisions: map[string]string{"connection:sample": "sha256:other"},
+		Lifetime:  lifetime,
+	}}
+	_, _, err := prepareNativeMaterializationRequest(t.Context(), resolver, release.CandidateArtifactSet{
+		Generation: release.CandidateGenerationArtifact{ManagedDataPins: []release.ManagedDataPin{{ConnectionID: "connection:sample", RevisionID: "sha256:expected"}}},
+	}, deploymentmodule.NativeDeliveryBuildRequest{ProjectID: "project:managed", Environment: "prod"}, "generation:1", "candidate:1", "", deploymentdomain.DeliveryPlan{})
+	if !errors.Is(err, deploymentdomain.ErrDeliveryConflict) {
+		t.Fatalf("revision drift error = %v", err)
+	}
+	if !lifetime.released {
+		t.Fatal("managed-data lease was not released after validation failure")
+	}
+}
+
+func TestPrepareNativeMaterializationRequestClassifiesInvalidBindingAsDeterministicPreflight(t *testing.T) {
+	resolver := &recordingNativeManagedDataResolver{err: manageddataresolver.ErrInvalidMetadata}
+	_, _, err := prepareNativeMaterializationRequest(t.Context(), resolver, release.CandidateArtifactSet{}, deploymentmodule.NativeDeliveryBuildRequest{
+		ProjectID: "project:managed", Environment: "prod",
+	}, "generation:1", "candidate:1", "", deploymentdomain.DeliveryPlan{})
+	if !nativeBuildPreflightFailureIsDeterministic(err) || !errors.Is(err, manageddataresolver.ErrInvalidMetadata) {
+		t.Fatalf("invalid binding classification = %v", err)
+	}
+}
+
+func TestPrepareNativeMaterializationRequestLeavesResolverOutageRetryable(t *testing.T) {
+	want := errors.New("managed-data store unavailable")
+	resolver := &recordingNativeManagedDataResolver{err: want}
+	_, _, err := prepareNativeMaterializationRequest(t.Context(), resolver, release.CandidateArtifactSet{}, deploymentmodule.NativeDeliveryBuildRequest{
+		ProjectID: "project:managed", Environment: "prod",
+	}, "generation:1", "candidate:1", "", deploymentdomain.DeliveryPlan{})
+	if nativeBuildPreflightFailureIsDeterministic(err) || !errors.Is(err, want) {
+		t.Fatalf("resolver outage classification = %v", err)
+	}
+}
+
+type recordingNativeManagedDataResolver struct {
+	resolution runtimehost.ManagedDataResolution
+	identity   projectgraph.ServingIdentity
+	err        error
+}
+
+func (r *recordingNativeManagedDataResolver) ResolveManagedDataForIdentity(_ context.Context, identity projectgraph.ServingIdentity) (runtimehost.ManagedDataResolution, error) {
+	r.identity = identity
+	return r.resolution, r.err
+}
+
+type recordingManagedDataLifetime struct{ released bool }
+
+func (l *recordingManagedDataLifetime) Release() error {
+	l.released = true
+	return nil
+}
