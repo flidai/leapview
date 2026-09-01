@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"mime"
 	stdhttp "net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -46,10 +48,52 @@ func negotiateDashboardArrowContract(accept, contract string) (dashboardArrowCon
 	if contract == "" {
 		return dashboardArrowContractLegacy, nil
 	}
-	if contract != dashboardNativeArrowContract || !acceptsDashboardMediaType(accept, dashboardArrowMediaType) {
+	if contract != dashboardNativeArrowContract || !acceptsDashboardNativeArrowMediaType(accept) {
 		return dashboardArrowContractInvalid, errDashboardArrowContractNotAcceptable
 	}
 	return dashboardArrowContractNativeV1, nil
+}
+
+func acceptsDashboardNativeArrowMediaType(header string) bool {
+	for _, item := range strings.Split(header, ",") {
+		mediaType, parameters, err := mime.ParseMediaType(strings.TrimSpace(item))
+		if err != nil || !strings.EqualFold(mediaType, dashboardArrowMediaType) {
+			continue
+		}
+		quality := 1.0
+		if value, ok := parameters["q"]; ok {
+			quality, err = parseDashboardMediaQuality(value)
+			if err != nil {
+				continue
+			}
+		}
+		if quality > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func parseDashboardMediaQuality(value string) (float64, error) {
+	whole, fraction, hasFraction := strings.Cut(value, ".")
+	if whole != "0" && whole != "1" {
+		return 0, fmt.Errorf("invalid media quality")
+	}
+	if hasFraction {
+		if len(fraction) > 3 {
+			return 0, fmt.Errorf("invalid media quality")
+		}
+		for _, digit := range fraction {
+			if digit < '0' || digit > '9' || whole == "1" && digit != '0' {
+				return 0, fmt.Errorf("invalid media quality")
+			}
+		}
+	}
+	quality, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid media quality: %w", err)
+	}
+	return quality, nil
 }
 
 func normalizeDashboardNativeArrowLimit(requested *int) (int, error) {
