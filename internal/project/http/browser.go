@@ -1458,7 +1458,7 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 			ID: item.StableID, DashboardID: item.ID.String(), Title: item.Title, Description: item.Description,
 			SemanticModel: item.SemanticModel.String(), Href: href, Owner: owner, Status: status,
 			CatalogScope: scope, UpdatedAt: updatedAt, PageCount: item.PageCount, Tags: append([]string(nil), item.Tags...),
-			Appearance: appearanceByID[item.ID.String()], RepositoryManaged: item.Source == dashboardauthoringcatalog.SourceProject,
+			Appearance: appearanceByID[item.ID.String()],
 		})
 	}
 	return catalog, options, nil

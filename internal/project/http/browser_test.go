@@ -111,7 +111,7 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != "/dashboards/dashboard:mine/edit?draft=draft-mine" || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
 		t.Fatalf("mine = %#v", mine)
 	}
-	if managed.CatalogScope != "managed" || !managed.RepositoryManaged || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" {
+	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" {
 		t.Fatalf("managed = %#v", managed)
 	}
 	if len(reader.requests) != 1 || reader.requests[0].ActorID != "alice" || reader.requests[0].ProjectID != "project:test" {

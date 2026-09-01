@@ -5,6 +5,7 @@ metadata:
   name: fulfillment-operations
   displayName: Fulfillment Operations
   description: Delivery speed, order status, reviews, and geography overview.
+  owner: Operations
   tags:
   - operations
   - fulfillment

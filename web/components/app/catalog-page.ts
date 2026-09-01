@@ -101,7 +101,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
-            labelBadges: dashboard.repositoryManaged ? ['Repository managed'] : [],
             columns: {
               owner: dashboard.owner || '—',
               status: dashboardStatusLabel(dashboard.status),

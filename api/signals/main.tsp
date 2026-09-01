@@ -601,7 +601,6 @@ model CatalogDashboardSignal {
 	`owner`?: string;
 	`pageCount`: int64;
 	`popularity`?: PopularityLevel;
-	`repositoryManaged`: boolean;
 	`semanticModel`?: string;
 	`status`: "private_draft" | "published" | "unpublished_changes";
 	`tags`?: string[];

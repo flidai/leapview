@@ -108,7 +108,7 @@ for (const viewport of [
           iconsAreFramed: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-framed')),
           framedIconBorderWidth: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
           framedIconBackground: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
-          repositoryBadges: rows.map((row) => row.querySelector('.entity-list-label-badge')?.textContent?.trim()),
+          originBadges: rows.filter((row) => row.querySelector('.entity-list-label-badge')).length,
           tabs: Array.from(root.querySelectorAll('.catalog-tab')).map((tab) => tab.textContent?.trim()),
           hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
           fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
@@ -140,7 +140,7 @@ for (const viewport of [
         iconsAreFramed: true,
         framedIconBorderWidth: '1px',
         framedIconBackground: 'rgb(251, 239, 255)',
-        repositoryBadges: ['Repository managed', 'Repository managed', 'Repository managed', 'Repository managed'],
+        originBadges: 0,
         tabs: ['All dashboards', 'My dashboards', 'Shared with me'],
         hasChevrons: false,
         fullWidth: true,
@@ -167,7 +167,6 @@ test('dashboard tabs filter by ownership without hiding managed dashboards from 
       const dashboards = element.page.dashboards.map((dashboard: any, index: number) => ({
         ...dashboard,
         catalogScope: index === 0 ? 'mine' : index === 1 ? 'shared' : 'managed',
-        repositoryManaged: index > 1,
       }))
       mergePatch({ page: { ...element.page, dashboards } })
       await element.updateComplete
@@ -386,7 +385,6 @@ function testDocument(): string {
         appearanceIcon: 'chart-no-axes-combined',
         appearanceColor: 'purple',
         catalogScope: 'managed',
-        repositoryManaged: true,
         status: 'published',
         owner: 'Analytics',
         title: 'Executive Sales Dashboard',
@@ -404,7 +402,6 @@ function testDocument(): string {
         appearanceIcon: 'package-check',
         appearanceColor: 'orange',
         catalogScope: 'managed',
-        repositoryManaged: true,
         status: 'published',
         owner: 'Operations',
         title: 'Operations Health',
@@ -422,7 +419,6 @@ function testDocument(): string {
         appearanceIcon: 'layout-dashboard',
         appearanceColor: 'purple',
         catalogScope: 'managed',
-        repositoryManaged: true,
         status: 'published',
         owner: 'Supply chain',
         title: 'Inventory Risk',
@@ -440,7 +436,6 @@ function testDocument(): string {
         appearanceIcon: 'layout-dashboard',
         appearanceColor: 'purple',
         catalogScope: 'managed',
-        repositoryManaged: true,
         status: 'published',
         title: 'Customer Detail',
         description: 'Customer profile details.',
