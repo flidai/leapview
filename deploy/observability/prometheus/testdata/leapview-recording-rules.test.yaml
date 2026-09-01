@@ -674,6 +674,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
         values: '0+1x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 5
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 0
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 0
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -693,6 +713,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
         values: '0+2x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -712,6 +752,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="complete"}'
         values: '0+4x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 20
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 10
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 40
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 20
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -723,7 +783,7 @@ tests:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
 
-  - name: canceled-only traffic emits no latency ratio
+  - name: canceled-only traffic emits no latency recordings
     interval: 1m
     input_series:
       - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="filter_change",outcome="canceled",le="5"}'
@@ -731,6 +791,18 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled"}'
         values: '0+10x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples: []
@@ -754,6 +826,18 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="other",outcome="other"}'
         values: '0+5x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples: []
@@ -761,7 +845,7 @@ tests:
         eval_time: 10m
         exp_samples: []
 
-  - name: counter resets preserve the timely completed ratio
+  - name: counter resets preserve latency recordings
     interval: 1m
     input_series:
       - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5"}'
@@ -769,6 +853,26 @@ tests:
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="initial",outcome="complete"}'
         values: '0 4 8 12 16 20 24 0 4 8 12'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 15
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 7.5
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 36
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 18
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -780,7 +884,7 @@ tests:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
 
-  - name: latency ratios aggregate commands and prohibited labels
+  - name: latency recordings aggregate commands and prohibited labels
     interval: 1m
     input_series:
       - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="initial",outcome="complete",le="5",route="/dashboards/{dashboard}",request_id="req-forbidden",trace_id="trace-forbidden",user_id="user-forbidden",project_id="project-forbidden",resource_id="resource-forbidden"}'
@@ -791,7 +895,31 @@ tests:
         values: '0+1x10'
       - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="select",outcome="complete",route="/updates",request_id="req-other",trace_id="trace-other",user_id="user-other",project_id="project-other",resource_id="resource-other"}'
         values: '0+5x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",instance="app:8080",command="filter_change",outcome="canceled",le="5",route="/updates",request_id="req-canceled",trace_id="trace-canceled",user_id="user-canceled",project_id="project-canceled",resource_id="resource-canceled"}'
+        values: '0+100x10'
+      - series: 'leapview_dashboard_refresh_duration_seconds_count{job="leapview",instance="app:8080",command="filter_change",outcome="canceled",route="/updates",request_id="req-canceled",trace_id="trace-canceled",user_id="user-canceled",project_id="project-canceled",resource_id="resource-canceled"}'
+        values: '0+100x10'
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 50
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_5m",instance="app:8080",job="leapview"}'
+            value: 25
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 100
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples:
+          - labels: '{__name__="leapview:dashboard_refresh_latency:slow_completed_events_30d",instance="app:8080",job="leapview"}'
+            value: 50
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples:
@@ -803,10 +931,22 @@ tests:
           - labels: '{__name__="leapview:dashboard_refresh_latency:timely_completed_ratio_30d",instance="app:8080",job="leapview"}'
             value: 0.5
 
-  - name: missing histogram traffic emits no latency ratio
+  - name: missing histogram traffic emits no latency recordings
     interval: 1m
     input_series: []
     promql_expr_test:
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        eval_time: 10m
+        exp_samples: []
+      - expr: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        eval_time: 10m
+        exp_samples: []
       - expr: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         eval_time: 10m
         exp_samples: []

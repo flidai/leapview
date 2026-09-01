@@ -212,6 +212,38 @@ groups:
 
   - name: leapview-dashboard-refresh-latency
     rules:
+      - record: 'leapview:dashboard_refresh_latency:completed_events_5m'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:slow_completed_events_5m'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[5m])
+          )
+          -
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[5m])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:completed_events_30d'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+          )
+
+      - record: 'leapview:dashboard_refresh_latency:slow_completed_events_30d'
+        expr: |
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_count{job="leapview",outcome="complete"}[30d])
+          )
+          -
+          sum by (job, instance) (
+            increase(leapview_dashboard_refresh_duration_seconds_bucket{job="leapview",outcome="complete",le="5"}[30d])
+          )
+
       - record: 'leapview:dashboard_refresh_latency:timely_completed_ratio_5m'
         expr: |
           (
