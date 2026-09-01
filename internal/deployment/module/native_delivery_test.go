@@ -21,10 +21,25 @@ import (
 	"github.com/google/uuid"
 )
 
+type nativeDeliveryTestPreparationLease struct {
+	ctx      context.Context
+	released *bool
+}
+
+func (l nativeDeliveryTestPreparationLease) Context() context.Context { return l.ctx }
+func (l nativeDeliveryTestPreparationLease) Release() {
+	if l.released != nil {
+		*l.released = true
+	}
+}
+
 func nativeDeliveryHandlerModule(port NativeDeliveryMutationPort) *Module {
 	return &Module{
 		nativeDeliveryMutations: port,
-		instanceID:              "target",
+		candidateAdmission: CandidatePreparationAdmitterFunc(func(ctx context.Context) (CandidatePreparationLease, error) {
+			return nativeDeliveryTestPreparationLease{ctx: ctx}, nil
+		}),
+		instanceID: "target",
 		handler: deploymenthttp.NewHandler(deploymenthttp.Options{
 			InstanceEnvironment: "prod",
 			CurrentPrincipal: func(*http.Request) (deploymenthttp.Principal, bool) {
@@ -85,9 +100,13 @@ func TestNativeDeliveryBuildHandlerUsesInjectedUUIDPort(t *testing.T) {
 	candidateID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000105")
 	sealID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000106")
 	generationID := uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000107")
-	called := false
-	port := NativeDeliveryMutationFuncs{Build: func(_ context.Context, request NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+	type admissionContextKey struct{}
+	called, acquired, released := false, false, false
+	port := NativeDeliveryMutationFuncs{Build: func(ctx context.Context, request NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
 		called = true
+		if ctx.Value(admissionContextKey{}) != "admitted" || released {
+			t.Fatalf("native build did not receive the live admitted context")
+		}
 		if request.ProjectID != projectID || request.TargetID != "target" || request.Environment != "prod" || request.PlanID != planID || request.PrincipalID != "operator" || request.IdempotencyKey != "build-key" {
 			t.Fatalf("native build request = %#v", request)
 		}
@@ -95,10 +114,14 @@ func TestNativeDeliveryBuildHandlerUsesInjectedUUIDPort(t *testing.T) {
 		return NativeDeliveryBuild{ID: attemptID, PlanID: planID, PlanDigest: nativeDigest('a'), SourceDigest: nativeDigest('b'), ExecutionDigest: nativeDigest('c'), PhysicalPoolID: "pool", WriterLeaseID: leaseID, CandidateID: candidateID, SealID: sealID, ServingArtifactID: "artifact-native", ServingArtifactDigest: nativeDigest('d'), ServingStateID: generationID, Status: string(deploymentgen.DeliveryBuildStatusSealed), CreatedAt: now, UpdatedAt: now, TerminalAt: now, Revision: 7, CandidateRevision: 13}, nil
 	}}
 	m := nativeDeliveryHandlerModule(port)
+	m.candidateAdmission = CandidatePreparationAdmitterFunc(func(ctx context.Context) (CandidatePreparationLease, error) {
+		acquired = true
+		return nativeDeliveryTestPreparationLease{ctx: context.WithValue(ctx, admissionContextKey{}, "admitted"), released: &released}, nil
+	})
 	recorder := httptest.NewRecorder()
 	m.BuildDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", planID.String(), "build-key")
-	if recorder.Code != http.StatusOK || !called {
-		t.Fatalf("status = %d, called = %v, body = %s", recorder.Code, called, recorder.Body.String())
+	if recorder.Code != http.StatusOK || !called || !acquired || !released {
+		t.Fatalf("status = %d, called = %v, acquired = %v, released = %v, body = %s", recorder.Code, called, acquired, released, recorder.Body.String())
 	}
 	if got := recorder.Header().Get("Location"); !strings.HasSuffix(got, attemptID.String()) {
 		t.Fatalf("location = %q", got)
@@ -109,6 +132,40 @@ func TestNativeDeliveryBuildHandlerUsesInjectedUUIDPort(t *testing.T) {
 	}
 	if response.Id != attemptID.String() || response.PlanId != planID.String() || response.WriterLeaseId != leaseID.String() || response.Revision != 7 || response.CandidateRevision == nil || *response.CandidateRevision != 13 {
 		t.Fatalf("response identity = %#v", response)
+	}
+}
+
+func TestNativeDeliveryBuildAdmissionFailureDoesNotInvokeMutation(t *testing.T) {
+	called := false
+	port := NativeDeliveryMutationFuncs{Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+		called = true
+		return NativeDeliveryBuild{}, nil
+	}}
+	m := nativeDeliveryHandlerModule(port)
+	m.candidateAdmission = CandidatePreparationAdmitterFunc(func(context.Context) (CandidatePreparationLease, error) {
+		return nil, errors.New("workload admission unavailable")
+	})
+	recorder := httptest.NewRecorder()
+	m.BuildDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", "0198f2c0-7c7a-7f00-8a11-000000000102", "build-key")
+	if recorder.Code != http.StatusServiceUnavailable || called {
+		t.Fatalf("status = %d, called = %v, body = %s", recorder.Code, called, recorder.Body.String())
+	}
+}
+
+func TestNativeDeliveryBuildRejectsMissingAdmissionContext(t *testing.T) {
+	called, released := false, false
+	port := NativeDeliveryMutationFuncs{Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+		called = true
+		return NativeDeliveryBuild{}, nil
+	}}
+	m := nativeDeliveryHandlerModule(port)
+	m.candidateAdmission = CandidatePreparationAdmitterFunc(func(context.Context) (CandidatePreparationLease, error) {
+		return nativeDeliveryTestPreparationLease{released: &released}, nil
+	})
+	recorder := httptest.NewRecorder()
+	m.BuildDeliveryPlan(recorder, httptest.NewRequest(http.MethodPost, "/", nil), "finance", "0198f2c0-7c7a-7f00-8a11-000000000102", "build-key")
+	if recorder.Code != http.StatusServiceUnavailable || called || !released {
+		t.Fatalf("status = %d, called = %v, released = %v, body = %s", recorder.Code, called, released, recorder.Body.String())
 	}
 }
 

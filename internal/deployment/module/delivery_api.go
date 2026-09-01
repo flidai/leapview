@@ -342,7 +342,30 @@ func (m *Module) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, proje
 			m.writeDeliveryMutationError(w, r, err)
 			return
 		}
-		built, err := m.nativeDeliveryMutations.BuildPlan(r.Context(), nativeRequest)
+		// Native builds cross the physical DuckDB boundary and therefore must
+		// execute under the candidate-preparation admission authority. The
+		// adapter reuses an outer refresh admission (when present) instead of
+		// attempting a conflicting nested control admission.
+		if m.candidateAdmission == nil {
+			m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
+			return
+		}
+		preparationLease, err := m.candidateAdmission.AcquireCandidatePreparation(r.Context())
+		if err != nil {
+			m.writeDeliveryMutationError(w, r, candidatePreparationError(err))
+			return
+		}
+		if preparationLease == nil {
+			m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
+			return
+		}
+		defer preparationLease.Release()
+		buildContext := preparationLease.Context()
+		if buildContext == nil {
+			m.writeDeliveryMutationError(w, r, ErrDeliveryInputUnavailable)
+			return
+		}
+		built, err := m.nativeDeliveryMutations.BuildPlan(buildContext, nativeRequest)
 		if err != nil {
 			m.writeDeliveryMutationError(w, r, err)
 			return
@@ -351,7 +374,7 @@ func (m *Module) BuildDeliveryPlan(w http.ResponseWriter, r *http.Request, proje
 			m.writeDeliveryMutationError(w, r, err)
 			return
 		}
-		if err := completeNativeBuildCommand(r.Context(), m.nativeDeliveryMutations, built); err != nil {
+		if err := completeNativeBuildCommand(buildContext, m.nativeDeliveryMutations, built); err != nil {
 			m.writeDeliveryMutationError(w, r, err)
 			return
 		}
