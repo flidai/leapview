@@ -345,6 +345,14 @@ func (m *Module) CommitProjectCandidateSynchronization(
 	if !ok {
 		return
 	}
+	// This endpoint is the legacy candidate-producing commit path. Native
+	// PostgreSQL source planning, upload, and retention do not require the
+	// legacy candidate service, but this operation still does and must fail
+	// before committing the source snapshot when it is absent.
+	if m.candidates == nil {
+		m.writeCandidateCommandFailure(w, r, operationID, deployment.ErrCandidateUnavailable)
+		return
+	}
 	projectID, err := projectgraph.NewResourceID(project)
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, operationID, err)
@@ -859,14 +867,9 @@ func (m *Module) candidateSynchronizationPrincipal(
 	r *http.Request,
 	operationID *deploymentgen.GenCommandOperationID,
 ) (string, bool) {
-	var principalID string
-	var ok bool
-	if operationID == nil {
-		principalID, ok = m.candidatePrincipalID(w, r)
-	} else {
-		principalID, ok = m.candidatePrincipalIDCommand(w, r, *operationID)
-	}
+	principal, ok := m.principal(r)
 	if !ok {
+		apitransport.WriteProblem(w, r, http.StatusUnauthorized, "AUTHENTICATION_REQUIRED", "Bearer authentication is required", nil)
 		return "", false
 	}
 	if m.candidateSources == nil {
@@ -877,7 +880,7 @@ func (m *Module) candidateSynchronizationPrincipal(
 		}
 		return "", false
 	}
-	return principalID, true
+	return principal.ID, true
 }
 
 func (m *Module) validateExpectedCandidate(
@@ -912,6 +915,14 @@ func (m *Module) validateExpectedCandidate(
 	}
 	if !hasID {
 		return true
+	}
+	if m.candidates == nil {
+		if operationID == nil {
+			writeCandidateUnavailable(w, r)
+		} else {
+			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateUnavailable)
+		}
+		return false
 	}
 	projectID, projectErr := projectgraph.NewResourceID(project)
 	if projectErr != nil {

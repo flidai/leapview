@@ -137,11 +137,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		return nil
 	})
 	cleanup.Add(func(cleanupCtx context.Context) error {
-		if browserContainer == "" {
-			return nil
-		}
-		_, err := c.qualificationContainers.Existing(browserContainer).Remove(cleanupCtx)
-		return ignoreQualificationNotFound(err)
+		return removeQualificationNamedContainerHandle(cleanupCtx, c.qualificationContainers, &browserContainer)
 	})
 	// Native PostgreSQL cleanup is deliberately one sequential step.  The
 	// application and Caddy containers must be removed before the sidecar, and
@@ -168,8 +164,17 @@ func (c *Controller) QualifyInstalledCandidate(
 			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
 		}
 		if nativeTopology != nil {
-			result = errors.Join(result, nativeTopology.Remove(cleanupCtx))
-			nativeTopology = nil
+			removeErr := nativeTopology.Remove(cleanupCtx)
+			result = errors.Join(result, removeErr)
+			if nativeTopology.Container != nil {
+				// The Compose network must remain until the sidecar is gone.
+				// Preserve the failed topology for operator-visible cleanup
+				// evidence instead of detaching a still-running database.
+				return result
+			}
+			if removeErr == nil {
+				nativeTopology = nil
+			}
 		}
 		if nativeComposeLifecycle {
 			_, downErr := c.qualificationCompose(
@@ -426,8 +431,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	report.Assertions.PerformanceBudgets = true
-	_, _ = c.qualificationContainers.Existing(browserContainer).Remove(ctx)
-	browserContainer = ""
+	_ = removeQualificationNamedContainerHandle(ctx, c.qualificationContainers, &browserContainer)
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}

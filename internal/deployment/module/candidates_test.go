@@ -542,6 +542,69 @@ func TestCandidateSynchronizationMapsProjectSourceErrors(t *testing.T) {
 	}
 }
 
+func TestCandidateSourcePlanDoesNotRequireLegacyCandidateService(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	module.candidates = nil
+	module.candidateSourceAudit = func(context.Context, CandidateSourceAuditEvent) error { return nil }
+	digest := "sha256:" + strings.Repeat("a", 64)
+	module.candidateSources = &candidateSourceSynchronizerStub{}
+
+	response := callCandidateAPI(
+		t,
+		http.MethodPost,
+		"/api/v1/projects/finance/candidate-sync/plan",
+		`{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`,
+		func(w http.ResponseWriter, r *http.Request) {
+			module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
+		},
+	)
+
+	require.Equal(t, http.StatusOK, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), `"planId":"plan-test"`)
+}
+
+func TestLegacyCandidateSourceCommitStillRequiresCandidateService(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	module.candidates = nil
+	sources := &candidateSourceSynchronizerStub{}
+	module.candidateSources = sources
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	response := callCandidateAPI(
+		t,
+		http.MethodPost,
+		"/api/v1/projects/finance/candidate-sync/commit",
+		`{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","artifacts":[]}`,
+		func(w http.ResponseWriter, r *http.Request) {
+			module.CommitProjectCandidateSynchronization(w, r, "finance", "commit-idem", "plan-test")
+		},
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "CANDIDATE_SERVICE_UNAVAILABLE")
+	require.Zero(t, sources.commits)
+}
+
+func TestNativeCandidateSourcePlanFailsClosedForLegacyExpectedCandidate(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	module.candidates = nil
+	module.candidateSources = &candidateSourceSynchronizerStub{}
+	digest := "sha256:" + strings.Repeat("a", 64)
+
+	response := callCandidateAPI(
+		t,
+		http.MethodPost,
+		"/api/v1/projects/finance/candidate-sync/plan",
+		`{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","expectedCandidateId":"cand_opaque_1","expectedArtifactDigest":"`+digest+`","artifacts":[]}`,
+		func(w http.ResponseWriter, r *http.Request) {
+			module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
+		},
+	)
+
+	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
+	require.Contains(t, response.Body.String(), "CANDIDATE_SERVICE_UNAVAILABLE")
+}
+
 func TestCandidateAPIStartsResumesUpdatesAndCancelsOwnedSession(t *testing.T) {
 	module := testCandidateModule(t, "principal_1")
 	digest := "sha256:" + strings.Repeat("a", 64)

@@ -48,6 +48,36 @@ type qualificationContainer interface {
 	Remove(context.Context) ([]byte, error)
 }
 
+// removeQualificationNamedContainerHandle removes a disposable container and
+// clears its name only after Docker confirms removal. Keeping the name on
+// failure lets a later cleanup pass retry the same container instead of
+// silently leaking it.
+func removeQualificationNamedContainerHandle(
+	ctx context.Context,
+	runtime qualificationContainerRuntime,
+	name *string,
+) error {
+	if name == nil || strings.TrimSpace(*name) == "" {
+		return nil
+	}
+	if runtime == nil {
+		return fmt.Errorf("qualification container runtime is required")
+	}
+	container := runtime.Existing(*name)
+	if container == nil {
+		return fmt.Errorf("qualification container %q is unavailable", *name)
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	_, err := container.Remove(ctx)
+	err = ignoreQualificationNotFound(err)
+	if err == nil {
+		*name = ""
+	}
+	return err
+}
+
 func qualificationContainerOperationError(
 	ctx context.Context,
 	container qualificationContainer,

@@ -49,6 +49,22 @@ func TestDockerCLIRuntimeStartsContainerWithDeterministicArguments(t *testing.T)
 	}
 }
 
+func TestQualificationNamedContainerHandlePreservesNameAfterRemovalFailure(t *testing.T) {
+	removeErr := errors.New("docker removal failed")
+	runtime := &nativePostgresRuntimeFixture{
+		container: &nativePostgresContainerFixture{removeErrs: []error{removeErr, nil}},
+	}
+	name := "qualification-browser"
+
+	err := removeQualificationNamedContainerHandle(t.Context(), runtime, &name)
+	require.ErrorIs(t, err, removeErr)
+	require.Equal(t, "qualification-browser", name)
+
+	require.NoError(t, removeQualificationNamedContainerHandle(t.Context(), runtime, &name))
+	require.Empty(t, name)
+	require.Equal(t, 2, runtime.container.removed)
+}
+
 func TestDockerCLIContainerMapsLifecycleOperations(t *testing.T) {
 	executor := &recordingQualificationExecutor{output: []byte("ok")}
 	runtime := newDockerCLIQualificationRuntime(t.TempDir(), "docker-probe", executor)

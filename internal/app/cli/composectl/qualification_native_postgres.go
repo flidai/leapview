@@ -104,13 +104,20 @@ func (topology *qualificationNativePostgresTopology) Remove(ctx context.Context)
 	if topology.Container != nil {
 		_, err := topology.Container.Remove(ctx)
 		result = ignoreQualificationNotFound(err)
-		if result == nil {
-			topology.Container = nil
+		if result != nil {
+			// Keep both handles intact while Docker removal is pending. The
+			// sidecar may still be using the mounted TLS files; preserving the
+			// ownership state also makes an explicit removal retry possible.
+			return result
 		}
+		topology.Container = nil
 	}
 	if topology.secretDir != "" {
-		result = errors.Join(result, os.RemoveAll(topology.secretDir))
-		topology.secretDir = ""
+		if err := os.RemoveAll(topology.secretDir); err != nil {
+			result = errors.Join(result, err)
+		} else {
+			topology.secretDir = ""
+		}
 	}
 	return result
 }

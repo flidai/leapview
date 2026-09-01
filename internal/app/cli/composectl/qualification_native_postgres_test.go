@@ -40,6 +40,7 @@ func (runtime *nativePostgresRuntimeFixture) Existing(string) qualificationConta
 type nativePostgresContainerFixture struct {
 	probes     []string
 	removed    int
+	removeErrs []error
 	execErr    error
 	execErrors []error
 	execOutput []byte
@@ -104,6 +105,11 @@ func (*nativePostgresContainerFixture) Inspect(context.Context, string) ([]byte,
 func (*nativePostgresContainerFixture) Logs(context.Context, int) ([]byte, error) { return nil, nil }
 func (container *nativePostgresContainerFixture) Remove(context.Context) ([]byte, error) {
 	container.removed++
+	if len(container.removeErrs) > 0 {
+		err := container.removeErrs[0]
+		container.removeErrs = container.removeErrs[1:]
+		return nil, err
+	}
 	return nil, nil
 }
 
@@ -205,6 +211,33 @@ func TestQualificationNativePostgresTopologyValidationAndCleanup(t *testing.T) {
 	require.Equal(t, 1, runtime.container.removed)
 	_, err = os.Stat(filepath.Dir(secretDir))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestQualificationNativePostgresTopologyPreservesHandlesAfterRemovalFailure(t *testing.T) {
+	bundleRoot := qualificationNativePostgresBundleFixture(t)
+	removeErr := errors.New("docker removal failed")
+	runtime := &nativePostgresRuntimeFixture{}
+	topology, err := newQualificationNativePostgresTopology(t.Context(), runtime, qualificationNativePostgresTopologyOptions{
+		ComposeProject: "project",
+		ComposeNetwork: "project_default",
+		BundleRoot:     bundleRoot,
+	})
+	require.NoError(t, err)
+	secretDir := topology.secretDir
+	runtime.container.removeErrs = []error{removeErr, nil}
+
+	err = topology.Remove(t.Context())
+	require.ErrorIs(t, err, removeErr)
+	require.Same(t, runtime.container, topology.Container)
+	require.Equal(t, secretDir, topology.secretDir)
+	require.DirExists(t, secretDir)
+
+	require.NoError(t, topology.Remove(t.Context()))
+	require.Nil(t, topology.Container)
+	require.Empty(t, topology.secretDir)
+	require.Equal(t, 2, runtime.container.removed)
+	_, statErr := os.Stat(secretDir)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
 
 func TestQualificationNativePostgresTopologyCleansUpStartAndReadinessFailures(t *testing.T) {

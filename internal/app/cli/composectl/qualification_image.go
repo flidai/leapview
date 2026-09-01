@@ -312,8 +312,16 @@ func (c *Controller) QualifyImage(
 			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
 		}
 		if nativeTopology != nil {
-			result = errors.Join(result, nativeTopology.Remove(cleanupCtx))
-			nativeTopology = nil
+			removeErr := nativeTopology.Remove(cleanupCtx)
+			result = errors.Join(result, removeErr)
+			if nativeTopology.Container != nil {
+				// Compose owns the network, so it cannot be torn down while a
+				// failed sidecar removal still holds an endpoint on it.
+				return result
+			}
+			if removeErr == nil {
+				nativeTopology = nil
+			}
 		}
 		if nativeComposeLifecycle {
 			_, downErr := c.qualificationCompose(

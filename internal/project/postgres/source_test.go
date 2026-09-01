@@ -384,6 +384,54 @@ func TestSourceSchemaRoleBoundaryAndImmutableRows(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(runtimeDB.Close)
+	var currentUser string
+	if err := runtimeDB.QueryRow(t.Context(), "SELECT current_user").Scan(&currentUser); err != nil {
+		t.Fatal(err)
+	}
+	if currentUser != runtimeRole.Name {
+		t.Fatalf("source sync-plan test connected as %q, want %q", currentUser, runtimeRole.Name)
+	}
+	runtimeRepo := New(runtimeDB)
+	entries := []SourceSyncPlanEntryInput{{Path: "leapview.yaml", Digest: sourceTestDigest("a"), SizeBytes: 1}}
+	runtimePlanInput := SyncPlanInput{
+		PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:runtime",
+		StorageSecurityDomain: "runtime", OwnerID: "principal:runtime", CandidateKey: "default",
+		SourceDigest: sourceDigest("project:runtime", "leapview.yaml", snapshotEntries(entries)),
+		ProjectFile:  "leapview.yaml", RequestDigest: sourceTestDigest("b"),
+		ExpiresAt: time.Now().Add(2 * time.Minute), Entries: entries,
+	}
+	runtimeTx, err := runtimeDB.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	plan, err := runtimeRepo.CreateSyncPlanTx(t.Context(), runtimeTx, runtimePlanInput)
+	if err != nil {
+		_ = runtimeTx.Rollback(t.Context())
+		t.Fatalf("runtime source sync-plan creation: %v", err)
+	}
+	if err := runtimeTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	runtimeTx, err = runtimeDB.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	locked, err := runtimeRepo.SyncPlanForUpdateTx(t.Context(), runtimeTx, plan.PlanID)
+	if err != nil {
+		_ = runtimeTx.Rollback(t.Context())
+		t.Fatalf("runtime source sync-plan lock: %v", err)
+	}
+	if locked.PlanID != plan.PlanID || locked.OwnerID != runtimePlanInput.OwnerID {
+		_ = runtimeTx.Rollback(t.Context())
+		t.Fatalf("runtime locked sync-plan = %#v", locked)
+	}
+	if _, err := runtimeTx.Exec(t.Context(), "SELECT 1"); err != nil {
+		_ = runtimeTx.Rollback(t.Context())
+		t.Fatalf("runtime source sync-plan transaction after lock: %v", err)
+	}
+	if err := runtimeTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runtimeDB.Exec(t.Context(), `UPDATE project.source_blob SET object_key='mutated'`); err == nil {
 		t.Fatal("runtime UPDATE on immutable source blob unexpectedly succeeded")
 	}
