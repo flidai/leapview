@@ -19,6 +19,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/dashboard"
+	dashboardauthoringcatalog "github.com/flidai/leapview/internal/dashboard/authoring/catalog"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	visualizationdefinition "github.com/flidai/leapview/internal/dashboard/visualization/definition"
@@ -79,6 +80,54 @@ func TestBoundProjectUsesActiveProjectResolver(t *testing.T) {
 	if got != want {
 		t.Fatalf("project ID = %q, want %q", got, want)
 	}
+}
+
+func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *testing.T) {
+	now := time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC)
+	reader := &browserDashboardCatalogStub{result: dashboardauthoringcatalog.ListResult{Items: []dashboardauthoringcatalog.Dashboard{
+		{
+			ID: "dashboard:mine", StableID: "instance:project:test:dashboard:mine", ProjectID: "project:test", Title: "My analysis",
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceInstance, Owner: "alice", DraftID: "draft-mine", PageCount: 2,
+			Revision: &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-mine", Number: 2, ContentHash: strings.Repeat("a", 64), CreatedAt: now},
+		},
+		{
+			ID: "dashboard:managed", StableID: "project:project:test:dashboard:managed", ProjectID: "project:test", Title: "Executive sales",
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1,
+		},
+	}}}
+	h := &BrowserHandler{
+		DashboardCatalog: reader,
+		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
+		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice", DevBypass: true}, true },
+	}
+	_, options, err := h.dashboardCatalogPage(httptest.NewRequest(stdhttp.MethodGet, "/", nil), "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(options.Dashboards) != 2 {
+		t.Fatalf("dashboards = %#v", options.Dashboards)
+	}
+	mine, managed := options.Dashboards[0], options.Dashboards[1]
+	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != "/dashboards/dashboard:mine/edit?draft=draft-mine" || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
+		t.Fatalf("mine = %#v", mine)
+	}
+	if managed.CatalogScope != "managed" || !managed.RepositoryManaged || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" {
+		t.Fatalf("managed = %#v", managed)
+	}
+	if len(reader.requests) != 1 || reader.requests[0].ActorID != "alice" || reader.requests[0].ProjectID != "project:test" {
+		t.Fatalf("catalog requests = %#v", reader.requests)
+	}
+}
+
+type browserDashboardCatalogStub struct {
+	result   dashboardauthoringcatalog.ListResult
+	err      error
+	requests []dashboardauthoringcatalog.ListRequest
+}
+
+func (s *browserDashboardCatalogStub) List(_ context.Context, request dashboardauthoringcatalog.ListRequest) (dashboardauthoringcatalog.ListResult, error) {
+	s.requests = append(s.requests, request)
+	return s.result, s.err
 }
 
 type browserGraphStub struct{ graph servingstate.AssetGraph }

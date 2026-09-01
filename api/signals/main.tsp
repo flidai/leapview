@@ -592,16 +592,21 @@ model AssetLineageNodeSignal {
 model CatalogDashboardSignal {
 	`appearanceColor`: string;
 	`appearanceIcon`: string;
+	`catalogScope`: "mine" | "shared" | "managed";
 	`description`?: string;
 	`dashboardId`: string;
   `href`: string;
   `id`: string;
   `lastRefreshedAt`?: string;
-  `pageCount`: int64;
-  `popularity`?: PopularityLevel;
-  `semanticModel`?: string;
-  `tags`?: string[];
-  `title`: string;
+	`owner`?: string;
+	`pageCount`: int64;
+	`popularity`?: PopularityLevel;
+	`repositoryManaged`: boolean;
+	`semanticModel`?: string;
+	`status`: "private_draft" | "published" | "unpublished_changes";
+	`tags`?: string[];
+	`title`: string;
+	`updatedAt`?: string;
 }
 
 @apigen.contract(#{ kind: "ui-envelope", tags: #["catalog", "envelope"] })

@@ -92,14 +92,14 @@ for (const viewport of [
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
           descriptions: rows.map((row) => row.querySelector('.entity-list-description')?.textContent?.trim()),
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
-          refreshed: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
-          refreshedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.getAttribute('title')),
+          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.getAttribute('title')),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
           popularityLevels: rows.map((row) => row.querySelector('.entity-list-badge')?.classList.contains('is-high') ? 'high' : row.querySelector('.entity-list-badge')?.classList.contains('is-medium') ? 'medium' : row.querySelector('.entity-list-badge')?.classList.contains('is-low') ? 'low' : ''),
-          emptyPopularityLabels: rows.map((row) => row.querySelector('.entity-list-badge-empty')?.getAttribute('aria-label') ?? ''),
-          emptyPopularityOpacity: getComputedStyle(rows[3].querySelector('.entity-list-badge-empty') as HTMLElement).color,
           popularityColoredBars: rows.slice(0, 3).map((row) => {
             const paths = Array.from(row.querySelectorAll('.entity-list-badge path'))
             const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-badge path')[2]).stroke
@@ -108,6 +108,8 @@ for (const viewport of [
           iconsAreFramed: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-framed')),
           framedIconBorderWidth: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).borderTopWidth,
           framedIconBackground: getComputedStyle(rows[0].querySelector('.entity-list-icon') as HTMLElement).backgroundColor,
+          repositoryBadges: rows.map((row) => row.querySelector('.entity-list-label-badge')?.textContent?.trim()),
+          tabs: Array.from(root.querySelectorAll('.catalog-tab')).map((tab) => tab.textContent?.trim()),
           hasChevrons: rows.every((row) => Boolean(row.querySelector('.entity-list-chevron svg'))),
           fullWidth: rows.every((row) => Math.abs(row.getBoundingClientRect().width - tableRect.width) <= 1),
           maxRowHeight: Math.max(...rows.map((row) => Math.round(row.getBoundingClientRect().height))),
@@ -125,19 +127,21 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptions: ['Fixture report', 'Fulfillment and delivery performance.', 'Stock exposure and replenishment.', 'Customer profile details.'],
-        headers: ['Dashboard', 'Popularity', 'Last refreshed'],
-        refreshed: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
-        refreshedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
+        headers: ['Dashboard', 'Owner', 'Status', 'Updated'],
+        owners: ['Analytics', 'Operations', 'Supply chain', '—'],
+        statuses: ['Published', 'Published', 'Published', 'Published'],
+        updated: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
+        updatedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
         popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', ''],
         popularityLevels: ['high', 'medium', 'low', ''],
-        emptyPopularityLabels: ['', '', '', 'No popularity data'],
-        emptyPopularityOpacity: 'rgb(129, 139, 152)',
         popularityColoredBars: [3, 2, 1],
         iconsAreFramed: true,
         framedIconBorderWidth: '1px',
         framedIconBackground: 'rgb(251, 239, 255)',
+        repositoryBadges: ['Repository managed', 'Repository managed', 'Repository managed', 'Repository managed'],
+        tabs: ['All dashboards', 'My dashboards', 'Shared with me'],
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
@@ -153,36 +157,39 @@ for (const viewport of [
   })
 }
 
-test('shared entity list sorts rows by popularity rank', async () => {
+test('dashboard tabs filter by ownership without hiding managed dashboards from All', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
-      const list = element.shadowRoot.querySelector('lv-entity-list') as any
-      const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
-      const popularityHeader = list.querySelector('button[aria-label="Sort by Popularity"]') as HTMLButtonElement
-      const before = rows()
-      popularityHeader.click()
-      await list.updateComplete
-      const ascending = rows()
-      const ascendingSort = popularityHeader.closest('th')?.getAttribute('aria-sort')
-      popularityHeader.click()
-      await list.updateComplete
-      return { before, ascending, ascendingSort, descending: rows(), descendingSort: popularityHeader.closest('th')?.getAttribute('aria-sort') }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const dashboards = element.page.dashboards.map((dashboard: any, index: number) => ({
+        ...dashboard,
+        catalogScope: index === 0 ? 'mine' : index === 1 ? 'shared' : 'managed',
+        repositoryManaged: index > 1,
+      }))
+      mergePatch({ page: { ...element.page, dashboards } })
+      await element.updateComplete
+      const rows = () => Array.from(element.shadowRoot.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
+      const all = rows()
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
+      await element.updateComplete
+      const mine = rows()
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { all, mine, shared: rows() }
     })
 
-    expect(state.before).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
-    expect(state.ascending).toEqual(['Customer Detail', 'Inventory Risk', 'Operations Health', 'Executive Sales Dashboard'])
-    expect(state.ascendingSort).toBe('ascending')
-    expect(state.descending).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
-    expect(state.descendingSort).toBe('descending')
+    expect(state.all).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
+    expect(state.mine).toEqual(['Executive Sales Dashboard'])
+    expect(state.shared).toEqual(['Operations Health'])
   } finally {
     await page.close()
   }
 })
 
-test('last refreshed sorting uses timestamps rather than relative labels', async () => {
+test('updated sorting uses timestamps rather than relative labels', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
@@ -191,7 +198,7 @@ test('last refreshed sorting uses timestamps rather than relative labels', async
     const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
       const rows = () => Array.from(list.querySelectorAll('.entity-list-table-row')).map((row: Element) => row.querySelector('.entity-list-title')?.textContent?.trim())
-      const header = list.querySelector('button[aria-label="Sort by Last refreshed"]') as HTMLButtonElement
+      const header = list.querySelector('button[aria-label="Sort by Updated"]') as HTMLButtonElement
       header.click()
       await list.updateComplete
       const ascending = rows()
@@ -228,7 +235,8 @@ test('CSV export uses displayed values instead of internal sort keys', async () 
       return exported?.text()
     })
 
-    expect(csv).toContain('"High"')
+    expect(csv).toContain('"Analytics"')
+    expect(csv).toContain('"Published"')
     expect(csv).toContain('"2 hr ago"')
     expect(csv).not.toContain('2026-08-12T09:42:00Z')
   } finally {
@@ -243,7 +251,7 @@ test('relative freshness labels update while the catalog remains open', async ()
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const freshness = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim(),
+      element.shadowRoot.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim(),
     )
 
     expect(await freshness()).toBe('59 min ago')
@@ -262,10 +270,8 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
     const colors = async () => page.locator('lv-catalog-page').evaluate((element: any) => {
       const root = element.shadowRoot
       const highPaths = Array.from(root.querySelectorAll('.entity-list-badge-popularity.is-high path')) as SVGPathElement[]
-      const empty = root.querySelector('.entity-list-badge-empty') as HTMLElement
       return {
         bars: highPaths.map((path) => getComputedStyle(path).stroke),
-        empty: getComputedStyle(empty).color,
       }
     })
 
@@ -275,11 +281,9 @@ test('popularity meter uses Primer theme tokens in light and dark modes', async 
 
     expect(light).toEqual({
       bars: ['rgb(31, 111, 235)', 'rgb(31, 111, 235)', 'rgb(31, 111, 235)'],
-      empty: 'rgb(129, 139, 152)',
     })
     expect(dark).toEqual({
       bars: ['rgb(77, 160, 255)', 'rgb(77, 160, 255)', 'rgb(77, 160, 255)'],
-      empty: 'rgb(101, 108, 118)',
     })
   } finally {
     await page.close()
@@ -347,6 +351,10 @@ function testDocument(): string {
         dashboardId: 'executive-sales',
         appearanceIcon: 'chart-no-axes-combined',
         appearanceColor: 'purple',
+        catalogScope: 'managed',
+        repositoryManaged: true,
+        status: 'published',
+        owner: 'Analytics',
         title: 'Executive Sales Dashboard',
         description: 'Fixture report',
         semanticModel: 'olist',
@@ -361,6 +369,10 @@ function testDocument(): string {
         dashboardId: 'operations-health',
         appearanceIcon: 'package-check',
         appearanceColor: 'orange',
+        catalogScope: 'managed',
+        repositoryManaged: true,
+        status: 'published',
+        owner: 'Operations',
         title: 'Operations Health',
         description: 'Fulfillment and delivery performance.',
         semanticModel: 'operations',
@@ -372,6 +384,13 @@ function testDocument(): string {
       },
       {
         id: 'inventory-risk',
+        dashboardId: 'inventory-risk',
+        appearanceIcon: 'layout-dashboard',
+        appearanceColor: 'purple',
+        catalogScope: 'managed',
+        repositoryManaged: true,
+        status: 'published',
+        owner: 'Supply chain',
         title: 'Inventory Risk',
         description: 'Stock exposure and replenishment.',
         semanticModel: 'inventory',
@@ -383,6 +402,12 @@ function testDocument(): string {
       },
       {
         id: 'customer-detail',
+        dashboardId: 'customer-detail',
+        appearanceIcon: 'layout-dashboard',
+        appearanceColor: 'purple',
+        catalogScope: 'managed',
+        repositoryManaged: true,
+        status: 'published',
         title: 'Customer Detail',
         description: 'Customer profile details.',
         semanticModel: 'customers',

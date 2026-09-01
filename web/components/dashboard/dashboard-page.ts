@@ -1,6 +1,6 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, ChevronDown, GitFork, PencilLine, SlidersHorizontal } from 'lucide'
+import { ArrowLeft, ChevronDown, Copy, PencilLine, SlidersHorizontal } from 'lucide'
 import type {
   AgentContextSignal,
   AgentReferenceSignal,
@@ -1213,7 +1213,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 								aria-label=${this.authoringActionLabel}
 								title=${this.authoringActionLabel}
 							>
-								${this.authoringActionLabel === 'Fork as draft' ? lucideIcon(GitFork) : lucideIcon(PencilLine)}
+								${this.authoringActionLabel === 'Make a copy' ? lucideIcon(Copy) : lucideIcon(PencilLine)}
 								<span>${this.authoringActionLabel}</span>
 							</a>
 							` : nothing}

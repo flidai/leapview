@@ -126,6 +126,25 @@ func TestDashboardCreateEntryUsesProductLanguage(t *testing.T) {
 	if strings.Contains(body, "Create dashboard draft") {
 		t.Fatalf("create dashboard page exposed implementation language: %s", body)
 	}
+	if strings.Contains(body, "route=dashboard_builder") {
+		t.Fatalf("create dashboard form opened a draft update stream before a draft exists: %s", body)
+	}
+}
+
+func TestDashboardCopyEntryUsesProductLanguageWithoutDraftStream(t *testing.T) {
+	var rendered strings.Builder
+	if err := DashboardDraftForkPageWithKey("dashboard:sales", "csrf", "/dashboards/dashboard:sales/fork", "request-1").Render(&rendered); err != nil {
+		t.Fatal(err)
+	}
+	body := html.UnescapeString(rendered.String())
+	for _, want := range []string{"Make a copy", "Create an editable copy in My dashboards."} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("copy dashboard page missing %q: %s", want, body)
+		}
+	}
+	if strings.Contains(body, "route=dashboard_builder") {
+		t.Fatalf("copy dashboard form opened a draft update stream before the copy exists: %s", body)
+	}
 }
 
 func TestDashboardCreateEntryOffersGovernedSemanticModels(t *testing.T) {
