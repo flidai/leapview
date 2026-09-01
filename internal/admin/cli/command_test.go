@@ -49,7 +49,7 @@ func (operations *fakeOperations) QualificationPoolArtifacts(context.Context) (a
 	return adminoffline.QualificationPoolArtifacts{
 		SchemaVersion: adminoffline.QualificationPoolArtifactsSchemaVersion,
 		Pool: physicalpool.PoolIdentity{
-			StorageLocation: "/var/lib/leapview/data", StorageNamespace: "delivery", EncryptionDomain: "local",
+			StorageLocation: "/var/lib/leapview/data", StorageNamespace: "delivery", Region: "local", Tenant: "qualification", EncryptionDomain: "local",
 			IsolationBoundary: "qualification", RetentionAuthority: "qualification",
 			RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600},
 			Compatibility:   compatibility,
