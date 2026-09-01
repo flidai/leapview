@@ -47,7 +47,7 @@ const supportedRuntime = {
   platform: "win32" as const,
   architecture: "x64",
   applicationVersion: "1.2.3",
-  electronVersion: "43.2.0",
+  electronVersion: "44.0.0",
   packaged: true,
   releaseChannel: "stable" as const,
 };
@@ -96,7 +96,7 @@ describe("desktopUpdateFeedURL", () => {
     expect(
       desktopUpdateFeedURL({
         ...supportedRuntime,
-        electronVersion: "44.0.0",
+        electronVersion: "43.2.0",
       }),
     ).toBeNull();
     expect(

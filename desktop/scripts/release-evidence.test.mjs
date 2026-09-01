@@ -20,7 +20,7 @@ const packageDocument = {
   productName: "LeapView",
   version: "0.1.0",
   devDependencies: {
-    electron: "43.2.0",
+    electron: "44.0.0",
     node: "24.14.0",
     "@electron-forge/cli": "8.0.0-alpha.9",
   },
@@ -51,9 +51,9 @@ const policy = {
     },
   },
   runtime: {
-    electron: "43.2.0",
-    electronMajor: 43,
-    chromium: "150.0.7871.129",
+    electron: "44.0.0",
+    electronMajor: 44,
+    chromium: "152.0.7977.54",
     node: "24.14.0",
     forge: "8.0.0-alpha.9",
     bun: "1.3.14",
@@ -64,7 +64,7 @@ const policy = {
     channel: "stable",
     productName: "LeapView",
     applicationId: "dev.leapview.desktop",
-    electronMajor: 43,
+    electronMajor: 44,
     windowsPackageId: "leapview",
   },
   supportMatrix: [
@@ -121,8 +121,8 @@ const packageVerification = {
   packageFormat: "dmg",
   asarOnly: true,
   runtime: {
-    electron: "43.2.0",
-    chromium: "150.0.7871.129",
+    electron: "44.0.0",
+    chromium: "152.0.7977.54",
     node: "24.14.0",
   },
   fuses: {
@@ -150,7 +150,7 @@ const packageVerification = {
     channel: "stable",
     productName: "LeapView",
     applicationId: "dev.leapview.desktop",
-    electronMajor: 43,
+    electronMajor: 44,
     delivery: "electron-auto-updater",
   },
   installer: {
@@ -175,7 +175,7 @@ test("release policy pins the supported Electron line and packaging contract", (
   );
 
   const mutable = structuredClone(packageDocument);
-  mutable.devDependencies.electron = "^43.2.0";
+  mutable.devDependencies.electron = "^44.0.0";
   assert.throws(
     () => validateReleasePolicy(policy, mutable),
     /exact Electron version/,
@@ -188,9 +188,9 @@ test("release policy pins the supported Electron line and packaging contract", (
         createdAt: "2026-07-29T12:00:00.000Z",
         files: [],
         lock: {
-          workspaces: { "": { devDependencies: { electron: "^43.0.0" } } },
+          workspaces: { "": { devDependencies: { electron: "^44.0.0" } } },
           packages: {
-            electron: ["electron@^43.0.0", "", {}, "sha512-ZWx1Y3Ryb24="],
+            electron: ["electron@^44.0.0", "", {}, "sha512-ZWx1Y3Ryb24="],
           },
         },
         packageDocument,
@@ -206,14 +206,14 @@ test("SPDX document covers every locked dependency and packaged runtime file", (
     workspaces: {
       "": {
         devDependencies: {
-          electron: "43.2.0",
+          electron: "44.0.0",
           rxjs: "7.8.2",
         },
       },
     },
     packages: {
       electron: [
-        "electron@43.2.0",
+        "electron@44.0.0",
         "",
         { dependencies: { "@electron/get": "^3.0.0" } },
         "sha512-ZWx1Y3Ryb24=",

@@ -20,8 +20,8 @@ import {
 
 const environment: DiagnosticEnvironment = {
   applicationVersion: "0.1.0",
-  electronVersion: "43.2.0",
-  chromiumVersion: "150.0.7339.3",
+  electronVersion: "44.0.0",
+  chromiumVersion: "152.0.7977.54",
   nodeVersion: "24.14.0",
   platform: "darwin",
   osRelease: "25.5.0",
