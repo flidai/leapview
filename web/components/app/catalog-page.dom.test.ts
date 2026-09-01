@@ -85,6 +85,8 @@ test('new dashboard trigger opens an accessible native dialog with the create fo
       const root = element.shadowRoot
       const dialog = root.querySelector('dialog') as HTMLDialogElement
       const form = root.querySelector('.catalog-create-dialog-form') as HTMLFormElement
+      const shell = root.querySelector('.catalog-create-dialog-shell') as HTMLElement
+      const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
       return {
         tagName: trigger.tagName,
         href: trigger.getAttribute('href'),
@@ -102,6 +104,9 @@ test('new dashboard trigger opens an accessible native dialog with the create fo
         csrf: root.querySelector<HTMLInputElement>('[name="gorilla.csrf.Token"]')?.value,
         idempotency: root.querySelector<HTMLInputElement>('[name="idempotencyKey"]')?.value,
         advanced: root.querySelector('summary')?.textContent?.trim(),
+        closeHasSVG: Boolean(close.querySelector('svg')),
+        closeText: close.textContent?.trim(),
+        noHorizontalOverflow: shell.scrollWidth <= shell.clientWidth,
       }
     })
 
@@ -126,6 +131,9 @@ test('new dashboard trigger opens an accessible native dialog with the create fo
       csrf: 'csrf-modal',
       idempotency: 'idem-modal',
       advanced: 'Advanced settings',
+      closeHasSVG: true,
+      closeText: '',
+      noHorizontalOverflow: true,
     })
   } finally {
     await page.close()
@@ -225,6 +233,7 @@ test('mobile create dialog stays within the viewport and disables submission wit
       const submit = root.querySelector('[type="submit"]') as HTMLButtonElement
       return {
         withinViewport: rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight,
+        noHorizontalOverflow: dialog.scrollWidth <= dialog.clientWidth,
         selectDisabled: select.disabled,
         submitDisabled: submit.disabled,
         help: root.querySelector('#catalog-create-draft-model-help')?.textContent?.trim(),
@@ -233,6 +242,7 @@ test('mobile create dialog stays within the viewport and disables submission wit
 
     expect(state).toEqual({
       withinViewport: true,
+      noHorizontalOverflow: true,
       selectDisabled: true,
       submitDisabled: true,
       help: 'No data models are available. Add one in Develop, then try again.',

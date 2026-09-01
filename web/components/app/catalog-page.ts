@@ -6,6 +6,7 @@ import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
 import '../shared/entity-list'
 import { lucideIconByCanonicalName } from '../shared/lucide-catalog'
+import { lucideIcon } from '../shared/lucide-icons'
 
 interface CreateDraftModel {
   id: string
@@ -54,27 +55,30 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .catalog-create-draft:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
     .catalog-create-draft:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
 
-    .catalog-create-dialog { width: min(calc(100% - var(--base-size-32)), 32rem); max-width: 32rem; max-height: calc(100svh - var(--base-size-32)); margin: auto; padding: 0; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-panel, var(--lv-radius-default)); color: var(--lv-fg-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
+    .catalog-create-dialog { box-sizing: border-box; width: min(calc(100% - var(--base-size-32)), 32rem); max-width: 32rem; max-height: calc(100svh - var(--base-size-32)); margin: auto; padding: 0; overflow: hidden; border: var(--lv-border-default); border-radius: var(--lv-radius-panel, var(--lv-radius-default)); color: var(--lv-fg-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); }
     .catalog-create-dialog::backdrop { background: var(--lv-modal-backdrop); }
-    .catalog-create-dialog-shell { display: grid; max-height: inherit; overflow: auto; }
-    .catalog-create-dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: var(--base-size-16); padding: var(--base-size-20) var(--base-size-24) var(--base-size-12); }
+    .catalog-create-dialog-shell { display: grid; width: 100%; min-width: 0; max-height: inherit; overflow-x: hidden; overflow-y: auto; }
+    .catalog-create-dialog-header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--base-size-16); box-sizing: border-box; padding: var(--base-size-20) var(--base-size-24) var(--base-size-12); }
+    .catalog-create-dialog-header > div { min-width: 0; }
     .catalog-create-dialog-header h2 { margin: 0; color: var(--lv-fg-default); font: var(--lv-type-section-title); }
     .catalog-create-dialog-header p { margin: var(--base-size-4) 0 0; color: var(--lv-fg-muted); font: var(--lv-type-body-compact); }
     .catalog-create-dialog-close { display: inline-grid; width: var(--control-medium-size); height: var(--control-medium-size); flex: 0 0 auto; place-items: center; border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: transparent; cursor: pointer; }
+    .catalog-create-dialog-close svg { display: block; }
     .catalog-create-dialog-close:hover { background: var(--lv-bg-control-hover); }
     .catalog-create-dialog-close:focus-visible,
     .catalog-create-dialog button:focus-visible,
     .catalog-create-dialog input:focus-visible,
     .catalog-create-dialog select:focus-visible,
     .catalog-create-dialog summary:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
-    .catalog-create-dialog-form { display: grid; gap: var(--base-size-16); padding: var(--base-size-12) var(--base-size-24) var(--base-size-24); }
-    .catalog-create-field { display: grid; gap: var(--base-size-6); }
+    .catalog-create-dialog-form { display: grid; min-width: 0; gap: var(--base-size-16); box-sizing: border-box; padding: var(--base-size-12) var(--base-size-24) var(--base-size-24); }
+    .catalog-create-field { display: grid; min-width: 0; gap: var(--base-size-6); }
     .catalog-create-field label,
     .catalog-create-advanced summary { color: var(--lv-fg-default); font: var(--lv-type-body-compact); font-weight: var(--base-text-weight-semibold); }
     .catalog-create-field input,
-    .catalog-create-field select { box-sizing: border-box; width: 100%; min-height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: var(--lv-bg-control); padding: 0 var(--base-size-8); font: var(--lv-type-body-compact); }
+    .catalog-create-field select,
+    .catalog-create-advanced-content input { box-sizing: border-box; width: 100%; max-width: 100%; min-height: var(--control-medium-size); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: var(--lv-bg-control); padding: 0 var(--base-size-8); font: var(--lv-type-body-compact); }
     .catalog-create-field select:disabled { color: var(--lv-fg-muted); background: var(--lv-bg-control-hover); cursor: not-allowed; }
-    .catalog-create-advanced { border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-8) var(--base-size-12); }
+    .catalog-create-advanced { min-width: 0; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); padding: var(--base-size-8) var(--base-size-12); }
     .catalog-create-advanced summary { cursor: pointer; }
     .catalog-create-advanced-content { display: grid; gap: var(--base-size-6); padding-top: var(--base-size-12); }
     .catalog-create-help { margin: 0; color: var(--lv-fg-muted); font: var(--lv-type-caption); }
@@ -211,7 +215,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               <h2 id="catalog-create-draft-title">New dashboard</h2>
               <p id="catalog-create-draft-description">Private until you publish.</p>
             </div>
-            <button class="catalog-create-dialog-close" type="button" aria-label="Close new dashboard" @click=${this.closeCreateDraft}>${lucideIconByCanonicalName('x')}</button>
+            <button class="catalog-create-dialog-close" type="button" aria-label="Close new dashboard" @click=${this.closeCreateDraft}>${lucideIcon(lucideIconByCanonicalName('x'), { size: 16, strokeWidth: 2 })}</button>
           </header>
           <form class="catalog-create-dialog-form" method="post" action=${this.createDraftHref}>
             <div class="catalog-create-field">
