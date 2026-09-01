@@ -117,7 +117,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if err := target.Start(t.Context()); err != nil {
 		t.Fatalf("start production application after native onboarding: %v", err)
 	}
-	firstInstance := assertPostgresOnboardingTarget(t, target, credentials.PublisherToken)
+	firstInstance := assertPostgresOnboardingTarget(t, target, credentials.PublisherToken, credentials.Email)
 	if err := target.Shutdown(context.Background()); err != nil {
 		t.Fatalf("shutdown onboarded production application: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	if err := secondTarget.Start(t.Context()); err != nil {
 		t.Fatalf("start rebuilt production application after native onboarding restart: %v", err)
 	}
-	secondInstance := assertPostgresOnboardingTarget(t, secondTarget, credentials.PublisherToken)
+	secondInstance := assertPostgresOnboardingTarget(t, secondTarget, credentials.PublisherToken, credentials.Email)
 	if secondInstance != firstInstance {
 		t.Fatalf("restart changed instance API identity: first=%#v second=%#v", firstInstance, secondInstance)
 	}
@@ -169,7 +169,7 @@ type postgresOnboardingPersistenceSnapshot struct {
 	Contract   physicalpool.AdmissionContract
 }
 
-func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisherToken string) apigenapi.InstanceResponse {
+func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisherToken, expectedEmail string) apigenapi.InstanceResponse {
 	t.Helper()
 	requestHTTP := httptest.NewRequest(http.MethodGet, "/readyz", nil)
 	requestHTTP.Host = "localhost"
@@ -212,7 +212,7 @@ func assertPostgresOnboardingTarget(t *testing.T, target *Application, publisher
 	if err := json.NewDecoder(meResponse.Body).Decode(&principal); err != nil {
 		t.Fatalf("decode onboarded production current-principal API: %v", err)
 	}
-	if principal.Email != "admin@example.com" {
+	if principal.Email != expectedEmail {
 		t.Fatalf("onboarded production current-principal email = %q", principal.Email)
 	}
 	return instance
