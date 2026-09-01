@@ -124,6 +124,55 @@ func New(options Options) (*Controller, error) {
 	}, nil
 }
 
+// scoped creates a controller for a qualification root while retaining the
+// process dependencies and test seams of the parent controller. Qualification
+// runtimes that shell out to Docker need to be rooted at the child directory
+// as well; injected runtimes are deliberately retained by identity.
+func (c *Controller) scoped(root string, stdout io.Writer) (*Controller, error) {
+	if c == nil {
+		return nil, fmt.Errorf("controller is required")
+	}
+	root = strings.TrimSpace(root)
+	if root == "" {
+		return nil, fmt.Errorf("scoped controller root is required")
+	}
+	if stdout == nil {
+		return nil, fmt.Errorf("scoped controller output is required")
+	}
+	absoluteRoot, err := filepath.Abs(root)
+	if err != nil {
+		return nil, err
+	}
+	containers := c.qualificationContainers
+	if dockerRuntime, ok := containers.(*dockerCLIQualificationRuntime); ok {
+		if dockerRuntime == nil {
+			return nil, fmt.Errorf("qualification container runtime is nil")
+		}
+		containers = newDockerCLIQualificationRuntime(
+			absoluteRoot,
+			c.dockerBin,
+			c.qualificationExecutor,
+		)
+	}
+	return &Controller{
+		root:                    absoluteRoot,
+		dockerBin:               c.dockerBin,
+		stdin:                   c.stdin,
+		stdout:                  stdout,
+		stderr:                  c.stderr,
+		now:                     c.now,
+		sleep:                   c.sleep,
+		dockerPlatform:          c.dockerPlatform,
+		qualificationExecutor:   c.qualificationExecutor,
+		qualificationContainers: containers,
+		startOverride:           c.startOverride,
+		setImageOverride:        c.setImageOverride,
+		isRunningOverride:       c.isRunningOverride,
+		stopOverride:            c.stopOverride,
+		composeOverride:         c.composeOverride,
+	}, nil
+}
+
 func (c *Controller) Initialize(ctx context.Context, options InitOptions) error {
 	var err error
 	options, err = NormalizeInitOptions(options)

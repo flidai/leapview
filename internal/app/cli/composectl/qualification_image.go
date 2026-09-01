@@ -272,16 +272,7 @@ func (c *Controller) QualifyImage(
 	}
 
 	var controllerOutput bytes.Buffer
-	instanceController, err := New(Options{
-		Root:                  bundleRoot,
-		DockerBin:             c.dockerBin,
-		Stdin:                 c.stdin,
-		Stdout:                &controllerOutput,
-		Stderr:                c.stderr,
-		Now:                   c.now,
-		Sleep:                 c.sleep,
-		qualificationExecutor: c.qualificationExecutor,
-	})
+	instanceController, err := c.scoped(bundleRoot, &controllerOutput)
 	if err != nil {
 		return err
 	}

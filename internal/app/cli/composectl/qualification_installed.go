@@ -48,12 +48,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		}
 		options.Bundle = ""
 		if bundleRoot != c.root {
-			bundleController, err := New(Options{
-				Root: bundleRoot, DockerBin: c.dockerBin,
-				Stdin: c.stdin, Stdout: c.stdout, Stderr: c.stderr,
-				Now: c.now, Sleep: c.sleep,
-				qualificationExecutor: c.qualificationExecutor,
-			})
+			bundleController, err := c.scoped(bundleRoot, c.stdout)
 			if err != nil {
 				return err
 			}
