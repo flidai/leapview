@@ -7,7 +7,6 @@ package compiler
 
 import (
 	"fmt"
-	"sort"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	"github.com/flidai/leapview/internal/dashboard/definition"
@@ -159,9 +158,6 @@ func CompileDashboardPageLayout(page document.DashboardPage, defaults definition
 			occupiedRows = occupied
 		}
 	}
-	if err := validateCanonicalRowContinuity(compiled.Visuals); err != nil {
-		return dashboard.Page{}, err
-	}
 	compiled.ResponsiveLayout.OccupiedRows = occupiedRows
 	if occupiedRows == 0 {
 		compiled.Height = resolved.Padding * 2
@@ -169,43 +165,6 @@ func CompileDashboardPageLayout(page document.DashboardPage, defaults definition
 		compiled.Height = resolved.Padding*2 + occupiedRows*resolved.RowHeight + (occupiedRows-1)*resolved.Gap
 	}
 	return compiled, nil
-}
-
-func validateCanonicalRowContinuity(visuals []dashboard.PageVisual) error {
-	if len(visuals) == 0 {
-		return nil
-	}
-	type rowInterval struct {
-		start int
-		end   int
-	}
-	intervals := make([]rowInterval, 0, len(visuals))
-	for _, visual := range visuals {
-		intervals = append(intervals, rowInterval{
-			start: visual.Placement.Row,
-			end:   visual.Placement.Row + visual.Placement.RowSpan - 1,
-		})
-	}
-	sort.Slice(intervals, func(i, j int) bool {
-		if intervals[i].start == intervals[j].start {
-			return intervals[i].end < intervals[j].end
-		}
-		return intervals[i].start < intervals[j].start
-	})
-	coveredThrough := 0
-	for _, interval := range intervals {
-		if interval.start > coveredThrough+1 {
-			emptyStart, emptyEnd := coveredThrough+1, interval.start-1
-			if emptyStart == emptyEnd {
-				return fmt.Errorf("grid row %d is empty before component row %d; placements must not leave empty rows", emptyStart, interval.start)
-			}
-			return fmt.Errorf("grid rows %d..%d are empty before component row %d; placements must not leave empty rows", emptyStart, emptyEnd, interval.start)
-		}
-		if interval.end > coveredThrough {
-			coveredThrough = interval.end
-		}
-	}
-	return nil
 }
 
 // CompileCanonicalDashboardPageLayout accepts generated defaults for callers
