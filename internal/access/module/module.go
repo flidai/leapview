@@ -44,8 +44,6 @@ type surfaceConfig struct {
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	Auth                         *Auth
 	Logger                       *slog.Logger
-	OAuth                        *mcpoauth.Service
-	OAuthResource                mcpoauth.ResourceServer
 	AuthoringAuth                *access.AuthoringAuthService
 	Avatar                       *avatar.Service
 	Presentation                 webpage.Presentation
@@ -99,7 +97,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		return session.ID, true
 	}
 	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
-		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
+		authoringAuth:                config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{
