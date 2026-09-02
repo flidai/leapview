@@ -603,6 +603,7 @@ func (m *Module) prepareCandidate(
 			AuthoredConnections:    candidateAuthoredConnections(generation.AuthoredConnections),
 			ManagedDataConnections: candidateManagedDataConnections(generation.ManagedDataPins),
 			Extensions:             append([]extension.Evidence(nil), artifacts.Extensions...),
+			Restrictions:           candidateRuntimeRestrictions(generation.Restrictions),
 		},
 	})
 	if err != nil {

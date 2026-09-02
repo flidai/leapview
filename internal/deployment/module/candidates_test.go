@@ -44,7 +44,13 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 			CompilerVersion: "compiler:test", SchemaVersion: 2,
 		},
 		AuthorizationFingerprint: "sha256:" + strings.Repeat("f", 64),
-		Generation:               release.CandidateGenerationArtifact{Identity: testServingIdentity("state_sales"), ArtifactDigest: digest, DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase},
+		Generation: release.CandidateGenerationArtifact{
+			Identity: testServingIdentity("state_sales"), ArtifactDigest: digest, DataRevision: "snapshot:1", DataMode: release.GenerationDataReuseBase,
+			Restrictions: []release.CandidateRestriction{{
+				ID: "orders-region", ObjectID: "model:orders", ObjectKind: projectgraph.KindModel,
+				PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`,
+			}},
+		},
 	}}
 	module.candidateArtifacts = artifacts
 	runtimes := &candidateRuntimePreparerStub{
@@ -89,6 +95,10 @@ func TestCandidateSynchronizationPlansUploadsAndCommitsOwnedCandidate(t *testing
 		retained.SourceRevision.Revision != "commit-a" ||
 		retained.Plan.RuntimeVersion != "runtime:test" {
 		t.Fatalf("retained provenance = %#v, candidate = %#v", retained, candidate)
+	}
+	if len(runtimes.requests) != 1 || len(runtimes.requests[0].Generation.Restrictions) != 1 ||
+		runtimes.requests[0].Generation.Restrictions[0].ID != "orders-region" {
+		t.Fatalf("candidate runtime restrictions = %#v", runtimes.requests)
 	}
 
 	nextDigest := "sha256:" + strings.Repeat("c", 64)
@@ -1021,6 +1031,7 @@ func (stub *candidateArtifactPreparerStub) CandidateProvenance(
 
 type candidateRuntimePreparerStub struct {
 	calls            int
+	requests         []deployment.CandidateRuntimeRequest
 	err              error
 	receipt          deployment.CandidateRuntimeReceipt
 	requireAdmission bool
@@ -1046,6 +1057,7 @@ func (stub *candidateRuntimePreparerStub) Prepare(
 	request deployment.CandidateRuntimeRequest,
 ) (deployment.CandidateRuntimeReceipt, error) {
 	stub.calls++
+	stub.requests = append(stub.requests, request)
 	if stub.requireAdmission {
 		if admitted, _ := ctx.Value(candidatePreparationAdmissionKey{}).(bool); !admitted {
 			return deployment.CandidateRuntimeReceipt{}, errors.New(
