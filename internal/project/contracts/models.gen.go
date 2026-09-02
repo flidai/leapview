@@ -14,10 +14,18 @@ type AIContext struct {
 }
 
 type AcceptedValuesModelCheck struct {
-	Type     string   `json:"type" yaml:"type"`
-	Field    string   `json:"field" yaml:"field"`
-	Values   []string `json:"values" yaml:"values"`
-	Severity *string  `json:"severity,omitempty" yaml:"severity,omitempty"`
+	ID          string    `json:"id" yaml:"id"`
+	Type        string    `json:"type" yaml:"type"`
+	Field       string    `json:"field" yaml:"field"`
+	Values      []string  `json:"values" yaml:"values"`
+	Severity    *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Description *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
+}
+
+type AuthoritativeDefinition struct {
+	Type string `json:"type" yaml:"type"`
+	URL  string `json:"url" yaml:"url"`
 }
 
 type AzureBlobConnection struct {
@@ -497,6 +505,24 @@ type ConnectionSpecBase struct {
 	Type string `json:"type" yaml:"type"`
 }
 
+type ContractMetadata struct {
+	Version       string `json:"version" yaml:"version"`
+	Compatibility string `json:"compatibility" yaml:"compatibility"`
+}
+
+type ContractResourceMetadata struct {
+	ID            string              `json:"id" yaml:"id"`
+	Name          string              `json:"name" yaml:"name"`
+	DisplayName   *string             `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Description   *string             `json:"description,omitempty" yaml:"description,omitempty"`
+	Owner         *string             `json:"owner,omitempty" yaml:"owner,omitempty"`
+	Domain        *string             `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Tags          *[]string           `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Documentation *string             `json:"documentation,omitempty" yaml:"documentation,omitempty"`
+	Provenance    *ResourceProvenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+	Contract      *ContractMetadata   `json:"contract,omitempty" yaml:"contract,omitempty"`
+}
+
 type DeltaPathSourceLocation struct {
 	PathSourceLocationBase
 	Format  string              `json:"format" yaml:"format"`
@@ -527,6 +553,12 @@ type ExcelPathSourceLocation struct {
 type ExcelReaderOptions struct {
 	Sheet  *string `json:"sheet,omitempty" yaml:"sheet,omitempty"`
 	Header *bool   `json:"header,omitempty" yaml:"header,omitempty"`
+}
+
+type FieldDeprecation struct {
+	Since       string  `json:"since" yaml:"since"`
+	Reason      string  `json:"reason" yaml:"reason"`
+	Replacement *string `json:"replacement,omitempty" yaml:"replacement,omitempty"`
 }
 
 type FieldFreshness struct {
@@ -593,11 +625,11 @@ type ManagedConnection struct {
 }
 
 type Model struct {
-	APIVersion string           `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string           `json:"kind" yaml:"kind"`
-	Metadata   ResourceMetadata `json:"metadata" yaml:"metadata"`
-	AiContext  *AIContext       `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
-	Spec       ModelSpec        `json:"spec" yaml:"spec"`
+	APIVersion string                   `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                   `json:"kind" yaml:"kind"`
+	Metadata   ContractResourceMetadata `json:"metadata" yaml:"metadata"`
+	AiContext  *AIContext               `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Spec       ModelSpec                `json:"spec" yaml:"spec"`
 }
 
 type ModelCheckVariant interface {
@@ -675,6 +707,9 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["field"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property field is missing", tag.Value)
 		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
+		}
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
 		}
@@ -690,6 +725,9 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 		if _, ok := fields["field"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property field is missing", tag.Value)
 		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
+		}
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
 		}
@@ -701,6 +739,9 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 	case "relationship":
 		if _, ok := fields["field"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property field is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
 		}
 		if _, ok := fields["to"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property to is missing", tag.Value)
@@ -714,6 +755,9 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 		}
 		value.Value = &variant
 	case "row_count":
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
+		}
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
 		}
@@ -725,6 +769,9 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 	case "unique":
 		if _, ok := fields["fields"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property fields is missing", tag.Value)
+		}
+		if _, ok := fields["id"]; !ok {
+			return fmt.Errorf("decode ModelCheck variant %q: required property id is missing", tag.Value)
 		}
 		if _, ok := fields["type"]; !ok {
 			return fmt.Errorf("decode ModelCheck variant %q: required property type is missing", tag.Value)
@@ -1019,10 +1066,16 @@ type ModelEntity struct {
 }
 
 type ModelField struct {
-	Datatype    *string    `json:"datatype,omitempty" yaml:"datatype,omitempty"`
-	Label       *string    `json:"label,omitempty" yaml:"label,omitempty"`
-	Description *string    `json:"description,omitempty" yaml:"description,omitempty"`
-	AiContext   *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Datatype                 *string                    `json:"datatype,omitempty" yaml:"datatype,omitempty"`
+	Label                    *string                    `json:"label,omitempty" yaml:"label,omitempty"`
+	Description              *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext                *AIContext                 `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Nullable                 *bool                      `json:"nullable,omitempty" yaml:"nullable,omitempty"`
+	Tags                     *[]string                  `json:"tags,omitempty" yaml:"tags,omitempty"`
+	CriticalDataElement      *bool                      `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
+	Classification           *string                    `json:"classification,omitempty" yaml:"classification,omitempty"`
+	AuthoritativeDefinitions *[]AuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
+	Deprecation              *FieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
 }
 
 type ModelGrain struct {
@@ -1043,9 +1096,12 @@ type MySQLConnection struct {
 }
 
 type NonNullModelCheck struct {
-	Type     string  `json:"type" yaml:"type"`
-	Field    string  `json:"field" yaml:"field"`
-	Severity *string `json:"severity,omitempty" yaml:"severity,omitempty"`
+	ID          string    `json:"id" yaml:"id"`
+	Type        string    `json:"type" yaml:"type"`
+	Field       string    `json:"field" yaml:"field"`
+	Severity    *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Description *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 type ParquetPathSourceLocation struct {
@@ -1567,10 +1623,13 @@ type RelationSourceLocation struct {
 }
 
 type RelationshipModelCheck struct {
-	Type     string  `json:"type" yaml:"type"`
-	Field    string  `json:"field" yaml:"field"`
-	To       string  `json:"to" yaml:"to"`
-	Severity *string `json:"severity,omitempty" yaml:"severity,omitempty"`
+	ID          string    `json:"id" yaml:"id"`
+	Type        string    `json:"type" yaml:"type"`
+	Field       string    `json:"field" yaml:"field"`
+	To          string    `json:"to" yaml:"to"`
+	Severity    *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Description *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 type ResourceMetadata struct {
@@ -1599,10 +1658,13 @@ type RevisionFreshness struct {
 }
 
 type RowCountModelCheck struct {
-	Type     string  `json:"type" yaml:"type"`
-	Minimum  *int64  `json:"minimum,omitempty" yaml:"minimum,omitempty"`
-	Maximum  *int64  `json:"maximum,omitempty" yaml:"maximum,omitempty"`
-	Severity *string `json:"severity,omitempty" yaml:"severity,omitempty"`
+	ID          string    `json:"id" yaml:"id"`
+	Type        string    `json:"type" yaml:"type"`
+	Minimum     *int64    `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum     *int64    `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Severity    *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Description *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 type S3Connection struct {
@@ -1624,10 +1686,10 @@ type SQLiteConnection struct {
 }
 
 type Source struct {
-	APIVersion string           `json:"apiVersion" yaml:"apiVersion"`
-	Kind       string           `json:"kind" yaml:"kind"`
-	Metadata   ResourceMetadata `json:"metadata" yaml:"metadata"`
-	Spec       SourceSpec       `json:"spec" yaml:"spec"`
+	APIVersion string                   `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                   `json:"kind" yaml:"kind"`
+	Metadata   ContractResourceMetadata `json:"metadata" yaml:"metadata"`
+	Spec       SourceSpec               `json:"spec" yaml:"spec"`
 }
 
 type SourceFreshnessVariant interface {
@@ -2084,9 +2146,14 @@ type SourceSchemaCompatibleVariant struct {
 }
 
 type SourceSchemaField struct {
-	Datatype    string  `json:"datatype" yaml:"datatype"`
-	Nullable    *bool   `json:"nullable,omitempty" yaml:"nullable,omitempty"`
-	Description *string `json:"description,omitempty" yaml:"description,omitempty"`
+	Datatype                 string                     `json:"datatype" yaml:"datatype"`
+	Nullable                 *bool                      `json:"nullable,omitempty" yaml:"nullable,omitempty"`
+	Description              *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags                     *[]string                  `json:"tags,omitempty" yaml:"tags,omitempty"`
+	CriticalDataElement      *bool                      `json:"criticalDataElement,omitempty" yaml:"criticalDataElement,omitempty"`
+	Classification           *string                    `json:"classification,omitempty" yaml:"classification,omitempty"`
+	AuthoritativeDefinitions *[]AuthoritativeDefinition `json:"authoritativeDefinitions,omitempty" yaml:"authoritativeDefinitions,omitempty"`
+	Deprecation              *FieldDeprecation          `json:"deprecation,omitempty" yaml:"deprecation,omitempty"`
 }
 
 type SourceSchemaInferredVariant struct {
@@ -2124,9 +2191,12 @@ type TextReaderOptions struct {
 }
 
 type UniqueModelCheck struct {
-	Type     string   `json:"type" yaml:"type"`
-	Fields   []string `json:"fields" yaml:"fields"`
-	Severity *string  `json:"severity,omitempty" yaml:"severity,omitempty"`
+	ID          string    `json:"id" yaml:"id"`
+	Type        string    `json:"type" yaml:"type"`
+	Fields      []string  `json:"fields" yaml:"fields"`
+	Severity    *string   `json:"severity,omitempty" yaml:"severity,omitempty"`
+	Description *string   `json:"description,omitempty" yaml:"description,omitempty"`
+	Tags        *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 }
 
 type VortexPathSourceLocation struct {

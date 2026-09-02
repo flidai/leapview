@@ -20,6 +20,28 @@ scalar ResourceName extends string;
 @pattern("^[A-Za-z0-9][A-Za-z0-9_.:-]*$")
 scalar ResourceID extends string;
 
+@pattern("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$")
+scalar SemanticVersion extends string;
+
+@format("uri")
+scalar AuthoritativeURL extends string;
+
+model ContractMetadata {
+  version: SemanticVersion;
+  compatibility: "backward";
+}
+
+model AuthoritativeDefinition {
+  type: "businessDefinition" | "transformationImplementation";
+  url: AuthoritativeURL;
+}
+
+model FieldDeprecation {
+  since: SemanticVersion;
+  reason: string;
+  replacement?: Identifier;
+}
+
 /**
  * Portable access is intentionally tiny. Endpoints, credentials, secret
  * providers, and resolved authentication are target-owned bindings.
@@ -270,6 +292,11 @@ model SourceSchemaField {
   datatype: "String" | "Integer" | "Decimal" | "Float" | "Boolean" | "Date" | "Time" | "DateTime" | "DateTimeTz" | "Opaque";
   nullable?: boolean;
   description?: string;
+  tags?: string[];
+  criticalDataElement?: boolean;
+  classification?: Identifier;
+  authoritativeDefinitions?: AuthoritativeDefinition[];
+  deprecation?: FieldDeprecation;
 }
 
 model AIContext {
@@ -429,6 +456,12 @@ model ModelField {
   label?: string;
   description?: string;
   aiContext?: AIContext;
+  nullable?: boolean;
+  tags?: string[];
+  criticalDataElement?: boolean;
+  classification?: Identifier;
+  authoritativeDefinitions?: AuthoritativeDefinition[];
+  deprecation?: FieldDeprecation;
 }
 
 model ModelEntity {
@@ -443,36 +476,51 @@ model ModelGrain {
 }
 
 model NonNullModelCheck {
+  id: Identifier;
   type: "non_null";
   field: Identifier;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model UniqueModelCheck {
+  id: Identifier;
   type: "unique";
   fields: Identifier[];
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model AcceptedValuesModelCheck {
+  id: Identifier;
   type: "accepted_values";
   field: Identifier;
   values: string[];
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model RelationshipModelCheck {
+  id: Identifier;
   type: "relationship";
   field: Identifier;
   to: ModelReference;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 model RowCountModelCheck {
+  id: Identifier;
   type: "row_count";
   minimum?: int64;
   maximum?: int64;
   severity?: "warning" | "error";
+  description?: string;
+  tags?: string[];
 }
 
 @discriminated(#{ envelope: "none", discriminatorPropertyName: "type" })
@@ -512,6 +560,11 @@ model ResourceMetadata {
   provenance?: ResourceProvenance;
 }
 
+model ContractResourceMetadata {
+  ...ResourceMetadata;
+  contract?: ContractMetadata;
+}
+
 @apigen.contract(#{ kind: "resource", tags: #["connection", "data-resource"] })
 model Connection {
   apiVersion: "leapview.dev/v1";
@@ -524,7 +577,7 @@ model Connection {
 model Source {
   apiVersion: "leapview.dev/v1";
   kind: "Source";
-  metadata: ResourceMetadata;
+  metadata: ContractResourceMetadata;
   spec: SourceSpec;
 }
 
@@ -532,7 +585,7 @@ model Source {
 model Model {
   apiVersion: "leapview.dev/v1";
   kind: "Model";
-  metadata: ResourceMetadata;
+  metadata: ContractResourceMetadata;
   aiContext?: AIContext;
   spec: ModelSpec;
 }

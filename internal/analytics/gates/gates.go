@@ -782,6 +782,9 @@ func canonicalChecks(values []semanticmodel.ModelCheck) []semanticmodel.ModelChe
 }
 
 func checkIdentity(modelID string, check semanticmodel.ModelCheck) string {
+	if check.ID != "" {
+		return strings.Join([]string{modelID, "authored", check.ID}, "\x00")
+	}
 	fields := canonicalFields(check.Fields)
 	values := append([]string(nil), check.Values...)
 	sort.Strings(values)

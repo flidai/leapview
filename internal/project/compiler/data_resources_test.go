@@ -151,7 +151,7 @@ spec:
   grain: {entity: id}
   fields: {id: {datatype: Integer}, customer_id: {datatype: Integer}}
   checks:
-    - {type: relationship, field: customer_id, to: customers.customer_id}
+    - {id: customer_relationship, type: relationship, field: customer_id, to: customers.customer_id}
 `
 	table, _, err := decodeModelResource("model.yaml", []byte(valid), metadata{})
 	if err != nil {
@@ -171,6 +171,38 @@ spec:
 				t.Fatalf("relationship reference %q was accepted", reference)
 			}
 		})
+	}
+}
+
+func TestTypedModelRequiresStableUniqueCheckIDs(t *testing.T) {
+	base := `apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:orders
+  name: orders
+  contract: {version: 1.2.0, compatibility: backward}
+spec:
+  definition: {type: direct, source: source:orders}
+  entities: {id: {type: primary, fields: [id]}}
+  grain: {entity: id}
+  fields: {id: {datatype: Integer}}
+  checks:
+    - {id: id_present, type: non_null, field: id, description: Stable evidence identity, tags: [contract]}
+`
+	table, _, err := decodeModelResource("model.yaml", []byte(base), metadata{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(table.Checks) != 1 || table.Checks[0].ID != "id_present" || table.Checks[0].Description == "" {
+		t.Fatalf("lowered stable check = %#v", table.Checks)
+	}
+	duplicate := strings.Replace(base, "    - {id: id_present", "    - {id: id_present, type: non_null, field: id}\n    - {id: id_present", 1)
+	if _, _, err := decodeModelResource("duplicate.yaml", []byte(duplicate), metadata{}); err == nil || !strings.Contains(err.Error(), "duplicates id") {
+		t.Fatalf("duplicate check IDs error = %v", err)
+	}
+	invalidVersion := strings.Replace(base, "version: 1.2.0", "version: latest", 1)
+	if _, _, err := decodeModelResource("invalid-version.yaml", []byte(invalidVersion), metadata{}); err == nil {
+		t.Fatal("invalid semantic contract version was accepted")
 	}
 }
 

@@ -247,6 +247,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 		return nil, nil
 	}
 	checks := make([]semanticmodel.ModelCheck, 0, len(*value))
+	seenIDs := make(map[string]struct{}, len(*value))
 	for index, check := range *value {
 		lowered := semanticmodel.ModelCheck{}
 		switch variant := check.Value.(type) {
@@ -254,7 +255,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 			if strings.TrimSpace(variant.Field) == "" {
 				return nil, fmt.Errorf("checks[%d] non_null requires field", index)
 			}
-			lowered.Type, lowered.Field, lowered.Severity = variant.Type, variant.Field, optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Field, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Field, optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckUniqueVariant:
 			if len(variant.Fields) == 0 {
 				return nil, fmt.Errorf("checks[%d] unique requires fields", index)
@@ -269,7 +270,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 				}
 				seenFields[field] = struct{}{}
 			}
-			lowered.Type, lowered.Fields, lowered.Severity = variant.Type, append([]string(nil), variant.Fields...), optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Fields, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, append([]string(nil), variant.Fields...), optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckAcceptedValuesVariant:
 			if strings.TrimSpace(variant.Field) == "" || len(variant.Values) == 0 {
 				return nil, fmt.Errorf("checks[%d] accepted_values requires field and values", index)
@@ -281,12 +282,12 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 				}
 				seenValues[accepted] = struct{}{}
 			}
-			lowered.Type, lowered.Field, lowered.Values, lowered.Severity = variant.Type, variant.Field, append([]string(nil), variant.Values...), optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Field, lowered.Values, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Field, append([]string(nil), variant.Values...), optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckRelationshipVariant:
 			if strings.TrimSpace(variant.Field) == "" || strings.TrimSpace(variant.To) == "" {
 				return nil, fmt.Errorf("checks[%d] relationship requires field and to", index)
 			}
-			lowered.Type, lowered.Field, lowered.To, lowered.Severity = variant.Type, variant.Field, variant.To, optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Field, lowered.To, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Field, variant.To, optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case *projectcontracts.ModelCheckRowCountVariant:
 			if variant.Minimum == nil && variant.Maximum == nil {
 				return nil, fmt.Errorf("checks[%d] row_count requires minimum or maximum", index)
@@ -300,7 +301,7 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 			if variant.Minimum != nil && variant.Maximum != nil && *variant.Minimum > *variant.Maximum {
 				return nil, fmt.Errorf("checks[%d] row_count minimum exceeds maximum", index)
 			}
-			lowered.Type, lowered.Minimum, lowered.Maximum, lowered.Severity = variant.Type, variant.Minimum, variant.Maximum, optionalString(variant.Severity)
+			lowered.ID, lowered.Type, lowered.Minimum, lowered.Maximum, lowered.Severity, lowered.Description, lowered.Tags = variant.ID, variant.Type, variant.Minimum, variant.Maximum, optionalString(variant.Severity), optionalString(variant.Description), optionalStrings(variant.Tags)
 		case nil:
 			return nil, fmt.Errorf("model check variant is required")
 		default:
@@ -309,6 +310,13 @@ func lowerModelChecks(value *[]projectcontracts.ModelCheck) ([]semanticmodel.Mod
 		if lowered.Severity != "" && !strings.EqualFold(lowered.Severity, "warning") && !strings.EqualFold(lowered.Severity, "error") {
 			return nil, fmt.Errorf("checks[%d] severity must be warning or error", index)
 		}
+		if strings.TrimSpace(lowered.ID) == "" {
+			return nil, fmt.Errorf("checks[%d] id is required", index)
+		}
+		if _, exists := seenIDs[lowered.ID]; exists {
+			return nil, fmt.Errorf("checks[%d] duplicates id %q", index, lowered.ID)
+		}
+		seenIDs[lowered.ID] = struct{}{}
 		checks = append(checks, lowered)
 	}
 	return checks, nil
