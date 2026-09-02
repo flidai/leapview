@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	platformdb "github.com/flidai/leapview/internal/platform/postgres/internal/db"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -90,6 +91,14 @@ type Pool struct {
 	config         Config
 }
 
+// SchemaRevision is the platform-owned migration readiness record. Generated
+// sqlc rows remain internal to this package.
+type SchemaRevision struct {
+	Revision    int64
+	MigrationID string
+	Checksum    string
+}
+
 // PoolConfig returns the normalized policy used to construct the pool.
 func (p *Pool) PoolConfig() Config {
 	if p == nil {
@@ -149,6 +158,28 @@ func (p *Pool) Ping(ctx context.Context) error {
 	return p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
 		return conn.Conn().Ping(ctx)
 	})
+}
+
+// SchemaRevision returns the exact durable identity for one baseline
+// revision, allowing application composition to fail closed on checksum drift.
+func (p *Pool) SchemaRevision(ctx context.Context, revision int64) (SchemaRevision, error) {
+	if p == nil || p.pool == nil {
+		return SchemaRevision{}, errors.New("postgres pool is nil")
+	}
+	var record platformdb.GetSchemaRevisionRow
+	err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
+		var err error
+		record, err = platformdb.New(conn).GetSchemaRevision(ctx, revision)
+		return err
+	})
+	if err != nil {
+		return SchemaRevision{}, err
+	}
+	return SchemaRevision{
+		Revision:    record.Revision,
+		MigrationID: record.MigrationID,
+		Checksum:    record.Checksum,
+	}, nil
 }
 
 // Close releases all pooled connections. It is safe to call on a nil Pool.

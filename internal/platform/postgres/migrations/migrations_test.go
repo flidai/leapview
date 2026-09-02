@@ -38,12 +38,14 @@ func (r recordingRow) Scan(dest ...any) error {
 	if r.err != nil {
 		return r.err
 	}
-	if len(dest) != 3 {
+	switch len(dest) {
+	case 3:
+		*dest[0].(*int64) = r.revision
+		*dest[1].(*string) = r.migrationID
+		*dest[2].(*string) = r.checksum
+	default:
 		return errors.New("unexpected destination count")
 	}
-	*dest[0].(*int64) = r.revision
-	*dest[1].(*string) = r.migrationID
-	*dest[2].(*string) = r.checksum
 	return nil
 }
 
@@ -52,31 +54,13 @@ func TestBaselineMetadata(t *testing.T) {
 		t.Fatalf("baseline metadata = revision %d, id %q", BaselineRevision, BaselineMigrationID)
 	}
 	sql := BaselineSQL()
-	for _, schema := range []string{"access", "delivery", "refresh", "event", "audit", "lineage", "cache", "agent"} {
-		if !strings.Contains(sql, "CREATE SCHEMA IF NOT EXISTS "+schema) {
-			t.Errorf("baseline does not create %s capability schema", schema)
-		}
-	}
-	for _, role := range []string{"leapview_control_owner", "leapview_control_migrator", "leapview_control_runtime", "leapview_control_readonly"} {
-		if !strings.Contains(sql, role) {
-			t.Errorf("baseline does not declare/grant %s", role)
-		}
-	}
-	for _, marker := range []string{
-		"platform.schema_revision",
-		"platform.operation",
-		"event.event_aggregate",
-		"event.event_retention_root",
-		"delivery.delivery_snapshot_retention",
-		"octet_length(payload::text) <= 65536",
-		"octet_length(properties::text) <= 16384",
-		"octet_length(metadata::text) <= 16384",
-		"audit.reject_audit_mutation",
-		"REVOKE UPDATE, DELETE ON audit.audit_event",
-	} {
+	for _, marker := range []string{"platform.schema_revision", "platform.reject_schema_revision_mutation", "leapview_control_owner", "leapview_control_maintenance", "leapview_control_backup", ")) <> 6"} {
 		if !strings.Contains(sql, marker) {
-			t.Errorf("baseline missing required contract marker %q", marker)
+			t.Errorf("foundation missing required contract marker %q", marker)
 		}
+	}
+	if strings.Contains(sql, "CREATE TABLE IF NOT EXISTS platform.operation") || strings.Contains(sql, "CREATE SCHEMA IF NOT EXISTS access") {
+		t.Fatal("foundation must not duplicate capability-owned DDL")
 	}
 	if strings.Contains(sql, "-- +goose") {
 		t.Fatal("PostgreSQL baseline must use its own migration mechanism")
@@ -86,22 +70,43 @@ func TestBaselineMetadata(t *testing.T) {
 	}
 }
 
+func testPlan() Plan {
+	return Plan{
+		Components:    []Component{{Name: "test.capability", SQL: "SELECT 1"}},
+		RolePolicySQL: "SELECT 2",
+	}
+}
+
 func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
-	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: BaselineChecksum()}
-	if err := Apply(context.Background(), recorder); err != nil {
+	plan := testPlan()
+	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: plan.Checksum()}
+	if err := Apply(context.Background(), recorder, plan); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 2 || recorder.sqls[0] != BaselineSQL() {
-		t.Fatal("Apply() did not execute the authored baseline SQL")
+	if len(recorder.sqls) != 4 || recorder.sqls[2] != BaselineSQL() {
+		t.Fatal("Apply() did not acquire its lock and execute the authored foundation")
 	}
-	if err := Apply(context.Background(), nil); err == nil {
+	if err := Apply(context.Background(), nil, plan); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
 	}
 }
 
 func TestApplyRejectsRevisionChecksumMismatch(t *testing.T) {
 	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: strings.Repeat("f", 64)}
-	if err := Apply(context.Background(), recorder); err == nil {
+	if err := Apply(context.Background(), recorder, testPlan()); err == nil {
 		t.Fatal("Apply() accepted a mismatched recorded checksum")
+	}
+}
+
+func TestApplyRejectsIncompleteOrDuplicatePlan(t *testing.T) {
+	recorder := &recordingTx{queryErr: pgx.ErrNoRows}
+	for _, plan := range []Plan{
+		{},
+		{Components: []Component{{Name: "one", SQL: "SELECT 1"}}},
+		{Components: []Component{{Name: "one", SQL: "SELECT 1"}, {Name: "one", SQL: "SELECT 2"}}, RolePolicySQL: "SELECT 3"},
+	} {
+		if err := Apply(context.Background(), recorder, plan); err == nil {
+			t.Fatalf("Apply accepted invalid plan %#v", plan)
+		}
 	}
 }
