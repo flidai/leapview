@@ -3242,7 +3242,6 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	prWorkflow := read(".github", "workflows", "ci.yml")
 	mergeWorkflow := read(".github", "workflows", "merge-validation.yml")
 	nightlyWorkflow := read(".github", "workflows", "nightly.yml")
-
 	pr := taskfileTaskBlock(t, taskfile, "ci:pr")
 	for _, want := range []string{
 		"- task: ci:prepare",
@@ -3293,7 +3292,8 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	for _, want := range []string{
 		"- task: desktop:test",
 		"go vet ./...",
-		"go test -race ./pkg/... ./internal/access ./internal/runtimehost",
+		"go test -race ./pkg/...",
+		"- task: quality:critical:race",
 		"- task: qa:ui-framework",
 		"- task: deploy:check",
 	} {
