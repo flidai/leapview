@@ -17,13 +17,14 @@ import (
 func nativeManagedDataAdmissionTestPool(t *testing.T) *pgxpool.Pool {
 	t.Helper()
 	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
 	db := h.NewDatabase(t, "native_managed_data_admission")
-	pool, err := pgxpool.New(t.Context(), db.AdminURL())
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
-		t.Fatalf("open PostgreSQL pool: %v", err)
+		t.Fatalf("open PostgreSQL administrator pool: %v", err)
 	}
-	t.Cleanup(pool.Close)
-	tx, err := pool.Begin(t.Context())
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
 	if err != nil {
 		t.Fatalf("begin schema transaction: %v", err)
 	}
@@ -34,6 +35,11 @@ func nativeManagedDataAdmissionTestPool(t *testing.T) *pgxpool.Pool {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatalf("commit schema transaction: %v", err)
 	}
+	pool, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
+	if err != nil {
+		t.Fatalf("open PostgreSQL runtime pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
 	return pool
 }
 
