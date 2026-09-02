@@ -1,6 +1,10 @@
 package ui
 
 import (
+	"encoding/json"
+	"net/url"
+	"strconv"
+
 	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -32,7 +36,7 @@ func DataExplorerPage(catalog catalog.Catalog, page uisignals.DataExplorerPageSi
 
 func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, agent DataExplorerAgentBootstrap, commands DataExplorerAgentCommandBindings, csrfToken string, providers ...webpage.Provider) g.Node {
 	layout := webpage.Resolve(firstProvider(providers), webpage.Context{Active: "data-explorer", PageTitle: page.Title})
-	explorerUpdatesURL := updatesURL(uisignals.RouteKindData, "surface", "explore", "object", uisignals.ValueOrZero(explorer.Command.ObjectKey))
+	explorerUpdatesURL := dataExplorerUpdatesURL(explorer.Command)
 	agentTurn := "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; " + uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{commands.CreateRun}, commands.Workflow(), "/chats/turns", "agent", "agentContext")
 	agentRestore := "$agent.activeConversationId = evt.detail.conversationId; " + uiactions.Get("/chats/restore", "agent")
 	return webpage.Render(layout, webpage.Spec{
@@ -51,6 +55,45 @@ func DataExplorerPageWithAgent(_ catalog.Catalog, page uisignals.DataExplorerPag
 		},
 	})
 }
+
+func dataExplorerUpdatesURL(command uisignals.DataExplorerCommand) string {
+	values := url.Values{"route": {string(uisignals.RouteKindData)}, "surface": {"explore"}}
+	if uisignals.ValueOrZero(command.Mode) != "explore" || command.Explore == nil {
+		if object := uisignals.ValueOrZero(command.ObjectKey); object != "" {
+			values.Set("object", object)
+		}
+		return "/updates?" + values.Encode()
+	}
+	explore := command.Explore
+	values.Set("v", "1")
+	values.Set("mode", "explore")
+	values.Set("model", uisignals.ValueOrZero(explore.ModelID))
+	values.Set("dataset", uisignals.ValueOrZero(explore.DatasetID))
+	for _, dimension := range explore.Dimensions {
+		values.Add("dimension", dimension)
+	}
+	for _, metric := range explore.Metrics {
+		values.Add("metric", metric)
+	}
+	for _, filter := range explore.Filters {
+		encoded, _ := json.Marshal(filter)
+		values.Add("filter", string(encoded))
+	}
+	for _, sorting := range explore.Sort {
+		encoded, _ := json.Marshal(sorting)
+		values.Add("sort", string(encoded))
+	}
+	if explore.Time != nil {
+		encoded, _ := json.Marshal(explore.Time)
+		values.Set("time", string(encoded))
+	}
+	if explore.Limit != dataExplorerDefaultLimit {
+		values.Set("limit", strconv.FormatInt(explore.Limit, 10))
+	}
+	return "/updates?" + values.Encode()
+}
+
+const dataExplorerDefaultLimit = int64(100)
 
 func DataExplorerBootstrapSignals(catalog catalog.Catalog, page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal, providers ...webpage.Provider) map[string]any {
 	return DataExplorerBootstrapSignalsWithAgent(catalog, page, explorer, DataExplorerAgentBootstrap{}, providers...)

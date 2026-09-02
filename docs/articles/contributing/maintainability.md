@@ -39,3 +39,55 @@ Every refactor must preserve capability ownership, the declared acyclic dependen
 ## Review signals
 
 Useful review signals are reduced reasons to change, narrower test setup, explicit dependencies, locally visible transitions, and smaller diffs for ordinary product work. Line count alone is not an acceptance criterion. Generated files are evaluated at their source generator, not as handwritten hotspots.
+
+## Ratcheting engineering-quality budgets
+
+`task quality:budget:check` scans tracked and newly authored Go and TypeScript/JavaScript files. Generated, compiled, and vendored sources are excluded. The required Go-package CI lane runs the same check for every pull request and merge-queue candidate.
+
+The policy in `.quality/engineering-budget.json` measures three dimensions for each source category:
+
+| Category | Per-file review threshold | Why it is tracked |
+| --- | ---: | --- |
+| Go production | 800 lines | Flags production files likely to combine several reasons to change. |
+| Go tests | 1,200 lines | Keeps broad characterization suites visible without applying the production threshold. |
+| TypeScript/JavaScript production | 700 lines | Flags stateful UI or tooling modules that may need purpose-owned controllers. |
+| TypeScript/JavaScript tests | 1,200 lines | Keeps large browser-contract suites visible while allowing cohesive scenario coverage. |
+
+For every category, CI rejects increases in the number of files over the threshold, total lines above the threshold, or the largest authored file. Existing hotspots remain visible as debt; they are not retroactively declared well-sized. The gate also rejects increases in reviewed quality suppressions such as `nolint`, `nosec`, `eslint-disable`, and TypeScript ignore directives.
+
+This is a ratchet, not an instruction to split code mechanically. A file may cross a review threshold only through an explicit policy change that explains why its invariants are clearer together. Reducing one hotspot does not silently authorize growing another: run `task quality:budget:update` after an improvement to tighten the committed baseline. The update command refuses increases by default.
+
+When the gate fails:
+
+1. Read the reported category and hotspot list.
+2. Prefer extracting a purpose-owned collaborator or removing the new suppression.
+3. Run focused characterization coverage and `task quality:budget:check`.
+4. If cohesion genuinely requires a larger surface, review the policy increase explicitly; do not use the normal update task to hide it.
+
+The budget intentionally does not grade naming, domain cohesion, or architectural correctness. Those remain review responsibilities backed by the ownership and behavior-preservation contracts on this page.
+
+`task quality:trends:report` complements the fail-closed budgets with the ten highest Go decision-point counts and the most frequently changed authored source files across the last 200 first-parent commits. The report is diagnostic evidence: complexity and author count trigger boundary review, but do not mechanically reject a cohesive implementation.
+
+### Reviewed exceptions
+
+`.quality/engineering-exceptions.json` is the durable record for a cohesive authored file that intentionally remains above its review threshold. Every entry is path-scoped and must name its architectural kind, accountable owner, specific reason, review date, next review deadline, and a hard maximum line count. `task quality:exceptions:check` fails when the file grows past that ceiling, disappears without policy cleanup, or passes its review deadline.
+
+Generated sources do not use authored-file exceptions. They are excluded only when their generated suffix, generated directory, or leading generated-file header makes the source boundary independently verifiable; the generator remains the reviewed implementation surface.
+
+### Current decomposition evidence
+
+The first governed extraction moves bootstrap, connection-scope, command-failure, and delivery-authorization policy from `internal/app/runtime_router.go` into `internal/app/runtime_router_policy.go`. The code remains in package `app`, so the change introduces no new dependency edge; existing bootstrap and canonical-authorization characterization tests protect behavior. On the PostgreSQL target branch where the policy landed, the router hotspot falls from 2,583 to 2,121 lines, and the Go-production excess-line measurement improves by 462 lines.
+
+## Engineering-quality delivery plan
+
+The current baseline supports five independently verifiable milestones:
+
+| Milestone | Deliverable | Verification |
+| --- | --- | --- |
+| Budget foundation | Ratcheting hotspot and suppression debt with actionable CI failures. | `task quality:budget:check` |
+| Critical-package qualification | Explicit coverage floors and race expectations for access, runtime hosting, architecture enforcement, and project compilation. | `task quality:critical:coverage` and `task quality:critical:race` |
+| Trend evidence | Current Go decision-point complexity and rolling ownership-change concentration for authored Go and browser source. | `task quality:trends:report` |
+| Exception governance | Path-scoped, owned, justified, and review-dated exceptions for cohesive roots and generated sources. | `task quality:exceptions:check` |
+| Targeted decomposition | Characterization-backed extraction of the highest-risk mixed-responsibility composition or routing root. | Focused package tests, architecture checks, and `task ci:full` |
+
+The milestones are ordered dependencies. Measurement and exception rules land before structural extraction so each decomposition tightens an observable baseline. Coverage floors run in the pull-request package lane. Race expectations run in the full merge lane because the tagged compiler race suite takes roughly 106 seconds on the revalidated baseline.

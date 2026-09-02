@@ -1,0 +1,47 @@
+{
+  "version": 1,
+  "categories": {
+    "go-production": {
+      "lineLimit": 800,
+      "maxFilesOverLimit": 99,
+      "maxExcessLines": 44269,
+      "maxLargestFile": 4750
+    },
+    "go-test": {
+      "lineLimit": 1200,
+      "maxFilesOverLimit": 17,
+      "maxExcessLines": 10499,
+      "maxLargestFile": 4721
+    },
+    "typescript-production": {
+      "lineLimit": 700,
+      "maxFilesOverLimit": 26,
+      "maxExcessLines": 13754,
+      "maxLargestFile": 2308
+    },
+    "typescript-test": {
+      "lineLimit": 1200,
+      "maxFilesOverLimit": 6,
+      "maxExcessLines": 6765,
+      "maxLargestFile": 3810
+    }
+  },
+  "suppressions": {
+    "eslint-disable": {
+      "marker": "eslint-disable",
+      "maxOccurrences": 0
+    },
+    "go-nolint": {
+      "marker": "//nolint",
+      "maxOccurrences": 7
+    },
+    "go-nosec": {
+      "marker": "#nosec",
+      "maxOccurrences": 1
+    },
+    "typescript-ignore": {
+      "marker": "@ts-ignore",
+      "maxOccurrences": 0
+    }
+  }
+}

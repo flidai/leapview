@@ -339,6 +339,36 @@ tasks:
       - task: build
       - bun scripts/capture_site_product.ts
 
+  quality:budget:check:
+    desc: Enforce ratcheting maintainability and engineering-quality budgets
+    cmds:
+      - go run ./internal/app/tools/qualitybudget
+
+  quality:budget:update:
+    desc: Tighten quality-budget baselines after maintainability improvements
+    cmds:
+      - go run ./internal/app/tools/qualitybudget --write
+
+  quality:critical:coverage:
+    desc: Enforce coverage floors for critical packages
+    cmds:
+      - go run ./internal/app/tools/criticalquality --mode coverage
+
+  quality:critical:race:
+    desc: Race-qualify every critical package in the full merge lane
+    cmds:
+      - go run ./internal/app/tools/criticalquality --mode race
+
+  quality:exceptions:check:
+    desc: Validate owned and time-bounded engineering exceptions
+    cmds:
+      - go run ./internal/app/tools/exceptionquality
+
+  quality:trends:report:
+    desc: Report structural complexity and ownership-change concentration
+    cmds:
+      - go run ./internal/app/tools/qualitytrends
+
   bench:arrow:quick:
     desc: Run the bounded Arrow evidence benchmark matrix for local iteration
     cmds:
@@ -1313,6 +1343,10 @@ tasks:
   ci:lane:go:packages:
     desc: Run non-application Go package tests
     cmds:
+      - task: quality:budget:check
+      - task: quality:exceptions:check
+      - task: quality:trends:report
+      - task: quality:critical:coverage
       - task: test:go:packages
 
   ci:lane:go:apigen:
@@ -1376,7 +1410,8 @@ tasks:
     cmds:
       - task: desktop:test
       - go vet ./...
-      - go test -race ./pkg/... ./internal/access ./internal/runtimehost
+      - go test -race ./pkg/...
+      - task: quality:critical:race
       - task: test:workload:qualify
       - task: qa:ui-framework
       - task: deploy:check
