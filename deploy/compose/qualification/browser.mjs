@@ -52,10 +52,10 @@ try {
 
   const table = page.locator('lv-report-table')
   await table.evaluate((element) => element.scrollIntoView({ block: 'center' }))
-  const rows = table.locator('[role="rowgroup"] [role="row"]')
-  await rows.first().waitFor({ state: 'visible', timeout: 30_000 })
-  const stateCells = page.getByRole('button', { name: 'State: SP', exact: true })
-  await stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })
+  const interactiveCells = table.locator('.row:not(.skeleton-row) button.cell-action')
+  await interactiveCells.first().waitFor({ state: 'visible', timeout: 30_000 })
+  const stateActions = table.locator('button.cell-action[aria-label="state: SP"]')
+  await stateActions.first().waitFor({ state: 'visible', timeout: 30_000 })
 
   const denialRequestID = `qualification-denial-${Date.now()}`
   const projectPath = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
@@ -87,7 +87,18 @@ try {
   }
 } catch (error) {
   await page.screenshot({ path: screenshotPath }).catch(() => {})
-  throw error
+  const tableDiagnostics = await page.locator('lv-report-table').evaluateAll((tables) => tables.slice(0, 4).map((table) => {
+    const root = table.shadowRoot
+    return {
+      skeletonRows: root?.querySelectorAll('.row.skeleton-row').length ?? 0,
+      renderedRows: root?.querySelectorAll('.row:not(.skeleton-row)').length ?? 0,
+      cellLabels: Array.from(root?.querySelectorAll('button.cell-action') ?? [])
+        .slice(0, 24)
+        .map((button) => button.getAttribute('aria-label')),
+    }
+  })).catch(() => [])
+  const message = error instanceof Error ? error.message : String(error)
+  throw new Error(`${message}; table diagnostics=${JSON.stringify(tableDiagnostics)}`)
 } finally {
   await context.close()
   await browser.close()

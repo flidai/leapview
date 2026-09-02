@@ -105,6 +105,7 @@ async function runWorkload(path) {
     }
     metricSamples.push(await metricSnapshot())
 
+    const table = page.locator('lv-report-table')
     const filterValues = ['SP', 'RJ', 'MG', 'PR']
     const filter = page.getByRole('button', { name: /^State:/ })
     for (let index = 0; index < policy.assumptions.samples.filterInteractions; index += 1) {
@@ -126,14 +127,14 @@ async function runWorkload(path) {
       await waitForDashboardGeneration(page, generation, 30_000)
       await page.keyboard.press('Escape')
       await options.waitFor({ state: 'hidden', timeout: 30_000 })
-      await page.getByRole('button', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator('.row:not(.skeleton-row) button.cell-action').first().waitFor({ state: 'visible', timeout: 30_000 })
+      await table.locator(`button.cell-action[aria-label="state: ${value}"]`).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }
     metricSamples.push(await metricSnapshot())
 
-    const table = page.locator('lv-report-table')
-    const orderSort = table.getByRole('button', { name: /^Order(?: [↑↓])?$/ })
+    const orderSort = table.locator('button.header-button').filter({ hasText: /^order_id(?:\s*[↑↓])?$/ })
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()
