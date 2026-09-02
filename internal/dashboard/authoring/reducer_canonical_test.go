@@ -342,6 +342,47 @@ func TestApplyRevisionRestoreAppendsMonotonicRevisionFromExactTarget(t *testing.
 	}
 }
 
+func TestApplyEditReplacesCanonicalDocumentWithoutChangingResourceIdentity(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	replacement, err := current.Document.Clone()
+	if err != nil {
+		t.Fatal(err)
+	}
+	title := "Agent-authored dashboard"
+	replacement.Metadata.DisplayName = &title
+	replacement.Spec.Pages[0].Title = "Agent overview"
+	command := Command{
+		ID: "replace-source", DashboardID: current.DashboardID, DraftID: lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(), Provenance: canonicalReducerProvenance(),
+		ReplaceDocument: &ReplaceDocumentPayload{Document: replacement},
+	}
+	nextLifecycle, next, err := ApplyEdit(lifecycle, current, command, "rev-2", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.Document.Spec.Pages[0].Title != "Agent overview" || nextLifecycle.Title != title {
+		t.Fatalf("replacement result = %#v / %#v", next.Document, nextLifecycle)
+	}
+
+	for name, mutate := range map[string]func(*document.DashboardDocument){
+		"id":             func(value *document.DashboardDocument) { value.Metadata.ID = "other" },
+		"name":           func(value *document.DashboardDocument) { value.Metadata.Name = "other" },
+		"semantic model": func(value *document.DashboardDocument) { value.Spec.SemanticModel = "other" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid, cloneErr := current.Document.Clone()
+			if cloneErr != nil {
+				t.Fatal(cloneErr)
+			}
+			mutate(&invalid)
+			command.ReplaceDocument = &ReplaceDocumentPayload{Document: invalid}
+			if _, _, applyErr := ApplyEdit(lifecycle, current, command, "rev-invalid", 2, time.Date(2026, 8, 18, 12, 1, 0, 0, time.UTC)); !errors.Is(applyErr, ErrInvalidPayload) {
+				t.Fatalf("error = %v, want invalid payload", applyErr)
+			}
+		})
+	}
+}
+
 func canonicalReducerProvenance() Provenance {
 	return Provenance{Origin: OriginUI, ActorID: "actor", ConversationID: "conversation", ToolCallID: "tool"}
 }

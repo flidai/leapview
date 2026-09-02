@@ -47,6 +47,11 @@
       "summary": "Search LeapView's version-matched product documentation."
     },
     {
+      "slug": "edit_dashboard_source",
+      "title": "edit_dashboard_source",
+      "summary": "Apply atomic exact-text replacements to one canonical dashboard YAML revision."
+    },
+    {
       "slug": "execute_dashboard_command",
       "title": "execute_dashboard_command",
       "summary": "Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision."
@@ -95,6 +100,11 @@
       "slug": "query_visual",
       "title": "query_visual",
       "summary": "Create one read-only visual from LeapView semantic model fields."
+    },
+    {
+      "slug": "read_dashboard_source",
+      "title": "read_dashboard_source",
+      "summary": "Read the exact current private dashboard draft as canonical YAML for a subsequent source edit."
     },
     {
       "slug": "set_dashboard_visibility",

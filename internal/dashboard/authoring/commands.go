@@ -604,6 +604,19 @@ func (ArchivePayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionArchive, nil
 }
 
+// ReplaceDocumentPayload replaces one complete canonical draft document. It
+// is reserved for trusted application boundaries such as the agent source
+// editor; browser builder intents remain limited to their narrow payloads.
+// The reducer preserves immutable resource identity and semantic-model scope.
+type ReplaceDocumentPayload struct {
+	Document document.DashboardDocument `json:"document"`
+}
+
+func (ReplaceDocumentPayload) authoringPayload() {}
+func (ReplaceDocumentPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // CommandID is the idempotency key. Fingerprint intentionally excludes it so
 // a store can detect reuse of one key with changed request inputs.
 type Command struct {
@@ -647,6 +660,7 @@ type Command struct {
 	RemoveFilterComponent *RemoveFilterComponentPayload `json:"removeFilterComponent,omitempty"`
 	SetInteraction        *SetInteractionPayload        `json:"setInteraction,omitempty"`
 	SetInteractionTarget  *SetInteractionTargetPayload  `json:"setInteractionTarget,omitempty"`
+	ReplaceDocument       *ReplaceDocumentPayload       `json:"replaceDocument,omitempty"`
 	Publish               *PublishPayload               `json:"publish,omitempty"`
 	Archive               *ArchivePayload               `json:"archive,omitempty"`
 }
@@ -751,6 +765,9 @@ func (c Command) payloads() []authoringPayload {
 	}
 	if c.SetInteractionTarget != nil {
 		payloads = append(payloads, c.SetInteractionTarget)
+	}
+	if c.ReplaceDocument != nil {
+		payloads = append(payloads, c.ReplaceDocument)
 	}
 	if c.Publish != nil {
 		payloads = append(payloads, c.Publish)
@@ -865,6 +882,10 @@ func validatePayload(payload authoringPayload) error {
 			if value.Appearance.Icon != nil && strings.TrimSpace(*value.Appearance.Icon) == "" {
 				return fmt.Errorf("%w: appearance icon cannot be blank", ErrInvalidPayload)
 			}
+		}
+	case *ReplaceDocumentPayload:
+		if err := ValidateCanonicalDocument(value.Document); err != nil {
+			return fmt.Errorf("%w: replacement document: %v", ErrInvalidPayload, err)
 		}
 	case *SetVisibilityPayload:
 		if !value.Visibility.Valid() {

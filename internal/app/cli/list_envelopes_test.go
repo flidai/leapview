@@ -405,7 +405,7 @@ func TestAgentToolsCommandListsCanonicalTools(t *testing.T) {
 			names = append(names, fields[0])
 		}
 	}
-	wantNames := []string{"add_dashboard_page", "add_dashboard_visual", "assign_dashboard_field", "catalog_get", "catalog_list", "catalog_search", "create_dashboard_draft", "docs_read", "docs_search", "execute_dashboard_command", "export_dashboard_yaml", "fork_dashboard", "get_dashboard", "get_dashboard_draft", "list_dashboards", "preview_dashboard_draft", "query_dashboard_visual", "query_semantic_model", "query_visual", "set_dashboard_visibility"}
+	wantNames := []string{"add_dashboard_page", "add_dashboard_visual", "assign_dashboard_field", "catalog_get", "catalog_list", "catalog_search", "create_dashboard_draft", "docs_read", "docs_search", "edit_dashboard_source", "execute_dashboard_command", "export_dashboard_yaml", "fork_dashboard", "get_dashboard", "get_dashboard_draft", "list_dashboards", "preview_dashboard_draft", "query_dashboard_visual", "query_semantic_model", "query_visual", "read_dashboard_source", "set_dashboard_visibility"}
 	if !slices.Equal(names, wantNames) {
 		t.Fatalf("agent tools names = %#v, want %#v\n%s", names, wantNames, output)
 	}

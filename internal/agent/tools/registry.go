@@ -57,6 +57,7 @@ func ManualToolNames() []string {
 		CreateDashboardDraftToolName,
 		DocsReadToolName,
 		DocsSearchToolName,
+		EditDashboardSourceToolName,
 		ExecuteDashboardCommandToolName,
 		ExportDashboardYAMLToolName,
 		ForkDashboardToolName,
@@ -65,6 +66,7 @@ func ManualToolNames() []string {
 		ListDashboardsToolName,
 		PreviewDashboardDraftToolName,
 		QueryVisualToolName,
+		ReadDashboardSourceToolName,
 		SetDashboardVisibilityToolName,
 	}
 }

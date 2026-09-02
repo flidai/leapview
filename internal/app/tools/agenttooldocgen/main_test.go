@@ -21,7 +21,7 @@ func TestGenerateWritesCanonicalManifestAndReferencePages(t *testing.T) {
 	if err := json.Unmarshal(manifestBytes, &manifest); err != nil {
 		t.Fatalf("decode manifest: %v", err)
 	}
-	if manifest.SchemaVersion != 1 || len(manifest.Tools) != 20 {
+	if manifest.SchemaVersion != 1 || len(manifest.Tools) != 22 {
 		t.Fatalf("manifest = %#v", manifest)
 	}
 	for _, tool := range manifest.Tools {

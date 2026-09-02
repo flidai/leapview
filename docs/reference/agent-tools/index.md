@@ -19,6 +19,7 @@ Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Foc
 | [`create_dashboard_draft`](/docs/agent-tools/create_dashboard_draft) | `RESOURCE_EDIT` | `write` | Create a private dashboard draft owned by the authenticated principal. |
 | [`docs_read`](/docs/agent-tools/docs_read) | `authenticated` | `read` | Read a bounded line window from one LeapView document returned by docs_search. |
 | [`docs_search`](/docs/agent-tools/docs_search) | `authenticated` | `read` | Search LeapView's version-matched product documentation. |
+| [`edit_dashboard_source`](/docs/agent-tools/edit_dashboard_source) | `RESOURCE_EDIT` | `write` | Apply atomic exact-text replacements to one canonical dashboard YAML revision. |
 | [`execute_dashboard_command`](/docs/agent-tools/execute_dashboard_command) | `RESOURCE_MANAGE` | `destructive` | Publish or archive one dashboard authoring revision using a closed, typed command and exact expected revision. |
 | [`export_dashboard_yaml`](/docs/agent-tools/export_dashboard_yaml) | `RESOURCE_READ` | `read` | Export an authorized authored dashboard source as canonical project YAML. |
 | [`fork_dashboard`](/docs/agent-tools/fork_dashboard) | `RESOURCE_EDIT` | `write` | Fork an authorized project or instance dashboard source into a private draft. |
@@ -29,4 +30,5 @@ Machine-readable: [complete tool manifest](/docs/agent-tools/manifest.json). Foc
 | [`query_dashboard_visual`](/docs/agent-tools/query_dashboard_visual) | `RESOURCE_READ` | `read` | Query an existing dashboard visual with governed filters and compact analytical output |
 | [`query_semantic_model`](/docs/agent-tools/query_semantic_model) | `RESOURCE_USE` | `read` | Query governed semantic data with typed columns, filters, pagination, and provenance |
 | [`query_visual`](/docs/agent-tools/query_visual) | `RESOURCE_USE` | `read` | Create one read-only visual from LeapView semantic model fields. |
+| [`read_dashboard_source`](/docs/agent-tools/read_dashboard_source) | `RESOURCE_EDIT` | `read` | Read the exact current private dashboard draft as canonical YAML for a subsequent source edit. |
 | [`set_dashboard_visibility`](/docs/agent-tools/set_dashboard_visibility) | `RESOURCE_EDIT` | `write` | Set a private dashboard draft's visibility using an exact expected revision. |
