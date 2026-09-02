@@ -1,0 +1,221 @@
+package postgres
+
+import (
+	"context"
+	"errors"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/platform/postgres/migrations"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/project/identityledger"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func newLedgerDatabase(t *testing.T) (*Repository, *pgxpool.Pool) {
+	t.Helper()
+	h := postgrestest.Start(t)
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{
+		Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true,
+	})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
+	h.GrantRole(t, owner, migrator)
+	database := h.NewDatabase(t, "")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	admin, err := pgxpool.New(ctx, database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	conn, err := admin.Acquire(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := conn.Exec(ctx, `SET ROLE leapview_control_migrator`); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	tx, err := conn.Begin(ctx)
+	if err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	if err := migrations.Apply(ctx, tx); err != nil {
+		_ = tx.Rollback(ctx)
+		conn.Release()
+		t.Fatalf("apply PostgreSQL migrations: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		conn.Release()
+		t.Fatal(err)
+	}
+	conn.Release()
+
+	runtime, err := pgxpool.New(ctx, database.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtime.Close)
+	repo, err := New(runtime)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return repo, admin
+}
+
+func candidate(instance, bundle, expected string, resources ...identityledger.Resource) identityledger.Candidate {
+	return identityledger.Candidate{
+		InstanceID: instance, BundleID: bundle, ExpectedBundleID: expected,
+		ActorID: "publisher", Resources: resources,
+	}
+}
+
+func resource(id string, kind projectgraph.Kind) identityledger.Resource {
+	return identityledger.Resource{AuthoredID: projectgraph.ResourceID(id), Kind: kind}
+}
+
+func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
+	repo, admin := newLedgerDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	first := candidate("instance-a", "bundle-1", "",
+		resource("orders", projectgraph.KindSource),
+		resource("orders-model", projectgraph.KindModel),
+	)
+	plan, err := repo.Activate(ctx, first)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(plan.Outcomes) != 2 || plan.Outcomes[0].Outcome != identityledger.OutcomeCreated {
+		t.Fatalf("first activation outcomes = %#v", plan.Outcomes)
+	}
+
+	// The same authored ID is a separate identity in another instance.
+	if _, err := repo.Activate(ctx, candidate("instance-b", "bundle-1", "", resource("orders", projectgraph.KindModel))); err != nil {
+		t.Fatalf("cross-instance authored ID: %v", err)
+	}
+
+	if _, err := repo.PutReference(ctx, identityledger.DurableReference{
+		InstanceID: "instance-a", ReferenceID: "grant-orders", OwnerAuthoredID: "grant-1",
+		OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Kind is immutable even after the first generation.
+	changedKind := candidate("instance-a", "bundle-kind-conflict", "bundle-1",
+		resource("orders", projectgraph.KindModel),
+	)
+	if _, err := repo.Activate(ctx, changedKind); !errors.Is(err, identityledger.ErrKindConflict) {
+		t.Fatalf("kind-change error = %v", err)
+	}
+
+	second := candidate("instance-a", "bundle-2", "bundle-1", resource("orders-model", projectgraph.KindModel))
+	if _, err := repo.Activate(ctx, second); err != nil {
+		t.Fatal(err)
+	}
+	identity, err := repo.Identity(ctx, "instance-a", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if identity.Lifecycle != identityledger.LifecycleTombstoned || identity.ActiveBundleID != "" || identity.TombstonedAt == nil {
+		t.Fatalf("tombstoned identity = %#v", identity)
+	}
+	reference, err := repo.Reference(ctx, "instance-a", "grant-orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.Lifecycle != identityledger.ReferenceSuspended || reference.SuspendedAt == nil {
+		t.Fatalf("suspended reference = %#v", reference)
+	}
+
+	third := candidate("instance-a", "bundle-3", "bundle-2",
+		resource("orders", projectgraph.KindSource), resource("orders-model", projectgraph.KindModel),
+	)
+	if _, err := repo.Activate(ctx, third); !errors.Is(err, identityledger.ErrRestoreRequired) {
+		t.Fatalf("implicit restore error = %v", err)
+	}
+	if _, err := repo.RestoreAndActivate(ctx, identityledger.Restore{
+		Candidate: third, AuthoredIDs: []projectgraph.ResourceID{"orders"}, Reason: "restore approved after dependency validation",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reference, err = repo.Reference(ctx, "instance-a", "grant-orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reference.Lifecycle != identityledger.ReferenceActive || reference.SuspendedAt != nil || reference.ReactivatedAt == nil {
+		t.Fatalf("reactivated reference = %#v", reference)
+	}
+
+	// Rollback uses the exact historical bundle snapshot and switches the
+	// singleton active bundle in the same transaction.
+	if _, err := repo.Rollback(ctx, identityledger.Rollback{
+		InstanceID: "instance-a", BundleID: "bundle-1", ExpectedBundleID: "bundle-3",
+		ActorID: "publisher", Reason: "release rollback",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var activeCount int
+	var activeBundle string
+	if err := admin.QueryRow(ctx, `SELECT count(*), min(bundle_id) FROM project.source_bundle WHERE instance_id='instance-a' AND state='active'`).Scan(&activeCount, &activeBundle); err != nil {
+		t.Fatal(err)
+	}
+	if activeCount != 1 || activeBundle != "bundle-1" {
+		t.Fatalf("active bundles = %d/%q", activeCount, activeBundle)
+	}
+	var historyCount int
+	if err := admin.QueryRow(ctx, `SELECT count(*) FROM project.resource_identity_history WHERE instance_id='instance-a' AND authored_id='orders'`).Scan(&historyCount); err != nil {
+		t.Fatal(err)
+	}
+	if historyCount < 4 {
+		t.Fatalf("orders history rows = %d, want at least 4", historyCount)
+	}
+}
+
+func TestIdentityLedgerPostgreSQL18ConcurrentActivation(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	if _, err := repo.Activate(ctx, candidate("instance-race", "bundle-base", "", resource("orders", projectgraph.KindSource))); err != nil {
+		t.Fatal(err)
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for _, bundle := range []string{"bundle-left", "bundle-right"} {
+		wg.Add(1)
+		go func(bundle string) {
+			defer wg.Done()
+			<-start
+			_, err := repo.Activate(ctx, candidate("instance-race", bundle, "bundle-base", resource("orders", projectgraph.KindSource)))
+			errs <- err
+		}(bundle)
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+	var succeeded, conflicted int
+	for err := range errs {
+		switch {
+		case err == nil:
+			succeeded++
+		case errors.Is(err, identityledger.ErrActivationConflict):
+			conflicted++
+		default:
+			t.Fatalf("unexpected concurrent activation error: %v", err)
+		}
+	}
+	if succeeded != 1 || conflicted != 1 {
+		t.Fatalf("concurrent outcomes success/conflict = %d/%d", succeeded, conflicted)
+	}
+}
