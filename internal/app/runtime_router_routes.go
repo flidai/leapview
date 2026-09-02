@@ -153,7 +153,7 @@ func mountAuthenticatedRoutes(mux *chi.Mux, dependencies authenticatedRouteDepen
 		r.With(dependencies.rateLimits.Updates()).Get("/candidates/{candidate}/updates", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardUpdates(dependencies.candidates, w, request)
 		}))
-		r.Post("/candidates/{candidate}/commands/{command}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
+		r.Post("/candidates/{candidate}/dashboards/{dashboard}/commands/{command}", candidateProjectGuard(func(w http.ResponseWriter, request *http.Request) {
 			candidateDashboardCommand(dependencies.candidates, w, request)
 		}))
 		dependencies.agent.MountAuthenticated(r, agentmodule.RouteGuard{Authenticate: dependencies.access.Authenticate, RequirePlatformAdmin: dependencies.access.RequirePlatformAdmin})
