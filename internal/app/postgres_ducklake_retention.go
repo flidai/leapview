@@ -18,7 +18,7 @@ import (
 	"time"
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/extension"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
@@ -184,7 +184,7 @@ func (w *duckLakeRetentionWorker) runPass(ctx context.Context) {
 // existing control maintenance pool; no graph.Retention facade is reused.
 func postgresDuckLakeRetentionWorker(
 	cfg config.Config,
-	control *ducklakepostgres.Repository,
+	control *analyticsmodule.PostgresDuckLakeRepository,
 	maintenancePool *platformpostgres.Pool,
 	extensionAdmission extension.Admission,
 	physicalPoolID string,
@@ -204,10 +204,10 @@ func postgresDuckLakeRetentionWorker(
 		return nil, errors.New("DuckLake retention worker configuration is incomplete")
 	}
 
-	coordinator := &ducklakepostgres.RetentionCoordinator{Control: control}
-	coordinator.Orphans = &ducklakepostgres.SnapshotOrphanCoordinator{
+	coordinator := &analyticsmodule.PostgresDuckLakeRetentionCoordinator{Control: control}
+	coordinator.Orphans = &analyticsmodule.PostgresDuckLakeSnapshotOrphanCoordinator{
 		Control: control,
-		OpenScannerFor: func(ctx context.Context, request ducklakepostgres.SnapshotOrphanMaintenanceRequest) (ducklakepostgres.SnapshotCatalogPageScanner, error) {
+		OpenScannerFor: func(ctx context.Context, request analyticsmodule.PostgresDuckLakeSnapshotOrphanMaintenanceRequest) (analyticsmodule.PostgresDuckLakeSnapshotCatalogPageScanner, error) {
 			catalog, err := control.LoadCatalog(ctx, request.PhysicalPoolID)
 			if err != nil {
 				return nil, err
@@ -215,10 +215,10 @@ func postgresDuckLakeRetentionWorker(
 			if catalog.PhysicalPoolID != request.PhysicalPoolID || catalog.CatalogID != request.CatalogID {
 				return nil, errors.New("DuckLake orphan scanner catalog identity changed")
 			}
-			return ducklakepostgres.NewPostgresSnapshotCatalogPageScanner(maintenancePool, catalog.MetadataSchema)
+			return analyticsmodule.NewPostgresDuckLakeSnapshotCatalogPageScanner(maintenancePool, catalog.MetadataSchema)
 		},
 	}
-	coordinator.OpenSessionFor = func(ctx context.Context, input ducklakepostgres.RetentionCatalogSessionInput) (ducklakepostgres.RetentionCatalogSession, error) {
+	coordinator.OpenSessionFor = func(ctx context.Context, input analyticsmodule.PostgresDuckLakeRetentionCatalogSessionInput) (analyticsmodule.PostgresDuckLakeRetentionCatalogSession, error) {
 		catalog, err := control.LoadCatalog(ctx, input.Request.PhysicalPoolID)
 		if err != nil {
 			return nil, err
@@ -270,7 +270,7 @@ func postgresDuckLakeRetentionWorker(
 				},
 			},
 		}
-		return ducklakepostgres.OpenPostgresRetentionCatalogSession(ctx, sessionConfig, contract)
+		return analyticsmodule.OpenPostgresDuckLakeRetentionCatalogSession(ctx, sessionConfig, contract)
 	}
 
 	grace := cfg.DuckLakeRetentionFileGracePeriod
@@ -291,17 +291,17 @@ func postgresDuckLakeRetentionWorker(
 			if policyErr != nil {
 				return policyErr
 			}
-			if orphanGrace < time.Microsecond || orphanGrace > ducklakepostgres.MaxSnapshotOrphanScanGrace {
-				return fmt.Errorf("admitted DuckLake orphan grace %s is outside (0,%s]", orphanGrace, ducklakepostgres.MaxSnapshotOrphanScanGrace)
+			if orphanGrace < time.Microsecond || orphanGrace > analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace {
+				return fmt.Errorf("admitted DuckLake orphan grace %s is outside (0,%s]", orphanGrace, analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace)
 			}
-			request := ducklakepostgres.RetentionMaintenanceRequest{
+			request := analyticsmodule.PostgresDuckLakeRetentionMaintenanceRequest{
 				MaintenanceID:     maintenanceID,
 				PhysicalPoolID:    physicalPoolID,
 				CatalogID:         catalog.CatalogID,
 				OwnerID:           ownerID,
 				FileGrace:         grace,
 				OrphanGracePeriod: orphanGrace,
-				OrphanScanID:      ducklakepostgres.SnapshotOrphanScanIDForMaintenance(maintenanceID, physicalPoolID, catalog.CatalogID),
+				OrphanScanID:      analyticsmodule.SnapshotOrphanScanIDForMaintenance(maintenanceID, physicalPoolID, catalog.CatalogID),
 				Evidence:          json.RawMessage(`{"source":"lifecycle"}`),
 			}
 			_, err = coordinator.Run(ctx, request)

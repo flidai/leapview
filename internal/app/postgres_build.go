@@ -20,7 +20,6 @@ import (
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
@@ -739,7 +738,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// maintenance credential.
 	duckLakeRetention, err := postgresDuckLakeRetentionWorker(
 		cfg,
-		ducklakepostgres.New(bootstrap.MaintenancePool()),
+		analyticsmodule.NewPostgresDuckLakeRepository(bootstrap.MaintenancePool()),
 		bootstrap.DuckLakeMaintenancePool(),
 		extensionSupply,
 		physicalPoolID,
@@ -762,8 +761,8 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 			if policy.BuildGracePeriodSeconds > seconds {
 				seconds = policy.BuildGracePeriodSeconds
 			}
-			if seconds > int64(ducklakepostgres.MaxSnapshotOrphanScanGrace/time.Second) {
-				return 0, fmt.Errorf("admitted DuckLake orphan/build grace %ds exceeds maximum %s", seconds, ducklakepostgres.MaxSnapshotOrphanScanGrace)
+			if seconds > int64(analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace/time.Second) {
+				return 0, fmt.Errorf("admitted DuckLake orphan/build grace %ds exceeds maximum %s", seconds, analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace)
 			}
 			return time.Duration(seconds) * time.Second, nil
 		},
