@@ -51,6 +51,12 @@ The production admin adapter separates credentials by operation:
 - readonly and backup control roles receive only the explicit projections
   granted by the baseline.
 
+Production provisioning must grant database `CONNECT` to
+`leapview_control_migrator` and database `CREATE` to the non-login
+`leapview_control_owner`. The application connects with the migrator
+credential, then `Apply` assumes the owner role for all baseline DDL; the
+migrator must not be granted database `CREATE` directly.
+
 Production initialization and physical-pool bootstrap never open SQLite.
 Development and the isolated evaluation target continue to use the explicit
 offline adapter.

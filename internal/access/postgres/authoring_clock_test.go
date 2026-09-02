@@ -61,7 +61,11 @@ func TestAuthoringPrincipalRotationLockOrdersRevocation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer gateConn.Release()
+	defer func() {
+		if gateConn != nil {
+			gateConn.Release()
+		}
+	}()
 	rotateConn, err := db.runtime.Acquire(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -141,6 +145,10 @@ func TestAuthoringPrincipalRotationLockOrdersRevocation(t *testing.T) {
 	if err := gateTx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// The gate transaction is complete; release its runtime-pool lease before
+	// the repository-backed assertions below need another connection.
+	gateConn.Release()
+	gateConn = nil
 	if err := <-rotateDone; err != nil {
 		t.Fatalf("rotation after principal lock release: %v", err)
 	}

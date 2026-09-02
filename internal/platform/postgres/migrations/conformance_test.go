@@ -23,7 +23,8 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 	h.GrantRole(t, owner, migrator)
 
 	database := h.NewDatabase(t, "leapview_control")
-	h.GrantDatabase(t, database.Name, migrator, "CONNECT", "CREATE")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT")
+	h.GrantDatabase(t, database.Name, owner, "CREATE")
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
@@ -32,6 +33,20 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
+
+	var ownerCanCreate, migratorCanCreate bool
+	if err := admin.QueryRow(ctx,
+		"SELECT has_database_privilege($1::name, $2::name, 'CREATE'), has_database_privilege($3::name, $2::name, 'CREATE')",
+		owner.Name, database.Name, migrator.Name,
+	).Scan(&ownerCanCreate, &migratorCanCreate); err != nil {
+		t.Fatal(err)
+	}
+	if !ownerCanCreate {
+		t.Fatalf("current DDL role %q lacks database CREATE", owner.Name)
+	}
+	if migratorCanCreate {
+		t.Fatalf("least-privileged migrator role %q has database CREATE", migrator.Name)
+	}
 
 	apply := func() {
 		t.Helper()

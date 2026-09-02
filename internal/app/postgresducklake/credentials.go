@@ -104,7 +104,9 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 		}
 		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE '%s')", PostgresSecret, sqlLiteral(parsed.Hostname()), port, sqlLiteral(database), sqlLiteral(user), sqlLiteral(password), sqlLiteral(sslMode))
 		if _, err := execer.ExecContext(ctx, statement, nil); err != nil {
-			return fmt.Errorf("create temporary PostgreSQL DuckDB secret: %w", err)
+			// The submitted statement contains the database password. Do not
+			// propagate driver diagnostics because an executor may echo its SQL.
+			return errors.New("create temporary PostgreSQL DuckDB secret")
 		}
 		if objectBootstrap != nil {
 			return objectBootstrap(ctx, execer)
