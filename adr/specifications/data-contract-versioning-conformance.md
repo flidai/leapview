@@ -201,12 +201,19 @@ profile identifier is part of canonical bytes and conformance evidence.
 | Requirement range | Evidence | Status |
 |---|---|---|
 | RID-01–RID-10 | PostgreSQL identity ledger, collision, tombstone, restore, rollback, concurrency, and reference tests | Implemented by FAI-617 |
-| CAN-01–CAN-07 | TypeSpec classification and generated projection checks | Pending |
+| ADR-0016 structural authority | FAI-619 completed the SemanticModel migration to [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp). The generated [Go DTOs](../../internal/project/contracts/models.gen.go) and [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) are the only production structural authority; the [architecture guard](../../internal/platform/architecture/architecture_test.go) rejects handwritten compiler DTOs and CUE copies. Qualified 2026-09-02 with `task generated:check`, `go test ./internal/platform/architecture -run '^TestSemanticModelStructuralAuthorityIsGeneratedFromTypeSpec$' -count=1`, `go test ./internal/project/contracts ./internal/project/schema -count=1`, and the focused `duckdb_arrow` compiler-lowering tests. | Implemented by FAI-619 |
+| CAN-01–CAN-07 | FAI-620: explicit generated `leapview.contract/v1` projection DTO allowlists plus reviewed exclusion manifests. This work has not started. | Pending (FAI-620) |
 | SRC-01–SRC-02 | Source canonical golden fixtures | Pending |
 | MOD-01–MOD-03 | Model AST and quality-contract golden fixtures | Pending |
-| SEM-01–SEM-03 | Semantic and access-contract golden fixtures | Pending |
-| SER-01–SER-10 | Cross-language RFC 8785 and typed-normalization corpus | Pending |
-| VER-01–VER-06 | Publication immutability, diff, and profile-version tests | Pending |
+| SEM-01–SEM-03 | FAI-620: SemanticModel and access-contract projection golden fixtures over the generated structural authority. | Pending (FAI-620) |
+| SER-01–SER-10 | FAI-620: one vetted RFC 8785 implementation, typed normalization, cross-language byte equality, and SHA-256 identity corpus. | Pending (FAI-620) |
+| VER-01–VER-06 | FAI-622, after FAI-620: compatibility/security-impact classification and immutable publication evidence. | Pending (FAI-622) |
+
+The FAI-619 qualification deliberately does not implement standalone
+`DataPolicy` rejection, contextual attribute/type-registry resolution,
+canonical projection, compatibility classification, publication immutability,
+or ODCS. FAI-620 must complete CAN/SRC/MOD/SEM/SER before FAI-622 consumes its
+canonical bytes; ODCS remains a later milestone.
 
 ## Maintained verification
 
