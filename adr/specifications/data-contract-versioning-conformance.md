@@ -34,21 +34,25 @@ profile identifier is part of canonical bytes and conformance evidence.
 - **RID-03:** A candidate contains at most one resource with a given
   `metadata.id` across all six authored kinds. Cross-kind and same-kind
   collisions are rejected before graph construction.
-- **RID-04:** First activation binds `(instance identity, metadata.id)` to an
-  immutable instance resource UID and authored kind. Control-plane grants,
-  publications, audit records, and durable references store the UID plus the
-  expected authored ID and kind; they do not resolve by name or path.
-- **RID-05:** A later candidate with the same authored ID and kind updates the
-  same resource UID. A kind change is never an update and is rejected.
-- **RID-06:** Removing a resource tombstones its UID and suspends dependent
-  control-plane references. Normal deployment cannot assign the tombstoned ID
-  to a new UID or automatically reactivate suspended grants or publications.
+- **RID-04:** First activation records `(instance identity, metadata.id)` with
+  an immutable authored kind. That tuple is the complete resource identity;
+  there is no second public or opaque resource UID. Control-plane grants,
+  publications, audit records, and durable references store the instance
+  scope, authored ID, and expected kind; they do not resolve by name or path.
+- **RID-05:** A later candidate in the same instance with the same authored ID
+  and kind updates the same resource identity. A kind change is never an update
+  and is rejected.
+- **RID-06:** Removing a resource tombstones its instance-qualified authored
+  identity and suspends dependent control-plane references. Normal deployment
+  cannot reuse the tombstoned ID or reactivate it implicitly.
 - **RID-07:** Restoration of a tombstoned logical resource requires an explicit,
-  audited control-plane restore operation. Restore reuses the original UID,
-  recompiles and revalidates every dependent reference, and leaves grants and
-  publications suspended until separately authorized reactivation.
-- **RID-08:** Rollback reactivates the historical UID and generation recorded by
-  the selected release. It cannot create a new identity or retarget a reference.
+  audited control-plane restore operation. Restore retains the original
+  `(instance identity, metadata.id)` tuple, recompiles and revalidates every
+  dependent reference, and reactivates only references whose stored instance,
+  authored ID, and expected kind still match.
+- **RID-08:** Rollback reactivates the historical instance-qualified authored
+  identities and generation recorded by the selected release. It cannot create
+  a new identity or retarget a reference.
 - **RID-09:** The same authored ID may exist in different instances because the
   instance identity is the namespace boundary. External ODCS, ODPS, DCAT, and
   lineage projections qualify it with a stable instance or tenant URI; the raw
@@ -152,7 +156,7 @@ profile identifier is part of canonical bytes and conformance evidence.
   equal text in different logical types never hashes identically by accident.
 - **SER-09:** The canonical digest is SHA-256 over the exact canonical bytes and
   is rendered as `sha256:` plus lowercase hexadecimal. Stored evidence retains
-  the profile, bytes, digest, resource UID, authored ID, kind, and version.
+  the profile, bytes, digest, instance-qualified authored ID, kind, and version.
 - **SER-10:** Independent fixtures in Go and one non-Go RFC 8785 implementation
   must produce byte-identical output and digests for the supported corpus.
 
@@ -180,11 +184,11 @@ profile identifier is part of canonical bytes and conformance evidence.
 
 | Scenario | Expected result |
 |---|---|
-| Source root or file moves with unchanged authored ID | Same resource UID and contract digest |
+| Source root or file moves with unchanged authored ID | Same instance-qualified resource identity and contract digest |
 | Two resources share an authored ID | Candidate rejected before graph construction |
 | Resource kind changes under an existing ID | Candidate rejected |
 | Deleted ID appears in a normal deployment | Tombstone-reuse rejection |
-| Explicit restore is approved | Original UID restored; grants remain suspended |
+| Explicit restore is approved | Original identity restored; validated exact references reactivate |
 | Description or tags change | Metadata diff only; digest unchanged |
 | Field datatype or access grant changes | Digest changes; new version required |
 | YAML key order, comments, aliases, or whitespace change | Digest unchanged |
@@ -196,7 +200,7 @@ profile identifier is part of canonical bytes and conformance evidence.
 
 | Requirement range | Evidence | Status |
 |---|---|---|
-| RID-01–RID-10 | Identity registry, collision, tombstone, restore, rollback, and reference tests | Pending |
+| RID-01–RID-10 | PostgreSQL identity ledger, collision, tombstone, restore, rollback, concurrency, and reference tests | Implemented by FAI-617 |
 | CAN-01–CAN-07 | TypeSpec classification and generated projection checks | Pending |
 | SRC-01–SRC-02 | Source canonical golden fixtures | Pending |
 | MOD-01–MOD-03 | Model AST and quality-contract golden fixtures | Pending |

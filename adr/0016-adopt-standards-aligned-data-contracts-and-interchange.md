@@ -348,20 +348,22 @@ root is a candidate replacement for that graph, not a second namespace. Two
 independently active source bundles require separate instances.
 
 Authored `metadata.id` is portable across repository, source-root, directory,
-filename, branch, and symbolic-name changes. First activation binds the tuple
-of instance identity and authored ID to an immutable resource UID and kind.
-Control-plane references retain that UID, authored ID, and expected kind; they
-never resolve by name, path, or whichever candidate currently contains a
-matching string. Candidate-wide ID collisions, including cross-kind collisions,
-block graph construction.
+filename, branch, and symbolic-name changes. The tuple of instance identity and
+authored ID is the complete resource identity, and first activation records its
+immutable kind. LeapView does not create a second public or opaque resource UID.
+Control-plane references retain the instance scope, authored ID, and expected
+kind; they never resolve by name, path, or whichever candidate currently
+contains a matching string. Candidate-wide ID collisions, including cross-kind
+collisions, block graph construction.
 
-Removal tombstones the UID and suspends its grants and publications. Normal
-deployment cannot reuse the ID or silently rebind those references. An explicit
-audited restore may recover the same logical resource and UID after recompiling
-all dependencies, but control-plane grants and publications remain suspended
-until separately reauthorized. External standard projections qualify the
-portable authored ID with a stable instance or tenant URI rather than claiming
-that the raw ID is globally unique.
+Removal tombstones the instance-qualified authored identity and suspends its
+grants and publications. Normal deployment cannot reuse the ID or silently
+rebind those references. An explicit audited restore may recover the same
+logical resource after recompiling and revalidating all dependencies; only
+references whose stored instance, authored ID, and expected kind still match
+are safely reactivated. External standard projections qualify the portable
+authored ID with a stable instance or tenant URI rather than claiming that the
+raw ID is globally unique.
 
 The linked data-contract versioning conformance specification owns the exact
 collision, tombstone, restore, rollback, and projection requirements.
