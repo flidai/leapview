@@ -19,6 +19,7 @@ import (
 const (
 	BaselineRevision    = platformmigrations.BaselineRevision
 	BaselineMigrationID = platformmigrations.BaselineMigrationID
+	LatestRevision      = accesspostgres.AttributeRegistryMigrationRevision
 )
 
 // Keep the reconciliation baseline intentionally small. New durable
@@ -29,6 +30,13 @@ var plan = platformmigrations.Plan{
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
 		{Name: "physical_pool", SQL: physicalpoolpostgres.SchemaSQL()},
 		{Name: "ducklake.bootstrap", SQL: ducklakepostgres.SchemaSQL()},
+	},
+	Migrations: []platformmigrations.Migration{
+		{
+			Revision:    accesspostgres.AttributeRegistryMigrationRevision,
+			MigrationID: accesspostgres.AttributeRegistryMigrationID,
+			SQL:         accesspostgres.AttributeRegistryMigrationSQL(),
+		},
 	},
 	RolePolicySQL: rolePolicySQL,
 }
@@ -43,6 +51,10 @@ func Components() []platformmigrations.Component {
 	return append([]platformmigrations.Component(nil), plan.Components...)
 }
 
+func Migrations() []platformmigrations.Migration {
+	return append([]platformmigrations.Migration(nil), plan.Migrations...)
+}
+
 func FoundationSQL() string { return platformmigrations.BaselineSQL() }
 
 type RevisionReader interface {
@@ -53,13 +65,28 @@ func Verify(ctx context.Context, reader RevisionReader) error {
 	if reader == nil {
 		return errors.New("PostgreSQL baseline revision reader is required")
 	}
-	revision, err := reader.SchemaRevision(ctx, BaselineRevision)
-	if err != nil {
-		return fmt.Errorf("read PostgreSQL baseline revision: %w", err)
+	expected := []struct {
+		revision int64
+		id       string
+		checksum string
+	}{
+		{revision: BaselineRevision, id: BaselineMigrationID, checksum: Checksum()},
 	}
-	wantChecksum := Checksum()
-	if revision.Revision != BaselineRevision || revision.MigrationID != BaselineMigrationID || revision.Checksum != wantChecksum {
-		return fmt.Errorf("PostgreSQL baseline mismatch: got revision=%d migration=%q checksum=%q, want revision=%d migration=%q checksum=%q", revision.Revision, revision.MigrationID, revision.Checksum, BaselineRevision, BaselineMigrationID, wantChecksum)
+	for _, migration := range plan.Migrations {
+		expected = append(expected, struct {
+			revision int64
+			id       string
+			checksum string
+		}{revision: migration.Revision, id: migration.MigrationID, checksum: migration.Checksum()})
+	}
+	for _, want := range expected {
+		revision, err := reader.SchemaRevision(ctx, want.revision)
+		if err != nil {
+			return fmt.Errorf("read PostgreSQL schema revision %d: %w", want.revision, err)
+		}
+		if revision.Revision != want.revision || revision.MigrationID != want.id || revision.Checksum != want.checksum {
+			return fmt.Errorf("PostgreSQL schema mismatch: got revision=%d migration=%q checksum=%q, want revision=%d migration=%q checksum=%q", revision.Revision, revision.MigrationID, revision.Checksum, want.revision, want.id, want.checksum)
+		}
 	}
 	return nil
 }

@@ -108,6 +108,26 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 		checksum != postgresbaseline.Checksum() {
 		t.Fatalf("baseline identity = %d/%q/%q", revision, migrationID, checksum)
 	}
+	forward := postgresbaseline.Migrations()[0]
+	if err := admin.QueryRow(ctx,
+		"SELECT revision, migration_id, checksum FROM platform.schema_revision WHERE revision = $1",
+		forward.Revision,
+	).Scan(&revision, &migrationID, &checksum); err != nil {
+		t.Fatal(err)
+	}
+	if revision != forward.Revision || migrationID != forward.MigrationID || checksum != forward.Checksum() {
+		t.Fatalf("attribute registry migration identity = %d/%q/%q", revision, migrationID, checksum)
+	}
+	var registryProfile, registryDigest string
+	var registryRevision int64
+	if err := admin.QueryRow(ctx,
+		"SELECT profile, registry_revision, registry_digest FROM access.semantic_attribute_registry WHERE singleton",
+	).Scan(&registryProfile, &registryRevision, &registryDigest); err != nil {
+		t.Fatal(err)
+	}
+	if registryProfile != "leapview.semantic-access/v1" || registryRevision != 0 || !strings.HasPrefix(registryDigest, "sha256:") {
+		t.Fatalf("attribute registry state = %q/%d/%q", registryProfile, registryRevision, registryDigest)
+	}
 
 	for _, schema := range []string{"platform", "access", "audit", "physical_pool", "ducklake"} {
 		var ownerName string

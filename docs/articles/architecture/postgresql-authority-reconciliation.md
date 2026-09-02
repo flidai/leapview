@@ -111,7 +111,8 @@ The required PostgreSQL lane must report an unavailable Docker provider or
 pinned image as a failure. Local optional runs may skip only when
 `LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED` is unset.
 
-FAI-636 remains blocked until this reconciliation is reviewed and merged.
-After that merge, its typed attribute registry must append a capability-owned
-forward migration and reuse the merged semantic-value canonicalizer. This
-change does not alter the partial VAL-11 qualification boundary.
+PR #460 merged the reconciliation. FAI-636 builds on it with an access-owned
+forward migration and the merged semantic-value canonicalizer; it does not
+rewrite this baseline. Attribute assignments and the remaining consumer paths
+stay outside the registry milestone, so the partial VAL-11 qualification
+boundary is unchanged.
