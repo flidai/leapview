@@ -160,7 +160,7 @@ func (Operations) BootstrapQualificationLocalPhysicalPool(ctx context.Context, o
 	return service.BootstrapPhysicalPool(ctx, adminoffline.PhysicalPoolBootstrapRequest{
 		Pool: physicalpool.PoolIdentity{
 			StorageLocation: storageLocation, StorageNamespace: "delivery",
-			IsolationBoundary: instanceID, RetentionAuthority: instanceID,
+			EncryptionDomain: instanceID, IsolationBoundary: instanceID, RetentionAuthority: instanceID,
 			RetentionPolicy: physicalpool.RetentionPolicy{
 				ReaderGracePeriodSeconds: 1800,
 				OrphanGracePeriodSeconds: 3600,
