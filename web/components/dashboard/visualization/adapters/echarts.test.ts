@@ -567,6 +567,20 @@ test('ECharts condenses crowded category-series charts without overlapping label
   expect(compact.series.every((series: any) => series.label.show === true)).toBe(true)
 })
 
+test('ECharts formats cartesian temporal axis ticks instead of exposing epoch milliseconds', () => {
+  const envelope = cartesianFixture('area') as any
+  const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
+  category.dataType = 'date'
+  category.format = { kind: 'temporal' }
+  envelope.dataState.datasets[0].rows = [['2016-12-23', 19.62]]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const tick = Date.UTC(2016, 11, 23)
+  expect(option.xAxis.type).toBe('time')
+  expect(option.xAxis.axisLabel.formatter(tick)).toBe('2016-12-23')
+  expect(option.xAxis.axisLabel.formatter(tick)).not.toContain(String(tick))
+})
+
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
   const envelope = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
   envelope.spec.presentation.stacked = false
