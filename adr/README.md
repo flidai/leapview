@@ -36,6 +36,8 @@ customer site.
 | [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md) | Adopt durable audit and compliance controls | Accepted | 2026-08-23 | Durable foundation and prioritized producer adoption | — |
 | [ADR-0016](0016-adopt-standards-aligned-data-contracts-and-interchange.md) | Adopt standards-aligned data contracts and interchange | Accepted | 2026-09-01 | Pending | — |
 | [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md) | Adopt a Looker-aligned semantic access contract | Accepted | 2026-09-01 | Pending | — |
+| [ADR-0018](0018-retain-project-as-the-durable-deployment-namespace.md) | Retain Project as the durable deployment namespace | Accepted | 2026-09-02 | Pending | — |
+| [ADR-0019](0019-integrate-dbt-through-immutable-build-releases.md) | Integrate dbt through immutable build releases | Proposed | 2026-09-02 | Pending | — |
 
 ## Companion specifications
 
@@ -49,6 +51,8 @@ historical records.
 - [Workload admission conformance](specifications/workload-admission-conformance.md)
 - [Data-contract versioning conformance](specifications/data-contract-versioning-conformance.md)
 - [Semantic access-policy conformance](specifications/semantic-access-policy-conformance.md)
+- [Project namespace conformance](specifications/project-namespace-conformance.md)
+- [dbt release conformance](specifications/dbt-release-conformance.md)
 
 ## Conventions
 
