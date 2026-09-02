@@ -285,9 +285,9 @@ func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
 
 // isBootstrapDeliveryAPIGenOperation is the exact delivery allowlist needed to
 // establish and resolve a plan before the target has an active generation.
-// It includes reviewer approval so its dedicated REST-token path can run
-// before the first generation; authoring credentials use the narrower
-// allowlist below to preserve separation of duties.
+// It includes reviewer approval so its dedicated credential path can run
+// before the first generation; ordinary authoring operations use the narrower
+// allowlist below.
 func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
@@ -299,8 +299,9 @@ func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
 }
 
 // isAuthoringDeliveryBootstrapOperation is the exact delivery allowlist for
-// scoped authoring credentials. Publication approval remains reviewer-only;
-// an authoring credential may request approval but never approve its own
+// scoped authoring credentials. Publication approval remains reviewer-only
+// and runs through its dedicated exact-scope validator and marker; the
+// downstream approval authority prevents a principal from approving its own
 // publication.
 func isAuthoringDeliveryBootstrapOperation(operationID string) bool {
 	switch operationID {
@@ -323,8 +324,8 @@ func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access
 // recheck their durable active-generation and immutable-snapshot fences before
 // committing state. The allowlisted delivery operations accept an exact-scope
 // authoring credential through this branch; publication approval has its own
-// reviewer-only REST-token marker, while all other bootstrap requests remain
-// restricted to explicit REST API tokens by AuthorizeBootstrapRequest.
+// reviewer-only marker, while all other bootstrap requests remain restricted
+// to explicit REST API tokens by AuthorizeBootstrapRequest.
 func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, capability access.Capability, next http.Handler) http.Handler {
 	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := a.module.CurrentPrincipal(r)
@@ -380,15 +381,15 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 				}
 			}
 			if operationID == "approveDeliveryPublicationApproval" {
-				// Approval is the sole fresh-target reviewer exception. It accepts
-				// only an explicitly PROJECT_ADMIN-attenuated API token after
-				// the durable bootstrap decision has allowed this exact operation. Do
-				// not route it through the generic platform-admin bootstrap path.
+				// Approval is the sole fresh-target reviewer exception. It accepts an
+				// explicitly PROJECT_ADMIN-attenuated reviewer credential after the
+				// durable bootstrap decision has allowed this exact operation. Do not
+				// route it through the generic platform-admin bootstrap path.
 				if !decision.Allowed {
 					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 					return
 				}
-				authorized, err := a.module.AuthorizePublicationApprovalBootstrapRequest(r)
+				authorized, err := a.module.AuthorizePublicationApprovalBootstrapRequest(r.Context(), r, projectID.String())
 				if err != nil {
 					a.module.logger.WarnContext(
 						r.Context(),

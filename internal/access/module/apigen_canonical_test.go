@@ -860,9 +860,19 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 			return APIGenBootstrapDecision{Handled: true, Allowed: true}, nil
 		})
 		protected, ok := authorizer.Protect(contract.OperationID, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			marker, marked := BootstrapAuthorizationFromContext(r.Context())
-			if marked != wantMarker || (marked && (marker.ProjectID != projectID || marker.PrincipalID != "authoring-user" || marker.Capability != access.Capability(contract.Command.Privilege))) {
-				t.Fatalf("authoring delivery bootstrap marker = %#v, marked=%t", marker, marked)
+			if contract.OperationID == "approveDeliveryPublicationApproval" {
+				marker, marked := PublicationApprovalBootstrapAuthorizationFromContext(r.Context())
+				if marked != wantMarker || (marked && (marker.ProjectID != projectID || marker.PrincipalID != "authoring-user" || marker.Capability != access.CapabilityProjectAdmin)) {
+					t.Fatalf("publication approval bootstrap marker = %#v, marked=%t", marker, marked)
+				}
+				if _, genericMarked := BootstrapAuthorizationFromContext(r.Context()); genericMarked {
+					t.Fatal("publication approval unexpectedly received generic bootstrap marker")
+				}
+			} else {
+				marker, marked := BootstrapAuthorizationFromContext(r.Context())
+				if marked != wantMarker || (marked && (marker.ProjectID != projectID || marker.PrincipalID != "authoring-user" || marker.Capability != access.Capability(contract.Command.Privilege))) {
+					t.Fatalf("authoring delivery bootstrap marker = %#v, marked=%t", marker, marked)
+				}
 			}
 			w.WriteHeader(http.StatusNoContent)
 		}))
@@ -918,8 +928,8 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 		}
 	}
 	approveContract := newContract("approveDeliveryPublicationApproval", "/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/approve", access.CapabilityProjectAdmin)
-	t.Run("approveDeliveryPublicationApproval/authoring credential denied", func(t *testing.T) {
-		serve(t, approveContract, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{"project": projectID.String(), "publication": "publication_1", "approval": "approval_1"}, true, projectID, []access.Capability{access.CapabilityProjectAdmin}, http.StatusForbidden, false)
+	t.Run("approveDeliveryPublicationApproval/authoring credential allowed", func(t *testing.T) {
+		serve(t, approveContract, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{"project": projectID.String(), "publication": "publication_1", "approval": "approval_1"}, true, projectID, []access.Capability{access.CapabilityProjectAdmin}, http.StatusNoContent, true)
 	})
 	contract := newContract("createDeliveryPlan", "/api/v1/projects/{project}/delivery", access.CapabilityResourceRead)
 	for _, test := range []struct {
@@ -938,9 +948,23 @@ func TestAPIGenDeliveryAuthoringBootstrapCredentialScope(t *testing.T) {
 	}
 }
 
-func TestAPIGenPublicationApprovalBootstrapUsesReviewerToken(t *testing.T) {
+func TestAPIGenPublicationApprovalBootstrapUsesReviewerCredential(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_demo")
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	authoringRepository := accesssqlite.NewRepository(store.SQLDB())
+	authoringAuth, err := access.NewAuthoringAuthService(authoringRepository, access.AuthoringAuthConfig{
+		InstanceID: "instance-prod", CanonicalOrigin: "https://example.test",
+		AccessTokenTTL: time.Hour, RefreshTokenTTL: 2 * time.Hour,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	module := browserGuardModule(browserGuardRepository{admin: false}, Principal{ID: "reviewer", Kind: access.PrincipalKindUser}, true)
+	module.authoringAuth = authoringAuth
 	contract := APIGenOperationContract{
 		OperationID: "approveDeliveryPublicationApproval", Method: http.MethodPost,
 		Path:      "/api/v1/projects/{project}/delivery/publications/{publication}/approval-requests/{approval}/approve",
@@ -994,6 +1018,73 @@ func TestAPIGenPublicationApprovalBootstrapUsesReviewerToken(t *testing.T) {
 	protected.ServeHTTP(recorder, request)
 	if recorder.Code != http.StatusNoContent {
 		t.Fatalf("reviewer approval bootstrap status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusNoContent)
+	}
+
+	authoringScope, err := access.NewAuthoringScope("instance-prod", projectID, []access.Capability{access.CapabilityProjectAdmin})
+	if err != nil {
+		t.Fatal(err)
+	}
+	authoringCredential := access.APICredential{
+		Principal: access.Principal{ID: "reviewer", Kind: access.PrincipalKindUser},
+		Authoring: &access.AuthoringSession{
+			ID: "reviewer-authoring", Kind: access.AuthoringSessionHumanCLI,
+			ClientID: access.AuthoringCLIClientID, PrincipalID: "reviewer",
+			Scope: authoringScope, ExpiresAt: time.Now().Add(time.Hour),
+		},
+	}
+	authoringRequest := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{
+		"project": projectID.String(), "publication": "publication_1", "approval": "approval_1",
+	})
+	authoringRequest.Header.Set("Authorization", "Bearer reviewer-authoring-token")
+	authoringRequest = authoringRequest.WithContext(WithAPICredential(authoringRequest.Context(), authoringCredential))
+	authoringRecorder := httptest.NewRecorder()
+	protected.ServeHTTP(authoringRecorder, authoringRequest)
+	if authoringRecorder.Code != http.StatusNoContent {
+		t.Fatalf("reviewer authoring approval bootstrap status = %d body=%q, want %d", authoringRecorder.Code, authoringRecorder.Body.String(), http.StatusNoContent)
+	}
+
+	for _, test := range []struct {
+		name  string
+		scope access.AuthoringScope
+	}{
+		{name: "wrong project", scope: func() access.AuthoringScope {
+			scope, err := access.NewAuthoringScope("instance-prod", projectgraph.ResourceID("project_other"), []access.Capability{access.CapabilityProjectAdmin})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return scope
+		}()},
+		{name: "wrong target", scope: func() access.AuthoringScope {
+			scope, err := access.NewAuthoringScope("instance-other", projectID, []access.Capability{access.CapabilityProjectAdmin})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return scope
+		}()},
+		{name: "missing project admin", scope: func() access.AuthoringScope {
+			scope, err := access.NewAuthoringScope("instance-prod", projectID, []access.Capability{access.CapabilityResourcePublish})
+			if err != nil {
+				t.Fatal(err)
+			}
+			return scope
+		}()},
+	} {
+		t.Run("authoring credential/"+test.name, func(t *testing.T) {
+			session := *authoringCredential.Authoring
+			session.Scope = test.scope
+			credential := authoringCredential
+			credential.Authoring = &session
+			request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{
+				"project": projectID.String(), "publication": "publication_1", "approval": "approval_1",
+			})
+			request.Header.Set("Authorization", "Bearer reviewer-authoring-token")
+			request = request.WithContext(WithAPICredential(request.Context(), credential))
+			recorder := httptest.NewRecorder()
+			protected.ServeHTTP(recorder, request)
+			if recorder.Code != http.StatusForbidden {
+				t.Fatalf("authoring approval bootstrap status = %d body=%q, want %d", recorder.Code, recorder.Body.String(), http.StatusForbidden)
+			}
+		})
 	}
 
 	for _, test := range []struct {

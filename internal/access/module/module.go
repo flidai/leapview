@@ -271,15 +271,14 @@ func (m *Module) AuthorizeBootstrapRequest(ctx context.Context, r *http.Request,
 	return isAdmin && bootstrapTokenAllowsCapability(credential.Token.Capabilities, required), nil
 }
 
-// AuthorizePublicationApprovalBootstrapRequest validates only the credential
-// attenuation for the fresh-target approval ingress. Only a normal API token
-// that explicitly carries PROJECT_ADMIN is admitted. Authoring credentials are
-// deliberately rejected so the credential that creates and publishes a
-// candidate cannot also approve it. This ingress does not use durable platform
-// administration: the downstream approval authorizer remains responsible for
-// loading the requested generation's immutable authorization snapshot and
-// proving that the principal is one of its project admins.
-func (m *Module) AuthorizePublicationApprovalBootstrapRequest(r *http.Request) (bool, error) {
+// AuthorizePublicationApprovalBootstrapRequest validates credential
+// attenuation for the fresh-target approval ingress. A normal API token must
+// explicitly carry PROJECT_ADMIN; an authoring credential must additionally
+// be bound to this exact project and target. This ingress does not use durable
+// platform administration: the downstream approval authorizer reloads the
+// requested generation's immutable authorization snapshot, and the approval
+// authority enforces requester/reviewer principal separation.
+func (m *Module) AuthorizePublicationApprovalBootstrapRequest(_ context.Context, r *http.Request, projectID string) (bool, error) {
 	if m == nil || r == nil || bearerToken(r) == "" {
 		return false, nil
 	}
@@ -292,7 +291,14 @@ func (m *Module) AuthorizePublicationApprovalBootstrapRequest(r *http.Request) (
 		return false, nil
 	}
 	if credential.Authoring != nil {
-		return false, nil
+		authoring := *credential.Authoring
+		if err := validateAuthoringBootstrapCredential(credential, authoring, principal, projectID); err != nil {
+			return false, nil
+		}
+		if targetID := m.authoringInstanceID(); targetID != "" && authoring.Scope.TargetID != targetID {
+			return false, nil
+		}
+		return containsCapability(authoring.Scope.Capabilities, access.CapabilityProjectAdmin), nil
 	}
 	if credential.Token.ID == "" || credential.Token.Capabilities == nil || len(credential.Token.Capabilities) == 0 || credential.Token.PrincipalID != principal.ID {
 		return false, nil
