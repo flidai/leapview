@@ -21,15 +21,22 @@ Related decisions:
 
 ## Purpose
 
-This mutable specification defines how a portable source bundle is bound to
-one durable Project and environment, how that identity is carried through
-deployment and serving, and which multi-Project behaviors are excluded from
-the first profile. The ADR owns the architectural choice. This document may
-evolve with TypeSpec, APIs, persistence, and test organization as long as it
-preserves that decision.
+This implementation-facing specification defines how a portable source bundle
+is bound to one durable Project and environment, how that identity is carried
+through deployment and serving, and which multi-Project behaviors are excluded
+from the first profile. The ADR owns the architectural choice.
 
 The terms **must**, **must not**, **should**, and **may** are normative. A
 requirement that has not been implemented is pending, not implicitly waived.
+
+## Profile stability
+
+`leapview.project-namespace/v1` semantics are immutable after acceptance.
+Editorial clarification, additional evidence, and implementation organization
+may evolve without changing accepted identity, authorization, failure, or
+compatibility behavior. A change that alters a conforming claim, durable
+identity, authorization result, or accepted/rejected input requires a new
+profile identifier and an explicit migration decision.
 
 ## Mental model
 
@@ -81,7 +88,8 @@ names, and physical relation names must not replace durable identity.
 | Concern                                                               | Owner                              |
 | --------------------------------------------------------------------- | ---------------------------------- |
 | Resource YAML and portable semantic meaning                           | Source repository                  |
-| Project UID and environment claim                                     | Target instance                    |
+| Project UID issuance and durable Project registry                     | Deployment authority               |
+| Environment and singleton Project claim                               | Target instance                    |
 | Connection endpoint and credentials                                   | Target binding                     |
 | Plan, candidate, generation, and active pointer                       | Bound Project deployment lifecycle |
 | Resource UID registry and tombstones                                  | Bound instance registry            |
@@ -92,21 +100,33 @@ names, and physical relation names must not replace durable identity.
 - **PRJ-01:** A target database instance must have at most one durable claim
   containing canonical `ProjectUID` and environment. A serving instance must
   have exactly one such claim.
-- **PRJ-02:** The first authorized bootstrap may create the claim. Repeating
-  the same claim is idempotent. A different Project UID or environment is a
-  conflict before planning or candidate work begins.
-- **PRJ-03:** Ordinary deployment must not rename, retarget, or replace the
-  claim. Reprovisioning or recovery is a separate authenticated, authorized,
-  and audited operation.
-- **PRJ-04:** One Project may be deployed to several distinct instances, for
-  example separate dev, staging, and production instances. Each instance has
-  its own bindings, plans, generations, approvals, and resource UID registry.
-- **PRJ-05:** Each bound `(ProjectUID, environment)` has at most one active
+- **PRJ-02:** A deployment authority must mint one opaque Project UID once, or
+  receive it from an external canonical Project registry, before contacting a
+  target. A target must not mint a Project UID as a deployment side effect.
+- **PRJ-03:** An unclaimed target exposes one bootstrap operation authorized by
+  an instance-administrator capability that does not depend on Project-scoped
+  grants. Bootstrap requires the issuer-supplied Project UID and canonical
+  environment and creates the singleton claim atomically.
+- **PRJ-04:** Bootstrap records issuer identity, authenticated principal,
+  Project UID, environment, target identity, time, and outcome in durable audit
+  evidence. Repeating the identical tuple is idempotent. Any different Project
+  UID or environment conflicts before repository access, planning, or candidate
+  work.
+- **PRJ-05:** After a claim exists, the bootstrap endpoint must not rename,
+  retarget, or replace it. Reprovisioning or recovery is a separate
+  authenticated, authorized, and audited operation.
+- **PRJ-06:** One Project may be deployed to several distinct instances, for
+  example separate dev, staging, and production instances. The deployment
+  authority supplies the same exact Project UID to each bootstrap; every
+  instance has its own bindings, plans, generations, approvals, and resource
+  UID registry.
+- **PRJ-07:** Each bound `(ProjectUID, environment)` has at most one active
   generation. Activation must not alter another instance's active pointer.
-- **PRJ-06:** The initial local and single-repository experience should create
-  or receive one default Project binding without authored Project YAML or a
-  Project-selection step.
-- **PRJ-07:** Retaining Project identity does not require server-local list,
+- **PRJ-08:** The initial local and single-repository experience may mint one
+  default Project UID in durable local deployment state and bootstrap its
+  target without authored Project YAML or a Project-selection step. Recreating
+  local target infrastructure reuses that UID rather than minting a new Project.
+- **PRJ-09:** Retaining Project identity does not require server-local list,
   create, rename, archive, or selection APIs for several Projects.
 
 ## Authoring, compilation, and deployment binding
@@ -164,6 +184,9 @@ names, and physical relation names must not replace durable identity.
 - **API-03:** A deployment route containing `{project}` must resolve it to the
   already bound canonical Project UID before repository access or mutation. An
   unknown or different Project is a conflict, not a request to switch context.
+  This rule applies after bootstrap; the narrow bootstrap endpoint accepts the
+  issuer-supplied UID only while the target is unclaimed and uses
+  instance-administrator authorization.
 - **API-04:** Every request independently verifies the principal's capability
   against the explicit bound Project UID. A valid session, locator, or UID is
   not authorization.
@@ -243,7 +266,8 @@ names, and physical relation names must not replace durable identity.
   Project for the reference adoption path.
 - **DBT-02:** The dbt project name, repository, commit, target, manifest, and
   invocation identifiers are producer provenance. They do not replace the
-  target-owned Project UID, environment, or generation identity.
+  issuer-assigned Project UID durably claimed by the target, environment, or
+  generation identity.
 - **DBT-03:** LeapView SemanticModels and Dashboards may live beside the dbt
   project in conventional directories and deploy without `kind: Project` or a
   Project manifest.
@@ -261,26 +285,28 @@ names, and physical relation names must not replace durable identity.
 
 ## Failure behavior
 
-| Condition                                                      | Required result                                                |
-| -------------------------------------------------------------- | -------------------------------------------------------------- |
-| `kind: Project` appears in source                              | Authoring rejection with migration guidance                    |
-| Target has no claim during authorized bootstrap                | Create one explicit claim or fail before planning              |
-| Requested Project or environment differs from the target claim | Conflict before repository access, planning, or candidate work |
-| Persisted active state spans several Projects or environments  | Runtime admission failure                                      |
-| Same authored ID appears twice in one candidate                | Candidate rejection before graph construction                  |
-| Same authored ID exists in an unrelated Project                | Allowed; identity remains instance- and Project-qualified      |
-| Request supplies a different Project selector                  | Reject; never switch context                                   |
-| SemanticModel dataset names a Model in another Project         | Compile failure without foreign metadata disclosure            |
-| Resource reference names another Project                       | Compile failure without foreign metadata disclosure            |
-| Source uses `projectOutput` or another native Project import   | Schema or compile rejection                                    |
-| Deployment contains several independent dbt releases           | Profile rejection before resource mapping                      |
-| Rollback names another environment or Project                  | Reject and require deployment to the intended target           |
+| Condition                                                      | Required result                                                                          |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------- |
+| `kind: Project` appears in source                              | Authoring rejection with migration guidance                                              |
+| Ordinary deployment targets an unclaimed instance              | Bootstrap-required failure before repository access                                      |
+| Bootstrap lacks instance-administrator authorization           | Authorization failure without creating a claim                                           |
+| Separate environments receive independently minted UIDs        | Treat as distinct Projects; block promotion and require reconciliation or reprovisioning |
+| Requested Project or environment differs from the target claim | Conflict before repository access, planning, or candidate work                           |
+| Persisted active state spans several Projects or environments  | Runtime admission failure                                                                |
+| Same authored ID appears twice in one candidate                | Candidate rejection before graph construction                                            |
+| Same authored ID exists in an unrelated Project                | Allowed; identity remains instance- and Project-qualified                                |
+| Request supplies a different Project selector                  | Reject; never switch context                                                             |
+| SemanticModel dataset names a Model in another Project         | Compile failure without foreign metadata disclosure                                      |
+| Resource reference names another Project                       | Compile failure without foreign metadata disclosure                                      |
+| Source uses `projectOutput` or another native Project import   | Schema or compile rejection                                                              |
+| Deployment contains several independent dbt releases           | Profile rejection before resource mapping                                                |
+| Rollback names another environment or Project                  | Reject and require deployment to the intended target                                     |
 
 ## Evidence and conformance gates
 
 | Requirement range | Required maintained evidence                                                                          | Status  |
 | ----------------- | ----------------------------------------------------------------------------------------------------- | ------- |
-| PRJ-01–PRJ-07     | Singleton claim, idempotency, conflict, independent-target, and lifecycle tests                       | Pending |
+| PRJ-01–PRJ-09     | UID issuance, pre-Project authorization, singleton claim, audit, idempotency, and environment tests   | Pending |
 | BND-01–BND-07     | Generated authoring schema, discovery, unbound compile, binding, promotion, and graph tests           | Pending |
 | RID-01–RID-07     | Uniqueness, instance registry, tombstone, restore, rollback, and projection fixtures                  | Pending |
 | API-01–API-07     | Generated contracts, selector rejection, authorization, filtering, cache, and runtime-admission tests | Pending |

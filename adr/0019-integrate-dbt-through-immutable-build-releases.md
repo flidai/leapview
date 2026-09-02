@@ -117,10 +117,12 @@ release is a producer-created, content-identified deployment input containing:
   invocation;
 - producer, repository, commit, adapter, command, and invocation
   provenance;
-- an explicit set of selected dbt model unique IDs;
-- exact immutable physical outputs for those models, including their connection
-  binding, content digest, observed schema digest, row count, and provider
-  identity evidence when available; and
+- an explicit, closed selection policy and a result for every model and test
+  that policy requires;
+- exact immutable physical outputs for those models, including portable storage
+  aliases, content digest, versioned schema digest, row count, and provider
+  identity evidence when available;
+- a producer-guaranteed acquisition deadline; and
 - a canonical release envelope written only after all outputs and evidence are
   complete.
 
@@ -150,11 +152,18 @@ allowlists, digest verification, size and graph limits, path controls, and
 fail-closed parsing before candidate construction.
 
 The producer's successful-build claim does not replace LeapView qualification.
-LeapView correlates invocation identity, model identity, execution status,
-physical object identity, and schema evidence. It then applies its own contract,
-connection, security, query, and deployment checks. A release failing either
-producer evidence validation or LeapView qualification cannot affect the active
-generation.
+LeapView correlates invocation identity, model identity, complete required-test
+results, physical object identity, schema evidence, and exported row-set
+equivalence. It then applies its own contract, connection, security, query, and
+deployment checks. A release failing either producer evidence validation or
+LeapView qualification cannot affect the active generation.
+
+The authenticated deployment request supplying the expected ReleaseDigest is
+the v1 admission trust root for the release bytes. Repository, commit, workflow,
+and toolchain fields are producer assertions retained as unverified provenance;
+they cannot grant authorization or satisfy a policy requiring authenticated
+build provenance. Such a policy requires a separately verified signed
+attestation covering the ReleaseDigest and claims.
 
 ### Project and resource mapping
 
@@ -190,13 +199,16 @@ is provenance inside the release; it is not a runtime cross-Project reference.
 
 ### Connections and environments
 
-Release locations refer to logical LeapView connection bindings and exact
-provider object paths, never credentials. Planning resolves and authorizes each
-binding in the destination Project and environment and locks the expected
-object evidence. Candidate construction acquires and verifies the complete
-bytes through the resolved binding before materializing them. Producer and
-LeapView identities may therefore use different, least-privilege credentials
-for the same storage service.
+Release locations contain portable producer-defined storage aliases and exact
+provider object paths, never LeapView binding names or credentials. The delivery
+request separately maps every alias to one target-owned logical connection
+binding. Planning resolves and authorizes that mapping in the destination
+Project and environment and records it in the ReleaseLock. The binding used to
+fetch `release.json` is a separate envelope-transport input and has no authority
+over aliases inside the envelope. Candidate construction acquires and verifies
+the complete bytes through the locked mappings before materializing them.
+Producer and LeapView identities may therefore use different, least-privilege
+credentials for the same storage service.
 
 The initial importer is a new pinned-ingress capability layered on LeapView's
 native Azure access; it is not an assertion that the ordinary direct-read Azure
@@ -228,18 +240,22 @@ v1 export contract. That materialization can encode a zero-row relation by
 writing a synthetic all-NULL record and hiding it in a DuckDB view, while
 LeapView consumes the Parquet object itself. The producer instead runs a
 LeapView-qualified export phase after a successful `dbt build`. The export must
-preserve the exact row set, including a true zero-row Parquet result with its
-schema, and must pass schema and row-count reconciliation. A future
-dbt-duckdb materialization may be admitted only after it passes the same tests.
+preserve the exact row multiset, including a true zero-row Parquet result with its
+schema. The v1 DuckDB exporter reopens the Parquet and proves duplicate-
+preserving multiset equality with the tested relation in both directions, in
+addition to schema and row-count reconciliation. A future dbt-duckdb
+materialization may be admitted only after it passes the same tests.
 
-The producer retains a committed release for every pending or retryable plan
-and candidate build that may still acquire it, and for any cross-environment
-promotion or rebuild policy that promises reuse. After a candidate has copied
-the verified data and sealed, active generations, rollback windows, and query
-leases root LeapView's catalog artifact and physical-pool objects rather than
-the producer release. Longer release retention remains valuable for audit,
-disaster recovery, and later promotion but is not a serving correctness
-dependency.
+Every release declares a producer-guaranteed `retainUntil`. The initial Azure
+profile requires at least 30 days from publication. Planning and retry policy
+must complete verified acquisition before that deadline and cannot promise a
+later promotion from the producer objects. Promotion after the deadline is
+availability-dependent and fails closed if the exact objects are gone. After a
+candidate has copied the verified data and sealed, active generations, rollback
+windows, and query leases root LeapView's catalog artifact and physical-pool
+objects rather than the producer release. Longer producer retention remains
+valuable for audit, disaster recovery, and later promotion but is not a serving
+correctness dependency.
 
 A producer may leave partial objects after a failed build, but it must not write
 the release commit marker; abandoned uncommitted prefixes may be removed after
@@ -259,6 +275,13 @@ and dbt execution service. The first conformance profile and showcase use dbt
 Core, dbt-duckdb, Parquet, GitHub Actions, and Azure Blob or ADLS because that
 combination exercises the production boundary while remaining locally
 reproducible.
+
+Profile identifiers are wire contracts, not rolling documentation labels. A
+profile may be refined while proposed, but once a conforming release is admitted
+by a released LeapView version its envelope shape, canonicalization, selection,
+schema normalization, digest inputs, and fail-closed acceptance semantics are
+immutable. A breaking or digest-affecting change requires a new profile
+identifier and explicit compatibility rules.
 
 ## Consequences
 
@@ -295,16 +318,22 @@ activation and rollback claims honest.
 - Golden releases prove canonical envelope hashing, strict version handling,
   bounded parsing, artifact digest verification, and manifest/run-result
   invocation correlation.
+- Selection fixtures prove the exact selection policy is locked, every required
+  model and test is derived from the manifest, and exclusions, empty indirect
+  selection, state, or defer cannot omit required evidence.
 - Mapping fixtures prove deterministic Project-local Source and Model identity,
   collision rejection, provenance retention, and ordinary compilation of local
   SemanticModel and Dashboard resources.
-- Export fixtures prove non-empty and zero-row relations retain their exact row
-  counts and physical schemas without sentinel records.
+- Export fixtures prove non-empty and zero-row relations retain their exact
+  duplicate-preserving row multisets and versioned physical schemas without
+  sentinel records across null, decimal, temporal, NaN, and nested values.
 - Object-store conformance tests prove conditional create of exact paths,
   content and schema verification, single-stream verified staging,
-  unavailable-object failure, and no mutable-prefix resolution.
+  retention through `retainUntil`, unavailable-object failure, and no
+  mutable-prefix resolution.
 - Delivery tests prove a failed dbt build, failing test, corrupt artifact,
-  missing object, incompatible schema, changed target binding, or failed
+  missing object, incompatible schema, changed storage-alias mapping or target
+  binding, expired guaranteed-acquisition window, or failed
   qualification leaves the active generation unchanged.
 - Promotion and rollback tests prove the same release can build qualified
   candidates in multiple environments without rerunning dbt and that rollback

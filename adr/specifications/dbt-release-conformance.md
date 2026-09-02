@@ -24,15 +24,25 @@ and [ADR-0018](../0018-retain-project-as-the-durable-deployment-namespace.md)
 
 ## Purpose
 
-This mutable specification defines the release envelope, dbt artifact
-correlation, physical-output evidence, generated-resource mapping, target
-binding, failure behavior, and initial production showcase required by
-ADR-0019. The ADR owns the immutable-build-release architectural choice. This
-document may evolve with TypeSpec, schemas, adapters, storage providers, and
-tests as long as it preserves that choice.
+This implementation-facing specification defines the release envelope, dbt
+artifact correlation, physical-output evidence, generated-resource mapping,
+target binding, failure behavior, and initial production showcase required by
+ADR-0019. The ADR owns the immutable-build-release architectural choice.
 
 The terms **must**, **must not**, **should**, and **may** are normative. A
 requirement that has not been implemented is pending, not implicitly waived.
+
+## Profile stability
+
+The `/v1` identifiers in this document are reserved while the specification is
+proposed. Their wire semantics become immutable when the first conforming
+producer release is admitted by a released LeapView version. After that point,
+editorial clarification, additional fixtures, and implementation organization
+may evolve, but any change to envelope shape, required fields,
+canonicalization, schema normalization, digest inputs, selection semantics, or
+acceptance and failure behavior requires a new profile identifier. Producers
+and consumers must reject unknown profile identifiers rather than inferring
+compatibility.
 
 ## Scope
 
@@ -41,10 +51,12 @@ The base `leapview.dbt-release/v1` profile covers:
 - ingestion of one exact dbt release into one selected LeapView Project and
   environment;
 - strict parsing and correlation of `manifest.json` and `run_results.json`;
-- explicit selection and deterministic lowering of dbt model outputs;
+- a closed selection policy and complete required model and test evidence;
 - qualified full-replacement export, including true zero-row outputs;
-- exact physical-object, integrity, row-count, and schema evidence;
-- target-owned connection binding;
+- duplicate-preserving equivalence to the tested dbt relation;
+- exact physical-object, integrity, row-count, and versioned schema evidence;
+- portable storage aliases resolved through target-owned connection mappings;
+- a producer-guaranteed acquisition deadline;
 - verified target-owned ingress into the private DuckLake candidate followed by
   normal LeapView qualification, activation, retention, and rollback; and
 - release provenance and failure behavior.
@@ -68,10 +80,11 @@ publication of a LeapView-governed output derived from a dbt release.
 | Release envelope | Canonical `release.json` committing a complete producer release                      | `ReleaseDigest`                                                   |
 | Release ID       | Producer-assigned unique locator for one attempt                                     | Informational locator; never sufficient without `ReleaseDigest`   |
 | Artifact         | Exact dbt JSON file referenced by the release                                        | URI plus SHA-256                                                  |
-| Output           | Exact producer data for one selected dbt model and candidate-build input             | Binding, URI, size, SHA-256, row count, and schema digest         |
+| Output           | Exact producer data for one selected dbt model and candidate-build input             | Storage alias, URI, size, SHA-256, row count, and schema digest   |
 | Local model ID   | Stable Project-local ID assigned to a generated Model                                | `(ProjectUID, localModelId)` after activation                     |
 | Object identity  | Provider evidence such as Azure Blob version ID and ETag                             | Optional provider-specific evidence; not a substitute for SHA-256 |
 | Schema digest    | SHA-256 of the normalized physical schema projection                                 | `SchemaDigest`                                                    |
+| Storage alias    | Portable producer label for one release-object location authority                    | Resolved only by the delivery request                             |
 | Release lock     | Exact release, artifacts, outputs, and resolved target bindings used by a plan       | `ReleaseLockDigest`                                               |
 | Verified staging | Target-owned bounded bytes acquired and hashed once before candidate materialization | Size and SHA-256 equal to the ReleaseLock                         |
 | Serving state    | Materialized tables and files named by the sealed candidate catalog                  | Sealed catalog digest and physical-pool closure                   |
@@ -87,18 +100,18 @@ the physical content digest.
 | ---------------------------------------------------------------------------------------------- | ---------------------------------------------- |
 | dbt source access, packages, macros, compilation, execution, tests, and intermediate database  | Release producer                               |
 | Immutable Parquet output and dbt artifact publication                                          | Release producer                               |
-| Release retention through every promised acquisition, retry, or later promotion                | Producer and target storage policy             |
-| Project selection and logical connection binding                                               | LeapView deployment caller and control plane   |
+| Release availability through declared `retainUntil`                                            | Release producer                               |
+| Project selection, envelope transport, and storage-alias mapping                               | LeapView deployment caller and control plane   |
 | Credential material and endpoint resolution                                                    | Target-owned LeapView connection binding       |
 | Release parsing, verified staging, correlation, generated resources, and schema reconciliation | LeapView importer and compiler                 |
 | Target-local dbt output materialization and sealed physical state                              | LeapView candidate lifecycle and physical pool |
 | SemanticModel, semantic access policy, dashboard, and governed queries                         | LeapView                                       |
 | Candidate qualification, active pointer, rollback, leases, and audit                           | LeapView deployment lifecycle                  |
 
-The release envelope and dbt artifacts must never contain connection strings,
-account keys, SAS tokens, access tokens, private keys, GitHub tokens, or other
-credential material. Logical binding names and non-secret storage locators are
-allowed.
+The release envelope and dbt artifacts must never contain LeapView connection
+binding names, connection strings, account keys, SAS tokens, access tokens,
+private keys, GitHub tokens, or other credential material. Portable storage
+aliases and non-secret provider object locators are allowed.
 
 ## Canonical release envelope
 
@@ -120,7 +133,10 @@ Schema become the executable authority:
 {
   "profile": "leapview.dbt-release/v1",
   "producerProfile": "leapview.dbt-duckdb-parquet/v1",
+  "schemaProfile": "leapview.parquet-schema/v1",
   "releaseId": "4f2d91a-184322-1",
+  "retainUntil": "2026-10-02T12:34:56Z",
+  "provenanceAuthentication": "unverified-producer-assertion",
   "producer": {
     "repository": "https://github.com/acme/analytics",
     "commit": "4f2d91a09e2d2345678901234567890123456789",
@@ -144,18 +160,25 @@ Schema become the executable authority:
     "adapterType": "duckdb",
     "invocationId": "3d12d6e8-6d49-4fcb-984c-037125f1fd3e",
     "command": "build",
-    "selection": "tag:leapview",
+    "selectionPolicy": {
+      "select": ["tag:leapview"],
+      "exclude": [],
+      "indirectSelection": "eager",
+      "state": null,
+      "defer": false,
+      "favorState": false
+    },
     "exitCode": 0
   },
   "artifacts": {
     "manifest": {
-      "binding": "analytics_releases",
+      "storageAlias": "release_objects",
       "uri": "az://analytics/releases/jaffle_shop/4f2d91a-184322-1/dbt/manifest.json",
       "sizeBytes": 125849,
       "sha256": "sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
     },
     "runResults": {
-      "binding": "analytics_releases",
+      "storageAlias": "release_objects",
       "uri": "az://analytics/releases/jaffle_shop/4f2d91a-184322-1/dbt/run_results.json",
       "sizeBytes": 12584,
       "sha256": "sha256:abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
@@ -166,7 +189,7 @@ Schema become the executable authority:
       "dbtUniqueId": "model.jaffle_shop.orders",
       "localModelId": "orders",
       "location": {
-        "binding": "analytics_releases",
+        "storageAlias": "release_objects",
         "uri": "az://analytics/releases/jaffle_shop/4f2d91a-184322-1/models/orders.parquet",
         "sizeBytes": 385042,
         "sha256": "sha256:89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567",
@@ -177,8 +200,12 @@ Schema become the executable authority:
       "schema": [
         {
           "name": "order_id",
-          "logicalType": "BIGINT",
-          "nullable": false
+          "nullable": false,
+          "type": {
+            "kind": "integer",
+            "signed": true,
+            "bitWidth": 64
+          }
         }
       ],
       "schemaDigest": "sha256:456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123"
@@ -196,7 +223,7 @@ version ranges or an unqualified `latest` are not support declarations.
 ## Envelope bounds and provenance
 
 - **ENV-01:** `profile` must equal `leapview.dbt-release/v1` and
-  `producerProfile` must name a supported qualified producer profile.
+  `producerProfile` and `schemaProfile` must name supported qualified profiles.
 - **ENV-02:** `releaseId` is 1–160 visible canonical characters, is unique within
   the producer repository and publication scope, and denotes a create-only
   prefix. A retry uses a new attempt identity.
@@ -209,8 +236,8 @@ version ranges or an unqualified `latest` are not support declarations.
   string, integer, and collection bounds are enforced before allocation
   proportional to untrusted input.
 - **ENV-05:** Outputs are sorted by `dbtUniqueId` in canonical bytes. Duplicate
-  dbt IDs, local IDs, binding/URI pairs, or canonical physical object identities
-  are rejected.
+  dbt IDs, local IDs, storage-alias/URI pairs, or canonical physical object
+  identities are rejected.
 - **ENV-06:** The expected ReleaseDigest is supplied out of band by the delivery
   request. A digest written only inside the envelope cannot authenticate itself.
 - **ENV-07:** Provenance is recorded in the plan, candidate, generation, lineage,
@@ -218,6 +245,24 @@ version ranges or an unqualified `latest` are not support declarations.
   resolver.
 - **ENV-08:** Reusing a release URI, ID, or provider object identity with
   different bytes is a conflict. LeapView never accepts last-writer-wins repair.
+- **ENV-09:** Base profile v1 requires
+  `provenanceAuthentication: unverified-producer-assertion`. Repository, commit,
+  workflow, run, and toolchain claims are audit provenance only. They must not
+  grant authorization or satisfy an admission rule requiring authenticated
+  provenance.
+- **ENV-10:** The authenticated and authorized delivery principal that supplies
+  the expected ReleaseDigest is recorded as the release-byte admission
+  authority. Azure OIDC publisher identity proves permission to create storage
+  objects but does not authenticate the envelope's repository, commit,
+  workflow, or toolchain claims.
+- **ENV-11:** A policy that relies on those claims requires a separately
+  admitted signed-attestation profile binding the ReleaseDigest to the claims
+  and a configured verifier trust root. An absent, invalid, or untrusted
+  attestation fails that policy; base v1 does not infer authenticity.
+- **ENV-12:** `retainUntil` is required, is later than `producer.createdAt`, and
+  is an RFC 3339 UTC timestamp with whole-second precision and is part of
+  ReleaseDigest. The Azure deployment profile requires at least 30 complete
+  days of guaranteed availability from creation.
 
 ## Compatibility profile
 
@@ -238,14 +283,14 @@ version ranges or an unqualified `latest` are not support declarations.
   ingress, schema reconciliation, candidate seal, and rollback before support is
   published.
 - **CMP-06:** Local development and production use a tuple with the same dbt and
-  export semantics. The storage binding and authentication mechanism may differ
-  without changing the base release profile.
+  export semantics. Storage-alias mapping and authentication mechanism may
+  differ without changing the base release profile.
 
 ## dbt artifact acceptance
 
-- **ART-01:** The manifest and run-results descriptors contain logical
-  connection bindings and name exact JSON objects, not directories, globs,
-  query results, symlinks, or mutable channel aliases.
+- **ART-01:** The manifest and run-results descriptors contain portable storage
+  aliases and name exact JSON objects, not LeapView bindings, directories,
+  globs, query results, symlinks, or mutable channel aliases.
 - **ART-02:** LeapView verifies descriptor byte size and SHA-256 before parsing.
   The target connection must not transparently substitute another object.
 - **ART-03:** `metadata.dbt_schema_version` in each artifact must match an
@@ -266,14 +311,32 @@ version ranges or an unqualified `latest` are not support declarations.
   and may accept `warn` only when Project deployment policy explicitly allows
   warnings. Error, fail, skipped, unknown, or reused results reject the release;
   warnings remain visible evidence.
-- **ART-08:** LeapView does not infer that every desired test was selected. The
-  producer profile declares the selector, and conformance fixtures prove the
-  reference workflow indirectly selects tests for every exposed model. A later
-  profile may require a separately canonical test-selection policy.
-- **ART-09:** Manifest checksums, compiled SQL, database/schema/alias, contracts,
+- **ART-08:** `dbt.selectionPolicy` is required and canonical. Producer profile
+  v1 requires a non-empty direct `select` array, an empty `exclude` array,
+  `indirectSelection: eager`, `state: null`, `defer: false`, and
+  `favorState: false`. Named selectors, CLI or environment overrides, result
+  reuse, retry artifacts, and any other stateful selection input are rejected.
+  The profile publishes the admitted selector-method and graph-operator grammar
+  and pins its evaluation to the admitted dbt tuple; an expression outside that
+  grammar fails closed.
+- **ART-09:** LeapView evaluates the locked selection policy against the
+  admitted manifest. Its directly selected set must contain only enabled,
+  relation-producing models, and the envelope output IDs must equal those model
+  IDs exactly; direct selection of a test, seed, snapshot, saved query,
+  operation, ephemeral model, or another executable kind rejects the release.
+  LeapView then derives the required test set as every enabled admitted
+  test-node kind that eager indirect selection includes for that model set
+  under the pinned dbt tuple. Zero tests is valid only when that derived set is
+  empty; an envelope or run-results artifact cannot declare either set smaller.
+- **ART-10:** Every derived required test must appear exactly once in the same
+  invocation's run results with an ART-07 acceptable status. Missing, skipped,
+  duplicate, or disallowed results reject the release. Additional executed
+  tests remain provenance and any disallowed additional result is already
+  inconsistent with the required zero exit code.
+- **ART-11:** Manifest checksums, compiled SQL, database/schema/alias, contracts,
   columns, descriptions, tags, owners, dependencies, and test edges are retained
   as bounded provenance. They do not authorize SQL execution inside LeapView.
-- **ART-10:** The parser ignores no security-relevant field because it is
+- **ART-12:** The parser ignores no security-relevant field because it is
   unknown. Unknown artifact schema versions and unsupported node variants fail
   with a version error and upgrade guidance.
 
@@ -295,8 +358,12 @@ version ranges or an unqualified `latest` are not support declarations.
   schema; sentinel, synthetic all-NULL, or otherwise filtered records are
   forbidden.
 - **EXP-05:** The exporter reopens the completed local Parquet object and proves
-  row count and SchemaDigest equality before it can be uploaded. It also records
-  size and SHA-256 over the exact local bytes.
+  logical-value equality before it can be uploaded. Producer profile v1 opens
+  the source relation and `read_parquet(...)` in the same pinned DuckDB process,
+  projects columns in canonical schema order without coercion, and runs
+  duplicate-preserving multiset differences in both directions using
+  `EXCEPT ALL`. Both differences must be empty. It then proves row-count and
+  SchemaDigest equality and records size and SHA-256 over the exact local bytes.
 - **EXP-06:** dbt-duckdb's stock `external` materialization is not qualified for
   producer profile v1 because its empty-relation behavior can write a synthetic
   all-NULL row that is hidden only by a DuckDB view. It may be admitted by a
@@ -308,29 +375,84 @@ version ranges or an unqualified `latest` are not support declarations.
 - **EXP-08:** Parquet byte serialization need not be reproducible across two
   independent releases. Within one committed release, the exact byte digest,
   row count, and SchemaDigest are immutable and authoritative input evidence.
+- **EXP-09:** A type whose equality semantics cannot be preserved by the pinned
+  comparison tuple is unsupported rather than omitted or string-coerced. Golden
+  fixtures cover duplicates, NULLs, decimals, every admitted timestamp mode,
+  floating-point NaNs, and admitted nested values; tuple qualification records
+  the exact equality behavior used for NaN and nested comparison.
+
+## Canonical schema profile
+
+- **SCH-01:** `leapview.parquet-schema/v1` identifies one immutable canonical
+  schema type algebra and Parquet mapping. The digest input is the RFC 8785
+  canonical JSON object `{"profile":"leapview.parquet-schema/v1","fields":[...]}`;
+  hashing only the field array or omitting the profile is invalid.
+- **SCH-02:** Each field contains `name`, `nullable`, and `type`. Names are exact
+  NFC-normalized, case-sensitive UTF-8; empty names and duplicate names within
+  one struct scope are rejected. Field and nested-struct order is preserved and
+  participates in SchemaDigest.
+- **SCH-03:** Primitive `type.kind` values are `boolean`, `integer`, `float`,
+  `decimal`, `string`, `binary`, `date`, `time`, and `timestamp`. Integer adds
+  `signed` and `bitWidth` in `8|16|32|64`; float adds `bitWidth` in `32|64`;
+  decimal adds positive `precision` not greater than 38 and `scale` from zero
+  through precision. No integer width or decimal scale is inferred.
+- **SCH-04:** `time` and `timestamp` add an exact `unit` from
+  `millisecond|microsecond|nanosecond` and an `adjustedToUtc` Boolean;
+  `timezone` is `UTC` only when adjusted and otherwise `null`. These values map
+  the Parquet logical annotation without session-zone conversion. The profile
+  rejects local-zone names, legacy INT96 timestamps, unannotated temporal
+  integers, and an annotation whose UTC-adjustment semantics cannot be
+  preserved.
+- **SCH-05:** Nested `type.kind` values are `list`, `map`, and `struct`. A list
+  contains one `element` with `nullable` and recursive `type`; a map contains a
+  non-null `key` type and a `value` with `nullable` and recursive `type`; a
+  struct contains ordered recursive `fields`. Only standard Parquet logical
+  LIST and MAP encodings are admitted; ambiguous legacy encodings fail closed.
+- **SCH-06:** Parquet logical annotations are authoritative: STRING/UTF8 maps
+  to `string`; unannotated BYTE_ARRAY/FIXED_LEN_BYTE_ARRAY maps to `binary`;
+  DATE, TIME, TIMESTAMP, INTEGER, DECIMAL, LIST, and MAP map only when every
+  required parameter is present and within the algebra. Unannotated INT32 and
+  INT64 map to signed 32- and 64-bit integers respectively; an INTEGER
+  annotation supplies its exact sign and width. BOOLEAN, FLOAT, and DOUBLE map
+  to boolean and exact 32- and 64-bit float variants. Unsupported annotations
+  including UUID, JSON, BSON, ENUM, INTERVAL, and FLOAT16, and unsupported
+  physical types including INT96, fail v1 rather than being silently coerced.
+- **SCH-07:** Parquet REQUIRED/OPTIONAL repetition defines field and element
+  nullability. REPEATED is accepted only through the admitted LIST or MAP
+  encoding. Nullability that is unavailable from a relation description is
+  checked against the completed Parquet and the enforced dbt contract; a
+  disagreement fails export or qualification.
+- **SCH-08:** The pinned producer and importer share golden schema fixtures for
+  every primitive, decimal boundary, timestamp unit and adjustment mode, nested
+  list/map/struct, field order, name case, and nullability. Any DuckDB or Parquet
+  library upgrade that changes normalization requires a new tested tuple; a
+  digest-affecting mapping change requires a new schema profile.
 
 ## Physical output acceptance
 
 - **OUT-01:** Each output has exactly one `location` in producer profile v1. Its
   URI names one `.parquet` object and contains no wildcard, directory-only key,
   `latest` segment used as a channel, or provider query that changes identity.
-- **OUT-02:** `binding` is a logical connection binding name. It is resolved
-  only in the selected Project and environment and carries no credential or
-  secret-provider parameters.
+- **OUT-02:** `storageAlias` is a portable producer-defined label, not a
+  LeapView connection binding. The delivery request supplies one destination
+  mapping from every used alias to an authorized target-owned connection
+  binding. An alias is resolved only through that mapping; no envelope value,
+  URI scheme, default connection, or envelope-transport binding can override
+  it.
 - **OUT-03:** `sizeBytes`, SHA-256, `rowCount`, normalized `schema`, and schema
   digest are required. Row count is a bounded non-negative integer. ETag and
   provider version ID are recorded when available. ETag is never interpreted as
   a cryptographic digest unless a future provider profile proves that property.
-- **OUT-04:** Planning resolves and authorizes the binding and records its target
-  identity and revision in the ReleaseLock. Candidate construction opens the
-  remote object once and streams it into target-owned bounded staging while
+- **OUT-04:** Planning requires an exact, duplicate-free mapping for all and
+  only the storage aliases used by the envelope. It resolves and authorizes each
+  mapped binding and records the alias, target binding identity, and revision in
+  the ReleaseLock. Candidate construction opens the remote object once through
+  that locked mapping and streams it into target-owned bounded staging while
   computing size and SHA-256. A provider version or conditional read is used
   when the admitted connector supports it.
-- **OUT-05:** The normalized physical schema projection in the envelope includes
-  ordered field identity, nested shape, logical type, precision, scale, timezone
-  semantics, and nullability when represented by the format. RFC 8785 canonical
-  JSON and SHA-256 produce `SchemaDigest`. Planning may use this declared schema
-  for graph compilation, but candidate verification remains authoritative for
+- **OUT-05:** `schemaProfile`, normalized `schema`, and SchemaDigest follow
+  SCH-01 through SCH-08 exactly. Planning may use this declared schema for graph
+  compilation, but candidate verification remains authoritative for
   qualification.
 - **OUT-06:** Only after staged size and SHA-256 equal the ReleaseLock does the
   importer open the staged Parquet bytes. Its row count and observed
@@ -345,11 +467,14 @@ version ranges or an unqualified `latest` are not support declarations.
 - **OUT-08:** Output creation is full replacement. Incremental external models,
   append-to-prefix behavior, mutable partition discovery, deletes, and partial
   replacement are outside producer profile v1.
-- **OUT-09:** Published objects remain readable for every pending or retryable
-  plan and candidate build, and for every later promotion or rebuild promised by
-  policy. Missing or changed objects fail candidate construction without
-  changing the active generation. There is no fallback to a newer release or
-  current relation.
+- **OUT-09:** The producer guarantees that every committed release object
+  remains readable and unchanged through `retainUntil`. LeapView must complete
+  verified acquisition no later than that instant for availability to be
+  guaranteed. A promotion or rebuild that begins after the deadline is allowed
+  only when the exact objects are still available and is explicitly
+  availability-dependent. Missing or changed objects fail candidate
+  construction without changing the active generation; there is no fallback to
+  a newer release or current relation.
 - **OUT-10:** Candidate construction materializes the verified Parquet into the
   private DuckLake catalog as full replacement. After seal, the catalog and its
   physical-pool closure are the only serving, lease, publication, and rollback
@@ -430,23 +555,26 @@ it is not Project UID and a later rename cannot retarget resource identity.
 
 ## Release planning and activation
 
-- **DEP-01:** The delivery request binds a logical release connection, exact
-  release URI, and expected ReleaseDigest to one Project UID, target,
-  environment, portable LeapView bundle digest, and connection-binding
-  revision.
+- **DEP-01:** The delivery request binds an envelope-transport connection, exact
+  release URI, expected ReleaseDigest, and exact `storageAlias`-to-connection
+  mapping to one Project UID, target, environment, portable LeapView bundle
+  digest, and every referenced connection-binding revision. The transport
+  connection fetches only `release.json` unless it is also named explicitly in
+  the alias mapping; it is never an implicit data-object authority.
 - **DEP-02:** Planning acquires the bounded envelope and dbt artifacts into
   content-addressed plan evidence while verifying their digests, then performs
   artifact parsing and correlation, resource mapping, connection authorization,
   declared-schema contract comparison, and complete graph compilation. It does
   not claim that the large Parquet outputs have been physically verified.
 - **DEP-03:** The canonical ReleaseLock contains ReleaseDigest, artifact digests,
-  selected nodes, generated IDs, exact expected object evidence, row counts,
-  declared schemas, SchemaDigests, resolved connection target IDs and revisions,
-  Project UID, and environment. Its digest enters plan review and generation
-  evidence.
+  canonical selection policy and derived required test IDs, generated IDs,
+  exact expected object evidence, row counts, schema profile, declared schemas,
+  SchemaDigests, the exact alias-to-target-binding map with target IDs and
+  revisions, `retainUntil`, Project UID, and environment. Its digest enters plan
+  review and generation evidence.
 - **DEP-04:** A retry with the same idempotency key and identical canonical
-  inputs returns the prior result. Any release, target, source-bundle, policy, or
-  binding drift conflicts and requires a new plan.
+  inputs returns the prior result. Any release, target, source-bundle, policy,
+  alias mapping, or binding-revision drift conflicts and requires a new plan.
 - **DEP-05:** Candidate construction and qualification use only the ReleaseLock.
   For every output the importer performs OUT-04 through OUT-10: one remote
   acquisition into verified staging followed by target-local materialization.
@@ -460,11 +588,15 @@ it is not Project UID and a later rename cannot retarget resource identity.
 - **DEP-08:** Rollback restores the prior LeapView generation and sealed catalog.
   Its ReleaseLock remains provenance, but rollback neither invokes dbt, resolves
   a producer head, nor reads release objects.
-- **DEP-09:** Release retention is required while a pending or retryable plan,
-  candidate build, later promotion, or legal hold promises acquisition. External
-  deletion before acquisition is a distinct candidate-input availability fault.
-  After candidate seal it does not change that candidate or generation; catalog
-  and physical-pool retention follow ADR-0009.
+- **DEP-09:** A plan records an acquisition deadline no later than
+  `retainUntil`. LeapView must not describe a pending plan, retry, promotion, or
+  rebuild as guaranteed to acquire producer objects after that deadline. Before
+  it, deletion or mutation is a producer-contract violation and candidate-input
+  availability fault. After it, an unacquired build is availability-dependent
+  and fails closed if the exact objects are absent. Legal holds require a
+  separately coordinated storage retention policy. After candidate seal,
+  producer deletion does not change the candidate or generation; catalog and
+  physical-pool retention follow ADR-0009.
 
 ## Producer transaction
 
@@ -475,20 +607,24 @@ The producer profile treats release creation as a create-only transaction:
 2. Refuse to reuse a prefix containing any committed release envelope.
 3. Run one pinned dbt Core and adapter toolchain with a fresh target directory
    and ephemeral DuckDB intermediate database.
-4. Use an explicit selector for exposed models and run `dbt build` so model and
-   test results share one run-results artifact.
-5. Stop on non-zero exit or disallowed model or test status. Partial output is
-   not a release.
+4. Use the canonical closed selection policy in ART-08 for exposed models and
+   run `dbt build` so model and test results share one run-results artifact.
+5. Derive the required model and test IDs from the generated manifest, prove
+   that the same invocation contains exactly the required successful model
+   results and every required acceptable test result, and stop on non-zero exit
+   or any disallowed status. Partial output is not a release.
 6. Run the qualified exporter against each selected relation and write one local
-   temporary Parquet object. Reopen it and verify exact row count, schema, size,
-   and SHA-256, including the zero-row case. Intermediate dbt relations need not
+   temporary Parquet object. Reopen it, prove duplicate-preserving multiset
+   equality in both directions, and verify exact row count, schema, size, and
+   SHA-256, including the zero-row case. Intermediate dbt relations need not
    survive the job after export completes.
 7. Conditionally create each final Azure output from the verified local bytes.
    The admitted publisher uses provider create-only preconditions and never
    truncates, repairs, or overwrites an existing key.
 8. Conditionally create the exact manifest and run-results artifacts from that
    invocation, recording their digests, sizes, and returned provider evidence.
-9. Generate the canonical envelope and conditionally create `release.json` last.
+9. Generate the canonical envelope with a `retainUntil` satisfying the
+   deployment profile and conditionally create `release.json` last.
 10. Read back or conditionally inspect the committed objects as required by the
     admitted publisher tuple, then submit the exact envelope URI and digest to
     LeapView deployment automation.
@@ -549,9 +685,11 @@ real upstream system may supply an equivalent immutable dataset revision.
   candidate-input acquisition. It does not receive the producer identity or
   access to raw source data unless separately required, and serving does not
   retain an Azure read dependency after candidate seal.
-- **AZR-05:** The LeapView connection binds the non-secret Azure account and
-  container endpoint. `release.json` refers to that logical binding and exact
-  `az://`, `azure://`, or `abfss://` object locations admitted by the binding.
+- **AZR-05:** The delivery request maps each portable storage alias in
+  `release.json` to a LeapView connection binding for the non-secret Azure
+  account and container endpoint. Each exact `az://`, `azure://`, or `abfss://`
+  object location must be within the mapped binding's admitted scope. The
+  envelope contains no LeapView binding name.
 - **AZR-06:** Azure Blob version ID and ETag are recorded when available, but
   streaming SHA-256 of the exact bytes staged by LeapView remains mandatory.
   Storage-level versioning or an immutable-storage policy is recommended defense
@@ -581,32 +719,39 @@ real upstream system may supply an equivalent immutable dataset revision.
   Preflight existence checks are advisory and never replace the atomic provider
   condition. Direct DuckDB writes to final release keys are not in the initial
   tuple.
+- **AZR-13:** The release container's lifecycle and immutable-storage settings,
+  together with producer cleanup permissions, must not delete or alter a
+  committed object before its envelope's `retainUntil`. The showcase records
+  this configuration as evidence of the 30-day producer guarantee.
 
 ## Failure behavior
 
-| Condition                                                                              | Required result                                                            |
-| -------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
-| dbt build exits non-zero                                                               | No release envelope and no LeapView deployment request                     |
-| Selected model or required test fails or is skipped                                    | No committed release; partial prefix may be cleaned later                  |
-| Exported Parquet contains a sentinel row or differs in row count from its dbt relation | Producer failure; no output publication or release envelope                |
-| Conditional create reports an existing final key                                       | Publication conflict; never overwrite, truncate, or repair that key        |
-| Artifact digest, size, invocation, project, adapter, or schema version differs         | Plan rejection before generated graph construction                         |
-| Selected node is missing, disabled, not a model, or lacks a successful result          | Plan rejection identifying the bounded dbt unique ID                       |
-| Release URI resolves but expected digest differs                                       | Integrity conflict; never accept current bytes                             |
-| Output path is a glob, directory, mutable channel, or unsupported provider             | Plan rejection                                                             |
-| Output is missing, unreadable, changed, or has wrong size or SHA-256                   | Plan or candidate failure; active generation unchanged                     |
-| Staged row count or physical SchemaDigest differs from release evidence                | Producer corruption or input race; candidate failure                       |
-| Physical schema conflicts with dbt contract or LeapView type support                   | Compatibility rejection with field-level diagnostics                       |
-| Logical connection binding is absent or unauthorized                                   | Not-found/authorization failure without credential disclosure              |
-| Binding revision changes after planning                                                | Target-revision conflict and replan                                        |
-| Generated ID collides or changes kind                                                  | Identity rejection; never retarget an existing UID                         |
-| Deployment supplies several independently published releases                           | Profile rejection before resource mapping                                  |
-| SemanticModel dataset carries a dbt or LeapView Project-qualified foreign reference    | Compile rejection without foreign metadata disclosure                      |
-| Producer publishes a newer release                                                     | Existing plans and generations remain pinned                               |
-| Release object disappears before verified acquisition                                  | Candidate-input availability failure; active generation unchanged          |
-| Release object disappears after candidate seal                                         | No serving or rollback effect; retained sealed state remains authoritative |
-| Mutable channel points elsewhere during retry                                          | Ignored after exact resolution; canonical-input drift conflicts            |
-| Release contains secret-like fields or values                                          | Strict rejection and security audit without echoing the value              |
+| Condition                                                                               | Required result                                                            |
+| --------------------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| dbt build exits non-zero                                                                | No release envelope and no LeapView deployment request                     |
+| Selection policy is absent, unsupported, or differs from the locked v1 policy           | Release rejection; do not infer what dbt selected                          |
+| Selected model or derived required test is missing, duplicated, fails, or is skipped    | No committed release or plan rejection, depending on detection point       |
+| Exported Parquet contains a sentinel row or differs as a multiset from its dbt relation | Producer failure; no output publication or release envelope                |
+| Conditional create reports an existing final key                                        | Publication conflict; never overwrite, truncate, or repair that key        |
+| Artifact digest, size, invocation, project, adapter, or schema version differs          | Plan rejection before generated graph construction                         |
+| Selected node is missing, disabled, not a model, or lacks a successful result           | Plan rejection identifying the bounded dbt unique ID                       |
+| Release URI resolves but expected digest differs                                        | Integrity conflict; never accept current bytes                             |
+| Output path is a glob, directory, mutable channel, or unsupported provider              | Plan rejection                                                             |
+| Output is missing, unreadable, changed, or has wrong size or SHA-256                    | Plan or candidate failure; active generation unchanged                     |
+| Staged row count or physical SchemaDigest differs from release evidence                 | Producer corruption or input race; candidate failure                       |
+| Physical schema conflicts with dbt contract or LeapView type support                    | Compatibility rejection with field-level diagnostics                       |
+| Storage-alias mapping is missing, extra, duplicated, or unauthorized                    | Plan rejection without credential or hidden binding disclosure             |
+| Alias mapping or binding revision changes after planning                                | Target-revision conflict and replan                                        |
+| Generated ID collides or changes kind                                                   | Identity rejection; never retarget an existing UID                         |
+| Deployment supplies several independently published releases                            | Profile rejection before resource mapping                                  |
+| SemanticModel dataset carries a dbt or LeapView Project-qualified foreign reference     | Compile rejection without foreign metadata disclosure                      |
+| Producer publishes a newer release                                                      | Existing plans and generations remain pinned                               |
+| Release object disappears before verified acquisition                                   | Candidate-input availability failure; active generation unchanged          |
+| Guaranteed acquisition is planned after `retainUntil`                                   | Plan rejection; later use must be explicitly availability-dependent        |
+| Release object disappears after candidate seal                                          | No serving or rollback effect; retained sealed state remains authoritative |
+| Mutable channel points elsewhere during retry                                           | Ignored after exact resolution; canonical-input drift conflicts            |
+| Release contains secret-like fields or values                                           | Strict rejection and security audit without echoing the value              |
+| Policy requires authenticated provenance but attestation is absent or untrusted         | Admission rejection; producer assertions never satisfy the policy          |
 
 ## Production showcase acceptance
 
@@ -619,9 +764,14 @@ The demonstration is conformant only when it proves all of the following:
 - a protected GitHub Actions workflow authenticates without a long-lived Azure
   secret, runs one pinned classic dbt Core and dbt-duckdb build, exports locally,
   and conditionally creates a new immutable release;
+- the recorded selection policy deterministically yields the admitted model and
+  required test sets, and omission of one required test is rejected;
 - the fixture includes both a non-empty model and a valid zero-row model, and
   proves that neither producer Parquet nor the imported DuckLake table contains
   a synthetic record;
+- duplicate, NULL, decimal, timestamp, NaN, and nested-value fixtures prove
+  duplicate-preserving multiset equality between each tested relation and its
+  exported Parquet under the pinned tuple;
 - LeapView plans against its read-only native Azure connection, displays
   generated resources and provenance, acquires and hashes each output once,
   materializes it into the private DuckLake candidate, qualifies that candidate,
@@ -631,6 +781,9 @@ The demonstration is conformant only when it proves all of the following:
 - an intentionally incompatible Parquet schema is rejected before activation;
 - a second successful release does not change the active generation until its
   own plan is activated;
+- Azure lifecycle configuration preserves every release object through the
+  envelope's `retainUntil`, and a post-deadline promotion is reported as
+  availability-dependent;
 - removing or changing Azure release objects after seal does not change the
   served generation; and
 - rollback restores the first sealed LeapView generation without rerunning dbt,
@@ -642,17 +795,18 @@ production profile; both paths must generate the same base release contract.
 
 ## Evidence and conformance gates
 
-| Requirement range | Required maintained evidence                                                                                                                     | Status  |
-| ----------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ | ------- |
-| ENV-01–ENV-08     | Generated release schema, RFC 8785 golden corpus, strict/bounded parser, and idempotency tests                                                   | Pending |
-| CMP-01–CMP-06     | Published exact compatibility matrix, upgrade fixtures, unsupported-engine and unsupported-version rejection                                     | Pending |
-| ART-01–ART-10     | Supported dbt artifact fixtures, invocation/status correlation, malformed and version-rejection corpus                                           | Pending |
-| EXP-01–EXP-08     | Non-empty and zero-row relations, no-sentinel proof, row-count/schema reconciliation, and stock-external rejection                               | Pending |
-| OUT-01–OUT-10     | Single-stream staging, SHA-256, row count, Parquet footer, schema normalization, target materialization, and post-seal independence              | Pending |
-| MAP-01–MAP-12     | Deterministic generated resources, dependency provenance, single-release enforcement, collision, lineage, and local semantic-consumer tests      | Pending |
-| DEP-01–DEP-09     | Release-lock, target-revision, verified ingress, candidate failure, promotion, activation, sealed rollback, lease, and GC tests                  | Pending |
-| AZR-01–AZR-12     | OIDC/RBAC review, explicit CLI credential chain, conditional-create integration fixtures, secret scan, protected workflow, and channel isolation | Pending |
-| Showcase          | Reproducible repository, recorded workflow evidence, failure demonstrations, activation, and rollback runbook                                    | Pending |
+| Requirement range | Required maintained evidence                                                                                                                          | Status  |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- | ------- |
+| ENV-01–ENV-12     | Generated release schema, RFC 8785 golden corpus, strict/bounded parser, trust-root/attestation policy, retention, and idempotency tests              | Pending |
+| CMP-01–CMP-06     | Published exact compatibility matrix, upgrade fixtures, unsupported-engine and unsupported-version rejection                                          | Pending |
+| ART-01–ART-12     | Supported dbt artifact fixtures, closed-selection and required-test derivation, invocation/status correlation, malformed and version-rejection corpus | Pending |
+| EXP-01–EXP-09     | Non-empty and zero-row relations, value multiset equivalence fixtures, no-sentinel proof, and stock-external rejection                                | Pending |
+| SCH-01–SCH-08     | Executable canonical type algebra, Parquet mapping, schema golden corpus, and digest compatibility fixtures                                           | Pending |
+| OUT-01–OUT-10     | Single-stream staging, SHA-256, row count, Parquet footer, schema normalization, target materialization, and post-seal independence                   | Pending |
+| MAP-01–MAP-12     | Deterministic generated resources, dependency provenance, single-release enforcement, collision, lineage, and local semantic-consumer tests           | Pending |
+| DEP-01–DEP-09     | Release-lock, target-revision, verified ingress, candidate failure, promotion, activation, sealed rollback, lease, and GC tests                       | Pending |
+| AZR-01–AZR-13     | OIDC/RBAC review, explicit CLI credential chain, conditional-create and retention fixtures, secret scan, protected workflow, and channel isolation    | Pending |
+| Showcase          | Reproducible repository, recorded workflow evidence, failure demonstrations, activation, and rollback runbook                                         | Pending |
 
 Implementation must add TypeSpec or an equivalent generated contract source for
 the release envelope, publish supported compatibility tuples, and update the

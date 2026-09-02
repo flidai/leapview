@@ -175,11 +175,26 @@ UID and environment. A later request naming another Project or environment is a
 conflict; changing the claim requires an explicit instance reprovisioning or
 recovery operation outside ordinary deployment.
 
-The first local or single-repository setup creates or receives one default
-Project binding automatically. Routine browser and query routes therefore need
-no Project prefix or picker. Deployment APIs may carry a Project locator, but
-it must resolve to the already bound Project UID before work begins and cannot
-switch the server's Project.
+The deployment authority is the canonical Project UID issuer. It mints one
+opaque Project UID once, or receives it from an external Project registry,
+before contacting any target instance. The same exact UID is supplied when
+bootstrapping that Project's development, staging, and production targets. A
+target never independently invents Project identity as a side effect of
+deployment.
+
+An unclaimed instance exposes one narrow bootstrap operation authorized by an
+instance-administrator capability that exists before Project-scoped
+authorization. Bootstrap receives the issuer-supplied Project UID and target
+environment, creates the durable singleton claim atomically, and records the
+issuer, principal, and audit evidence. Repeating the same tuple is idempotent;
+any different tuple conflicts. After a claim exists, the bootstrap capability
+cannot select or switch Project context.
+
+The first local or single-repository setup may mint one default Project UID in
+durable local deployment state and bootstrap its target automatically. Routine
+browser and query routes therefore need no Project prefix or picker. Ordinary
+deployment APIs may carry a Project locator, but it must resolve to the already
+bound Project UID before work begins and cannot switch the server's Project.
 
 ### Project, environment, and generation
 
@@ -270,7 +285,8 @@ and failure behavior. Project identity alone does not select those semantics.
 
 One dbt repository normally maps to one LeapView Project. The dbt project name,
 repository, and commit remain producer provenance and may seed a suggested
-human-facing locator, but they do not replace the target-owned Project UID.
+human-facing locator, but they do not replace the issuer-assigned Project UID
+durably claimed by the target.
 Environment-specific dbt releases and LeapView bindings remain target inputs.
 
 The producing dbt project may already depend on other dbt projects. dbt, not
@@ -328,6 +344,10 @@ its publication, import, retention, and policy complexity.
 - Project-claim tests prove one target database instance can bind exactly one
   canonical Project UID and environment, the same claim is idempotent, and a
   conflicting claim fails before candidate work.
+- Bootstrap tests prove a deployment authority mints or receives one Project UID
+  before target contact, all environments claim that exact UID, only an
+  instance administrator may initialize an unclaimed target, and ordinary
+  Project authorization is never used before the claim exists.
 - Runtime-host, router, browser, query, release, search, and agent tests reject
   request-time Project switching and active scopes spanning several Projects.
 - Plan, candidate, generation, serving, audit, lineage, authorization, cache,
