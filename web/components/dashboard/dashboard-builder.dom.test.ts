@@ -1974,6 +1974,15 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
       await element.updateComplete
       const root = element.shadowRoot
       const host = root.querySelector('.visual-preview lv-visualization-host') as any
+      const initialEnvelope = host?.envelope
+      const pages = element.builder.pages.map((page: any) => page.id === 'overview'
+        ? { ...page, visuals: page.visuals.map((visual: any) => visual.id === 'sales-chart'
+          ? { ...visual, placement: { ...visual.placement, colSpan: Math.max(1, visual.placement.colSpan - 1) } }
+          : visual) }
+        : page)
+      mergePatch({ builder: { pages } })
+      await element.updateComplete
+      const hostAfterLayout = root.querySelector('.visual-preview lv-visualization-host') as any
       const previewWrapper = root.querySelector('.visual-preview') as HTMLElement | null
       const hostBox = host?.getBoundingClientRect()
       const wrapperBox = previewWrapper?.getBoundingClientRect()
@@ -1982,6 +1991,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
         visualTag: root.querySelector('.visual')?.localName,
         visualRole: root.querySelector('.visual')?.getAttribute('role'),
         hostVisualID: host?.envelope?.visualID,
+        envelopeStableAfterLayout: hostAfterLayout?.envelope === initialEnvelope,
         hostAuthoring: host?.authoring,
         hostPointerEvents: host ? getComputedStyle(host).pointerEvents : '',
         wrapperInert: previewWrapper?.hasAttribute('inert'),
@@ -1998,6 +2008,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.visualTag).toBe('div')
     expect(state.visualRole).toBe('group')
     expect(state.hostVisualID).toBe('sales-chart')
+    expect(state.envelopeStableAfterLayout).toBe(true)
     expect(state.hostAuthoring).toBe(true)
     expect(state.hostPointerEvents).toBe('auto')
     expect(state.wrapperInert).toBe(false)

@@ -392,6 +392,34 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		writeBuilderError(w, r, err)
 		return
 	}
+	if command.SetPlacements != nil || command.UpdatePageLayout != nil {
+		// Moving, resizing, or changing the page canvas cannot change a visual's
+		// query or renderer envelope. Recompile only to bind the new authored
+		// revision to the active semantic generation, then leave the existing
+		// preview and filter signals untouched in the browser. Republishing (and
+		// especially clear-first replacing) builderVisuals here makes every
+		// renderer reload for a layout-only edit.
+		envelope := dashboardBuilderEnvelope(builder)
+		if compiled, compileErr := h.Authoring.Compile(h.analyticalContext(r.Context()), preview.CompileRequest{
+			ProjectID: project, ActorID: actorID,
+			DashboardID: authoring.DashboardID(strings.TrimSpace(builder.DashboardID)),
+			DraftID:     authoring.DraftID(strings.TrimSpace(builder.DraftID)),
+			ExpectedRevision: authoring.RevisionToken{
+				RevisionID: authoring.RevisionID(strings.TrimSpace(builder.Revision.ID)), Number: uint64(maxInt64(builder.Revision.Number)), ContentHash: strings.TrimSpace(builder.Revision.ContentHash),
+			},
+		}); compileErr == nil {
+			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateIDForGeneration(builder, compiled.SemanticEvidence.Identity.GenerationID))
+		} else {
+			envelope.Runtime.ServingStateID = optionalRuntimeString(builderServingStateID(builder))
+		}
+		envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
+		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
+			"builder": envelope.Builder,
+			"runtime": envelope.Runtime,
+			"status":  uisignals.DashboardStatus{Loading: false},
+		})
+		return
+	}
 	envelope := h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder)
 	envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 	// Datastar applies JSON merge-patch semantics. A complete visualization
