@@ -4,7 +4,7 @@ Status: accepted
 
 Profile: `leapview.semantic-access/v1`
 
-Last updated: 2026-09-01
+Last updated: 2026-09-02
 
 Owners: LeapView maintainers
 
@@ -438,7 +438,8 @@ spec:
 | CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
 | STR-01–STR-12 | Generated TypeSpec, JSON Schema, DTO, extracted-YAML, and authoring-registry fixtures | Pending |
 | ATT-01–ATT-12 | Control-plane attribute registry, mutation, disablement, claim-mapping, and trust-boundary tests | Pending |
-| VAL-01–VAL-11 | Cross-path and independent typed-canonicalization golden fixtures | Pending |
+| VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented |
+| VAL-11 | The shared handwritten canonicalizer and analytics semantic-filter consumer are implemented. Generated canonicalization and the control-plane ingestion, claims, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection paths remain unqualified. | Partial |
 | GRT-01–GRT-10 | Access-grant compiler and evaluator fixtures | Pending |
 | FLT-01–FLT-10 | Semantic planner, parameterization, cardinality, and fail-closed tests | Pending |
 | PLN-01–PLN-09 | Security-barrier IR validation and join, aggregate, rollup, and rewrite golden plans | Pending |

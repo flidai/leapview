@@ -8,6 +8,7 @@ import test from "node:test";
 import {
   buildSpdxDocument,
   createReleaseManifest,
+  parseBunLock,
   validateReleasePolicy,
 } from "./release-evidence.mjs";
 import {
@@ -21,7 +22,7 @@ const packageDocument = {
   version: "0.1.0",
   devDependencies: {
     electron: "44.0.0",
-    node: "24.14.0",
+    node: "26.8.1",
     "@electron-forge/cli": "8.0.0-alpha.10",
   },
 };
@@ -54,7 +55,7 @@ const policy = {
     electron: "44.0.0",
     electronMajor: 44,
     chromium: "152.0.7977.54",
-    node: "24.14.0",
+    node: "26.8.1",
     forge: "8.0.0-alpha.10",
     bun: "1.3.14",
   },
@@ -114,6 +115,19 @@ const policy = {
   },
 };
 
+test("bun lock parsing is independent of the TypeScript compiler API", async () => {
+  const lockText = await readFile(
+    new URL("../bun.lock", import.meta.url),
+    "utf8",
+  );
+  const parsed = parseBunLock(lockText);
+  assert.equal(parsed.lockfileVersion, 1);
+  assert.throws(
+    () => parseBunLock('{ "lockfileVersion": }'),
+    /could not parse bun\.lock/u,
+  );
+});
+
 const packageVerification = {
   schemaVersion: 2,
   platform: "darwin",
@@ -123,7 +137,7 @@ const packageVerification = {
   runtime: {
     electron: "44.0.0",
     chromium: "152.0.7977.54",
-    node: "24.14.0",
+    node: "26.8.1",
   },
   fuses: {
     RunAsNode: "disabled",

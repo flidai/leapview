@@ -29,6 +29,7 @@ require (
 	github.com/go-jose/go-jose/v4 v4.1.4
 	github.com/google/go-cmp v0.7.0
 	github.com/gorilla/csrf v1.7.3
+	github.com/jackc/pgx/v5 v5.10.0
 	github.com/moby/moby/api v1.54.2
 	github.com/modelcontextprotocol/go-sdk v1.6.1
 	github.com/opencontainers/go-digest v1.0.0
@@ -47,6 +48,7 @@ require (
 	github.com/stretchr/testify v1.12.1
 	github.com/testcontainers/testcontainers-go v0.42.0
 	github.com/testcontainers/testcontainers-go/modules/minio v0.42.0
+	github.com/testcontainers/testcontainers-go/modules/postgres v0.42.0
 	github.com/toon-format/toon-go v0.0.0-20251202084852-7ca0e27c4e8c
 	github.com/tus/tusd/v2 v2.10.0
 	github.com/yuin/goldmark v1.7.17
@@ -59,6 +61,7 @@ require (
 	golang.org/x/oauth2 v0.36.0
 	golang.org/x/sync v0.22.0
 	golang.org/x/sys v0.47.0
+	golang.org/x/text v0.41.0
 	golang.org/x/tools v0.49.0
 	gopkg.in/yaml.v3 v3.0.1
 	maragu.dev/gomponents v1.3.0
@@ -134,6 +137,9 @@ require (
 	github.com/hashicorp/go-retryablehttp v0.7.7 // indirect
 	github.com/hashicorp/hcl v1.0.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
+	github.com/jackc/pgpassfile v1.0.0 // indirect
+	github.com/jackc/pgservicefile v0.0.0-20240606120523-5a60cdf6a761 // indirect
+	github.com/jackc/puddle/v2 v2.2.2 // indirect
 	github.com/klauspost/asmfmt v1.3.2 // indirect
 	github.com/klauspost/compress v1.18.5 // indirect
 	github.com/klauspost/cpuid/v2 v2.3.0 // indirect
@@ -208,7 +214,6 @@ require (
 	golang.org/x/exp v0.0.0-20260410095643-746e56fc9e2f // indirect
 	golang.org/x/telemetry v0.0.0-20260811182544-a038080d80e5 // indirect
 	golang.org/x/term v0.45.0 // indirect
-	golang.org/x/text v0.41.0 // indirect
 	golang.org/x/xerrors v0.0.0-20240903120638-7835f813f4da // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20260414002931-afd174a4e478 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20260523011958-0a33c5d7ca68 // indirect

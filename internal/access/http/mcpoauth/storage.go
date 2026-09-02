@@ -31,7 +31,15 @@ type Store struct {
 
 func NewStore(db *sql.DB) *Store { return &Store{db: db} }
 
-func (s *Store) setClientResolver(resolver func(context.Context, string) (storedClient, error)) {
+func (s *Store) IsPostgresBacked() bool { return false }
+
+func (s *Store) SetSessionRetention(retention time.Duration) {
+	if s != nil {
+		s.sessionRetention = retention
+	}
+}
+
+func (s *Store) SetClientResolver(resolver func(context.Context, string) (storedClient, error)) {
 	s.resolveClient = resolver
 }
 
@@ -54,7 +62,12 @@ type storedClient struct {
 	PrincipalID             string
 }
 
-func (s *Store) createClient(ctx context.Context, client storedClient) error {
+// StoredClient is the portable client record supplied by a durable OAuth
+// backend. The alias keeps the existing internal representation while making
+// StoreBackend implementable by other capability packages.
+type StoredClient = storedClient
+
+func (s *Store) CreateClient(ctx context.Context, client storedClient) error {
 	redirects, _ := json.Marshal(client.RedirectURIs)
 	grants, _ := json.Marshal(client.GrantTypes)
 	responses, _ := json.Marshal(client.ResponseTypes)
@@ -74,25 +87,19 @@ func (s *Store) createClient(ctx context.Context, client storedClient) error {
 	return err
 }
 
-func (s *Store) ensureServiceClient(ctx context.Context, principal accessPrincipal) error {
+func (s *Store) EnsureServiceClient(ctx context.Context, principalID, principalName, resource string) error {
 	redirects, _ := json.Marshal([]string{})
 	grants, _ := json.Marshal([]string{"client_credentials"})
 	responses, _ := json.Marshal([]string{})
 	scopes, _ := json.Marshal([]string{ScopeMCPUse})
-	audience, _ := json.Marshal([]string{principal.resource})
+	audience, _ := json.Marshal([]string{resource})
 	_, err := s.db.ExecContext(ctx, `INSERT INTO oauth_clients
         (id, name, redirect_uris_json, grant_types_json, response_types_json, scopes_json, audience_json, public, token_endpoint_auth_method, principal_id)
         VALUES (?, ?, ?, ?, ?, ?, ?, 0, 'client_secret_post', ?)
         ON CONFLICT(id) DO UPDATE SET name = excluded.name, scopes_json = excluded.scopes_json,
         audience_json = excluded.audience_json, principal_id = excluded.principal_id`,
-		principal.id, principal.name, redirects, grants, responses, scopes, audience, principal.id)
+		principalID, principalName, redirects, grants, responses, scopes, audience, principalID)
 	return err
-}
-
-type accessPrincipal struct {
-	id       string
-	name     string
-	resource string
 }
 
 func (s *Store) GetClient(ctx context.Context, id string) (fosite.Client, error) {
@@ -156,7 +163,7 @@ func (client storedClient) fositeClient() fosite.Client {
 	}
 }
 
-func (s *Store) clientName(ctx context.Context, id string) (string, error) {
+func (s *Store) ClientName(ctx context.Context, id string) (string, error) {
 	if cached, ok := s.dynamicClients.Load(id); ok {
 		entry := cached.(cachedClient)
 		if entry.expiresAt.After(time.Now()) {

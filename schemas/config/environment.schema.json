@@ -2492,6 +2492,167 @@
       "x-lifecycle": "internal",
       "x-scope": "browser test setup"
     },
+    "LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED": {
+      "description": "Require the real PostgreSQL 18 conformance lane to fail closed when Docker or the pinned image is unavailable.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "internal",
+      "x-scope": "PostgreSQL conformance gate"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_ACQUIRE_TIMEOUT": {
+      "default": "5s",
+      "description": "Maximum time to wait when acquiring a control-plane PostgreSQL connection.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_IDLE_TX_TIMEOUT": {
+      "default": "1m",
+      "description": "Control-plane PostgreSQL idle-in-transaction timeout.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_INTENT": {
+      "default": "read-write",
+      "description": "Read/write intent required for the control-plane PostgreSQL pool.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_LOCK_TIMEOUT": {
+      "default": "5s",
+      "description": "Control-plane PostgreSQL session lock-wait timeout.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_POOL_MAX_CONNS": {
+      "default": "8",
+      "description": "Maximum connections allowed in the control-plane PostgreSQL pool.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_POOL_MIN_CONNS": {
+      "default": "1",
+      "description": "Minimum connections reserved for the control-plane PostgreSQL pool.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {
+      "default": "leapview_control_runtime",
+      "description": "Configured PostgreSQL runtime role expected by the control-plane pool.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_STATEMENT_TIMEOUT": {
+      "default": "30s",
+      "description": "Control-plane PostgreSQL session statement timeout.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_URL": {
+      "description": "Explicit PostgreSQL control-plane connection URL (including credentials and TLS parameters).",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_ACQUIRE_TIMEOUT": {
+      "default": "5s",
+      "description": "Maximum time to wait when acquiring a DuckLake catalog PostgreSQL connection.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_IDLE_TX_TIMEOUT": {
+      "default": "1m",
+      "description": "DuckLake catalog PostgreSQL idle-in-transaction timeout.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_INTENT": {
+      "default": "read-write",
+      "description": "Read/write intent required for the DuckLake catalog PostgreSQL pool.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_LOCK_TIMEOUT": {
+      "default": "5s",
+      "description": "DuckLake catalog PostgreSQL session lock-wait timeout.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_POOL_MAX_CONNS": {
+      "default": "4",
+      "description": "Maximum connections allowed in the DuckLake catalog PostgreSQL pool.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_POOL_MIN_CONNS": {
+      "default": "1",
+      "description": "Minimum connections reserved for the DuckLake catalog PostgreSQL pool.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {
+      "default": "leapview_ducklake_runtime",
+      "description": "Configured PostgreSQL runtime role expected by the DuckLake catalog pool.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_STATEMENT_TIMEOUT": {
+      "default": "30s",
+      "description": "DuckLake catalog PostgreSQL session statement timeout.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_URL": {
+      "description": "Explicit PostgreSQL DuckLake catalog connection URL; independent from the control-plane URL.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_EXPECTED_MAJOR": {
+      "default": "18",
+      "description": "Required PostgreSQL server major version for runtime readiness.",
+      "pattern": "^-?[0-9]+$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_POSTGRES_REQUIRE_TLS": {
+      "default": "true",
+      "description": "Require PostgreSQL URLs to use an encrypted sslmode.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_PRODUCTION": {
       "default": "false",
       "description": "Enable production serving and validation behavior.",

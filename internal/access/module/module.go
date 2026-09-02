@@ -20,6 +20,7 @@ import (
 
 type Module struct {
 	handler                      accesshttp.Handler
+	persistence                  *Persistence
 	auth                         *Auth
 	currentPrincipal             func(*http.Request) (Principal, bool)
 	repository                   func() (access.Repository, error)
@@ -35,6 +36,7 @@ type Module struct {
 }
 
 type surfaceConfig struct {
+	Persistence                  *Persistence
 	Repository                   func() (access.Repository, error)
 	CurrentPrincipal             func(*http.Request) (Principal, bool)
 	CurrentCredential            func(*http.Request) (access.APICredential, bool)
@@ -96,7 +98,7 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	module := &Module{auth: config.Auth, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
+	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
 		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
