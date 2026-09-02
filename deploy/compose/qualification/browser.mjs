@@ -41,10 +41,13 @@ try {
   await page.getByText('Governed order rows', { exact: true }).waitFor({ state: 'visible', timeout: 60_000 })
   await page.getByText('24', { exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
 
-  const state = page.getByRole('combobox', { name: 'State' })
+  const state = page.getByRole('button', { name: /^State:/ })
   await state.click({ force: true })
-  await state.locator('option', { hasText: 'SP' }).waitFor({ state: 'attached', timeout: 30_000 })
-  await state.selectOption({ label: 'SP' })
+  const stateOptions = page.getByRole('dialog', { name: 'State filter options', exact: true })
+  await stateOptions.waitFor({ state: 'visible', timeout: 30_000 })
+  await stateOptions.getByRole('checkbox', { name: 'SP', exact: true }).check()
+  await page.keyboard.press('Escape')
+  await stateOptions.waitFor({ state: 'hidden', timeout: 30_000 })
   await page.getByText('6', { exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
 
   const table = page.locator('lv-report-table')

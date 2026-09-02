@@ -485,6 +485,24 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 			t.Errorf("browser qualification must wait for asynchronous governed table rendering %q", required)
 		}
 	}
+	for name, script := range map[string]string{"browser": browser, "performance": performance} {
+		for _, required := range []string{
+			`getByRole('button', { name: /^State:/ })`,
+			`getByRole('dialog', { name: 'State filter options', exact: true })`,
+		} {
+			if !strings.Contains(script, required) {
+				t.Errorf("%s qualification must use the current State multi-select contract %q", name, required)
+			}
+		}
+		if strings.Contains(script, `getByRole('combobox', { name: 'State' })`) {
+			t.Errorf("%s qualification still uses the retired State select contract", name)
+		}
+	}
+	if !strings.Contains(browser, `getByRole('checkbox', { name: 'SP', exact: true })`) ||
+		!strings.Contains(performance, `getByRole('checkbox', { name: value, exact: true })`) ||
+		!strings.Contains(performance, `getByRole('checkbox', { name: 'All State', exact: true })`) {
+		t.Error("browser qualification must exercise deterministic State multi-select values")
+	}
 	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
 		t.Error("browser qualification must assert the table cell accessibility label")
 	}
