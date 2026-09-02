@@ -243,6 +243,8 @@ func (topology *qualificationNativePostgresTopology) AssertBootstrapOpen(ctx con
 	if stage == "" {
 		return errors.New("qualification bootstrap stage is required")
 	}
+	// sqlc-exception: analyzer-incompatible. Qualification executes psql through
+	// a sidecar container command, outside the generated PostgreSQL query boundary.
 	output, err := topology.Container.Exec(
 		ctx,
 		nil,
@@ -479,6 +481,8 @@ func waitQualificationNativePostgresTopology(
 			{qualificationNativePostgresControlDatabase, qualificationNativePostgresControlRuntimeRole, credentials.controlRuntime},
 			{qualificationNativePostgresDuckLakeDatabase, qualificationNativePostgresDuckLakeRuntimeRole, credentials.duckLakeRuntime},
 		} {
+			// sqlc-exception: analyzer-incompatible. Readiness probes execute psql
+			// through a sidecar container command, outside generated query code.
 			if _, probeErr := container.Exec(requestCtx, nil, "sh", "-ec", qualificationNativePostgresProbe(probe.database, probe.role, probe.password)); probeErr != nil {
 				lastErr = probeErr
 				return false, nil

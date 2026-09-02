@@ -137,7 +137,7 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	if tx == nil {
 		return fmt.Errorf("schema transaction is required")
 	}
-	_, err := tx.Exec(ctx, schemaSQL)
+	_, err := tx.Exec(ctx, schemaSQL) // sqlc-exception: schema-ddl. Capability-owned DDL runs on the caller-owned migration transaction.
 	return err
 }
 
