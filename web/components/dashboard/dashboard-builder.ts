@@ -1203,7 +1203,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
       .pane[data-collapsed='true'] .pane-header,
       .pane[data-collapsed='true'] .field-browser-header {
-        position: static;
+        position: relative;
         height: 100%;
         box-sizing: border-box;
         padding: var(--base-size-8) var(--base-size-4);
@@ -1213,8 +1213,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       .pane[data-collapsed='true'] .pane-heading-row,
       .pane[data-collapsed='true'] .inspector-heading {
         height: 100%;
-        flex-direction: column-reverse;
-        justify-content: flex-end;
+        flex-direction: column;
+        justify-content: flex-start;
         flex-wrap: nowrap;
       }
 
@@ -1228,6 +1228,32 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         transform: rotate(180deg);
         overflow: visible;
         text-overflow: clip;
+      }
+
+      .pane[data-collapsed='true'] .pane-collapse {
+        position: absolute;
+        z-index: 1;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        min-height: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+      }
+
+      .pane[data-collapsed='true'] .pane-collapse svg {
+        display: none;
+      }
+
+      .pane[data-collapsed='true']:hover .pane-header,
+      .pane[data-collapsed='true']:hover .field-browser-header {
+        background: var(--lv-bg-control-hover, var(--lv-bg-panel-muted));
+      }
+
+      .pane[data-collapsed='true'] .pane-collapse:focus-visible {
+        outline: 2px solid var(--lv-fg-accent);
+        outline-offset: -2px;
       }
     }
 
