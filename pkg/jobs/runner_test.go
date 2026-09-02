@@ -118,6 +118,50 @@ func TestRunnerFailsUnknownJobKindExplicitly(t *testing.T) {
 	}
 }
 
+func TestRunnerSkipsUnknownCandidateBeforeAdmissionAndClaim(t *testing.T) {
+	repository := &candidateKindRunnerRepository{}
+	var admitted atomic.Int32
+	var handled atomic.Int32
+	runner, err := NewRunner(RunnerConfig{
+		Repository: repository,
+		Admission: AdmitterFunc(func(ctx context.Context, _ AdmissionRequest) (AdmissionLease, error) {
+			admitted.Add(1)
+			return testAdmissionLease{ctx: ctx}, nil
+		}),
+		Classes: []string{"control"},
+		Handlers: []Handler{HandlerFunc{JobKind: "known", Run: func(context.Context, Job) error {
+			handled.Add(1)
+			return nil
+		}}},
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner.dispatchCandidate(t.Context(), "owner", "control", Job{ID: "unknown", Kind: "unknown", WorkloadClass: "control"})
+	if got := admitted.Load(); got != 0 {
+		t.Fatalf("unknown candidate admission calls = %d, want 0", got)
+	}
+	if got := repository.claimed.Load(); got != 0 {
+		t.Fatalf("unknown candidate claim calls = %d, want 0", got)
+	}
+	if got := repository.failed.Load(); got != 0 {
+		t.Fatalf("unknown candidate failure calls = %d, want 0", got)
+	}
+
+	runner.dispatchCandidate(t.Context(), "owner", "control", Job{ID: "known", Kind: "known", WorkloadClass: "control"})
+	if got := admitted.Load(); got != 1 {
+		t.Fatalf("known candidate admission calls = %d, want 1", got)
+	}
+	if got := repository.claimed.Load(); got != 1 {
+		t.Fatalf("known candidate claim calls = %d, want 1", got)
+	}
+	if got := handled.Load(); got != 1 {
+		t.Fatalf("known candidate handler calls = %d, want 1", got)
+	}
+}
+
 func TestRunnerDurablyRequeuesExplicitRetryableFailure(t *testing.T) {
 	repository := &retryRecordingRunnerRepository{}
 	runner, err := NewRunner(RunnerConfig{
@@ -323,6 +367,22 @@ type candidateRunnerRepository struct {
 	started    chan struct{}
 	limit      atomic.Int64
 	problem    []byte
+}
+
+type candidateKindRunnerRepository struct {
+	runnerTestRepository
+	claimed atomic.Int32
+	failed  atomic.Int32
+}
+
+func (r *candidateKindRunnerRepository) ClaimByID(_ context.Context, id, _ string, owner string, _ time.Duration) (Job, bool, error) {
+	r.claimed.Add(1)
+	return Job{ID: id, Kind: "known", LeaseOwner: owner}, true, nil
+}
+
+func (r *candidateKindRunnerRepository) Fail(_ context.Context, _ string, _ Fence, _ []byte) error {
+	r.failed.Add(1)
+	return nil
 }
 
 func (r *candidateRunnerRepository) Candidates(_ context.Context, class string, limit int) ([]Job, error) {

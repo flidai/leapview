@@ -246,6 +246,12 @@ func (r *Runner) runPump(ctx context.Context, owner, class string) {
 }
 
 func (r *Runner) dispatchCandidate(ctx context.Context, owner, class string, candidate Job) {
+	// A generic runner only owns kinds for which a handler was explicitly
+	// registered. Skip unsupported candidates before admission and claiming so
+	// capability-specific dispatchers can service their own queue entries.
+	if _, ok := r.handlers[candidate.Kind]; !ok {
+		return
+	}
 	lease, err := r.admission.Acquire(ctx, AdmissionRequest{
 		Class: candidate.WorkloadClass, PrincipalID: candidate.PrincipalID,
 		GroupIDs:             append([]string(nil), candidate.GroupIDs...),
