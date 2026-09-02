@@ -785,7 +785,7 @@ func (c *UpgradeCoordinator) Run(ctx context.Context, in UpgradeRequest) (migrat
 	if err != nil {
 		return failMigration(err)
 	}
-	completed, err := c.Control.CompleteCatalogMigration(ctx, CompleteCatalogMigrationInput{MigrationID: in.MigrationID, GlobalFence: global, PoolFence: pool, Evidence: completion})
+	completed, err := c.Control.CompleteCatalogMigration(operationCtx, CompleteCatalogMigrationInput{MigrationID: in.MigrationID, GlobalFence: global, PoolFence: pool, Evidence: completion})
 	if err != nil {
 		return failMigration(err)
 	}

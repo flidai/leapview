@@ -411,14 +411,25 @@ SELECT count(*) FROM ducklake.catalog_migration WHERE physical_pool_id=sqlc.arg(
 SELECT count(*) FROM ducklake.migration_fence WHERE (scope='global' OR (scope='pool' AND physical_pool_id=sqlc.arg(physical_pool_id))) AND owner_id IS NOT NULL AND lease_expires_at > sqlc.arg(lease_expires_at);
 
 -- name: CountMissingSnapshotQualifications :one
+-- Snapshots admitted after the exact completed epoch carry native
+-- qualification evidence and do not incur requalification debt.
 SELECT count(*) FROM ducklake.snapshot_retention r
 WHERE r.physical_pool_id=sqlc.arg(physical_pool_id) AND r.catalog_id=sqlc.arg(catalog_id) AND r.state IN ('live','retiring')
 AND NOT EXISTS (
- SELECT 1 FROM ducklake.snapshot_requalification q
- WHERE q.physical_pool_id=r.physical_pool_id AND q.catalog_id=r.catalog_id AND q.snapshot_id=r.snapshot_id
-   AND q.migration_id=sqlc.arg(migration_id) AND q.status='qualified' AND q.compatibility_digest=sqlc.arg(compatibility_digest) AND q.catalog_schema_version=sqlc.arg(catalog_schema_version)
-   AND q.duckdb_runtime=sqlc.arg(duckdb_runtime) AND q.ducklake_extension=sqlc.arg(ducklake_extension) AND q.catalog_format=sqlc.arg(catalog_format)
-   AND EXISTS (SELECT 1 FROM ducklake.catalog_migration m WHERE m.migration_id=q.migration_id AND m.state='completed'
-      AND m.target_compatibility_digest=sqlc.arg(compatibility_digest) AND m.target_catalog_schema_version=sqlc.arg(catalog_schema_version) AND m.target_duckdb_runtime=sqlc.arg(duckdb_runtime)
-      AND m.target_ducklake_extension=sqlc.arg(ducklake_extension) AND m.target_catalog_format=sqlc.arg(catalog_format))
+ SELECT 1
+ FROM ducklake.catalog_migration m
+ WHERE m.migration_id=sqlc.arg(migration_id)
+   AND m.physical_pool_id=r.physical_pool_id AND m.catalog_id=r.catalog_id
+   AND m.state='completed' AND m.terminal_at IS NOT NULL
+   AND m.target_compatibility_digest=sqlc.arg(compatibility_digest) AND m.target_catalog_schema_version=sqlc.arg(catalog_schema_version) AND m.target_duckdb_runtime=sqlc.arg(duckdb_runtime)
+   AND m.target_ducklake_extension=sqlc.arg(ducklake_extension) AND m.target_catalog_format=sqlc.arg(catalog_format)
+   AND (
+      r.created_at > m.terminal_at
+      OR EXISTS (
+         SELECT 1 FROM ducklake.snapshot_requalification q
+         WHERE q.physical_pool_id=r.physical_pool_id AND q.catalog_id=r.catalog_id AND q.snapshot_id=r.snapshot_id
+           AND q.migration_id=m.migration_id AND q.status='qualified' AND q.compatibility_digest=sqlc.arg(compatibility_digest) AND q.catalog_schema_version=sqlc.arg(catalog_schema_version)
+           AND q.duckdb_runtime=sqlc.arg(duckdb_runtime) AND q.ducklake_extension=sqlc.arg(ducklake_extension) AND q.catalog_format=sqlc.arg(catalog_format)
+      )
+   )
 );

@@ -226,6 +226,76 @@ func TestPostgres18UpgradeAuthorityLifecycleAndRuntimeGate(t *testing.T) {
 	}
 }
 
+func TestPostgres18RuntimeGateSnapshotQualificationEpochBoundary(t *testing.T) {
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "ducklake_upgrade_epoch_boundary_test")
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	const poolID, catalogID = "upgrade-epoch-pool", "upgrade-epoch-catalog"
+	identity := CatalogIdentity{
+		PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID,
+		CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000401", MetadataSchema: "lake",
+		CompatibilityDigest: digest('a'), CatalogSchemaVersion: "catalog-v1",
+	}
+	compatibility := RuntimeCompatibility{
+		RuntimeTuple:        RuntimeTuple{DuckDBRuntime: "duckdb:1.5", DuckLakeExtension: "ducklake:0.3", CatalogFormat: "ducklake:v1"},
+		CompatibilityDigest: digest('a'), CatalogSchemaVersion: "catalog-v1",
+	}
+	if _, _, err := BootstrapCatalog(t.Context(), admin, identity, compatibility); err != nil {
+		t.Fatal(err)
+	}
+	tx, err = admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	qualified, err := QualifyCatalogBootstrap(t.Context(), tx, CatalogBootstrapQualificationInput{
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "epoch-boundary-owner", Compatibility: compatibility,
+		BeginEvidence:      []byte(`{"bootstrap":true,"drain_verified":true,"backup_verified":true}`),
+		CompletionEvidence: []byte(`{"bootstrap":true,"catalog_registration_verified":true}`),
+	})
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	postEpochRef := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 401}
+	if err := ensureSnapshotLive(t.Context(), admin, postEpochRef); err != nil {
+		t.Fatal(err)
+	}
+	if eligibility, err := CheckRuntimeAttachEligibility(t.Context(), admin, RuntimeAttachInput{PhysicalPoolID: poolID, CatalogID: catalogID, Compatibility: compatibility}); err != nil || !eligibility.Eligible {
+		t.Fatalf("post-epoch snapshot attach eligibility = %#v, err %v", eligibility, err)
+	}
+	var terminalAt time.Time
+	if err := admin.QueryRow(t.Context(), `SELECT terminal_at FROM ducklake.catalog_migration WHERE migration_id=$1`, qualified.CurrentMigrationID).Scan(&terminalAt); err != nil {
+		t.Fatal(err)
+	}
+	// Equality belongs to the pre-epoch side of the <= terminal_at boundary;
+	// without qualification evidence this retained snapshot must fail closed.
+	preEpochRef := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 402}
+	if _, err := admin.Exec(t.Context(), `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state,created_at) VALUES ($1,$2,$3,'live',$4)`, poolID, catalogID, preEpochRef.SnapshotID, terminalAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CheckRuntimeAttachEligibility(t.Context(), admin, RuntimeAttachInput{PhysicalPoolID: poolID, CatalogID: catalogID, Compatibility: compatibility}); !errors.Is(err, ErrRuntimeAttachIneligible) {
+		t.Fatalf("missing pre-epoch qualification attach error = %v, want ErrRuntimeAttachIneligible", err)
+	}
+}
+
 func TestPostgres18MigrationFenceConcurrencyAndGlobalExclusion(t *testing.T) {
 	h := postgrestest.Start(t)
 	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_upgrade_coordinator", Password: "migrator-secret", Login: true})

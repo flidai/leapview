@@ -1986,7 +1986,7 @@ CREATE OR REPLACE FUNCTION ducklake.complete_catalog_migration(
 ) RETURNS void LANGUAGE plpgsql SECURITY DEFINER
 SET search_path = pg_catalog, ducklake
 AS $$
-DECLARE m record; v_now timestamptz := clock_timestamp(); v_missing bigint; v_rows bigint;
+DECLARE m record; v_now timestamptz := clock_timestamp(); v_terminal timestamptz; v_missing bigint; v_rows bigint;
 BEGIN
     PERFORM 1 FROM ducklake.migration_fence WHERE scope='global' AND physical_pool_id=''
       AND owner_id=p_owner_id AND fencing_epoch=p_global_fencing_epoch AND lease_expires_at > v_now FOR UPDATE;
@@ -2004,6 +2004,12 @@ BEGIN
     IF m.owner_id <> p_owner_id OR m.fencing_epoch <> p_pool_fencing_epoch OR m.global_fencing_epoch <> p_global_fencing_epoch THEN
         RAISE EXCEPTION 'migration fence stale';
     END IF;
+    -- Serialize the retained-snapshot boundary with commit attempts. Writers
+    -- that started before completion become part of this migration epoch;
+    -- writers admitted after the transaction commits receive a later
+    -- created_at and rely on their native qualification evidence instead.
+    LOCK TABLE ducklake.snapshot_retention IN SHARE MODE;
+    v_terminal := clock_timestamp();
     SELECT count(*) INTO v_missing FROM ducklake.snapshot_retention r
      WHERE r.physical_pool_id=m.physical_pool_id AND r.catalog_id=m.catalog_id AND r.state IN ('live','retiring')
        AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_requalification q WHERE q.physical_pool_id=r.physical_pool_id AND q.catalog_id=r.catalog_id AND q.snapshot_id=r.snapshot_id AND q.migration_id=p_migration_id AND q.status='qualified' AND q.duckdb_runtime=m.target_duckdb_runtime AND q.ducklake_extension=m.target_ducklake_extension AND q.catalog_format=m.target_catalog_format AND q.compatibility_digest=m.target_compatibility_digest AND q.catalog_schema_version=m.target_catalog_schema_version);
@@ -2012,7 +2018,7 @@ BEGIN
        SET duckdb_runtime=m.target_duckdb_runtime,ducklake_extension=m.target_ducklake_extension,
            catalog_format=m.target_catalog_format,compatibility_digest=m.target_compatibility_digest,
            catalog_schema_version=m.target_catalog_schema_version,current_migration_id=p_migration_id,
-           updated_at=v_now
+           updated_at=v_terminal
      WHERE physical_pool_id=m.physical_pool_id AND catalog_id=m.catalog_id
        AND duckdb_runtime=m.current_duckdb_runtime AND ducklake_extension=m.current_ducklake_extension
        AND catalog_format=m.current_catalog_format AND compatibility_digest=m.current_compatibility_digest
@@ -2020,7 +2026,7 @@ BEGIN
     GET DIAGNOSTICS v_rows = ROW_COUNT;
     IF v_rows <> 1 THEN RAISE EXCEPTION 'runtime compatibility mismatch'; END IF;
     UPDATE ducklake.catalog_migration
-       SET state='completed',terminal_at=v_now,completion_evidence=p_completion_evidence
+       SET state='completed',terminal_at=v_terminal,completion_evidence=p_completion_evidence
      WHERE migration_id=p_migration_id AND state='running' AND owner_id=p_owner_id
        AND fencing_epoch=p_pool_fencing_epoch AND global_fencing_epoch=p_global_fencing_epoch;
     GET DIAGNOSTICS v_rows = ROW_COUNT;
