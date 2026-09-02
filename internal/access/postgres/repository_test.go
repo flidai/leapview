@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,7 +28,7 @@ type auditDatabase struct {
 
 func newAuditDatabase(t *testing.T) auditDatabase {
 	t.Helper()
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{

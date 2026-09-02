@@ -37,17 +37,15 @@ func TestValidateRoleRequiresPasswordForLogin(t *testing.T) {
 	}
 }
 
-func TestRequiredParsesBooleanEnvironment(t *testing.T) {
+func TestRequiredParsesBooleanSetting(t *testing.T) {
 	for _, value := range []string{"1", "true", "T", "yes", "on"} {
-		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", value)
-		if !Required() {
-			t.Fatalf("Required() = false for %q", value)
+		if !Required(value) {
+			t.Fatalf("Required(%q) = false", value)
 		}
 	}
 	for _, value := range []string{"", "0", "false", "off", "no"} {
-		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", value)
-		if Required() {
-			t.Fatalf("Required() = true for %q", value)
+		if Required(value) {
+			t.Fatalf("Required(%q) = true", value)
 		}
 	}
 }

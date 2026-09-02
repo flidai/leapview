@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -61,7 +62,7 @@ func (m *ownershipMarker) VerifyNamespaceOwnership(context.Context, physicalpool
 
 func testDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
 	db := h.NewDatabase(t, "physical_pool_test")
 	p, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {

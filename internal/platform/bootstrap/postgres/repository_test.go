@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 
 func bootstrapTestDB(t *testing.T) *pgxpool.Pool {
 	t.Helper()
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
 	db := h.NewDatabase(t, "")
 	p, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
@@ -133,7 +134,7 @@ func TestBootstrapImmutableTamperAndCallerRollback(t *testing.T) {
 }
 
 func TestBootstrapRolePrivileges(t *testing.T) {
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true})
 	readonly := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})

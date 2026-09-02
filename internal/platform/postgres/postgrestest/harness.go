@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -59,11 +58,11 @@ type Harness struct {
 	databaseCreated bool
 }
 
-// Required reports whether the real PostgreSQL conformance lane is mandatory.
-// When mandatory, an unavailable provider or pinned image fails the test;
-// otherwise Start skips the test cleanly.
-func Required() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED"))) {
+// Required parses an application-owned conformance setting without reading
+// process state. Tests pass the setting explicitly so this reusable platform
+// harness does not own a LeapView environment variable.
+func Required(value string) bool {
+	switch strings.ToLower(strings.TrimSpace(value)) {
 	case "1", "true", "t", "yes", "on":
 		return true
 	default:
@@ -71,14 +70,13 @@ func Required() bool {
 	}
 }
 
-// Start starts a pinned PostgreSQL 18 container.  Docker is optional for local
-// runs, but setting LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED makes all startup
-// failures fatal (fail closed).
-func Start(t *testing.T) *Harness {
+// Start starts a pinned PostgreSQL 18 container. The caller decides whether an
+// unavailable provider or image is fatal; optional local runs skip cleanly.
+func Start(t *testing.T, required bool) *Harness {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), defaultHarnessTimeout)
 	defer cancel()
-	if !Required() {
+	if !required {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
 
@@ -90,7 +88,7 @@ func Start(t *testing.T) *Harness {
 		testcontainers.WithLogger(log.TestLogger(t)),
 	)
 	if err != nil {
-		if Required() {
+		if required {
 			t.Fatalf("required PostgreSQL 18 conformance container: %v", err)
 		}
 		t.Skipf("PostgreSQL 18 conformance container unavailable: %v", err)

@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"errors"
+	"os"
 	"sync"
 	"testing"
 	"time"
@@ -13,7 +14,7 @@ import (
 )
 
 func TestPostgreSQL18PoolConformance(t *testing.T) {
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_runtime", Password: "leapview-conformance-secret", Login: true})
 	db := h.NewDatabase(t, "leapview_control")
 	schema := db.CreateSchema(t, "conformance", runtime)
