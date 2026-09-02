@@ -161,7 +161,7 @@ func TestNativeBuildContractAuthorityRejectsCatalogAndRuntimeDrift(t *testing.T)
 		"catalog schema":     func(f *nativeBuildContractFixture) { f.runtime.CatalogSchemaVersion = "schema-v2" },
 		"runtime pool":       func(f *nativeBuildContractFixture) { f.runtime.PhysicalPoolID = "other-pool" },
 		"runtime digest":     func(f *nativeBuildContractFixture) { f.runtime.CompatibilityDigest = nativeContractDigest('b') },
-		"runtime tuple":      func(f *nativeBuildContractFixture) { f.runtime.DuckLakeExtension = "ducklake:v2" },
+		"runtime tuple":      func(f *nativeBuildContractFixture) { f.runtime.DuckLakeExtension = "ducklake:2" },
 		"metadata schema":    func(f *nativeBuildContractFixture) { f.catalog.MetadataSchema = "other_schema" },
 	}
 	for name, mutate := range cases {
@@ -333,7 +333,7 @@ type nativeBuildContractFixture struct {
 
 func newNativeBuildContractFixture(t *testing.T) nativeBuildContractFixture {
 	t.Helper()
-	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:v1", DuckLakeExtension: "ducklake:v1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
+	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: t.TempDir(), StorageNamespace: "objects", Region: "us-east", Tenant: "tenant-domain", EncryptionDomain: "encryption-domain", IsolationBoundary: "boundary", RetentionAuthority: "retention", Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)

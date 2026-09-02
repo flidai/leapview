@@ -139,13 +139,16 @@ func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.Ru
 // reads a current catalog row and therefore cannot self-assert an upgrade.
 func postgresRuntimeAttachInputFromRoot(root SealedServingRoot) (ducklakepostgres.RuntimeAttachInput, error) {
 	values := map[string]string{
-		"physical pool ID":               root.PhysicalPoolID,
-		"catalog ID":                     root.CatalogID,
-		"DuckDB version":                 root.DuckDBVersion,
-		"DuckLake extension version":     root.DuckLakeExtensionVersion,
-		"DuckLake specification version": root.DuckLakeSpecVersion,
-		"compatibility digest":           root.CompatibilityDigest,
-		"catalog schema version":         root.CatalogSchemaVersion,
+		"physical pool ID":                 root.PhysicalPoolID,
+		"catalog ID":                       root.CatalogID,
+		"DuckDB version":                   root.DuckDBVersion,
+		"DuckLake extension version":       root.DuckLakeExtensionVersion,
+		"DuckLake specification version":   root.DuckLakeSpecVersion,
+		"compatibility digest":             root.CompatibilityDigest,
+		"catalog schema version":           root.CatalogSchemaVersion,
+		"admitted DuckDB runtime":          root.Compatibility.DuckDBRuntime,
+		"admitted DuckLake extension":      root.Compatibility.DuckLakeExtension,
+		"admitted DuckLake catalog format": root.Compatibility.CatalogFormat,
 	}
 	for name, value := range values {
 		if strings.TrimSpace(value) == "" || strings.TrimSpace(value) != value {
@@ -157,9 +160,9 @@ func postgresRuntimeAttachInputFromRoot(root SealedServingRoot) (ducklakepostgre
 		CatalogID:      root.CatalogID,
 		Compatibility: ducklakepostgres.RuntimeCompatibility{
 			RuntimeTuple: ducklakepostgres.RuntimeTuple{
-				DuckDBRuntime:     root.DuckDBVersion,
-				DuckLakeExtension: root.DuckLakeExtensionVersion,
-				CatalogFormat:     root.DuckLakeSpecVersion,
+				DuckDBRuntime:     root.Compatibility.DuckDBRuntime,
+				DuckLakeExtension: root.Compatibility.DuckLakeExtension,
+				CatalogFormat:     root.Compatibility.CatalogFormat,
 			},
 			CompatibilityDigest:  root.CompatibilityDigest,
 			CatalogSchemaVersion: root.CatalogSchemaVersion,
@@ -280,6 +283,11 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	}
 	if root.CompatibilityDigest != compatibilityDigest {
 		return nil, fmt.Errorf("%w: PostgreSQL runtime compatibility evidence differs", ErrSealedRootMismatch)
+	}
+	sealedCatalogVersion, sealedCatalogErr := ducklake.CatalogVersionNumber(root.DuckLakeSpecVersion)
+	admittedCatalogVersion, admittedCatalogErr := ducklake.CatalogVersionNumber(root.Compatibility.CatalogFormat)
+	if root.DuckDBVersion != root.Compatibility.DuckDBRuntime || root.DuckLakeExtensionVersion != root.Compatibility.DuckLakeExtension || sealedCatalogErr != nil || admittedCatalogErr != nil || sealedCatalogVersion != admittedCatalogVersion || sealedCatalogVersion != root.CatalogVersionNumber {
+		return nil, fmt.Errorf("%w: PostgreSQL sealed runtime versions differ from admitted compatibility", ErrSealedRootMismatch)
 	}
 	metadataSchema := strings.TrimSpace(root.CatalogMetadataSchema)
 	if metadataSchema == "" || metadataSchema != ducklake.MetadataSchemaForPool(root.PhysicalPoolID) {

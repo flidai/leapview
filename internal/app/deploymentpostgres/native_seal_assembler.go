@@ -196,15 +196,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 	if err != nil {
 		return GenerationAdmissionInput{}, fmt.Errorf("%w: catalog version: %v", deploymentnative.ErrInvalid, err)
 	}
-	duckDBVersion, err := runtimeVersionPayload("duckdb", input.Compatibility.DuckDBRuntime)
-	if err != nil {
-		return GenerationAdmissionInput{}, fmt.Errorf("%w: DuckDB runtime: %v", deploymentnative.ErrInvalid, err)
-	}
 	duckLakeSpecVersion := strconv.FormatInt(catalogVersion, 10)
-	duckLakeExtensionVersion, err := runtimeVersionPayload("ducklake", build.Seal.ExtensionVersion)
-	if err != nil {
-		return GenerationAdmissionInput{}, fmt.Errorf("%w: DuckLake extension version: %v", deploymentnative.ErrInvalid, err)
-	}
 
 	generationID := input.GenerationID
 	if generationID == "" {
@@ -240,8 +232,8 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			SecurityDomainFingerprint: input.Artifacts.AuthorizationFingerprint, RequestDigest: attempt.RequestDigest,
 			PlanDigest: input.Plan.Digest, CompatibilityDigest: input.Compatibility.CompatibilityDigest,
 			ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest,
-			DuckDBVersion: duckDBVersion, RuntimeVersion: input.RuntimeVersion,
-			DuckLakeExtensionVersion: duckLakeExtensionVersion, DuckLakeSpecVersion: duckLakeSpecVersion,
+			DuckDBVersion: input.Compatibility.DuckDBRuntime, RuntimeVersion: input.RuntimeVersion,
+			DuckLakeExtensionVersion: input.Compatibility.DuckLakeExtension, DuckLakeSpecVersion: duckLakeSpecVersion,
 			CatalogSchemaVersion: input.CatalogIdentity.CatalogSchemaVersion, QualificationEvidence: qualification,
 		},
 		QualificationDigest: qualificationDigest,
@@ -641,11 +633,11 @@ func validateRuntimeAndCatalogVersions(catalogVersion, extensionVersion string, 
 	if err != nil || gotCatalog != wantCatalog {
 		return conflict("DuckLake catalog version differs from runtime compatibility")
 	}
-	wantExtension, err := runtimeVersionPayload("ducklake", compatibility.DuckLakeExtension)
+	wantExtension, err := canonicalRuntimeComponent("ducklake", compatibility.DuckLakeExtension)
 	if err != nil {
 		return fmt.Errorf("%w: DuckLake runtime extension: %v", deploymentnative.ErrInvalid, err)
 	}
-	gotExtension, err := runtimeVersionPayload("ducklake", extensionVersion)
+	gotExtension, err := canonicalRuntimeComponent("ducklake", extensionVersion)
 	if err != nil || gotExtension != wantExtension {
 		return conflict("DuckLake extension version differs from runtime compatibility")
 	}
@@ -653,11 +645,19 @@ func validateRuntimeAndCatalogVersions(catalogVersion, extensionVersion string, 
 }
 
 func compatibilityValidate(value ducklakepostgres.RuntimeCompatibility) error {
-	if _, err := runtimeVersionPayload("duckdb", value.DuckDBRuntime); err != nil {
+	duckDBRuntime, err := canonicalRuntimeComponent("duckdb", value.DuckDBRuntime)
+	if err != nil {
 		return fmt.Errorf("%w: DuckDB runtime: %v", deploymentnative.ErrInvalid, err)
 	}
-	if _, err := runtimeVersionPayload("ducklake", value.DuckLakeExtension); err != nil {
+	if duckDBRuntime != value.DuckDBRuntime {
+		return fmt.Errorf("%w: DuckDB runtime is not canonical", deploymentnative.ErrInvalid)
+	}
+	duckLakeExtension, err := canonicalRuntimeComponent("ducklake", value.DuckLakeExtension)
+	if err != nil {
 		return fmt.Errorf("%w: DuckLake extension: %v", deploymentnative.ErrInvalid, err)
+	}
+	if duckLakeExtension != value.DuckLakeExtension {
+		return fmt.Errorf("%w: DuckLake extension is not canonical", deploymentnative.ErrInvalid)
 	}
 	if _, err := canonicalNumericCatalogVersion(value.CatalogFormat); err != nil {
 		return fmt.Errorf("%w: DuckLake catalog format: %v", deploymentnative.ErrInvalid, err)
@@ -672,45 +672,11 @@ func compatibilityValidate(value ducklakepostgres.RuntimeCompatibility) error {
 }
 
 func canonicalNumericCatalogVersion(value string) (int64, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return 0, errors.New("catalog version is required")
-	}
-	if strings.Contains(value, ":") {
-		prefix, payload, ok := strings.Cut(value, ":")
-		if !ok || (prefix != "ducklake" && prefix != "ducklake-catalog") {
-			return 0, errors.New("catalog version prefix is invalid")
-		}
-		value = payload
-	}
-	value = strings.TrimPrefix(value, "v")
-	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
-		return 0, errors.New("catalog version is invalid")
-	}
-	parsed, err := strconv.ParseInt(value, 10, 64)
-	if err != nil || parsed <= 0 || strconv.FormatInt(parsed, 10) != value {
-		return 0, errors.New("catalog version must be canonical positive decimal")
+	parsed, err := ducklake.CatalogVersionNumber(value)
+	if err != nil {
+		return 0, errors.New("catalog version must be a canonical positive major version")
 	}
 	return parsed, nil
-}
-
-func runtimeVersionPayload(prefix, value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" || value != strings.TrimSpace(value) || strings.ContainsAny(value, "\r\n\x00") {
-		return "", errors.New("version is not canonical")
-	}
-	if strings.Contains(value, ":") {
-		gotPrefix, payload, ok := strings.Cut(value, ":")
-		if !ok || gotPrefix != prefix {
-			return "", errors.New("version prefix is invalid")
-		}
-		value = payload
-	}
-	value = strings.TrimPrefix(value, "v")
-	if value == "" {
-		return "", errors.New("version is empty")
-	}
-	return value, nil
 }
 
 func validateCanonicalRuntimeText(value, label string, max int) error {

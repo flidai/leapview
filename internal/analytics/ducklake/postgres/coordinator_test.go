@@ -158,6 +158,34 @@ func TestSQLCatalogExecutorVerifySnapshotInspectsRuntimeAndSettings(t *testing.T
 	}
 }
 
+func TestSQLCatalogExecutorVerifySnapshotAcceptsZeroMinorCatalogVersion(t *testing.T) {
+	driverName := "leapview-verify-catalog-zero-minor"
+	sql.Register(driverName, verifySQLDriver{state: verifySQLState{
+		version: "v1.5.4", catalogType: "postgres", extensionVersion: "d318a545",
+		dataPath: "s3://Bucket/lake/", catalogVersion: "1.0", snapshotID: 1,
+	}})
+	db, err := sql.Open(driverName, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	adapter := &SQLCatalogExecutor{Exec: db, Query: db, DataPath: "s3://bucket/lake", DuckLakeSecret: "lake_secret", PostgresSecret: "pg_secret"}
+	target := RuntimeCompatibility{RuntimeTuple: RuntimeTuple{
+		DuckDBRuntime: "duckdb:1.5.4", DuckLakeExtension: "ducklake:d318a545", CatalogFormat: "ducklake-catalog:v1",
+	}, CompatibilityDigest: digest('c'), CatalogSchemaVersion: "catalog-v1"}
+	evidence, err := adapter.VerifySnapshot(t.Context(), SnapshotRef{PhysicalPoolID: "pool-zero-minor", CatalogID: "catalog-zero-minor", SnapshotID: 1}, target)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]any
+	if err := json.Unmarshal(evidence, &got); err != nil {
+		t.Fatal(err)
+	}
+	if got["ducklake_catalog_version"] != "1" {
+		t.Fatalf("verification catalog version = %v, want canonical major 1", got["ducklake_catalog_version"])
+	}
+}
+
 func TestCanonicalCatalogVersionRejectsUnqualifiedFormats(t *testing.T) {
 	for _, test := range []struct {
 		value, want string

@@ -48,7 +48,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	if err != nil {
 		t.Fatal(err)
 	}
-	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:v1", DuckLakeExtension: "ducklake:v1", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
+	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
 	identity := physicalpool.PoolIdentity{StorageLocation: "/tmp", StorageNamespace: "native-assembler-objects", Region: "us-east", Tenant: "tenant-assembler", EncryptionDomain: "encryption-assembler", IsolationBoundary: "isolation-assembler", RetentionAuthority: "retention-assembler", Compatibility: tuple}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
@@ -103,7 +103,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	// which supplies these canonical digests. Recompute the tiny fixture using
 	// the same constructor path so the assembler verifies real closure evidence.
 	closure = nativeAssemblerClosure(t, "catalog-assembler", poolRoot, namespace, relations)
-	build := NativePhysicalBuildEvidence{AttemptID: attemptID, CatalogID: "catalog-assembler", ObjectRoot: poolRoot, SnapshotID: 42, Marker: marker, CanonicalMarkerJSON: json.RawMessage(markerJSON), Seal: ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(poolID), DataPath: poolRoot, ExtensionVersion: "1", CatalogVersion: "1", SnapshotID: 42, CommitMarker: markerJSON}, Closure: closure}
+	build := NativePhysicalBuildEvidence{AttemptID: attemptID, CatalogID: "catalog-assembler", ObjectRoot: poolRoot, SnapshotID: 42, Marker: marker, CanonicalMarkerJSON: json.RawMessage(markerJSON), Seal: ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(poolID), DataPath: poolRoot, ExtensionVersion: "1", CatalogVersion: "1.0", SnapshotID: 42, CommitMarker: markerJSON}, Closure: closure}
 	artifact := release.CandidateGenerationArtifact{Identity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: "prod", GenerationID: generation}, ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ArtifactDigest: artifactDigest, BundleManifestJSON: `{"version":1}`, NativeArtifact: release.NativeArtifactObjectEvidence{Locator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ContentType: projectbundle.BundleContentType, MetadataDigest: assemblerDigest('9'), SizeBytes: 1}, AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, DataMode: release.GenerationDataRefreshSources}
 	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: "builder-assembler", PhysicalPoolID: poolID, FencingEpoch: 3, RequestDigest: requestDigest, PlanDigest: plan.Digest, Namespace: namespace, State: deploymentnative.AttemptRunning, LeaseExpiresAt: now.Add(time.Hour)}
 	lease := deploymentnative.DeliveryLease{LeaseID: leaseID, TargetID: "target-assembler", OwnerID: attempt.OwnerID, FencingEpoch: 3, State: "active", ExpiresAt: now.Add(time.Hour), AcquiredAt: now}
@@ -161,11 +161,14 @@ func nativeAssemblerClosure(t *testing.T, catalogID, root, namespace string, rel
 
 func TestAssembleNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T) {
 	input := validNativeSealAssemblerInput(t)
+	if input.Build.Seal.CatalogVersion != "1.0" || input.Compatibility.CatalogFormat != "ducklake-catalog:v1" {
+		t.Fatalf("fixture does not represent raw DuckLake v1.0 evidence: seal=%q tuple=%q", input.Build.Seal.CatalogVersion, input.Compatibility.CatalogFormat)
+	}
 	got, err := AssembleNativeGenerationAdmissionInput(input)
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	if got.Generation.GenerationID != input.GenerationID || got.Seal.CatalogVersion != 1 || got.Seal.DuckDBVersion != "1" || got.Seal.DuckLakeSpecVersion != "1" {
+	if got.Generation.GenerationID != input.GenerationID || got.Seal.CatalogVersion != 1 || got.Seal.DuckDBVersion != input.Compatibility.DuckDBRuntime || got.Seal.DuckLakeExtensionVersion != input.Compatibility.DuckLakeExtension || got.Seal.DuckLakeSpecVersion != "1" {
 		t.Fatalf("assembled identity = %#v", got)
 	}
 	if got.Bundle.ArtifactLocator != input.Artifacts.Generation.NativeArtifact.Locator || got.Seal.ClosureDigest != input.Build.Closure.ClosureDigest {
@@ -313,7 +316,7 @@ func TestCanonicalNumericCatalogVersion(t *testing.T) {
 		value string
 		want  int64
 	}{
-		{"1", 1}, {"v1", 1}, {"ducklake:v1", 1}, {"ducklake-catalog:1", 1},
+		{"1", 1}, {"v1", 1}, {"1.0", 1}, {"ducklake:v1", 1}, {"ducklake-catalog:1", 1}, {"ducklake:1.0", 1},
 	} {
 		if got, err := canonicalNumericCatalogVersion(test.value); err != nil || got != test.want {
 			t.Fatalf("canonicalNumericCatalogVersion(%q) = %d, %v", test.value, got, err)
@@ -322,6 +325,30 @@ func TestCanonicalNumericCatalogVersion(t *testing.T) {
 	for _, value := range []string{"", "0", "01", "duckdb:v1", "ducklake:v1.1"} {
 		if _, err := canonicalNumericCatalogVersion(value); err == nil {
 			t.Fatalf("canonicalNumericCatalogVersion(%q) unexpectedly succeeded", value)
+		}
+	}
+}
+
+func TestCanonicalRuntimeComponentPreservesTuplePrefix(t *testing.T) {
+	for _, test := range []struct {
+		prefix, value, want string
+	}{
+		{prefix: "duckdb", value: "v1.5.4", want: "duckdb:1.5.4"},
+		{prefix: "duckdb", value: "duckdb:v1.5.4", want: "duckdb:1.5.4"},
+		{prefix: "ducklake", value: "d318a545", want: "ducklake:d318a545"},
+		{prefix: "ducklake", value: "ducklake:d318a545", want: "ducklake:d318a545"},
+	} {
+		got, err := canonicalRuntimeComponent(test.prefix, test.value)
+		if err != nil || got != test.want {
+			t.Fatalf("canonicalRuntimeComponent(%q, %q) = %q, %v; want %q", test.prefix, test.value, got, err, test.want)
+		}
+	}
+	for _, test := range []struct{ prefix, value string }{
+		{prefix: "duckdb", value: "ducklake:v1"},
+		{prefix: "ducklake", value: "duckdb:v1"},
+	} {
+		if _, err := canonicalRuntimeComponent(test.prefix, test.value); err == nil {
+			t.Fatalf("canonicalRuntimeComponent(%q, %q) unexpectedly succeeded", test.prefix, test.value)
 		}
 	}
 }

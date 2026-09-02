@@ -150,6 +150,31 @@ func TestQualifyNativeSnapshotRunsGatesAgainstExactNamespace(t *testing.T) {
 	}
 }
 
+func TestQualifyNativeSnapshotAcceptsZeroMinorCatalogVersion(t *testing.T) {
+	request, _ := qualificationRequest(t)
+	request.Build.Seal.CatalogVersion = "1.0"
+	request.Compatibility.CatalogFormat = "ducklake-catalog:v1"
+	compat := NativeRuntimeCompatibilityEvidence{
+		SnapshotID: 42, CatalogType: "postgres", DataPath: "/objects", MetadataSchema: ducklake.MetadataSchemaForPool("pool"),
+		DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "1",
+		CompatibilityDigest: request.Compatibility.CompatibilityDigest, CatalogSchemaVersion: request.Compatibility.CatalogSchemaVersion,
+	}
+	env := &qualificationEnvironmentFake{
+		compat:  compat,
+		closure: request.Build.Closure,
+		query: func(context.Context, semanticquery.Plan) (semanticquery.Rows, error) {
+			return semanticquery.Rows{{"count": int64(1)}}, nil
+		},
+	}
+	result, err := QualifyNativeSnapshot(t.Context(), request, &qualificationFactoryFake{env: env})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Runtime.CatalogFormat != "1" || result.Gates.Outcome != release.GateSuccess || env.closed != 1 {
+		t.Fatalf("qualification result catalog=%q outcome=%q closed=%d, want catalog major 1, success, one close", result.Runtime.CatalogFormat, result.Gates.Outcome, env.closed)
+	}
+}
+
 func TestQualifyNativeSnapshotChargesSourceObservationBounds(t *testing.T) {
 	cases := []struct {
 		name        string

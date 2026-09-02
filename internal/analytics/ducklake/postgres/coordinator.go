@@ -375,22 +375,11 @@ func (e *SQLCatalogExecutor) VerifySnapshot(ctx context.Context, snapshot Snapsh
 // CatalogFormat tuple component ("ducklake:v1.1-dev1" or the equivalent
 // "ducklake-catalog:" prefix). A leading v is presentation-only.
 func canonicalCatalogVersion(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if value == "" {
+	canonical, err := ducklake.CanonicalCatalogVersion(value)
+	if err != nil {
 		return "", ErrCompatibilityMismatch
 	}
-	if i := strings.IndexByte(value, ':'); i >= 0 {
-		prefix := value[:i]
-		if prefix != "ducklake" && prefix != "ducklake-catalog" {
-			return "", ErrCompatibilityMismatch
-		}
-		value = value[i+1:]
-	}
-	value = strings.TrimPrefix(value, "v")
-	if value == "" || strings.ContainsAny(value, "\r\n\x00") {
-		return "", ErrCompatibilityMismatch
-	}
-	return value, nil
+	return canonical, nil
 }
 
 // canonicalRuntimeComponent gives version() and ducklake_settings() values a

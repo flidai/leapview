@@ -212,7 +212,15 @@ func validateNativeBuildRecoveryPhysical(build NativePhysicalBuildEvidence, pars
 	if err != nil || catalogVersion != assembled.Seal.CatalogVersion {
 		return fmt.Errorf("%w: recovered catalog version differs from assembled seal", deploymentdomain.ErrDeliveryConflict)
 	}
-	if build.AttemptID != admission.Attempt.AttemptID || build.CatalogID != assembled.Seal.CatalogID || build.SnapshotID != assembled.Commit.SnapshotID || build.ObjectRoot != assembled.Seal.ObjectRoot || build.Seal.SnapshotID != build.SnapshotID || build.Seal.CatalogType != "postgres" || build.Seal.MetadataSchema != ducklake.MetadataSchemaForPool(admission.Attempt.PhysicalPoolID) || build.Seal.DataPath != build.ObjectRoot || build.Seal.ExtensionVersion != assembled.Seal.DuckLakeExtensionVersion || build.Seal.CommitMarker != string(canonicalMarker) || build.Closure.SnapshotID != build.SnapshotID || build.Closure.CatalogID != build.CatalogID || build.Closure.ObjectRoot != build.ObjectRoot || build.Closure.RelationNamespace != assembled.Seal.RelationNamespace || build.Closure.RelationManifestDigest != assembled.Seal.RelationManifestDigest || build.Closure.ClosureDigest != assembled.Seal.ClosureDigest || build.Closure.ObjectRootDigest != assembled.Seal.ObjectRootDigest {
+	buildExtension, extensionErr := canonicalRuntimeComponent("ducklake", build.Seal.ExtensionVersion)
+	if extensionErr != nil {
+		return fmt.Errorf("%w: recovered DuckLake extension version is invalid: %v", deploymentdomain.ErrDeliveryConflict, extensionErr)
+	}
+	assembledExtension, extensionErr := canonicalRuntimeComponent("ducklake", assembled.Seal.DuckLakeExtensionVersion)
+	if extensionErr != nil {
+		return fmt.Errorf("%w: assembled DuckLake extension version is invalid: %v", deploymentdomain.ErrDeliveryConflict, extensionErr)
+	}
+	if build.AttemptID != admission.Attempt.AttemptID || build.CatalogID != assembled.Seal.CatalogID || build.SnapshotID != assembled.Commit.SnapshotID || build.ObjectRoot != assembled.Seal.ObjectRoot || build.Seal.SnapshotID != build.SnapshotID || build.Seal.CatalogType != "postgres" || build.Seal.MetadataSchema != ducklake.MetadataSchemaForPool(admission.Attempt.PhysicalPoolID) || build.Seal.DataPath != build.ObjectRoot || buildExtension != assembledExtension || build.Seal.CommitMarker != string(canonicalMarker) || build.Closure.SnapshotID != build.SnapshotID || build.Closure.CatalogID != build.CatalogID || build.Closure.ObjectRoot != build.ObjectRoot || build.Closure.RelationNamespace != assembled.Seal.RelationNamespace || build.Closure.RelationManifestDigest != assembled.Seal.RelationManifestDigest || build.Closure.ClosureDigest != assembled.Seal.ClosureDigest || build.Closure.ObjectRootDigest != assembled.Seal.ObjectRootDigest {
 		return fmt.Errorf("%w: recovered physical evidence differs from assembled seal", deploymentdomain.ErrDeliveryConflict)
 	}
 	if artifacts.Generation.Identity.GenerationID != generationID || artifacts.Generation.ServingArtifactID != assembled.Seal.ServingArtifactID || artifacts.Generation.ArtifactDigest != assembled.Seal.ServingArtifactDigest || assembled.Seal.SealID != sealID {

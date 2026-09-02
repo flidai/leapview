@@ -15,7 +15,7 @@ import (
 // identities admitted by the target extension supply.
 func LocalPool(ctx context.Context, admission extension.Admission) (physicalpool.Compatibility, error) {
 	if admission == nil {
-		return physicalpool.Compatibility{}, fmt.Errorf("local evaluation compatibility requires extension admission")
+		return physicalpool.Compatibility{}, fmt.Errorf("local pool compatibility requires extension admission")
 	}
 	admitted, err := admission.AdmitExtension(ctx, "ducklake")
 	if err != nil {
@@ -37,7 +37,7 @@ func LocalPool(ctx context.Context, admission extension.Admission) (physicalpool
 		CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1",
 	}
 	if err := tuple.Validate(); err != nil {
-		return physicalpool.Compatibility{}, fmt.Errorf("validate local evaluation compatibility: %w", err)
+		return physicalpool.Compatibility{}, fmt.Errorf("validate local pool compatibility: %w", err)
 	}
 	return tuple, nil
 }

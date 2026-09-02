@@ -471,6 +471,11 @@ func validateNativeQualificationRequest(request NativeQualificationRequest) erro
 	if request.Compatibility.DuckDBRuntime == "" || request.Compatibility.DuckLakeExtension == "" || request.Compatibility.CatalogFormat == "" || request.Compatibility.CompatibilityDigest == "" || request.Compatibility.CatalogSchemaVersion == "" {
 		return fmt.Errorf("%w: runtime compatibility contract is incomplete", ErrNativeQualificationInvalid)
 	}
+	canonicalDuckDB, duckDBErr := canonicalRuntimeComponent("duckdb", request.Compatibility.DuckDBRuntime)
+	canonicalDuckLake, duckLakeErr := canonicalRuntimeComponent("ducklake", request.Compatibility.DuckLakeExtension)
+	if duckDBErr != nil || duckLakeErr != nil || canonicalDuckDB != request.Compatibility.DuckDBRuntime || canonicalDuckLake != request.Compatibility.DuckLakeExtension {
+		return fmt.Errorf("%w: runtime compatibility components are not canonical", ErrNativeQualificationInvalid)
+	}
 	if err := digest.ValidateSHA256Identity(request.Compatibility.CompatibilityDigest); err != nil {
 		return fmt.Errorf("%w: compatibility digest: %v", ErrNativeQualificationInvalid, err)
 	}
@@ -604,18 +609,11 @@ func canonicalRuntimeComponent(prefix, value string) (string, error) {
 }
 
 func canonicalCatalogVersion(value string) (string, error) {
-	value = strings.TrimSpace(value)
-	if index := strings.IndexByte(value, ':'); index >= 0 {
-		if value[:index] != "ducklake" && value[:index] != "ducklake-catalog" {
-			return "", ErrNativeQualificationRuntime
-		}
-		value = value[index+1:]
-	}
-	value = strings.TrimPrefix(value, "v")
-	if value == "" || strings.ContainsAny(value, "\x00\r\n") {
+	canonical, err := ducklake.CanonicalCatalogVersion(value)
+	if err != nil {
 		return "", ErrNativeQualificationRuntime
 	}
-	return value, nil
+	return canonical, nil
 }
 
 func stringValue(value any) string {

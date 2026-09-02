@@ -77,12 +77,16 @@ func TestPostgresSealedFactoryRejectsMissingRuntimeAttachCheckerBeforeResolveOrL
 }
 
 func TestCheckPostgresRuntimeAttachEligibility(t *testing.T) {
+	compatibility := ducklake.CompatibilityTuple{
+		DuckDBRuntime: "duckdb:1.5", DuckLakeExtension: "ducklake:0.3", CatalogFormat: "ducklake:v1",
+	}
 	root := SealedServingRoot{
 		PhysicalPoolID:           "pool-serving",
 		CatalogID:                "catalog-serving",
-		DuckDBVersion:            "duckdb:1.5",
-		DuckLakeExtensionVersion: "ducklake:0.3",
-		DuckLakeSpecVersion:      "ducklake:v1",
+		Compatibility:            compatibility,
+		DuckDBVersion:            compatibility.DuckDBRuntime,
+		DuckLakeExtensionVersion: compatibility.DuckLakeExtension,
+		DuckLakeSpecVersion:      "1",
 		CompatibilityDigest:      runtimeFactoryDigest("compatibility"),
 		CatalogSchemaVersion:     "catalog-v1",
 	}
@@ -147,6 +151,47 @@ func TestCheckPostgresRuntimeAttachEligibility(t *testing.T) {
 				t.Fatalf("check() error=%v, want substring %q", err, test.wantMatch)
 			}
 		})
+	}
+}
+
+func TestPostgresRuntimeAttachUsesAdmittedCatalogTupleOverNumericSpec(t *testing.T) {
+	// Native seal assembly stores DuckLakeSpecVersion as the numeric major
+	// ("1"), while the physical-pool admission keeps the exact tuple spelling
+	// (ducklake-catalog:v1). Runtime attach must preserve that admitted tuple
+	// when asking the PostgreSQL authority for eligibility.
+	compatibility := ducklake.CompatibilityTuple{
+		DuckDBRuntime: "duckdb:1.5.4", DuckLakeExtension: "ducklake:d318a545",
+		CatalogFormat: "ducklake-catalog:v1",
+	}
+	root := SealedServingRoot{
+		PhysicalPoolID:           "pool-serving-tuple",
+		CatalogID:                "catalog-serving-tuple",
+		Compatibility:            compatibility,
+		DuckDBVersion:            compatibility.DuckDBRuntime,
+		DuckLakeExtensionVersion: compatibility.DuckLakeExtension,
+		DuckLakeSpecVersion:      "1",
+		CompatibilityDigest:      runtimeFactoryDigest("compatibility-tuple"),
+		CatalogSchemaVersion:     "catalog-v1",
+	}
+	input, err := postgresRuntimeAttachInputFromRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if input.Compatibility.DuckDBRuntime != compatibility.DuckDBRuntime || input.Compatibility.DuckLakeExtension != compatibility.DuckLakeExtension || input.Compatibility.CatalogFormat != compatibility.CatalogFormat || input.Compatibility.CompatibilityDigest != root.CompatibilityDigest || input.Compatibility.CatalogSchemaVersion != root.CatalogSchemaVersion {
+		t.Fatalf("attach compatibility=%+v, want admitted tuple=%+v digest=%q schema=%q", input.Compatibility, compatibility, root.CompatibilityDigest, root.CatalogSchemaVersion)
+	}
+	checker := duckLakeRuntimeAttachCheckerFunc(func(_ context.Context, got ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error) {
+		return ducklakepostgres.RuntimeAttachEligibility{
+			Eligible: true, Reason: "qualified",
+			Current: ducklakepostgres.CatalogRuntimeCompatibility{
+				PhysicalPoolID: got.PhysicalPoolID, CatalogID: got.CatalogID,
+				RuntimeCompatibility: got.Compatibility,
+				CurrentMigrationID:   "0198f2c0-7c7a-7f00-8a11-000000000010",
+			},
+		}, nil
+	})
+	if err := checkPostgresRuntimeAttachEligibility(t.Context(), checker, root); err != nil {
+		t.Fatalf("runtime attach eligibility with admitted tuple: %v", err)
 	}
 }
 
@@ -270,7 +315,7 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 		CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogMetadataSchema: ducklake.MetadataSchemaForPool(contract.Pool.ID.String()),
 		CatalogSnapshotID: 7, DeliveryID: "delivery", FencingEpoch: 3, DataPath: dataPath,
 		CompatibilityDigest: compatibilityDigest, RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: runtimeFactoryDigest("security"),
-		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: "v1", DuckLakeExtensionVersion: "v1", DuckLakeSpecVersion: "spec-v1", CatalogSchemaVersion: "schema-v1", RelationNamespace: relationNamespace, RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
+		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: contract.Tuple.DuckDBRuntime, DuckLakeExtensionVersion: contract.Tuple.DuckLakeExtension, DuckLakeSpecVersion: "1", CatalogSchemaVersion: "schema-v1", RelationNamespace: relationNamespace, RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
 	}
 	leases := &leaseProbe{}
 	authorized := false
@@ -355,7 +400,7 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 		CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000008", CatalogMetadataSchema: ducklake.MetadataSchemaForPool(contract.Pool.ID.String()),
 		CatalogSnapshotID: 7, DeliveryID: "delivery", FencingEpoch: 3, DataPath: dataPath,
 		CompatibilityDigest: compatibilityDigest, RuntimeVersion: "runtime-v1", SecurityDomainFingerprint: runtimeFactoryDigest("security"),
-		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: "v1", DuckLakeExtensionVersion: "v1", DuckLakeSpecVersion: "spec-v1", CatalogSchemaVersion: "schema-v1", RelationNamespace: relationNamespace, RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
+		CatalogVersion: "1", CatalogVersionNumber: 1, DuckDBVersion: contract.Tuple.DuckDBRuntime, DuckLakeExtensionVersion: contract.Tuple.DuckLakeExtension, DuckLakeSpecVersion: "1", CatalogSchemaVersion: "schema-v1", RelationNamespace: relationNamespace, RelationManifestDigest: runtimeFactoryDigest("manifest"), ObjectRoot: "objects/tenant", ObjectRootDigest: runtimeFactoryDigest("object-root"), ArtifactRoot: "artifacts/tenant", ArtifactRootDigest: runtimeFactoryDigest("artifact-root"), CompiledGraphDigest: runtimeFactoryDigest("graph"), CompiledConfigDigest: runtimeFactoryDigest("config"), RequestDigest: runtimeFactoryDigest("request"), PlanDigest: runtimeFactoryDigest("plan"), TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
 	}
 	input := runtimehost.RuntimeInput{State: servingstate.State{ID: stateID, ProjectID: "project", Environment: "prod", DuckLakeSnapshotID: 7}, Artifact: servingstate.Artifact{ID: "artifact", ServingStateID: stateID, Digest: artifactDigest}}
 	cases := []struct {
@@ -368,6 +413,9 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 		{"attempt identity", func(r *SealedServingRoot) { r.AttemptID = "" }},
 		{"catalog UUID", func(r *SealedServingRoot) { r.CatalogUUID = "not-a-uuid" }},
 		{"catalog version cross-binding", func(r *SealedServingRoot) { r.CatalogVersionNumber = 2 }},
+		{"DuckDB runtime cross-binding", func(r *SealedServingRoot) { r.DuckDBVersion = "duckdb:other" }},
+		{"DuckLake extension cross-binding", func(r *SealedServingRoot) { r.DuckLakeExtensionVersion = "ducklake:other" }},
+		{"DuckLake catalog cross-binding", func(r *SealedServingRoot) { r.DuckLakeSpecVersion = "2" }},
 		{"relation namespace", func(r *SealedServingRoot) { r.RelationNamespace = "" }},
 		{"relation namespace identity drift", func(r *SealedServingRoot) { r.RelationNamespace = "_other_namespace" }},
 		{"relation manifest digest", func(r *SealedServingRoot) { r.RelationManifestDigest = "invalid" }},

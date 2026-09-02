@@ -314,7 +314,7 @@ func validateNativeBuildContractRuntimeCompatibility(value ducklakepostgres.Runt
 			return err
 		}
 	}
-	return nil
+	return compatibilityValidate(value)
 }
 
 func validateNativeBuildContractEligibility(eligibility ducklakepostgres.RuntimeAttachEligibility, runtime ducklakepostgres.CatalogRuntimeCompatibility) error {
