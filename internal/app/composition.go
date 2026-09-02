@@ -33,6 +33,7 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	"github.com/flidai/leapview/internal/app/poolcompatibility"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
@@ -1183,9 +1184,10 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		// owning and qualifying an isolated local pool. Ordinary production
 		// targets must still use reviewed offline admission evidence.
 		if allowsLocalEvaluationRuntime(production, cfg.EvaluationMode) && deliveryPhysicalPoolID == "" {
-			tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:" + identity.Version + ":" + identity.Revision, DuckLakeExtension: "ducklake:managed", CatalogFormat: "ducklake-catalog:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
-			deliveryStorageLocation, storageLocationErr := filepath.Abs(cfg.DuckLakeDataDir())
-			if storageLocationErr != nil {
+			tuple, compatibilityErr := poolcompatibility.LocalPool(ctx, extensionSupply)
+			if compatibilityErr != nil {
+				poolErr = fmt.Errorf("resolve local physical-pool compatibility: %w", compatibilityErr)
+			} else if deliveryStorageLocation, storageLocationErr := filepath.Abs(cfg.DuckLakeDataDir()); storageLocationErr != nil {
 				poolErr = fmt.Errorf("resolve local physical-pool storage location: %w", storageLocationErr)
 			} else {
 				pool, newPoolErr := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: deliveryStorageLocation, StorageNamespace: "delivery", EncryptionDomain: "local", IsolationBoundary: instanceID, RetentionAuthority: instanceID, RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600}, Compatibility: tuple})

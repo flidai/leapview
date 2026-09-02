@@ -17,8 +17,8 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/extensionsupplyloader"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	"github.com/flidai/leapview/internal/app/poolcompatibility"
 	"github.com/flidai/leapview/internal/extension"
-	"github.com/flidai/leapview/internal/platform/buildinfo"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
 )
 
@@ -99,13 +99,9 @@ func (Operations) QualificationPoolArtifacts(ctx context.Context) (adminoffline.
 	if err != nil {
 		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("load qualification extension supply: %w", err)
 	}
-	identity := buildinfo.Current()
-	tuple := physicalpool.Compatibility{
-		DuckDBRuntime:         "duckdb:" + identity.Version + ":" + identity.Revision,
-		DuckLakeExtension:     "ducklake:managed",
-		CatalogFormat:         "ducklake-catalog:v1",
-		StorageImplementation: "local",
-		ObjectNamingContract:  "uuidv7:v1",
+	tuple, err := poolcompatibility.LocalPool(ctx, supply)
+	if err != nil {
+		return adminoffline.QualificationPoolArtifacts{}, fmt.Errorf("resolve qualification pool compatibility: %w", err)
 	}
 	storageLocation, err := filepath.Abs(cfg.DuckLakeDataDir())
 	if err != nil {
