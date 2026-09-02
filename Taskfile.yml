@@ -1037,11 +1037,11 @@ tasks:
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
-    desc: Run the required PostgreSQL 18 pool conformance test against a pinned image
+    desc: Run required PostgreSQL 18 container-backed conformance packages against a pinned image
     env:
       LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
     cmds:
-      - go test ./internal/platform/postgres -run '^TestPostgreSQL18PoolConformance$' -count=1 -v
+      - go test ./internal/platform/postgres/... ./internal/platform/bootstrap/postgres ./internal/access/postgres ./internal/analytics/physicalpool/postgres ./internal/access/http/mcpoauth -count=1 -v
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView

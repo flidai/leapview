@@ -55,6 +55,12 @@ Production initialization and physical-pool bootstrap never open SQLite.
 Development and the isolated evaluation target continue to use the explicit
 offline adapter.
 
+This is the focused extraction of the FAI-609 prerequisite: native production
+administrator initialization, one-time credential handoff, and physical-pool
+bootstrap run against the PostgreSQL authorities above. The broader
+PostgreSQL-only serving application graph remains a separate architecture
+milestone; this reconciliation does not claim that cutover.
+
 ## Lifecycle and compatibility
 
 The baseline is a clean-slate revision. Its checksum frames the platform
@@ -62,6 +68,12 @@ foundation, ordered capability name and SQL bytes, and role policy. A matching
 revision is replay-safe; a different migration ID or checksum fails closed.
 Because the revision is immutable, changing any component after release
 requires a new forward revision rather than editing revision 1.
+
+SQLite development databases that already applied migration 073 receive
+`encryption_domain` through forward migration 095. Existing rows are
+backfilled from `isolation_boundary`; that equal-value spelling retains the
+legacy content-addressed pool identity, while a distinct encryption domain is
+identity-significant. New rows must always provide the domain explicitly.
 
 Physical-pool identity, namespace ownership, conformance evidence, and
 DuckLake catalog identity are immutable. Bootstrap replay succeeds only when
@@ -85,7 +97,7 @@ task db:generate
 task generated:check
 go test -tags=duckdb_arrow ./internal/analytics/ducklake/... ./internal/analytics/physicalpool/... ./internal/access/postgres ./internal/platform/bootstrap/postgres ./internal/app/adminpostgres ./internal/app/postgresbaseline
 go test ./internal/platform/architecture
-LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 go test ./internal/platform/postgres/... -count=1
+LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1 go test ./internal/platform/postgres/... ./internal/platform/bootstrap/postgres ./internal/access/postgres ./internal/analytics/physicalpool/postgres ./internal/access/http/mcpoauth -count=1 -v
 task ci
 ```
 
