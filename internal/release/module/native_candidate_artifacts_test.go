@@ -1026,6 +1026,48 @@ func TestNativeGenerationBaseLoadsExactObjectAndPlansAgainstArtifact(t *testing.
 	}
 }
 
+func TestNativeGenerationBaseHydratesReorderedJSONBManifest(t *testing.T) {
+	fixture := nativeInspectFixture(t)
+	base := nativeBaseFixture(t, fixture)
+	reorderObject := func(label, value string) string {
+		var object map[string]json.RawMessage
+		if err := json.Unmarshal([]byte(value), &object); err != nil {
+			t.Fatalf("unmarshal %s JSON: %v", label, err)
+		}
+		reordered, err := json.Marshal(object)
+		if err != nil {
+			t.Fatalf("marshal reordered %s JSON: %v", label, err)
+		}
+		return string(reordered)
+	}
+	reordered := reorderObject("base manifest", base.artifact.ManifestJSON)
+	if string(reordered) == base.artifact.ManifestJSON {
+		t.Fatal("reordered base manifest JSON unexpectedly retained the original key order")
+	}
+	// Serving-state JSONB can reorder object keys, while the immutable bundle
+	// retains the producer's original manifest bytes.
+	base.state.ManifestJSON = string(reordered)
+	base.artifact.ManifestJSON = string(reordered)
+	base.state.AccessPolicyJSON = reorderObject("access policy", base.state.AccessPolicyJSON)
+	base.state.DashboardPublicationsJSON = reorderObject("dashboard publications", base.state.DashboardPublicationsJSON)
+	base.state.DashboardAppearancesJSON = reorderObject("dashboard appearances", base.state.DashboardAppearancesJSON)
+
+	service := &nativeCandidateArtifactPhases{
+		states:        nativeBaseStateStub{state: base.state, artifact: base.artifact},
+		provenance:    nativeBaseProvenanceStub{provenance: base.provenance},
+		artifacts:     base.store,
+		storageDomain: "runtime",
+		environment:   "dev",
+	}
+	loaded, err := service.nativeGenerationBase(t.Context(), &base.identity)
+	if err != nil {
+		t.Fatalf("nativeGenerationBase() error = %v, want success for semantically equivalent manifest", err)
+	}
+	if !loaded.active || loaded.artifact.Digest() != base.state.ProjectDigest {
+		t.Fatalf("loaded native base = %#v", loaded)
+	}
+}
+
 func TestNativeGenerationBaseRejectsInactiveOrIncompleteState(t *testing.T) {
 	fixture := nativeInspectFixture(t)
 	base := nativeBaseFixture(t, fixture)

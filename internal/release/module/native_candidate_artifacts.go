@@ -215,7 +215,8 @@ func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.C
 	if locator == "" || artifact.Locator != locator || artifact.Locator != strings.TrimSpace(artifact.Locator) {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact locator is not canonical"))
 	}
-	if err := validateNativeBundleManifestJSON(artifact.ManifestJSON); err != nil {
+	durableManifestJSON, err := projectbundle.CanonicalManifestJSON(artifact.ManifestJSON)
+	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactInvalid(err)
 	}
 	if baseProvenance.Artifact.ContentDigest != artifact.Digest || baseProvenance.Artifact.ProjectDigest != state.ProjectDigest {
@@ -238,7 +239,11 @@ func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.C
 	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactInvalid(err)
 	}
-	if validation.Digest != artifact.Digest || validation.ProjectID != identity.ProjectID.String() || validation.ProjectDigest != state.ProjectDigest || validation.ManifestJSON != artifact.ManifestJSON || compiled.ProjectID != identity.ProjectID || compiled.ProjectDigest != state.ProjectDigest {
+	validatedManifestJSON, err := projectbundle.CanonicalManifestJSON(validation.ManifestJSON)
+	if err != nil {
+		return candidateGenerationBase{}, candidateArtifactInvalid(err)
+	}
+	if validation.Digest != artifact.Digest || validation.ProjectID != identity.ProjectID.String() || validation.ProjectDigest != state.ProjectDigest || !bytes.Equal(validatedManifestJSON, durableManifestJSON) || compiled.ProjectID != identity.ProjectID || compiled.ProjectDigest != state.ProjectDigest {
 		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving artifact content identity mismatch"))
 	}
 	baseArtifact, err := projectartifact.NewProject(compiled.Graph, compiled.Manifest)
@@ -255,10 +260,19 @@ func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.C
 	if err != nil {
 		return candidateGenerationBase{}, candidateArtifactInvalid(err)
 	}
-	if state.AccessPolicyJSON != accessPolicyJSON || state.DashboardPublicationsJSON != publicationsJSON || state.DashboardAppearancesJSON != appearancesJSON {
-		return candidateGenerationBase{}, candidateArtifactInvalid(errors.New("candidate base serving policy identity mismatch"))
+	for _, document := range []struct {
+		label       string
+		persisted   string
+		regenerated string
+	}{
+		{label: "access policy", persisted: state.AccessPolicyJSON, regenerated: accessPolicyJSON},
+		{label: "dashboard publications", persisted: state.DashboardPublicationsJSON, regenerated: publicationsJSON},
+		{label: "dashboard appearances", persisted: state.DashboardAppearancesJSON, regenerated: appearancesJSON},
+	} {
+		if err := equivalentNativeServingDocuments(document.persisted, document.regenerated, document.label); err != nil {
+			return candidateGenerationBase{}, candidateArtifactInvalid(err)
+		}
 	}
-
 	pins := make(map[string]string, len(baseProvenance.Plan.ManagedDataPins))
 	for _, pin := range baseProvenance.Plan.ManagedDataPins {
 		connection, revision := pin.ConnectionID, pin.RevisionID
@@ -811,6 +825,21 @@ func canonicalNativeServingObject(encoded []byte, label string) ([]byte, error) 
 		return nil, fmt.Errorf("native serving %s exceeds bounded document size", label)
 	}
 	return canonical, nil
+}
+
+func equivalentNativeServingDocuments(persisted, regenerated, label string) error {
+	persistedCanonical, err := canonicalNativeServingObject([]byte(persisted), label)
+	if err != nil {
+		return err
+	}
+	regeneratedCanonical, err := canonicalNativeServingObject([]byte(regenerated), label)
+	if err != nil {
+		return err
+	}
+	if !bytes.Equal(persistedCanonical, regeneratedCanonical) {
+		return fmt.Errorf("candidate base serving %s identity mismatch", label)
+	}
+	return nil
 }
 
 func validateNativeServingDocument(value, label string) error {

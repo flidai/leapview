@@ -29,6 +29,53 @@ func TestServingArtifactLoaderLoadsNativeLocatorFromMemoryStore(t *testing.T) {
 	}
 }
 
+func TestServingArtifactLoaderAcceptsReorderedManifestJSON(t *testing.T) {
+	store, artifact, want := nativeServingArtifactFixture(t)
+	loader := ServingArtifactLoader{Objects: store}
+
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(artifact.ManifestJSON), &manifest); err != nil {
+		t.Fatalf("unmarshal manifest JSON: %v", err)
+	}
+	reordered, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal reordered manifest JSON: %v", err)
+	}
+	if string(reordered) == artifact.ManifestJSON {
+		t.Fatal("reordered manifest JSON unexpectedly retained the original key order")
+	}
+	artifact.ManifestJSON = string(reordered)
+
+	got, err := loader.LoadCompiled(context.Background(), artifact, t.TempDir())
+	if err != nil {
+		t.Fatalf("LoadCompiled() error = %v, want success for semantically equivalent manifest", err)
+	}
+	if got.ProjectID != want.ProjectID || got.ProjectDigest != want.ProjectDigest {
+		t.Fatalf("compiled project identity = (%q, %q), want (%q, %q)", got.ProjectID, got.ProjectDigest, want.ProjectID, want.ProjectDigest)
+	}
+}
+
+func TestServingArtifactLoaderRejectsSemanticallyTamperedManifestJSON(t *testing.T) {
+	store, artifact, _ := nativeServingArtifactFixture(t)
+	loader := ServingArtifactLoader{Objects: store}
+
+	var manifest map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(artifact.ManifestJSON), &manifest); err != nil {
+		t.Fatalf("unmarshal manifest JSON: %v", err)
+	}
+	manifest["projectId"] = json.RawMessage(`"tampered-project"`)
+	tampered, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal tampered manifest JSON: %v", err)
+	}
+	artifact.ManifestJSON = string(tampered)
+
+	_, err = loader.LoadCompiled(context.Background(), artifact, t.TempDir())
+	if err == nil || !strings.Contains(err.Error(), "native serving artifact content differs from durable serving state") {
+		t.Fatalf("LoadCompiled() error = %v, want semantically tampered manifest mismatch", err)
+	}
+}
+
 func TestServingArtifactLoaderRequiresNativeReaderWhenPathEmpty(t *testing.T) {
 	_, artifact, _ := nativeServingArtifactFixture(t)
 

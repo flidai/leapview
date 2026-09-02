@@ -1,7 +1,9 @@
 package bundle
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"strings"
 
@@ -74,8 +76,28 @@ func (l ServingArtifactLoader) LoadCompiled(ctx context.Context, artifact servin
 	if closeErr != nil {
 		return CompiledProjectArtifact{}, fmt.Errorf("close native serving artifact: %w", closeErr)
 	}
-	if validation.Digest != artifact.Digest || validation.ManifestJSON != artifact.ManifestJSON {
+	durableManifestJSON, err := CanonicalManifestJSON(artifact.ManifestJSON)
+	if err != nil {
+		return CompiledProjectArtifact{}, fmt.Errorf("decode durable native serving artifact manifest: %w", err)
+	}
+	validatedManifestJSON, err := CanonicalManifestJSON(validation.ManifestJSON)
+	if err != nil {
+		return CompiledProjectArtifact{}, fmt.Errorf("decode validated native serving artifact manifest: %w", err)
+	}
+	if validation.Digest != artifact.Digest || !bytes.Equal(durableManifestJSON, validatedManifestJSON) {
 		return CompiledProjectArtifact{}, fmt.Errorf("native serving artifact content differs from durable serving state")
 	}
 	return compiled, nil
+}
+
+// CanonicalManifestJSON validates and canonicalizes the bundle's typed
+// manifest contract. Consumers use it when a provider such as PostgreSQL
+// jsonb can preserve JSON semantics but not the producer's object key order.
+// The bundle digest remains the authority for exact compressed bytes.
+func CanonicalManifestJSON(value string) ([]byte, error) {
+	manifest, err := decodeManifest([]byte(value))
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(manifest)
 }
