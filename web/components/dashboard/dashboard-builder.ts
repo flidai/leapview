@@ -2027,6 +2027,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-semibold);
     }
 
+    .inline-page-properties {
+      margin-top: var(--base-size-4);
+      border-top: var(--lv-border-muted);
+      padding-top: var(--base-size-12);
+    }
+
     .format-section {
       display: grid;
       gap: var(--base-size-8);
@@ -3583,7 +3589,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                   ? this.renderSlicerFieldWell(slicerFilter)
                   : visual
                     ? html`${this.renderFieldWells(visual)}${this.renderVisualFormatControls(visual)}${this.renderInteractionEditor(builder, page, visual)}`
-                    : nothing}
+                    : page ? html`<div class="inline-page-properties">${this.renderPageProperties(page)}</div>` : nothing}
               </section>`}
           ${this.renderInspectorDetails(builder)}
         </div>
