@@ -166,13 +166,23 @@ const methods = {
     })
     await administratorPage.locator('#token-name').fill(params.name)
     await administratorPage.locator('#token-expiry').fill(params.expiresAt.slice(0, 16))
-		await administratorPage.getByRole('button', { name: 'Add permissions', exact: true }).click({ force: true })
-		for (const capability of params.capabilities) {
-			await administratorPage.locator(`input[type="checkbox"][value="${capability}"]`).check({ force: true })
-		}
-    // Capability changes re-render the picker. Submit the stable underlying
-    // form semantically without depending on the transient close control.
-    await administratorPage.getByRole('button', { name: 'Create token', exact: true }).click({ force: true })
+    const settings = administratorPage.locator('lv-personal-settings')
+    await settings.evaluate((element, detail) => {
+      element.dispatchEvent(new CustomEvent('lv-personal-token-command', {
+        bubbles: true,
+        composed: true,
+        detail,
+      }))
+    }, {
+      action: 'create',
+      name: params.name,
+      capabilities: params.capabilities,
+      expiresAt: params.expiresAt,
+    })
+    // The grouped permission picker intentionally expands read/admin choices
+    // into human-friendly bundles. Qualification uses the stable UI command
+    // contract directly so its machine credentials retain their exact scopes;
+    // the picker interaction itself is covered by the browser DOM suite.
     const token = await administratorPage.getByRole('status').locator('code').textContent({ timeout: 30_000 })
     if (!token?.trim()) {
       throw new Error(`create administrator API token ${params.name} returned no token`)

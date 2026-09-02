@@ -568,10 +568,18 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(authoring, "PLATFORM_ADMIN") {
 		t.Error("authoring credentials must not claim the durable platform-admin role")
 	}
-	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "candidate preview returned HTTP", "Governed order rows", "check({ force: true })"} {
+	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "candidate preview returned HTTP", "Governed order rows"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker missing %q", required)
 		}
+	}
+	for _, required := range []string{"lv-personal-token-command", "new CustomEvent", "capabilities: params.capabilities"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must create exact-scope API tokens through the stable UI command contract: missing %q", required)
+		}
+	}
+	if strings.Contains(worker, `input[type="checkbox"][value="${capability}"]`) {
+		t.Error("browser worker must not couple exact token scopes to grouped permission-picker checkbox values")
 	}
 	for _, required := range []string{"resolvePrincipalFromDirectory", "tr.entity-list-table-row", "a.entity-list-identity", "'/admin/principals/'"} {
 		if !strings.Contains(worker, required) {
