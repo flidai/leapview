@@ -145,6 +145,13 @@ type Module struct {
 	wg          sync.WaitGroup
 }
 
+func durableRefreshAudit(config Config) bool {
+	// Build validates a PostgreSQL backend's concrete native repository before
+	// this value can reach a live module. Inspecting the backend marker here
+	// keeps the audit guarantee independent of repository implementation detail.
+	return config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.backend == backendPostgres)
+}
+
 func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Production {
 		if config.Persistence == nil || !config.Persistence.isPostgres() {
@@ -190,8 +197,12 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		refreshClock:       config.Clock,
 		reconcileSchedules: config.ReconcileSchedules, scheduleInterval: interval,
 		leaseTimeout: leaseTimeout, logger: logger,
-		events:            config.Events,
-		durableAudit:      config.AuditIntentRecorder != nil,
+		events: config.Events,
+		// Native PostgreSQL admission records the generated create audit intent
+		// inside the same transaction as the operation, run tree, queue job, and
+		// initial lifecycle event. It therefore satisfies the transactional
+		// command guarantee without the legacy post-commit audit recorder.
+		durableAudit:      durableRefreshAudit(config),
 		refreshExecution:  refreshExecution,
 		resolveIdentity:   config.ResolveIdentity,
 		publishedVersion:  config.PublishedVersion,

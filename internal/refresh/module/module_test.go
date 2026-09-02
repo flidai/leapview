@@ -101,13 +101,23 @@ func TestRefreshCreateDurableAuditDoesNotAppendPostCommitDuplicate(t *testing.T)
 
 func TestRefreshCreateDurableAuditSkipsLegacyVerificationFailure(t *testing.T) {
 	var logs bytes.Buffer
-	module := &Module{events: &refreshEventStore{err: errors.New("event store unavailable")}, logger: slog.New(slog.NewTextHandler(&logs, nil)), durableAudit: true}
+	module := &Module{
+		events:       &refreshEventStore{err: errors.New("event store unavailable")},
+		logger:       slog.New(slog.NewTextHandler(&logs, nil)),
+		durableAudit: durableRefreshAudit(Config{Persistence: &Persistence{backend: backendPostgres}}),
+	}
 	run := refreshrun.RunRecord{ID: "run-audit-failure", Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation"}, SemanticModelID: "orders", PipelineID: "daily", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "daily", Status: refreshrun.RunStatusQueued, CreatedAt: "2026-08-10T12:00:00Z"}
 	if err := module.verifyRunCreated(t.Context(), run); err != nil {
 		t.Fatalf("durable audit verification changed command result: %v", err)
 	}
 	if logs.Len() != 0 {
 		t.Fatalf("legacy verification log = %q", logs.String())
+	}
+}
+
+func TestBuildDoesNotTreatLegacyPersistenceAsTransactionalAudit(t *testing.T) {
+	if durableRefreshAudit(Config{Persistence: &Persistence{backend: backendSQLiteLegacy}}) {
+		t.Fatal("legacy persistence was recognized as transactional audit authority without a recorder")
 	}
 }
 
