@@ -33,19 +33,19 @@ func TestPhysicalPoolMigrationPersistsControlMetadataOnly(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(ctx, `
 		INSERT INTO physical_pools (
 		  id, identity_digest, storage_location, storage_namespace,
-		  storage_implementation, object_naming_contract, isolation_boundary,
+		  storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 		  retention_authority, retention_policy_json
 		) VALUES ('pool-1', 'sha256:bad', 's3://invalid', 'tenant-a', 's3',
-		  'uuidv7:v1', 'target-a', 'retention-a', '{}')`); err == nil {
+		  'uuidv7:v1', 'target-a', 'target-a', 'retention-a', '{}')`); err == nil {
 		t.Fatal("non-canonical physical pool digest unexpectedly accepted")
 	}
 	_, err = store.SQLDB().ExecContext(ctx, `
 		INSERT INTO physical_pools (
 		  id, identity_digest, storage_location, storage_namespace,
-		  storage_implementation, object_naming_contract, isolation_boundary,
+		  storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 		  retention_authority, retention_policy_json
 		  ) VALUES (?, ?, 's3://warehouse', 'tenant-a', 's3',
-		  'uuidv7:v1', 'target-a', 'target-a-retention', '{}')`, poolID, identityDigest)
+		  'uuidv7:v1', 'target-a', 'target-a', 'target-a-retention', '{}')`, poolID, identityDigest)
 	if err != nil {
 		t.Fatalf("insert physical pool: %v", err)
 	}
@@ -54,10 +54,10 @@ func TestPhysicalPoolMigrationPersistsControlMetadataOnly(t *testing.T) {
 	_, err = store.SQLDB().ExecContext(ctx, `
 		INSERT INTO physical_pools (
 		  id, identity_digest, storage_location, storage_namespace,
-		  storage_implementation, object_naming_contract, isolation_boundary,
+		  storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 		  retention_authority, retention_policy_json
 		) VALUES (?, ?, 's3://warehouse', 'tenant-a', 's3',
-		  'uuidv7:v1', 'target-b', 'independent-collector', '{}')`, conflictID, conflictDigest)
+		  'uuidv7:v1', 'target-a', 'target-b', 'independent-collector', '{}')`, conflictID, conflictDigest)
 	if err != nil {
 		// The same deletable namespace must remain globally owned, regardless
 		// of target boundary, tenant, or retention authority.
@@ -77,10 +77,10 @@ func TestPhysicalPoolMigrationPersistsControlMetadataOnly(t *testing.T) {
 		if _, err := store.SQLDB().ExecContext(ctx, `
 			INSERT INTO physical_pools (
 			  id, identity_digest, storage_location, storage_namespace,
-			  storage_implementation, object_naming_contract, isolation_boundary,
+			  storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 			  tenant, retention_authority, retention_policy_json
 			) VALUES (?, ?, 's3://warehouse', 'tenant-a', 's3',
-			  'uuidv7:v1', ?, ?, ?, '{}')`, candidate.id, candidate.digest, candidate.isolation, candidate.tenant, candidate.authority); err == nil {
+			  'uuidv7:v1', 'target-a', ?, ?, ?, '{}')`, candidate.id, candidate.digest, candidate.isolation, candidate.tenant, candidate.authority); err == nil {
 			t.Fatalf("namespace variant tenant=%q isolation=%q authority=%q unexpectedly registered", candidate.tenant, candidate.isolation, candidate.authority)
 		}
 	}
