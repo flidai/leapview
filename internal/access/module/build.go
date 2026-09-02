@@ -21,11 +21,8 @@ import (
 
 type Config struct {
 	// Persistence is the preferred capability-owned authority bundle.
-	Persistence *Persistence
-	Database    *sql.DB
-	// LegacySQLite is an explicit development/test opt-in for Database.
-	// Production composition must inject PostgreSQL Persistence instead.
-	LegacySQLite                 bool
+	Persistence                  *Persistence
+	Database                     *sql.DB
 	Production                   bool
 	Auth                         AuthConfig
 	ExistingAuth                 *Auth
@@ -73,9 +70,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return newSurface(surface)
 	}
 	if config.Persistence == nil {
-		if !config.LegacySQLite {
-			return nil, errors.New("SQLite access build requires LegacySQLite=true; inject PostgreSQL persistence for production")
-		}
 		persistence, err := NewSQLitePersistence(ctx, SQLitePersistenceConfig{Database: config.Database})
 		if err != nil {
 			return nil, err

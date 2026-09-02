@@ -310,7 +310,7 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	module, err := Build(t.Context(), Config{
-		Database: store.SQLDB(), LegacySQLite: true,
+		Database:   store.SQLDB(),
 		InstanceID: desktopTestInstanceID,
 		PublicURL:  "https://analytics.company.com",
 		Auth: AuthConfig{

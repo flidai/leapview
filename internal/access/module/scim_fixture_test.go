@@ -48,7 +48,7 @@ func testAccessRepository(store *platform.Store) access.Repository {
 
 func assembleSCIMTestHarness(_ fakeMetrics, config assemblyConfig) *scimTestHarness {
 	module, err := Build(context.Background(), Config{
-		Database: config.store.SQLDB(), LegacySQLite: true,
+		Database: config.store.SQLDB(),
 	})
 	if err != nil {
 		panic(err)
