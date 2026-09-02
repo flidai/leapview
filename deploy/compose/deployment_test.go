@@ -573,8 +573,13 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 			t.Errorf("browser worker missing %q", required)
 		}
 	}
-	if !strings.Contains(worker, "/api/v1/principals?email=") || strings.Contains(worker, "params.principalId") {
-		t.Error("browser worker must return the durable reviewer principal ID instead of a fixture-supplied identity")
+	for _, required := range []string{"resolvePrincipalFromDirectory", "tr.entity-list-table-row", "a.entity-list-identity", "'/admin/principals/'"} {
+		if !strings.Contains(worker, required) {
+			t.Errorf("browser worker must resolve durable principal IDs from the authenticated directory: missing %q", required)
+		}
+	}
+	if strings.Contains(worker, "params.principalId") || strings.Contains(worker, "new URL('/api/v1/me'") || strings.Contains(worker, "/api/v1/principals?email=") {
+		t.Error("browser worker must not fabricate identities or send browser sessions to bearer-only API routes")
 	}
 	for _, required := range []string{"page.waitForResponse", "'/auth/local/password'", "getByLabel('Password').fill(password)"} {
 		if !strings.Contains(worker, required) {
