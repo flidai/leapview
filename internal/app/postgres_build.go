@@ -376,7 +376,11 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		}
 		return rich.SourceDigest, nil
 	}
-	attachChecker := appruntimefactory.NewPostgresRuntimeAttachChecker(bootstrap.DuckLakePool())
+	// Runtime attach eligibility is control-plane evidence, not DuckLake
+	// catalog metadata.  The checker must therefore read the canonical
+	// DuckLake control ledger in leapview_control; the separately authenticated
+	// DuckLake pool remains reserved for the actual catalog ATTACH.
+	attachChecker := graph.DuckLakeControlLedger
 	// BuildRuntime uses the analytics module's factory against the immutable
 	// DuckLake environment opened by the sealed runtime factory. The dashboard
 	// runtime implementation remains behind the app/runtimefactory seam.

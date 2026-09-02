@@ -15,6 +15,7 @@ import (
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	"github.com/flidai/leapview/internal/app/adminpostgres"
@@ -253,6 +254,27 @@ func capturePostgresOnboardingPersistence(t *testing.T, cfg config.Config, contr
 	}
 	if err := physicalpool.VerifyAdmission(contract.Pool, tuple, contract.Admission, contract.Evidence); err != nil {
 		t.Fatalf("verify admitted PostgreSQL physical-pool contract after restart: %v", err)
+	}
+	// The compatibility ledger is part of the control-plane baseline, while
+	// the separately authenticated DuckLake pool contains only per-pool
+	// metadata.  Exercise both identities so runtime attach cannot regress to
+	// querying the external catalog database for control evidence.
+	ledger := ducklakepostgres.New(lifecycle.RuntimePool())
+	compatibility, err := ledger.LoadCatalogRuntimeCompatibility(t.Context(), poolID.String())
+	if err != nil {
+		t.Fatalf("load control-plane DuckLake runtime compatibility after restart: %v", err)
+	}
+	eligibility, err := ledger.CheckRuntimeAttachEligibility(t.Context(), ducklakepostgres.RuntimeAttachInput{
+		PhysicalPoolID: poolID.String(), CatalogID: compatibility.CatalogID, Compatibility: compatibility.RuntimeCompatibility,
+	})
+	if err != nil || !eligibility.Eligible {
+		t.Fatalf("control-plane DuckLake runtime attach eligibility = %#v, err %v", eligibility, err)
+	}
+	externalChecker := ducklakepostgres.New(lifecycle.DuckLakePool())
+	if _, err := externalChecker.CheckRuntimeAttachEligibility(t.Context(), ducklakepostgres.RuntimeAttachInput{
+		PhysicalPoolID: poolID.String(), CatalogID: compatibility.CatalogID, Compatibility: compatibility.RuntimeCompatibility,
+	}); err == nil {
+		t.Fatal("external DuckLake catalog unexpectedly exposed control-plane runtime compatibility")
 	}
 	return postgresOnboardingPersistenceSnapshot{InstanceID: instanceID, Contract: contract}
 }

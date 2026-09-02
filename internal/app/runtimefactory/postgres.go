@@ -37,21 +37,11 @@ var (
 
 // DuckLakeRuntimeAttachChecker is the narrow, read-only authority required
 // immediately before a PostgreSQL-backed DuckLake serving attachment. The
-// checker implementation owns the DuckLake runtime pool; serving composition
-// never receives the broader migration/owner repository.
+// checker reads application-owned compatibility and migration evidence from
+// the control ledger; it never receives the external catalog pool or broader
+// migration/owner capability.
 type DuckLakeRuntimeAttachChecker interface {
 	CheckRuntimeAttachEligibility(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error)
-}
-
-// NewPostgresRuntimeAttachChecker adapts the target-owned DuckLake PostgreSQL
-// runtime pool to the narrow checker consumed by the sealed factory. Keeping
-// construction here prevents process composition from depending on the
-// adapter package directly.
-func NewPostgresRuntimeAttachChecker(pool ducklakepostgres.DBTX) DuckLakeRuntimeAttachChecker {
-	if pool == nil {
-		return nil
-	}
-	return ducklakepostgres.New(pool)
 }
 
 // PostgresDashboardRuntimeConfig contains the module-owned inputs needed to
