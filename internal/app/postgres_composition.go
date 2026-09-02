@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
@@ -81,12 +82,43 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("identify PostgreSQL DuckLake runtime database: %w", err)
 	}
+	// The runtime URL is a credential selector, not the catalog identity
+	// authority. Fail closed unless it lands on the dedicated DuckLake
+	// database, and re-check both login and session roles through the existing
+	// capability-owned static probe. This prevents a syntactically valid URL
+	// from silently attaching a control or cross-environment database.
+	ducklakeConfig := cfg.PostgresDuckLakeRuntimeConfig()
+	ducklakeIdentity, err := ducklakepostgres.ReadDatabaseIdentity(ctx, ducklake)
+	if err != nil {
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("identify PostgreSQL DuckLake runtime credentials: %w", err)
+	}
+	if err := validatePostgresDuckLakeRuntimeIdentity(ducklakeDatabase, ducklakeIdentity, ducklakeConfig.RuntimeRole); err != nil {
+		ducklake.Close()
+		pools.Close()
+		return nil, fmt.Errorf("validate PostgreSQL DuckLake runtime credentials: %w", err)
+	}
 	if ducklakeDatabase == runtimeDatabase {
 		ducklake.Close()
 		pools.Close()
 		return nil, fmt.Errorf("PostgreSQL control and DuckLake authorities resolve to the same database %q", runtimeDatabase)
 	}
 	return &postgresControlPlaneLifecycle{pools: pools, ducklake: ducklake}, nil
+}
+
+// validatePostgresDuckLakeRuntimeIdentity is the production admission seam
+// for the separately authenticated DuckLake pool. Both the pool's current
+// database probe and PostgreSQL's login/session identity must agree with the
+// dedicated catalog contract before serving composition proceeds.
+func validatePostgresDuckLakeRuntimeIdentity(database string, identity ducklakepostgres.DatabaseIdentity, expectedRole string) error {
+	if database != ducklakepostgres.DefaultDuckLakeDatabase {
+		return fmt.Errorf("%w: PostgreSQL DuckLake runtime database %q differs from required database %q", ducklakepostgres.ErrWrongDatabaseCredential, database, ducklakepostgres.DefaultDuckLakeDatabase)
+	}
+	if identity.Database != database {
+		return fmt.Errorf("%w: PostgreSQL DuckLake identity database %q differs from pool database %q", ducklakepostgres.ErrWrongDatabaseCredential, identity.Database, database)
+	}
+	return ducklakepostgres.ValidateDatabaseIdentity(identity, database, expectedRole)
 }
 
 func postgresDatabaseName(ctx context.Context, pool *platformpostgres.Pool) (string, error) {

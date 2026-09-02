@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/config"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	projectsource "github.com/flidai/leapview/internal/app/projectsource"
@@ -246,5 +247,55 @@ func TestOpenPostgresControlPlaneRejectsMissingPoolConfiguration(t *testing.T) {
 	_, err := openPostgresControlPlane(context.Background(), config.Config{})
 	if err == nil {
 		t.Fatal("openPostgresControlPlane accepted an empty pool configuration")
+	}
+}
+
+func TestValidatePostgresDuckLakeRuntimeIdentity(t *testing.T) {
+	tests := []struct {
+		name     string
+		database string
+		identity ducklakepostgres.DatabaseIdentity
+		wantErr  bool
+	}{
+		{
+			name:     "exact database and role",
+			database: ducklakepostgres.DefaultDuckLakeDatabase,
+			identity: ducklakepostgres.DatabaseIdentity{Database: ducklakepostgres.DefaultDuckLakeDatabase, User: "runtime", SessionUser: "runtime"},
+		},
+		{
+			name:     "wrong database",
+			database: "other_database",
+			identity: ducklakepostgres.DatabaseIdentity{Database: "other_database", User: "runtime", SessionUser: "runtime"},
+			wantErr:  true,
+		},
+		{
+			name:     "identity database disagrees with pool",
+			database: ducklakepostgres.DefaultDuckLakeDatabase,
+			identity: ducklakepostgres.DatabaseIdentity{Database: "other_database", User: "runtime", SessionUser: "runtime"},
+			wantErr:  true,
+		},
+		{
+			name:     "wrong login role",
+			database: ducklakepostgres.DefaultDuckLakeDatabase,
+			identity: ducklakepostgres.DatabaseIdentity{Database: ducklakepostgres.DefaultDuckLakeDatabase, User: "wrong", SessionUser: "runtime"},
+			wantErr:  true,
+		},
+		{
+			name:     "wrong session role",
+			database: ducklakepostgres.DefaultDuckLakeDatabase,
+			identity: ducklakepostgres.DatabaseIdentity{Database: ducklakepostgres.DefaultDuckLakeDatabase, User: "runtime", SessionUser: "wrong"},
+			wantErr:  true,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := validatePostgresDuckLakeRuntimeIdentity(tt.database, tt.identity, "runtime")
+			if (err != nil) != tt.wantErr {
+				t.Fatalf("validation error = %v, wantErr=%t", err, tt.wantErr)
+			}
+			if tt.wantErr && !errors.Is(err, ducklakepostgres.ErrWrongDatabaseCredential) {
+				t.Fatalf("validation error = %v, want ErrWrongDatabaseCredential", err)
+			}
+		})
 	}
 }

@@ -37,7 +37,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	h := postgrestest.StartTLS(t)
 	roles := provisionPostgresOnboardingRoles(t, h)
 	control := h.NewDatabase(t, "leapview_control")
-	catalog := h.NewDatabase(t, "leapview_ducklake")
+	catalog := h.NewDatabase(t, ducklakepostgres.DefaultDuckLakeDatabase)
 	grantPostgresOnboardingDatabases(t, h, control, catalog, roles)
 
 	fixture := extensionfixture.New(t, "ducklake", "postgres")

@@ -161,6 +161,29 @@ func postgresRuntimeAttachInputFromRoot(root SealedServingRoot) (ducklakepostgre
 	}, nil
 }
 
+// validatePostgresCatalogRegistration binds the durable serving root to the
+// deterministic catalog identity registered during physical-pool bootstrap.
+// The live DuckLake PostgreSQL connection proves database/role identity at
+// process startup; the root carries the remaining catalog registration fields
+// (ID, UUID, and metadata schema), which must not drift between qualification
+// and serving attach.
+func validatePostgresCatalogRegistration(root SealedServingRoot) error {
+	if root.CatalogDatabase != ducklakepostgres.DefaultDuckLakeDatabase {
+		return fmt.Errorf("%w: PostgreSQL catalog database %q differs from required database %q", ErrSealedRootMismatch, root.CatalogDatabase, ducklakepostgres.DefaultDuckLakeDatabase)
+	}
+	if root.CompatibilityDigest == "" || root.CatalogSchemaVersion == "" {
+		return fmt.Errorf("%w: PostgreSQL catalog registration compatibility evidence is incomplete", ErrSealedRootUnavailable)
+	}
+	identity, err := ducklakepostgres.DeriveCatalogIdentity(root.PhysicalPoolID, root.CatalogDatabase, root.CompatibilityDigest, root.CatalogSchemaVersion)
+	if err != nil {
+		return fmt.Errorf("%w: derive PostgreSQL catalog registration identity: %v", ErrSealedRootMismatch, err)
+	}
+	if root.CatalogID != identity.CatalogID || root.CatalogUUID != identity.CatalogUUID || root.CatalogMetadataSchema != identity.MetadataSchema {
+		return fmt.Errorf("%w: PostgreSQL catalog registration identity differs from physical-pool authority", ErrSealedRootMismatch)
+	}
+	return nil
+}
+
 // checkPostgresRuntimeAttachEligibility runs the existing PostgreSQL DuckLake
 // gate against the exact root selected for serving. It also verifies the
 // evidence returned by the checker at this boundary so an adapter cannot
@@ -235,6 +258,9 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	}
 	if root.CatalogDatabase == "" || root.CatalogID == "" || root.CatalogUUID == "" || root.DeliveryID == "" || root.GenerationID == "" || root.CandidateID == "" || root.AttemptID == "" || root.FencingEpoch <= 0 || root.DataPath == "" {
 		return nil, fmt.Errorf("%w: PostgreSQL catalog and generation identity is incomplete", ErrSealedRootUnavailable)
+	}
+	if err := validatePostgresCatalogRegistration(root); err != nil {
+		return nil, err
 	}
 	if _, err := uuid.Parse(root.CatalogUUID); err != nil {
 		return nil, fmt.Errorf("%w: PostgreSQL catalog UUID is invalid", ErrSealedRootMismatch)
