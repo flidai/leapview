@@ -168,6 +168,8 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 		"RefreshTargetRevision: resolveRefreshTargetRevision",
 		"RefreshSourceDigest: resolveRefreshSourceDigest",
 		"CanonicalRefreshExecutor: nativeRefreshExecutor.Execute",
+		"CanonicalResultReconciler: canonicalResultReconciler",
+		"runtimeHost.ReconcileSealed(reconcileCtx, servingstate.ID(target.ActiveGenerationID))",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("PostgreSQL composition is missing %q", required)

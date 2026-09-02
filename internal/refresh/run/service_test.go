@@ -185,6 +185,7 @@ func TestServiceExecuteClaimedJobRequiresAtomicRuntimeHost(t *testing.T) {
 func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	repo := newFakeRepo()
 	executed := false
+	reconciled := false
 	service := Service{
 		Runs: repo,
 		CanonicalExecutor: func(_ context.Context, job JobRecord) (CanonicalRefreshResult, error) {
@@ -195,6 +196,16 @@ func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 			return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
 		},
 		Publication: fakePublication{repo: repo},
+		CanonicalResultReconciler: func(_ context.Context, job JobRecord, result CanonicalRefreshResult) error {
+			if job.RunID != "run_root" || result.PlanID != "plan-refresh" || result.ServingStateID != "generation-refresh" {
+				t.Fatalf("canonical reconciliation input = job %#v, result %#v", job, result)
+			}
+			if repo.runStatuses["run_root"] != RunStatusSucceeded {
+				t.Fatal("canonical result reconciled before durable completion")
+			}
+			reconciled = true
+			return nil
+		},
 	}
 	err := service.ExecuteClaimedJob(t.Context(), JobRecord{
 		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
@@ -205,8 +216,32 @@ func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	if err != nil {
 		t.Fatalf("execute canonical claimed job: %v", err)
 	}
-	if !executed || repo.runStatuses["run_root"] != RunStatusSucceeded || repo.runStatuses["run_child"] != RunStatusSucceeded {
-		t.Fatalf("executed/statuses = %v/%#v", executed, repo.runStatuses)
+	if !executed || !reconciled || repo.runStatuses["run_root"] != RunStatusSucceeded || repo.runStatuses["run_child"] != RunStatusSucceeded {
+		t.Fatalf("executed/reconciled/statuses = %v/%v/%#v", executed, reconciled, repo.runStatuses)
+	}
+}
+
+func TestServiceExecuteClaimedJobReturnsCanonicalReconciliationFailure(t *testing.T) {
+	repo := newFakeRepo()
+	wantErr := errors.New("runtime cutover unavailable")
+	service := Service{
+		Runs: repo,
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
+		},
+		Publication: fakePublication{repo: repo},
+		CanonicalResultReconciler: func(context.Context, JobRecord, CanonicalRefreshResult) error {
+			return wantErr
+		},
+	}
+	err := service.ExecuteClaimedJob(t.Context(), JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	})
+	if !errors.Is(err, wantErr) || !strings.Contains(err.Error(), "reconcile canonical refresh result") {
+		t.Fatalf("canonical reconciliation error = %v, want %v", err, wantErr)
 	}
 }
 

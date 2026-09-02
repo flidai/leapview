@@ -118,6 +118,12 @@ type CanonicalPublicationUnitOfWork interface {
 	CompleteCanonicalRefresh(context.Context, JobRecord, CanonicalRefreshResult) error
 }
 
+// CanonicalResultReconciler applies the committed canonical result to runtime
+// and serving projections. The durable publication is already authoritative
+// when this hook runs, so implementations must reconcile the exact result
+// generation and remain safe to replay.
+type CanonicalResultReconciler func(context.Context, JobRecord, CanonicalRefreshResult) error
+
 // CanonicalRefreshResult is the exact committed delivery identity produced by
 // a refresh restatement. The old job identity remains the workflow/lease
 // fence; this result identifies the new immutable serving generation whose
@@ -145,19 +151,20 @@ type Service struct {
 	// ResolveTargetRevision reads the authoritative deployment target fence at
 	// queue time. Native PostgreSQL refreshes must carry this exact revision
 	// into the durable run; a zero or inferred revision is never publishable.
-	ResolveTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
-	ResolveSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
-	CanonicalExecutor        func(context.Context, JobRecord) (CanonicalRefreshResult, error)
-	Runs                     WorkflowRepository
-	Artifacts                ArtifactLoader
-	Materializer             Materializer
-	Runtime                  RuntimeHost
-	Retention                RetentionRunner
-	Publisher                Publisher
-	DataVersions             DataVersionRepository
-	Publication              PublicationUnitOfWork
-	CandidateValidationHooks []CandidateValidationHook
-	Now                      func() time.Time
+	ResolveTargetRevision     func(context.Context, projectgraph.ServingIdentity) (int64, error)
+	ResolveSourceDigest       func(context.Context, projectgraph.ServingIdentity) (string, error)
+	CanonicalExecutor         func(context.Context, JobRecord) (CanonicalRefreshResult, error)
+	CanonicalResultReconciler CanonicalResultReconciler
+	Runs                      WorkflowRepository
+	Artifacts                 ArtifactLoader
+	Materializer              Materializer
+	Runtime                   RuntimeHost
+	Retention                 RetentionRunner
+	Publisher                 Publisher
+	DataVersions              DataVersionRepository
+	Publication               PublicationUnitOfWork
+	CandidateValidationHooks  []CandidateValidationHook
+	Now                       func() time.Time
 }
 
 type ServingState struct {
@@ -542,6 +549,11 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 		}
 		if err := publication.CompleteCanonicalRefresh(ctx, job, result); err != nil {
 			return err
+		}
+		if s.CanonicalResultReconciler != nil {
+			if err := s.CanonicalResultReconciler(ctx, job, result); err != nil {
+				return fmt.Errorf("reconcile canonical refresh result: %w", err)
+			}
 		}
 		s.publish(ctx, job.Identity, job.TargetType, job.TargetID)
 		return nil

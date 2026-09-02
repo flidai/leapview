@@ -214,22 +214,23 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
-	managedDataValidation    refreshmodule.CandidateValidationHook
-	managedDataResolver      runtimehostmodule.ManagedDataResolver
-	refreshPipelineClock     refreshmodule.Clock
-	refreshMaterializer      refreshrun.Materializer
-	refreshTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
-	refreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
-	canonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
-	publishedVersion         refreshmodule.PublishedDataVersionResolver
-	enableRefreshDispatcher  bool
-	recoveryLifecycle        *refreshmodule.RecoveryLifecycle
-	recoveryInterval         time.Duration
-	agent                    *agentmodule.Service
-	agentConfig              agentmodule.ModelConfig
-	reloader                 runtimeReloader
-	deploymentConfig         deploymentmodule.Config
-	servingArtifacts         projectbundle.ArtifactObjectReader
+	managedDataValidation     refreshmodule.CandidateValidationHook
+	managedDataResolver       runtimehostmodule.ManagedDataResolver
+	refreshPipelineClock      refreshmodule.Clock
+	refreshMaterializer       refreshrun.Materializer
+	refreshTargetRevision     func(context.Context, projectgraph.ServingIdentity) (int64, error)
+	refreshSourceDigest       func(context.Context, projectgraph.ServingIdentity) (string, error)
+	canonicalRefreshExecutor  func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	canonicalResultReconciler refreshrun.CanonicalResultReconciler
+	publishedVersion          refreshmodule.PublishedDataVersionResolver
+	enableRefreshDispatcher   bool
+	recoveryLifecycle         *refreshmodule.RecoveryLifecycle
+	recoveryInterval          time.Duration
+	agent                     *agentmodule.Service
+	agentConfig               agentmodule.ModelConfig
+	reloader                  runtimeReloader
+	deploymentConfig          deploymentmodule.Config
+	servingArtifacts          projectbundle.ArtifactObjectReader
 }
 
 type storageInputs struct {
@@ -327,25 +328,26 @@ type capabilityAssemblyInputs struct {
 }
 
 type workflowAssemblyInputs struct {
-	AgentSettings            agentmodule.Settings
-	ManagedDataValidation    refreshmodule.CandidateValidationHook
-	ManagedDataResolver      runtimehostmodule.ManagedDataResolver
-	AgentConfig              agentmodule.ModelConfig
-	Auth                     *accessmodule.Auth
-	Reloader                 runtimeReloader
-	Workload                 workloadControl
-	DeploymentConfig         deploymentmodule.Config
-	ServingArtifacts         projectbundle.ArtifactObjectReader
-	RefreshPipelineClock     refreshmodule.Clock
-	RefreshMaterializer      refreshrun.Materializer
-	RefreshTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
-	RefreshSourceDigest      func(context.Context, projectgraph.ServingIdentity) (string, error)
-	CanonicalRefreshExecutor func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
-	PublishedVersion         refreshmodule.PublishedDataVersionResolver
-	EnableRefreshDispatcher  bool
-	RecoveryLifecycle        *refreshmodule.RecoveryLifecycle
-	RecoveryInterval         time.Duration
-	QueryAudit               *analyticsmodule.QueryAuditSurface
+	AgentSettings             agentmodule.Settings
+	ManagedDataValidation     refreshmodule.CandidateValidationHook
+	ManagedDataResolver       runtimehostmodule.ManagedDataResolver
+	AgentConfig               agentmodule.ModelConfig
+	Auth                      *accessmodule.Auth
+	Reloader                  runtimeReloader
+	Workload                  workloadControl
+	DeploymentConfig          deploymentmodule.Config
+	ServingArtifacts          projectbundle.ArtifactObjectReader
+	RefreshPipelineClock      refreshmodule.Clock
+	RefreshMaterializer       refreshrun.Materializer
+	RefreshTargetRevision     func(context.Context, projectgraph.ServingIdentity) (int64, error)
+	RefreshSourceDigest       func(context.Context, projectgraph.ServingIdentity) (string, error)
+	CanonicalRefreshExecutor  func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
+	CanonicalResultReconciler refreshrun.CanonicalResultReconciler
+	PublishedVersion          refreshmodule.PublishedDataVersionResolver
+	EnableRefreshDispatcher   bool
+	RecoveryLifecycle         *refreshmodule.RecoveryLifecycle
+	RecoveryInterval          time.Duration
+	QueryAudit                *analyticsmodule.QueryAuditSurface
 }
 
 type runtimeAssemblyInputs struct {
@@ -731,6 +733,7 @@ func buildApplicationSurfaces(
 	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
 	moduleWorkflow.refreshTargetRevision = workflow.RefreshTargetRevision
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
+	moduleWorkflow.canonicalResultReconciler = workflow.CanonicalResultReconciler
 	moduleWorkflow.publishedVersion = workflow.PublishedVersion
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle
