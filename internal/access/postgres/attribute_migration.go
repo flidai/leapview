@@ -1,0 +1,17 @@
+package postgres
+
+import _ "embed"
+
+const (
+	// AttributeRegistryMigrationRevision is the first forward-only extension to
+	// the reconciled PostgreSQL control-plane baseline.
+	AttributeRegistryMigrationRevision int64 = 2
+	AttributeRegistryMigrationID             = "002_typed_attribute_registry"
+)
+
+//go:embed migrations/002_typed_attribute_registry.sql
+var attributeRegistryMigrationSQL string
+
+// AttributeRegistryMigrationSQL returns the access-owned immutable forward
+// migration for application-level PostgreSQL migration composition.
+func AttributeRegistryMigrationSQL() string { return attributeRegistryMigrationSQL }

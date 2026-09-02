@@ -46,11 +46,30 @@ type Component struct {
 	SQL  string
 }
 
+// Migration is one immutable forward-only control-plane revision. Capability
+// packages own the SQL and application composition assigns its global
+// revision and stable migration ID. Revision 1 remains the clean-slate
+// baseline; forward migrations never alter its checksum.
+type Migration struct {
+	Revision    int64
+	MigrationID string
+	SQL         string
+}
+
+// Checksum is the immutable SHA-256 identity recorded for this migration.
+func (m Migration) Checksum() string {
+	h := sha256.New()
+	writeChecksumPart(h, "migration.id", m.MigrationID)
+	writeChecksumPart(h, "migration.sql", m.SQL)
+	return hex.EncodeToString(h.Sum(nil))
+}
+
 // Plan is the product-supplied ordered capability baseline. The generic
 // migration runner deliberately does not import product capabilities; the
 // application composition layer owns this list and its role policy.
 type Plan struct {
 	Components    []Component
+	Migrations    []Migration
 	RolePolicySQL string
 }
 
@@ -84,6 +103,21 @@ func (p Plan) validate() error {
 			return fmt.Errorf("duplicate PostgreSQL migration component %q", component.Name)
 		}
 		seen[component.Name] = struct{}{}
+	}
+	seenMigrationIDs := make(map[string]struct{}, len(p.Migrations))
+	wantRevision := BaselineRevision + 1
+	for _, migration := range p.Migrations {
+		if migration.Revision != wantRevision {
+			return fmt.Errorf("PostgreSQL migration revision %d is not the expected revision %d", migration.Revision, wantRevision)
+		}
+		if strings.TrimSpace(migration.MigrationID) == "" || strings.TrimSpace(migration.SQL) == "" {
+			return fmt.Errorf("PostgreSQL migration revision %d is incomplete", migration.Revision)
+		}
+		if _, exists := seenMigrationIDs[migration.MigrationID]; exists {
+			return fmt.Errorf("duplicate PostgreSQL migration ID %q", migration.MigrationID)
+		}
+		seenMigrationIDs[migration.MigrationID] = struct{}{}
+		wantRevision++
 	}
 	return nil
 }
@@ -149,38 +183,64 @@ func Apply(ctx context.Context, tx Tx, plan Plan) error {
 		if recorded.Revision != BaselineRevision || recorded.MigrationID != BaselineMigrationID || recorded.Checksum != checksum {
 			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
 		}
-		// Reapply the deny-by-default role policy even when DDL is already
-		// present. This repairs accidental ACL widening without replaying
-		// capability triggers that are not all CREATE OR REPLACE-safe.
-		if _, err := tx.Exec(ctx, plan.RolePolicySQL); err != nil {
-			return fmt.Errorf("reapply PostgreSQL migration role policy: %w", err)
-		}
-		return nil
-	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	} else if !errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("inspect PostgreSQL schema revision: %w", err)
+	} else {
+		for _, component := range plan.Components {
+			if _, err := tx.Exec(ctx, component.SQL); err != nil {
+				return fmt.Errorf("apply PostgreSQL capability %s: %w", component.Name, err)
+			}
+		}
+		if err := queries.InsertSchemaRevision(ctx, platformdb.InsertSchemaRevisionParams{
+			Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: checksum,
+		}); err != nil {
+			return fmt.Errorf("record PostgreSQL schema revision: %w", err)
+		}
+
+		recorded, err = queries.GetSchemaRevision(ctx, BaselineRevision)
+		if err != nil {
+			return fmt.Errorf("verify PostgreSQL schema revision: %w", err)
+		}
+		if recorded.Revision != BaselineRevision || recorded.MigrationID != BaselineMigrationID || recorded.Checksum != checksum {
+			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
+		}
 	}
 
-	for _, component := range plan.Components {
-		if _, err := tx.Exec(ctx, component.SQL); err != nil {
-			return fmt.Errorf("apply PostgreSQL capability %s: %w", component.Name, err)
+	for _, migration := range plan.Migrations {
+		migrationChecksum := migration.Checksum()
+		recorded, err = queries.GetSchemaRevision(ctx, migration.Revision)
+		if err == nil {
+			if recorded.Revision != migration.Revision || recorded.MigrationID != migration.MigrationID || recorded.Checksum != migrationChecksum {
+				return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
+			}
+			continue
+		}
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return fmt.Errorf("inspect PostgreSQL schema revision %d: %w", migration.Revision, err)
+		}
+		if _, err := tx.Exec(ctx, migration.SQL); err != nil {
+			return fmt.Errorf("apply PostgreSQL migration %s: %w", migration.MigrationID, err)
+		}
+		if err := queries.InsertSchemaRevision(ctx, platformdb.InsertSchemaRevisionParams{
+			Revision: migration.Revision, MigrationID: migration.MigrationID, Checksum: migrationChecksum,
+		}); err != nil {
+			return fmt.Errorf("record PostgreSQL schema revision %d: %w", migration.Revision, err)
+		}
+		recorded, err = queries.GetSchemaRevision(ctx, migration.Revision)
+		if err != nil {
+			return fmt.Errorf("verify PostgreSQL schema revision %d: %w", migration.Revision, err)
+		}
+		if recorded.Revision != migration.Revision || recorded.MigrationID != migration.MigrationID || recorded.Checksum != migrationChecksum {
+			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
 		}
 	}
+
+	// Reapply the deny-by-default baseline role policy after every newly applied
+	// capability migration and on idempotent replay. This repairs accidental
+	// ACL widening; each capability migration remains responsible for grants on
+	// its newly introduced objects.
 	if _, err := tx.Exec(ctx, plan.RolePolicySQL); err != nil {
 		return fmt.Errorf("apply PostgreSQL migration role policy: %w", err)
-	}
-	if err := queries.InsertSchemaRevision(ctx, platformdb.InsertSchemaRevisionParams{
-		Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: checksum,
-	}); err != nil {
-		return fmt.Errorf("record PostgreSQL schema revision: %w", err)
-	}
-
-	recorded, err = queries.GetSchemaRevision(ctx, BaselineRevision)
-	if err != nil {
-		return fmt.Errorf("verify PostgreSQL schema revision: %w", err)
-	}
-	if recorded.Revision != BaselineRevision || recorded.MigrationID != BaselineMigrationID || recorded.Checksum != checksum {
-		return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", recorded.Revision, recorded.MigrationID, recorded.Checksum)
 	}
 	return nil
 }
