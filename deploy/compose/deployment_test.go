@@ -568,7 +568,7 @@ func TestEnterpriseAuthoringGoldenJourneyContract(t *testing.T) {
 	if strings.Contains(authoring, "PLATFORM_ADMIN") {
 		t.Error("authoring credentials must not claim the durable platform-admin role")
 	}
-	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "Governed order rows", "check({ force: true })"} {
+	for _, required := range []string{"Authorize LeapView CLI", "CLI authorized", "/candidates/", "candidate preview returned HTTP", "Governed order rows", "check({ force: true })"} {
 		if !strings.Contains(worker, required) {
 			t.Errorf("browser worker missing %q", required)
 		}

@@ -187,10 +187,14 @@ const methods = {
     if (!previewURL.pathname.startsWith('/candidates/')) {
       throw new Error(`CLI returned a non-candidate preview URL: ${previewURL.href}`)
     }
-    await administratorPage.goto(
+    const previewResponse = await administratorPage.goto(
       previewURL.href,
       { waitUntil: 'domcontentloaded', timeout: 60_000 },
     )
+    if (!previewResponse || !previewResponse.ok()) {
+      const status = previewResponse ? previewResponse.status() : 'no response'
+      throw new Error(`candidate preview returned HTTP ${status}: ${previewURL.href}`)
+    }
     await administratorPage.waitForURL(
       (url) => url.pathname.startsWith(`${previewURL.pathname}/dashboards/`),
       { timeout: 60_000 },
