@@ -121,13 +121,13 @@ exact release is active**.
 Instance, source bundle, and generation identities could replace Project. This
 would minimize vocabulary but erase the durable product scope already carried
 through deployment and authorization. The same product promoted through
-separate target instances would have no stable target-owned namespace distinct
-from its repository or current release.
+separate target instances would have no stable issuer-assigned, target-claimed
+namespace distinct from its repository or current release.
 
 ### Restore `kind: Project`
 
 An authored Project resource could carry includes and identity. This would
-again mix portable source with target-owned lifecycle and authorization state.
+again mix portable source with destination lifecycle and authorization state.
 The compiler already discovers the six authored resource kinds without it.
 
 ### Retain Project and host several Projects in one server process

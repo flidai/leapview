@@ -31,12 +31,15 @@ requirement that has not been implemented is pending, not implicitly waived.
 
 ## Profile stability
 
-`leapview.project-namespace/v1` semantics are immutable after acceptance.
-Editorial clarification, additional evidence, and implementation organization
-may evolve without changing accepted identity, authorization, failure, or
-compatibility behavior. A change that alters a conforming claim, durable
-identity, authorization result, or accepted/rejected input requires a new
-profile identifier and an explicit migration decision.
+`leapview.project-namespace/v1` is reserved while implementation is pending.
+Its wire semantics become immutable when the first conforming claim or
+generation is admitted by a released LeapView version. Until that freeze point,
+the accepted architectural decision may be refined without claiming that an
+unreleased contract is already interoperable. After the freeze point, editorial
+clarification, additional evidence, and implementation organization may evolve,
+but a change that alters a conforming claim, durable identity, authorization
+result, or accepted/rejected input requires a new profile identifier and an
+explicit migration decision.
 
 ## Mental model
 
