@@ -164,6 +164,29 @@ func TestBuildNativePhysicalWithCandidateBindingsScopesLeaseToPhysicalWork(t *te
 	}
 }
 
+func TestBuildNativePhysicalWithCandidateBindingsEvidenceAllowsNoBindings(t *testing.T) {
+	input := nativePhysicalFixtureInput(t)
+	emptyDigest, err := deployment.BindingFingerprint(nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	physical, evidence, err := buildNativePhysicalWithCandidateBindingsEvidence(
+		t.Context(), nil, deployment.CandidateConnectionRequest{}, emptyDigest, input,
+		NativePhysicalBuildEnvironmentFactoryFunc(func(_ context.Context, _ catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+			return nativePhysicalEnvironment(t, input), nil
+		}),
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if physical.SnapshotID == 0 {
+		t.Fatal("physical build returned no snapshot")
+	}
+	if len(evidence) != 0 {
+		t.Fatalf("binding evidence = %#v, want empty", evidence)
+	}
+}
+
 func TestBuildNativePhysicalWithCandidateBindingsClosesBeforeReturningFailure(t *testing.T) {
 	evidence := []deployment.CandidateConnectionEvidence{{BindingID: "binding_warehouse", ConnectionID: projectgraph.ResourceID("warehouse"), ConnectorKind: "postgres", Revision: 7, ProviderVersion: "provider:v3", EndpointConfigHash: createPlanTestDigest('7')}}
 	leases := &nativeConnectionLeases{evidence: evidence}

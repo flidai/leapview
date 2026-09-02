@@ -391,6 +391,9 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(fmt.Errorf("build release module: %w", err))
 	}
+	activeRuntimeEvidence := activeConnectionEvidenceSource{
+		releases: release, targetID: instanceID, environment: string(environment),
+	}
 
 	// Runtime factory resolution is entirely root-driven. No catalog database,
 	// pool ID, UUID, or snapshot is synthesized from configuration.
@@ -454,7 +457,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// DuckLake environment opened by the sealed runtime factory. The dashboard
 	// runtime implementation remains behind the app/runtimefactory seam.
 	postgresFactory := appruntimefactory.NewPostgresSealedFactory(appruntimefactory.PostgresSealedFactoryConfig{
-		Base:             appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), SealedLeaseHolder: instanceID},
+		Base:             appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), SealedLeaseHolder: instanceID, ActivationEvidence: activeRuntimeEvidence},
 		ServingArtifacts: nativeProjectSource.Objects,
 		Resolve:          appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
 		LeaseHolder: instanceID, DuckLakeSecret: postgresDuckLakeSecret, PostgresSecret: postgresConnectionSecret, ExtensionAdmission: extensionSupply,
@@ -521,7 +524,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		return fail(err)
 	}
 	release.SetProjectSearchCatalog(projectCatalogService)
-	if err := analytics.ConfigureActiveRuntimeBindings(activeConnectionEvidenceSource{releases: release, targetID: instanceID, environment: string(environment)}); err != nil {
+	if err := analytics.ConfigureActiveRuntimeBindings(activeRuntimeEvidence); err != nil {
 		return fail(err)
 	}
 	authoring, err := dashboardmodule.BuildAuthoring(dashboardmodule.AuthoringConfig{Persistence: graph.DashboardPersistence, AuthorizeResource: func(ctx context.Context, principal string, project projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
@@ -635,7 +638,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.DuckLakeControlLedger, managedDataAdmission)
+	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.DuckLakeControlLedger, managedDataAdmission, graph.Release)
 	if err != nil {
 		return fail(err)
 	}

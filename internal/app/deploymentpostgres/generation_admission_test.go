@@ -16,6 +16,7 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -27,6 +28,26 @@ type testManagedDataBindingAdmission struct {
 	calls int
 	pins  []release.ManagedDataPin
 	err   error
+}
+
+type testCandidateProvenanceAdmission struct {
+	calls    int
+	retained []release.Provenance
+	err      error
+}
+
+func (a *testCandidateProvenanceAdmission) Configured() bool { return a != nil }
+
+func (a *testCandidateProvenanceAdmission) RetainCandidateProvenanceTx(_ context.Context, _ releasepostgres.Tx, _ projectgraph.ResourceID, provenance release.Provenance) (release.Provenance, error) {
+	if a == nil {
+		return release.Provenance{}, errors.New("nil test provenance authority")
+	}
+	a.calls++
+	if a.err != nil {
+		return release.Provenance{}, a.err
+	}
+	a.retained = append(a.retained, provenance)
+	return provenance, nil
 }
 
 func (a *testManagedDataBindingAdmission) AdmitServingStateBindingsTx(_ context.Context, _ deploymentnative.Tx, _ projectgraph.ServingIdentity, pins []release.ManagedDataPin) error {
@@ -67,6 +88,15 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 		t.Fatal(err)
 	}
 	manifest := `{"version":1}`
+	gate, err := (release.GateEvidence{
+		Version: 1, CandidateID: candidateID, SourceDigest: admissionDigest('a'),
+		BindingGeneration: release.BindingFingerprint(nil), RuntimeVersion: "runtime", DuckDBVersion: "1",
+		Bounds: release.GateBounds{MaxRows: 100, MaxQueries: 10, MaxMillis: 1000}, Outcome: release.GateSuccess,
+		EvaluatedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+	}).Canonical()
+	if err != nil {
+		t.Fatal(err)
+	}
 	return GenerationAdmissionInput{
 		Commit:              CommitEvidence{DeliveryID: "delivery-admission", AttemptID: attemptID, OwnerID: "builder-admission", FencingEpoch: 1, SnapshotID: 42, CommitMarker: json.RawMessage(markerJSON)},
 		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: relationNamespace, RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
@@ -77,6 +107,14 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: admissionDigest('b'), AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
 		Graph:               graph,
 		ManagedDataPins:     []release.ManagedDataPin{},
+		Provenance: release.ProvenanceInput{
+			Artifact:  release.ProjectArtifactProvenance{SourceDigest: admissionDigest('a'), ProjectDigest: admissionDigest('b'), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1},
+			Candidate: release.CandidateProvenance{ID: candidateID, OwnerID: "builder-admission"},
+			Plan: release.GenerationPlanProvenance{
+				Identity: projectgraph.ServingIdentity{ProjectID: "project_admission", Environment: "prod", GenerationID: genID}, TargetID: "target-admission", RuntimeVersion: "runtime", PolicyDigest: admissionDigest('d'), DataRevision: "sources:admission", DataMode: release.GenerationDataRefreshSources,
+				AuthoredConnections: []release.AuthoredConnectionEvidence{{ConnectionID: "connection_admission", ConnectorKind: "postgres"}}, GateEvidence: &gate,
+			},
+		},
 	}
 }
 
@@ -205,22 +243,25 @@ func TestNewGenerationAdmissionRejectsNilAuthorities(t *testing.T) {
 	configuredDelivery := deploymentnative.New(db)
 	configuredServing := servingnative.New(db)
 	configuredDuckLake := ducklakepostgres.New(db)
+	configuredProvenance := &testCandidateProvenanceAdmission{}
 	cases := []struct {
 		name        string
 		delivery    *deploymentnative.Repository
 		serving     *servingnative.Repository
 		ducklake    DuckLakeAuthority
 		managedData NativeManagedDataBindingAdmission
+		provenance  NativeCandidateProvenanceAdmission
 	}{
-		{name: "nil delivery", serving: configuredServing, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}},
-		{name: "nil serving", delivery: configuredDelivery, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}},
-		{name: "typed nil ducklake", delivery: configuredDelivery, serving: configuredServing, ducklake: (*nilDuckLakeAuthority)(nil), managedData: &testManagedDataBindingAdmission{}},
-		{name: "nil managed data", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake},
-		{name: "typed nil managed data", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake, managedData: (*testManagedDataBindingAdmission)(nil)},
+		{name: "nil delivery", serving: configuredServing, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
+		{name: "nil serving", delivery: configuredDelivery, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
+		{name: "typed nil ducklake", delivery: configuredDelivery, serving: configuredServing, ducklake: (*nilDuckLakeAuthority)(nil), managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
+		{name: "nil managed data", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake, provenance: configuredProvenance},
+		{name: "typed nil managed data", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake, managedData: (*testManagedDataBindingAdmission)(nil), provenance: configuredProvenance},
+		{name: "nil provenance", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if got, err := NewGenerationAdmission(test.delivery, test.serving, test.ducklake, test.managedData); err == nil || got != nil {
+			if got, err := NewGenerationAdmission(test.delivery, test.serving, test.ducklake, test.managedData, test.provenance); err == nil || got != nil {
 				t.Fatalf("NewGenerationAdmission() = (%v, %v), want nil capability and error", got, err)
 			}
 		})
@@ -298,6 +339,10 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
+	if err := releasepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -370,20 +415,21 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	serving := servingnative.New(p)
 	ducklake := ducklakepostgres.New(p)
 	managedData := &testManagedDataBindingAdmission{}
-	if _, err := NewGenerationAdmission(delivery, serving, nil, managedData); err == nil {
+	provenance := releasepostgres.New(p)
+	if _, err := NewGenerationAdmission(delivery, serving, nil, managedData, provenance); err == nil {
 		t.Fatal("generation admission accepted a nil DuckLake authority")
 	}
 	var unconfigured *ducklakepostgres.Repository
-	if _, err := NewGenerationAdmission(delivery, serving, unconfigured, managedData); err == nil {
+	if _, err := NewGenerationAdmission(delivery, serving, unconfigured, managedData, provenance); err == nil {
 		t.Fatal("generation admission accepted an unconfigured DuckLake authority")
 	}
-	capability, err := NewGenerationAdmission(delivery, serving, ducklake, managedData)
+	capability, err := NewGenerationAdmission(delivery, serving, ducklake, managedData, provenance)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := validGenerationAdmissionInput(t)
 	seedGenerationAdmission(t, delivery, ducklake, input)
-	tamperedCapability, err := NewGenerationAdmission(delivery, serving, &tamperingDuckLakeAuthority{inner: ducklake, tamperCommit: true}, managedData)
+	tamperedCapability, err := NewGenerationAdmission(delivery, serving, &tamperingDuckLakeAuthority{inner: ducklake, tamperCommit: true}, managedData, provenance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -401,6 +447,20 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	if first.Generation.GenerationID != input.Generation.GenerationID || first.Generation.GenerationRevision != 1 || first.CandidateRevision != 1 || first.Bundle.ArtifactLocator != input.Bundle.ArtifactLocator {
 		t.Fatalf("admission result = %#v", first)
+	}
+	retained, err := provenance.CandidateProvenance(t.Context(), input.Bundle.ProjectID, input.Generation.CandidateID, first.CandidateRevision)
+	if err != nil {
+		t.Fatalf("load committed candidate provenance: %v", err)
+	}
+	if retained.Candidate.ID != input.Generation.CandidateID || retained.Candidate.Revision != first.CandidateRevision || retained.Plan.Identity.GenerationID != input.Generation.GenerationID {
+		t.Fatalf("committed candidate provenance = %#v", retained)
+	}
+	servingProvenance, err := provenance.ProvenanceForServingState(t.Context(), retained.Plan.Identity)
+	if err != nil {
+		t.Fatalf("load committed provenance by serving identity: %v", err)
+	}
+	if servingProvenance.Digest != retained.Digest {
+		t.Fatalf("serving provenance digest = %q, want %q", servingProvenance.Digest, retained.Digest)
 	}
 	if managedData.calls < 1 || managedData.pins == nil || len(managedData.pins) != 0 {
 		t.Fatalf("managed-data binding admission calls=%d pins=%#v, want nonnil empty pins", managedData.calls, managedData.pins)
@@ -515,6 +575,9 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if retentionRoots != 0 {
 		t.Fatalf("rollback retained candidate delivery retention root: %d", retentionRoots)
 	}
+	if _, err := provenance.CandidateProvenance(t.Context(), rollbackInput.Bundle.ProjectID, rollbackInput.Generation.CandidateID, 1); !errors.Is(err, releasepostgres.ErrNotFound) {
+		t.Fatalf("rollback retained candidate provenance, err=%v", err)
+	}
 	if _, err := ducklake.LoadBinding(t.Context(), rollbackInput.Commit.DeliveryID, rollbackInput.Generation.GenerationID); !errors.Is(err, ducklakepostgres.ErrNotFound) {
 		t.Fatalf("rollback retained DuckLake generation binding, err=%v", err)
 	}
@@ -531,7 +594,7 @@ func TestGenerationAdmissionRejectsCandidateExpiryDrift(t *testing.T) {
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
 	ducklake := ducklakepostgres.New(p)
-	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{})
+	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -555,7 +618,7 @@ func TestGenerationAdmissionTxComposesAdjacentMutation(t *testing.T) {
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
 	ducklake := ducklakepostgres.New(p)
-	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{})
+	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}

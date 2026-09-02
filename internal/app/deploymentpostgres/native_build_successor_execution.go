@@ -154,7 +154,7 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	materializationRequest.RelationNamespace = attemptAdmission.Attempt.Namespace
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
 	physicalContext := materialize.WithObservationBudget(buildCtx, materialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
-	physical, err := buildNativePhysicalWithCandidateBindings(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
+	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native successor managed-data roots: %w", releaseErr)))
 	}
@@ -177,6 +177,17 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	if err != nil {
 		return settle(err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
+	bindingDigest, err = deploymentdomain.BindingFingerprint(bindingEvidence)
+	if err != nil {
+		return settle(fmt.Errorf("fingerprint acquired candidate connection evidence: %w", err), NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
+	}
+	if bindingDigest != plan.Execution.BindingDigest {
+		return settle(fmt.Errorf("%w: acquired successor candidate connection evidence differs from planned binding identity", deploymentdomain.ErrDeliveryConflict), NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
+	}
+	sourceRevision, err := c.nativeSourceRevision(ctx, plan, request)
+	if err != nil {
+		return settle(err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
+	}
 	if _, heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, c.settleNativeBuildSuccessorFailure(ctx, successor, requestDigest, heartbeatErr, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
@@ -184,7 +195,7 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	if err != nil {
 		return settle(err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
-	assembled, err := AssembleNativeGenerationAdmissionInput(NativeSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: artifacts, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: generationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
+	assembled, err := AssembleNativeGenerationAdmissionInput(NativeSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: artifacts, Bindings: bindingEvidence, SourceRevision: sourceRevision, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: generationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
 	if err != nil {
 		return settle(err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}

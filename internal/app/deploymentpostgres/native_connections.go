@@ -55,28 +55,37 @@ func resolveNativeCandidateBindingDigest(
 	resolver deployment.CandidateConnectionEvidenceResolver,
 	request deployment.CandidateConnectionRequest,
 ) (string, error) {
+	_, fingerprint, err := resolveNativeCandidateBindingEvidence(ctx, resolver, request)
+	return fingerprint, err
+}
+
+func resolveNativeCandidateBindingEvidence(
+	ctx context.Context,
+	resolver deployment.CandidateConnectionEvidenceResolver,
+	request deployment.CandidateConnectionRequest,
+) ([]deployment.CandidateConnectionEvidence, string, error) {
 	empty, err := deployment.BindingFingerprint(nil)
 	if err != nil {
-		return "", err
+		return nil, "", err
 	}
 	if len(request.Requirements) == 0 && len(request.AuthoredConnections) == 0 {
-		return empty, nil
+		return nil, empty, nil
 	}
 	if nativeBuildAuthorityNil(resolver) {
-		return "", fmt.Errorf("%w: native candidate binding evidence resolver is required", deploymentmodule.ErrDeliveryInputUnavailable)
+		return nil, "", fmt.Errorf("%w: native candidate binding evidence resolver is required", deploymentmodule.ErrDeliveryInputUnavailable)
 	}
 	evidence, err := resolver.Resolve(ctx, request)
 	if err != nil {
-		return "", fmt.Errorf("resolve native candidate binding evidence: %w", err)
+		return nil, "", fmt.Errorf("resolve native candidate binding evidence: %w", err)
 	}
 	if err := validateNativeCandidateBindingEvidence(request, evidence); err != nil {
-		return "", err
+		return nil, "", err
 	}
 	fingerprint, err := deployment.BindingFingerprint(evidence)
 	if err != nil {
-		return "", fmt.Errorf("fingerprint native candidate binding evidence: %w", err)
+		return nil, "", fmt.Errorf("fingerprint native candidate binding evidence: %w", err)
 	}
-	return fingerprint, nil
+	return append([]deployment.CandidateConnectionEvidence(nil), evidence...), fingerprint, nil
 }
 
 func validateNativeCandidateBindingEvidence(request deployment.CandidateConnectionRequest, evidence []deployment.CandidateConnectionEvidence) error {
@@ -148,13 +157,35 @@ func buildNativePhysicalWithCandidateBindings(
 	physicalInput NativePhysicalBuildInput,
 	physicalFactory NativePhysicalBuildEnvironmentFactory,
 ) (NativePhysicalBuildEvidence, error) {
+	physical, _, err := buildNativePhysicalWithCandidateBindingsEvidence(ctx, connections, bindingRequest, expectedBindingDigest, physicalInput, physicalFactory)
+	return physical, err
+}
+
+// buildNativePhysicalWithCandidateBindingsEvidence is the credential-bearing
+// build boundary that also returns the exact non-secret evidence acquired for
+// materialization. Callers persist this snapshot as release provenance rather
+// than performing a moving post-build resolver read.
+func buildNativePhysicalWithCandidateBindingsEvidence(
+	ctx context.Context,
+	connections deployment.CandidateConnectionLeaser,
+	bindingRequest deployment.CandidateConnectionRequest,
+	expectedBindingDigest string,
+	physicalInput NativePhysicalBuildInput,
+	physicalFactory NativePhysicalBuildEnvironmentFactory,
+) (NativePhysicalBuildEvidence, []deployment.CandidateConnectionEvidence, error) {
 	leases, acquiredBindingDigest, err := acquireNativeCandidateBindings(ctx, connections, bindingRequest)
 	if err != nil {
-		return NativePhysicalBuildEvidence{}, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, err)
+		return NativePhysicalBuildEvidence{}, nil, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, err)
+	}
+	// Snapshot evidence before releasing the credential-bearing leases. This is
+	// the exact provider revision/configuration used by physical materialization.
+	var bindingEvidence []deployment.CandidateConnectionEvidence
+	if !nativeBuildAuthorityNil(leases) {
+		bindingEvidence = append([]deployment.CandidateConnectionEvidence(nil), leases.Evidence()...)
 	}
 	if acquiredBindingDigest != expectedBindingDigest {
 		closeErr := closeNativeCandidateBindings(leases)
-		return NativePhysicalBuildEvidence{}, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, errors.Join(
+		return NativePhysicalBuildEvidence{}, nil, nativePhysicalBuildDeterministicFailure(NativePhysicalBuildPhaseValidation, errors.Join(
 			fmt.Errorf("%w: acquired candidate connection evidence differs from planned binding identity", deployment.ErrDeliveryConflict), closeErr,
 		))
 	}
@@ -166,12 +197,12 @@ func buildNativePhysicalWithCandidateBindings(
 			if failure, ok := NativePhysicalBuildFailureOf(buildErr); ok {
 				phase = failure.Phase
 			}
-			return physical, nativePhysicalBuildIndeterminateFailure(phase, errors.Join(buildErr, closeErr))
+			return physical, nil, nativePhysicalBuildIndeterminateFailure(phase, errors.Join(buildErr, closeErr))
 		}
-		return physical, buildErr
+		return physical, nil, buildErr
 	}
 	if closeErr != nil {
-		return physical, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, closeErr)
+		return physical, nil, nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, closeErr)
 	}
-	return physical, nil
+	return physical, bindingEvidence, nil
 }

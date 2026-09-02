@@ -86,7 +86,10 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if err != nil {
 		return nil, err
 	}
-	dependencyEvidence, _ := dependencyEvidenceForRuntime(ctx, identity, compiled, compiledProject, input.ManagedData, input.Candidate, f.activationEvidence)
+	dependencyEvidence, err := dependencyEvidenceForRuntime(ctx, identity, compiled, compiledProject, input.ManagedData, input.Candidate, f.activationEvidence)
+	if err != nil {
+		return nil, fmt.Errorf("resolve runtime dependency evidence: %w", err)
+	}
 	policy := projectmanifest.AccessPolicy{}
 	if value := input.State.AccessPolicyJSON; value != "" {
 		if err := json.Unmarshal([]byte(value), &policy); err != nil {

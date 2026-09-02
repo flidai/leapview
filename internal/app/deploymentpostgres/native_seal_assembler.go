@@ -22,7 +22,10 @@ import (
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	"github.com/flidai/leapview/internal/extension"
+	project "github.com/flidai/leapview/internal/project"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -45,6 +48,11 @@ type NativeSealEvidenceAssemblerInput struct {
 	Compatibility    ducklakepostgres.RuntimeCompatibility
 	Plan             deployment.DeliveryPlan
 	Artifacts        release.CandidateArtifactSet
+	// Bindings and SourceRevision are the exact non-secret evidence observed
+	// while preparing this candidate. They are retained in release provenance
+	// together with the native qualification gate result.
+	Bindings       []deployment.CandidateConnectionEvidence
+	SourceRevision *project.CandidateSourceRevision
 
 	// RuntimeVersion is the LeapView runtime identity (not DuckDB's version).
 	// DuckDB and DuckLake versions are taken from Compatibility and build seal
@@ -260,6 +268,39 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 		ManagedDataPins: append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
 		Graph:           input.Artifacts.Compiler.Graph,
 	}
+	// Carry a provenance template through the value-only boundary. Candidate
+	// revision is allocated by delivery during CompleteBuildAndAdmitTx and is
+	// filled there immediately before the immutable row is retained.
+	bindings := make([]release.BindingEvidence, len(input.Bindings))
+	for i, binding := range input.Bindings {
+		bindings[i] = release.BindingEvidence{
+			BindingID: binding.BindingID, ConnectionID: binding.ConnectionID.String(), ConnectorKind: binding.ConnectorKind,
+			Revision: binding.Revision, ValidatedVersion: binding.ProviderVersion,
+			EndpointConfigHash: binding.EndpointConfigHash, Access: binding.Access,
+		}
+	}
+	var sourceRevision *release.SourceRevisionProvenance
+	if input.SourceRevision != nil {
+		sourceRevision = &release.SourceRevisionProvenance{Revision: input.SourceRevision.Revision, Repository: input.SourceRevision.Repository, Ref: input.SourceRevision.Ref, ChangeID: input.SourceRevision.ChangeID}
+	}
+	var baseIdentity *projectgraph.ServingIdentity
+	if input.Plan.BaseGenerationID != "" {
+		base := projectgraph.ServingIdentity{ProjectID: projectID, Environment: input.Plan.Environment, GenerationID: input.Plan.BaseGenerationID}
+		baseIdentity = &base
+	}
+	gates := input.Qualification.Gates
+	assembled.Provenance = release.ProvenanceInput{
+		Artifact:       input.Artifacts.Artifact,
+		Candidate:      release.CandidateProvenance{ID: attempt.CandidateID, OwnerID: attempt.OwnerID},
+		SourceRevision: sourceRevision,
+		Plan: release.GenerationPlanProvenance{
+			Identity: artifact.Identity, BaseIdentity: baseIdentity, TargetID: input.Plan.TargetID,
+			RuntimeVersion: input.RuntimeVersion, PolicyDigest: input.Artifacts.AuthorizationFingerprint,
+			DataRevision: artifact.DataRevision, DataMode: artifact.DataMode,
+			ManagedDataPins: append([]release.ManagedDataPin(nil), artifact.ManagedDataPins...), Bindings: bindings,
+			AuthoredConnections: nativeAuthoredConnectionEvidence(artifact.AuthoredConnections), Extensions: append([]extension.Evidence(nil), input.Artifacts.Extensions...), GateEvidence: &gates,
+		},
+	}
 
 	// Ensure marker is retained as the exact canonical bytes used by the
 	// delivery authority.  The local variable also makes the identity checks
@@ -270,6 +311,14 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 		return GenerationAdmissionInput{}, err
 	}
 	return normalized, nil
+}
+
+func nativeAuthoredConnectionEvidence(values []release.CandidateAuthoredConnection) []release.AuthoredConnectionEvidence {
+	result := make([]release.AuthoredConnectionEvidence, len(values))
+	for i, value := range values {
+		result[i] = release.AuthoredConnectionEvidence{ConnectionID: value.ConnectionID.String(), ConnectorKind: value.ConnectorKind, Access: value.Access}
+	}
+	return result
 }
 
 func validateNativeSealAssemblerInput(input NativeSealEvidenceAssemblerInput) error {

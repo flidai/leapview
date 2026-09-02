@@ -521,7 +521,7 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	materializationRequest.RelationNamespace = attemptAdmission.Attempt.Namespace
 	physicalInput := NativePhysicalBuildInput{Attempt: attemptAdmission.Attempt, Marker: marker, CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, ObservationWriter: c.observationWriter, CaptureClock: c.clock, Request: materializationRequest}
 	physicalContext := analyticsmaterialize.WithObservationBudget(buildCtx, analyticsmaterialize.ObservationBudget{MaxQueries: c.bounds.MaxQueries, MaxMillis: c.bounds.MaxMillis})
-	physical, err := buildNativePhysicalWithCandidateBindings(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
+	physical, bindingEvidence, err := buildNativePhysicalWithCandidateBindingsEvidence(physicalContext, c.connections, bindingRequest, plan.Execution.BindingDigest, physicalInput, c.physicalFactory)
 	if releaseErr := releaseManagedData(); releaseErr != nil {
 		err = nativePhysicalBuildIndeterminateFailure(NativePhysicalBuildPhaseEvidence, errors.Join(err, fmt.Errorf("release native candidate managed-data roots: %w", releaseErr)))
 	}
@@ -544,6 +544,13 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, settle(err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
+	bindingDigest, err = deploymentdomain.BindingFingerprint(bindingEvidence)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, settle(fmt.Errorf("fingerprint acquired candidate connection evidence: %w", err), NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
+	}
+	if bindingDigest != plan.Execution.BindingDigest {
+		return deploymentmodule.NativeDeliveryBuild{}, settle(fmt.Errorf("%w: acquired candidate connection evidence differs from planned binding identity", deploymentdomain.ErrDeliveryConflict), NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
+	}
 	if _, heartbeatErr := stopHeartbeat(); heartbeatErr != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, c.settleNativeBuildFailure(ctx, bound.Lease, attemptAdmission, heartbeatErr, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
@@ -551,7 +558,7 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, c.settleNativeBuildFailure(ctx, bound.Lease, attemptAdmission, err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
-	assembled, err := AssembleNativeGenerationAdmissionInput(NativeSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: effective, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: generationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
+	assembled, err := AssembleNativeGenerationAdmissionInput(NativeSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: effective, Bindings: bindingEvidence, SourceRevision: source.SourceRevision, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: generationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, c.settleNativeBuildFailure(ctx, bound.Lease, attemptAdmission, err, NativePhysicalFailureIndeterminate, NativePhysicalBuildPhaseEvidence, &physical)
 	}
@@ -802,6 +809,26 @@ func (c *NativeBuildCoordinator) loadBuildPlan(ctx context.Context, request depl
 		return nativeBuildPlan{}, fmt.Errorf("%w: persisted native plan evidence is incomplete", deploymentdomain.ErrDeliveryConflict)
 	}
 	return nativeBuildPlan{DeliveryPlan: plan, ArtifactDigest: stored.ArtifactDigest}, nil
+}
+
+// nativeSourceRevision resolves the immutable source attestation used by a
+// build. Recovery and successor paths must re-read this exact attestation;
+// lossy reconstruction from durable delivery metadata is not admissible.
+func (c *NativeBuildCoordinator) nativeSourceRevision(ctx context.Context, plan nativeBuildPlan, request deploymentmodule.NativeDeliveryBuildRequest) (*project.CandidateSourceRevision, error) {
+	if c == nil || nativeBuildAuthorityNil(c.sources) {
+		return nil, deploymentmodule.ErrDeliveryInputUnavailable
+	}
+	if strings.TrimSpace(plan.SourceOwnerID) == "" || strings.TrimSpace(plan.Provenance.AttestationDigest) == "" {
+		return nil, fmt.Errorf("%w: persisted native plan source attestation evidence is incomplete", deploymentdomain.ErrDeliveryInvalid)
+	}
+	snapshot, err := c.sources.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: request.ProjectID, OwnerID: plan.SourceOwnerID}, plan.SourceDigest, plan.Provenance.AttestationDigest)
+	if err != nil {
+		return nil, fmt.Errorf("resolve retained source attestation for provenance: %w", err)
+	}
+	if snapshot.ProjectID != request.ProjectID || snapshot.ArtifactDigest != plan.SourceDigest || snapshot.SourceAttestationDigest != plan.Provenance.AttestationDigest {
+		return nil, fmt.Errorf("%w: retained source attestation identity changed", deploymentdomain.ErrDeliveryConflict)
+	}
+	return snapshot.SourceRevision, nil
 }
 
 func validateNativeBuildArtifacts(artifacts release.CandidateArtifactSet, request deploymentmodule.NativeDeliveryBuildRequest, plan deploymentdomain.DeliveryPlan) error {

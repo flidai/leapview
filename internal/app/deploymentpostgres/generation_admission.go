@@ -23,6 +23,7 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
+	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -60,7 +61,11 @@ type GenerationAdmissionInput struct {
 	// portable graph and admitted atomically with the serving bundle so native
 	// candidate recovery can resolve roots by serving identity.
 	ManagedDataPins []release.ManagedDataPin
-	Graph           projectgraph.ProjectGraph
+	// Provenance is the value-only release provenance template. Candidate
+	// revision is finalized from the completed delivery row in the admission
+	// transaction before this evidence is retained.
+	Provenance release.ProvenanceInput
+	Graph      projectgraph.ProjectGraph
 }
 
 // CommitEvidence is the immutable attempt completion proof written by the
@@ -150,6 +155,7 @@ type generationAdmitter struct {
 	serving     *servingnative.Repository
 	ducklake    DuckLakeAuthority
 	managedData NativeManagedDataBindingAdmission
+	provenance  NativeCandidateProvenanceAdmission
 }
 
 // DuckLakeAuthority is the narrow app-composition surface needed to admit
@@ -169,15 +175,23 @@ type NativeManagedDataBindingAdmission interface {
 	AdmitServingStateBindingsTx(context.Context, deploymentnative.Tx, projectgraph.ServingIdentity, []release.ManagedDataPin) error
 }
 
+// NativeCandidateProvenanceAdmission retains immutable release provenance on
+// the caller-owned transaction used by generation admission.
+type NativeCandidateProvenanceAdmission interface {
+	Configured() bool
+	RetainCandidateProvenanceTx(context.Context, releasepostgres.Tx, projectgraph.ResourceID, release.Provenance) (release.Provenance, error)
+}
+
 var _ GenerationAdmission = (*generationAdmitter)(nil)
 var _ DuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
+var _ NativeCandidateProvenanceAdmission = (*releasepostgres.Repository)(nil)
 
-// NewGenerationAdmission constructs the native capability from the four
+// NewGenerationAdmission constructs the native capability from the five
 // process-owned PostgreSQL authorities. DuckLake and managed-data bindings
 // are required so an external physical commit cannot be admitted without its
 // complete runtime evidence. It does not begin a transaction or perform
 // schema work.
-func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority, managedData NativeManagedDataBindingAdmission) (GenerationAdmission, error) {
+func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority, managedData NativeManagedDataBindingAdmission, provenance NativeCandidateProvenanceAdmission) (GenerationAdmission, error) {
 	if delivery == nil || serving == nil || !delivery.Configured() || !serving.Configured() {
 		return nil, errors.New("generation admission requires configured PostgreSQL delivery and serving-state authorities")
 	}
@@ -187,7 +201,10 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 	if !configuredManagedDataBindingAdmission(managedData) {
 		return nil, errors.New("generation admission requires a managed-data binding authority")
 	}
-	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake, managedData: managedData}, nil
+	if !configuredCandidateProvenanceAdmission(provenance) {
+		return nil, errors.New("generation admission requires a configured release provenance authority")
+	}
+	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake, managedData: managedData, provenance: provenance}, nil
 }
 
 // CompleteBuildAndAdmit completes the build, allocates a generation revision,
@@ -195,7 +212,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 // lower-level Tx method receives the exact same pgx transaction; this
 // convenience method owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) {
+	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -228,7 +245,7 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 // revision, and admits the serving bundle in the caller-owned transaction.
 // It never commits or rolls back tx.
 func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) {
+	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -296,6 +313,28 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	}
 	if err := verifyCompletedBuild(completed, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
+	}
+	provenanceInput := normalized.Provenance
+	if err := validateAdmissionProvenanceInput(provenanceInput, normalized); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if provenanceInput.Candidate.ID != "" && provenanceInput.Candidate.ID != completed.Candidate.CandidateID {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: release provenance candidate identity differs", deploymentnative.ErrConflict)
+	}
+	if provenanceInput.Candidate.OwnerID != "" && provenanceInput.Candidate.OwnerID != completed.Attempt.OwnerID {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: release provenance owner identity differs", deploymentnative.ErrConflict)
+	}
+	provenanceInput.Candidate = release.CandidateProvenance{ID: completed.Candidate.CandidateID, Revision: completed.Candidate.CandidateRevision, OwnerID: completed.Attempt.OwnerID}
+	provenance, err := release.NewProvenance(provenanceInput)
+	if err != nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: build release provenance: %v", deploymentnative.ErrInvalid, err)
+	}
+	retainedProvenance, err := a.provenance.RetainCandidateProvenanceTx(ctx, tx, normalized.Bundle.ProjectID, provenance)
+	if err != nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("retain release provenance: %w", err)
+	}
+	if retainedProvenance.Digest != provenance.Digest || retainedProvenance.Plan.Identity.GenerationID != normalized.Generation.GenerationID {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: retained release provenance identity differs", deploymentnative.ErrConflict)
 	}
 	generation, err := a.delivery.CreateGenerationAllocatedTx(ctx, tx, toNativeGeneration(normalized.Generation))
 	if err != nil {
@@ -366,6 +405,20 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	}, nil
 }
 
+func validateAdmissionProvenanceInput(input release.ProvenanceInput, admission GenerationAdmissionInput) error {
+	if input.Artifact.ContentDigest != admission.Bundle.Artifact.Digest || input.Artifact.ProjectDigest != admission.Bundle.ProjectDigest {
+		return fmt.Errorf("%w: release provenance artifact identity differs", deploymentnative.ErrConflict)
+	}
+	identity := input.Plan.Identity
+	if identity.ProjectID != admission.Bundle.ProjectID || identity.Environment != string(admission.Bundle.Environment) || identity.GenerationID != admission.Generation.GenerationID {
+		return fmt.Errorf("%w: release provenance serving identity differs", deploymentnative.ErrConflict)
+	}
+	if input.Plan.TargetID != admission.Generation.TargetID || input.Plan.RuntimeVersion != admission.Seal.RuntimeVersion || input.Plan.PolicyDigest != admission.Generation.SecurityDomainFingerprint {
+		return fmt.Errorf("%w: release provenance plan identity differs", deploymentnative.ErrConflict)
+	}
+	return nil
+}
+
 // configuredDuckLakeAuthority keeps interface-backed constructor checks safe
 // for typed nil implementations. Calling a method on a typed nil is legal in
 // Go but may panic in an implementation that does not guard its receiver.
@@ -395,6 +448,20 @@ func configuredManagedDataBindingAdmission(authority NativeManagedDataBindingAdm
 		}
 	}
 	return true
+}
+
+func configuredCandidateProvenanceAdmission(authority NativeCandidateProvenanceAdmission) bool {
+	if authority == nil {
+		return false
+	}
+	v := reflect.ValueOf(authority)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return false
+		}
+	}
+	return authority.Configured()
 }
 
 func admissionEvidenceConflict(kind string) error {

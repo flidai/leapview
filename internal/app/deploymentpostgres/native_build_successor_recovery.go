@@ -271,12 +271,24 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuildSuccessor(ctx conte
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
+	bindingRequest := nativeCandidateConnectionRequest(prepared.CandidateID, request.PrincipalID, request.TargetID, artifacts)
+	bindingEvidence, bindingDigest, err := resolveNativeCandidateBindingEvidence(ctx, c.bindingEvidence, bindingRequest)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	if bindingDigest != plan.Execution.BindingDigest {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: recovered successor candidate connection evidence differs from planned binding identity", deploymentdomain.ErrDeliveryConflict)
+	}
+	sourceRevision, err := c.nativeSourceRevision(ctx, plan, request)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	sealID, err := nativeBuildConsequenceID(reservation.Operation.OperationID, "seal")
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	attemptAdmission := CandidateBuildAttemptAdmissionResult{Lease: prepared.Lease, Attempt: prepared.DeliveryAttempt, Artifact: binding, DuckLakeAttempt: prepared.DuckLakeAttempt}
-	assembled, err := AssembleRecoveredNativeGenerationAdmissionInput(NativeRecoveredSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: artifacts, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: prepared.GenerationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
+	assembled, err := AssembleRecoveredNativeGenerationAdmissionInput(NativeRecoveredSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: artifacts, Bindings: bindingEvidence, SourceRevision: sourceRevision, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: prepared.GenerationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
