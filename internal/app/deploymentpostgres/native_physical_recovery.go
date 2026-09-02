@@ -94,6 +94,15 @@ type NativeSourceObservationReader interface {
 	LoadSourceObservationCapture(context.Context, string) (ducklakepostgres.SourceObservationCapture, error)
 }
 
+// NativeMarkerQuarantineWriter is the durable DuckLake control authority used
+// when the read-only physical resolver finds marker evidence that cannot be
+// selected safely. Recovery must persist that evidence before returning the
+// anomaly; merely logging the resolver error would allow later admission to
+// treat the pool as healthy again.
+type NativeMarkerQuarantineWriter interface {
+	QuarantineMarker(context.Context, ducklakepostgres.MarkerQuarantineInput) (ducklakepostgres.MarkerQuarantine, error)
+}
+
 // NativePhysicalRecoveryInput binds every identity and read-only capability
 // required to reconstruct one exact attempted native build. No recovery path
 // may infer an attempt, snapshot, source observation, or catalog environment.
@@ -106,6 +115,7 @@ type NativePhysicalRecoveryInput struct {
 	Compatibility ducklakepostgres.RuntimeCompatibility
 
 	MarkerResolverFactory NativePhysicalMarkerResolverFactory
+	MarkerQuarantine      NativeMarkerQuarantineWriter
 	ObservationReader     NativeSourceObservationReader
 	SnapshotFactory       NativePhysicalSnapshotInspectorFactory
 }
@@ -121,7 +131,7 @@ func RecoverNativePhysicalBuild(ctx context.Context, input NativePhysicalRecover
 	if err != nil {
 		return NativePhysicalBuildEvidence{}, err
 	}
-	if nativeBuildAuthorityNil(input.MarkerResolverFactory) || nativeBuildAuthorityNil(input.ObservationReader) || nativeBuildAuthorityNil(input.SnapshotFactory) {
+	if nativeBuildAuthorityNil(input.MarkerResolverFactory) || nativeBuildAuthorityNil(input.MarkerQuarantine) || nativeBuildAuthorityNil(input.ObservationReader) || nativeBuildAuthorityNil(input.SnapshotFactory) {
 		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: recovery authorities are required", deploymentnative.ErrInvalid)
 	}
 
@@ -137,6 +147,20 @@ func RecoverNativePhysicalBuild(ctx context.Context, input NativePhysicalRecover
 	}
 	resolution, resolveErr := resolver.ResolveCommittedMarker(ctx, normalized.Marker)
 	closeErr := resolver.Close()
+	if resolution.Anomaly != "" {
+		if resolution.Found || resolution.SnapshotID != 0 {
+			contradiction := fmt.Errorf("%w: marker resolver returned anomaly with a positive snapshot", deploymentnative.ErrConflict)
+			if closeErr != nil {
+				contradiction = errors.Join(contradiction, fmt.Errorf("close marker resolver: %w", closeErr))
+			}
+			return NativePhysicalBuildEvidence{}, errors.Join(ErrNativePhysicalRecoveryUnresolved, contradiction, resolveErr)
+		}
+		quarantineErr := persistNativeMarkerQuarantine(ctx, input, resolution)
+		if closeErr != nil {
+			quarantineErr = errors.Join(quarantineErr, fmt.Errorf("close marker resolver: %w", closeErr))
+		}
+		return NativePhysicalBuildEvidence{}, errors.Join(ErrNativePhysicalRecoveryUnresolved, ducklakepostgres.ErrMarkerQuarantined, resolveErr, quarantineErr)
+	}
 	if resolveErr != nil {
 		if closeErr != nil {
 			resolveErr = errors.Join(resolveErr, closeErr)
@@ -212,6 +236,62 @@ func RecoverNativePhysicalBuild(ctx context.Context, input NativePhysicalRecover
 		Seal: cloneSealEvidence(seal), Closure: cloneClosureEvidence(closure),
 		SourceObservations: cloneSourceObservations(observations),
 	}, nil
+}
+
+type nativeMarkerQuarantineEvidence struct {
+	SchemaVersion         int      `json:"schema_version"`
+	Anomaly               string   `json:"anomaly"`
+	PhysicalPoolID        string   `json:"physical_pool_id"`
+	CatalogID             string   `json:"catalog_id"`
+	AttemptID             string   `json:"attempt_id"`
+	RequestDigest         string   `json:"request_digest"`
+	PlanDigest            string   `json:"plan_digest"`
+	ObservedMarkerDigests []string `json:"observed_marker_digests"`
+	ObservedSnapshotIDs   []int64  `json:"observed_snapshot_ids"`
+}
+
+func persistNativeMarkerQuarantine(ctx context.Context, input NativePhysicalRecoveryInput, resolution ducklake.PhysicalMarkerResolution) error {
+	var reason ducklakepostgres.MarkerQuarantineReason
+	switch resolution.Anomaly {
+	case ducklake.PhysicalMarkerAnomalyDuplicate:
+		reason = ducklakepostgres.MarkerQuarantineDuplicate
+	case ducklake.PhysicalMarkerAnomalyDigestMismatch:
+		reason = ducklakepostgres.MarkerQuarantineDigestMismatch
+	case ducklake.PhysicalMarkerAnomalyIdentityMismatch:
+		reason = ducklakepostgres.MarkerQuarantineIdentityMismatch
+	default:
+		return fmt.Errorf("%w: unknown physical marker anomaly %q", deploymentnative.ErrConflict, resolution.Anomaly)
+	}
+	digests := make([]string, 0, len(resolution.ObservedMarkerDigests))
+	for _, digest := range resolution.ObservedMarkerDigests {
+		if digest != "" {
+			digests = append(digests, digest)
+		}
+	}
+	snapshotIDs := make([]int64, 0, len(resolution.ObservedSnapshotIDs))
+	for _, snapshotID := range resolution.ObservedSnapshotIDs {
+		if snapshotID > 0 {
+			snapshotIDs = append(snapshotIDs, snapshotID)
+		}
+	}
+	if len(digests) == 0 || len(snapshotIDs) == 0 {
+		return fmt.Errorf("%w: physical marker anomaly evidence is incomplete", deploymentnative.ErrConflict)
+	}
+	evidence, err := json.Marshal(nativeMarkerQuarantineEvidence{
+		SchemaVersion: 1, Anomaly: string(resolution.Anomaly),
+		PhysicalPoolID: input.Attempt.PhysicalPoolID, CatalogID: input.CatalogID,
+		AttemptID: input.Attempt.AttemptID, RequestDigest: input.Attempt.RequestDigest, PlanDigest: input.Attempt.PlanDigest,
+		ObservedMarkerDigests: digests, ObservedSnapshotIDs: snapshotIDs,
+	})
+	if err != nil {
+		return err
+	}
+	_, err = input.MarkerQuarantine.QuarantineMarker(ctx, ducklakepostgres.MarkerQuarantineInput{
+		PhysicalPoolID: input.Attempt.PhysicalPoolID, CatalogID: input.CatalogID,
+		AttemptID: input.Attempt.AttemptID, RequestDigest: input.Attempt.RequestDigest, PlanDigest: input.Attempt.PlanDigest,
+		Reason: reason, Evidence: evidence, ObservedMarkerDigest: digests[0], ObservedSnapshotIDs: snapshotIDs,
+	})
+	return err
 }
 
 // RecoverNativePhysical is a concise alias for command-style callers.

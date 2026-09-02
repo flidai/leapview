@@ -111,14 +111,16 @@ WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
 
 -- name: CommitBuildAttempt :execrows
 UPDATE delivery.delivery_build_attempt SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
-WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch)
+  AND NOT EXISTS (SELECT 1 FROM delivery.delivery_build_attempt_successor s WHERE s.predecessor_attempt_id=sqlc.arg(attempt_id)::uuid);
 
 -- name: ReconcileBuildAttemptCommitted :execrows
 -- Explicit recovery may close an exact running or indeterminate attempt after
 -- its target lease has expired. Normal completion remains guarded by the
 -- CommitBuildAttempt query and its active-lease check in the repository.
 UPDATE delivery.delivery_build_attempt SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,termination_evidence=NULL,updated_at=clock_timestamp(),finished_at=clock_timestamp()
-WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch)
+  AND NOT EXISTS (SELECT 1 FROM delivery.delivery_build_attempt_successor s WHERE s.predecessor_attempt_id=sqlc.arg(attempt_id)::uuid);
 
 -- name: TerminateBuildAttempt :execrows
 UPDATE delivery.delivery_build_attempt SET state=sqlc.arg(state),termination_evidence=sqlc.arg(evidence)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
@@ -126,7 +128,18 @@ WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state='running' AND owner_id=sql
 
 -- name: ReconcileBuildAttemptTerminal :execrows
 UPDATE delivery.delivery_build_attempt SET state=sqlc.arg(state),termination_evidence=sqlc.arg(evidence)::jsonb,updated_at=clock_timestamp(),finished_at=clock_timestamp()
-WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch)
+  AND NOT EXISTS (SELECT 1 FROM delivery.delivery_build_attempt_successor s WHERE s.predecessor_attempt_id=sqlc.arg(attempt_id)::uuid);
+
+-- name: InsertBuildAttemptSuccessor :exec
+INSERT INTO delivery.delivery_build_attempt_successor(predecessor_attempt_id,successor_attempt_id,resolution_evidence)
+VALUES(sqlc.arg(predecessor_attempt_id)::uuid,sqlc.arg(successor_attempt_id)::uuid,sqlc.arg(resolution_evidence)::jsonb)
+ON CONFLICT(predecessor_attempt_id) DO NOTHING;
+
+-- name: GetBuildAttemptSuccessor :one
+SELECT predecessor_attempt_id::text,successor_attempt_id::text,resolution_evidence,created_at
+FROM delivery.delivery_build_attempt_successor
+WHERE predecessor_attempt_id=sqlc.arg(predecessor_attempt_id)::uuid;
 
 -- name: RenewBuildAttemptLease :execresult
 UPDATE delivery.delivery_build_attempt

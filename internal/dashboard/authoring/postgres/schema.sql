@@ -701,7 +701,7 @@ BEGIN
            AND a.resource_id = e.aggregate_id
            AND a.aggregate_key = ('dashboard_authoring:' || e.scope_id || ':' || e.aggregate_id)
            AND a.aggregate_sequence = e.aggregate_version
-           AND a.correlation_id IS NOT DISTINCT FROM e.correlation_id
+           AND a.correlation_id IS NOT DISTINCT FROM e.correlation_id::text
            AND a.action = e.event_type
            AND a.metadata = e.payload)
        INTO v_ok;

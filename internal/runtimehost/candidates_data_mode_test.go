@@ -60,3 +60,23 @@ func TestValidateCandidateDataModeRefreshRequiresDeclaredConnection(t *testing.T
 		})
 	}
 }
+
+func TestCandidateRefreshSnapshotRequirementUsesFactoryCapability(t *testing.T) {
+	tests := []struct {
+		name                 string
+		factory              RuntimeFactory
+		requireSealedCatalog bool
+		wantPinned           bool
+	}{
+		{name: "postgres pinned sealed", factory: &pinnedLifecycleFactory{}, requireSealedCatalog: true, wantPinned: true},
+		{name: "local file sealed", factory: &lifecycleFactory{}, requireSealedCatalog: true},
+		{name: "unsealed target", factory: &pinnedLifecycleFactory{}, wantPinned: false},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := candidateRequiresPinnedSnapshot(test.factory, test.requireSealedCatalog); got != test.wantPinned {
+				t.Fatalf("candidateRequiresPinnedSnapshot() = %v, want %v", got, test.wantPinned)
+			}
+		})
+	}
+}

@@ -28,6 +28,171 @@ func TestValidationRejectsUnboundedOrCrossPoolIdentity(t *testing.T) {
 	}
 }
 
+func TestPostgres18MarkerQuarantineIsImmutableAndGatesAttempts(t *testing.T) {
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "ducklake_marker_quarantine_test")
+	p, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r := New(p)
+	const poolID, catalogID = "quarantine-pool", "quarantine-catalog"
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000701", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000702"
+	requestDigest, planDigest := digest('b'), digest('c')
+	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "quarantine-owner", FencingEpoch: 1, SessionIdentity: "quarantine-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.MarkAttemptIndeterminate(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "quarantine-owner", FencingEpoch: 1, Evidence: json.RawMessage(`{"indeterminate":true}`)}); err != nil {
+		t.Fatal(err)
+	}
+	input := MarkerQuarantineInput{PhysicalPoolID: poolID, CatalogID: catalogID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, Reason: MarkerQuarantineDigestMismatch, Evidence: json.RawMessage(`{"observed_snapshot_ids":[41],"reason":"digest_mismatch"}`), ObservedMarkerDigest: digest('d'), ObservedSnapshotIDs: []int64{41}}
+	first, err := r.QuarantineMarker(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Reason != MarkerQuarantineDigestMismatch || first.CreatedAt.IsZero() || len(first.ObservedSnapshotIDs) != 1 || first.ObservedSnapshotIDs[0] != 41 {
+		t.Fatalf("quarantine row = %#v", first)
+	}
+	if replay, err := r.QuarantineMarker(t.Context(), input); err != nil || replay.CreatedAt.IsZero() || replay.Reason != first.Reason {
+		t.Fatalf("exact quarantine replay = %#v, %v", replay, err)
+	}
+	changed := input
+	changed.Evidence = json.RawMessage(`{"observed_snapshot_ids":[42],"reason":"digest_mismatch"}`)
+	if _, err := r.QuarantineMarker(t.Context(), changed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed quarantine replay error = %v, want ErrConflict", err)
+	}
+	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: "0198f2c0-7c7a-7f00-0000-000000000703", RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "successor", FencingEpoch: 2, SessionIdentity: "successor-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); !errors.Is(err, ErrMarkerQuarantined) {
+		t.Fatalf("successor admission error = %v, want ErrMarkerQuarantined", err)
+	}
+	marker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-quarantine", GenerationID: "generation-quarantine", AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest, Project: "project-quarantine", Environment: "prod", PhysicalPoolID: poolID}
+	markerJSON, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileAttempt(t.Context(), ReconcileAttemptInput{AttemptID: attemptID, OwnerID: "quarantine-owner", FencingEpoch: 1, Snapshot: SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 41}, CommitMarker: markerJSON, State: AttemptCommitted}); !errors.Is(err, ErrMarkerQuarantined) {
+		t.Fatalf("quarantine recovery gate error = %v, want ErrMarkerQuarantined", err)
+	}
+}
+
+func TestPostgres18MarkerQuarantineSerializesAdmissionAtCatalogScope(t *testing.T) {
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "ducklake_marker_quarantine_lock_test")
+	p, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	r := New(p)
+	const poolID, catalogID = "quarantine-lock-pool", "quarantine-lock-catalog"
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-0000-000000000711", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	const attemptID = "0198f2c0-7c7a-7f00-0000-000000000712"
+	requestDigest, planDigest := digest('b'), digest('c')
+	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "lock-owner", FencingEpoch: 1, SessionIdentity: "lock-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	lockTx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(t.Context())
+	if err := lockMarkerQuarantineScope(t.Context(), lockTx, poolID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := QuarantineMarker(t.Context(), lockTx, MarkerQuarantineInput{PhysicalPoolID: poolID, CatalogID: catalogID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, Reason: MarkerQuarantineDuplicate, Evidence: json.RawMessage(`{"anomaly":"duplicate"}`), ObservedMarkerDigest: digest('d'), ObservedSnapshotIDs: []int64{101}}); err != nil {
+		t.Fatal(err)
+	}
+	admissionDone := make(chan error, 1)
+	go func() {
+		_, admissionErr := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: "0198f2c0-7c7a-0000-0000-000000000713", RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "successor", FencingEpoch: 2, SessionIdentity: "successor-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)})
+		admissionDone <- admissionErr
+	}()
+	select {
+	case admissionErr := <-admissionDone:
+		t.Fatalf("admission completed before quarantine commit: %v", admissionErr)
+	case <-time.After(100 * time.Millisecond):
+	}
+	if err := lockTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case admissionErr := <-admissionDone:
+		if !errors.Is(admissionErr, ErrMarkerQuarantined) {
+			t.Fatalf("serialized admission error = %v, want ErrMarkerQuarantined", admissionErr)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("serialized admission did not complete after quarantine commit")
+	}
+}
+
+func TestPostgres18RuntimeRoleCanUseMarkerQuarantineLockAndInsert(t *testing.T) {
+	h := postgrestest.Start(t)
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-quarantine-secret", Login: true})
+	db := h.NewDatabase(t, "ducklake_marker_quarantine_role_test")
+	admin, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+	tx, err := admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	const poolID, catalogID = "quarantine-role-pool", "quarantine-role-catalog"
+	adminRepo := New(admin)
+	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-0000-0000-000000000721", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+	runtimeDB, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtimeDB.Close)
+	runtimeRepo := New(runtimeDB)
+	const attemptID = "0198f2c0-7c7a-0000-0000-000000000722"
+	requestDigest, planDigest := digest('b'), digest('c')
+	if _, err := runtimeRepo.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-owner", FencingEpoch: 1, SessionIdentity: "runtime-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runtimeRepo.QuarantineMarker(t.Context(), MarkerQuarantineInput{PhysicalPoolID: poolID, CatalogID: catalogID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, Reason: MarkerQuarantineIdentityMismatch, Evidence: json.RawMessage(`{"anomaly":"identity_mismatch"}`), ObservedMarkerDigest: digest('d'), ObservedSnapshotIDs: []int64{102}}); err != nil {
+		t.Fatalf("runtime role marker quarantine insert = %v", err)
+	}
+}
+
 // This is the focused PostgreSQL 18 integration contract. It is skipped by
 // default when Docker is unavailable; CI sets the conformance-required flag.
 func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.T) {
@@ -598,6 +763,13 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	if _, err := runtime.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: attemptID, OwnerID: "runtime-worker", FencingEpoch: 1, Evidence: json.RawMessage(`{"reason":"role-test"}`)}); err != nil {
 		t.Fatalf("runtime terminate attempt: %v", err)
 	}
+	quarantineInput := MarkerQuarantineInput{PhysicalPoolID: poolID, CatalogID: catalogID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, Reason: MarkerQuarantineIdentityMismatch, Evidence: json.RawMessage(`{"reason":"role-test"}`), ObservedMarkerDigest: digest('d'), ObservedSnapshotIDs: []int64{42}}
+	if _, err := runtime.QuarantineMarker(t.Context(), quarantineInput); err != nil {
+		t.Fatalf("runtime marker quarantine insert: %v", err)
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `UPDATE ducklake.marker_quarantine SET evidence='{"tampered":true}' WHERE physical_pool_id=$1`, poolID); err == nil {
+		t.Fatal("runtime marker quarantine update unexpectedly succeeded")
+	}
 	if _, err := runtimeDB.Exec(t.Context(), `UPDATE ducklake.catalog_identity SET catalog_id='tampered' WHERE physical_pool_id=$1`, poolID); err == nil {
 		t.Fatal("runtime immutable identity update unexpectedly succeeded")
 	}
@@ -620,6 +792,9 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	}
 	if _, err := readonly.LoadSourceObservationCapture(t.Context(), attemptID); err != nil {
 		t.Fatalf("readonly source observation select: %v", err)
+	}
+	if _, err := readonly.LoadMarkerQuarantine(t.Context(), poolID, catalogID, attemptID); err != nil {
+		t.Fatalf("readonly marker quarantine select: %v", err)
 	}
 	if _, err := readonlyDB.Exec(t.Context(), `INSERT INTO ducklake.catalog_identity(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,compatibility_digest,catalog_schema_version) VALUES ('readonly-pool','ducklake','readonly-catalog','0198f2c0-7c7a-7f00-8a11-000000000010','lake',$1,'ducklake-v1')`, digest('d')); err == nil {
 		t.Fatal("readonly catalog insert unexpectedly succeeded")

@@ -167,7 +167,14 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData, r.manager.requireSealedCatalog); err != nil {
+	// Candidate source refreshes in the local/evaluation file-catalog path are
+	// sealed only after the physical build has produced its catalog seal. Their
+	// serving-state row therefore intentionally has no legacy snapshot pointer
+	// at this preparation boundary. PostgreSQL's sealed runtime, by contrast,
+	// opts into the exact SNAPSHOT_VERSION contract through
+	// PinnedSnapshotSealedFactory and must retain the positive snapshot check.
+	requirePinnedSnapshot := candidateRequiresPinnedSnapshot(r.manager.factory, r.manager.requireSealedCatalog)
+	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData, requirePinnedSnapshot); err != nil {
 		return nil, errors.Join(err, releaseManaged(managedData.Lifetime))
 	}
 	candidate := &candidatePreparationContext{runtime: CandidateRuntimeContext{
@@ -188,6 +195,19 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 		return nil, err
 	}
 	return prepared, nil
+}
+
+// candidateRequiresPinnedSnapshot scopes the positive snapshot requirement to
+// targets whose sealed runtime explicitly implements the PostgreSQL-style
+// SNAPSHOT_VERSION contract. Local sealed file catalogs remain immutable, but
+// their candidate serving-state rows intentionally carry no legacy snapshot
+// pointer until physical materialization has completed.
+func candidateRequiresPinnedSnapshot(factory RuntimeFactory, requireSealedCatalog bool) bool {
+	if !requireSealedCatalog {
+		return false
+	}
+	_, ok := factory.(PinnedSnapshotSealedFactory)
+	return ok
 }
 
 func candidateBindingKinds(value CandidateCompatibility) map[string]string {

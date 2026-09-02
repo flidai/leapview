@@ -136,6 +136,19 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     FOREIGN KEY (candidate_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, plan_id)
 );
 
+-- A successor is admitted only from an explicitly reconciled predecessor.
+-- Keeping the edge in its own immutable table means the predecessor attempt
+-- row remains append-only after it is fenced, while normal commit/reconcile
+-- transitions can reject late writes by checking this edge.
+CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt_successor (
+    predecessor_attempt_id uuid PRIMARY KEY REFERENCES delivery.delivery_build_attempt(attempt_id) ON DELETE RESTRICT,
+    successor_attempt_id uuid NOT NULL UNIQUE REFERENCES delivery.delivery_build_attempt(attempt_id) ON DELETE RESTRICT,
+    resolution_evidence jsonb NOT NULL
+        CHECK (jsonb_typeof(resolution_evidence) = 'object' AND octet_length(resolution_evidence::text) <= 32768),
+    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (predecessor_attempt_id <> successor_attempt_id)
+);
+
 -- A build artifact binding is the immutable hand-off from a durable build
 -- attempt to the serving-state artifact that was produced by that attempt.
 -- The attempt UUID is the sole identity: a retry may replay the exact row,
@@ -484,10 +497,22 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION delivery.reject_build_attempt_successor_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'delivery build attempt successor link is immutable';
+END;
+$$;
+
 DROP TRIGGER IF EXISTS delivery_build_artifact_binding_immutable ON delivery.delivery_build_artifact_binding;
 CREATE TRIGGER delivery_build_artifact_binding_immutable
 BEFORE UPDATE OR DELETE ON delivery.delivery_build_artifact_binding
 FOR EACH ROW EXECUTE FUNCTION delivery.reject_build_artifact_binding_mutation();
+
+DROP TRIGGER IF EXISTS delivery_build_attempt_successor_immutable ON delivery.delivery_build_attempt_successor;
+CREATE TRIGGER delivery_build_attempt_successor_immutable
+BEFORE UPDATE OR DELETE ON delivery.delivery_build_attempt_successor
+FOR EACH ROW EXECUTE FUNCTION delivery.reject_build_attempt_successor_mutation();
 
 CREATE OR REPLACE FUNCTION delivery.reject_publication_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -826,3 +851,5 @@ REVOKE ALL ON ALL SEQUENCES IN SCHEMA delivery FROM PUBLIC;
 GRANT USAGE ON SCHEMA delivery TO CURRENT_USER;
 GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery TO CURRENT_USER;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA delivery TO CURRENT_USER;
+REVOKE UPDATE, DELETE ON delivery.delivery_build_attempt_successor FROM CURRENT_USER;
+GRANT SELECT, INSERT ON delivery.delivery_build_attempt_successor TO CURRENT_USER;

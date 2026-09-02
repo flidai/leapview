@@ -119,6 +119,44 @@ func TestBlobInventoryRejectsNoncanonicalEntriesAndSymlinks(t *testing.T) {
 	}
 }
 
+func TestOpenRejectsBlobShardSymlinkEscape(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("creating symlinks requires optional Windows privileges")
+	}
+	root := t.TempDir()
+	store, err := filesystem.New(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := []byte("trusted")
+	blob := testBlob(body)
+	if _, err := store.Put(t.Context(), blob, bytes.NewReader(body)); err != nil {
+		t.Fatal(err)
+	}
+
+	shard := filepath.Dir(store.BlobPath(blob.SHA256))
+	if err := os.Chmod(shard, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(store.BlobPath(blob.SHA256)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(shard); err != nil {
+		t.Fatal(err)
+	}
+	outside := t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, blob.SHA256), []byte("attacker"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, shard); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := store.Open(t.Context(), blob.SHA256); err == nil {
+		t.Fatal("Open followed a blob shard symlink outside the store")
+	}
+}
+
 func TestMaterializeRevisionCreatesImmutableHardLinkedView(t *testing.T) {
 	root := t.TempDir()
 	t.Cleanup(func() {

@@ -39,18 +39,19 @@ type beginner interface {
 type Tx = DBTX
 
 var (
-	ErrInvalid          = errors.New("invalid DuckLake PostgreSQL identity")
-	ErrConflict         = errors.New("DuckLake PostgreSQL identity conflict")
-	ErrNotFound         = errors.New("DuckLake PostgreSQL identity not found")
-	ErrNotLive          = errors.New("DuckLake snapshot is not live")
-	ErrLeaseExpired     = errors.New("DuckLake snapshot lease is expired")
-	ErrStaleFence       = errors.New("DuckLake owner fencing epoch is stale")
-	ErrAttemptBusy      = errors.New("DuckLake build attempt is owned by another worker")
-	ErrIndeterminate    = errors.New("DuckLake build attempt outcome is indeterminate")
-	ErrQuarantined      = errors.New("DuckLake snapshot is quarantined")
-	ErrCleanupPending   = errors.New("DuckLake snapshot cleanup is pending")
-	ErrCleanupBusy      = errors.New("DuckLake snapshot cleanup is owned by another worker")
-	ErrClockUnavailable = errors.New("DuckLake PostgreSQL clock unavailable")
+	ErrInvalid           = errors.New("invalid DuckLake PostgreSQL identity")
+	ErrConflict          = errors.New("DuckLake PostgreSQL identity conflict")
+	ErrNotFound          = errors.New("DuckLake PostgreSQL identity not found")
+	ErrNotLive           = errors.New("DuckLake snapshot is not live")
+	ErrLeaseExpired      = errors.New("DuckLake snapshot lease is expired")
+	ErrStaleFence        = errors.New("DuckLake owner fencing epoch is stale")
+	ErrAttemptBusy       = errors.New("DuckLake build attempt is owned by another worker")
+	ErrIndeterminate     = errors.New("DuckLake build attempt outcome is indeterminate")
+	ErrQuarantined       = errors.New("DuckLake snapshot is quarantined")
+	ErrMarkerQuarantined = errors.New("DuckLake physical pool has a marker quarantine")
+	ErrCleanupPending    = errors.New("DuckLake snapshot cleanup is pending")
+	ErrCleanupBusy       = errors.New("DuckLake snapshot cleanup is owned by another worker")
+	ErrClockUnavailable  = errors.New("DuckLake PostgreSQL clock unavailable")
 )
 
 const (
@@ -125,6 +126,46 @@ type AttemptEvidence struct {
 	CreatedAt           time.Time
 	UpdatedAt           time.Time
 	TerminalAt          time.Time
+}
+
+// MarkerQuarantineReason identifies why exact external marker reconciliation
+// could not safely select one committed snapshot.
+type MarkerQuarantineReason string
+
+const (
+	MarkerQuarantineDuplicate        MarkerQuarantineReason = "duplicate"
+	MarkerQuarantineDigestMismatch   MarkerQuarantineReason = "digest_mismatch"
+	MarkerQuarantineIdentityMismatch MarkerQuarantineReason = "identity_mismatch"
+)
+
+// MarkerQuarantine is immutable, pool-wide evidence of an external DuckLake
+// marker anomaly. It is intentionally separate from AttemptEvidence's
+// positive termination evidence: an anomaly does not establish that a
+// transaction aborted and therefore gates both successor admission and
+// restart recovery.
+type MarkerQuarantine struct {
+	PhysicalPoolID       string
+	CatalogID            string
+	AttemptID            string
+	RequestDigest        string
+	PlanDigest           string
+	Reason               MarkerQuarantineReason
+	Evidence             json.RawMessage
+	ObservedMarkerDigest string
+	ObservedSnapshotIDs  []int64
+	CreatedAt            time.Time
+}
+
+type MarkerQuarantineInput struct {
+	PhysicalPoolID       string
+	CatalogID            string
+	AttemptID            string
+	RequestDigest        string
+	PlanDigest           string
+	Reason               MarkerQuarantineReason
+	Evidence             json.RawMessage
+	ObservedMarkerDigest string
+	ObservedSnapshotIDs  []int64
 }
 
 type BeginAttemptInput struct {
@@ -393,6 +434,129 @@ func (r *Repository) TransactionCapable() bool {
 	}
 	_, ok := r.db.(beginner)
 	return ok
+}
+
+// QuarantineMarkerTx persists immutable marker-anomaly evidence through a
+// caller-owned transaction. Exact replay is idempotent; changed evidence for
+// the same pool/catalog/attempt key returns ErrConflict.
+func (r *Repository) QuarantineMarkerTx(ctx context.Context, tx Tx, in MarkerQuarantineInput) (MarkerQuarantine, error) {
+	if r == nil || tx == nil {
+		return MarkerQuarantine{}, ErrInvalid
+	}
+	return QuarantineMarker(ctx, tx, in)
+}
+
+// QuarantineMarker records an anomaly observed while reconciling one external
+// attempt. The operation never opens or commits a transaction itself.
+func QuarantineMarker(ctx context.Context, tx DBTX, in MarkerQuarantineInput) (MarkerQuarantine, error) {
+	if tx == nil || !validMarkerQuarantineInput(in) {
+		return MarkerQuarantine{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	evidence, err := canonicalEvidence(in.Evidence)
+	if err != nil {
+		return MarkerQuarantine{}, fmt.Errorf("%w: marker quarantine evidence is required", ErrInvalid)
+	}
+	if err := lockMarkerQuarantineScope(ctx, tx, in.PhysicalPoolID); err != nil {
+		return MarkerQuarantine{}, err
+	}
+	observedIDs := append([]int64(nil), in.ObservedSnapshotIDs...)
+	if observedIDs == nil {
+		observedIDs = []int64{}
+	}
+	if err := querygen(tx).InsertMarkerQuarantine(ctx, dbgen.InsertMarkerQuarantineParams{
+		PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, AttemptID: pgUUID(in.AttemptID),
+		RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, Reason: string(in.Reason),
+		Evidence: []byte(evidence), ObservedMarkerDigest: in.ObservedMarkerDigest, ObservedSnapshotIds: observedIDs,
+	}); err != nil {
+		return MarkerQuarantine{}, err
+	}
+	got, err := LoadMarkerQuarantine(ctx, tx, in.PhysicalPoolID, in.CatalogID, in.AttemptID)
+	if errors.Is(err, ErrNotFound) {
+		return MarkerQuarantine{}, ErrNotFound
+	}
+	if err != nil {
+		return MarkerQuarantine{}, err
+	}
+	if !sameMarkerQuarantine(got, in, evidence) {
+		return MarkerQuarantine{}, fmt.Errorf("%w: marker quarantine %q", ErrConflict, in.AttemptID)
+	}
+	return got, nil
+}
+
+func (r *Repository) QuarantineMarker(ctx context.Context, in MarkerQuarantineInput) (MarkerQuarantine, error) {
+	if r == nil {
+		return MarkerQuarantine{}, ErrInvalid
+	}
+	return inRepositoryTransaction(ctx, r.db, func(tx DBTX) (MarkerQuarantine, error) {
+		return QuarantineMarker(ctx, tx, in)
+	})
+}
+
+func LoadMarkerQuarantine(ctx context.Context, db DBTX, physicalPoolID, catalogID, attemptID string) (MarkerQuarantine, error) {
+	if db == nil || !validID(physicalPoolID) || !validID(catalogID) || !validUUID(attemptID) {
+		return MarkerQuarantine{}, ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	row, err := querygen(db).GetMarkerQuarantine(ctx, dbgen.GetMarkerQuarantineParams{PhysicalPoolID: physicalPoolID, CatalogID: catalogID, AttemptID: pgUUID(attemptID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return MarkerQuarantine{}, ErrNotFound
+	}
+	if err != nil {
+		return MarkerQuarantine{}, err
+	}
+	return MarkerQuarantine{
+		PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, AttemptID: row.AttemptID,
+		RequestDigest: row.RequestDigest, PlanDigest: row.PlanDigest, Reason: MarkerQuarantineReason(row.Reason),
+		Evidence: append(json.RawMessage(nil), row.Evidence...), ObservedMarkerDigest: row.ObservedMarkerDigest,
+		ObservedSnapshotIDs: append([]int64(nil), row.ObservedSnapshotIds...), CreatedAt: tsTime(row.CreatedAt),
+	}, nil
+}
+
+func (r *Repository) LoadMarkerQuarantine(ctx context.Context, physicalPoolID, catalogID, attemptID string) (MarkerQuarantine, error) {
+	if r == nil {
+		return MarkerQuarantine{}, ErrInvalid
+	}
+	return LoadMarkerQuarantine(ctx, r.db, physicalPoolID, catalogID, attemptID)
+}
+
+func markerQuarantineExistsForPool(ctx context.Context, db DBTX, physicalPoolID string) (bool, error) {
+	if db == nil || !validID(physicalPoolID) {
+		return false, ErrInvalid
+	}
+	quarantined, err := querygen(db).HasMarkerQuarantineForPool(ctx, physicalPoolID)
+	if err != nil {
+		return false, err
+	}
+	return quarantined, nil
+}
+
+// lockMarkerQuarantineScope serializes every operation that can admit or
+// reconcile a build attempt with insertion of a pool quarantine row. Callers
+// must acquire this catalog-identity row lock before locking any attempt row,
+// preserving the repository-wide catalog-before-attempt lock order.
+func lockMarkerQuarantineScope(ctx context.Context, db DBTX, physicalPoolID string) error {
+	if db == nil || !validID(physicalPoolID) {
+		return ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	locked, err := querygen(db).LockCatalogQuarantineScope(ctx, physicalPoolID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if locked != physicalPoolID {
+		return fmt.Errorf("%w: marker quarantine catalog identity differs", ErrConflict)
+	}
+	return nil
 }
 
 // BeginAttemptTx persists an exact running-attempt identity through a
@@ -930,6 +1094,14 @@ func beginAttemptAt(ctx context.Context, tx DBTX, in BeginAttemptInput, now time
 	if err := validateBeginAt(in, now); err != nil {
 		return AttemptEvidence{}, err
 	}
+	if err := lockMarkerQuarantineScope(ctx, tx, in.PhysicalPoolID); err != nil {
+		return AttemptEvidence{}, err
+	}
+	if quarantined, err := markerQuarantineExistsForPool(ctx, tx, in.PhysicalPoolID); err != nil {
+		return AttemptEvidence{}, err
+	} else if quarantined {
+		return AttemptEvidence{}, ErrMarkerQuarantined
+	}
 	in.LeaseExpiresAt = in.LeaseExpiresAt.UTC().Truncate(time.Microsecond)
 	leaseExpires := in.LeaseExpiresAt.UTC()
 	err := querygen(tx).InsertAttemptEvidence(ctx, dbgen.InsertAttemptEvidenceParams{AttemptID: pgUUID(in.AttemptID), RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch, LeaseExpiresAt: pgtype.Timestamptz{Time: leaseExpires, Valid: true}, SessionIdentity: in.SessionIdentity})
@@ -950,11 +1122,13 @@ func (r *Repository) BeginAttempt(ctx context.Context, in BeginAttemptInput) (At
 	if r == nil {
 		return AttemptEvidence{}, ErrInvalid
 	}
-	now, err := databaseClock(ctx, r.db)
-	if err != nil {
-		return AttemptEvidence{}, err
-	}
-	return beginAttemptAt(ctx, r.db, in, now)
+	return inRepositoryTransaction(ctx, r.db, func(tx DBTX) (AttemptEvidence, error) {
+		now, err := databaseClock(ctx, tx)
+		if err != nil {
+			return AttemptEvidence{}, err
+		}
+		return beginAttemptAt(ctx, tx, in, now)
+	})
 }
 
 func CommitAttempt(ctx context.Context, tx DBTX, in CommitAttemptInput) (AttemptEvidence, error) {
@@ -968,6 +1142,9 @@ func CommitAttempt(ctx context.Context, tx DBTX, in CommitAttemptInput) (Attempt
 	if marker.AttemptID != in.AttemptID || marker.PhysicalPoolID != in.Snapshot.PhysicalPoolID || marker.LeaseEpoch != in.FencingEpoch {
 		return AttemptEvidence{}, fmt.Errorf("%w: commit marker identity mismatch", ErrConflict)
 	}
+	if err := lockMarkerQuarantineScope(ctx, tx, in.Snapshot.PhysicalPoolID); err != nil {
+		return AttemptEvidence{}, err
+	}
 	now, err := databaseClock(ctx, tx)
 	if err != nil {
 		return AttemptEvidence{}, err
@@ -976,6 +1153,11 @@ func CommitAttempt(ctx context.Context, tx DBTX, in CommitAttemptInput) (Attempt
 	existing, err := loadAttemptForUpdate(ctx, tx, in.AttemptID)
 	if err != nil {
 		return AttemptEvidence{}, err
+	}
+	if quarantined, err := markerQuarantineExistsForPool(ctx, tx, existing.PhysicalPoolID); err != nil {
+		return AttemptEvidence{}, err
+	} else if quarantined {
+		return AttemptEvidence{}, ErrMarkerQuarantined
 	}
 	if existing.OwnerID != in.OwnerID || existing.FencingEpoch != in.FencingEpoch {
 		return AttemptEvidence{}, ErrStaleFence
@@ -1026,7 +1208,9 @@ func (r *Repository) CommitAttempt(ctx context.Context, in CommitAttemptInput) (
 	if r == nil {
 		return AttemptEvidence{}, ErrInvalid
 	}
-	return CommitAttempt(ctx, r.db, in)
+	return inRepositoryTransaction(ctx, r.db, func(tx DBTX) (AttemptEvidence, error) {
+		return CommitAttempt(ctx, tx, in)
+	})
 }
 
 func TerminateAttempt(ctx context.Context, tx DBTX, in TerminateAttemptInput, state AttemptState) (AttemptEvidence, error) {
@@ -1160,9 +1344,24 @@ func reconcileAttemptTx(ctx context.Context, tx DBTX, in ReconcileAttemptInput) 
 		}
 	}
 
+	// Attempt identity is immutable, so an unlocked read is sufficient to
+	// discover the pool scope. Acquire the catalog scope before taking the
+	// attempt row lock, matching Begin/Commit/Quarantine lock order.
+	identity, err := LoadAttempt(ctx, tx, in.AttemptID)
+	if err != nil {
+		return AttemptEvidence{}, err
+	}
+	if err := lockMarkerQuarantineScope(ctx, tx, identity.PhysicalPoolID); err != nil {
+		return AttemptEvidence{}, err
+	}
 	existing, err := loadAttemptForUpdate(ctx, tx, in.AttemptID)
 	if err != nil {
 		return AttemptEvidence{}, err
+	}
+	if quarantined, err := markerQuarantineExistsForPool(ctx, tx, existing.PhysicalPoolID); err != nil {
+		return AttemptEvidence{}, err
+	} else if quarantined {
+		return AttemptEvidence{}, ErrMarkerQuarantined
 	}
 	if existing.OwnerID != in.OwnerID || existing.FencingEpoch != in.FencingEpoch {
 		return AttemptEvidence{}, ErrStaleFence
@@ -2329,6 +2528,43 @@ func validateBeginAt(in BeginAttemptInput, now time.Time) error {
 		return ErrInvalid
 	}
 	return nil
+}
+
+func validMarkerQuarantineInput(in MarkerQuarantineInput) bool {
+	if !validID(in.PhysicalPoolID) || !validID(in.CatalogID) || !validUUID(in.AttemptID) ||
+		!validDigest(in.RequestDigest) || !validDigest(in.PlanDigest) || !validMarkerQuarantineReason(in.Reason) ||
+		!validDigest(in.ObservedMarkerDigest) || len(in.ObservedSnapshotIDs) > 128 {
+		return false
+	}
+	for _, id := range in.ObservedSnapshotIDs {
+		if id <= 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func validMarkerQuarantineReason(reason MarkerQuarantineReason) bool {
+	switch reason {
+	case MarkerQuarantineDuplicate, MarkerQuarantineDigestMismatch, MarkerQuarantineIdentityMismatch:
+		return true
+	default:
+		return false
+	}
+}
+
+func sameMarkerQuarantine(got MarkerQuarantine, in MarkerQuarantineInput, canonicalEvidenceJSON string) bool {
+	if got.PhysicalPoolID != in.PhysicalPoolID || got.CatalogID != in.CatalogID || got.AttemptID != in.AttemptID ||
+		got.RequestDigest != in.RequestDigest || got.PlanDigest != in.PlanDigest || got.Reason != in.Reason ||
+		got.ObservedMarkerDigest != in.ObservedMarkerDigest || len(got.ObservedSnapshotIDs) != len(in.ObservedSnapshotIDs) {
+		return false
+	}
+	for i := range got.ObservedSnapshotIDs {
+		if got.ObservedSnapshotIDs[i] != in.ObservedSnapshotIDs[i] {
+			return false
+		}
+	}
+	return evidenceEqual(got.Evidence, canonicalEvidenceJSON)
 }
 
 func validID(value string) bool {

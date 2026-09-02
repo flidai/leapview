@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/csv"
 	"encoding/json"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"io"
@@ -379,6 +380,31 @@ func TestQualificationLoopbackRequestUsesProductionAllowedHost(t *testing.T) {
 	require.NoError(t, err)
 	if request.Host != "localhost" {
 		t.Fatalf("request Host = %q, want localhost", request.Host)
+	}
+}
+
+func TestQualificationHTTPSClientTrustsOnlySuppliedCA(t *testing.T) {
+	server := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	certificateFile := filepath.Join(t.TempDir(), "qualification-ca.pem")
+	certificate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: server.Certificate().Raw})
+	require.NoError(t, os.WriteFile(certificateFile, certificate, 0o600))
+	client, err := qualificationHTTPSClient(certificateFile)
+	require.NoError(t, err)
+
+	response, err := client.Get(server.URL)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	if response.StatusCode != http.StatusNoContent {
+		t.Fatalf("qualification HTTPS status = %d, want %d", response.StatusCode, http.StatusNoContent)
+	}
+
+	require.NoError(t, os.WriteFile(certificateFile, []byte("not a certificate"), 0o600))
+	if _, err := qualificationHTTPSClient(certificateFile); err == nil {
+		t.Fatal("invalid qualification CA certificate was accepted")
 	}
 }
 

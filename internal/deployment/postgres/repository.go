@@ -157,6 +157,43 @@ type BuildAttemptInput struct {
 }
 type DeliveryBuildAttemptInput = BuildAttemptInput
 
+// BuildAttemptSuccessorInput is the caller-owned transaction input for
+// recovery after an exact physical marker lookup returned "absent" without
+// proving that the predecessor session terminated. The predecessor must have
+// already been marked indeterminate by the owner/reconciler; the resolution
+// document is separate evidence for the immutable successor edge. A lease
+// timeout alone must never authorize a successor.
+//
+// SuccessorAttempt.Namespace and FencingEpoch are authority-derived and must
+// be left empty/zero.  The repository derives a fresh relation namespace from
+// the successor candidate, attempt UUID, and newly allocated target fence.
+type BuildAttemptSuccessorInput struct {
+	Predecessor          LeaseFence
+	PredecessorAttemptID string
+	CatalogID            string
+	ResolutionEvidence   json.RawMessage
+	SuccessorLease       LeaseInput
+	SuccessorAttempt     BuildAttemptInput
+}
+
+// BuildAttemptSuccessorResult contains the immutable predecessor->successor
+// edge and the fresh target lease/attempt admitted by one control transaction.
+type BuildAttemptSuccessorResult struct {
+	Predecessor        DeliveryBuildAttempt
+	SuccessorLease     DeliveryLease
+	Successor          DeliveryBuildAttempt
+	ResolutionEvidence json.RawMessage
+}
+
+// BuildAttemptSuccessorLink is the durable immutable predecessor edge.  It is
+// read-only evidence used to fence late predecessor commit/reconcile calls.
+type BuildAttemptSuccessorLink struct {
+	PredecessorAttemptID string
+	SuccessorAttemptID   string
+	ResolutionEvidence   json.RawMessage
+	CreatedAt            time.Time
+}
+
 // BuildArtifactBinding is the immutable artifact hand-off for one build
 // attempt. An attempt can have at most one binding; retries may only replay
 // the exact artifact and serving-state identity.
@@ -873,6 +910,44 @@ func canonicalNonEmpty(raw json.RawMessage, max int) (json.RawMessage, error) {
 	return canonicalObject(raw, max, false)
 }
 
+// BuildAttemptMarkerResolutionEvidence is the bounded, typed proof that an
+// exact marker lookup completed and found no matching snapshot. It is
+// intentionally separate from session-termination evidence: absence of a
+// marker does not prove the external transaction cannot still commit. Every
+// physical identity is repeated in the document so a resolution cannot be
+// replayed for another pool, catalog, request, plan, or attempt.
+type BuildAttemptMarkerResolutionEvidence struct {
+	SchemaVersion  int       `json:"schema_version"`
+	PhysicalPoolID string    `json:"physical_pool_id"`
+	CatalogID      string    `json:"catalog_id"`
+	AttemptID      string    `json:"attempt_id"`
+	RequestDigest  string    `json:"request_digest"`
+	PlanDigest     string    `json:"plan_digest"`
+	MarkerAbsent   bool      `json:"marker_absent"`
+	ResolvedAt     time.Time `json:"resolved_at"`
+}
+
+func normalizeSuccessorResolutionEvidence(raw json.RawMessage, predecessor DeliveryBuildAttempt, catalogID string) (json.RawMessage, error) {
+	if len(raw) == 0 || len(raw) > maxEvidence {
+		return nil, fmt.Errorf("%w: physical marker resolution evidence is required", ErrInvalid)
+	}
+	var evidence BuildAttemptMarkerResolutionEvidence
+	if err := strictjson.DecodeWithOptions(raw, &evidence, strictjson.Options{MaxBytes: maxEvidence, MaxDepth: 32, DuplicateKeys: strictjson.CaseSensitiveKeys}); err != nil {
+		return nil, fmt.Errorf("%w: physical marker resolution evidence is invalid", ErrInvalid)
+	}
+	if evidence.SchemaVersion != 1 || evidence.PhysicalPoolID != predecessor.PhysicalPoolID || evidence.CatalogID != catalogID || evidence.AttemptID != predecessor.AttemptID || evidence.RequestDigest != predecessor.RequestDigest || evidence.PlanDigest != predecessor.PlanDigest || !evidence.MarkerAbsent || evidence.ResolvedAt.IsZero() {
+		return nil, fmt.Errorf("%w: physical marker resolution identity differs from predecessor", ErrConflict)
+	}
+	if evidence.ResolvedAt.Location() != time.UTC {
+		return nil, fmt.Errorf("%w: physical marker resolution timestamp must be UTC", ErrInvalid)
+	}
+	canonical, err := json.Marshal(evidence)
+	if err != nil || len(canonical) > maxEvidence || !bytes.Equal(raw, canonical) {
+		return nil, fmt.Errorf("%w: physical marker resolution evidence is not canonical", ErrInvalid)
+	}
+	return canonical, nil
+}
+
 func sameBytes(a, b []byte) bool { return bytes.Equal(a, b) }
 
 func (r *Repository) begin(ctx context.Context) (pgx.Tx, error) {
@@ -1368,6 +1443,166 @@ func (r *Repository) BeginBuildAttemptTx(ctx context.Context, tx Tx, in BuildAtt
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
 	return beginBuildAttempt(contextOrBackground(ctx), tx, in)
+}
+
+// AdmitSuccessorBuildAttemptTx fences an indeterminate predecessor and
+// admits a fresh successor in one caller-owned PostgreSQL transaction.  The
+// predecessor must be bound to the exact lease fence supplied by the caller
+// and already be indeterminate; its existing termination evidence is kept
+// unchanged, its target lease is released, and a successor lease/attempt is
+// then allocated. The successor receives a strictly higher target fencing
+// epoch and an authority-derived relation namespace.
+//
+// This method deliberately does not infer termination from an expired lease.
+// Callers must provide a bounded resolution document proving that the exact
+// predecessor marker was absent. Positive session-termination evidence is a
+// separate reconciliation outcome and is outside this successor primitive.
+func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in BuildAttemptSuccessorInput) (BuildAttemptSuccessorResult, error) {
+	if tx == nil {
+		return BuildAttemptSuccessorResult{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	predecessorID, err := uuidID(in.PredecessorAttemptID, "predecessor attempt id", false)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if in.Predecessor.LeaseID == "" || in.PredecessorAttemptID != predecessorID {
+		return BuildAttemptSuccessorResult{}, ErrInvalid
+	}
+	if in.Predecessor.FencingEpoch <= 0 {
+		return BuildAttemptSuccessorResult{}, ErrInvalid
+	}
+	// Lock the predecessor lease first, matching completion/recovery lock
+	// ordering (lease -> attempt) and preventing a concurrent successor from
+	// racing this normalization.
+	predecessorLease, err := r.LockLeaseTx(ctx, tx, in.Predecessor.LeaseID)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if predecessorLease.TargetID != in.Predecessor.TargetID || predecessorLease.OwnerID != in.Predecessor.OwnerID || predecessorLease.FencingEpoch != in.Predecessor.FencingEpoch {
+		return BuildAttemptSuccessorResult{}, ErrStaleFence
+	}
+	predecessor, err := r.BuildAttemptTx(ctx, tx, predecessorID)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if predecessor.OwnerID != in.Predecessor.OwnerID || predecessor.FencingEpoch != in.Predecessor.FencingEpoch {
+		return BuildAttemptSuccessorResult{}, ErrStaleFence
+	}
+	if predecessor.State == AttemptCommitted || predecessor.State == AttemptAborted || predecessor.State == AttemptFenced {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: predecessor attempt is %s", ErrConflict, predecessor.State)
+	}
+	if predecessor.CandidateID == "" || predecessor.PlanID == "" || predecessor.PhysicalPoolID == "" {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: predecessor attempt identity is incomplete", ErrConflict)
+	}
+	// The predecessor must already be indeterminate. Marker absence is not
+	// process-termination evidence and therefore must never overwrite the
+	// predecessor's durable termination_evidence document.
+	if predecessor.State != AttemptIndeterminate || len(predecessor.TerminationEvidence) == 0 {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: predecessor must already be indeterminate", ErrConflict)
+	}
+	catalogID, err := textID(in.CatalogID, "catalog id")
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	resolution, err := normalizeSuccessorResolutionEvidence(in.ResolutionEvidence, predecessor, catalogID)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if err := r.ReleaseLeaseAfterAttemptTerminationTx(ctx, tx, in.Predecessor); err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+
+	// Successor IDs are explicit so a retried transaction can replay exactly;
+	// silently generating a new UUID on each retry would violate idempotency.
+	successorID, err := uuidID(in.SuccessorAttempt.AttemptID, "successor attempt id", false)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if successorID == predecessor.AttemptID {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor must use a new attempt UUID", ErrConflict)
+	}
+	if in.SuccessorAttempt.Namespace != "" || in.SuccessorAttempt.FencingEpoch != 0 {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor namespace and fencing epoch are authority-derived", ErrInvalid)
+	}
+	if in.SuccessorAttempt.OwnerID == "" || in.SuccessorAttempt.OwnerID != strings.TrimSpace(in.SuccessorAttempt.OwnerID) || in.SuccessorAttempt.SessionIdentity == "" || in.SuccessorAttempt.SessionIdentity != strings.TrimSpace(in.SuccessorAttempt.SessionIdentity) {
+		return BuildAttemptSuccessorResult{}, ErrInvalid
+	}
+	if in.SuccessorAttempt.SessionIdentity == predecessor.SessionIdentity {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor must use a new session identity", ErrConflict)
+	}
+	if in.SuccessorAttempt.PlanID != predecessor.PlanID || in.SuccessorAttempt.CandidateID != predecessor.CandidateID || in.SuccessorAttempt.PhysicalPoolID != predecessor.PhysicalPoolID || in.SuccessorAttempt.RequestDigest != predecessor.RequestDigest || in.SuccessorAttempt.PlanDigest != predecessor.PlanDigest {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor attempt identity differs from predecessor", ErrConflict)
+	}
+	if in.SuccessorLease.OwnerID != in.SuccessorAttempt.OwnerID || in.SuccessorLease.TargetID != in.Predecessor.TargetID {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor lease and attempt owners or target differ", ErrConflict)
+	}
+	if in.SuccessorLease.LeaseID == "" || in.SuccessorLease.LeaseID == in.Predecessor.LeaseID {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor must use a new lease identity", ErrConflict)
+	}
+	if in.SuccessorLease.ExpiresAt.IsZero() {
+		return BuildAttemptSuccessorResult{}, ErrInvalid
+	}
+
+	successorLease, err := acquireLease(ctx, tx, in.SuccessorLease)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if successorLease.FencingEpoch <= predecessor.FencingEpoch {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor fencing epoch did not advance", ErrConflict)
+	}
+	successorInput := in.SuccessorAttempt
+	successorInput.AttemptID = successorID
+	successorInput.FencingEpoch = successorLease.FencingEpoch
+	successorInput.LeaseExpiresAt = successorLease.ExpiresAt
+	successorInput.Namespace, err = deployment.DeriveRelationNamespace(deployment.RelationNamespaceInput{CandidateID: successorInput.CandidateID, AttemptID: successorID, FencingEpoch: successorLease.FencingEpoch})
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: derive successor relation namespace: %v", ErrInvalid, err)
+	}
+	if successorInput.Namespace == predecessor.Namespace {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor relation namespace reused predecessor", ErrConflict)
+	}
+	successor, err := beginBuildAttempt(ctx, tx, successorInput)
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if successor.AttemptID != successorID || successor.FencingEpoch != successorLease.FencingEpoch || successor.Namespace != successorInput.Namespace || successor.SessionIdentity == predecessor.SessionIdentity {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor attempt identity drifted", ErrConflict)
+	}
+	if err := depdb.New(tx).InsertBuildAttemptSuccessor(ctx, depdb.InsertBuildAttemptSuccessorParams{PredecessorAttemptID: dbUUID(predecessor.AttemptID), SuccessorAttemptID: dbUUID(successor.AttemptID), ResolutionEvidence: resolution}); err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	link, err := depdb.New(tx).GetBuildAttemptSuccessor(ctx, dbUUID(predecessor.AttemptID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BuildAttemptSuccessorResult{}, ErrConflict
+	}
+	if err != nil {
+		return BuildAttemptSuccessorResult{}, err
+	}
+	if link.SuccessorAttemptID != successor.AttemptID || !sameCanonical(link.ResolutionEvidence, resolution) {
+		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor link identity differs", ErrConflict)
+	}
+	return BuildAttemptSuccessorResult{Predecessor: predecessor, SuccessorLease: successorLease, Successor: successor, ResolutionEvidence: append(json.RawMessage(nil), resolution...)}, nil
+}
+
+// BuildAttemptSuccessorTx returns the immutable successor edge, if one was
+// admitted for predecessorAttemptID.
+func (r *Repository) BuildAttemptSuccessorTx(ctx context.Context, tx Tx, predecessorAttemptID string) (BuildAttemptSuccessorLink, error) {
+	if tx == nil {
+		return BuildAttemptSuccessorLink{}, ErrInvalid
+	}
+	id, err := uuidID(predecessorAttemptID, "predecessor attempt id", false)
+	if err != nil {
+		return BuildAttemptSuccessorLink{}, err
+	}
+	row, err := depdb.New(tx).GetBuildAttemptSuccessor(contextOrBackground(ctx), dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return BuildAttemptSuccessorLink{}, ErrNotFound
+	}
+	if err != nil {
+		return BuildAttemptSuccessorLink{}, err
+	}
+	return BuildAttemptSuccessorLink{PredecessorAttemptID: row.PredecessorAttemptID, SuccessorAttemptID: row.SuccessorAttemptID, ResolutionEvidence: append(json.RawMessage(nil), row.ResolutionEvidence...), CreatedAt: dbTime(row.CreatedAt)}, nil
 }
 
 // AcquireLeaseAndBeginBuildAttemptTx atomically acquires a target writer

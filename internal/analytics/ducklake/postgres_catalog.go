@@ -13,6 +13,7 @@ import (
 	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"regexp"
@@ -38,9 +39,31 @@ var (
 	// ErrCommittedSnapshotNotFound means no persistent snapshot carries the
 	// exact marker. It is distinct from an ambiguous or malformed catalog so
 	// restart reconciliation can require positive session termination evidence.
-	ErrCommittedSnapshotNotFound  = errors.New("DuckLake committed snapshot identity was not found")
-	ErrCommittedSnapshotAmbiguous = errors.New("multiple DuckLake snapshots match the commit marker")
+	ErrCommittedSnapshotNotFound         = errors.New("DuckLake committed snapshot identity was not found")
+	ErrCommittedSnapshotAmbiguous        = errors.New("multiple DuckLake snapshots match the commit marker")
+	ErrCommittedSnapshotDigestMismatch   = errors.New("DuckLake committed snapshot marker digest differs from the attempt")
+	ErrCommittedSnapshotIdentityMismatch = errors.New("DuckLake committed snapshot marker identity differs from the attempt")
 )
+
+// PhysicalMarkerAnomaly classifies persistent marker evidence that must be
+// durably quarantined rather than treated as an absent commit.
+type PhysicalMarkerAnomaly string
+
+const (
+	PhysicalMarkerAnomalyDuplicate        PhysicalMarkerAnomaly = "duplicate"
+	PhysicalMarkerAnomalyDigestMismatch   PhysicalMarkerAnomaly = "digest_mismatch"
+	PhysicalMarkerAnomalyIdentityMismatch PhysicalMarkerAnomaly = "identity_mismatch"
+)
+
+const (
+	maxObservedMarkerDigests = 16
+	maxObservedSnapshotIDs   = 128
+)
+
+// Fixed-size evidence arrays keep PhysicalMarkerResolution value-comparable
+// for callers while bounding what a catalog scan can return.
+type PhysicalMarkerObservedDigests [maxObservedMarkerDigests]string
+type PhysicalMarkerObservedSnapshotIDs [maxObservedSnapshotIDs]int64
 
 // PostgresCatalogMode selects the lifecycle contract for an attachment.
 // Initialization is the only mode allowed to create a missing catalog.
@@ -297,13 +320,16 @@ type SnapshotLookup interface {
 }
 
 // PhysicalMarkerResolution is the bounded value returned by a marker
-// reconciliation. Found is false only when no persistent snapshot carries
-// the exact marker; a true result always contains one positive snapshot ID.
-// Ambiguous matches are returned as ErrCommittedSnapshotAmbiguous instead of
-// exposing a count to callers that could accidentally choose one row.
+// reconciliation. Found remains for compatibility with existing callers;
+// Anomaly is non-empty when persistent marker evidence must be quarantined.
+// Observed marker digests and snapshot IDs are bounded evidence for that
+// quarantine decision and are never used to choose a snapshot.
 type PhysicalMarkerResolution struct {
-	SnapshotID int64
-	Found      bool
+	SnapshotID            int64
+	Found                 bool
+	Anomaly               PhysicalMarkerAnomaly
+	ObservedMarkerDigests PhysicalMarkerObservedDigests
+	ObservedSnapshotIDs   PhysicalMarkerObservedSnapshotIDs
 }
 
 // PhysicalMarkerResolver is the narrow read-only capability needed by native
@@ -380,37 +406,71 @@ func ResolveCommittedSnapshot(ctx context.Context, queryer SnapshotLookup, marke
 		return 0, fmt.Errorf("find DuckLake snapshot for commit marker: %w", err)
 	}
 	defer rows.Close()
-	var found int64
-	count := 0
+	var exactIDs []int64
+	var digestIDs []int64
+	var identityIDs []int64
+	var exactDigests []string
+	var digestDigests []string
+	var identityDigests []string
 	for rows.Next() {
 		var id int64
 		var extra string
 		if err := rows.Scan(&id, &extra); err != nil {
 			return 0, err
 		}
-		if !commitMarkerMatches(extra, canonical) {
-			continue
+		parsed, parseErr := catalogartifact.DecodeCommitMarker([]byte(extra))
+		if parseErr == nil {
+			parsedCanonical, canonicalErr := parsed.CanonicalJSON()
+			if canonicalErr != nil {
+				parseErr = canonicalErr
+			} else {
+				digest := canonicalMarkerDigest(parsedCanonical)
+				switch {
+				case parsedCanonical == canonical:
+					appendBoundedString(&exactDigests, digest, maxObservedMarkerDigests)
+					exactIDs = appendBoundedInt64(exactIDs, id, maxObservedSnapshotIDs)
+				case parsed.AttemptID == marker.AttemptID && parsed.PhysicalPoolID == marker.PhysicalPoolID && parsed.LeaseEpoch == marker.LeaseEpoch && parsed.DeliveryID == marker.DeliveryID && parsed.GenerationID == marker.GenerationID && (parsed.RequestDigest != marker.RequestDigest || parsed.PlanDigest != marker.PlanDigest):
+					appendBoundedString(&digestDigests, digest, maxObservedMarkerDigests)
+					digestIDs = appendBoundedInt64(digestIDs, id, maxObservedSnapshotIDs)
+				case parsed.AttemptID == marker.AttemptID:
+					appendBoundedString(&identityDigests, digest, maxObservedMarkerDigests)
+					identityIDs = appendBoundedInt64(identityIDs, id, maxObservedSnapshotIDs)
+				}
+				continue
+			}
 		}
-		found = id
-		count++
+		// A malformed marker carrying this attempt identity is still an
+		// identity anomaly; it must never collapse to an absent marker.
+		if attemptIDFromMarkerJSON(extra) == marker.AttemptID {
+			identityIDs = appendBoundedInt64(identityIDs, id, maxObservedSnapshotIDs)
+			appendBoundedString(&identityDigests, rawMarkerDigest(extra), maxObservedMarkerDigests)
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return 0, err
 	}
-	switch count {
+	if len(exactIDs) > 1 {
+		return 0, &markerAnomalyError{kind: PhysicalMarkerAnomalyDuplicate, observedDigests: exactDigests, observedIDs: exactIDs}
+	}
+	if len(digestIDs) > 0 {
+		return 0, &markerAnomalyError{kind: PhysicalMarkerAnomalyDigestMismatch, observedDigests: digestDigests, observedIDs: digestIDs}
+	}
+	if len(identityIDs) > 0 {
+		return 0, &markerAnomalyError{kind: PhysicalMarkerAnomalyIdentityMismatch, observedDigests: identityDigests, observedIDs: identityIDs}
+	}
+	switch len(exactIDs) {
 	case 0:
 		if lastMarkerMatch > 0 {
 			return lastMarkerMatch, nil
 		}
 		return 0, ErrCommittedSnapshotNotFound
 	case 1:
-		if found <= 0 {
+		if exactIDs[0] <= 0 {
 			return 0, errors.New("DuckLake committed snapshot identity is invalid")
 		}
-		return found, nil
-	default:
-		return 0, ErrCommittedSnapshotAmbiguous
+		return exactIDs[0], nil
 	}
+	return 0, ErrCommittedSnapshotNotFound
 }
 
 // ResolveCommittedMarker returns a typed found/absent result while retaining
@@ -420,10 +480,88 @@ func ResolveCommittedMarker(ctx context.Context, queryer SnapshotLookup, marker 
 	if errors.Is(err, ErrCommittedSnapshotNotFound) {
 		return PhysicalMarkerResolution{}, nil
 	}
+	var anomaly *markerAnomalyError
+	if errors.As(err, &anomaly) {
+		var digests PhysicalMarkerObservedDigests
+		copy(digests[:], anomaly.observedDigests)
+		var snapshotIDs PhysicalMarkerObservedSnapshotIDs
+		copy(snapshotIDs[:], anomaly.observedIDs)
+		return PhysicalMarkerResolution{Anomaly: anomaly.kind, ObservedMarkerDigests: digests, ObservedSnapshotIDs: snapshotIDs}, err
+	}
 	if err != nil {
 		return PhysicalMarkerResolution{}, err
 	}
 	return PhysicalMarkerResolution{SnapshotID: snapshotID, Found: true}, nil
+}
+
+type markerAnomalyError struct {
+	kind            PhysicalMarkerAnomaly
+	observedDigests []string
+	observedIDs     []int64
+}
+
+func (e *markerAnomalyError) Error() string {
+	switch e.kind {
+	case PhysicalMarkerAnomalyDuplicate:
+		return ErrCommittedSnapshotAmbiguous.Error()
+	case PhysicalMarkerAnomalyDigestMismatch:
+		return ErrCommittedSnapshotDigestMismatch.Error()
+	case PhysicalMarkerAnomalyIdentityMismatch:
+		return ErrCommittedSnapshotIdentityMismatch.Error()
+	default:
+		return "DuckLake committed snapshot marker anomaly"
+	}
+}
+
+func (e *markerAnomalyError) Unwrap() error {
+	switch e.kind {
+	case PhysicalMarkerAnomalyDuplicate:
+		return ErrCommittedSnapshotAmbiguous
+	case PhysicalMarkerAnomalyDigestMismatch:
+		return ErrCommittedSnapshotDigestMismatch
+	case PhysicalMarkerAnomalyIdentityMismatch:
+		return ErrCommittedSnapshotIdentityMismatch
+	default:
+		return nil
+	}
+}
+
+func canonicalMarkerDigest(canonical string) string {
+	sum := sha256.Sum256([]byte(canonical))
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+func rawMarkerDigest(raw string) string { return canonicalMarkerDigest(raw) }
+
+func appendBoundedInt64(values []int64, value int64, limit int) []int64 {
+	if value <= 0 || len(values) >= limit {
+		return values
+	}
+	return append(values, value)
+}
+
+func appendBoundedString(values *[]string, value string, limit int) {
+	if value == "" || len(*values) >= limit {
+		return
+	}
+	for _, existing := range *values {
+		if existing == value {
+			return
+		}
+	}
+	*values = append(*values, value)
+}
+
+func attemptIDFromMarkerJSON(raw string) string {
+	var object map[string]json.RawMessage
+	if json.Unmarshal([]byte(raw), &object) != nil {
+		return ""
+	}
+	var attemptID string
+	if json.Unmarshal(object["attempt_id"], &attemptID) != nil {
+		return ""
+	}
+	return attemptID
 }
 
 func commitMarkerMatches(extra, canonical string) bool {

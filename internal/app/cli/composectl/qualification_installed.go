@@ -968,17 +968,17 @@ func verifyQualificationDenialsAndMetrics(
 	metricsToken string,
 ) error {
 	client := &http.Client{Timeout: 30 * time.Second}
-	request, err := http.NewRequestWithContext(
+	request, err := newQualificationLoopbackRequest(
 		ctx,
 		http.MethodPost,
-		"https://localhost/api/v1/semantic-models/semantic-model:sales/query",
+		"http://127.0.0.1:8080/api/v1/semantic-models/semantic-model:sales/query",
 		strings.NewReader(queryBody),
 	)
 	if err != nil {
 		return err
 	}
 	request.Header.Set("Content-Type", "application/json")
-	response, err := qualificationHTTPSClient().Do(request)
+	response, err := client.Do(request)
 	if err != nil {
 		return err
 	}

@@ -59,6 +59,47 @@ CREATE TABLE IF NOT EXISTS ducklake.attempt_evidence (
     CHECK (state IN ('running', 'committed') OR termination_evidence IS NOT NULL)
 );
 
+-- Marker anomalies are durable pool-wide quarantine evidence.  They are
+-- deliberately separate from positive attempt termination evidence: an
+-- ambiguous or mismatched external marker cannot be represented as an abort
+-- and must gate every successor attempt/recovery for this physical pool.
+DO $$
+BEGIN
+    CREATE TYPE ducklake.marker_quarantine_reason AS ENUM
+        ('duplicate', 'digest_mismatch', 'identity_mismatch');
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+-- The composite index lets the quarantine row prove that its attempt and
+-- catalog identity refer to the same immutable attempt evidence row.
+CREATE UNIQUE INDEX IF NOT EXISTS ducklake_attempt_evidence_identity_unique
+    ON ducklake.attempt_evidence (attempt_id, physical_pool_id, catalog_id);
+
+CREATE TABLE IF NOT EXISTS ducklake.marker_quarantine (
+    physical_pool_id       text NOT NULL,
+    catalog_id             text NOT NULL,
+    attempt_id             uuid NOT NULL,
+    request_digest         text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
+    plan_digest            text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
+    reason                 ducklake.marker_quarantine_reason NOT NULL,
+    evidence               jsonb NOT NULL,
+    observed_marker_digest text NOT NULL CHECK (observed_marker_digest ~ '^sha256:[0-9a-f]{64}$'),
+    observed_snapshot_ids  bigint[] NOT NULL DEFAULT '{}'::bigint[],
+    created_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (physical_pool_id, catalog_id, attempt_id),
+    FOREIGN KEY (physical_pool_id, catalog_id)
+        REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
+    FOREIGN KEY (attempt_id, physical_pool_id, catalog_id)
+        REFERENCES ducklake.attempt_evidence(attempt_id, physical_pool_id, catalog_id),
+    CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
+    CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
+    CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
+    CHECK (cardinality(observed_snapshot_ids) <= 128)
+);
+
+CREATE INDEX IF NOT EXISTS ducklake_marker_quarantine_pool_idx
+    ON ducklake.marker_quarantine (physical_pool_id, created_at);
+
 -- Source observations are captured by the exact native DuckLake writer while
 -- its prepared source session is still live.  The attempt key makes the
 -- capture replay-safe; marker and envelope bytes are canonical identities,
@@ -919,6 +960,11 @@ DROP TRIGGER IF EXISTS attempt_identity_immutable ON ducklake.attempt_evidence;
 CREATE TRIGGER attempt_identity_immutable
     BEFORE UPDATE OR DELETE ON ducklake.attempt_evidence
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_attempt_identity_change();
+
+DROP TRIGGER IF EXISTS marker_quarantine_immutable ON ducklake.marker_quarantine;
+CREATE TRIGGER marker_quarantine_immutable
+    BEFORE UPDATE OR DELETE ON ducklake.marker_quarantine
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_immutable_change();
 
 DROP TRIGGER IF EXISTS snapshot_root_identity_immutable ON ducklake.snapshot_root;
 CREATE TRIGGER snapshot_root_identity_immutable
@@ -2163,6 +2209,7 @@ BEGIN
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
             || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
             || 'ducklake.snapshot_orphan TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.marker_quarantine TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.source_observation_capture TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_runtime';
@@ -2173,7 +2220,7 @@ BEGIN
             || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
             || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
-            || 'ducklake.snapshot_orphan, ducklake.snapshot_reader_drain, '
+            || 'ducklake.snapshot_orphan, ducklake.marker_quarantine, ducklake.snapshot_reader_drain, '
             || 'ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, '
             || 'ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, '
             || 'ducklake.catalog_migration, ducklake.snapshot_requalification, '

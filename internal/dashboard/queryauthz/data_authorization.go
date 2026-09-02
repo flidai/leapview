@@ -514,7 +514,11 @@ func (m Metrics) resolvedDependencyObjects(resourceIndex projectResourceIndex, r
 		}
 		semanticObjects = append(semanticObjects, modelObject)
 	}
-	physicalObjects := make([]access.ResourceRef, 0, len(dependencies.Datasets)+len(dependencies.PhysicalFields))
+	// Dependency cardinality is compiler-controlled, but do not combine two
+	// independently sized slices into an allocation hint: the addition can
+	// overflow before make applies its own bounds check. Appends retain the
+	// same bounded result without an attacker-controlled capacity calculation.
+	physicalObjects := make([]access.ResourceRef, 0)
 	datasets := map[string]access.ResourceRef{}
 	for _, datasetName := range dependencies.Datasets {
 		dataset, ok := resourceIndex.byName(datasetName, projectgraph.KindModel)

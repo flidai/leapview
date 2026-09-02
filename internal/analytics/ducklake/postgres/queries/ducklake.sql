@@ -139,6 +139,26 @@ FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id);
 -- name: LockAttempt :one
 SELECT attempt_id::text FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id) FOR UPDATE;
 
+-- name: InsertMarkerQuarantine :exec
+INSERT INTO ducklake.marker_quarantine
+ (physical_pool_id,catalog_id,attempt_id,request_digest,plan_digest,reason,evidence,observed_marker_digest,observed_snapshot_ids)
+ VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(attempt_id),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(reason)::ducklake.marker_quarantine_reason,sqlc.arg(evidence)::jsonb,sqlc.arg(observed_marker_digest),sqlc.arg(observed_snapshot_ids)::bigint[])
+ ON CONFLICT (physical_pool_id,catalog_id,attempt_id) DO NOTHING;
+
+-- name: GetMarkerQuarantine :one
+SELECT physical_pool_id,catalog_id,attempt_id::text,request_digest,plan_digest,reason::text,evidence,observed_marker_digest,observed_snapshot_ids,created_at
+FROM ducklake.marker_quarantine
+WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND attempt_id=sqlc.arg(attempt_id);
+
+-- name: HasMarkerQuarantineForPool :one
+SELECT EXISTS (SELECT 1 FROM ducklake.marker_quarantine WHERE physical_pool_id=sqlc.arg(physical_pool_id));
+
+-- name: LockCatalogQuarantineScope :one
+SELECT physical_pool_id
+FROM ducklake.catalog_identity
+WHERE physical_pool_id=sqlc.arg(physical_pool_id)
+FOR UPDATE;
+
 -- name: GetGenerationBindingSnapshot :one
 SELECT physical_pool_id,catalog_id,snapshot_id,fencing_epoch
 FROM ducklake.generation_binding WHERE delivery_id=sqlc.arg(delivery_id) AND generation_id=sqlc.arg(generation_id);

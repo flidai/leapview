@@ -47,6 +47,18 @@ type recoveryObservationReader struct {
 	reads   int
 }
 
+type recoveryMarkerQuarantineWriter struct {
+	input  ducklakepostgres.MarkerQuarantineInput
+	err    error
+	writes int
+}
+
+func (w *recoveryMarkerQuarantineWriter) QuarantineMarker(_ context.Context, input ducklakepostgres.MarkerQuarantineInput) (ducklakepostgres.MarkerQuarantine, error) {
+	w.writes++
+	w.input = input
+	return ducklakepostgres.MarkerQuarantine{PhysicalPoolID: input.PhysicalPoolID, CatalogID: input.CatalogID, AttemptID: input.AttemptID, Reason: input.Reason}, w.err
+}
+
 func (r *recoveryObservationReader) LoadSourceObservationCapture(context.Context, string) (ducklakepostgres.SourceObservationCapture, error) {
 	r.reads++
 	return r.capture, r.err
@@ -128,7 +140,7 @@ func recoveryFixture(t *testing.T) (NativePhysicalRecoveryInput, *recoveryMarker
 		Attempt: build.Attempt, Marker: build.Marker, Request: build.Request,
 		CatalogID: build.CatalogID, ObjectRoot: build.ObjectRoot,
 		Compatibility:         ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "ducklake:v1"}, CompatibilityDigest: nativePhysicalDigest('c'), CatalogSchemaVersion: "schema-v1"},
-		MarkerResolverFactory: &recoveryMarkerResolverFactory{resolver: resolver}, ObservationReader: reader, SnapshotFactory: factory,
+		MarkerResolverFactory: &recoveryMarkerResolverFactory{resolver: resolver}, MarkerQuarantine: &recoveryMarkerQuarantineWriter{}, ObservationReader: reader, SnapshotFactory: factory,
 	}, resolver, reader, factory
 }
 
@@ -206,6 +218,100 @@ func TestRecoverNativePhysicalBuildResolverErrorsCloseAndSkipCapture(t *testing.
 	}
 }
 
+func TestRecoverNativePhysicalBuildPersistsMarkerAnomalyBeforeFailingClosed(t *testing.T) {
+	input, resolver, reader, factory := recoveryFixture(t)
+	markerDigest := nativePhysicalDigest('9')
+	resolver.resolution = ducklake.PhysicalMarkerResolution{Anomaly: ducklake.PhysicalMarkerAnomalyDigestMismatch}
+	resolver.resolution.ObservedMarkerDigests[0] = markerDigest
+	resolver.resolution.ObservedSnapshotIDs[0] = 91
+	resolver.err = ducklake.ErrCommittedSnapshotDigestMismatch
+	writer := &recoveryMarkerQuarantineWriter{}
+	input.MarkerQuarantine = writer
+
+	_, err := RecoverNativePhysicalBuild(t.Context(), input)
+	if !errors.Is(err, ErrNativePhysicalRecoveryUnresolved) || !errors.Is(err, ducklakepostgres.ErrMarkerQuarantined) || !errors.Is(err, ducklake.ErrCommittedSnapshotDigestMismatch) {
+		t.Fatalf("marker anomaly error = %v", err)
+	}
+	if writer.writes != 1 || writer.input.AttemptID != input.Attempt.AttemptID || writer.input.CatalogID != input.CatalogID || writer.input.Reason != ducklakepostgres.MarkerQuarantineDigestMismatch || writer.input.ObservedMarkerDigest != markerDigest || len(writer.input.ObservedSnapshotIDs) != 1 || writer.input.ObservedSnapshotIDs[0] != 91 {
+		t.Fatalf("marker quarantine write = %d %#v", writer.writes, writer.input)
+	}
+	if reader.reads != 0 || factory.opened != 0 || resolver.closed != 1 {
+		t.Fatalf("anomaly reached downstream recovery reader=%d factory=%d close=%d", reader.reads, factory.opened, resolver.closed)
+	}
+}
+
+func TestRecoverNativePhysicalBuildMarkerAnomalyPersistenceFailureFailsClosed(t *testing.T) {
+	input, resolver, reader, factory := recoveryFixture(t)
+	markerDigest := nativePhysicalDigest('8')
+	resolver.resolution = ducklake.PhysicalMarkerResolution{Anomaly: ducklake.PhysicalMarkerAnomalyDuplicate}
+	resolver.resolution.ObservedMarkerDigests[0] = markerDigest
+	resolver.resolution.ObservedSnapshotIDs[0] = 92
+	resolver.err = ducklake.ErrCommittedSnapshotAmbiguous
+	writerErr := errors.New("control database unavailable")
+	writer := &recoveryMarkerQuarantineWriter{err: writerErr}
+	input.MarkerQuarantine = writer
+
+	_, err := RecoverNativePhysicalBuild(t.Context(), input)
+	if !errors.Is(err, writerErr) || !errors.Is(err, ErrNativePhysicalRecoveryUnresolved) || !errors.Is(err, ducklakepostgres.ErrMarkerQuarantined) {
+		t.Fatalf("marker quarantine persistence failure = %v", err)
+	}
+	if writer.writes != 1 || reader.reads != 0 || factory.opened != 0 || resolver.closed != 1 {
+		t.Fatalf("persistence failure calls writes=%d reader=%d factory=%d close=%d", writer.writes, reader.reads, factory.opened, resolver.closed)
+	}
+}
+
+func TestRecoverNativePhysicalBuildRejectsAnomalyWithPositiveSnapshot(t *testing.T) {
+	for name, resolution := range map[string]ducklake.PhysicalMarkerResolution{
+		"found":    {Found: true, SnapshotID: 93, Anomaly: ducklake.PhysicalMarkerAnomalyIdentityMismatch},
+		"snapshot": {SnapshotID: 94, Anomaly: ducklake.PhysicalMarkerAnomalyDigestMismatch},
+	} {
+		t.Run(name, func(t *testing.T) {
+			input, resolver, reader, factory := recoveryFixture(t)
+			resolver.resolution = resolution
+			resolver.err = ducklake.ErrCommittedSnapshotIdentityMismatch
+			writer := &recoveryMarkerQuarantineWriter{}
+			input.MarkerQuarantine = writer
+
+			_, err := RecoverNativePhysicalBuild(t.Context(), input)
+			if !errors.Is(err, deploymentnative.ErrConflict) || !errors.Is(err, ErrNativePhysicalRecoveryUnresolved) {
+				t.Fatalf("contradictory anomaly resolution = %v", err)
+			}
+			if writer.writes != 0 || reader.reads != 0 || factory.opened != 0 || resolver.closed != 1 {
+				t.Fatalf("contradictory anomaly calls writes=%d reader=%d factory=%d close=%d", writer.writes, reader.reads, factory.opened, resolver.closed)
+			}
+		})
+	}
+}
+
+func TestPersistNativeMarkerQuarantineMapsReasonsAndCanonicalEvidence(t *testing.T) {
+	for _, tc := range []struct {
+		anomaly ducklake.PhysicalMarkerAnomaly
+		reason  ducklakepostgres.MarkerQuarantineReason
+	}{
+		{ducklake.PhysicalMarkerAnomalyDuplicate, ducklakepostgres.MarkerQuarantineDuplicate},
+		{ducklake.PhysicalMarkerAnomalyDigestMismatch, ducklakepostgres.MarkerQuarantineDigestMismatch},
+		{ducklake.PhysicalMarkerAnomalyIdentityMismatch, ducklakepostgres.MarkerQuarantineIdentityMismatch},
+	} {
+		t.Run(string(tc.anomaly), func(t *testing.T) {
+			input, _, _, _ := recoveryFixture(t)
+			writer := &recoveryMarkerQuarantineWriter{}
+			input.MarkerQuarantine = writer
+			resolution := ducklake.PhysicalMarkerResolution{Anomaly: tc.anomaly}
+			resolution.ObservedMarkerDigests[0] = nativePhysicalDigest('7')
+			resolution.ObservedSnapshotIDs[0] = 95
+			if err := persistNativeMarkerQuarantine(t.Context(), input, resolution); err != nil {
+				t.Fatal(err)
+			}
+			if writer.writes != 1 || writer.input.Reason != tc.reason || writer.input.ObservedMarkerDigest != nativePhysicalDigest('7') || len(writer.input.ObservedSnapshotIDs) != 1 || writer.input.ObservedSnapshotIDs[0] != 95 {
+				t.Fatalf("quarantine input = %#v", writer.input)
+			}
+			if string(writer.input.Evidence) != `{"schema_version":1,"anomaly":"`+string(tc.anomaly)+`","physical_pool_id":"`+input.Attempt.PhysicalPoolID+`","catalog_id":"`+input.CatalogID+`","attempt_id":"`+input.Attempt.AttemptID+`","request_digest":"`+input.Attempt.RequestDigest+`","plan_digest":"`+input.Attempt.PlanDigest+`","observed_marker_digests":["`+nativePhysicalDigest('7')+`"],"observed_snapshot_ids":[95]}` {
+				t.Fatalf("non-canonical marker quarantine evidence = %s", writer.input.Evidence)
+			}
+		})
+	}
+}
+
 func TestRecoverNativePhysicalBuildResolverOpenErrorIsUnresolvedAndClosesPartialOpen(t *testing.T) {
 	input, resolver, reader, factory := recoveryFixture(t)
 	openErr := errors.New("resolver open failed")
@@ -234,6 +340,10 @@ func TestRecoverNativePhysicalBuildRejectsTypedNilAuthorities(t *testing.T) {
 		"marker resolver": func(input *NativePhysicalRecoveryInput) {
 			var factory *recoveryMarkerResolverFactory
 			input.MarkerResolverFactory = factory
+		},
+		"marker quarantine": func(input *NativePhysicalRecoveryInput) {
+			var writer *recoveryMarkerQuarantineWriter
+			input.MarkerQuarantine = writer
 		},
 		"observation reader": func(input *NativePhysicalRecoveryInput) {
 			var reader *recoveryObservationReader

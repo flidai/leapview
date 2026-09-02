@@ -188,7 +188,7 @@ BEGIN
            AND a.resource_id = p_resource_id
            AND a.capability = 'RESOURCE_PUBLISH'
            AND a.outcome = 'success'
-           AND a.correlation_id IS NOT DISTINCT FROM NULLIF(p_correlation_id, '')::uuid
+           AND a.correlation_id IS NOT DISTINCT FROM NULLIF(p_correlation_id, '')
            AND a.aggregate_key = 'dashboard_publication:' || p_project_id || ':' || p_name
            AND a.aggregate_sequence = p_aggregate_version
            AND a.metadata = p_audit_metadata

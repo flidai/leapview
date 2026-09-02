@@ -3,6 +3,7 @@ package composectl
 import (
 	"context"
 	"crypto/tls"
+	"crypto/x509"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -354,7 +355,10 @@ func (c *Controller) runQualificationAuthoring(
 	if err := phases.Finish(nil); err != nil {
 		return report, err
 	}
-	apiClient := qualificationHTTPSClient()
+	apiClient, err := qualificationHTTPSClient(certificateFile)
+	if err != nil {
+		return report, err
+	}
 	ctx = phases.Begin(rootContext, "native keyring login", 10*time.Minute)
 
 	keyringPassword, err := randomHex(24)
@@ -647,15 +651,24 @@ func validateQualificationAuthoringOptions(options qualificationAuthoringOptions
 	return nil
 }
 
-func qualificationHTTPSClient() *http.Client {
+func qualificationHTTPSClient(certificateFile string) (*http.Client, error) {
+	certificate, err := os.ReadFile(certificateFile)
+	if err != nil {
+		return nil, fmt.Errorf("read qualification CA certificate: %w", err)
+	}
+	roots := x509.NewCertPool()
+	if !roots.AppendCertsFromPEM(certificate) {
+		return nil, errors.New("qualification CA certificate is invalid")
+	}
 	return &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
-			// The isolated production Compose target uses its generated local
-			// Caddy CA. This client is restricted to that disposable target.
-			TLSClientConfig: &tls.Config{InsecureSkipVerify: true}, //nolint:gosec
+			// Trust only the generated CA copied from this isolated production
+			// Compose target. Normal hostname and certificate verification remain
+			// enabled; qualification must fail if the endpoint identity drifts.
+			TLSClientConfig: &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: roots},
 		},
-	}
+	}, nil
 }
 
 func qualificationAPI(

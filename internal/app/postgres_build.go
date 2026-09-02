@@ -709,6 +709,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		PhysicalFactory:       physicalFactory,
 		ObservationWriter:     graph.DuckLakeControlLedger,
 		MarkerResolverFactory: markerFactory,
+		MarkerQuarantine:      graph.DuckLakeControlLedger,
 		ObservationReader:     graph.DuckLakeControlLedger,
 		SnapshotFactory:       appdeploymentpostgres.NativeQualificationSnapshotInspectorFactory{QualificationFactory: qualificationFactory},
 		QualificationFactory:  qualificationFactory,

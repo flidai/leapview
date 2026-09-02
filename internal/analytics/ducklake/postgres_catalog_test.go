@@ -344,6 +344,89 @@ func TestResolveCommittedMarkerRejectsDuplicateEvenWhenLastPointerMatches(t *tes
 	}
 }
 
+func TestResolveCommittedMarkerClassifiesDigestMismatch(t *testing.T) {
+	marker := CommitMarker{SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-digest", GenerationID: "generation-digest", AttemptID: "attempt-digest", LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project-digest", Environment: "production", PhysicalPoolID: "pool-digest"}
+	observed := marker
+	observed.PlanDigest = "sha256:" + strings.Repeat("c", 64)
+	canonical, err := observed.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	unrelated := observed
+	unrelated.AttemptID = "attempt-unrelated"
+	unrelatedCanonical, err := unrelated.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openMarkerLookupDB(t, markerLookupState{fallback: [][2]driver.Value{{int64(36), unrelatedCanonical}, {int64(37), canonical}}})
+	defer db.Close()
+	lookup, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lookup.Close()
+	got, err := ResolveCommittedMarker(context.Background(), lookup, marker)
+	if !errors.Is(err, ErrCommittedSnapshotDigestMismatch) || got.Anomaly != PhysicalMarkerAnomalyDigestMismatch {
+		t.Fatalf("digest mismatch resolution = %#v, %v", got, err)
+	}
+	if got.ObservedSnapshotIDs[0] != 37 || got.ObservedMarkerDigests[0] != canonicalMarkerDigest(canonical) || got.ObservedMarkerDigests[1] != "" {
+		t.Fatalf("digest mismatch evidence = %#v", got)
+	}
+}
+
+func TestResolveCommittedMarkerMixedExactAndDigestMismatchUsesOnlyMismatchEvidence(t *testing.T) {
+	marker := CommitMarker{SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-mixed", GenerationID: "generation-mixed", AttemptID: "attempt-mixed", LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project-mixed", Environment: "production", PhysicalPoolID: "pool-mixed"}
+	exact, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	observed := marker
+	observed.PlanDigest = "sha256:" + strings.Repeat("c", 64)
+	mismatch, err := observed.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openMarkerLookupDB(t, markerLookupState{fallback: [][2]driver.Value{{int64(39), exact}, {int64(40), mismatch}}})
+	defer db.Close()
+	lookup, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lookup.Close()
+	got, err := ResolveCommittedMarker(context.Background(), lookup, marker)
+	if !errors.Is(err, ErrCommittedSnapshotDigestMismatch) || got.Anomaly != PhysicalMarkerAnomalyDigestMismatch {
+		t.Fatalf("mixed resolution = %#v, %v", got, err)
+	}
+	wantDigest := canonicalMarkerDigest(mismatch)
+	if got.ObservedMarkerDigests[0] != wantDigest || got.ObservedMarkerDigests[1] != "" || got.ObservedSnapshotIDs[0] != 40 || got.ObservedSnapshotIDs[1] != 0 {
+		t.Fatalf("mixed anomaly evidence = %#v", got)
+	}
+}
+
+func TestResolveCommittedMarkerClassifiesIdentityMismatch(t *testing.T) {
+	marker := CommitMarker{SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-identity", GenerationID: "generation-identity", AttemptID: "attempt-identity", LeaseEpoch: 7, RequestDigest: "sha256:" + strings.Repeat("b", 64), PlanDigest: "sha256:" + strings.Repeat("a", 64), Project: "project-identity", Environment: "production", PhysicalPoolID: "pool-identity"}
+	observed := marker
+	observed.LeaseEpoch = 8
+	canonical, err := observed.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	db := openMarkerLookupDB(t, markerLookupState{fallback: [][2]driver.Value{{int64(38), canonical}}})
+	defer db.Close()
+	lookup, err := db.Conn(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lookup.Close()
+	got, err := ResolveCommittedMarker(context.Background(), lookup, marker)
+	if !errors.Is(err, ErrCommittedSnapshotIdentityMismatch) || got.Anomaly != PhysicalMarkerAnomalyIdentityMismatch {
+		t.Fatalf("identity mismatch resolution = %#v, %v", got, err)
+	}
+	if got.ObservedSnapshotIDs[0] != 38 || got.ObservedMarkerDigests[0] == "" {
+		t.Fatalf("identity mismatch evidence = %#v", got)
+	}
+}
+
 func TestResolveCommittedSnapshotPropagatesCatalogProbeError(t *testing.T) {
 	marker := CommitMarker{
 		SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery-1",

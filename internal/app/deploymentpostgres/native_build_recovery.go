@@ -67,7 +67,7 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 		Lease: prepared.Lease, Attempt: prepared.DeliveryAttempt,
 		Artifact: artifactBinding, DuckLakeAttempt: prepared.DuckLakeAttempt,
 	}
-	physicalInput, err := deriveNativeBuildRecoveryPhysicalInput(request, plan, prepared, contract, artifacts, marker, c.markerResolverFactory, c.observationReader, c.snapshotFactory)
+	physicalInput, err := deriveNativeBuildRecoveryPhysicalInput(request, plan, prepared, contract, artifacts, marker, c.markerResolverFactory, c.markerQuarantine, c.observationReader, c.snapshotFactory)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
@@ -183,6 +183,7 @@ func deriveNativeBuildRecoveryPhysicalInput(
 	artifacts release.CandidateArtifactSet,
 	marker catalogartifact.CommitMarker,
 	markerResolverFactory NativePhysicalMarkerResolverFactory,
+	markerQuarantine NativeMarkerQuarantineWriter,
 	observationReader NativeSourceObservationReader,
 	snapshotFactory NativePhysicalSnapshotInspectorFactory,
 ) (NativePhysicalRecoveryInput, error) {
@@ -197,6 +198,6 @@ func deriveNativeBuildRecoveryPhysicalInput(
 		Attempt: prepared.DeliveryAttempt, Marker: marker,
 		Request:   nativeMaterializationRequest(artifacts, request, prepared.GenerationID, prepared.CandidateID, prepared.DeliveryAttempt.Namespace, plan.DeliveryPlan),
 		CatalogID: contract.Catalog.CatalogID, ObjectRoot: physicalRoot, Compatibility: contract.Compatibility,
-		MarkerResolverFactory: markerResolverFactory, ObservationReader: observationReader, SnapshotFactory: snapshotFactory,
+		MarkerResolverFactory: markerResolverFactory, MarkerQuarantine: markerQuarantine, ObservationReader: observationReader, SnapshotFactory: snapshotFactory,
 	}, nil
 }

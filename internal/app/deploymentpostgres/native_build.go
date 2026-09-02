@@ -96,6 +96,7 @@ type NativeBuildConfig struct {
 	PhysicalFactory       NativePhysicalBuildEnvironmentFactory
 	ObservationWriter     ducklakepostgres.SourceObservationWriter
 	MarkerResolverFactory NativePhysicalMarkerResolverFactory
+	MarkerQuarantine      NativeMarkerQuarantineWriter
 	ObservationReader     NativeSourceObservationReader
 	SnapshotFactory       NativePhysicalSnapshotInspectorFactory
 	QualificationFactory  NativeQualificationEnvironmentFactory
@@ -133,6 +134,7 @@ type NativeBuildCoordinator struct {
 	physicalFactory                     NativePhysicalBuildEnvironmentFactory
 	observationWriter                   ducklakepostgres.SourceObservationWriter
 	markerResolverFactory               NativePhysicalMarkerResolverFactory
+	markerQuarantine                    NativeMarkerQuarantineWriter
 	observationReader                   NativeSourceObservationReader
 	snapshotFactory                     NativePhysicalSnapshotInspectorFactory
 	qualificationFactory                NativeQualificationEnvironmentFactory
@@ -171,7 +173,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 	if nativeBuildAuthorityNil(config.ArtifactRecovery) {
 		return nil, errors.New("native build artifact recovery authority is required")
 	}
-	if nativeBuildAuthorityNil(config.MarkerResolverFactory) || nativeBuildAuthorityNil(config.ObservationReader) || nativeBuildAuthorityNil(config.SnapshotFactory) {
+	if nativeBuildAuthorityNil(config.MarkerResolverFactory) || nativeBuildAuthorityNil(config.MarkerQuarantine) || nativeBuildAuthorityNil(config.ObservationReader) || nativeBuildAuthorityNil(config.SnapshotFactory) {
 		return nil, errors.New("native build physical recovery authorities are required")
 	}
 	artifacts := config.Artifacts
@@ -243,7 +245,7 @@ func NewNativeBuildCoordinator(config NativeBuildConfig) (*NativeBuildCoordinato
 		repository: config.Repository, sources: config.Sources, artifacts: artifacts, artifactRecovery: config.ArtifactRecovery, bindingEvidence: config.BindingEvidence, connections: config.Connections, managedData: config.ManagedData, contract: contract,
 		physicalPoolID: config.PhysicalPoolID, compatibilityDigest: config.CompatibilityDigest,
 		operations: config.Operations, heartbeat: config.Heartbeat, heartbeatInterval: heartbeatInterval, attemptAdmission: config.AttemptAdmission, attemptTermination: config.AttemptTermination, generationAdmission: config.GenerationAdmission,
-		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
+		physicalFactory: config.PhysicalFactory, observationWriter: config.ObservationWriter, markerResolverFactory: config.MarkerResolverFactory, markerQuarantine: config.MarkerQuarantine, observationReader: config.ObservationReader, snapshotFactory: config.SnapshotFactory, qualificationFactory: config.QualificationFactory,
 		runtimeVersion: config.RuntimeVersion, sessionIdentity: session, bounds: bounds,
 		leaseDuration: leaseDuration, clock: clock, events: config.Events, eventReader: eventReader, audit: config.Audit,
 		auditReader: auditReader, workflow: config.Workflow,
