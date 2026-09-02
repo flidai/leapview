@@ -137,6 +137,40 @@ func TestInstalledQualificationAcceptsExplicitReleaseBundle(t *testing.T) {
 	}
 }
 
+func TestInstalledQualificationDeploymentUsesLoopbackCaddyBindings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), deploymentEnvName)
+	contents := strings.Join([]string{
+		"COMPOSE_PROJECT_NAME=leapview",
+		"LEAPVIEW_IMAGE=ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64),
+		"COMPOSE_APP_BIND=127.0.0.1:8080",
+		"CADDY_DOMAIN=dash.example.com",
+		"CADDY_HTTP_BIND=80",
+		"CADDY_HTTPS_BIND=443",
+		"CADDY_HTTPS_UDP_BIND=443",
+	}, "\n") + "\n"
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, configureInstalledQualificationDeployment(path, "leapview-qualification-test", image))
+
+	for _, test := range []struct {
+		key  string
+		want string
+	}{
+		{key: "COMPOSE_PROJECT_NAME", want: "leapview-qualification-test"},
+		{key: "LEAPVIEW_IMAGE", want: image},
+		{key: "CADDY_DOMAIN", want: "localhost"},
+		{key: "CADDY_HTTP_BIND", want: "127.0.0.1:80"},
+		{key: "CADDY_HTTPS_BIND", want: "127.0.0.1:443"},
+		{key: "CADDY_HTTPS_UDP_BIND", want: "127.0.0.1:443"},
+		{key: "COMPOSE_APP_BIND", want: "127.0.0.1:8080"},
+	} {
+		got, err := envFileValue(path, test.key)
+		require.NoError(t, err)
+		require.Equal(t, test.want, got, test.key)
+	}
+}
+
 func TestQualificationTransientDeploymentErrorRecognizesStructuredAndPlainErrors(t *testing.T) {
 	tests := []struct {
 		name string

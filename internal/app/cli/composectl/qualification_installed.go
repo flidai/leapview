@@ -18,6 +18,24 @@ import (
 	"time"
 )
 
+// configureInstalledQualificationDeployment keeps the bundled HTTPS proxy
+// private to the qualification host. The shipped Compose defaults intentionally
+// expose Caddy on all interfaces (80/443), which is appropriate for an
+// installation but can collide with host services bound to another interface
+// and unnecessarily exposes the disposable test instance. The application
+// service remains on its existing loopback bind from deployment.env.example
+// (127.0.0.1:8080).
+func configureInstalledQualificationDeployment(path, project, image string) error {
+	return updateEnvFile(path, map[string]string{
+		"COMPOSE_PROJECT_NAME": project,
+		"LEAPVIEW_IMAGE":       image,
+		"CADDY_DOMAIN":         "localhost",
+		"CADDY_HTTP_BIND":      "127.0.0.1:80",
+		"CADDY_HTTPS_BIND":     "127.0.0.1:443",
+		"CADDY_HTTPS_UDP_BIND": "127.0.0.1:443",
+	})
+}
+
 func (c *Controller) QualifyInstalledCandidate(
 	ctx context.Context,
 	options QualificationInstalledOptions,
@@ -225,11 +243,9 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
-	if err := updateEnvFile(c.path(deploymentEnvName), map[string]string{
-		"COMPOSE_PROJECT_NAME": primaryProject,
-		"LEAPVIEW_IMAGE":       imageReference,
-		"CADDY_DOMAIN":         "localhost",
-	}); err != nil {
+	if err := configureInstalledQualificationDeployment(
+		c.path(deploymentEnvName), primaryProject, imageReference,
+	); err != nil {
 		return err
 	}
 	if err := c.seedQualificationNativePostgresEnvironment(); err != nil {
