@@ -657,6 +657,41 @@ func TestCanonicalReducerAuthorsFiltersWithoutReplacingCodeOnlyProperties(t *tes
 	}
 }
 
+func TestCanonicalReducerAddsSlicerAtomically(t *testing.T) {
+	lifecycle, current := canonicalReducerFixture(t)
+	command := Command{
+		ID:               CommandID("add-slicer"),
+		DashboardID:      current.DashboardID,
+		DraftID:          lifecycle.Draft.ID,
+		ExpectedRevision: current.Token(),
+		Provenance:       canonicalReducerProvenance(),
+	}
+	command = canonicalReducerCommandWithPayload(command, &AddSlicerPayload{
+		PageID:      "overview",
+		Label:       "Status",
+		Dimension:   "status",
+		Dataset:     "orders",
+		ControlType: "multiSelect",
+	})
+
+	_, next, err := ApplyEdit(lifecycle, current, command, RevisionID("slicer-revision"), current.Number+1, time.Date(2026, 8, 18, 18, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Document.Spec.Filters) != 1 {
+		t.Fatalf("filter count = %d", len(next.Document.Spec.Filters))
+	}
+	filter := next.Document.Spec.Filters[0]
+	if filter.ID == "" || filter.Label != "Status" || filter.Dimension != "status" {
+		t.Fatalf("filter = %#v", filter)
+	}
+	components := next.Document.Spec.Pages[0].Components
+	component, ok := components[len(components)-1].Value.(*document.FilterDashboardPageComponent)
+	if !ok || component.ID == "" || component.Filter != filter.ID {
+		t.Fatalf("slicer component = %#v", components[len(components)-1])
+	}
+}
+
 func TestCanonicalReducerSetsFilterTargetsAndRestoresAllPages(t *testing.T) {
 	lifecycle, current := canonicalReducerFixture(t)
 	apply := func(payload authoringPayload) error {
@@ -808,6 +843,8 @@ func canonicalReducerCommandWithPayload(command Command, payload authoringPayloa
 		command.SetFilters = value
 	case *AddFilterPayload:
 		command.AddFilter = value
+	case *AddSlicerPayload:
+		command.AddSlicer = value
 	case *UpdateFilterPayload:
 		command.UpdateFilter = value
 	case *SetFilterTargetsPayload:

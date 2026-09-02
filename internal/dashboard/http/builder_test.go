@@ -545,6 +545,11 @@ func TestDashboardBuilderCommandTranslatesFocusedFilterMutations(t *testing.T) {
 				t.Fatalf("add filter = %#v", command.AddFilter)
 			}
 		}},
+		{name: "add slicer", action: map[string]any{"action": "add_slicer", "pageId": "overview", "fieldId": "status", "title": "Status", "dataset": "orders", "controlType": "multiSelect"}, assert: func(t *testing.T, command authoring.Command) {
+			if command.AddSlicer == nil || command.AddSlicer.PageID != "overview" || command.AddSlicer.Dimension != "status" || command.AddSlicer.Dataset != "orders" || command.AddSlicer.ControlType != "multiSelect" {
+				t.Fatalf("add slicer = %#v", command.AddSlicer)
+			}
+		}},
 		{name: "update", action: map[string]any{"action": "update_filter", "filterId": "status", "title": "Order status", "dataset": "orders", "controlType": "singleSelect", "required": true, "readerEditable": false, "urlParameter": "status"}, assert: func(t *testing.T, command authoring.Command) {
 			if command.UpdateFilter == nil || command.UpdateFilter.FilterID != "status" || !command.UpdateFilter.Required || command.UpdateFilter.ReaderEditable || command.UpdateFilter.URLParameter != "status" {
 				t.Fatalf("update filter = %#v", command.UpdateFilter)

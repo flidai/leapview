@@ -152,12 +152,12 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.rightDockContainsAuthoringPanes).toBe(true)
     expect(state.dataPaneRightOfVisual).toBe(true)
     expect(state.pageBarVisible).toBe(true)
-    expect(state.pickerButtons).toHaveLength(26)
-    expect(state.pickerButtons.map((button) => button.type)).toEqual(['line', 'area', 'bar', 'column', 'candlestick', 'combo', 'waterfall', 'pie', 'donut', 'funnel', 'scatter', 'heatmap', 'boxplot', 'histogram', 'treemap', 'sankey', 'graph', 'tree', 'sunburst', 'gauge', 'map', 'radar', 'kpi', 'table', 'matrix', 'pivot'])
-    expect(state.pickerButtons.every((button) => button.hasIcon && button.label?.endsWith(' visual') && button.title)).toBe(true)
+    expect(state.pickerButtons).toHaveLength(27)
+    expect(state.pickerButtons.map((button) => button.type)).toEqual(['line', 'area', 'bar', 'column', 'candlestick', 'combo', 'waterfall', 'pie', 'donut', 'funnel', 'scatter', 'heatmap', 'boxplot', 'histogram', 'treemap', 'sankey', 'graph', 'tree', 'sunburst', 'gauge', 'map', 'radar', 'kpi', 'table', 'matrix', 'pivot', 'slicer'])
+    expect(state.pickerButtons.every((button) => button.hasIcon && button.label && button.title)).toBe(true)
     expect(state.pickerButtons.every((button) => !button.hasVisibleLabel)).toBe(true)
     expect(state.pickerButtons.every((button) => button.iconType === button.type && button.filledMarks > 0)).toBe(true)
-    expect(state.pickerGroups).toEqual(['Cartesian', 'Part to whole', 'Distribution', 'Hierarchy & flow', 'Specialized', 'Tables'])
+    expect(state.pickerGroups).toEqual(['Cartesian', 'Part to whole', 'Distribution', 'Hierarchy & flow', 'Specialized', 'Tables', 'Filters'])
     expect(state.pickerColumns).toBe(7)
     expect(state.pickerHasScroll).toBe(false)
     expect(state.referenceHref).toBe('/docs/visuals/bar')
@@ -295,6 +295,72 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     expect(stacked.dataHeight).toBeLessThanOrEqual(57)
     expect(stacked.filtersOverflow).toBe(false)
     expect(stacked.dataOverflow).toBe(false)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder creates a slicer from one compatible dimension', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { semanticModel: { id: 'commerce', title: 'Orders', datasets: [{ id: 'orders', title: 'Orders', fields: [
+        { id: 'orders.status', datasetId: 'orders', label: 'Status', kind: 'dimension', roles: ['dimension'], dataType: 'string' },
+        { id: 'orders.total', datasetId: 'orders', label: 'Total', kind: 'metric', roles: ['metric'], dataType: 'decimal' },
+      ] }] } } })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      ;(root.querySelector('button[data-visual-picker-type="slicer"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const heading = root.querySelector('.inspector-title .pane-title')?.textContent?.trim()
+      const well = root.querySelector('.slicer-field-well')?.textContent?.replace(/\s+/g, ' ').trim()
+      const slicerPressed = root.querySelector('button[data-visual-picker-type="slicer"]')?.getAttribute('aria-pressed')
+      const status = Array.from(root.querySelectorAll<HTMLButtonElement>('button.field')).find((field) => field.textContent?.includes('Status'))
+      const totalUnsupported = Array.from(root.querySelectorAll<HTMLElement>('.field-unsupported')).some((field) => field.textContent?.includes('Total'))
+      status?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const pages = structuredClone(element.builder.pages)
+      pages[0].filterComponents = [{ id: 'status-slicer', filterId: 'status-filter', label: 'Status', controlType: 'multiSelect', placement: { col: 7, row: 1, colSpan: 3, rowSpan: 2 } }]
+      mergePatch({ builder: {
+        filters: [{ id: 'status-filter', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'status-filter', scope: 'report', targets: [] }] }],
+        pages,
+        revision: { id: 'rev-8', number: 8, contentHash: 'sha256:slicer' },
+      } })
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
+      await element.updateComplete
+      await element.updateComplete
+      return {
+        heading,
+        well,
+        slicerPressed,
+        statusEnabled: Boolean(status && !status.disabled),
+        totalUnsupported,
+        commands,
+        selectedSlicer: root.querySelector('.filter-component')?.getAttribute('data-selected'),
+        selectedFilter: root.querySelector('.filter-card')?.getAttribute('aria-pressed'),
+        selectedHeading: root.querySelector('.inspector-title .pane-title')?.textContent?.trim(),
+        selectedType: root.querySelector('button[data-visual-picker-type="slicer"]')?.getAttribute('aria-pressed'),
+        selectedField: root.querySelector('.slicer-field-well .field-token-label')?.textContent?.trim(),
+      }
+    })
+    expect(state.heading).toBe('Add a slicer')
+    expect(state.well).toBe('Field Drop a dimension here')
+    expect(state.slicerPressed).toBe('true')
+    expect(state.statusEnabled).toBe(true)
+    expect(state.totalUnsupported).toBe(true)
+    expect(state.commands).toHaveLength(1)
+    expect(state.commands[0]).toMatchObject({ action: 'add_slicer', pageId: 'overview', fieldId: 'orders.status', title: 'Status', dataset: 'orders', controlType: 'multiSelect' })
+    expect(state.selectedSlicer).toBe('true')
+    expect(state.selectedFilter).toBe('true')
+    expect(state.selectedHeading).toBe('Status')
+    expect(state.selectedType).toBe('true')
+    expect(state.selectedField).toBe('Status')
   } finally {
     await page.close()
   }
@@ -2324,9 +2390,11 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       await slicer.updateComplete
       const slicerLeaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
       await slicerLeaf.updateComplete
-      const slicerSelect = slicerLeaf.shadowRoot.querySelector('select') as HTMLSelectElement
-      slicerSelect.value = JSON.stringify({ kind: 'string', value: 'complete' })
-      slicerSelect.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
+      ;(slicerLeaf.shadowRoot.querySelector('.dropdown-trigger') as HTMLButtonElement).click()
+      await slicerLeaf.updateComplete
+      const completeOption = slicerLeaf.shadowRoot.querySelector('input[aria-label="Complete"]') as HTMLInputElement
+      completeOption.checked = true
+      completeOption.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await element.updateComplete
 
       const tile = root.querySelector('.filter-component') as HTMLElement

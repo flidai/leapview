@@ -144,6 +144,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
   @state() private selectedFilterComponentID = ''
+  @state() private addingSlicer = false
   @state() private gridInteractionMessage = ''
   @state() private visualActionMessage = ''
   @state() private draggedFieldID = ''
@@ -197,6 +198,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private pendingAddVisual: { revision: string; visualIDs: Set<string>; pageID: string } | null = null
   private pendingAddFilter: { revision: string; filterIDs: Set<string> } | null = null
   private pendingAddFilterComponent: { revision: string; componentIDs: Set<string>; pageID: string } | null = null
+  private pendingAddSlicer: { revision: string; filterIDs: Set<string>; componentIDs: Set<string>; pageID: string } | null = null
 
   override connectedCallback(): void {
     super.connectedCallback()
@@ -1520,6 +1522,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       --visual-picker-muted: var(--lv-data-5-muted);
     }
 
+    .visual-picker-button[data-visual-group='Filters'] {
+      --visual-picker-color: var(--lv-data-1);
+      --visual-picker-muted: var(--lv-data-1-muted);
+    }
+
     .visual-picker-button:hover {
       border-color: color-mix(in srgb, var(--visual-picker-color) 55%, var(--lv-line-default));
       background: color-mix(in srgb, var(--visual-picker-muted) 72%, var(--lv-bg-panel-muted));
@@ -2401,6 +2408,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.selectPendingAddedVisual(builder)
     this.selectPendingAddedFilter(builder)
     this.selectPendingAddedFilterComponent(builder)
+    this.selectPendingAddedSlicer(builder)
     this.reconcileBuilderFilterController()
     const page = builder ? this.selectedPage(builder) : undefined
     this.syncGridStack(builder, page)
@@ -2865,6 +2873,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.interactionEffectOverrides = {}
     this.interactionOverridesRevision = ''
     this.pendingAddPage = null
+    this.pendingAddFilter = null
+    this.pendingAddFilterComponent = null
+    this.pendingAddSlicer = null
+    this.addingSlicer = false
     if (this.pendingRemovePage) {
       this.localPageID = this.pendingRemovePage.pageID
       this.localVisualID = this.pendingRemovePage.visualID
@@ -2957,9 +2969,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const datasets = builder.semanticModel.datasets ?? []
     const catalog = this.filteredCatalog(this.semanticCatalog(datasets))
     const visibleCatalog = this.fieldFilter === 'all' ? catalog : catalog.filter((item) => item.group === this.fieldFilter)
-    const supported = visibleCatalog.filter((item) => visual
-      ? Boolean(this.fieldUsedIn(item.field, visual) || this.fieldCompatibleWithVisual(item.field, visual))
-      : this.fieldDataTypeSupported(item.field))
+    const supported = visibleCatalog.filter((item) => this.addingSlicer
+      ? this.fieldSupportsFilter(item.field)
+      : visual
+        ? Boolean(this.fieldUsedIn(item.field, visual) || this.fieldCompatibleWithVisual(item.field, visual))
+        : this.fieldDataTypeSupported(item.field))
     const unsupported = visibleCatalog.filter((item) => !supported.includes(item))
     const recordColumns = unsupported.filter((item) => item.field.roles?.includes('detail'))
     const unavailable = unsupported.filter((item) => !recordColumns.includes(item))
@@ -2997,7 +3011,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               : html`
                 ${this.renderCatalogEntities(supported, datasets, visual)}
                 ${this.renderCatalogDisclosure('record-fields', 'Record columns', recordColumns, datasets, visual, false)}
-                ${this.renderCatalogDisclosure('unsupported-fields', 'Unavailable for this visual', unavailable, datasets, visual, true)}
+                ${this.renderCatalogDisclosure('unsupported-fields', this.addingSlicer ? 'Unavailable for slicers' : 'Unavailable for this visual', unavailable, datasets, visual, true)}
               `}
           </div>
         </div>
@@ -3164,13 +3178,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const visualType = visual ? this.visualTypeForRender(visual) : ''
     const datasetContext = item.datasets[0]?.title ?? ''
     const usedIn = visual ? this.fieldUsedIn(field, visual) : ''
-    const editable = Boolean(this.builder?.capabilities.canEdit && compatible && (visual || this.builder?.capabilities.canAddVisual))
+    const editable = Boolean(this.builder?.capabilities.canEdit && compatible && (this.addingSlicer || visual || this.builder?.capabilities.canAddVisual))
     const roleLabel = this.fieldGroupLabel(item.group, true)
     const dataType = field.dataType.toLowerCase() === 'unknown' ? '' : field.dataType
     const targetRole = visual ? this.roleForField(field, visual) : undefined
     const roleFull = Boolean(visual && targetRole && this.fieldDataTypeSupported(field) && this.fieldSupportsRole(field, targetRole) && !this.roleHasCapacity(visual, targetRole))
     const action = !visual
-      ? `Click or drag to create a ${this.visualLabel(this.recommendedVisualForField(field))} visual.`
+      ? this.addingSlicer
+        ? `Click or drag to use ${field.label} in the slicer.`
+        : `Click or drag to create a ${this.visualLabel(this.recommendedVisualForField(field))} visual.`
       : !compatible
         ? roleFull
           ? `${this.fieldWellLabel(visual!, targetRole!)} is full. Remove its current field before adding another.`
@@ -3179,7 +3195,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           ? `Used in ${usedIn}. Drag to a compatible field well.`
           : `Click to add to ${this.fieldWellLabel(visual, this.roleForField(field, visual))}, or drag to a field well.`
     const accessibleName = [field.label, roleLabel, dataType, datasetContext, action].filter(Boolean).join('. ')
-    const compatibilityContext = roleFull ? `${this.fieldWellLabel(visual!, targetRole!)} is full` : `Not compatible with ${visualType || 'this visual'}`
+    const compatibilityContext = roleFull ? `${this.fieldWellLabel(visual!, targetRole!)} is full` : `Not compatible with ${this.addingSlicer ? 'slicers' : visualType || 'this visual'}`
     const context = compatible
       ? (showDatasetContext ? datasetContext : '')
       : [showDatasetContext ? datasetContext : '', showCompatibilityContext ? compatibilityContext : ''].filter(Boolean).join(' · ')
@@ -3322,15 +3338,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderInspector(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
     const collapsed = this.collapsedPanes.visuals
-    const formattingPage = Boolean(page && !visual && this.inspectorTab === 'format')
+    const slicer = page?.filterComponents?.find((component) => component.id === this.selectedFilterComponentID)
+    const slicerFilter = slicer ? (builder.filters ?? []).find((filter) => filter.id === slicer.filterId) : undefined
+    const slicerActive = Boolean(this.addingSlicer || slicer)
+    const formattingPage = Boolean(page && !visual && !slicerActive && this.inspectorTab === 'format')
     return html`
       <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label=${formattingPage ? 'Page properties' : 'Visual builder'}>
         <div class="pane-header">
           <div class="inspector-heading">
             <div class="inspector-title">
-              <span class="pane-title-icon">${lucideIcon(ChartColumn, { size: 16, strokeWidth: 2 })}</span>
-              <h2 class="pane-title">${collapsed ? 'Visuals' : visual ? visual.title : formattingPage ? page?.title : page ? 'Add a visual' : 'Visual builder'}</h2>
+              <span class="pane-title-icon">${lucideIcon(slicerActive ? ListFilter : ChartColumn, { size: 16, strokeWidth: 2 })}</span>
+              <h2 class="pane-title">${collapsed ? 'Visuals' : this.addingSlicer ? 'Add a slicer' : slicer ? slicer.label : visual ? visual.title : formattingPage ? page?.title : page ? 'Add a visual' : 'Visual builder'}</h2>
               ${visual && !collapsed ? html`<span class="visual-type-badge">${this.titleCase(this.visualTypeForRender(visual))}</span>` : nothing}
+              ${slicer && !collapsed ? html`<span class="visual-type-badge">Slicer</span>` : nothing}
               ${formattingPage && !collapsed ? html`<span class="visual-type-badge">Page</span>` : nothing}
             </div>
             ${this.renderPaneToggle('visuals', 'Visuals pane', 'builder-visuals-content')}
@@ -3340,12 +3360,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div id="builder-visuals-content" class="pane-content" ?hidden=${collapsed}>
           <div class="inspector-tabs" role="tablist" aria-label="Visual configuration">
             <button class="inspector-tab" role="tab" data-inspector-tab="build" aria-selected=${this.inspectorTab === 'build'} @click=${() => { this.inspectorTab = 'build' }}>Build</button>
-            <button class="inspector-tab" role="tab" data-inspector-tab="format" aria-selected=${this.inspectorTab === 'format'} @click=${() => { this.inspectorTab = 'format' }}>Format</button>
+            <button class="inspector-tab" role="tab" data-inspector-tab="format" aria-selected=${this.inspectorTab === 'format'} ?disabled=${slicerActive} @click=${() => { this.inspectorTab = 'format' }}>Format</button>
           </div>
           ${this.inspectorTab === 'build'
-            ? html`<div class="inspector-panel" role="tabpanel" aria-label="Build visual">
+            ? html`<div class="inspector-panel" role="tabpanel" aria-label=${slicerActive ? 'Build slicer' : 'Build visual'}>
                 ${this.renderVisualPicker(builder, page, visual)}
-                ${visual ? html`${this.renderFieldWells(visual)}${this.renderInteractionEditor(builder, page, visual)}` : nothing}
+                ${slicerActive ? this.renderSlicerFieldWell(slicerFilter) : visual ? html`${this.renderFieldWells(visual)}${this.renderInteractionEditor(builder, page, visual)}` : nothing}
               </div>`
             : html`<div class="inspector-panel" role="tabpanel" aria-label=${visual ? 'Format visual' : 'Format page'}>
                 ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
@@ -3363,16 +3383,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private renderVisualPicker(builder: DashboardBuilderSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
     const currentType = visual ? this.visualTypeForRender(visual) : undefined
+    const slicerSelected = Boolean(this.addingSlicer || this.selectedFilterComponentID)
     const pickerHelpID = 'builder-visual-type-help'
     const catalog = this.visualCatalogGroups(builder.visualCatalog ?? []).flatMap(([, entries]) => entries)
     const selectedEntry = visual ? this.visualCatalogEntry(currentType ?? '', builder) : undefined
     return html`
-      <section class="property-group" aria-label=${visual ? 'Edit visual type' : 'Add visual'}>
+      <section class="property-group" aria-label=${visual ? 'Edit visual type' : slicerSelected ? 'Edit slicer' : 'Add visual'}>
         <div class="property-heading">
-          <span class="property-label">${visual ? 'Visual type' : 'Add a visual'}</span>
+          <span class="property-label">${visual || this.addingSlicer || this.selectedFilterComponentID ? 'Visual type' : 'Add a visual'}</span>
           ${selectedEntry ? html`<a class="visual-reference-link" href=${selectedEntry.referenceHref}>Reference</a>` : nothing}
         </div>
-        <p id=${pickerHelpID} class=${visual ? 'sr-only' : 'pane-hint'}>${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
+        <p id=${pickerHelpID} class="sr-only">${visual ? `Choose a type to change ${visual.title}.` : 'Choose a type to add it immediately.'}</p>
         <div class="visual-picker-catalog" role="group" aria-label=${visual ? `Change ${visual.title} type` : 'Visual types'}>
           <div class="visual-picker">
             ${catalog.map((entry) => html`
@@ -3381,8 +3402,26 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 <span class="sr-only">${entry.label}</span>
               </button>
             `)}
+            <button type="button" class="visual-picker-button" data-visual-picker-type="slicer" data-visual-type="slicer" data-visual-group="Filters" aria-label="Add slicer" aria-describedby=${pickerHelpID} title="Slicer" aria-pressed=${slicerSelected} ?disabled=${this.commandPending || !page || !builder.capabilities.canEdit} @click=${this.startAddingSlicer}>
+              ${renderVisualTypeIcon('slicer')}
+              <span class="sr-only">Slicer</span>
+            </button>
           </div>
         </div>
+      </section>
+    `
+  }
+
+  private renderSlicerFieldWell(filter?: DashboardBuilderFilterSignal) {
+    const draggedField = this.draggedFieldID ? this.builder?.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((field) => field.id === this.draggedFieldID) : undefined
+    const fieldDrop = draggedField ? this.fieldSupportsFilter(draggedField) ? 'compatible' : 'incompatible' : ''
+    const assignedField = filter ? this.builder?.semanticModel.datasets.flatMap((dataset) => dataset.fields).find((field) => field.id === filter.dimension) : undefined
+    return html`
+      <section class="property-group slicer-field-well" aria-label="Slicer field">
+        <div class="property-heading"><span class="property-label">Field</span></div>
+        ${filter
+          ? html`<div class="field-well-target" aria-label=${`Slicer field ${assignedField?.label ?? filter.dimension}`}><span class="field-pill"><span class="field-token-label">${assignedField?.label ?? filter.dimension}</span></span></div>`
+          : html`<div class="field-well-target" data-field-drop=${fieldDrop || nothing} tabindex="0" aria-label="Drop a dimension field for the slicer" @dragover=${this.allowFieldDrop} @drop=${this.dropFieldOnSlicer}><span class="field-placeholder">Drop a dimension here</span></div>`}
       </section>
     `
   }
@@ -4214,6 +4253,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private selectVisualType(type: BuilderVisualType, visual: DashboardBuilderVisualSignal | undefined): void {
+    this.addingSlicer = false
     this.visualType = type
     if (!visual) {
       this.addVisual(type)
@@ -4255,6 +4295,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.reversibleVisualTypeSwitch = null
     }
     this.emitCommand('set_visual_type', { pageId: page.id, visualId: visual.id, type })
+  }
+
+  private readonly startAddingSlicer = (): void => {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending) return
+    const selectedVisualID = this.effectiveVisualID(builder, page)
+    this.addingSlicer = true
+    this.localVisualID = ''
+    this.selectedFilterID = ''
+    this.selectedFilterComponentID = ''
+    this.inspectorTab = 'build'
+    this.fieldFilter = 'all'
+    this.visualActionMessage = 'Choose a dimension for the slicer.'
+    if (selectedVisualID) this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
   }
 
   private visualTypeForRender(visual: DashboardBuilderVisualSignal): string {
@@ -4302,6 +4357,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const page = builder ? this.selectedPage(builder) : undefined
     const visual = page && builder ? this.selectedVisual(page, builder) : undefined
     if (!builder?.capabilities.canEdit || !page) return
+    if (this.addingSlicer) {
+      this.createSlicerFromField(field)
+      return
+    }
     if (!visual) {
       this.createVisualFromField(field)
       return
@@ -4324,7 +4383,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const field = this.draggedField(event, builder)
     this.clearDraggedField()
     if (!field) return
-    this.createVisualFromField(field)
+    if (this.addingSlicer) this.createSlicerFromField(field)
+    else this.createVisualFromField(field)
+  }
+
+  private readonly dropFieldOnSlicer = (event: DragEvent): void => {
+    event.preventDefault()
+    event.stopPropagation()
+    const builder = this.builder
+    if (!builder?.capabilities.canEdit) return
+    const field = this.draggedField(event, builder)
+    this.clearDraggedField()
+    if (field) this.createSlicerFromField(field)
   }
 
   private dropFieldOnRole(event: DragEvent, role: BuilderFieldRole): void {
@@ -4490,6 +4560,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private selectFilterDefinition(filterID: string): void {
+    this.addingSlicer = false
     this.selectedFilterID = filterID
     this.selectedFilterComponentID = ''
   }
@@ -4526,6 +4597,41 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.pendingAddFilter = { revision: this.revisionKey(builder), filterIDs: new Set((builder.filters ?? []).map((filter) => filter.id)) }
     this.visualActionMessage = `Adding ${field.label} as a report filter.`
     this.emitCommand('add_filter', { fieldId: field.id, title: field.label, dataset: this.datasetForField(builder, field.id), controlType })
+    return true
+  }
+
+  private createSlicerFromField(field: DashboardBuilderFieldSignal): boolean {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    if (!builder?.capabilities.canEdit || !page || this.commandPending || !this.fieldSupportsFilter(field)) return false
+    const existing = (builder.filters ?? []).find((filter) => filter.dimension === field.id)
+    if (existing) {
+      const placed = page.filterComponents?.find((component) => component.filterId === existing.id)
+      if (placed) {
+        this.addingSlicer = false
+        this.selectFilterComponent(placed)
+        this.visualActionMessage = `${field.label} is already on this page.`
+        return false
+      }
+      this.addFilterComponent(page, existing)
+      return true
+    }
+    this.pendingAddSlicer = {
+      revision: this.revisionKey(builder),
+      filterIDs: new Set((builder.filters ?? []).map((filter) => filter.id)),
+      componentIDs: new Set((page.filterComponents ?? []).map((component) => component.id)),
+      pageID: page.id,
+    }
+    this.visualActionMessage = `Adding ${field.label} as a slicer on ${page.title}.`
+    this.emitCommand('add_slicer', {
+      pageId: page.id,
+      filterId: '',
+      componentId: '',
+      fieldId: field.id,
+      title: field.label,
+      dataset: this.datasetForField(builder, field.id),
+      controlType: this.recommendedFilterControl(field),
+    })
     return true
   }
 
@@ -4657,6 +4763,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     this.localPageID = pageID
     this.localVisualID = ''
+    this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.emit('lv-builder-page-select', { ...this.commandDetail(), pageId: pageID })
@@ -4671,6 +4778,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const selectedVisual = builder ? this.effectiveVisualID(builder, page) : ''
     this.localPageID = page.id
     this.localVisualID = ''
+    this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.inspectorTab = 'format'
@@ -4688,6 +4796,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private selectVisual(visualID: string): void {
+    this.addingSlicer = false
     this.localVisualID = visualID
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
@@ -4711,8 +4820,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (target instanceof Element && target.closest('.visual, .filter-component')) return
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!page || (!this.effectiveVisualID(builder, page) && !this.selectedFilterComponentID && !this.selectedFilterID)) return
+    if (!page || (!this.effectiveVisualID(builder, page) && !this.selectedFilterComponentID && !this.selectedFilterID && !this.addingSlicer)) return
     this.localVisualID = ''
+    this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.inspectorTab = 'build'
@@ -4745,6 +4855,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private selectFilterComponent(component: DashboardBuilderFilterComponentSignal): void {
+    this.addingSlicer = false
+    this.inspectorTab = 'build'
     this.selectedFilterComponentID = component.id
     this.selectedFilterID = component.filterId
     this.localVisualID = ''
@@ -4980,7 +5092,31 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!page || !addedComponent) return
     this.localPageID = page.id
     this.localVisualID = ''
+    this.addingSlicer = false
+    this.inspectorTab = 'build'
     this.selectedFilterID = addedComponent.filterId
+    this.selectedFilterComponentID = addedComponent.id
+  }
+
+  private selectPendingAddedSlicer(builder: DashboardBuilderSignal | null): void {
+    const pending = this.pendingAddSlicer
+    if (!pending || !builder) return
+    if (this.status.error) {
+      this.pendingAddSlicer = null
+      this.addingSlicer = false
+      return
+    }
+    if (pending.revision === this.revisionKey(builder)) return
+    const page = builder.pages.find((item) => item.id === pending.pageID)
+    const addedFilter = (builder.filters ?? []).find((filter) => !pending.filterIDs.has(filter.id))
+    const addedComponent = page?.filterComponents?.find((component) => !pending.componentIDs.has(component.id))
+    if (!page || !addedFilter || !addedComponent || addedComponent.filterId !== addedFilter.id) return
+    this.pendingAddSlicer = null
+    this.addingSlicer = false
+    this.localPageID = page.id
+    this.localVisualID = ''
+    this.inspectorTab = 'build'
+    this.selectedFilterID = addedFilter.id
     this.selectedFilterComponentID = addedComponent.id
   }
 

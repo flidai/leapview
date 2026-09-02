@@ -273,6 +273,8 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return nil
 	case *AddFilterPayload:
 		return addCanonicalFilter(value, *patch)
+	case *AddSlicerPayload:
+		return addCanonicalSlicer(value, *patch)
 	case *UpdateFilterPayload:
 		return updateCanonicalFilter(value, *patch)
 	case *SetFilterTargetsPayload:
@@ -526,7 +528,21 @@ func updateCanonicalPageLayout(value *document.DashboardDocument, patch UpdatePa
 }
 
 func addCanonicalFilter(value *document.DashboardDocument, patch AddFilterPayload) error {
-	id := strings.TrimSpace(patch.FilterID)
+	id, err := canonicalNewFilterID(value, patch.FilterID)
+	if err != nil {
+		return err
+	}
+	control, err := canonicalBuilderFilterControl(patch.ControlType, patch.Dataset, nil)
+	if err != nil {
+		return err
+	}
+	readerEditable := true
+	value.Spec.Filters = append(value.Spec.Filters, document.DashboardFilter{ID: id, Label: strings.TrimSpace(patch.Label), Dimension: strings.TrimSpace(patch.Dimension), Control: control, ReaderEditable: &readerEditable})
+	return nil
+}
+
+func canonicalNewFilterID(value *document.DashboardDocument, requested string) (string, error) {
+	id := strings.TrimSpace(requested)
 	if id == "" {
 		id = nextCanonicalBuilderID("filter", len(value.Spec.Filters)+1, func(candidate string) bool {
 			for _, filter := range value.Spec.Filters {
@@ -539,15 +555,28 @@ func addCanonicalFilter(value *document.DashboardDocument, patch AddFilterPayloa
 	}
 	for _, filter := range value.Spec.Filters {
 		if filter.ID == id {
-			return fmt.Errorf("%w: filter %q already exists", ErrConflict, id)
+			return "", fmt.Errorf("%w: filter %q already exists", ErrConflict, id)
 		}
 	}
-	control, err := canonicalBuilderFilterControl(patch.ControlType, patch.Dataset, nil)
+	return id, nil
+}
+
+func addCanonicalSlicer(value *document.DashboardDocument, patch AddSlicerPayload) error {
+	filterID, err := canonicalNewFilterID(value, patch.FilterID)
 	if err != nil {
 		return err
 	}
-	readerEditable := true
-	value.Spec.Filters = append(value.Spec.Filters, document.DashboardFilter{ID: id, Label: strings.TrimSpace(patch.Label), Dimension: strings.TrimSpace(patch.Dimension), Control: control, ReaderEditable: &readerEditable})
+	filterCount := len(value.Spec.Filters)
+	if err := addCanonicalFilter(value, AddFilterPayload{
+		FilterID: filterID, Label: patch.Label, Dimension: patch.Dimension,
+		Dataset: patch.Dataset, ControlType: patch.ControlType,
+	}); err != nil {
+		return err
+	}
+	if err := addCanonicalFilterComponent(value, AddFilterComponentPayload{PageID: patch.PageID, FilterID: filterID, ComponentID: patch.ComponentID}); err != nil {
+		value.Spec.Filters = value.Spec.Filters[:filterCount]
+		return err
+	}
 	return nil
 }
 

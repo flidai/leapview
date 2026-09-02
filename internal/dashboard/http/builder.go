@@ -797,6 +797,8 @@ func (s dashboardBuilderCommandSignal) authoringCommand(r *nethttp.Request, acto
 		command.SetPlacements = &authoring.SetPlacementsPayload{PageID: strings.TrimSpace(s.PageID), Placements: placements}
 	case "add_filter":
 		command.AddFilter = &authoring.AddFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
+	case "add_slicer":
+		command.AddSlicer = &authoring.AddSlicerPayload{PageID: strings.TrimSpace(s.PageID), FilterID: strings.TrimSpace(s.FilterID), ComponentID: strings.TrimSpace(s.ComponentID), Label: strings.TrimSpace(s.Title), Dimension: strings.TrimSpace(s.FieldID), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType)}
 	case "update_filter":
 		command.UpdateFilter = &authoring.UpdateFilterPayload{FilterID: strings.TrimSpace(s.FilterID), Label: strings.TrimSpace(s.Title), Description: strings.TrimSpace(s.Description), Dataset: strings.TrimSpace(s.Dataset), ControlType: strings.TrimSpace(s.ControlType), Required: s.Required, ReaderEditable: s.ReaderEditable, URLParameter: strings.TrimSpace(s.URLParameter)}
 	case "set_filter_targets":
