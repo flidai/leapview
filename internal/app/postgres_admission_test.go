@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/config"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
+	postgresducklake "github.com/flidai/leapview/internal/app/postgresducklake"
 	extensionfixture "github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -34,7 +34,7 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	h.GrantRole(t, owner, migrator)
 
 	control := h.NewDatabase(t, "leapview_production_admission_control")
-	ducklake := h.NewDatabase(t, ducklakepostgres.DefaultDuckLakeDatabase)
+	ducklake := h.NewDatabase(t, postgresducklake.DefaultDuckLakeDatabase)
 	h.GrantDatabase(t, control.Name, owner, "CREATE")
 	h.GrantDatabase(t, control.Name, migrator, "CONNECT", "CREATE")
 	h.GrantDatabase(t, control.Name, runtime, "CONNECT")

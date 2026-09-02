@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"sync"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
+	"github.com/flidai/leapview/internal/app/postgresducklake"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
@@ -88,7 +88,7 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 	// capability-owned static probe. This prevents a syntactically valid URL
 	// from silently attaching a control or cross-environment database.
 	ducklakeConfig := cfg.PostgresDuckLakeRuntimeConfig()
-	ducklakeIdentity, err := ducklakepostgres.ReadDatabaseIdentity(ctx, ducklake)
+	ducklakeIdentity, err := postgresducklake.ReadDatabaseIdentity(ctx, ducklake)
 	if err != nil {
 		ducklake.Close()
 		pools.Close()
@@ -111,14 +111,14 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 // for the separately authenticated DuckLake pool. Both the pool's current
 // database probe and PostgreSQL's login/session identity must agree with the
 // dedicated catalog contract before serving composition proceeds.
-func validatePostgresDuckLakeRuntimeIdentity(database string, identity ducklakepostgres.DatabaseIdentity, expectedRole string) error {
-	if database != ducklakepostgres.DefaultDuckLakeDatabase {
-		return fmt.Errorf("%w: PostgreSQL DuckLake runtime database %q differs from required database %q", ducklakepostgres.ErrWrongDatabaseCredential, database, ducklakepostgres.DefaultDuckLakeDatabase)
+func validatePostgresDuckLakeRuntimeIdentity(database string, identity postgresducklake.DatabaseIdentity, expectedRole string) error {
+	if database != postgresducklake.DefaultDuckLakeDatabase {
+		return fmt.Errorf("%w: PostgreSQL DuckLake runtime database %q differs from required database %q", postgresducklake.ErrWrongDatabaseCredential, database, postgresducklake.DefaultDuckLakeDatabase)
 	}
 	if identity.Database != database {
-		return fmt.Errorf("%w: PostgreSQL DuckLake identity database %q differs from pool database %q", ducklakepostgres.ErrWrongDatabaseCredential, identity.Database, database)
+		return fmt.Errorf("%w: PostgreSQL DuckLake identity database %q differs from pool database %q", postgresducklake.ErrWrongDatabaseCredential, identity.Database, database)
 	}
-	return ducklakepostgres.ValidateDatabaseIdentity(identity, database, expectedRole)
+	return postgresducklake.ValidateDatabaseIdentity(identity, database, expectedRole)
 }
 
 func postgresDatabaseName(ctx context.Context, pool *platformpostgres.Pool) (string, error) {
