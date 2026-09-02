@@ -108,6 +108,9 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if !cfg.PostgresRequireTLS {
 		return result, errors.New("production physical-pool bootstrap requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true")
 	}
+	if err := cfg.ValidatePostgres(); err != nil {
+		return result, fmt.Errorf("invalid PostgreSQL application configuration: %w", err)
+	}
 	controlConfig := cfg.PostgresControlMigratorConfig()
 	catalogConfig := cfg.PostgresDuckLakeMigratorConfig()
 	if err := controlConfig.Validate(); err != nil {

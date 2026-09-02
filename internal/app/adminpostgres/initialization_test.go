@@ -94,6 +94,26 @@ func productionAdminConfig(home string) config.Config {
 
 func skipProductionBaseline(context.Context, config.Config) error { return nil }
 
+func TestProductionAccessConfigRejectsNonCanonicalPostgresSettings(t *testing.T) {
+	for _, test := range []struct {
+		name   string
+		mutate func(*config.Config)
+		want   string
+	}{
+		{name: "control intent", mutate: func(cfg *config.Config) { cfg.PostgresControlIntent = "read-only" }, want: "LEAPVIEW_POSTGRES_CONTROL_INTENT"},
+		{name: "runtime role", mutate: func(cfg *config.Config) { cfg.PostgresControlRuntimeRole = "custom_runtime" }, want: "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE"},
+		{name: "migrator role", mutate: func(cfg *config.Config) { cfg.PostgresControlMigratorRole = "custom_migrator" }, want: "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := productionAdminConfig(t.TempDir())
+			test.mutate(&cfg)
+			if _, err := productionAccessConfig(cfg); err == nil || !strings.Contains(err.Error(), test.want) {
+				t.Fatalf("productionAccessConfig() error = %v, want %s rejection", err, test.want)
+			}
+		})
+	}
+}
+
 func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 	home := t.TempDir()
 	cfg := productionAdminConfig(home)

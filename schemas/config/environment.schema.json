@@ -1788,6 +1788,162 @@
         ]
       },
       "x-error-message": "LEAPVIEW_MANAGED_DATA_MAX_REVISION_BYTES must be at least LEAPVIEW_MANAGED_DATA_MAX_FILE_BYTES"
+    },
+    {
+      "description": "The control-plane PostgreSQL authority is read-write in the foundation.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_CONTROL_INTENT": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_CONTROL_INTENT"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_CONTROL_INTENT": {
+            "enum": [
+              "read-write"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_CONTROL_INTENT"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_POSTGRES_CONTROL_INTENT must be read-write; the foundation does not support read-only control access"
+    },
+    {
+      "description": "The control-plane migration role is canonical in the foundation.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {
+            "enum": [
+              "leapview_control_migrator"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE must be leapview_control_migrator; custom PostgreSQL role names are not supported by the foundation"
+    },
+    {
+      "description": "The control-plane runtime role is canonical in the foundation.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {
+            "enum": [
+              "leapview_control_runtime"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE must be leapview_control_runtime; custom PostgreSQL role names are not supported by the foundation"
+    },
+    {
+      "description": "The DuckLake catalog migration role is canonical in the foundation.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE": {
+            "enum": [
+              "leapview_ducklake_migrator"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE must be leapview_ducklake_migrator; custom PostgreSQL role names are not supported by the foundation"
+    },
+    {
+      "description": "The DuckLake catalog runtime role is canonical in the foundation.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {
+            "enum": [
+              "leapview_ducklake_runtime"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE must be leapview_ducklake_runtime; custom PostgreSQL role names are not supported by the foundation"
+    },
+    {
+      "description": "The DuckLake catalog maintenance role is canonical in the foundation.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {
+            "minLength": 1
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE"
+        ]
+      },
+      "then": {
+        "properties": {
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {
+            "enum": [
+              "leapview_ducklake_maintenance"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE"
+        ]
+      },
+      "x-error-message": "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE must be leapview_ducklake_maintenance; custom PostgreSQL role names are not supported by the foundation"
     }
   ],
   "properties": {
@@ -2517,7 +2673,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_INTENT": {
       "default": "read-write",
-      "description": "Read/write intent required for the control-plane PostgreSQL pool.",
+      "description": "Read-write intent for the control-plane PostgreSQL pool; the foundation does not support read-only control access.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -2532,7 +2688,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {
       "default": "leapview_control_migrator",
-      "description": "Configured PostgreSQL role expected by the control-plane migration pool.",
+      "description": "Canonical PostgreSQL role expected by the control-plane migration pool; other role names are rejected by foundation validation.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve,admin"
@@ -2562,7 +2718,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {
       "default": "leapview_control_runtime",
-      "description": "Configured PostgreSQL runtime role expected by the control-plane pool.",
+      "description": "Canonical PostgreSQL runtime role expected by the control-plane pool; other role names are rejected by foundation validation.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -2584,45 +2740,38 @@
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_ACQUIRE_TIMEOUT": {
       "default": "5s",
-      "description": "Maximum time to wait when acquiring a DuckLake catalog PostgreSQL connection.",
+      "description": "Maximum time to wait when acquiring the DuckLake catalog initialization connection.",
       "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
       "type": "string",
       "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "admin"
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_IDLE_TX_TIMEOUT": {
       "default": "1m",
-      "description": "DuckLake catalog PostgreSQL idle-in-transaction timeout.",
+      "description": "DuckLake catalog initialization PostgreSQL idle-in-transaction timeout.",
       "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
       "type": "string",
       "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_POSTGRES_DUCKLAKE_INTENT": {
-      "default": "read-write",
-      "description": "Read/write intent required for the DuckLake catalog PostgreSQL pool.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "admin"
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_LOCK_TIMEOUT": {
       "default": "5s",
-      "description": "DuckLake catalog PostgreSQL session lock-wait timeout.",
+      "description": "DuckLake catalog initialization PostgreSQL session lock-wait timeout.",
       "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
       "type": "string",
       "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "admin"
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {
       "default": "leapview_ducklake_maintenance",
-      "description": "Least-privilege role granted bounded DuckLake metadata maintenance access.",
+      "description": "Canonical least-privilege role granted bounded DuckLake metadata maintenance access; other role names are rejected by foundation validation.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "admin"
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE": {
       "default": "leapview_ducklake_migrator",
-      "description": "Role expected by the bounded DuckLake catalog initialization connection.",
+      "description": "Canonical role expected by the bounded DuckLake catalog initialization connection; other role names are rejected by foundation validation.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "admin"
@@ -2634,43 +2783,20 @@
       "x-lifecycle": "supported",
       "x-scope": "admin"
     },
-    "LEAPVIEW_POSTGRES_DUCKLAKE_POOL_MAX_CONNS": {
-      "default": "4",
-      "description": "Maximum connections allowed in the DuckLake catalog PostgreSQL pool.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_POSTGRES_DUCKLAKE_POOL_MIN_CONNS": {
-      "default": "1",
-      "description": "Minimum connections reserved for the DuckLake catalog PostgreSQL pool.",
-      "pattern": "^-?[0-9]+$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {
       "default": "leapview_ducklake_runtime",
-      "description": "Configured PostgreSQL runtime role expected by the DuckLake catalog pool.",
+      "description": "Canonical role granted bounded DuckLake catalog metadata access; no DuckLake runtime pool is opened in the foundation.",
       "type": "string",
       "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "admin"
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_STATEMENT_TIMEOUT": {
       "default": "30s",
-      "description": "DuckLake catalog PostgreSQL session statement timeout.",
+      "description": "DuckLake catalog initialization PostgreSQL session statement timeout.",
       "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
       "type": "string",
       "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_POSTGRES_DUCKLAKE_URL": {
-      "description": "Explicit PostgreSQL DuckLake catalog connection URL; independent from the control-plane URL.",
-      "type": "string",
-      "writeOnly": true,
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "admin"
     },
     "LEAPVIEW_POSTGRES_EXPECTED_MAJOR": {
       "default": "18",

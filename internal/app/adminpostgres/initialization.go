@@ -202,6 +202,9 @@ func productionAccessConfig(cfg config.Config) (platformpostgres.Config, error) 
 	if !cfg.PostgresRequireTLS {
 		return platformpostgres.Config{}, errors.New("production admin initialization requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true")
 	}
+	if err := cfg.ValidatePostgres(); err != nil {
+		return platformpostgres.Config{}, fmt.Errorf("invalid PostgreSQL application configuration: %w", err)
+	}
 	accessConfig := cfg.PostgresControlRuntimeConfig()
 	if err := accessConfig.Validate(); err != nil {
 		return platformpostgres.Config{}, fmt.Errorf("invalid PostgreSQL control runtime configuration: %w", err)
@@ -210,6 +213,9 @@ func productionAccessConfig(cfg config.Config) (platformpostgres.Config, error) 
 }
 
 func prepareProductionBaseline(ctx context.Context, cfg config.Config) error {
+	if err := cfg.ValidatePostgres(); err != nil {
+		return fmt.Errorf("invalid PostgreSQL application configuration: %w", err)
+	}
 	migratorConfig := cfg.PostgresControlMigratorConfig()
 	if err := migratorConfig.Validate(); err != nil {
 		return fmt.Errorf("invalid PostgreSQL control migrator configuration: %w", err)
