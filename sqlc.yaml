@@ -159,7 +159,9 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/access/postgres/queries"
-    schema: "internal/access/postgres/schema.sql"
+    schema:
+      - "internal/access/postgres/schema.sql"
+      - "internal/access/postgres/migrations/002_typed_attribute_registry.sql"
     gen:
       go:
         package: "db"

@@ -9,41 +9,82 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
-type verifyRevisionReader struct {
-	revision platformpostgres.SchemaRevision
-	err      error
+// revisionReader models the authoritative platform.schema_revision table.
+// Keeping revisions keyed by number ensures Verify checks every immutable
+// baseline and forward-migration identity rather than only the foundation.
+type revisionReader struct {
+	revisions map[int64]platformpostgres.SchemaRevision
+	err       error
 }
 
-func (reader verifyRevisionReader) SchemaRevision(context.Context, int64) (platformpostgres.SchemaRevision, error) {
-	return reader.revision, reader.err
-}
-
-func TestVerifyRequiresExactBaselineIdentity(t *testing.T) {
-	want := platformpostgres.SchemaRevision{
-		Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: Checksum(),
+func (r revisionReader) SchemaRevision(_ context.Context, revision int64) (platformpostgres.SchemaRevision, error) {
+	if r.err != nil {
+		return platformpostgres.SchemaRevision{}, r.err
 	}
+	value, ok := r.revisions[revision]
+	if !ok {
+		return platformpostgres.SchemaRevision{}, errors.New("revision not found")
+	}
+	return value, nil
+}
+
+func TestVerifyRequiresExactBaselineAndMigrationIdentity(t *testing.T) {
+	revisions := map[int64]platformpostgres.SchemaRevision{
+		BaselineRevision: {Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: Checksum()},
+	}
+	for _, migration := range Migrations() {
+		revisions[migration.Revision] = platformpostgres.SchemaRevision{
+			Revision: migration.Revision, MigrationID: migration.MigrationID, Checksum: migration.Checksum(),
+		}
+	}
+	if err := Verify(t.Context(), revisionReader{revisions: revisions}); err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+
 	tests := []struct {
-		name     string
-		revision platformpostgres.SchemaRevision
-		err      error
-		wantErr  bool
+		name   string
+		mutate func(map[int64]platformpostgres.SchemaRevision)
 	}{
-		{name: "exact match", revision: want},
-		{name: "revision mismatch", revision: platformpostgres.SchemaRevision{Revision: want.Revision + 1, MigrationID: want.MigrationID, Checksum: want.Checksum}, wantErr: true},
-		{name: "migration mismatch", revision: platformpostgres.SchemaRevision{Revision: want.Revision, MigrationID: "tampered", Checksum: want.Checksum}, wantErr: true},
-		{name: "checksum mismatch", revision: platformpostgres.SchemaRevision{Revision: want.Revision, MigrationID: want.MigrationID, Checksum: "tampered"}, wantErr: true},
-		{name: "reader error", err: errors.New("connection failed"), wantErr: true},
+		{name: "baseline revision", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
+			value := values[BaselineRevision]
+			value.Revision++
+			values[BaselineRevision] = value
+		}},
+		{name: "baseline migration", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
+			value := values[BaselineRevision]
+			value.MigrationID = "tampered"
+			values[BaselineRevision] = value
+		}},
+		{name: "baseline checksum", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
+			value := values[BaselineRevision]
+			value.Checksum = "tampered"
+			values[BaselineRevision] = value
+		}},
+		{name: "forward migration checksum", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
+			for _, migration := range Migrations() {
+				value := values[migration.Revision]
+				value.Checksum = strings.Repeat("f", 64)
+				values[migration.Revision] = value
+			}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			err := Verify(t.Context(), verifyRevisionReader{revision: test.revision, err: test.err})
-			if test.wantErr && err == nil {
-				t.Fatal("Verify unexpectedly succeeded")
+			copy := make(map[int64]platformpostgres.SchemaRevision, len(revisions))
+			for key, value := range revisions {
+				copy[key] = value
 			}
-			if !test.wantErr && err != nil {
-				t.Fatalf("Verify returned error: %v", err)
+			test.mutate(copy)
+			if err := Verify(t.Context(), revisionReader{revisions: copy}); err == nil {
+				t.Fatal("Verify() accepted mismatched schema identity")
 			}
 		})
+	}
+	if err := Verify(t.Context(), revisionReader{err: errors.New("connection failed")}); err == nil {
+		t.Fatal("Verify() accepted a revision reader error")
+	}
+	if err := Verify(t.Context(), nil); err == nil {
+		t.Fatal("Verify(nil) unexpectedly succeeded")
 	}
 }
 

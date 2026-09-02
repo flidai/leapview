@@ -99,12 +99,37 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 
 	var revision int64
-	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, postgresbaseline.BaselineMigrationID).Scan(&revision); err != nil {
+	var migrationID, checksum string
+	if err := db.QueryRow(ctx,
+		"SELECT revision, migration_id, checksum FROM platform.schema_revision WHERE revision = $1",
+		postgresbaseline.BaselineRevision,
+	).Scan(&revision, &migrationID, &checksum); err != nil {
 		t.Fatal(err)
 	}
-	if revision != postgresbaseline.BaselineRevision {
-		t.Fatalf("schema revision = %d, want %d", revision, postgresbaseline.BaselineRevision)
+	if revision != postgresbaseline.BaselineRevision || migrationID != postgresbaseline.BaselineMigrationID || checksum != postgresbaseline.Checksum() {
+		t.Fatalf("baseline identity = %d/%q/%q", revision, migrationID, checksum)
 	}
+	forward := postgresbaseline.Migrations()[0]
+	if err := db.QueryRow(ctx,
+		"SELECT revision, migration_id, checksum FROM platform.schema_revision WHERE revision = $1",
+		forward.Revision,
+	).Scan(&revision, &migrationID, &checksum); err != nil {
+		t.Fatal(err)
+	}
+	if revision != forward.Revision || migrationID != forward.MigrationID || checksum != forward.Checksum() {
+		t.Fatalf("attribute registry migration identity = %d/%q/%q", revision, migrationID, checksum)
+	}
+	var registryProfile, registryDigest string
+	var registryRevision int64
+	if err := db.QueryRow(ctx,
+		"SELECT profile, registry_revision, registry_digest FROM access.semantic_attribute_registry WHERE singleton",
+	).Scan(&registryProfile, &registryRevision, &registryDigest); err != nil {
+		t.Fatal(err)
+	}
+	if registryProfile != "leapview.semantic-access/v1" || registryRevision != 0 || !strings.HasPrefix(registryDigest, "sha256:") {
+		t.Fatalf("attribute registry state = %q/%d/%q", registryProfile, registryRevision, registryDigest)
+	}
+
 	var canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateDuckLake, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
 	var physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite bool
 	var readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential bool

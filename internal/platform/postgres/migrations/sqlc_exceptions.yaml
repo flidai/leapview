@@ -1,7 +1,7 @@
 # ADR-0018 exception inventory. Keep entries exact; static SQL is never allowlisted.
 entries:
   - file: internal/platform/postgres/migrations/migrations.go
-    line: 142
+    line: 176
     function: Apply
     method: Exec
     fingerprint: sha256:62e7ba971eaaf2f2b6b559ab740a79a2e38de729767aae99d5a3da482a8936db
@@ -9,15 +9,7 @@ entries:
     rationale: Migration DDL is assembled from the versioned migration body and executed on the caller-owned transaction.
     verification: Migration ordering, transaction, and checksum tests cover this execution path.
   - file: internal/platform/postgres/migrations/migrations.go
-    line: 155
-    function: Apply
-    method: Exec
-    fingerprint: sha256:a6152ae093fd53d3d799f6e81e5bf9bde5935a3fc0f0cae5be066754480bfd70
-    class: schema-ddl
-    rationale: Migration DDL is assembled from the versioned migration body and executed on the caller-owned transaction.
-    verification: Migration ordering, transaction, and checksum tests cover this execution path.
-  - file: internal/platform/postgres/migrations/migrations.go
-    line: 165
+    line: 190
     function: Apply
     method: Exec
     fingerprint: sha256:b5156810e58c68a0177a2a8241f114d5d0f1a8566488b7e8f00d30aac5626a0e
@@ -25,7 +17,15 @@ entries:
     rationale: Migration DDL is assembled from the versioned migration body and executed on the caller-owned transaction.
     verification: Migration ordering, transaction, and checksum tests cover this execution path.
   - file: internal/platform/postgres/migrations/migrations.go
-    line: 169
+    line: 221
+    function: Apply
+    method: Exec
+    fingerprint: sha256:0b6ef46d66598b2f36acbf1c57e5e1f3f90dad08d408620f7d9a6a96351aac64
+    class: schema-ddl
+    rationale: Migration DDL is assembled from the versioned migration body and executed on the caller-owned transaction.
+    verification: Migration ordering, transaction, and checksum tests cover this execution path.
+  - file: internal/platform/postgres/migrations/migrations.go
+    line: 242
     function: Apply
     method: Exec
     fingerprint: sha256:a6152ae093fd53d3d799f6e81e5bf9bde5935a3fc0f0cae5be066754480bfd70

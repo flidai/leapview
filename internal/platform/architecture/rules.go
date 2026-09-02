@@ -169,7 +169,7 @@ func IsDeferredPackageEdge(sourcePath, targetCapability string) bool {
 
 var CapabilityDependencies = map[string]map[string]bool{
 	"project":       {"analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
-	"access":        {},
+	"access":        {"semanticvalue": true},
 	"manageddata":   {"servingstate": true},
 	"analytics":     {"access": true, "manageddata": true, "semanticvalue": true, "servingstate": true},
 	"dashboard":     {"access": true, "analytics": true, "runtimehost": true, "workload": true},
