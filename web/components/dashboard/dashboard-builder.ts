@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Sun, Trash2, Undo2 } from 'lucide'
+import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Minus, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Sun, Trash2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -161,6 +161,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private collapsedPanes: Record<BuilderPane, boolean> = { ...defaultCollapsedPanes }
   @state() private appearanceOpen = false
   @state() private resolvedTheme: BuilderResolvedTheme = currentResolvedTheme()
+  @state() private canvasScale = 1
+  private canvasZoom: number | null = null
   private commandPending = false
   private activeCommandAction = ''
   private interactionOverridesRevision = ''
@@ -817,9 +819,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       min-width: 0;
       min-height: var(--control-large-size);
       align-items: center;
-      gap: var(--base-size-4);
+      gap: 0;
       border-top: var(--lv-border-muted);
-      background: var(--lv-bg-panel);
+      background: var(--lv-bg-panel-muted);
     }
 
     .page-bar > button {
@@ -831,7 +833,24 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .page-add {
-      margin-right: var(--base-size-8);
+      align-self: stretch;
+      margin: 0;
+      border-radius: 0;
+      color: var(--lv-button-accent-fg-rest, var(--lv-fg-on-accent));
+      background: var(--lv-button-accent-bg-rest, var(--lv-bg-accent));
+    }
+
+    .page-add:hover:not(:disabled) {
+      color: var(--lv-button-accent-fg-rest, var(--lv-fg-on-accent));
+      background: var(--lv-button-accent-bg-hover, var(--lv-bg-accent));
+    }
+
+    .page-bar-tools {
+      display: flex;
+      flex: 0 0 auto;
+      align-self: stretch;
+      align-items: center;
+      margin-left: auto;
     }
 
     .page-actions {
@@ -892,6 +911,39 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .page-actions-menu .page-delete {
       color: var(--lv-fg-danger, var(--lv-fg-default));
+    }
+
+    .page-zoom {
+      display: flex;
+      height: 100%;
+      align-items: center;
+      gap: var(--base-size-2);
+      padding-inline: var(--base-size-8);
+      border-left: var(--lv-border-muted);
+    }
+
+    .page-zoom button {
+      display: grid;
+      min-width: var(--control-small-size);
+      min-height: var(--control-small-size);
+      place-items: center;
+      border-color: transparent;
+      padding: 0;
+      color: var(--lv-fg-muted);
+      background: transparent;
+    }
+
+    .page-zoom button:hover:not(:disabled) {
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-control-hover);
+    }
+
+    .page-zoom-value {
+      min-width: 3.25rem !important;
+      padding-inline: var(--base-size-6) !important;
+      color: var(--lv-fg-default) !important;
+      font: var(--lv-type-caption);
+      font-variant-numeric: tabular-nums;
     }
 
     .pane-header {
@@ -1269,12 +1321,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .page-tabs {
       display: flex;
-      flex: 1 1 auto;
+      flex: 0 1 auto;
+      align-self: stretch;
       min-width: 0;
-      gap: var(--base-size-4);
+      gap: 0;
       overflow-x: auto;
       overscroll-behavior-x: contain;
-      padding: var(--base-size-4) var(--base-size-8);
+      padding-left: var(--base-size-8);
       scrollbar-width: thin;
     }
 
@@ -1283,13 +1336,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       flex: 0 0 auto;
       min-width: 4.5rem;
       max-width: 14rem;
-      min-height: var(--control-medium-size);
+      min-height: 100%;
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      border: var(--lv-border-width) solid var(--lv-line-muted);
-      border-radius: var(--lv-button-radius, var(--lv-radius-default));
-      padding: 0 var(--base-size-8);
+      border: 0;
+      border-left: var(--lv-border-width) solid var(--lv-line-muted);
+      border-right: var(--lv-border-width) solid var(--lv-line-muted);
+      border-radius: 0;
+      padding: 0 var(--base-size-16);
       color: inherit;
       background: var(--lv-bg-panel-muted);
       font: var(--lv-type-body-compact);
@@ -1301,8 +1356,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .page-tab:hover {
-      border-color: var(--lv-line-emphasis);
-      background: var(--lv-bg-panel-muted);
+      background: var(--lv-bg-control-hover);
     }
 
     .page-tab:focus-visible {
@@ -1316,7 +1370,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       color: var(--lv-fg-default);
       background: var(--lv-bg-panel);
       font-weight: var(--base-text-weight-semibold);
-      box-shadow: inset 0 -2px 0 var(--lv-fg-accent);
+      box-shadow: inset 0 -3px 0 var(--lv-fg-accent);
     }
 
     .page-tab[data-page-dragging='true'] {
@@ -2703,6 +2757,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       canvas?.style.removeProperty('--builder-canvas-width')
       canvas?.style.removeProperty('--builder-canvas-min-height')
       canvas?.style.removeProperty('min-height')
+      if (this.canvasScale !== 1) this.canvasScale = 1
       return
     }
     if (scroll !== this.canvasViewportElement && typeof ResizeObserver !== 'undefined') {
@@ -2715,7 +2770,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (availableWidth <= 0) return
     const logicalWidth = page.canvas.width > 0 ? page.canvas.width : builderCanvasDesktopWidth
     const minimumHeight = page.canvas.height > 0 ? page.canvas.height : builderCanvasMinimumHeight
-    const scale = Math.min(1, availableWidth / logicalWidth)
+    const fitScale = Math.min(1, availableWidth / logicalWidth)
+    const scale = Math.min(2, Math.max(0.25, this.canvasZoom ?? fitScale))
     const occupiedRows = this.canvasOccupiedRows(page)
     const workingRows = occupiedRows + builderCanvasRunwayRows
     const rowHeight = Math.max(1, page.grid.rowHeight || 48)
@@ -2733,6 +2789,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     canvas.style.setProperty('--builder-grid-columns', String(Math.max(1, page.grid.columns || 12)))
     canvas.style.setProperty('--builder-grid-row-pitch', `${rowHeight + gap}px`)
     canvas.style.minHeight = `${logicalHeight}px`
+    if (Math.abs(this.canvasScale - scale) > 0.0001) this.canvasScale = scale
+  }
+
+  private readonly changeCanvasZoom = (delta: number): void => {
+    this.canvasZoom = Math.min(2, Math.max(0.25, this.canvasScale + delta))
+    this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
+  }
+
+  private readonly fitCanvasToViewport = (): void => {
+    this.canvasZoom = null
+    this.syncCanvasViewport(this.builder ? this.selectedPage(this.builder) : undefined)
   }
 
   private canvasOccupiedRows(page: DashboardBuilderPageSignal): number {
@@ -3194,19 +3261,26 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
                 @keydown=${(event: KeyboardEvent) => this.handlePageTabKeydown(event, item.id)}
               >${item.title}</button>`)}
         </nav>
-        ${page && builder.capabilities.canEdit ? html`
-          <details class="page-actions">
-            <summary aria-label=${`Actions for ${page.title}`} title=${`Actions for ${page.title}`}>${lucideIcon(MoreHorizontal, { size: 16, strokeWidth: 2 })}</summary>
-            <div class="page-actions-menu" role="menu" aria-label=${`${page.title} page actions`}>
-              <button type="button" role="menuitem" data-page-action="settings" @click=${(event: Event) => this.openPageSettings(page, event)}>${lucideIcon(Settings2, { size: 14, strokeWidth: 2 })}<span>Page settings</span></button>
-              <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex <= 0} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex - 1)}>${lucideIcon(ChevronLeft, { size: 14, strokeWidth: 2 })}<span>Move earlier</span></button>
-              <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex < 0 || pageIndex >= builder.pages.length - 1} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex + 1)}>${lucideIcon(ChevronRight, { size: 14, strokeWidth: 2 })}<span>Move later</span></button>
-              <button type="button" role="menuitem" ?disabled=${this.commandPending} @click=${(event: Event) => this.duplicatePage(event, page)}>${lucideIcon(Copy, { size: 14, strokeWidth: 2 })}<span>Duplicate page</span></button>
-              <button type="button" role="menuitem" class="page-delete" ?disabled=${this.commandPending || builder.pages.length <= 1} @click=${(event: Event) => this.removePage(event, page)}>${lucideIcon(Trash2, { size: 14, strokeWidth: 2 })}<span>Delete page</span></button>
-            </div>
-          </details>
-        ` : nothing}
         ${builder.capabilities.canAddPage ? html`<button type="button" class="page-add" @click=${this.addPage} aria-label="Add page" title="Add page">${lucideIcon(Plus, { size: 16, strokeWidth: 2 })}<span class="sr-only">+</span></button>` : nothing}
+        <div class="page-bar-tools">
+          ${page && builder.capabilities.canEdit ? html`
+            <details class="page-actions">
+              <summary aria-label=${`Actions for ${page.title}`} title=${`Actions for ${page.title}`}>${lucideIcon(MoreHorizontal, { size: 16, strokeWidth: 2 })}</summary>
+              <div class="page-actions-menu" role="menu" aria-label=${`${page.title} page actions`}>
+                <button type="button" role="menuitem" data-page-action="settings" @click=${(event: Event) => this.openPageSettings(page, event)}>${lucideIcon(Settings2, { size: 14, strokeWidth: 2 })}<span>Page settings</span></button>
+                <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex <= 0} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex - 1)}>${lucideIcon(ChevronLeft, { size: 14, strokeWidth: 2 })}<span>Move earlier</span></button>
+                <button type="button" role="menuitem" ?disabled=${this.commandPending || pageIndex < 0 || pageIndex >= builder.pages.length - 1} @click=${(event: Event) => this.movePageFromMenu(event, page, pageIndex + 1)}>${lucideIcon(ChevronRight, { size: 14, strokeWidth: 2 })}<span>Move later</span></button>
+                <button type="button" role="menuitem" ?disabled=${this.commandPending} @click=${(event: Event) => this.duplicatePage(event, page)}>${lucideIcon(Copy, { size: 14, strokeWidth: 2 })}<span>Duplicate page</span></button>
+                <button type="button" role="menuitem" class="page-delete" ?disabled=${this.commandPending || builder.pages.length <= 1} @click=${(event: Event) => this.removePage(event, page)}>${lucideIcon(Trash2, { size: 14, strokeWidth: 2 })}<span>Delete page</span></button>
+              </div>
+            </details>
+          ` : nothing}
+          <div class="page-zoom" role="group" aria-label="Canvas zoom">
+            <button type="button" @click=${() => this.changeCanvasZoom(-0.1)} ?disabled=${this.canvasScale <= 0.25} aria-label="Zoom out" title="Zoom out">${lucideIcon(Minus, { size: 15, strokeWidth: 2 })}</button>
+            <button type="button" class="page-zoom-value" @click=${this.fitCanvasToViewport} aria-label="Fit canvas to available space" title="Fit canvas to available space">${Math.round(this.canvasScale * 100)}%</button>
+            <button type="button" @click=${() => this.changeCanvasZoom(0.1)} ?disabled=${this.canvasScale >= 2} aria-label="Zoom in" title="Zoom in">${lucideIcon(Plus, { size: 15, strokeWidth: 2 })}</button>
+          </div>
+        </div>
       </footer>
     `
   }

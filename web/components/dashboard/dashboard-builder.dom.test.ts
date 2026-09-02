@@ -1029,6 +1029,60 @@ test('dashboard builder keeps bottom-tab navigation and add-page actions wired',
   }
 })
 
+test('dashboard builder presents Power BI-style page tabs with working footer zoom controls', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const initialZoom = Number.parseInt(root.querySelector('.page-zoom-value')?.textContent ?? '', 10)
+      const zoomIn = root.querySelector('button[aria-label="Zoom in"]') as HTMLButtonElement
+      zoomIn.click()
+      await element.updateComplete
+      const increasedZoom = Number.parseInt(root.querySelector('.page-zoom-value')?.textContent ?? '', 10)
+      const fit = root.querySelector('button[aria-label="Fit canvas to available space"]') as HTMLButtonElement
+      fit.click()
+      await element.updateComplete
+      const fittedZoom = Number.parseInt(root.querySelector('.page-zoom-value')?.textContent ?? '', 10)
+      const pageBar = root.querySelector('.page-bar') as HTMLElement
+      const pageTabs = root.querySelector('.page-tabs') as HTMLElement
+      const addPage = root.querySelector('.page-add') as HTMLElement
+      const zoom = root.querySelector('.page-zoom') as HTMLElement
+      const active = root.querySelector('.page-tab[aria-selected="true"]') as HTMLElement
+      const accentProbe = document.createElement('span')
+      accentProbe.style.color = 'var(--lv-fg-accent)'
+      root.append(accentProbe)
+      const accent = getComputedStyle(accentProbe).color
+      const activeShadow = getComputedStyle(active).boxShadow
+      const barBox = pageBar.getBoundingClientRect()
+      const tabsBox = pageTabs.getBoundingClientRect()
+      const addBox = addPage.getBoundingClientRect()
+      const zoomBox = zoom.getBoundingClientRect()
+      accentProbe.remove()
+      return {
+        initialZoom,
+        increasedZoom,
+        fittedZoom,
+        zoomButtons: Array.from(zoom.querySelectorAll('button')).map((button) => button.getAttribute('aria-label')),
+        addFollowsTabs: addBox.left >= tabsBox.right - 1,
+        zoomAtRight: zoomBox.right <= barBox.right + 1 && zoomBox.right >= barBox.right - 12,
+        activeUsesAccent: activeShadow.includes(accent),
+      }
+    })
+    expect(state.initialZoom).toBeGreaterThan(0)
+    expect(state.increasedZoom).toBe(state.initialZoom + 10)
+    expect(state.fittedZoom).toBe(state.initialZoom)
+    expect(state.zoomButtons).toEqual(['Zoom out', 'Fit canvas to available space', 'Zoom in'])
+    expect(state.addFollowsTabs).toBe(true)
+    expect(state.zoomAtRight).toBe(true)
+    expect(state.activeUsesAccent).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder edits page name and grid through the page Format contract', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
