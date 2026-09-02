@@ -440,7 +440,7 @@ func nativeRecoveryFixtureForConnector(t *testing.T, connectorKind string) nativ
 func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing.T) {
 	fixture := nativeRecoveryFixture(t)
 	store := &nativeForgedArtifactStore{ImmutableStore: fixture.store}
-	service := &nativeCandidateArtifactPhases{artifacts: store, storageDomain: "runtime", environment: "dev"}
+	service := &nativeCandidateArtifactPhases{artifacts: store, storageDomain: "runtime", environment: "dev", extensionPreparation: nativeInspectExtensionStub{}}
 	set, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request)
 	if err != nil {
 		t.Fatal(err)
@@ -454,17 +454,24 @@ func TestNativeCandidateRecoverUsesImmutableBundleWithoutSourceReader(t *testing
 	if set.Generation.NativeArtifact.Locator != nativeServingArtifactKey(fixture.request.Artifact.ServingArtifactDigest) || set.Generation.NativeArtifact.SizeBytes != int64(len(fixture.body)) || set.Generation.BundleManifestJSON == "" || set.Generation.AccessPolicyJSON == "" || set.Generation.DashboardPublicationsJSON == "" || set.Generation.DashboardAppearancesJSON == "" {
 		t.Fatalf("recovered serving evidence = %#v", set.Generation)
 	}
+	if len(set.Extensions) != 2 || set.Extensions[0].Name != "ducklake" || set.Extensions[1].Name != "httpfs" {
+		t.Fatalf("recovered extension evidence = %#v, want exact bundle requirements", set.Extensions)
+	}
 	if set.Compiler.Graph.Validate() != nil || set.Compiler.Graph.ProjectID() != fixture.request.ServingIdentity.ProjectID || set.Compiler.Manifest.ID != fixture.request.ServingIdentity.ProjectID.String() || set.Compiler.Plan.Project != fixture.request.ServingIdentity.ProjectID.String() {
 		t.Fatalf("recovered compiler evidence = %#v", set.Compiler)
 	}
 	if store.opens != 1 || store.puts != 0 {
 		t.Fatalf("recovery object calls = opens %d puts %d, want one read and no writes", store.opens, store.puts)
 	}
+	service.extensionPreparation = nil
+	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactUnavailable) {
+		t.Fatalf("missing extension admission error = %v, want unavailable", err)
+	}
 }
 
 func TestNativeCandidateRecoverRejectsManagedBundleWithoutPins(t *testing.T) {
 	fixture := nativeRecoveryFixtureForConnector(t, "managed")
-	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev"}
+	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev", extensionPreparation: nativeInspectExtensionStub{}}
 	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
 		t.Fatalf("managed recovery error = %v, want invalid", err)
 	}
@@ -472,7 +479,7 @@ func TestNativeCandidateRecoverRejectsManagedBundleWithoutPins(t *testing.T) {
 
 func TestNativeCandidateRecoverRejectsMissingBodyAndForgedMetadata(t *testing.T) {
 	fixture := nativeRecoveryFixture(t)
-	service := &nativeCandidateArtifactPhases{artifacts: &nativeForgedArtifactStore{ImmutableStore: fixture.store, nilBody: true}, storageDomain: "runtime", environment: "dev"}
+	service := &nativeCandidateArtifactPhases{artifacts: &nativeForgedArtifactStore{ImmutableStore: fixture.store, nilBody: true}, storageDomain: "runtime", environment: "dev", extensionPreparation: nativeInspectExtensionStub{}}
 	if _, err := service.RecoverCandidateArtifacts(t.Context(), fixture.request); !errors.Is(err, release.ErrCandidateArtifactInvalid) {
 		t.Fatalf("nil body error = %v", err)
 	}
@@ -495,7 +502,7 @@ func TestNativeCandidateRecoverRejectsMissingBodyAndForgedMetadata(t *testing.T)
 
 func TestNativeCandidateRecoverRejectsIdentityAndBundleMismatches(t *testing.T) {
 	fixture := nativeRecoveryFixture(t)
-	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev"}
+	service := &nativeCandidateArtifactPhases{artifacts: fixture.store, storageDomain: "runtime", environment: "dev", extensionPreparation: nativeInspectExtensionStub{}}
 	for name, mutate := range map[string]func(*release.CandidateArtifactRecoveryRequest){
 		"candidate": func(request *release.CandidateArtifactRecoveryRequest) { request.CandidateID = " candidate" },
 		"serving project": func(request *release.CandidateArtifactRecoveryRequest) {

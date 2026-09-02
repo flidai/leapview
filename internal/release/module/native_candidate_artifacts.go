@@ -537,8 +537,10 @@ func (service *nativeCandidateArtifactPhases) HydrateCandidateArtifacts(ctx cont
 
 // RecoverCandidateArtifacts reloads one immutable serving bundle for native
 // physical-build recovery. It intentionally has no source reader, serving
-// state writer, provenance reader, or materialization dependency: the bundle
-// and its provider metadata are the sole recovery inputs.
+// state writer, provenance reader, or materialization dependency. Runtime
+// extensions are re-admitted from requirements derived from that exact bundle
+// so a restarted process retains the capability evidence used by result
+// identity derivation.
 func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx context.Context, request release.CandidateArtifactRecoveryRequest) (release.CandidateArtifactSet, error) {
 	if service == nil || service.artifacts == nil || service.storageDomain == "" {
 		return release.CandidateArtifactSet{}, release.ErrCandidateArtifactUnavailable
@@ -609,6 +611,14 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
+	extensionRequirements, err := requiredExtensionNames(activations, canonicalProject.Manifest())
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	extensions, err := (&candidateArtifactService{extensionPreparation: service.extensionPreparation}).collectExtensionEvidence(ctx, extensionRequirements)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
+	}
 	requirements, managedConnections, authored, err := candidateConnectionRequirements(activations)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
@@ -667,6 +677,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 			SourceDigest: request.SourceDigest, ProjectDigest: canonicalProject.Digest(), ContentDigest: digest,
 			CompilerVersion: projectartifact.CompilerVersion, SchemaVersion: canonicalProject.Version(),
 		},
+		Extensions:               extensions,
 		AuthorizationFingerprint: authorizationFingerprint,
 		Generation: release.CandidateGenerationArtifact{
 			Identity: request.ServingIdentity, ServingArtifactID: request.Artifact.ServingArtifactID,
