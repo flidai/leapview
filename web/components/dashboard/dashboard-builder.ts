@@ -1259,11 +1259,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       outline-offset: -2px;
     }
 
-    .page-tab[aria-selected='true'] {
+    .page-tab[aria-selected='true'],
+    .page-tab[aria-current='page'] {
       border-color: var(--lv-data-3);
       color: var(--lv-fg-default);
       background: var(--lv-data-3-muted);
       font-weight: var(--base-text-weight-semibold);
+      box-shadow: inset 0 -2px 0 var(--lv-data-3);
     }
 
     .page-tab[data-page-dragging='true'] {

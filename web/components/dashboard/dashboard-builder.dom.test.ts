@@ -2252,6 +2252,9 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
       await element.updateComplete
       const root = element.shadowRoot
       const activePage = root.querySelector('.page-tab[aria-current="page"]') as HTMLAnchorElement
+      const inactivePage = root.querySelector('.page-tab:not([aria-current="page"])') as HTMLAnchorElement
+      const activeStyle = getComputedStyle(activePage)
+      const inactiveStyle = getComputedStyle(inactivePage)
       const activeNavigationCanceled = !activePage.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }))
       await element.updateComplete
       return {
@@ -2260,6 +2263,9 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
         routeTabRole: root.querySelector('.page-tab')?.getAttribute('role'),
         tablistRole: root.querySelector('.page-tabs')?.getAttribute('role'),
         activeNavigationCanceled,
+        activeHasDistinctBackground: activeStyle.backgroundColor !== inactiveStyle.backgroundColor,
+        activeHasDistinctBorder: activeStyle.borderColor !== inactiveStyle.borderColor,
+        activeHasIndicator: activeStyle.boxShadow !== 'none',
         inspectorTabs: root.querySelectorAll('.inspector-tab').length,
         panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
         paneLabel: root.querySelector('.visual-builder')?.getAttribute('aria-label'),
@@ -2271,6 +2277,9 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
       routeTabRole: null,
       tablistRole: null,
       activeNavigationCanceled: true,
+      activeHasDistinctBackground: true,
+      activeHasDistinctBorder: true,
+      activeHasIndicator: true,
       inspectorTabs: 0,
       panel: 'Page settings',
       paneLabel: 'Page properties',
