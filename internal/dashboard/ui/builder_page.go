@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
+	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -36,6 +37,7 @@ type DashboardBuilderActionBindings struct {
 	// writes the authored document.
 	FilterCommandPath string
 	FilterOptionPath  string
+	AgentCommands     AgentCommandBindings
 }
 
 // DashboardBuilderPage renders the document shell for the draft dashboard
@@ -57,9 +59,18 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		g.Attr("slot", "page"),
 		g.Attr("dashboard-id", builder.DashboardID),
 		g.Attr("draft-id", builder.DraftID),
+		g.Attr("data-indicator", "agentTurnPending"),
 		builderCommandAction(actions),
 		builderFilterCommandAction(actions),
 		builderFilterOptionsAction(actions),
+	}
+	agentEnabled := strings.TrimSpace(actions.AgentCommands.CreateConversation.OperationID()) != "" && strings.TrimSpace(actions.AgentCommands.CreateRun.OperationID()) != ""
+	if agentEnabled {
+		attrs = append(attrs,
+			g.Attr("data-on:lv-chat-submit", "$agent.composer.value = evt.detail.input; $agentContext.references = evt.detail.references; $agentContext.filters = $builderFilterState; $agentContext.generation = $status.generation; "+uiactions.CommandPostConditional("$agent.activeConversationId", []uicommand.Binding{actions.AgentCommands.CreateRun}, actions.AgentCommands.Workflow(), "/chats/turns", "agent", "agentContext")),
+			g.Attr("data-on:lv-chat-restore", "$agent.activeConversationId = evt.detail.conversationId; "+uiactions.Get("/chats/restore", "agent")),
+			g.Attr("data-on:lv-chat-new", "$agent.activeConversationId = ''; $agent.transcript = []; $agent.composer.value = ''; $agentVisuals = {}"),
+		)
 	}
 	for name, value := range map[string]string{
 		"back-href":        actions.BackHref,
@@ -73,12 +84,19 @@ func DashboardBuilderPage(envelope uisignals.DashboardBuilderEnvelope, csrfToken
 		}
 	}
 
+	contentAttrs := []g.Node{}
+	if agentEnabled {
+		contentAttrs = append(contentAttrs,
+			g.Attr("data-on:lv-chat-reference-search__debounce.200ms", "$agentReferenceSearch.query = evt.detail.query; $agentReferenceSearch.requestId = evt.detail.requestId; "+uiactions.Get("/chats/references/search", "agentReferenceSearch", "agentContext")),
+		)
+	}
 	return webpage.Render(layout, webpage.Spec{
 		Title: builder.Title, CSRFToken: csrfToken,
-		Scripts:    []string{"/static/dashboard-builder.js"},
-		MainAttrs:  []g.Node{h.ID("dashboard-builder"), h.Class(webpage.RootClass)},
-		UpdatesURL: updates,
-		Content:    g.El("lv-dashboard-builder", attrs...),
+		Scripts:      []string{"/static/dashboard-builder.js"},
+		MainAttrs:    []g.Node{h.ID("dashboard-builder"), h.Class(webpage.RootClass)},
+		UpdatesURL:   updates,
+		ContentAttrs: contentAttrs,
+		Content:      g.El("lv-dashboard-builder", attrs...),
 	})
 }
 
@@ -128,7 +146,22 @@ func builderFocusLayout(provider webpage.Provider, context webpage.Context) webp
 // DashboardBuilderBootstrapSignals exposes the typed stream bootstrap under
 // stable signal keys without serializing it into the document shell.
 func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelope) map[string]any {
+	agentContext := DashboardBuilderAgentContext(envelope)
 	return map[string]any{
+		"agent": uisignals.ChatSignal{
+			Conversations: []uisignals.ChatConversationSummary{},
+			Transcript:    []uisignals.ChatTranscriptItemSignal{},
+			Status: uisignals.ChatStatus{
+				Enabled: false,
+				Running: false,
+				Error:   uisignals.Optional("Agent is not configured"),
+			},
+			Composer: uisignals.ComposerSignal{Disabled: true, Placeholder: "Agent is not configured"},
+		},
+		"agentContext":               agentContext,
+		"agentReferenceSearch":       uisignals.AgentReferenceSearchSignal{Results: []uisignals.AgentReferenceSignal{}},
+		"agentVisuals":               map[string]visualizationir.VisualizationEnvelope{},
+		"interactionSelections":      []uisignals.DashboardInteractionSelection{},
 		"builder":                    envelope.Builder,
 		"builderVisuals":             envelope.BuilderVisuals,
 		"runtime":                    envelope.Runtime,
@@ -139,6 +172,35 @@ func DashboardBuilderBootstrapSignals(envelope uisignals.DashboardBuilderEnvelop
 		"builderFilterValidation":    envelope.BuilderFilterValidation,
 		"builderFilterCommand":       envelope.BuilderFilterCommand,
 		"builderFilterOptionRequest": envelope.BuilderFilterOptionRequest,
+	}
+}
+
+// DashboardBuilderAgentContext projects the current draft selection into the
+// shared dashboard-agent context without making the browser own a second
+// representation of the builder state.
+func DashboardBuilderAgentContext(envelope uisignals.DashboardBuilderEnvelope) uisignals.AgentContextSignal {
+	builder := envelope.Builder
+	pageID, pageTitle := "", ""
+	if builder.SelectedPageID != nil {
+		pageID = strings.TrimSpace(*builder.SelectedPageID)
+	}
+	for _, page := range builder.Pages {
+		if pageID == "" || page.ID == pageID {
+			pageID = page.ID
+			pageTitle = page.Title
+			break
+		}
+	}
+	return uisignals.AgentContextSignal{
+		Surface:        "dashboard",
+		DashboardID:    builder.DashboardID,
+		DashboardTitle: builder.Title,
+		PageID:         pageID,
+		PageTitle:      pageTitle,
+		ModelID:        builder.SemanticModel.ID,
+		Filters:        envelope.BuilderFilterState,
+		ReferenceLimit: 12,
+		References:     []uisignals.AgentReferenceSignal{},
 	}
 }
 

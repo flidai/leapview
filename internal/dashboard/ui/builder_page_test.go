@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	agentgen "github.com/flidai/leapview/internal/agent/api/gen"
 	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	uisignals "github.com/flidai/leapview/internal/dashboard/ui/signals"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
@@ -26,6 +27,10 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		PageBaseHref:   "/dashboards/revenue/edit",
 		CommandPath:    "/dashboards/revenue/commands",
 		CommandBinding: dashboardgen.GenUIActionExecuteDashboardAuthoringCommand(),
+		AgentCommands: AgentCommandBindings{
+			CreateConversation: agentgen.GenUIActionCreateAgentConversation(),
+			CreateRun:          agentgen.GenUIActionCreateAgentRun(),
+		},
 	}
 
 	var rendered strings.Builder
@@ -38,6 +43,8 @@ func TestDashboardBuilderPageRendersStreamShellAndTypedActions(t *testing.T) {
 		`data-on:lv-builder-command`, `@post('/dashboards/revenue/commands'`, `headers: window.LeapViewCommand.headers('executeDashboardAuthoringCommand')`,
 		`back-href="/dashboards"`, `preview-href="/dashboards/revenue/preview"`,
 		`page-base-href="/dashboards/revenue/edit"`,
+		`data-on:lv-chat-submit`, `data-on:lv-chat-restore`, `data-on:lv-chat-new`,
+		`/chats/turns`, `/chats/references/search`, `agentContext`, `builderFilterState`,
 	} {
 		if !strings.Contains(output, want) {
 			t.Fatalf("builder shell missing %q:\n%s", want, output)
@@ -61,7 +68,16 @@ func TestDashboardBuilderUpdatesURLCarriesSelectedPage(t *testing.T) {
 }
 
 func TestDashboardBuilderBootstrapSignalsStayUnderDedicatedKeys(t *testing.T) {
-	envelope := uisignals.DashboardBuilderEnvelope{Builder: uisignals.DashboardBuilderSignal{DashboardID: "revenue", DraftID: "draft-7"}, BuilderVisuals: map[string]uisignals.DashboardVisualizationSignal{}}
+	selectedPage := "details"
+	envelope := uisignals.DashboardBuilderEnvelope{
+		Builder: uisignals.DashboardBuilderSignal{
+			DashboardID: "revenue", DraftID: "draft-7", Title: "Revenue draft", SelectedPageID: &selectedPage,
+			SemanticModel: uisignals.DashboardBuilderSemanticModelSignal{ID: "semantic-model:sales"},
+			Pages:         []uisignals.DashboardBuilderPageSignal{{ID: "overview", Title: "Overview"}, {ID: selectedPage, Title: "Details"}},
+		},
+		BuilderVisuals:     map[string]uisignals.DashboardVisualizationSignal{},
+		BuilderFilterState: uisignals.DashboardFilterState{Revision: 4},
+	}
 	signals := DashboardBuilderBootstrapSignals(envelope)
 	if _, ok := signals["builder"].(uisignals.DashboardBuilderSignal); !ok {
 		t.Fatalf("builder signal = %T, want DashboardBuilderSignal", signals["builder"])
@@ -74,6 +90,16 @@ func TestDashboardBuilderBootstrapSignalsStayUnderDedicatedKeys(t *testing.T) {
 	}
 	if _, ok := signals["builderVisuals"].(map[string]uisignals.DashboardVisualizationSignal); !ok {
 		t.Fatalf("builderVisuals signal = %T, want map[string]DashboardVisualizationSignal", signals["builderVisuals"])
+	}
+	if agent, ok := signals["agent"].(uisignals.ChatSignal); !ok || agent.Status.Enabled || !agent.Composer.Disabled {
+		t.Fatalf("agent signal = %#v, want disabled typed bootstrap", signals["agent"])
+	}
+	context, ok := signals["agentContext"].(uisignals.AgentContextSignal)
+	if !ok || context.Surface != "dashboard" || context.DashboardID != "revenue" || context.PageID != selectedPage || context.PageTitle != "Details" || context.ModelID != "semantic-model:sales" || context.Filters.Revision != 4 {
+		t.Fatalf("agent context = %#v, want dashboard builder context", signals["agentContext"])
+	}
+	if _, ok := signals["agentReferenceSearch"].(uisignals.AgentReferenceSearchSignal); !ok {
+		t.Fatalf("agent reference search = %T, want AgentReferenceSearchSignal", signals["agentReferenceSearch"])
 	}
 	if _, legacy := signals["page"]; legacy {
 		t.Fatal("builder bootstrap reused runtime dashboard page signal")

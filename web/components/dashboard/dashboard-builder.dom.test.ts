@@ -105,6 +105,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
       const pageBar = root.querySelector('.page-bar')?.getBoundingClientRect()
       const visualBuilder = root.querySelector('.visual-builder')?.getBoundingClientRect()
       const dataPane = root.querySelector('.data-pane')?.getBoundingClientRect()
+      const agentPane = root.querySelector('.agent-pane')?.getBoundingClientRect()
       const pickerCatalog = root.querySelector('.visual-picker-catalog') as HTMLElement
       const pickerGrid = root.querySelector('.visual-picker') as HTMLElement
       const pickerButtons = Array.from(root.querySelectorAll('.visual-picker-button')).map((button) => ({
@@ -132,8 +133,9 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         pageBarBelowCanvas: Boolean(canvas && pageBar && pageBar.top >= canvas.top + canvas.height - 1),
         pageBarSharesCanvasWidth: Boolean(canvas && pageBar && pageBar.left >= canvas.left - 1 && pageBar.right <= canvas.right + 1),
         pageBarBeforeVisualBuilder: Boolean(pageBar && visualBuilder && pageBar.bottom <= visualBuilder.bottom + 1),
-        rightDockContainsAuthoringPanes: root.querySelectorAll('.right-dock > .filters-pane, .right-dock > .visual-builder, .right-dock > .data-pane').length === 3,
+        rightDockContainsAuthoringPanes: root.querySelectorAll('.right-dock > .filters-pane, .right-dock > .visual-builder, .right-dock > .data-pane, .right-dock > .agent-pane').length === 4,
         dataPaneRightOfVisual: Boolean(visualBuilder && dataPane && dataPane.left >= visualBuilder.right - 1),
+        agentPaneRightOfData: Boolean(dataPane && agentPane && agentPane.left >= dataPane.right - 1),
         pageBarVisible: Boolean(pageBar && pageBar.bottom <= innerHeight + 1),
         horizontalOverflow: document.documentElement.scrollWidth > innerWidth || document.body.scrollWidth > innerWidth,
         verticalOverflow: document.documentElement.scrollHeight > innerHeight || document.body.scrollHeight > innerHeight,
@@ -147,6 +149,7 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.pageBarBeforeVisualBuilder).toBe(true)
     expect(state.rightDockContainsAuthoringPanes).toBe(true)
     expect(state.dataPaneRightOfVisual).toBe(true)
+    expect(state.agentPaneRightOfData).toBe(true)
     expect(state.pageBarVisible).toBe(true)
     expect(state.pickerButtons).toHaveLength(27)
     expect(state.pickerButtons.map((button) => button.type)).toEqual(['line', 'area', 'bar', 'column', 'candlestick', 'combo', 'waterfall', 'pie', 'donut', 'funnel', 'scatter', 'heatmap', 'boxplot', 'histogram', 'treemap', 'sankey', 'graph', 'tree', 'sunburst', 'gauge', 'map', 'radar', 'kpi', 'table', 'matrix', 'pivot', 'slicer'])
@@ -189,6 +192,10 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
           controlsExistingTarget: Boolean(root.querySelector(`#${button.getAttribute('aria-controls')}`)),
           hasIcon: Boolean(button.querySelector('svg[data-lucide="icon"]')),
         })),
+        agent: {
+          bodyHidden: (root.querySelector('#builder-agent-content') as HTMLElement).hidden,
+          hasDrawer: Boolean(root.querySelector('.agent-pane lv-chat-drawer[open][embedded]')),
+        },
       }
     })
 
@@ -204,6 +211,27 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
       ;(root.querySelector('[data-pane-toggle="visuals"]') as HTMLButtonElement).click()
       await element.updateComplete
       return { collapsed, reopened: root.querySelector('.visual-builder')?.getAttribute('data-collapsed') }
+    })
+
+    const agentToggle = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const root = element.shadowRoot
+      ;(root.querySelector('[data-pane-toggle="agent"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const pane = root.querySelector('.agent-pane') as HTMLElement
+      const content = root.querySelector('#builder-agent-content') as HTMLElement
+      const drawer = root.querySelector('lv-chat-drawer') as any
+      await drawer.updateComplete
+      const title = drawer.shadowRoot.querySelector('.title') as HTMLElement
+      const state = {
+        collapsed: pane.dataset.collapsed,
+        hidden: content.hidden,
+        width: pane.getBoundingClientRect().width,
+        embeddedTitleHidden: getComputedStyle(title).display === 'none',
+        hasComposer: Boolean(drawer.shadowRoot.querySelector('lv-chat-composer')),
+      }
+      ;(root.querySelector('[data-pane-toggle="agent"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      return { ...state, recollapsed: pane.dataset.collapsed }
     })
 
     await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
@@ -236,6 +264,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
         filters: root.querySelector('.filters-pane')?.getAttribute('data-collapsed'),
         visuals: root.querySelector('.visual-builder')?.getAttribute('data-collapsed'),
         data: root.querySelector('.data-pane')?.getAttribute('data-collapsed'),
+        agent: root.querySelector('.agent-pane')?.getAttribute('data-collapsed'),
       }
     })
     await page.setViewportSize({ width: 900, height: 900 })
@@ -245,10 +274,12 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
       const dock = root.querySelector('.right-dock') as HTMLElement
       const filters = root.querySelector('.filters-pane') as HTMLElement
       const data = root.querySelector('.data-pane') as HTMLElement
+      const agent = root.querySelector('.agent-pane') as HTMLElement
       return {
         dockOverflow: dock.scrollWidth > dock.clientWidth + 1,
         filtersOverflow: filters.scrollWidth > filters.clientWidth + 1,
         dataOverflow: data.scrollWidth > data.clientWidth + 1,
+        agentOverflow: agent.scrollWidth > agent.clientWidth + 1,
       }
     })
     await page.setViewportSize({ width: 1100, height: 900 })
@@ -257,15 +288,19 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
       const root = element.shadowRoot
       const filters = root.querySelector('.filters-pane') as HTMLElement
       const data = root.querySelector('.data-pane') as HTMLElement
+      const agent = root.querySelector('.agent-pane') as HTMLElement
       return {
         filtersHeight: filters.getBoundingClientRect().height,
         dataHeight: data.getBoundingClientRect().height,
+        agentHeight: agent.getBoundingClientRect().height,
         filtersOverflow: filters.scrollHeight > filters.clientHeight + 1,
         dataOverflow: data.scrollHeight > data.clientHeight + 1,
+        agentOverflow: agent.scrollHeight > agent.clientHeight + 1,
       }
     })
 
-    expect(before.panes).toEqual(['false', 'false', 'false'])
+    expect(before.panes).toEqual(['false', 'false', 'false', 'true'])
+    expect(before.agent).toEqual({ bodyHidden: true, hasDrawer: true })
     expect(before.historyIcons).toEqual([
       { label: 'Undo', hasIcon: true, text: 'Undo' },
       { label: 'Redo', hasIcon: true, text: 'Redo' },
@@ -274,8 +309,11 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
       { pane: 'filters', controls: 'builder-filters-content', controlsExistingTarget: true, hasIcon: true },
       { pane: 'visuals', controls: 'builder-visuals-content', controlsExistingTarget: true, hasIcon: true },
       { pane: 'data', controls: 'builder-data-content', controlsExistingTarget: true, hasIcon: true },
+      { pane: 'agent', controls: 'builder-agent-content', controlsExistingTarget: true, hasIcon: true },
     ])
     expect(visualsToggle).toEqual({ collapsed: { pane: 'true', hidden: true, expanded: 'false' }, reopened: 'false' })
+    expect(agentToggle).toMatchObject({ collapsed: 'false', hidden: false, embeddedTitleHidden: true, hasComposer: true, recollapsed: 'true' })
+    expect(agentToggle.width).toBeGreaterThanOrEqual(280)
     expect(collapsed.canvasWidth).toBeGreaterThan(before.canvasWidth + 200)
     expect(collapsed.filtersCollapsed).toBe('true')
     expect(collapsed.dataCollapsed).toBe('true')
@@ -283,12 +321,14 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     expect(collapsed.dataHidden).toBe(true)
     expect(collapsed.filtersExpanded).toBe('false')
     expect(collapsed.filterToggleTitle).toBe('Expand Filters pane')
-    expect(restored).toEqual({ filters: 'true', visuals: 'false', data: 'true' })
-    expect(responsive).toEqual({ dockOverflow: false, filtersOverflow: false, dataOverflow: false })
+    expect(restored).toEqual({ filters: 'true', visuals: 'false', data: 'true', agent: 'true' })
+    expect(responsive).toEqual({ dockOverflow: false, filtersOverflow: false, dataOverflow: false, agentOverflow: false })
     expect(stacked.filtersHeight).toBeLessThanOrEqual(57)
     expect(stacked.dataHeight).toBeLessThanOrEqual(57)
+    expect(stacked.agentHeight).toBeLessThanOrEqual(57)
     expect(stacked.filtersOverflow).toBe(false)
     expect(stacked.dataOverflow).toBe(false)
+    expect(stacked.agentOverflow).toBe(false)
   } finally {
     await page.close()
   }
@@ -2506,7 +2546,7 @@ test('dashboard builder authors report filters from governed fields through focu
       ;(root.querySelector('.filter-remove') as HTMLButtonElement).click()
       await new Promise((resolve) => setTimeout(resolve, 20))
       return {
-        panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.classList.contains('filters-pane') ? 'filters' : pane.classList.contains('visual-builder') ? 'visual' : 'data'),
+        panes: Array.from(root.querySelectorAll('.right-dock > .pane')).map((pane: Element) => pane.classList.contains('filters-pane') ? 'filters' : pane.classList.contains('visual-builder') ? 'visual' : pane.classList.contains('data-pane') ? 'data' : 'agent'),
         scopes: Array.from(root.querySelectorAll('.filter-scope-heading')).map((heading: Element) => heading.textContent?.replace(/\s+/g, ' ').trim()),
         hasIntroCopy: Boolean(filterPane.querySelector('.pane-hint')),
         hasIdleDropZone: Boolean(filterPane.querySelector('.filter-drop-zone')),
@@ -2517,7 +2557,7 @@ test('dashboard builder authors report filters from governed fields through focu
         commands,
       }
     })
-    expect(state.panes).toEqual(['filters', 'visual', 'data'])
+    expect(state.panes).toEqual(['filters', 'visual', 'data', 'agent'])
     expect(state.scopes).toEqual(['All pages1'])
     expect(state.hasIntroCopy).toBe(false)
     expect(state.hasIdleDropZone).toBe(false)
