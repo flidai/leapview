@@ -5,8 +5,6 @@
 -- DuckLake PostgreSQL database and is accessed by local DuckDB connectors.
 -- These rows carry only immutable identities and lifecycle evidence; they do
 -- not duplicate DuckLake's table/file manifest.
-CREATE EXTENSION IF NOT EXISTS pgcrypto;
-
 CREATE SCHEMA IF NOT EXISTS ducklake;
 
 CREATE TABLE IF NOT EXISTS ducklake.catalog_identity (
@@ -2573,7 +2571,7 @@ BEGIN
     IF v_len = 0 AND p_cursor_after <> p_cursor_before THEN
         RAISE EXCEPTION 'empty terminal snapshot orphan page must preserve cursor';
     END IF;
-    v_expected_digest := 'sha256:' || encode(public.digest(convert_to(p_evidence::text, 'UTF8'), 'sha256'), 'hex');
+    v_expected_digest := 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(p_evidence::text, 'UTF8')), 'hex');
     IF p_page_digest <> v_expected_digest THEN
         RAISE EXCEPTION 'snapshot orphan scan page digest mismatch';
     END IF;
@@ -2759,7 +2757,7 @@ BEGIN
          FOR UPDATE
     LOOP
         SELECT count(*)::integer,
-               COALESCE('sha256:' || encode(public.digest(convert_to(string_agg(p.page_digest, ',' ORDER BY p.page_number), 'UTF8'), 'sha256'), 'hex'), 'sha256:' || encode(public.digest(convert_to('', 'UTF8'), 'sha256'), 'hex'))
+               COALESCE('sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(string_agg(p.page_digest, ',' ORDER BY p.page_number), 'UTF8')), 'hex'), 'sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to('', 'UTF8')), 'hex'))
           INTO v_pages,v_digest
           FROM ducklake.snapshot_orphan_scan_page p WHERE p.scan_id=v_scan.scan_id;
         PERFORM set_config('ducklake.scan_prune', 'on', true);

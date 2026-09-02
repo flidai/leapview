@@ -240,7 +240,7 @@ SELECT (r).next_cursor::bigint AS next_cursor, (r).orphan_count::integer AS orph
 FROM ducklake.record_snapshot_orphan_scan_page(sqlc.arg(scan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(page_number),sqlc.arg(cursor_before),sqlc.arg(cursor_after),sqlc.arg(snapshot_ids)::bigint[],sqlc.arg(page_digest),sqlc.arg(evidence)::jsonb,sqlc.arg(terminal)) AS r;
 
 -- name: ComputeSnapshotOrphanScanPageDigest :one
-SELECT ('sha256:' || encode(public.digest(convert_to(sqlc.arg(evidence)::jsonb::text, 'UTF8'), 'sha256'), 'hex'))::text;
+SELECT ('sha256:' || pg_catalog.encode(pg_catalog.sha256(pg_catalog.convert_to(sqlc.arg(evidence)::jsonb::text, 'UTF8')), 'hex'))::text;
 
 -- name: CompleteSnapshotOrphanScan :exec
 SELECT ducklake.complete_snapshot_orphan_scan(sqlc.arg(scan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(completion_evidence)::jsonb);
