@@ -39,6 +39,8 @@ import './filters/filter-control'
 import { DashboardFilterController } from './filters/filter-controller'
 import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/filter-control'
 import '../app/dashboard-icon-picker'
+import '../chat/chat-drawer'
+import { agentIcon } from '../chat/agent-icon'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -55,12 +57,12 @@ type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
 type BuilderFieldFilter = 'all' | 'metric' | 'dimension' | 'time'
 type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
 type BuilderFilterScope = 'report' | 'page' | 'visual' | 'custom'
-type BuilderPane = 'filters' | 'visuals' | 'data'
+type BuilderPane = 'filters' | 'visuals' | 'data' | 'agent'
 type BuilderInteractionEffect = 'filter' | 'highlight' | 'none'
 type BuilderResolvedTheme = 'light' | 'dark'
 
 const builderPaneStorageKey = 'leapview-dashboard-builder-collapsed-panes'
-const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false }
+const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false, agent: true }
 const builderCanvasDesktopWidth = 1366
 const builderCanvasMinimumHeight = 768
 const builderCanvasRunwayRows = 3
@@ -521,7 +523,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       grid-row: 1 / span 2;
       min-width: 0;
       min-height: 0;
-      grid-template-columns: var(--dock-filters-width) var(--dock-visuals-width) var(--dock-data-width);
+      grid-template-columns: var(--dock-filters-width) var(--dock-visuals-width) var(--dock-data-width) var(--dock-agent-width);
       background: var(--lv-bg-panel);
     }
 
@@ -540,8 +542,29 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       border-left: var(--lv-border-muted);
     }
 
-    .data-pane {
+    .data-pane,
+    .agent-pane {
       border-left: var(--lv-border-muted);
+    }
+
+    .agent-pane {
+      display: grid;
+      overflow: hidden;
+      grid-template-rows: auto minmax(0, 1fr);
+    }
+
+    .agent-pane[data-collapsed='true'] {
+      display: block;
+    }
+
+    .agent-pane-content {
+      min-height: 0;
+      overflow: hidden;
+    }
+
+    .agent-pane-content lv-chat-drawer {
+      height: 100%;
+      min-height: 0;
     }
 
     .filter-pane-body {
@@ -2381,14 +2404,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         grid-column: 1;
         grid-row: 3;
         max-height: 19rem;
-        grid-template-columns: var(--dock-filters-flex) var(--dock-visuals-flex) var(--dock-data-flex);
+        grid-template-columns: var(--dock-filters-flex) var(--dock-visuals-flex) var(--dock-data-flex) var(--dock-agent-flex);
         grid-template-rows: minmax(0, 1fr);
         border-top: var(--lv-border-muted);
       }
 
       .filters-pane,
       .properties,
-      .data-pane {
+      .data-pane,
+      .agent-pane {
         max-height: none;
         border-top: 0;
       }
@@ -2397,7 +2421,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         border-left: 0;
       }
 
-      .data-pane {
+      .data-pane,
+      .agent-pane {
         border-left: var(--lv-border-muted);
       }
     }
@@ -2409,11 +2434,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
       .right-dock {
         grid-template-columns: minmax(0, 1fr);
-        grid-template-rows: var(--dock-filters-row) var(--dock-visuals-row) var(--dock-data-row);
+        grid-template-rows: var(--dock-filters-row) var(--dock-visuals-row) var(--dock-data-row) var(--dock-agent-row);
       }
 
       .properties,
-      .data-pane {
+      .data-pane,
+      .agent-pane {
         border-top: var(--lv-border-muted);
       }
     }
@@ -2451,8 +2477,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         max-height: none;
       }
 
-      .data-pane {
+      .data-pane,
+      .agent-pane {
         border-left: 0;
+      }
+
+      .agent-pane-content {
+        height: min(32rem, 60svh);
       }
 
       .page-tab {
@@ -2812,13 +2843,20 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private restoreCollapsedPanes(): void {
     if (typeof window === 'undefined') return
     try {
-      const value = JSON.parse(window.localStorage.getItem(builderPaneStorageKey) ?? '[]')
-      if (!Array.isArray(value)) return
-      const collapsed = new Set(value.filter((pane): pane is BuilderPane => pane === 'filters' || pane === 'visuals' || pane === 'data'))
+      const stored = window.localStorage.getItem(builderPaneStorageKey)
+      if (stored === null) return
+      const value = JSON.parse(stored)
+      const legacy = Array.isArray(value)
+      const panes = legacy ? value : value?.version === 2 && Array.isArray(value.collapsed) ? value.collapsed : null
+      if (!panes) return
+      const collapsed = new Set(panes.filter((pane: unknown): pane is BuilderPane => pane === 'filters' || pane === 'visuals' || pane === 'data' || pane === 'agent'))
       this.collapsedPanes = {
         filters: collapsed.has('filters'),
         visuals: collapsed.has('visuals'),
         data: collapsed.has('data'),
+        // The agent pane did not exist in the legacy array format. Introduce
+        // it collapsed so upgrading does not unexpectedly shrink the canvas.
+        agent: legacy ? true : collapsed.has('agent'),
       }
     } catch {
       this.collapsedPanes = { ...defaultCollapsedPanes }
@@ -2829,7 +2867,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (typeof window === 'undefined') return
     try {
       const collapsed = (Object.keys(this.collapsedPanes) as BuilderPane[]).filter((pane) => this.collapsedPanes[pane])
-      window.localStorage.setItem(builderPaneStorageKey, JSON.stringify(collapsed))
+      window.localStorage.setItem(builderPaneStorageKey, JSON.stringify({ version: 2, collapsed }))
     } catch {
       // Storage can be unavailable in hardened browser contexts. The current
       // session still keeps the pane state through this reactive property.
@@ -2845,15 +2883,18 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const size = (pane: BuilderPane, open: string) => this.collapsedPanes[pane] ? '2.75rem' : open
     const rowSize = (pane: BuilderPane) => this.collapsedPanes[pane] ? '3.5rem' : 'minmax(0, 1fr)'
     return [
-      `--dock-filters-width:${size('filters', '12rem')}`,
-      `--dock-visuals-width:${size('visuals', '14rem')}`,
-      `--dock-data-width:${size('data', '12rem')}`,
+      `--dock-filters-width:${size('filters', '11.5rem')}`,
+      `--dock-visuals-width:${size('visuals', '13.5rem')}`,
+      `--dock-data-width:${size('data', '11.5rem')}`,
+      `--dock-agent-width:${size('agent', '19rem')}`,
       `--dock-filters-flex:${size('filters', 'minmax(0, 1fr)')}`,
       `--dock-visuals-flex:${size('visuals', 'minmax(0, 1fr)')}`,
       `--dock-data-flex:${size('data', 'minmax(0, 1fr)')}`,
+      `--dock-agent-flex:${size('agent', 'minmax(0, 1fr)')}`,
       `--dock-filters-row:${rowSize('filters')}`,
       `--dock-visuals-row:${rowSize('visuals')}`,
       `--dock-data-row:${rowSize('data')}`,
+      `--dock-agent-row:${rowSize('agent')}`,
     ].join(';')
   }
 
@@ -2902,6 +2943,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             ${this.renderFiltersPane(builder)}
             ${this.renderInspector(builder, page, visual)}
             ${this.renderDataPane(builder, visual)}
+            ${this.renderAgentPane()}
           </div>
         </div>
       </section>
@@ -3199,6 +3241,26 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <aside class="pane data-pane" data-collapsed=${this.collapsedPanes.data} aria-labelledby="builder-data-heading">
         ${this.renderFieldBrowser(builder, visual)}
+      </aside>
+    `
+  }
+
+  private renderAgentPane() {
+    const collapsed = this.collapsedPanes.agent
+    return html`
+      <aside class="pane agent-pane" data-collapsed=${collapsed} aria-labelledby="builder-agent-heading">
+        <div class="pane-header">
+          <div class="pane-heading-row">
+            <div class="pane-title-group">
+              <span class="pane-title-icon">${agentIcon()}</span>
+              <h2 id="builder-agent-heading" class="pane-title">Agent</h2>
+            </div>
+            ${this.renderPaneToggle('agent', 'Agent pane', 'builder-agent-content')}
+          </div>
+        </div>
+        <div id="builder-agent-content" class="pane-content agent-pane-content" ?hidden=${collapsed}>
+          <lv-chat-drawer open embedded></lv-chat-drawer>
+        </div>
       </aside>
     `
   }

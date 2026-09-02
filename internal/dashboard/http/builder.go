@@ -83,6 +83,7 @@ func (h Handler) DashboardBuilder(w nethttp.ResponseWriter, r *nethttp.Request) 
 		CommandBinding:    dashboardBuilderCommandBinding,
 		FilterCommandPath: dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter"),
 		FilterOptionPath:  dashboardBuilderDraftRoute(dashboardID, builder.DraftID, "/draft/filter-options"),
+		AgentCommands:     h.AgentCommands,
 	}, providers...).Render(w); err != nil {
 		nethttp.Error(w, "dashboard builder unavailable", nethttp.StatusInternalServerError)
 	}
@@ -313,7 +314,16 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	envelope.Runtime.DashboardID = uisignals.Optional(dashboardID)
 	envelope.Runtime.PageID = uisignals.Optional(firstBuilderPage(builder))
 	updates := pagestream.NewSignalStream(w, r)
-	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(envelope)); err != nil {
+	bootstrap := ui.DashboardBuilderBootstrapSignals(envelope)
+	if hasClientAgentState(r) {
+		delete(bootstrap, "agent")
+		delete(bootstrap, "agentVisuals")
+	} else if h.AgentBootstrap != nil {
+		agentState := h.AgentBootstrap(r, project.String())
+		bootstrap["agent"] = agentState.Agent
+		bootstrap["agentVisuals"] = agentState.Visuals
+	}
+	if err := updates.Patch(bootstrap); err != nil {
 		return
 	}
 	updates.Wait(r.Context())
@@ -414,9 +424,10 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 		}
 		envelope.Runtime = h.builderCommandRuntime(r, signals.Runtime, envelope.Runtime, project.String(), dashboardID, input.PageID, builder)
 		_ = pagestream.PatchResponse(w, r, pagestream.SignalPatch{
-			"builder": envelope.Builder,
-			"runtime": envelope.Runtime,
-			"status":  uisignals.DashboardStatus{Loading: false},
+			"builder":      envelope.Builder,
+			"agentContext": ui.DashboardBuilderAgentContext(envelope),
+			"runtime":      envelope.Runtime,
+			"status":       uisignals.DashboardStatus{Loading: false},
 		})
 		return
 	}
@@ -434,6 +445,7 @@ func (h Handler) DashboardBuilderCommand(w nethttp.ResponseWriter, r *nethttp.Re
 	}
 	_ = updates.Patch(pagestream.SignalPatch{
 		"builder":                  envelope.Builder,
+		"agentContext":             ui.DashboardBuilderAgentContext(envelope),
 		"builderVisuals":           envelope.BuilderVisuals,
 		"runtime":                  envelope.Runtime,
 		"builderFilterContract":    envelope.BuilderFilterContract,
