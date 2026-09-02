@@ -8,13 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/dashboard/document"
-	"github.com/flidai/leapview/internal/dashboard/publication"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	configschema "github.com/flidai/leapview/internal/project/schema"
-	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"gopkg.in/yaml.v3"
 )
 
@@ -35,45 +30,13 @@ func LoadProject(projectPath string) (Project, error) {
 		return Project{}, resourceError(projectPath, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", projectPath, err.Error())
 	}
 	baseDir := filepath.Dir(projectPath)
-	project := Project{
-		ID:                      projectgraph.ResourceID(envelope.Metadata.ID),
-		Metadata:                projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.Metadata.DisplayName, envelope.Metadata.Title, envelope.Metadata.Name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation},
-		Name:                    envelope.Metadata.Name,
-		BaseDir:                 baseDir,
-		ProjectPath:             projectPath,
-		Connections:             map[string]semanticmodel.Connection{},
-		ConnectionPaths:         map[string]string{},
-		ConnectionIDs:           map[string]string{},
-		Sources:                 map[string]semanticmodel.Source{},
-		SourcePaths:             map[string]string{},
-		SourceIDs:               map[string]string{},
-		Models:                  map[string]semanticmodel.Table{},
-		ModelDefinitions:        map[string]projectmanifest.AuthoredModelDefinition{},
-		ModelSources:            map[string]string{},
-		ModelAIContexts:         map[string]*semanticmodel.AIContext{},
-		ModelIDs:                map[string]string{},
-		ModelPaths:              map[string]string{},
-		SemanticModels:          map[string]projectSemanticModelSpec{},
-		SemanticModelAIContexts: map[string]*semanticmodel.AIContext{},
-		SemanticModelIDs:        map[string]string{},
-		SemanticModelPaths:      map[string]string{},
-		Dashboards:              map[string]*document.DashboardDocument{},
-		DashboardIDs:            map[string]string{},
-		DashboardPaths:          map[string]string{},
-		DashboardMetadata:       map[string]projectgraph.Metadata{},
-		PipelineIDs:             map[string]string{},
-		PipelinePaths:           map[string]string{},
-		RefreshPipelines:        map[string]refreshschedule.Definition{},
-		Publications:            map[string]publication.Definition{},
-		PublicationPaths:        map[string]string{},
-		Access:                  projectAccessPolicy(),
-		AccessPaths:             map[string]string{},
-		ResourceIDs:             map[string]string{},
-		ResourceIDOwners:        map[string]string{},
-		ResourcePaths:           map[string]string{},
-		ResourceMetadata:        map[string]projectgraph.Metadata{},
-		ResourceSources:         map[string]string{},
-	}
+	project := newProjectAssembly(
+		projectgraph.ResourceID(envelope.Metadata.ID),
+		envelope.Metadata.Name,
+		baseDir,
+		projectPath,
+		projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.Metadata.DisplayName, envelope.Metadata.Title, envelope.Metadata.Name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation},
+	)
 	if envelope.Metadata.ID == "" {
 		return Project{}, resourceError(projectPath, envelopeResourceID(envelope, ""), "metadata.id", "%s metadata.id is required", projectPath)
 	}

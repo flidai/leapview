@@ -19,6 +19,16 @@ func SourceFiles(projectPath string) ([]string, error) {
 	return sourceFilesFromProject(projectPath, project)
 }
 
+// SourceRootFiles resolves the deterministic authored files discovered beneath
+// a conventional analytics source root.
+func SourceRootFiles(sourceRoot string) ([]string, error) {
+	project, err := LoadSourceRoot(sourceRoot)
+	if err != nil {
+		return nil, err
+	}
+	return sourceFilesFromProject(sourceRoot, project)
+}
+
 func sourceFilesFromProject(projectPath string, project Project) ([]string, error) {
 	root, err := filepath.Abs(project.BaseDir)
 	if err != nil {
@@ -52,8 +62,14 @@ func sourceFilesFromProject(projectPath string, project Project) ([]string, erro
 		seen[filepath.Clean(path)] = struct{}{}
 		return nil
 	}
-	if err := add(projectPath); err != nil {
+	entrypoint, err := filepath.Abs(projectPath)
+	if err != nil {
 		return nil, err
+	}
+	if filepath.Clean(entrypoint) != filepath.Clean(root) {
+		if err := add(projectPath); err != nil {
+			return nil, err
+		}
 	}
 	addPaths := func(paths map[string]string) error {
 		for _, path := range paths {
