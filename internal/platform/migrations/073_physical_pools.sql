@@ -12,7 +12,6 @@ CREATE TABLE physical_pools (
   object_naming_contract TEXT NOT NULL,
   region TEXT NOT NULL DEFAULT '',
   tenant TEXT NOT NULL DEFAULT '',
-  encryption_domain TEXT NOT NULL,
   isolation_boundary TEXT NOT NULL,
   encryption_key_ref TEXT NOT NULL DEFAULT '',
   credential_reference TEXT NOT NULL DEFAULT '',
@@ -47,7 +46,7 @@ CREATE TABLE physical_pool_admissions (
 CREATE TRIGGER physical_pools_identity_immutable
 BEFORE UPDATE OF id, identity_digest, storage_location, storage_namespace,
   storage_implementation, region, tenant, isolation_boundary,
-  encryption_domain, encryption_key_ref, credential_reference, retention_authority,
+  encryption_key_ref, credential_reference, retention_authority,
   retention_policy_json, object_naming_contract
 ON physical_pools
 BEGIN

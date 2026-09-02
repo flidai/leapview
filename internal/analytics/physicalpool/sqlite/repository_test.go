@@ -97,6 +97,47 @@ func TestAdmissionRestartRoundTripAndIdempotentRetry(t *testing.T) {
 	}
 }
 
+func TestLegacyPoolRowRemainsReadableAfterEncryptionDomainMigration(t *testing.T) {
+	store, repo := repositoryStore(t)
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
+		StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a",
+		Region: "us-east-1", Tenant: "tenant-a", EncryptionDomain: "target-a",
+		IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1",
+		CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention",
+		RetentionPolicy: physicalpool.RetentionPolicy{OrphanGracePeriodSeconds: 3600, ReaderGracePeriodSeconds: 300, BuildGracePeriodSeconds: 60},
+		Compatibility:   repositoryCompatibility(),
+	})
+	if err != nil {
+		t.Fatalf("construct migrated legacy pool: %v", err)
+	}
+	if _, err := store.SQLDB().ExecContext(t.Context(), `
+		INSERT INTO physical_pools (
+		  id, identity_digest, storage_location, storage_namespace,
+		  storage_implementation, object_naming_contract, region, tenant,
+		  encryption_domain, isolation_boundary, encryption_key_ref,
+		  credential_reference, retention_authority, retention_policy_json
+		) VALUES (?, ?, 's3://warehouse', 'tenant-a', 's3', 'uuidv7:v1',
+		  'us-east-1', 'tenant-a', 'target-a', 'target-a', 'kms:key-1',
+		  'credential:warehouse', 'target-a-retention',
+		  '{"orphan_grace_period_seconds":3600,"reader_grace_period_seconds":300,"build_grace_period_seconds":60}')`, pool.ID, pool.ID); err != nil {
+		t.Fatalf("seed migrated legacy pool row: %v", err)
+	}
+	evidence := repositoryEvidence(t, pool.Compatibility, "lea-405/v1", "legacy-row")
+	if _, err := repo.Admit(t.Context(), pool, evidence); err != nil {
+		t.Fatalf("admit migrated legacy pool: %v", err)
+	}
+	contract, err := repo.LoadAdmissionContract(t.Context(), pool.ID, pool.Compatibility)
+	if err != nil {
+		t.Fatalf("load migrated legacy pool: %v", err)
+	}
+	if contract.Pool.Identity.EncryptionDomain != "target-a" {
+		t.Fatalf("migrated encryption domain = %q, want target-a", contract.Pool.Identity.EncryptionDomain)
+	}
+	if err := contract.Pool.Validate(); err != nil {
+		t.Fatalf("migrated legacy pool is invalid: %v", err)
+	}
+}
+
 func TestCreateAndAdmitIsExplicitBootstrapAndMigrationPath(t *testing.T) {
 	_, repo := repositoryStore(t)
 	pool := repositoryPool(t, filepath.Join(t.TempDir(), "bootstrap-pool"))

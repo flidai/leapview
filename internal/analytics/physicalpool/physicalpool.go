@@ -280,6 +280,28 @@ func (i PoolIdentity) CanonicalJSON() (string, error) {
 	}
 	// Runtime, extension, and catalog format are deliberately omitted: those
 	// exact tuple members are versioned through append-only admissions.
+	// Rows created before encryption_domain was introduced are backfilled from
+	// isolation_boundary. Keep that default identity spelling stable while
+	// making any distinct encryption domain identity-significant.
+	if i.EncryptionDomain == i.IsolationBoundary {
+		encoded, err := json.Marshal(struct {
+			StorageLocation       string          `json:"storage_location"`
+			StorageNamespace      string          `json:"storage_namespace"`
+			Region                string          `json:"region"`
+			Tenant                string          `json:"tenant"`
+			IsolationBoundary     string          `json:"isolation_boundary"`
+			EncryptionKeyRef      string          `json:"encryption_key_ref,omitempty"`
+			CredentialReference   string          `json:"credential_reference,omitempty"`
+			RetentionAuthority    string          `json:"retention_authority"`
+			RetentionPolicy       RetentionPolicy `json:"retention_policy"`
+			StorageImplementation string          `json:"storage_implementation"`
+			ObjectNamingContract  string          `json:"object_naming_contract"`
+		}{canonicalLocation, i.StorageNamespace, i.Region, i.Tenant, i.IsolationBoundary, i.EncryptionKeyRef, i.CredentialReference, i.RetentionAuthority, i.RetentionPolicy, i.Compatibility.StorageImplementation, i.Compatibility.ObjectNamingContract})
+		if err != nil {
+			return "", fmt.Errorf("marshal legacy pool identity: %w", err)
+		}
+		return string(encoded), nil
+	}
 	encoded, err := json.Marshal(struct {
 		StorageLocation       string          `json:"storage_location"`
 		StorageNamespace      string          `json:"storage_namespace"`
