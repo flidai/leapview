@@ -9,7 +9,7 @@ import (
 )
 
 func TestValidateAttributeName(t *testing.T) {
-	for _, name := range []string{"department", "piiAccess", "allowed_regions_2"} {
+	for _, name := range []string{"department", "regionScope", "allowed_regions_2"} {
 		if err := ValidateAttributeName(name); err != nil {
 			t.Fatalf("ValidateAttributeName(%q) error = %v", name, err)
 		}
