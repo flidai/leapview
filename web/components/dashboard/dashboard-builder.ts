@@ -41,6 +41,7 @@ import type { FilterMutationDetail, FilterOptionsNeededDetail } from './filters/
 import '../app/dashboard-icon-picker'
 import '../chat/chat-drawer'
 import { agentIcon } from '../chat/agent-icon'
+import './visual-modal'
 
 const emptyStatus: DashboardStatus = {
   loading: false,
@@ -2973,6 +2974,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           </div>
         </div>
       </section>
+      <lv-visual-modal></lv-visual-modal>
     `
   }
 

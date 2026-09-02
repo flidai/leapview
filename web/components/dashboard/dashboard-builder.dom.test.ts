@@ -2053,7 +2053,7 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
       const previewWrapper = root.querySelector('.visual-preview') as HTMLElement | null
       const hostBox = host?.getBoundingClientRect()
       const wrapperBox = previewWrapper?.getBoundingClientRect()
-      return {
+      const initialState = {
         hostCount: root.querySelectorAll('.visual-preview lv-visualization-host').length,
         visualTag: root.querySelector('.visual')?.localName,
         visualRole: root.querySelector('.visual')?.getAttribute('role'),
@@ -2069,6 +2069,24 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
         emptyPreviewCount: root.querySelectorAll('.visual-preview-empty').length,
         previewTitleCount: root.querySelectorAll('.visual-preview ~ .visual-title').length,
         previewTypeCount: root.querySelectorAll('.visual-preview ~ .visual-type').length,
+      }
+      const expand = host?.shadowRoot?.querySelector('button[aria-label="Expand chart"]') as HTMLButtonElement | null
+      expand?.click()
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const modal = root.querySelector('lv-visual-modal') as any
+      await modal?.updateComplete
+      const focusDialog = modal?.shadowRoot?.querySelector('[role="dialog"]')?.getAttribute('aria-label')
+      const close = modal?.shadowRoot?.querySelector('button[aria-label="Close visual modal"]') as HTMLButtonElement | null
+      const closeButton = close?.getAttribute('aria-label')
+      close?.click()
+      await modal?.updateComplete
+      return {
+        ...initialState,
+        expandButton: expand?.getAttribute('aria-label'),
+        focusDialog,
+        closeButton,
+        modalClosed: !modal?.shadowRoot?.querySelector('[role="dialog"]'),
+        hostRestored: root.querySelector('.visual-preview lv-visualization-host') === host,
       }
     })
     expect(state.hostCount).toBe(1)
@@ -2086,6 +2104,11 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
     expect(state.emptyPreviewCount).toBe(0)
     expect(state.previewTitleCount).toBe(0)
     expect(state.previewTypeCount).toBe(0)
+    expect(state.expandButton).toBe('Expand chart')
+    expect(state.focusDialog).toBe('Sales by status')
+    expect(state.closeButton).toBe('Close visual modal')
+    expect(state.modalClosed).toBe(true)
+    expect(state.hostRestored).toBe(true)
   } finally {
     await page.close()
   }
