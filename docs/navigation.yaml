@@ -535,6 +535,11 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/postgresql-authority-reconciliation
+            title: PostgreSQL authority reconciliation
+            type: explanation
+            summary: Understand the reconciled PostgreSQL ownership, transaction, role, and compatibility boundaries.
+            source: articles/architecture/postgresql-authority-reconciliation.md
           - slug: architecture/arrow-optimization-evidence
             title: Evidence-gated Arrow optimization
             type: explanation
