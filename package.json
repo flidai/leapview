@@ -58,6 +58,7 @@
   },
   "devDependencies": {
     "@axe-core/playwright": "^4.13.0",
+    "@babel/parser": "8.0.4",
     "@fontsource-variable/inter": "^5.2.8",
     "@playwright/test": "^1.61.1",
     "@primer/primitives": "11.10.0",
@@ -81,7 +82,7 @@
     "react": "^19.2.7",
     "react-dom": "^19.2.7",
     "tailwindcss": "4.3.3",
-    "typescript": "5.9.3"
+    "typescript": "7.0.2"
   },
   "dependencies": {
     "@shikijs/monaco": "^4.3.0",

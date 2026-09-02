@@ -1,4 +1,4 @@
-import ts from 'typescript'
+import { parse } from '@babel/parser'
 import { relative, resolve } from 'node:path'
 import { readFileSync } from 'node:fs'
 
@@ -8,88 +8,166 @@ export type UICommandBoundaryViolation = {
   message: string
 }
 
+type ASTNode = {
+  type: string
+  loc?: { start: { line: number } } | null
+  [key: string]: unknown
+}
+
 const mutationMethods = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
 
 export function inspectUICommandSource(file: string, source: string, generatedUIOperations?: ReadonlySet<string>): UICommandBoundaryViolation[] {
-  const parsed = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true)
-  const violations: UICommandBoundaryViolation[] = []
-  const report = (node: ts.Node, message: string) => {
-    const line = parsed.getLineAndCharacterOfPosition(node.getStart(parsed)).line + 1
-    violations.push({ file, line, message })
+  let parsed: ASTNode
+  try {
+    parsed = parse(source, { sourceType: 'module', plugins: ['typescript', 'jsx', 'decorators'] }) as unknown as ASTNode
+  } catch (error) {
+    const line = parserErrorLine(error)
+    return [{ file, line, message: 'UI boundary source could not be parsed safely' }]
   }
-  const visit = (node: ts.Node) => {
-	if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'fetch') {
-	  const options = node.arguments[1]
-	  if (options && !ts.isObjectLiteralExpression(options)) {
-		report(options, 'fetch options are dynamic, so the UI boundary cannot prove the request is read-only')
-	  } else if (options) {
-		const method = options.properties.find((property) =>
-		  property.name?.getText(parsed).replaceAll(/['"]/g, '') === 'method')
+  const violations: UICommandBoundaryViolation[] = []
+  const report = (node: ASTNode, message: string) => violations.push({ file, line: node.loc?.start.line ?? 1, message })
+  const visit = (node: ASTNode) => {
+    if (node.type === 'CallExpression' && identifierName(node.callee) === 'fetch') {
+      const options = nodeArguments(node)[1]
+      if (options && options.type !== 'ObjectExpression') {
+        report(options, 'fetch options are dynamic, so the UI boundary cannot prove the request is read-only')
+      } else if (options) {
+        const method = nodeArray(options.properties).find((property) => objectPropertyName(property) === 'method')
         if (method) {
-		  const initializer = ts.isPropertyAssignment(method) ? method.initializer : undefined
-		  if (!initializer || !ts.isStringLiteralLike(initializer) || mutationMethods.has(initializer.text.toUpperCase())) {
-			const operationID = generatedOperationHeader(options)
-			if (!operationID) {
+          const initializer = method.type === 'ObjectProperty' ? asNode(method.value) : undefined
+          const methodName = initializer ? stringValue(initializer) : undefined
+          if (!methodName || mutationMethods.has(methodName.toUpperCase())) {
+            const operationID = generatedOperationHeader(options)
+            if (!operationID) {
               report(method, 'direct mutating fetch bypasses the generated UI command transport')
-			} else if (generatedUIOperations && !generatedUIOperations.has(operationID)) {
-			  report(method, `direct mutating fetch references non-generated UI operation ${JSON.stringify(operationID)}`)
-			}
+            } else if (generatedUIOperations && !generatedUIOperations.has(operationID)) {
+              report(method, `direct mutating fetch references non-generated UI operation ${JSON.stringify(operationID)}`)
+            }
           }
         }
       }
     }
-    if (ts.isStringLiteralLike(node)) {
-      if (node.text.includes('@post(') || node.text.includes('@patch(')) {
+    const literal = stringValue(node)
+    if (literal !== undefined) {
+      if (literal.includes('@post(') || literal.includes('@patch(')) {
         report(node, 'direct Datastar mutation expression bypasses a classified UI action helper')
       }
-      if (node.text.toLowerCase() === 'x-leapview-operation-id' && !file.endsWith('web/components/shared/command.ts')) {
+      if (literal.toLowerCase() === 'x-leapview-operation-id' && !file.endsWith('web/components/shared/command.ts')) {
         report(node, 'operation identity headers must be authored by the shared command transport')
       }
     }
-    if (ts.isBinaryExpression(node) && node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
-      ts.isPropertyAccessExpression(node.left) && node.left.expression.getText(parsed) === 'window' && node.left.name.text === 'LeapViewCommand' &&
+    if (node.type === 'AssignmentExpression' && node.operator === '=' && memberPath(node.left) === 'window.LeapViewCommand' &&
       !file.endsWith('web/components/shared/command.ts')) {
       report(node, 'the LeapView command transport may only be installed by the shared command module')
     }
-    ts.forEachChild(node, visit)
+    for (const child of childNodes(node)) visit(child)
   }
   visit(parsed)
   return violations
 }
 
-export function checkUICommandBoundaries(root = process.cwd()): UICommandBoundaryViolation[] {
+export async function checkUICommandBoundaries(root = process.cwd()): Promise<UICommandBoundaryViolation[]> {
   const webRoot = resolve(root, 'web')
   const ir = JSON.parse(readFileSync(resolve(root, 'api/gen/json-ir.json'), 'utf8')) as {
-	endpoints?: Array<{ operation_id?: string, command?: { ui?: unknown } }>
+    endpoints?: Array<{ operation_id?: string, command?: { ui?: unknown } }>
   }
   const generatedUIOperations = new Set((ir.endpoints ?? [])
-	.filter((endpoint) => endpoint.command?.ui != null)
-	.map((endpoint) => endpoint.operation_id ?? '')
-	.filter(Boolean))
-  const files = ts.sys.readDirectory(webRoot, ['.ts', '.tsx'], ['**/*.test.ts', '**/*.dom.test.ts', '**/generated/**', '**/benchmarks/**'])
-  return files.flatMap((file) => inspectUICommandSource(relative(root, file), ts.sys.readFile(file) ?? '', generatedUIOperations))
+    .filter((endpoint) => endpoint.command?.ui != null)
+    .map((endpoint) => endpoint.operation_id ?? '')
+    .filter(Boolean))
+  const glob = new Bun.Glob('**/*.{ts,tsx}')
+  const files: string[] = []
+  for await (const file of glob.scan({ cwd: webRoot, onlyFiles: true })) {
+    if (/\.(?:dom\.)?test\.tsx?$/.test(file) || file.includes('/generated/') || file.startsWith('generated/') || file.includes('/benchmarks/')) continue
+    files.push(file)
+  }
+  files.sort()
+  const results = await Promise.all(files.map(async (file) => inspectUICommandSource(
+    relative(root, resolve(webRoot, file)),
+    await Bun.file(resolve(webRoot, file)).text(),
+    generatedUIOperations,
+  )))
+  return results.flat()
 }
 
-function generatedOperationHeader(options: ts.ObjectLiteralExpression): string | undefined {
+function generatedOperationHeader(options: ASTNode): string | undefined {
   let operationID: string | undefined
-  const visit = (node: ts.Node) => {
-	if (ts.isCallExpression(node) && ts.isPropertyAccessExpression(node.expression) &&
-		node.expression.getText() === 'window.LeapViewCommand.headers') {
-	  const operation = node.arguments[0]
-	  if (operation && ts.isStringLiteralLike(operation) && operation.text.trim()) operationID = operation.text.trim()
-	}
-	ts.forEachChild(node, visit)
+  const visit = (node: ASTNode) => {
+    if (node.type === 'CallExpression' && memberPath(node.callee) === 'window.LeapViewCommand.headers') {
+      const operation = nodeArguments(node)[0]
+      const value = operation ? stringValue(operation)?.trim() : undefined
+      if (value) operationID = value
+    }
+    for (const child of childNodes(node)) visit(child)
   }
   visit(options)
   return operationID
 }
 
+function childNodes(node: ASTNode): ASTNode[] {
+  const children: ASTNode[] = []
+  for (const value of Object.values(node)) {
+    if (isNode(value)) children.push(value)
+    else if (Array.isArray(value)) for (const item of value) if (isNode(item)) children.push(item)
+  }
+  return children
+}
+
+function isNode(value: unknown): value is ASTNode {
+  return Boolean(value && typeof value === 'object' && typeof (value as { type?: unknown }).type === 'string')
+}
+
+function asNode(value: unknown): ASTNode | undefined { return isNode(value) ? value : undefined }
+
+function nodeArray(value: unknown): ASTNode[] {
+  return Array.isArray(value) ? value.filter(isNode) : []
+}
+
+function nodeArguments(node: ASTNode): ASTNode[] { return nodeArray(node.arguments) }
+
+function identifierName(value: unknown): string | undefined {
+  const node = asNode(value)
+  return node?.type === 'Identifier' && typeof node.name === 'string' ? node.name : undefined
+}
+
+function objectPropertyName(node: ASTNode): string | undefined {
+  if (node.type !== 'ObjectProperty' && node.type !== 'ObjectMethod') return undefined
+  const key = asNode(node.key)
+  return key ? identifierName(key) ?? stringValue(key) : undefined
+}
+
+function stringValue(node: ASTNode): string | undefined {
+  if (node.type === 'StringLiteral' && typeof node.value === 'string') return node.value
+  if (node.type === 'TemplateLiteral' && nodeArray(node.expressions).length === 0) {
+    const quasi = nodeArray(node.quasis)[0]
+    const value = quasi?.value
+    if (value && typeof value === 'object' && typeof (value as { cooked?: unknown }).cooked === 'string') return (value as { cooked: string }).cooked
+  }
+  return undefined
+}
+
+function memberPath(value: unknown): string | undefined {
+  const node = asNode(value)
+  if (!node) return undefined
+  const identifier = identifierName(node)
+  if (identifier) return identifier
+  if (node.type !== 'MemberExpression' && node.type !== 'OptionalMemberExpression') return undefined
+  const object = memberPath(node.object)
+  const property = asNode(node.property)
+  const name = node.computed ? property && stringValue(property) : property && identifierName(property)
+  return object && name ? `${object}.${name}` : undefined
+}
+
+function parserErrorLine(error: unknown): number {
+  if (!error || typeof error !== 'object') return 1
+  const loc = (error as { loc?: { line?: unknown } }).loc
+  return typeof loc?.line === 'number' ? loc.line : 1
+}
+
 if (import.meta.main) {
-  const violations = checkUICommandBoundaries()
+  const violations = await checkUICommandBoundaries()
   if (violations.length > 0) {
-    for (const violation of violations) {
-      console.error(`${violation.file}:${violation.line}: ${violation.message}`)
-    }
+    for (const violation of violations) console.error(`${violation.file}:${violation.line}: ${violation.message}`)
     process.exit(1)
   }
 }
