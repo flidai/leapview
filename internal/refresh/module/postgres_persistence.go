@@ -421,6 +421,32 @@ func operationRunID(op refreshoperation.Record) (string, bool) {
 	return runID, true
 }
 
+// operationCancelOutcome accepts only the exact terminal evidence emitted by
+// keyed cancellation. Both the run identity and cancelled status are needed
+// to prevent a replay from trusting an ambiguous or incomplete result.
+func operationCancelOutcome(op refreshoperation.Record) (string, string, bool) {
+	if op.State != "completed" || len(op.Outcome) == 0 {
+		return "", "", false
+	}
+	var fields map[string]json.RawMessage
+	if err := strictjson.DecodeWithOptions(op.Outcome, &fields, strictjson.Options{MaxBytes: 32768, MaxDepth: 4, DuplicateKeys: strictjson.CaseSensitiveKeys}); err != nil || len(fields) != 2 {
+		return "", "", false
+	}
+	rawRunID, runOK := fields["runId"]
+	rawStatus, statusOK := fields["status"]
+	if !runOK || !statusOK {
+		return "", "", false
+	}
+	var runID, status string
+	if err := strictjson.DecodeWithOptions(rawRunID, &runID, strictjson.Options{MaxBytes: 256, MaxDepth: 2}); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
+		return "", "", false
+	}
+	if err := strictjson.DecodeWithOptions(rawStatus, &status, strictjson.Options{MaxBytes: 64, MaxDepth: 2}); err != nil || status != refreshrun.RunStatusCancelled {
+		return "", "", false
+	}
+	return runID, status, true
+}
+
 // CreateRunTree is the PostgreSQL atomic admission boundary used by
 // QueuePipelineRefresh. It constructs deterministic dependency identities and
 // delegates one transaction containing root insertion, Replace supersession,
@@ -1039,6 +1065,107 @@ func (p *postgresRunPersistence) CancelRunWithAudit(ctx context.Context, identit
 		return refreshrun.RunRecord{}, err
 	}
 	return fromPostgresRun(run)
+}
+
+// CancelRunWithAuditKeyed reserves the shared platform operation for a native
+// cancellation and composes its terminal outcome with the refresh run, the
+// canonical platform job, and the cancellation audit in one caller-owned
+// PostgreSQL transaction. Replays read the exact {runId,status} evidence and
+// return the original cancelled run without invoking either callback.
+func (p *postgresRunPersistence) CancelRunWithAuditKeyed(ctx context.Context, identity projectgraph.ServingIdentity, runID, actorID, idempotencyKey, requestDigest string, intent *access.AuditIntent) (refreshrun.RunRecord, bool, error) {
+	if p == nil || p.repository == nil || p.operations == nil {
+		return refreshrun.RunRecord{}, false, errors.New("refresh PostgreSQL keyed cancellation is unavailable")
+	}
+	if err := identity.Validate(); err != nil {
+		return refreshrun.RunRecord{}, false, err
+	}
+	actorID = strings.TrimSpace(actorID)
+	rawKey, rawDigest := idempotencyKey, requestDigest
+	idempotencyKey = strings.TrimSpace(rawKey)
+	requestDigest = strings.TrimSpace(rawDigest)
+	if actorID == "" || idempotencyKey == "" || requestDigest == "" || rawKey != idempotencyKey || rawDigest != requestDigest {
+		return refreshrun.RunRecord{}, false, errors.New("refresh keyed cancellation identity is required")
+	}
+	if intent == nil {
+		if fromContext, ok := refreshrun.AuditIntentFromContext(ctx); ok {
+			intent = &fromContext
+		}
+	}
+	if intent != nil && p.cancelAuditWriter == nil {
+		return refreshrun.RunRecord{}, false, errors.New("refresh cancellation audit writer is required")
+	}
+	lifecycle, err := p.queueLifecycle()
+	if err != nil {
+		return refreshrun.RunRecord{}, false, err
+	}
+	scope := refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID}
+	var cancelled refreshpostgres.Run
+	replayed := false
+	err = p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
+		acquired, acquireErr := p.operations.AcquireTx(ctx, tx, refreshoperation.AcquireInput{
+			Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment), OperationType: "refresh_pipeline_cancel",
+			IdempotencyKey: idempotencyKey, RequestDigest: requestDigest, OwnerID: actorID,
+			Lease: 2 * time.Minute, Retention: 24 * time.Hour,
+		})
+		if acquireErr != nil {
+			return acquireErr
+		}
+		if acquired.Operation.Scope != refreshOperationScope(identity.ProjectID.String(), identity.Environment) || acquired.Operation.OperationType != "refresh_pipeline_cancel" || acquired.Operation.IdempotencyKey != idempotencyKey || acquired.Operation.RequestDigest != requestDigest {
+			return refreshpostgres.ErrConflict
+		}
+		if acquired.Status == refreshoperation.Replay || acquired.Replay {
+			evidenceRunID, evidenceStatus, ok := operationCancelOutcome(acquired.Operation)
+			if !ok || evidenceRunID != runID || evidenceStatus != refreshrun.RunStatusCancelled {
+				return refreshpostgres.ErrConflict
+			}
+			replay, replayErr := p.repository.GetRunTx(ctx, tx, scope, runID)
+			if replayErr != nil {
+				return replayErr
+			}
+			if replay.Status != evidenceStatus {
+				return refreshpostgres.ErrConflict
+			}
+			cancelled = replay
+			replayed = true
+			return nil
+		}
+		if acquired.Status != refreshoperation.Acquired {
+			return refreshpostgres.ErrConflict
+		}
+		prior, priorErr := p.repository.LookupRunTx(ctx, tx, runID)
+		if priorErr != nil {
+			return priorErr
+		}
+		if prior.ProjectID != identity.ProjectID.String() || prior.Environment != identity.Environment || prior.GenerationID != identity.GenerationID || prior.ParentRunID != "" || prior.TargetType != refreshrun.TargetRefreshPipeline || prior.JobID == "" {
+			return refreshpostgres.ErrNotFound
+		}
+		cancelled, err = p.repository.CancelRunWithAuditTx(ctx, tx, scope, runID, func(auditCtx context.Context, auditTx refreshpostgres.Tx) error {
+			if intent != nil {
+				auditIntent := *intent
+				auditIntent.RequestDigest = requestDigest
+				if err := p.cancelAuditWriter.RecordRefreshCancelAuditTx(auditCtx, auditTx, auditIntent); err != nil {
+					return err
+				}
+			}
+			return lifecycle.CancelJobTx(auditCtx, auditTx, prior.JobID)
+		})
+		if err != nil {
+			return err
+		}
+		outcome, marshalErr := json.Marshal(struct {
+			RunID  string `json:"runId"`
+			Status string `json:"status"`
+		}{cancelled.RunID, cancelled.Status})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		return p.operations.CompleteTx(ctx, tx, acquired.Lease, outcome)
+	})
+	if err != nil {
+		return refreshrun.RunRecord{}, false, err
+	}
+	row, err := fromPostgresRun(cancelled)
+	return row, replayed, err
 }
 
 func (p *postgresRunPersistence) CheckInvocationAdmission(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, source string) error {

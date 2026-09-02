@@ -28,3 +28,21 @@ func TestOperationRunIDRequiresExactTerminalEvidence(t *testing.T) {
 		}
 	}
 }
+
+func TestOperationCancelOutcomeRequiresExactTerminalEvidence(t *testing.T) {
+	valid := refreshoperation.Record{State: "completed", Outcome: json.RawMessage(`{"runId":"run-1","status":"cancelled"}`)}
+	if gotRun, gotStatus, ok := operationCancelOutcome(valid); !ok || gotRun != "run-1" || gotStatus != "cancelled" {
+		t.Fatalf("valid cancellation evidence = (%q, %q, %v)", gotRun, gotStatus, ok)
+	}
+	for _, raw := range []string{
+		`{"runId":"run-1"}`,
+		`{"runId":"run-1","status":"cancelled","extra":true}`,
+		`{"runId":"run-1","status":"succeeded"}`,
+		`{"runId":"run-1","status":"cancelled","runId":"run-2"}`,
+		`{"RunId":"run-1","status":"cancelled"}`,
+	} {
+		if gotRun, gotStatus, ok := operationCancelOutcome(refreshoperation.Record{State: "completed", Outcome: json.RawMessage(raw)}); ok {
+			t.Fatalf("ambiguous cancellation evidence %q accepted as (%q, %q)", raw, gotRun, gotStatus)
+		}
+	}
+}

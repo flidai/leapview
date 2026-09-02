@@ -57,6 +57,15 @@ func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 	if cancel.UI == nil || cancel.UI.ActionID != "refresh.cancel" || len(cancel.AdditionalExposures) != 1 || string(cancel.AdditionalExposures[0]) != "ui" {
 		t.Errorf("cancel refresh UI contract = %#v", cancel)
 	}
+	cancelConflict := false
+	for _, failure := range cancel.Failures {
+		if failure.Kind == "conflict" && failure.StatusCode == 409 && failure.Code == "REFRESH_RUN_CONFLICT" {
+			cancelConflict = true
+		}
+	}
+	if !cancelConflict {
+		t.Errorf("cancel refresh conflict contract = %#v", cancel.Failures)
+	}
 	if create.Execution == nil || create.Execution.Guarantee != "transactional" ||
 		create.Execution.JobKind != "refresh_pipeline" || create.Execution.ResourceKind != "refresh" ||
 		create.Execution.InitialEvent != refreshQueuedAuditAction || create.Execution.InitialState != "queued" ||

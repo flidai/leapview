@@ -15,7 +15,19 @@ type Credentials struct {
 	Target          string
 	Token           string
 	CanonicalOrigin string
+	// DeliveryMode is negotiated from the target's composed capabilities. It
+	// is intentionally carried with resolved credentials so project-dev remote
+	// factories cannot infer transport support from an implementation type.
+	DeliveryMode DeliveryMode
 }
+
+// DeliveryMode identifies the target-owned project authoring transport.
+type DeliveryMode string
+
+const (
+	DeliveryModeNativePostgres DeliveryMode = "native_postgres"
+	DeliveryModeLegacySQLite   DeliveryMode = "legacy_sqlite"
+)
 
 // Client is the narrow application-facing port used by capability CLI
 // adapters. Implementations own credential and transport configuration.

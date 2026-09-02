@@ -4543,6 +4543,7 @@ paths:
                 buildRevision: example
                 buildTime: example
                 buildVersion: example
+                deliveryMode: native_postgres
                 environment: example
                 queryFormats:
                   - application/json
@@ -50442,6 +50443,10 @@ paths:
           success_action: refresh.cancelled
         authz_mode: authenticated
         failures:
+          - code: REFRESH_RUN_CONFLICT
+            kind: conflict
+            public_detail: The refresh run conflicts with its current state.
+            status_code: !!float 409
           - code: REFRESH_RUN_NOT_CANCELLABLE
             kind: not_cancellable
             public_detail: Only queued refresh runs can be cancelled.
@@ -64951,6 +64956,7 @@ components:
         - buildDevelopment
         - environment
         - authentication
+        - deliveryMode
         - queryFormats
         - uploadProtocols
         - visualization
@@ -64982,6 +64988,8 @@ components:
             $ref: '#/components/schemas/AuthenticationMode'
           example:
             - bearer
+        deliveryMode:
+          $ref: '#/components/schemas/DeliveryMode'
         queryFormats:
           type: array
           items:
@@ -65005,6 +65013,7 @@ components:
         buildRevision: example
         buildTime: example
         buildVersion: example
+        deliveryMode: native_postgres
         environment: example
         queryFormats:
           - application/json
@@ -74328,6 +74337,16 @@ components:
         - released
         - expired
       example: active
+    DeliveryMode:
+      type: string
+      enum:
+        - native_postgres
+        - legacy_sqlite
+      description: |-
+        Project authoring delivery transport exposed by this composed server.
+        Native PostgreSQL targets use the canonical plan/build APIs; local SQLite
+        targets retain the legacy candidate synchronization protocol.
+      example: native_postgres
     DeliveryOperationKind:
       type: string
       enum:

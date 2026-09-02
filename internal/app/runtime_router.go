@@ -174,6 +174,9 @@ type platformServices struct {
 	apiProtocol             *apiprotocol.Protocol
 	apiGenServers           apiaggregate.Servers
 	requireActiveDeployment bool
+	// nativeDelivery is derived from the composed deployment mutation port and
+	// is surfaced through /capabilities for authoring transport negotiation.
+	nativeDelivery bool
 }
 
 type httpPolicy struct {
@@ -935,6 +938,7 @@ func buildApplicationSurfaces(
 		}
 	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
+	platform.nativeDelivery = moduleWorkflow.deploymentConfig.NativeDeliveryMutations != nil
 	policy.managedDataTus = httpConfig.ManagedDataTus
 	storage.jobLeaseTimeout = httpConfig.JobLeaseTimeout
 	if storage.jobLeaseTimeout <= 0 {
@@ -1744,6 +1748,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		managedDataModule:  routes.managedDataModule,
 		productAPI:         routes.adminModule,
 		arrowQueries:       supportsNativeArrow(runtime.metrics),
+		nativeDelivery:     platform.nativeDelivery,
 		defaultEnvironment: policy.defaultEnvironment, managedDataTus: policy.managedDataTus,
 		instanceID: storage.instanceID, canonicalOrigin: storage.publicURL, buildIdentity: platform.buildIdentity,
 	}

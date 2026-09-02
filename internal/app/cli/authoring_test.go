@@ -1,12 +1,15 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -15,6 +18,8 @@ import (
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
+	"github.com/flidai/leapview/internal/platform/cliapi"
+	projectcli "github.com/flidai/leapview/internal/project/cli"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	"github.com/stretchr/testify/require"
 )
@@ -51,6 +56,108 @@ spec:
 	}
 	if identity != got {
 		t.Fatalf("authoring identity = %q, want %q", identity, got)
+	}
+}
+
+func TestProjectDevTransportNegotiatesNativeAndLegacyModes(t *testing.T) {
+	base := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(&candidateSyncTransportStub{}))
+	if _, ok := any(newProjectDevSynchronizationTransport(cliapi.DeliveryModeNativePostgres, base)).(projectdevloop.NativeSynchronizationTransport); !ok {
+		t.Fatal("native delivery mode did not expose native synchronization transport")
+	}
+	legacy := newProjectDevSynchronizationTransport(cliapi.DeliveryModeLegacySQLite, base)
+	if _, ok := any(legacy).(projectdevloop.NativeSynchronizationTransport); ok {
+		t.Fatal("legacy delivery mode exposed native synchronization transport")
+	}
+	if _, ok := any(newProjectDevSynchronizationTransport("", base)).(projectdevloop.NativeSynchronizationTransport); ok {
+		t.Fatal("unspecified delivery mode exposed native synchronization transport")
+	}
+}
+
+func TestRunDevLegacySQLiteAcceptsOpaqueCandidateID(t *testing.T) {
+	projectPath := filepath.Join(t.TempDir(), "leapview.yaml")
+	if err := os.WriteFile(projectPath, []byte(`apiVersion: leapview.dev/v1
+kind: Project
+metadata:
+  id: project:sqlite-regression
+  name: sqlite-regression
+spec:
+  connections: {include: []}
+  sources: {include: []}
+  models: {include: []}
+  semanticModels: {include: []}
+  pipelines: {include: []}
+  dashboards: {include: []}
+  access: {include: []}
+  publications: {include: []}
+`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var server *httptest.Server
+	server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if r.Header.Get("Authorization") != "Bearer token" {
+			t.Fatalf("authorization = %q", r.Header.Get("Authorization"))
+		}
+		switch {
+		case r.URL.Path == "/api/v1/instance":
+			_, _ = fmt.Fprintf(w, `{"id":"lvinst_sqlite","canonicalOrigin":%q,"environment":"evaluation"}`, server.URL)
+		case r.URL.Path == "/api/v1/capabilities":
+			_, _ = fmt.Fprint(w, `{"apiVersion":"v1","buildVersion":"test","buildRevision":"test","buildTime":"2026-08-01T00:00:00Z","buildDirty":false,"buildDevelopment":true,"environment":"evaluation","deliveryMode":"legacy_sqlite","authentication":["bearer"],"queryFormats":["application/json"],"uploadProtocols":[],"visualization":{"schemaVersion":7,"renderers":[]}}`)
+		case strings.HasSuffix(r.URL.Path, "/candidate-sync/plan"):
+			var request deploymentgen.CandidateSynchronizationRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode plan request: %v", err)
+			}
+			missing := make([]string, 0, len(request.Artifacts))
+			for _, artifact := range request.Artifacts {
+				missing = append(missing, artifact.Digest)
+			}
+			_ = json.NewEncoder(w).Encode(deploymentgen.CandidateSynchronizationPlanResponse{PlanId: "sqlite-plan", ArtifactDigest: request.ArtifactDigest, MissingDigests: missing})
+		case strings.Contains(r.URL.Path, "/candidate-sync/blobs/"):
+			pathDigest := strings.TrimPrefix(r.URL.Path[strings.Index(r.URL.Path, "/candidate-sync/blobs/")+len("/candidate-sync/blobs/"):], "/")
+			content, _ := io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(deploymentgen.CandidateSourceBlobResponse{Digest: pathDigest, SizeBytes: int64(len(content))})
+		case strings.HasSuffix(r.URL.Path, "/candidate-sync/commit"):
+			var request deploymentgen.CandidateSynchronizationRequest
+			if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+				t.Fatalf("decode commit request: %v", err)
+			}
+			provenance := "sha256:" + strings.Repeat("b", 64)
+			_ = json.NewEncoder(w).Encode(deploymentgen.CandidateResponse{
+				ArtifactDigest: request.ArtifactDigest, BaseGeneration: "", CandidateKey: "default",
+				CreatedAt: "2026-08-01T00:00:00Z", Environment: "evaluation", ExpiresAt: "2026-08-02T00:00:00Z",
+				Id: "cand_sqlite_1", OwnerId: "principal_sqlite", PreviewUrl: server.URL + "/candidates/cand_sqlite_1",
+				ProjectId: "project:sqlite-regression", ProvenanceDigest: &provenance, Revision: 1,
+				Status: deploymentgen.CandidateStatusReady, TargetId: "target_sqlite", UpdatedAt: "2026-08-01T00:00:00Z",
+			})
+		default:
+			t.Fatalf("unexpected path %q", r.URL.Path)
+		}
+	}))
+	defer server.Close()
+
+	var out, errOut bytes.Buffer
+	err := projectcli.RunDev(
+		t.Context(),
+		capabilityAPIClient{httpClient: server.Client(), validateAuthoring: true},
+		projectcli.NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json")),
+		projectDevRemoteFactory{client: capabilityAPIClient{httpClient: server.Client(), validateAuthoring: true}},
+		projectcli.DevOptions{
+			ProjectPath: projectPath, Credentials: cliapi.Credentials{Target: server.URL, Token: "token"},
+			UploadConcurrency: 1, Once: true, NoBrowser: true, CandidateKey: "default", Format: "json",
+		},
+		nil, &out, &errOut,
+	)
+	if err != nil {
+		t.Fatalf("RunDev returned %v (stderr=%s)", err, errOut.String())
+	}
+	var result projectcli.DevResult
+	if err := json.NewDecoder(&out).Decode(&result); err != nil {
+		t.Fatalf("decode dev result: %v output=%s", err, out.String())
+	}
+	if result.CandidateID != "cand_sqlite_1" {
+		t.Fatalf("candidate ID = %q, want opaque SQLite candidate", result.CandidateID)
 	}
 }
 

@@ -235,6 +235,38 @@ func RequestDigest(identity projectgraph.ServingIdentity, actorID string, pipeli
 	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
+// CancelRequestDigest binds a keyed cancellation to the authenticated actor,
+// the stable project/environment scope, the originating serving generation,
+// and the exact run identity. The originating generation is included because
+// cancellation is generation-fenced even though reads remain available after
+// a later deployment cutover.
+func CancelRequestDigest(identity projectgraph.ServingIdentity, actorID, runID string) (string, error) {
+	if err := identity.Validate(); err != nil {
+		return "", err
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return "", errors.New("refresh actor id is required")
+	}
+	trimmedRunID := strings.TrimSpace(runID)
+	if trimmedRunID == "" || trimmedRunID != runID {
+		return "", errors.New("refresh run id is required")
+	}
+	runID = trimmedRunID
+	payload, err := json.Marshal(struct {
+		Actor       string `json:"actor"`
+		Project     string `json:"project"`
+		Environment string `json:"environment"`
+		Generation  string `json:"generation"`
+		Run         string `json:"run"`
+	}{actorID, identity.ProjectID.String(), identity.Environment, identity.GenerationID, runID})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
+}
+
 // InvocationAdmissionChecker is an optional repository fast-path used before
 // candidate construction. The durable CreateRun transaction remains the final
 // fence; this check prevents an external conflict from allocating physical

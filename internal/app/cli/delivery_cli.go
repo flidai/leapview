@@ -74,7 +74,13 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 		if err != nil {
 			return projectcli.DeliveryPlanResult{}, fmt.Errorf("capture project source snapshot: %w", err)
 		}
-		remote, err := devloop.NewTransportRemote(newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic)), options.UploadConcurrency)
+		remote, err := devloop.NewTransportRemote(
+			newProjectDevSynchronizationTransport(
+				credentials.DeliveryMode,
+				newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic)),
+			),
+			options.UploadConcurrency,
+		)
 		if err != nil {
 			return projectcli.DeliveryPlanResult{}, err
 		}

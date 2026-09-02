@@ -19,6 +19,16 @@ enum UploadProtocol {
   s3Multipart: "s3_multipart",
 }
 
+/**
+ * Project authoring delivery transport exposed by this composed server.
+ * Native PostgreSQL targets use the canonical plan/build APIs; local SQLite
+ * targets retain the legacy candidate synchronization protocol.
+ */
+enum DeliveryMode {
+  nativePostgres: "native_postgres",
+  legacySqlite: "legacy_sqlite",
+}
+
 enum VisualizationRendererID {
   echarts,
   tanstack,
@@ -60,6 +70,7 @@ model CapabilitiesResponse {
   buildDevelopment: boolean;
   environment: string;
   authentication: AuthenticationMode[];
+  deliveryMode: DeliveryMode;
   queryFormats: QueryFormat[];
   uploadProtocols: UploadProtocol[];
   visualization: VisualizationCapabilities;

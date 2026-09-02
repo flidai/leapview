@@ -1771,29 +1771,43 @@ func (r *Repository) FailQueuedRunWithHook(ctx context.Context, scope Scope, run
 func (r *Repository) CancelRunWithAudit(ctx context.Context, scope Scope, runID string, audit func(context.Context, Tx) error) (Run, error) {
 	var out Run
 	err := r.InTx(ctx, func(tx Tx) error {
-		if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
-			return err
-		}
-		tag, err := refreshdb.New(tx).CancelQueuedRun(contextOrBackground(ctx), refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
-		if err != nil {
-			return err
-		}
-		if tag != 1 {
-			return ErrStaleFence
-		}
-		if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "cancelled", json.RawMessage(`{"code":"REFRESH_CANCELLED"}`)); err != nil {
-			return err
-		}
-		if audit != nil {
-			if err := audit(contextOrBackground(ctx), tx); err != nil {
-				return err
-			}
-		}
-		var errRead error
-		out, errRead = r.runByID(contextOrBackground(ctx), tx, runID)
-		return errRead
+		var err error
+		out, err = r.CancelRunWithAuditTx(ctx, tx, scope, runID, audit)
+		return err
 	})
 	return out, err
+}
+
+// CancelRunWithAuditTx performs the queued cancellation and optional caller
+// side effects in a transaction owned by the caller. It is the composition
+// seam used by native keyed cancellation so the shared operation authority,
+// refresh run, canonical job, and audit rows all commit or roll back together.
+func (r *Repository) CancelRunWithAuditTx(ctx context.Context, tx Tx, scope Scope, runID string, audit func(context.Context, Tx) error) (Run, error) {
+	if tx == nil {
+		return Run{}, ErrInvalid
+	}
+	if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
+		return Run{}, err
+	}
+	if err := validateGeneration(scope.GenerationID); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
+		return Run{}, ErrInvalid
+	}
+	tag, err := refreshdb.New(tx).CancelQueuedRun(contextOrBackground(ctx), refreshdb.CancelQueuedRunParams{RunID: runID, ProjectID: scope.ProjectID, Environment: scope.Environment, GenerationID: scope.GenerationID})
+	if err != nil {
+		return Run{}, err
+	}
+	if tag != 1 {
+		return Run{}, ErrStaleFence
+	}
+	if err := r.transitionRunOccurrenceTx(ctx, tx, runID, "cancelled", json.RawMessage(`{"code":"REFRESH_CANCELLED"}`)); err != nil {
+		return Run{}, err
+	}
+	if audit != nil {
+		if err := audit(contextOrBackground(ctx), tx); err != nil {
+			return Run{}, err
+		}
+	}
+	return r.runByID(contextOrBackground(ctx), tx, runID)
 }
 
 // ClaimAttemptTx is the refresh-side evidence boundary. Worker claim

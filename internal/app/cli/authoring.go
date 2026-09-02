@@ -29,6 +29,59 @@ type candidateSynchronizationTransport struct {
 	canonicalOrigin string
 }
 
+// legacyCandidateSynchronizationTransport intentionally exposes only the
+// candidate-sync protocol. Keeping this as a forwarding wrapper (rather than
+// embedding candidateSynchronizationTransport) prevents Go method promotion
+// from making it satisfy NativeSynchronizationTransport accidentally.
+type legacyCandidateSynchronizationTransport struct {
+	base *candidateSynchronizationTransport
+}
+
+func newLegacyCandidateSynchronizationTransport(base *candidateSynchronizationTransport) *legacyCandidateSynchronizationTransport {
+	return &legacyCandidateSynchronizationTransport{base: base}
+}
+
+func (transport *legacyCandidateSynchronizationTransport) Plan(
+	ctx context.Context,
+	request projectdevloop.SynchronizationPlanRequest,
+) (projectdevloop.SynchronizationPlan, error) {
+	if transport == nil {
+		return projectdevloop.SynchronizationPlan{}, fmt.Errorf("candidate synchronization client is not configured")
+	}
+	return transport.base.Plan(ctx, request)
+}
+
+func (transport *legacyCandidateSynchronizationTransport) Upload(
+	ctx context.Context,
+	request projectdevloop.SynchronizationPlanRequest,
+	artifact projectdevloop.Artifact,
+) error {
+	if transport == nil {
+		return fmt.Errorf("candidate synchronization client is not configured")
+	}
+	return transport.base.Upload(ctx, request, artifact)
+}
+
+func (transport *legacyCandidateSynchronizationTransport) Commit(
+	ctx context.Context,
+	request projectdevloop.SynchronizationPlanRequest,
+) (projectdevloop.Candidate, error) {
+	if transport == nil {
+		return projectdevloop.Candidate{}, fmt.Errorf("candidate synchronization client is not configured")
+	}
+	return transport.base.Commit(ctx, request)
+}
+
+func (transport *legacyCandidateSynchronizationTransport) RetainSource(
+	ctx context.Context,
+	request projectdevloop.SynchronizationPlanRequest,
+) (projectdevloop.RetainedSource, error) {
+	if transport == nil {
+		return projectdevloop.RetainedSource{}, fmt.Errorf("candidate synchronization client is not configured")
+	}
+	return transport.base.RetainSource(ctx, request)
+}
+
 type projectDevRemoteFactory struct {
 	client cliapi.Client
 }
@@ -60,13 +113,24 @@ func (factory projectDevRemoteFactory) Remote(
 	if err != nil {
 		return nil, err
 	}
-	transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic))
-	transport.principalClient = accessgen.NewGenClient(generic)
-	transport.canonicalOrigin = credentials.CanonicalOrigin
+	nativeTransport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic))
+	nativeTransport.principalClient = accessgen.NewGenClient(generic)
+	nativeTransport.canonicalOrigin = credentials.CanonicalOrigin
+	transport := newProjectDevSynchronizationTransport(credentials.DeliveryMode, nativeTransport)
 	return projectdevloop.NewTransportRemote(
 		transport,
 		uploadConcurrency,
 	)
+}
+
+func newProjectDevSynchronizationTransport(
+	mode cliapi.DeliveryMode,
+	native *candidateSynchronizationTransport,
+) projectdevloop.SynchronizationTransport {
+	if mode == cliapi.DeliveryModeNativePostgres {
+		return native
+	}
+	return newLegacyCandidateSynchronizationTransport(native)
 }
 
 func newCandidateSynchronizationTransport(

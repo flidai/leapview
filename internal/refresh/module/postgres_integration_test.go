@@ -41,6 +41,13 @@ func (w integrationAuditWriter) RecordRefreshCancelAuditTx(context.Context, refr
 	return nil
 }
 
+type recordingCancelAuditWriter struct{ calls int }
+
+func (w *recordingCancelAuditWriter) RecordRefreshCancelAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error {
+	w.calls++
+	return nil
+}
+
 type integrationCanonicalVerifier struct {
 	physicalPoolID string
 	catalogID      string
@@ -521,7 +528,8 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	operationAuthority, err := refreshcomposition.NewPostgresOperationAuthorityAdapter(operationpostgres.New(db))
+	platformOperations := operationpostgres.New(db)
+	operationAuthority, err := refreshcomposition.NewPostgresOperationAuthorityAdapter(platformOperations)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -616,6 +624,130 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 		t.Fatalf("retry after callback rollback root=%#v err=%v", retried, err)
 	}
 	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackRoot.RunID, rollbackTree.IdempotencyKey, 1, 1, 1, 1, 1)
+}
+
+func TestPostgresKeyedRefreshCancellationReplayConflictsAndRollback(t *testing.T) {
+	db := modulePostgresTestDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	platformOperations := operationpostgres.New(db)
+	operationAuthority, err := refreshcomposition.NewPostgresOperationAuthorityAdapter(platformOperations)
+	if err != nil {
+		t.Fatal(err)
+	}
+	auditWriter := &recordingCancelAuditWriter{}
+	identity := projectgraph.ServingIdentity{ProjectID: "project-cancel-keyed", Environment: "prod", GenerationID: "generation-cancel-keyed"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline-plan-cancel-keyed", PipelineID: "pipeline-cancel-keyed", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic-cancel-keyed", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: "sha256:" + strings.Repeat("a", 64), SelectionDigest: "sha256:" + strings.Repeat("b", 64), MaterializationScope: []string{"model-cancel-keyed"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	create := func(runID string, audit PostgresCancelAuditWriter) (refreshrun.RunRecord, *postgresRunPersistence) {
+		configured, createErr := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+			PublicationIdentityResolver: staticPublicationIdentityResolver("pool-cancel-keyed", "catalog-cancel-keyed"), SchedulerOwner: "scheduler-cancel-keyed",
+			Jobs: queue, CanonicalVerifier: integrationCanonicalVerifier{physicalPoolID: "pool-cancel-keyed", catalogID: "catalog-cancel-keyed"}, Operations: operationAuthority, CancelAuditWriter: audit,
+		})
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		root, createErr := createTreeRootE(t.Context(), configured.Runs, refreshrun.RunInput{
+			RunID: runID, Identity: identity, SemanticModelID: "semantic-cancel-keyed", PipelineID: "pipeline-cancel-keyed", PipelinePlan: &plan,
+			InvocationSource: "manual", PrincipalID: "principal:cancel-keyed", EstimatedMemoryBytes: 1,
+			TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline-cancel-keyed", TriggerType: refreshrun.TriggerManual, JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`,
+		}, nil)
+		if createErr != nil {
+			t.Fatal(createErr)
+		}
+		return root, configured.Runs.(*postgresRunPersistence)
+	}
+	run, runs := create("run-cancel-keyed", auditWriter)
+	key := "cancel-keyed"
+	digest, err := refreshrun.CancelRequestDigest(identity, "operator:cancel-keyed", run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyed := runs
+	cancelIntent := &access.AuditIntent{EventID: "event-cancel-keyed", ResourceID: run.ID, Operation: "cancel_refresh_run", Outcome: "success"}
+	first, replayed, err := keyed.CancelRunWithAuditKeyed(t.Context(), identity, run.ID, "operator:cancel-keyed", key, digest, cancelIntent)
+	if err != nil {
+		t.Fatalf("first keyed cancellation: %v", err)
+	}
+	if replayed || first.Status != refreshrun.RunStatusCancelled || auditWriter.calls != 1 {
+		t.Fatalf("first cancellation status/audit=%q/%d, want cancelled/1", first.Status, auditWriter.calls)
+	}
+	durableRun, err := refreshRepo.LookupRun(t.Context(), run.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	job, err := jobsRepo.Get(t.Context(), durableRun.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if job.Status != jobs.StatusCancelled {
+		t.Fatalf("cancelled job status=%q, want cancelled", job.Status)
+	}
+	replay, replayed, err := keyed.CancelRunWithAuditKeyed(t.Context(), identity, run.ID, "operator:cancel-keyed", key, digest, nil)
+	if err != nil {
+		t.Fatalf("keyed cancellation replay: %v", err)
+	}
+	if !replayed || replay.ID != first.ID || replay.Status != first.Status || auditWriter.calls != 1 {
+		t.Fatalf("replay id/status/audit=%q/%q/%d, want %q/%q/1", replay.ID, replay.Status, auditWriter.calls, first.ID, first.Status)
+	}
+	changedDigest := digest[:len(digest)-1] + "0"
+	if _, _, err := keyed.CancelRunWithAuditKeyed(t.Context(), identity, run.ID, "operator:cancel-keyed", key, changedDigest, nil); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("changed digest error=%v, want conflict", err)
+	}
+
+	// A different operation type occupying the same scope/key is a durable
+	// conflict and must not reach the run/job mutation.
+	typeConflictKey := "cancel-type-conflict"
+	typeConflictDigest := digest
+	if _, err := platformOperations.Acquire(t.Context(), operationpostgres.AcquireInput{Scope: refreshOperationScope(identity.ProjectID.String(), identity.Environment), OperationType: "other_operation", IdempotencyKey: typeConflictKey, RequestDigest: typeConflictDigest, OwnerID: "operator:cancel-keyed", Lease: time.Minute, Retention: 24 * time.Hour}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := keyed.CancelRunWithAuditKeyed(t.Context(), identity, run.ID, "operator:cancel-keyed", typeConflictKey, typeConflictDigest, nil); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("changed operation type error=%v, want conflict", err)
+	}
+
+	// Audit failure rolls back operation, run, and canonical job together.
+	rollbackRun, rollbackRuns := create("run-cancel-keyed-rollback", integrationAuditWriter{fail: true})
+	rollbackKey := "cancel-keyed-rollback"
+	rollbackDigest, err := refreshrun.CancelRequestDigest(identity, "operator:cancel-keyed", rollbackRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := rollbackRuns.CancelRunWithAuditKeyed(t.Context(), identity, rollbackRun.ID, "operator:cancel-keyed", rollbackKey, rollbackDigest, &access.AuditIntent{EventID: "event-cancel-keyed-rollback", ResourceID: rollbackRun.ID}); err == nil {
+		t.Fatal("cancellation audit failure unexpectedly committed")
+	}
+	unchanged, err := refreshRepo.LookupRun(t.Context(), rollbackRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unchanged.Status != refreshrun.RunStatusQueued {
+		t.Fatalf("rollback run status=%q, want queued", unchanged.Status)
+	}
+	rollbackDurable, err := refreshRepo.LookupRun(t.Context(), rollbackRun.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rollbackJob, err := jobsRepo.Get(t.Context(), rollbackDurable.JobID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rollbackJob.Status != jobs.StatusQueued {
+		t.Fatalf("rollback job status=%q, want queued", rollbackJob.Status)
+	}
+	var operationCount int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, refreshOperationScope(identity.ProjectID.String(), identity.Environment), rollbackKey).Scan(&operationCount); err != nil {
+		t.Fatal(err)
+	}
+	if operationCount != 0 {
+		t.Fatalf("rollback operation rows=%d, want 0", operationCount)
+	}
 }
 
 func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo *jobspostgres.Repository, projectID, runID, operationKey string, wantRuns, wantJobs, wantAudit, wantEvents, wantOperations int) {

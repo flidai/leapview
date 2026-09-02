@@ -87,6 +87,17 @@ type RunPersistence interface {
 	CancelRunWithAudit(context.Context, projectgraph.ServingIdentity, string, *access.AuditIntent) (refreshrun.RunRecord, error)
 }
 
+// KeyedCancelRunPersistence is the native cancellation capability. Keyed
+// cancellation reserves the shared platform operation and commits its
+// terminal run/job/audit evidence in the same PostgreSQL transaction. Legacy
+// SQLite (and direct non-keyed callers) continue to use RunPersistence's
+// CancelRunWithAudit method.
+type KeyedCancelRunPersistence interface {
+	// The replay result lets command surfaces suppress post-commit callbacks
+	// after the exact transaction outcome has already been returned once.
+	CancelRunWithAuditKeyed(context.Context, projectgraph.ServingIdentity, string, string, string, string, *access.AuditIntent) (refreshrun.RunRecord, bool, error)
+}
+
 func (p Persistence) Validate() error {
 	if p.Runs == nil {
 		return errors.New("refresh run persistence is required")

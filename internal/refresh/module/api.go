@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -14,6 +15,7 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/flidai/leapview/pkg/jobs"
 )
@@ -27,6 +29,10 @@ type EventStore interface {
 // the refresh module boundary so application composition does not import a
 // product capability's generated transport package directly.
 const CreateRefreshRunOperationID = string(refreshgen.GenOperationCreateRefreshRun)
+
+// CancelRefreshRunOperationID exposes the generated cancellation identity for
+// production protocol composition.
+const CancelRefreshRunOperationID = string(refreshgen.GenOperationCancelRefreshRun)
 
 func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
 	logger := m.logger
@@ -150,7 +156,7 @@ func (m *Module) GetRefreshRun(w http.ResponseWriter, r *http.Request, project, 
 	m.handler.GetRun(w, r, project, runID)
 }
 
-func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, project, runID string) {
+func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, project, runID, idempotencyKey string) {
 	operationID := refreshgen.GenCommandOperationCancelRefreshRun()
 	if m == nil || m.runs == nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
@@ -203,19 +209,54 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 			principalID = principal.ID
 		}
 	}
-	if intent, intentErr := buildRefreshAuditIntent(cancelCtx, operationID.APIGenOperationID(), principalID, identity.ProjectID.String(), r.Header.Get("Idempotency-Key"), r.Header.Get("X-Correlation-Id")); intentErr == nil && intent != nil {
-		intent.EventID = ""
-		cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
+	intent, intentErr := buildRefreshAuditIntent(cancelCtx, operationID.APIGenOperationID(), principalID, identity.ProjectID.String(), idempotencyKey, r.Header.Get("X-Correlation-Id"))
+	if intentErr != nil || intent == nil {
+		if intentErr == nil {
+			intentErr = errors.New("refresh cancellation audit intent is unavailable")
+		}
+		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", intentErr))
+		return
 	}
+	intent.EventID = ""
+	cancelCtx = refreshrun.WithAuditIntent(cancelCtx, *intent)
 	cancel, cancelErr := m.cancelRuns()
 	if cancelErr != nil {
 		writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("unavailable", "Refresh service is unavailable"))
 		return
 	}
-	row, err := cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+	var row refreshrun.RunRecord
+	replayed := false
+	if strings.TrimSpace(idempotencyKey) != "" {
+		keyed, keyedOK := cancel.(KeyedCancelRunPersistence)
+		if keyedOK {
+			requestDigest, digestErr := refreshrun.CancelRequestDigest(prior.Identity, principalID, runID)
+			if digestErr != nil {
+				writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.Wrap("unavailable", digestErr))
+				return
+			}
+			row, replayed, err = keyed.CancelRunWithAuditKeyed(cancelCtx, prior.Identity, runID, principalID, idempotencyKey, requestDigest, nil)
+		} else {
+			// Legacy SQLite and evaluation repositories do not expose the native
+			// operation port. Their surrounding API idempotency layer remains the
+			// authority, so preserve the historical cancellation call.
+			row, err = cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+		}
+	} else {
+		// Direct/local callers that do not carry a generated idempotency key
+		// retain the legacy cancellation behavior (notably SQLite).
+		row, err = cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
+	}
 	if err != nil {
 		if errors.Is(err, refreshrun.ErrRunNotCancellable) {
 			writeRefreshCommandFailure(m, w, r, operationID, err)
+			return
+		}
+		if errors.Is(err, refreshpostgres.ErrStaleFence) {
+			writeRefreshCommandFailure(m, w, r, operationID, refreshrun.ErrRunNotCancellable)
+			return
+		}
+		if errors.Is(err, refreshpostgres.ErrConflict) {
+			writeRefreshCommandFailure(m, w, r, operationID, apigenfailure.New("conflict", "refresh cancellation request conflicts with a prior request"))
 			return
 		}
 		if errors.Is(err, sql.ErrNoRows) {
@@ -230,9 +271,11 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 		writeRefreshCommandFailure(m, w, r, operationID, errors.New("refresh response is invalid"))
 		return
 	}
-	if err := m.verifyRunCancelled(r.Context(), row); err != nil {
-		writeRefreshCommandFailure(m, w, r, operationID, err)
-		return
+	if !replayed {
+		if err := m.verifyRunCancelled(r.Context(), row); err != nil {
+			writeRefreshCommandFailure(m, w, r, operationID, err)
+			return
+		}
 	}
 	w.Header().Set("Location", "/api/v1/projects/"+identity.ProjectID.String()+"/refresh-runs/"+runID)
 	apitransport.WriteJSON(w, http.StatusAccepted, response)

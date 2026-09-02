@@ -34,7 +34,7 @@ type generatedRefreshAPI interface {
 	CreateRefreshRun(http.ResponseWriter, *http.Request, string, string)
 	ListRefreshRuns(http.ResponseWriter, *http.Request, string)
 	GetRefreshRun(http.ResponseWriter, *http.Request, string, string)
-	CancelRefreshRun(http.ResponseWriter, *http.Request, string, string)
+	CancelRefreshRun(http.ResponseWriter, *http.Request, string, string, string)
 	ListRefreshRunEvents(http.ResponseWriter, *http.Request, string, string, *int32, *string)
 }
 
