@@ -65,9 +65,10 @@ demo login:
 - `DEMO_VIEWER_EMAIL`
 - `DEMO_VIEWER_PASSWORD`
 
-The shared principal is `demo@leapview.dev`. The project grants it only
-`RESOURCE_USE` and `RESOURCE_READ` on the canonical project and dashboard
-resource IDs. Do not bind it to the built-in `viewer` role: that role
+The shared principal is `demo@leapview.dev`. After activation, the deployment
+workflow reconciles only `RESOURCE_USE` and `RESOURCE_READ` grants through the
+authenticated control API for the canonical semantic-model and dashboard IDs.
+Do not bind it to the built-in `viewer` role: that role
 also enables the agent and shared conversation history. The shared login must
 never receive administration, authoring, preview, refresh, deployment, token,
 or connection privileges.
@@ -76,8 +77,8 @@ Treat the shared credential as public. To rotate it, reset the local password,
 revoke every existing session for the principal, complete the forced password
 change, and update `DEMO_VIEWER_PASSWORD` in Infisical. A password reset alone
 does not revoke an already-issued browser session. On a replacement instance,
-create the local shared principal before the first project deployment; the
-project deployment then reconciles its least-privilege grants.
+create the local shared principal before the first analytics deployment; the
+deployment workflow then reconciles its least-privilege control-plane grants.
 
 The checked-in `ssh-host-key.sha256` pins the server identity. The workflow
 adds only its current runner `/32` to SSH, then restores the complete prior

@@ -18,7 +18,8 @@ runner_ip="${DEMO_RUNNER_IP:?Set DEMO_RUNNER_IP to the deployment runner IPv4 ad
 project_path="$repo_root/dashboards"
 data_link="$repo_root/.data/olist"
 fingerprint_file="$repo_root/deploy/demo/ssh-host-key.sha256"
-project_id="project:leapview-showcase"
+project_id="project:source-root"
+demo_principal_id="email_2a7d2952c0d423cf3ea7b39428fb9420"
 candidate_key="hosted-demo"
 temporary_directory="$(mktemp -d)"
 firewall_changed=false
@@ -279,13 +280,51 @@ if [[ "$status" != "active" ]]; then
   exit 1
 fi
 
-"$leapview" api call getProject \
+existing_grants="$("$leapview" api call listGrants \
   --target "$demo_target" \
   --token "$release_token" \
-  --path "project=$project_id" >/dev/null
+  --path "project=$project_id")"
+demo_grants=(
+  'semantic_model|semantic-model:sales|RESOURCE_USE'
+  'semantic_model|semantic-model:sales|RESOURCE_READ'
+  'semantic_model|semantic-model:operations|RESOURCE_USE'
+  'semantic_model|semantic-model:operations|RESOURCE_READ'
+  'dashboard|dashboard:executive-sales|RESOURCE_READ'
+  'dashboard|dashboard:fulfillment-operations|RESOURCE_READ'
+  'dashboard|dashboard:visual-showcase|RESOURCE_READ'
+)
+for grant_spec in "${demo_grants[@]}"; do
+  IFS='|' read -r resource_kind resource_id capability <<<"$grant_spec"
+  if jq -e \
+    --arg resource_kind "$resource_kind" \
+    --arg resource_id "$resource_id" \
+    --arg principal "$demo_principal_id" \
+    --arg capability "$capability" \
+    'any(.items[]?;
+      .resourceKind == $resource_kind and
+      .resourceId == $resource_id and
+      .subjectType == "principal" and
+      .subjectId == $principal and
+      .capability == $capability)' <<<"$existing_grants" >/dev/null; then
+    continue
+  fi
+  grant_body="$(jq -nc \
+    --arg resource_kind "$resource_kind" \
+    --arg resource_id "$resource_id" \
+    --arg principal "$demo_principal_id" \
+    --arg capability "$capability" \
+    '{resourceKind: $resource_kind, resourceId: $resource_id, subjectType: "principal", subjectId: $principal, capability: $capability}')"
+  created_grant="$("$leapview" api call createGrant \
+    --target "$demo_target" \
+    --token "$release_token" \
+    --path "project=$project_id" \
+    --body-json "$grant_body" \
+    --idempotency-key "demo-grant-$source_revision-${resource_kind}-${resource_id//[:]/-}-$capability")"
+  existing_grants="$(jq --argjson grant "$created_grant" '.items += [$grant]' <<<"$existing_grants")"
+done
 
 jq -e --arg project "$project_id" '
   .projectId == $project and .evidence.projectId == $project
 ' <<<"$deployment" >/dev/null
 curl --fail --silent --show-error --max-time 15 "$demo_target/readyz" >/dev/null
-printf 'deployed %s and the canonical project showcase to %s\n' "$demo_image" "$demo_target"
+printf 'deployed %s and the canonical analytics showcase to %s\n' "$demo_image" "$demo_target"
