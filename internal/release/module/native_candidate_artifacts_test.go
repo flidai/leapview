@@ -10,6 +10,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -332,6 +333,52 @@ func TestNativeCandidateMaterializeAndHydrateUsesImmutableServingObject(t *testi
 	}
 	if replayed.Generation.BundleManifestJSON != materialized.Generation.BundleManifestJSON || replayed.Generation.NativeArtifact != materialized.Generation.NativeArtifact || replayed.Generation.AccessPolicyJSON != materialized.Generation.AccessPolicyJSON || replayed.Generation.DashboardPublicationsJSON != materialized.Generation.DashboardPublicationsJSON || replayed.Generation.DashboardAppearancesJSON != materialized.Generation.DashboardAppearancesJSON {
 		t.Fatalf("materialized replay changed serving evidence: %#v != %#v", replayed.Generation, materialized.Generation)
+	}
+}
+
+func TestNativeAuthorizationFingerprintIsGenerationIndependent(t *testing.T) {
+	fixture := nativePolicyInspectFixture(t)
+	fixture.request.CandidateID = "018f0e4e-6f2a-7abc-8def-0123456789aa"
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(inspected.Generation.Restrictions) == 0 {
+		t.Fatal("inspection did not retain data-policy restrictions")
+	}
+
+	for _, generationID := range []string{fixture.request.GenerationID, "018f0e4e-6f2a-7abd-8def-0123456789ab"} {
+		request := fixture.request
+		request.GenerationID = generationID
+		materialized, err := service.MaterializeCandidateArtifacts(t.Context(), request, inspected)
+		if err != nil {
+			t.Fatalf("materialize generation %q: %v", generationID, err)
+		}
+		if materialized.AuthorizationFingerprint != inspected.AuthorizationFingerprint {
+			t.Fatalf("materialized generation %q fingerprint = %q, want inspected %q", generationID, materialized.AuthorizationFingerprint, inspected.AuthorizationFingerprint)
+		}
+
+		recovered, err := service.RecoverCandidateArtifacts(t.Context(), release.CandidateArtifactRecoveryRequest{
+			CandidateID: fixture.request.CandidateID, ServingIdentity: materialized.Generation.Identity, SourceDigest: request.ArtifactDigest,
+			ManagedDataPins: materialized.Generation.ManagedDataPins,
+			Artifact:        release.CandidateArtifactIdentity{ServingArtifactID: materialized.Generation.ServingArtifactID, ServingArtifactDigest: materialized.Generation.ArtifactDigest, ServingStateID: materialized.Generation.Identity.GenerationID},
+		})
+		if err != nil {
+			t.Fatalf("recover generation %q: %v", generationID, err)
+		}
+		if recovered.AuthorizationFingerprint != inspected.AuthorizationFingerprint {
+			t.Fatalf("recovered generation %q fingerprint = %q, want inspected %q", generationID, recovered.AuthorizationFingerprint, inspected.AuthorizationFingerprint)
+		}
+		if !reflect.DeepEqual(recovered.Generation.Restrictions, inspected.Generation.Restrictions) || !reflect.DeepEqual(recovered.Generation.Restrictions, materialized.Generation.Restrictions) {
+			t.Fatalf("recovered generation %q restrictions = %#v, want %#v", generationID, recovered.Generation.Restrictions, inspected.Generation.Restrictions)
+		}
 	}
 }
 
@@ -797,6 +844,44 @@ type nativeInspectFixtureValue struct {
 	artifact []byte
 	refs     []project.CandidateSourceObjectRef
 	objects  map[string][]byte
+}
+
+func nativePolicyInspectFixture(t *testing.T) nativeInspectFixtureValue {
+	t.Helper()
+	fixture := nativeInspectFixture(t)
+	var projectRef *project.CandidateSourceObjectRef
+	for index := range fixture.refs {
+		if fixture.refs[index].Path == fixture.request.Source.ProjectFile {
+			projectRef = &fixture.refs[index]
+			break
+		}
+	}
+	if projectRef == nil {
+		t.Fatal("native inspect fixture is missing project file")
+	}
+	projectYAML := strings.Replace(string(fixture.objects[projectRef.ObjectKey]), "access: {include: []}", "access: {include: [access/*.yaml]}", 1)
+	if projectYAML == string(fixture.objects[projectRef.ObjectKey]) {
+		t.Fatal("native inspect fixture project file did not contain empty access include")
+	}
+	fixture.objects[projectRef.ObjectKey] = []byte(projectYAML)
+	projectRef.Digest = testNativeDigestBytes([]byte(projectYAML))
+	projectRef.SizeBytes = int64(len(projectYAML))
+	policyYAML := []byte("apiVersion: leapview.dev/v1\nkind: DataPolicy\nmetadata: {id: policy:orders, name: orders}\nspec: {object: {kind: model, id: model:orders}, subject: {kind: principal, principalId: principal:alice}, policyType: row_filter, expression: {field: id, operator: equals, value: '1'}}\n")
+	const policyKey = "source_access_orders.yaml"
+	fixture.objects[policyKey] = policyYAML
+	fixture.refs = append(fixture.refs, project.CandidateSourceObjectRef{Path: "access/orders.yaml", Digest: testNativeDigestBytes(policyYAML), SizeBytes: int64(len(policyYAML)), ObjectKey: policyKey, ContentType: "text/plain", MetadataDigest: testNativeDigest("access/orders.yaml"), StorageSecurityDomain: "runtime"})
+
+	files := make(map[string][]byte, len(fixture.refs))
+	for _, ref := range fixture.refs {
+		files[ref.Path] = fixture.objects[ref.ObjectKey]
+	}
+	compiled, err := projectcompiler.CompileProjectFiles(files, fixture.request.Source.ProjectFile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture.artifact = compiled.Canonical()
+	fixture.request.Source.ProjectDigest = compiled.Digest()
+	return fixture
 }
 
 func nativeInspectFixture(t *testing.T) nativeInspectFixtureValue {

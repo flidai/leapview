@@ -612,11 +612,22 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 		}
 	}
 
+	// Keep restrictions bound to the concrete serving identity used for this
+	// recovery. The fingerprint itself is governance evidence and must remain
+	// stable when the same artifact is reattached to another generation.
 	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(request.ServingIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	authorizationFingerprint, err := authorizationSnapshot.Digest()
+	policyIdentity, err := candidatePolicyIdentity(request.ServingIdentity.ProjectID, request.ServingIdentity.Environment)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	policySnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, canonicalProject.Graph(), canonicalProject.Manifest().Access)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	authorizationFingerprint, err := policySnapshot.Digest()
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}

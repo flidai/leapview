@@ -147,7 +147,11 @@ func (service *candidateArtifactService) inspectCandidateProjectPlan(ctx context
 			}
 		}
 	}
-	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(projectgraph.ServingIdentity{ProjectID: request.Scope.ProjectID, Environment: request.Scope.Environment, GenerationID: "inspect"}, compiledProject.Graph(), compiledProject.Manifest().Access)
+	policyIdentity, err := candidatePolicyIdentity(request.Scope.ProjectID, request.Scope.Environment)
+	if err != nil {
+		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+	}
+	authorizationSnapshot, err := projectmanifest.CompileAuthorizationSnapshot(policyIdentity, compiledProject.Graph(), compiledProject.Manifest().Access)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
@@ -201,6 +205,16 @@ func (service *candidateArtifactService) inspectCandidateProjectPlan(ctx context
 func shortCandidateDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
 	return fmt.Sprintf("%x", sum[:])
+}
+
+const candidatePolicyGenerationID = "candidate-policy"
+
+// candidatePolicyIdentity is a stable, non-runtime identity used only when
+// hashing candidate authorization policy evidence. The policy fingerprint
+// must remain unchanged as a candidate moves between concrete serving
+// generations; runtime snapshots retain their actual generation identity.
+func candidatePolicyIdentity(projectID projectgraph.ResourceID, environment string) (projectgraph.ServingIdentity, error) {
+	return projectgraph.NewServingIdentity(projectID, environment, candidatePolicyGenerationID)
 }
 
 func candidateRelationContexts(pins map[string]string, artifact projectartifact.Project, bindingKinds ...map[string]string) (map[string]string, error) {
