@@ -819,6 +819,16 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	if publicSchema || publicTable || publicFunction || runtimeDelete || runtimeFunction || !runtimeAdmissionFunction || runtimeOrphanInsert || runtimeOrphanUpdate || maintenanceAdmissionFunction || maintenanceOrphanInsert || readonlyAdmissionFunction || readonlyInsert || readonlyOrphanUpdate {
 		t.Fatalf("DuckLake role grants leaked: public schema=%t table=%t function=%t runtime delete=%t function=%t admission=%t runtime orphan insert=%t update=%t maintenance admission=%t orphan insert=%t readonly admission=%t insert=%t update=%t", publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, runtimeAdmissionFunction, runtimeOrphanInsert, runtimeOrphanUpdate, maintenanceAdmissionFunction, maintenanceOrphanInsert, readonlyAdmissionFunction, readonlyInsert, readonlyOrphanUpdate)
 	}
+	var runtimeCatalogIdentitySelect, runtimeGenerationBindingSelect bool
+	if err := admin.QueryRow(t.Context(), `
+		SELECT has_table_privilege('leapview_control_runtime', 'ducklake.catalog_identity', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'ducklake.generation_binding', 'SELECT')`).
+		Scan(&runtimeCatalogIdentitySelect, &runtimeGenerationBindingSelect); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeCatalogIdentitySelect || !runtimeGenerationBindingSelect {
+		t.Fatalf("DuckLake runtime identity reads missing: catalog_identity=%t generation_binding=%t", runtimeCatalogIdentitySelect, runtimeGenerationBindingSelect)
+	}
 	runtimeDB, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
 	if err != nil {
 		t.Fatal(err)

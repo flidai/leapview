@@ -312,6 +312,15 @@ func (w *qualificationJSONWorker) CallContext(
 		return eventErr
 	}
 	if err != nil {
+		if w.stderr != nil {
+			diagnostics := strings.TrimSpace(string(redactQualificationLog(
+				[]byte(w.stderr.String()),
+				100,
+			)))
+			if diagnostics != "" {
+				return fmt.Errorf("%s worker: %w: %s", method, err, diagnostics)
+			}
+		}
 		return fmt.Errorf("%s worker: %w", method, err)
 	}
 	return nil

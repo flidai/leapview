@@ -188,6 +188,12 @@ BEGIN
         GRANT EXECUTE ON FUNCTION lineage.publish_revision(text, text, text) TO leapview_control_runtime;
         REVOKE UPDATE, DELETE ON event.event_log FROM leapview_control_runtime;
         REVOKE UPDATE, DELETE ON audit.audit_event FROM leapview_control_runtime;
+        -- Native delivery planning resolves the exact catalog and generation
+        -- binding before a build or serving cutover. Reassert read access here
+        -- because Apply skips already-recorded capability SQL on replay.
+        -- INSERT remains capability-owned (bootstrap/admission); UPDATE and
+        -- DELETE stay forbidden for these immutable identity rows.
+        GRANT SELECT ON ducklake.catalog_identity, ducklake.generation_binding TO leapview_control_runtime;
         REVOKE UPDATE, DELETE ON ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE ON ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) FROM leapview_control_runtime;

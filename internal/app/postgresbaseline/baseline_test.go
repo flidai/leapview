@@ -125,6 +125,21 @@ func TestProductRolePolicyDoesNotRestoreDuckLakeMigrationAuthority(t *testing.T)
 	}
 }
 
+func TestProductRolePolicyGrantsNativeDeliveryIdentityReads(t *testing.T) {
+	const required = "GRANT SELECT ON ducklake.catalog_identity, ducklake.generation_binding TO leapview_control_runtime"
+	if !strings.Contains(rolePolicySQL, required) {
+		t.Fatalf("native delivery role policy is missing exact identity read grant %q", required)
+	}
+	for _, forbidden := range []string{
+		"GRANT SELECT ON ALL TABLES IN SCHEMA ducklake TO leapview_control_runtime",
+		"GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA ducklake TO leapview_control_runtime",
+	} {
+		if strings.Contains(rolePolicySQL, forbidden) {
+			t.Fatalf("native delivery role policy broadens DuckLake identity access through %q", forbidden)
+		}
+	}
+}
+
 func TestProductRolePolicyKeepsRetentionOutOfRuntime(t *testing.T) {
 	for _, forbidden := range []string{
 		"GRANT EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) TO leapview_control_runtime",
