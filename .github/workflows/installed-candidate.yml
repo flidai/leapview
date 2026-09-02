@@ -96,7 +96,13 @@ jobs:
           set -euo pipefail
           init_script="$PACKAGE_ROOT/qualification/postgres-init.sh"
           test -s "$init_script"
+          # The release archive may have crossed an artifact boundary that
+          # strips executable bits (or was produced by a hardened umask).
+          # PostgreSQL executes this hook after dropping to the `postgres`
+          # user, so normalize its reviewed mode before starting the sidecar.
+          chmod 0755 "$init_script"
           test -x "$init_script"
+          test "$(stat -c '%a' "$init_script")" = "755"
           grep -q 'CREATE ROLE leapview_control_owner' "$init_script"
           grep -q 'CREATE ROLE leapview_ducklake_owner' "$init_script"
           test -s "$PACKAGE_ROOT/Caddyfile"

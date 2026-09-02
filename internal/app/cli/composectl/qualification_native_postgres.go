@@ -144,6 +144,9 @@ func newQualificationNativePostgresTopology(
 	if err != nil {
 		return nil, err
 	}
+	if err := ensureQualificationNativePostgresInitScriptExecutable(initScript); err != nil {
+		return nil, err
+	}
 	containerName := strings.TrimSpace(options.ContainerName)
 	if containerName == "" {
 		containerName = normalizedQualificationName(options.ComposeProject + "-postgres")
@@ -387,6 +390,36 @@ func qualificationNativePostgresInitScript(options qualificationNativePostgresTo
 		}
 	}
 	return initScript, nil
+}
+
+// ensureQualificationNativePostgresInitScriptExecutable normalizes the mode
+// of the host-mounted init hook before the PostgreSQL image starts. Release
+// archives can cross artifact boundaries (or be assembled under umask 0077)
+// that retain only owner permissions. The official entrypoint executes .sh
+// hooks after dropping to the unprivileged postgres user, so owner-only modes
+// fail with EACCES even though the invoking qualification process can read
+// the file. The hook contains no credentials and is already part of the
+// extracted release bundle, making 0755 the reviewed mode for this mount.
+func ensureQualificationNativePostgresInitScriptExecutable(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("qualification PostgreSQL init script path is required")
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("stat qualification PostgreSQL init script: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("qualification PostgreSQL init script %q is not a regular file", path)
+	}
+	const reviewedMode os.FileMode = 0o755
+	if info.Mode().Perm() == reviewedMode {
+		return nil
+	}
+	if err := os.Chmod(path, reviewedMode); err != nil {
+		return fmt.Errorf("make qualification PostgreSQL init script executable: %w", err)
+	}
+	return nil
 }
 
 func validateQualificationNativePostgresIdentifier(value, label string) error {

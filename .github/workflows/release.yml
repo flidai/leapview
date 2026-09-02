@@ -359,7 +359,14 @@ jobs:
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
             cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"
+            # GitHub artifact extraction (and hardened runners using umask
+            # 0077) can leave checked-in executable assets owner-only. The
+            # PostgreSQL entrypoint runs the init hook as the unprivileged
+            # `postgres` user, so preserve the reviewed world-readable mode
+            # explicitly instead of relying on cp's source mode.
+            chmod 0755 "dist/$package/qualification/postgres-init.sh"
             test -x "dist/$package/qualification/postgres-init.sh"
+            test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"
             test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
             test -s "dist/$package/Caddyfile"

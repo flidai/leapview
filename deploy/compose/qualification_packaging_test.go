@@ -17,6 +17,8 @@ func TestNativePostgresQualificationPackagingContract(t *testing.T) {
 		`canonical_postgres_init="deploy/postgres/init.sh"`,
 		`canonical_postgres_init_sha256="$(sha256sum "$canonical_postgres_init" | awk '{print $1}')"`,
 		`cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"`,
+		`chmod 0755 "dist/$package/qualification/postgres-init.sh"`,
+		`test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"`,
 		`test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"`,
 		`grep -q '^LEAPVIEW_POSTGRES_REQUIRE_TLS=true$' "dist/$package/leapview.env.example"`,
 		`test -s "dist/$package/Caddyfile"`,
@@ -34,6 +36,8 @@ func TestNativePostgresQualificationPackagingContract(t *testing.T) {
 	for _, required := range []string{
 		"Verify native PostgreSQL qualification assets",
 		"qualification/postgres-init.sh",
+		`chmod 0755 "$init_script"`,
+		`test "$(stat -c '%a' "$init_script")" = "755"`,
 		"CREATE ROLE leapview_control_owner",
 		"CREATE ROLE leapview_ducklake_owner",
 		"Caddyfile",

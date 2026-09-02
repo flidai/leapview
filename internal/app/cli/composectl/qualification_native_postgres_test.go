@@ -178,6 +178,13 @@ func TestQualificationNativePostgresTopologyStartsPinnedTLSNetworkSidecar(t *tes
 	}, runtime.request.Tmpfs)
 	initVolume := runtime.request.Volumes[0]
 	require.Equal(t, filepath.Join(filepath.Dir(filepath.Dir(initVolume.Source)), "qualification", "postgres-init.sh"), initVolume.Source)
+	initInfo, err := os.Stat(initVolume.Source)
+	require.NoError(t, err)
+	// Bundles assembled under a restrictive umask can preserve 0700 here.
+	// The PostgreSQL image executes the hook as its unprivileged postgres user,
+	// so topology startup must normalize the host mount to the reviewed 0755
+	// mode before handing it to Docker.
+	require.Equal(t, os.FileMode(0o755), initInfo.Mode().Perm())
 
 	for _, probe := range []string{"leapview_control", "leapview_ducklake"} {
 		found := false
@@ -236,6 +243,20 @@ func TestQualificationNativePostgresTopologyValidationAndCleanup(t *testing.T) {
 	require.Equal(t, 1, runtime.container.removed)
 	_, err = os.Stat(filepath.Dir(secretDir))
 	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestEnsureQualificationNativePostgresInitScriptExecutableRejectsSymlink(t *testing.T) {
+	target := filepath.Join(t.TempDir(), "target.sh")
+	require.NoError(t, os.WriteFile(target, []byte("#!/bin/sh\n"), 0o600))
+	link := filepath.Join(t.TempDir(), "postgres-init.sh")
+	require.NoError(t, os.Symlink(target, link))
+
+	err := ensureQualificationNativePostgresInitScriptExecutable(link)
+	require.ErrorContains(t, err, "is not a regular file")
+
+	info, statErr := os.Stat(target)
+	require.NoError(t, statErr)
+	require.Equal(t, os.FileMode(0o600), info.Mode().Perm())
 }
 
 func TestQualificationNativePostgresTopologyPreservesHandlesAfterRemovalFailure(t *testing.T) {
