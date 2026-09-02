@@ -18,7 +18,7 @@ func TestGenerationAdmissionAndReconciliationUseDeliveryFirstLockOrder(t *testin
 	delivery := deploymentnative.New(p)
 	ducklake := ducklakepostgres.New(p)
 	serving := servingnative.New(p)
-	admission, err := NewGenerationAdmission(delivery, serving, ducklake)
+	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}

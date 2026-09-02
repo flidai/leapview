@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -18,8 +19,10 @@ import (
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	"github.com/flidai/leapview/internal/manageddata"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -47,7 +50,12 @@ type GenerationAdmissionInput struct {
 	Fence               LeaseFenceEvidence
 	Generation          GenerationEvidence
 	Bundle              BundleEvidenceInput
-	Graph               projectgraph.ProjectGraph
+	// ManagedDataPins is the exact content-addressed managed-data identity
+	// selected for this generation. It is retained separately from the
+	// portable graph and admitted atomically with the serving bundle so native
+	// candidate recovery can resolve roots by serving identity.
+	ManagedDataPins []release.ManagedDataPin
+	Graph           projectgraph.ProjectGraph
 }
 
 // CommitEvidence is the immutable attempt completion proof written by the
@@ -133,9 +141,10 @@ type BundleEvidence struct {
 // repositories are retained privately; callers depend only on
 // GenerationAdmission.
 type generationAdmitter struct {
-	delivery *deploymentnative.Repository
-	serving  *servingnative.Repository
-	ducklake DuckLakeAuthority
+	delivery    *deploymentnative.Repository
+	serving     *servingnative.Repository
+	ducklake    DuckLakeAuthority
+	managedData NativeManagedDataBindingAdmission
 }
 
 // DuckLakeAuthority is the narrow app-composition surface needed to admit
@@ -148,21 +157,32 @@ type DuckLakeAuthority interface {
 	BindGenerationTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.GenerationBinding) (ducklakepostgres.GenerationBinding, error)
 }
 
+// NativeManagedDataBindingAdmission writes the immutable managed-data
+// binding set for one generation on the caller-owned native transaction.
+// Implementations must not begin, commit, or roll back the transaction.
+type NativeManagedDataBindingAdmission interface {
+	AdmitServingStateBindingsTx(context.Context, deploymentnative.Tx, projectgraph.ServingIdentity, []release.ManagedDataPin) error
+}
+
 var _ GenerationAdmission = (*generationAdmitter)(nil)
 var _ DuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 
-// NewGenerationAdmission constructs the native capability from the three
-// process-owned PostgreSQL authorities. DuckLake is required so an external
-// physical commit cannot be admitted without its ledger, binding, and
-// retention evidence. It does not begin a transaction or perform schema work.
-func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority) (GenerationAdmission, error) {
+// NewGenerationAdmission constructs the native capability from the four
+// process-owned PostgreSQL authorities. DuckLake and managed-data bindings
+// are required so an external physical commit cannot be admitted without its
+// complete runtime evidence. It does not begin a transaction or perform
+// schema work.
+func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority, managedData NativeManagedDataBindingAdmission) (GenerationAdmission, error) {
 	if delivery == nil || serving == nil || !delivery.Configured() || !serving.Configured() {
 		return nil, errors.New("generation admission requires configured PostgreSQL delivery and serving-state authorities")
 	}
 	if !configuredDuckLakeAuthority(ducklake) {
 		return nil, errors.New("generation admission requires a configured DuckLake authority")
 	}
-	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake}, nil
+	if !configuredManagedDataBindingAdmission(managedData) {
+		return nil, errors.New("generation admission requires a managed-data binding authority")
+	}
+	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake, managedData: managedData}, nil
 }
 
 // CompleteBuildAndAdmit completes the build, allocates a generation revision,
@@ -170,7 +190,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 // lower-level Tx method receives the exact same pgx transaction; this
 // convenience method owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) {
+	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -203,7 +223,7 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 // revision, and admits the serving bundle in the caller-owned transaction.
 // It never commits or rolls back tx.
 func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) {
+	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -282,6 +302,13 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if err := verifyBundle(bundle, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
+	identity, err := projectgraph.NewServingIdentity(normalized.Bundle.ProjectID, string(normalized.Bundle.Environment), normalized.Generation.GenerationID)
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := a.managedData.AdmitServingStateBindingsTx(ctx, tx, identity, normalized.ManagedDataPins); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 	duckBinding, err := a.ducklake.BindGenerationTx(ctx, tx, ducklakepostgres.GenerationBinding{
 		DeliveryID:             normalized.Commit.DeliveryID,
 		GenerationID:           normalized.Generation.GenerationID,
@@ -324,6 +351,20 @@ func configuredDuckLakeAuthority(authority DuckLakeAuthority) bool {
 		}
 	}
 	return authority.Configured()
+}
+
+func configuredManagedDataBindingAdmission(authority NativeManagedDataBindingAdmission) bool {
+	if authority == nil {
+		return false
+	}
+	v := reflect.ValueOf(authority)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if v.IsNil() {
+			return false
+		}
+	}
+	return true
 }
 
 func admissionEvidenceConflict(kind string) error {
@@ -486,6 +527,35 @@ func validPersistedTimestamp(value string) bool {
 
 func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, error) {
 	ctx := input
+	if input.ManagedDataPins == nil {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: managed-data pins evidence is required", deploymentnative.ErrInvalid)
+	}
+	if len(input.ManagedDataPins) > maxNativeManagedDataPins {
+		return GenerationAdmissionInput{}, fmt.Errorf("%w: managed-data pin count exceeds limit", deploymentnative.ErrInvalid)
+	}
+	pins := make([]release.ManagedDataPin, len(input.ManagedDataPins))
+	copy(pins, input.ManagedDataPins)
+	sort.Slice(pins, func(i, j int) bool {
+		if pins[i].ConnectionID != pins[j].ConnectionID {
+			return pins[i].ConnectionID < pins[j].ConnectionID
+		}
+		return pins[i].RevisionID < pins[j].RevisionID
+	})
+	for index, pin := range pins {
+		if pin.ConnectionID == "" || pin.ConnectionID != strings.TrimSpace(pin.ConnectionID) || pin.RevisionID == "" || pin.RevisionID != strings.TrimSpace(pin.RevisionID) {
+			return GenerationAdmissionInput{}, fmt.Errorf("%w: managed-data pin identity is invalid", deploymentnative.ErrInvalid)
+		}
+		if _, err := projectgraph.NewResourceID(pin.ConnectionID); err != nil {
+			return GenerationAdmissionInput{}, fmt.Errorf("%w: managed-data connection id: %v", deploymentnative.ErrInvalid, err)
+		}
+		if err := manageddata.ValidateRevisionID(pin.RevisionID); err != nil {
+			return GenerationAdmissionInput{}, fmt.Errorf("%w: managed-data revision digest: %v", deploymentnative.ErrInvalid, err)
+		}
+		if index > 0 && pins[index-1].ConnectionID == pin.ConnectionID {
+			return GenerationAdmissionInput{}, fmt.Errorf("%w: duplicate managed-data connection %q", deploymentnative.ErrInvalid, pin.ConnectionID)
+		}
+	}
+	ctx.ManagedDataPins = pins
 	genID, err := canonicalUUID(ctx.Generation.GenerationID, "generation id")
 	if err != nil {
 		return GenerationAdmissionInput{}, err

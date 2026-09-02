@@ -256,7 +256,8 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			DashboardPublicationsJSON: artifact.DashboardPublicationsJSON, DashboardAppearancesJSON: artifact.DashboardAppearancesJSON,
 			CreatedBy: attempt.OwnerID,
 		},
-		Graph: input.Artifacts.Compiler.Graph,
+		ManagedDataPins: append([]release.ManagedDataPin{}, artifact.ManagedDataPins...),
+		Graph:           input.Artifacts.Compiler.Graph,
 	}
 
 	// Ensure marker is retained as the exact canonical bytes used by the

@@ -315,7 +315,7 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 
 func mustGenerationAdmission(t *testing.T, delivery *deploymentnative.Repository, db *pgxpool.Pool, ducklake *ducklakepostgres.Repository) GenerationAdmission {
 	t.Helper()
-	capability, err := NewGenerationAdmission(delivery, servingnative.New(db), ducklake)
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(db), ducklake, &testManagedDataBindingAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,12 +15,26 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func admissionDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+
+type testManagedDataBindingAdmission struct {
+	calls int
+	pins  []release.ManagedDataPin
+	err   error
+}
+
+func (a *testManagedDataBindingAdmission) AdmitServingStateBindingsTx(_ context.Context, _ deploymentnative.Tx, _ projectgraph.ServingIdentity, pins []release.ManagedDataPin) error {
+	a.calls++
+	a.pins = make([]release.ManagedDataPin, len(pins))
+	copy(a.pins, pins)
+	return a.err
+}
 
 func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 	t.Helper()
@@ -61,6 +75,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 		Generation:          GenerationEvidence{GenerationID: genID, TargetID: "target-admission", CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d')},
 		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: admissionDigest('b'), AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
 		Graph:               graph,
+		ManagedDataPins:     []release.ManagedDataPin{},
 	}
 }
 
@@ -96,6 +111,10 @@ func TestNormalizeGenerationAdmissionRejectsCrossFieldMismatches(t *testing.T) {
 		{name: "artifact digest", mutate: func(in *GenerationAdmissionInput) { in.Bundle.Artifact.Digest = admissionDigest('4') }},
 		{name: "relation namespace", mutate: func(in *GenerationAdmissionInput) { in.Seal.RelationNamespace = "_not_the_canonical_namespace" }},
 		{name: "filesystem path", mutate: func(in *GenerationAdmissionInput) { in.Bundle.Artifact.Path = "/tmp/artifact" }},
+		{name: "missing managed-data pins", mutate: func(in *GenerationAdmissionInput) { in.ManagedDataPins = nil }},
+		{name: "invalid managed-data revision", mutate: func(in *GenerationAdmissionInput) {
+			in.ManagedDataPins = []release.ManagedDataPin{{ConnectionID: "orders", RevisionID: "revision-1"}}
+		}},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
@@ -107,6 +126,25 @@ func TestNormalizeGenerationAdmissionRejectsCrossFieldMismatches(t *testing.T) {
 				t.Fatalf("normalize error = %v, want native conflict/invalid", err)
 			}
 		})
+	}
+}
+
+func TestNormalizeGenerationAdmissionCanonicalizesManagedDataPins(t *testing.T) {
+	input := validGenerationAdmissionInput(t)
+	input.ManagedDataPins = []release.ManagedDataPin{
+		{ConnectionID: "orders", RevisionID: admissionDigest('b')},
+		{ConnectionID: "customers", RevisionID: admissionDigest('a')},
+	}
+	got, err := normalizeInput(input)
+	if err != nil {
+		t.Fatalf("normalize managed-data pins: %v", err)
+	}
+	if len(got.ManagedDataPins) != 2 || got.ManagedDataPins[0].ConnectionID != "customers" || got.ManagedDataPins[1].ConnectionID != "orders" {
+		t.Fatalf("managed-data pins order = %#v", got.ManagedDataPins)
+	}
+	got.ManagedDataPins[0].ConnectionID = "mutated"
+	if input.ManagedDataPins[0].ConnectionID != "orders" {
+		t.Fatal("normalization did not clone managed-data pins")
 	}
 }
 
@@ -152,18 +190,21 @@ func TestNewGenerationAdmissionRejectsNilAuthorities(t *testing.T) {
 	configuredServing := servingnative.New(db)
 	configuredDuckLake := ducklakepostgres.New(db)
 	cases := []struct {
-		name     string
-		delivery *deploymentnative.Repository
-		serving  *servingnative.Repository
-		ducklake DuckLakeAuthority
+		name        string
+		delivery    *deploymentnative.Repository
+		serving     *servingnative.Repository
+		ducklake    DuckLakeAuthority
+		managedData NativeManagedDataBindingAdmission
 	}{
-		{name: "nil delivery", serving: configuredServing, ducklake: configuredDuckLake},
-		{name: "nil serving", delivery: configuredDelivery, ducklake: configuredDuckLake},
-		{name: "typed nil ducklake", delivery: configuredDelivery, serving: configuredServing, ducklake: (*nilDuckLakeAuthority)(nil)},
+		{name: "nil delivery", serving: configuredServing, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}},
+		{name: "nil serving", delivery: configuredDelivery, ducklake: configuredDuckLake, managedData: &testManagedDataBindingAdmission{}},
+		{name: "typed nil ducklake", delivery: configuredDelivery, serving: configuredServing, ducklake: (*nilDuckLakeAuthority)(nil), managedData: &testManagedDataBindingAdmission{}},
+		{name: "nil managed data", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake},
+		{name: "typed nil managed data", delivery: configuredDelivery, serving: configuredServing, ducklake: configuredDuckLake, managedData: (*testManagedDataBindingAdmission)(nil)},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if got, err := NewGenerationAdmission(test.delivery, test.serving, test.ducklake); err == nil || got != nil {
+			if got, err := NewGenerationAdmission(test.delivery, test.serving, test.ducklake, test.managedData); err == nil || got != nil {
 				t.Fatalf("NewGenerationAdmission() = (%v, %v), want nil capability and error", got, err)
 			}
 		})
@@ -313,20 +354,21 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
 	ducklake := ducklakepostgres.New(p)
-	if _, err := NewGenerationAdmission(delivery, serving, nil); err == nil {
+	managedData := &testManagedDataBindingAdmission{}
+	if _, err := NewGenerationAdmission(delivery, serving, nil, managedData); err == nil {
 		t.Fatal("generation admission accepted a nil DuckLake authority")
 	}
 	var unconfigured *ducklakepostgres.Repository
-	if _, err := NewGenerationAdmission(delivery, serving, unconfigured); err == nil {
+	if _, err := NewGenerationAdmission(delivery, serving, unconfigured, managedData); err == nil {
 		t.Fatal("generation admission accepted an unconfigured DuckLake authority")
 	}
-	capability, err := NewGenerationAdmission(delivery, serving, ducklake)
+	capability, err := NewGenerationAdmission(delivery, serving, ducklake, managedData)
 	if err != nil {
 		t.Fatal(err)
 	}
 	input := validGenerationAdmissionInput(t)
 	seedGenerationAdmission(t, delivery, ducklake, input)
-	tamperedCapability, err := NewGenerationAdmission(delivery, serving, &tamperingDuckLakeAuthority{inner: ducklake, tamperCommit: true})
+	tamperedCapability, err := NewGenerationAdmission(delivery, serving, &tamperingDuckLakeAuthority{inner: ducklake, tamperCommit: true}, managedData)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -344,6 +386,9 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	if first.Generation.GenerationID != input.Generation.GenerationID || first.Generation.GenerationRevision != 1 || first.CandidateRevision != 1 || first.Bundle.ArtifactLocator != input.Bundle.ArtifactLocator {
 		t.Fatalf("admission result = %#v", first)
+	}
+	if managedData.calls < 1 || managedData.pins == nil || len(managedData.pins) != 0 {
+		t.Fatalf("managed-data binding admission calls=%d pins=%#v, want nonnil empty pins", managedData.calls, managedData.pins)
 	}
 	attemptEvidence, err := ducklake.LoadAttempt(t.Context(), input.Commit.AttemptID)
 	if err != nil {
@@ -456,7 +501,7 @@ func TestGenerationAdmissionTxComposesAdjacentMutation(t *testing.T) {
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
 	ducklake := ducklakepostgres.New(p)
-	admission, err := NewGenerationAdmission(delivery, serving, ducklake)
+	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}

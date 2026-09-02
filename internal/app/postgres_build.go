@@ -550,7 +550,11 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.DuckLakeControlLedger)
+	managedDataAdmission, err := appdeploymentpostgres.NewNativeManagedDataBindingAdmission(graph.ManagedDataRepository)
+	if err != nil {
+		return fail(err)
+	}
+	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.DuckLakeControlLedger, managedDataAdmission)
 	if err != nil {
 		return fail(err)
 	}

@@ -161,6 +161,7 @@ func nativeAssemblerClosure(t *testing.T, catalogID, root, namespace string, rel
 
 func TestAssembleNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T) {
 	input := validNativeSealAssemblerInput(t)
+	input.Artifacts.Generation.ManagedDataPins = []release.ManagedDataPin{{ConnectionID: "connection-orders", RevisionID: assemblerDigest('a')}}
 	if input.Build.Seal.CatalogVersion != "1.0" || input.Compatibility.CatalogFormat != "ducklake-catalog:v1" {
 		t.Fatalf("fixture does not represent raw DuckLake v1.0 evidence: seal=%q tuple=%q", input.Build.Seal.CatalogVersion, input.Compatibility.CatalogFormat)
 	}
@@ -173,6 +174,13 @@ func TestAssembleNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T
 	}
 	if got.Bundle.ArtifactLocator != input.Artifacts.Generation.NativeArtifact.Locator || got.Seal.ClosureDigest != input.Build.Closure.ClosureDigest {
 		t.Fatalf("assembled artifact/closure = %#v / %#v", got.Bundle, got.Seal)
+	}
+	if len(got.ManagedDataPins) != 1 || got.ManagedDataPins[0] != input.Artifacts.Generation.ManagedDataPins[0] {
+		t.Fatalf("assembled managed-data pins = %#v", got.ManagedDataPins)
+	}
+	got.ManagedDataPins[0].ConnectionID = "mutated"
+	if input.Artifacts.Generation.ManagedDataPins[0].ConnectionID != "connection-orders" {
+		t.Fatal("assembler did not clone managed-data pins")
 	}
 }
 
