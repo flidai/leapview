@@ -1251,24 +1251,50 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		SnapshotID     int64  `json:"snapshot_id"`
 	}{result.PlanID, result.ServingStateID, result.SnapshotID})
 	return p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
-		// Replays deliberately resolve the current admitted identity before
-		// trusting persisted publication evidence. If admission is unavailable,
-		// fail closed instead of treating an old physical tuple as authority.
-		identity, identityErr := resolvePublicationIdentityTx(ctx, tx, p.identityResolver, PostgresPublicationIdentityRequest{
-			ProjectID: job.Identity.ProjectID.String(), Environment: job.Identity.Environment,
-			GenerationID: result.ServingStateID, SemanticModelID: job.SemanticModelID.String(),
-			PipelineID: job.PipelineID.String(), RunID: job.RunID, SnapshotID: result.SnapshotID,
-			Source: string(refreshschedule.DataVersionSourceRefresh), TargetRevision: job.TargetRevision,
-		})
-		if identityErr != nil {
-			return identityErr
+		publicationID := "publication-canonical-" + job.RunID
+		// A committed refresh publication is durable completion evidence. Resolve
+		// the currently admitted physical identity before accepting that replay;
+		// an old physical tuple must never be trusted when the admission has
+		// changed since the original completion.
+		publication, publicationErr := p.repository.PublicationTx(ctx, tx, publicationID)
+		if publicationErr == nil {
+			if publication.State != "committed" {
+				// Preserve the poison check for a partial refresh publication. A
+				// pending link is not a fresh completion and must fail closed.
+				_, replayErr := p.replayCanonicalCompletionTx(ctx, tx, job, result, evidence, PostgresPublicationIdentity{})
+				return replayErr
+			}
+			identity, identityErr := resolvePublicationIdentityTx(ctx, tx, p.identityResolver, PostgresPublicationIdentityRequest{
+				ProjectID: job.Identity.ProjectID.String(), Environment: job.Identity.Environment,
+				GenerationID: result.ServingStateID, SemanticModelID: job.SemanticModelID.String(),
+				PipelineID: job.PipelineID.String(), RunID: job.RunID, SnapshotID: result.SnapshotID,
+				Source: string(refreshschedule.DataVersionSourceRefresh), TargetRevision: job.TargetRevision,
+			})
+			if identityErr != nil {
+				return identityErr
+			}
+			replayed, replayErr := p.replayCanonicalCompletionTx(ctx, tx, job, result, evidence, identity)
+			if replayErr != nil {
+				return replayErr
+			}
+			if replayed {
+				return nil
+			}
+			return refreshpostgres.ErrConflict
 		}
-		replayed, replayErr := p.replayCanonicalCompletionTx(ctx, tx, job, result, evidence, identity)
+		if !errors.Is(publicationErr, refreshpostgres.ErrNotFound) {
+			return publicationErr
+		}
+		// No deterministic publication exists yet. Run the partial-evidence
+		// poison checks before entering the first-time path; this prevents a
+		// missing link from masking a marker, data-version, terminal run, or
+		// terminal queue outcome left by an interrupted completion.
+		replayed, replayErr := p.replayCanonicalCompletionTx(ctx, tx, job, result, evidence, PostgresPublicationIdentity{})
 		if replayErr != nil {
 			return replayErr
 		}
 		if replayed {
-			return nil
+			return refreshpostgres.ErrConflict
 		}
 		mayPublish, fenceErr := p.repository.RunMayPublishTx(ctx, tx, job.RunID, job.LeaseOwner, job.LeaseRevision)
 		if fenceErr != nil {
@@ -1284,11 +1310,8 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 		if pubInput.RunID != job.RunID || pubInput.BaseGenerationID != job.Identity.GenerationID || pubInput.ResultGenerationID != result.ServingStateID || pubInput.ExpectedTargetRevision != job.TargetRevision || pubInput.ResultTargetRevision <= pubInput.ExpectedTargetRevision || pubInput.SnapshotID != 0 {
 			return errors.New("canonical publication evidence identity differs")
 		}
-		if pubInput.PhysicalPoolID != identity.PhysicalPoolID || pubInput.CatalogID != identity.CatalogID {
-			return publicationIdentityMismatchf("canonical publication physical identity differs from resolved runtime")
-		}
 		if pubInput.PublicationID == "" {
-			pubInput.PublicationID = "publication-canonical-" + job.RunID
+			pubInput.PublicationID = publicationID
 		}
 		pubInput.PlanDigest = job.PipelinePlan.Digest
 		pubInput.ArtifactDigest = job.PipelinePlan.ArtifactDigest
@@ -1300,7 +1323,23 @@ func (p *postgresPublicationPersistence) CompleteCanonicalRefresh(ctx context.Co
 				return fmt.Errorf("finalize native canonical refresh: %w", err)
 			}
 		}
-		publication, err := p.repository.LinkPublicationTx(ctx, tx, pubInput)
+		// Native finalization may create and activate the result generation.
+		// Resolve its physical identity only after that step, then bind all
+		// refresh provenance to the exact admitted tuple before linking or
+		// committing any refresh evidence.
+		identity, identityErr := resolvePublicationIdentityTx(ctx, tx, p.identityResolver, PostgresPublicationIdentityRequest{
+			ProjectID: job.Identity.ProjectID.String(), Environment: job.Identity.Environment,
+			GenerationID: result.ServingStateID, SemanticModelID: job.SemanticModelID.String(),
+			PipelineID: job.PipelineID.String(), RunID: job.RunID, SnapshotID: result.SnapshotID,
+			Source: string(refreshschedule.DataVersionSourceRefresh), TargetRevision: job.TargetRevision,
+		})
+		if identityErr != nil {
+			return identityErr
+		}
+		if pubInput.PhysicalPoolID != identity.PhysicalPoolID || pubInput.CatalogID != identity.CatalogID {
+			return publicationIdentityMismatchf("canonical publication physical identity differs from resolved runtime")
+		}
+		publication, err = p.repository.LinkPublicationTx(ctx, tx, pubInput)
 		if err != nil {
 			return fmt.Errorf("link canonical publication: %w", err)
 		}

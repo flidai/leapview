@@ -28,6 +28,29 @@ func (q failingNativeCompletionQueue) CompleteJobTx(context.Context, refreshpost
 	return q.err
 }
 
+type orderingNativeFinalizer struct {
+	inner  PostgresNativeRefreshFinalizer
+	called *bool
+}
+
+func (f orderingNativeFinalizer) FinalizeCanonicalRefreshTx(ctx context.Context, tx refreshpostgres.Tx, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, publication refreshpostgres.PublicationInput) error {
+	*f.called = true
+	return f.inner.FinalizeCanonicalRefreshTx(ctx, tx, job, result, publication)
+}
+
+type orderingPublicationIdentityResolver struct {
+	physicalPoolID string
+	catalogID      string
+	finalized      *bool
+}
+
+func (r orderingPublicationIdentityResolver) ResolvePublicationIdentityTx(_ context.Context, _ refreshpostgres.Tx, _ PostgresPublicationIdentityRequest) (PostgresPublicationIdentity, error) {
+	if !*r.finalized {
+		return PostgresPublicationIdentity{}, errors.New("publication identity resolved before native finalization")
+	}
+	return PostgresPublicationIdentity{PhysicalPoolID: r.physicalPoolID, CatalogID: r.catalogID}, nil
+}
+
 type nativeRefreshFixture struct {
 	db        *pgxpool.Pool
 	delivery  *deploymentpostgres.Repository
@@ -171,6 +194,75 @@ func TestPostgresNativeRefreshFinalizerRollsBackAndReplaysExactly(t *testing.T) 
 		t.Fatal(err)
 	}
 	_ = tx.Rollback(t.Context())
+}
+
+func TestCompleteCanonicalRefreshResolvesIdentityAfterNativeFinalizer(t *testing.T) {
+	f := newNativeRefreshFixture(t)
+	finalized := false
+	persistence, err := NewPostgresPersistence(f.refresh, PostgresPersistenceConfig{
+		PublicationIdentityResolver: orderingPublicationIdentityResolver{physicalPoolID: f.poolID, catalogID: f.catalogID, finalized: &finalized},
+		SchedulerOwner:              "scheduler-native-order",
+		Jobs:                        f.jobs,
+		CanonicalVerifier:           integrationCanonicalVerifier{physicalPoolID: f.poolID, catalogID: f.catalogID},
+		NativeFinalizer:             orderingNativeFinalizer{inner: f.finalizer, called: &finalized},
+		CancelAuditWriter:           integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
+	if err := publication.CompleteCanonicalRefresh(t.Context(), f.job, f.result); err != nil {
+		t.Fatalf("canonical completion error = %v", err)
+	}
+	if !finalized {
+		t.Fatal("native finalizer was not invoked")
+	}
+}
+
+func TestCompleteCanonicalRefreshWithNativeVerifierAcceptsUnpublishedResult(t *testing.T) {
+	f := newNativeRefreshFixture(t)
+	publicationID, _, _, _ := apprefreshpostgres.NativeRefreshIdentities(f.job, f.result, f.evidence)
+	if _, err := f.delivery.Publication(t.Context(), publicationID); !errors.Is(err, deploymentpostgres.ErrNotFound) {
+		t.Fatalf("result publication before completion = %v, want not found", err)
+	}
+	verifier, err := apprefreshpostgres.NewPostgresCanonicalVerifierAdapter(f.delivery, f.targetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewPostgresPersistence(f.refresh, PostgresPersistenceConfig{
+		PublicationIdentityResolver: verifier,
+		SchedulerOwner:              "scheduler-native-canonical",
+		Jobs:                        f.jobs,
+		CanonicalVerifier:           verifier,
+		NativeFinalizer:             f.finalizer,
+		CancelAuditWriter:           integrationAuditWriter{},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	publication := persistence.Publication.(refreshrun.CanonicalPublicationUnitOfWork)
+	if err := publication.CompleteCanonicalRefresh(t.Context(), f.job, f.result); err != nil {
+		t.Fatalf("canonical completion error = %v", err)
+	}
+	target, err := f.delivery.Target(t.Context(), f.targetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.ActiveGenerationID != f.resultID || target.TargetRevision != f.job.TargetRevision+1 {
+		t.Fatalf("target after canonical completion = %#v", target)
+	}
+	nativePublication, err := f.delivery.Publication(t.Context(), publicationID)
+	if err != nil || nativePublication.State != "committed" || nativePublication.GenerationID != f.resultID {
+		t.Fatalf("native publication after canonical completion = %#v, %v", nativePublication, err)
+	}
+	version, found, err := f.refresh.DataVersion(t.Context(), f.job.Identity.ProjectID.String(), f.job.Identity.Environment, f.job.SemanticModelID.String(), f.resultID)
+	if err != nil || !found || version.SnapshotID != f.result.SnapshotID || version.TargetRevision != target.TargetRevision {
+		t.Fatalf("refresh data version after canonical completion = %#v, found=%v, err=%v", version, found, err)
+	}
+	run, err := f.refresh.LookupRun(t.Context(), f.job.RunID)
+	if err != nil || run.Status != refreshrun.RunStatusSucceeded {
+		t.Fatalf("refresh run after canonical completion = %#v, %v", run, err)
+	}
 }
 
 func TestPostgresNativeRefreshFinalizerRejectsStaleRunFence(t *testing.T) {
