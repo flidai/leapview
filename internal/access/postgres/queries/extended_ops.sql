@@ -6,6 +6,12 @@ INSERT INTO access.platform_setting(key, value)
 VALUES (sqlc.arg(key), sqlc.arg(value))
 ON CONFLICT (key) DO NOTHING;
 
+-- name: HasPlatformSetting :one
+SELECT EXISTS (
+    SELECT 1 FROM access.platform_setting
+    WHERE key = sqlc.arg(key)
+);
+
 -- name: ListServiceSecrets :many
 SELECT id, service_principal_id, name, expires_at, created_at, revoked_at
 FROM access.service_principal_secret

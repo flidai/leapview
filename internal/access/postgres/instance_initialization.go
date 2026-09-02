@@ -11,6 +11,17 @@ import (
 
 var _ access.InstanceInitializer = (*Repository)(nil)
 
+// Initialized reports whether the access-owned one-shot initialization marker
+// exists. Native replay and acknowledgement therefore consult the same
+// authority that performs initialization.
+func (r *Repository) Initialized(ctx context.Context) (bool, error) {
+	db, err := r.requireDB()
+	if err != nil {
+		return false, err
+	}
+	return accessdb.New(db).HasPlatformSetting(ctx, access.InstanceInitializedSetting)
+}
+
 // InitializeInstance performs the one-shot administrator bootstrap as one
 // database transaction. The marker, principal, role, publisher credential,
 // and audit event therefore cannot be observed independently.
@@ -104,5 +115,8 @@ func (r *Repository) InitializeInstance(
 			Status:       "success",
 		}}, nil
 	})
-	return result, err
+	if err != nil {
+		return access.InitialInstanceCredentials{}, err
+	}
+	return result, nil
 }
