@@ -11,7 +11,6 @@ func TestIdealV1Surface(t *testing.T) {
 
 	required := map[string][]string{
 		"/api/v1/capabilities":                                                                     {"get"},
-		"/api/v1/projects/{project}":                                                               {"get"},
 		"/api/v1/projects/{project}/connections":                                                   {"get"},
 		"/api/v1/projects/{project}/connections/{connection}":                                      {"get"},
 		"/api/v1/projects/{project}/connections/{connection}/active-revision":                      {"get"},
@@ -51,6 +50,7 @@ func TestIdealV1Surface(t *testing.T) {
 	}
 
 	removed := []string{
+		"/api/v1/projects/{project}",
 		"/api/v1/projects/{project}/workspaces/{workspace}/deployment-candidates",
 		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/pages/{page}/components",
 		"/api/v1/workspaces/{workspace}/dashboards/{dashboard}/tables/{table}/query",

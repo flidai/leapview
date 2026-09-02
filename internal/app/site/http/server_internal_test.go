@@ -1132,7 +1132,7 @@ func TestSiteAPIReferenceIsGeneratedFromOpenAPI(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
 
-	response, err := server.Client().Get(server.URL + "/docs/api/projects")
+	response, err := server.Client().Get(server.URL + "/docs/api/search")
 	if err != nil {
 		t.Fatalf("get API reference: %v", err)
 	}
@@ -1141,7 +1141,7 @@ func TestSiteAPIReferenceIsGeneratedFromOpenAPI(t *testing.T) {
 		t.Fatalf("API reference status = %d, want %d", response.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, response)
-	for _, want := range []string{"<title>Projects</title>", `<h1 id="projects">Projects</h1>`, "Get a materialized project", "<code>GET /api/v1/projects/{project}"} {
+	for _, want := range []string{"<title>Search</title>", `<h1 id="search">Search</h1>`, "Search accessible product objects", "<code>GET /api/v1/search"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("API reference missing %q:\n%s", want, body)
 		}
