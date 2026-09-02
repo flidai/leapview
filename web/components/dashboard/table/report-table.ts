@@ -321,7 +321,7 @@ export class ReportTable extends LitElement {
     .visual-options summary:focus-visible,
     .visual-options[open] summary {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
-      background: color-mix(in srgb, var(--lv-bg-panel) 80%, var(--lv-fg-muted));
+      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-control-hover)));
       color: var(--lv-fg-default);
       outline: var(--focus-outline, var(--lv-border-default));
       outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
@@ -372,7 +372,7 @@ export class ReportTable extends LitElement {
     .menu button:hover,
     .menu button:focus-visible {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
-      background: color-mix(in srgb, var(--lv-bg-panel) 80%, var(--lv-fg-muted));
+      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-control-hover)));
       outline: var(--focus-outline, var(--lv-border-default));
       outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
       outline-offset: var(--focus-outline-offset, var(--base-size-2));

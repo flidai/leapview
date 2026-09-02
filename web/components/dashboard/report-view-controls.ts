@@ -70,7 +70,7 @@ class ReportZoom extends LitElement {
     summary:hover,
     summary:focus-visible,
     details[open] summary {
-      background: color-mix(in srgb, var(--lv-bg-panel) 80%, var(--lv-fg-muted));
+      background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
     }
 
@@ -158,7 +158,7 @@ class ReportZoom extends LitElement {
     }
 
     .menu-button[aria-pressed='true'] {
-      background: color-mix(in srgb, var(--lv-bg-panel) 88%, var(--lv-fg-link));
+      background: var(--lv-bg-accent-muted);
       color: var(--lv-fg-link);
       font-weight: var(--base-text-weight-semibold, 600);
     }
@@ -185,13 +185,13 @@ class ReportZoom extends LitElement {
 
     button:hover,
     button:focus-visible {
-      background: color-mix(in srgb, var(--lv-bg-panel) 80%, var(--lv-fg-muted));
+      background: var(--lv-bg-control-hover);
       color: var(--lv-fg-default);
       outline: 0;
     }
 
     button[aria-pressed='true'] {
-      background: color-mix(in srgb, var(--lv-bg-panel) 88%, var(--lv-fg-link));
+      background: var(--lv-bg-accent-muted);
       color: var(--lv-fg-link);
     }
 
