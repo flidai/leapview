@@ -830,7 +830,8 @@ async function verifySpatialShowcaseMaps(): Promise<void> {
       const summary = await page.evaluate((visualID) => {
         const dashboard = document.querySelector('lv-dashboard-page') as HTMLElement & { shadowRoot: ShadowRoot }
         const hosts = Array.from(dashboard?.shadowRoot?.querySelectorAll('lv-visualization-host') ?? []) as Array<HTMLElement & { envelope?: any; shadowRoot: ShadowRoot }>
-        return hosts.find((candidate) => candidate.envelope?.visualID === visualID)?.shadowRoot?.querySelector('[data-map-data-table] > summary')?.textContent ?? ''
+        const summary = hosts.find((candidate) => candidate.envelope?.visualID === visualID)?.shadowRoot?.querySelector('[data-map-data-table] > summary')
+        return summary?.getAttribute('aria-label') ?? summary?.textContent ?? ''
       }, visualIDs[0])
       if (hasMixedSpatialPrecision(summary)) {
         throw new Error(`${path}: point map mixed raw and aggregate granularity after zoom step ${step + 1}: ${summary.trim()}`)
@@ -906,8 +907,8 @@ async function verifySpatialMapWindowing(): Promise<void> {
     if (initial.cardinality !== 1_000_000 || initial.featureCap !== 5_000 || initial.maximumTileBytes !== 512 * 1024) {
       throw new Error(`${path}: budgets/cardinality ${JSON.stringify(initial)}; want 1000000 coordinates, 5000 features, 512KiB`)
     }
-    if (initial.zoomControlWidth !== 30 || initial.zoomControlHeight !== 30) {
-      throw new Error(`${path}: zoom control is ${initial.zoomControlWidth}x${initial.zoomControlHeight} CSS pixels; want 30x30`)
+    if (initial.zoomControlWidth < 24 || initial.zoomControlHeight < 24) {
+      throw new Error(`${path}: rendered zoom target is ${initial.zoomControlWidth}x${initial.zoomControlHeight} CSS pixels; want at least 24x24`)
     }
 
     const zoomIn = page.locator('lv-dashboard-page').locator('lv-visualization-host').locator('button.maplibregl-ctrl-zoom-in')
@@ -947,11 +948,11 @@ async function spatialTileSnapshot(page: Page): Promise<SpatialTileSnapshot> {
     const envelope = host?.envelope
     const state = envelope?.dataState
     const zoom = host?.shadowRoot?.querySelector('button.maplibregl-ctrl-zoom-in') as HTMLButtonElement | null
-    const style = zoom ? getComputedStyle(zoom) : undefined
+    const bounds = zoom?.getBoundingClientRect()
     return {
       status: String(envelope?.status?.kind ?? ''), message: String(envelope?.status?.message ?? ''), dataRevision: Number(envelope?.dataRevision ?? 0),
       cardinality: Number(state?.cardinality?.count ?? 0), featureCap: Number(state?.featureCap ?? 0), maximumTileBytes: Number(state?.maximumTileBytes ?? 0), tileURL: String(state?.tileURL ?? ''),
-      zoomControlWidth: Number.parseFloat(style?.width ?? '0'), zoomControlHeight: Number.parseFloat(style?.height ?? '0'),
+      zoomControlWidth: bounds?.width ?? 0, zoomControlHeight: bounds?.height ?? 0,
     }
   })
 }

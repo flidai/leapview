@@ -172,3 +172,49 @@ func TestCanonicalSemanticFiltersRejectStoredSelectionWithOmittedJSONValue(t *te
 		t.Fatalf("error=%v", err)
 	}
 }
+
+func TestCanonicalSemanticFiltersORAdditiveAreasFromOneMapAndANDSeparateMaps(t *testing.T) {
+	model := &semanticmodel.Model{
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"latitude":  {Type: "number", Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.latitude"}}},
+			"longitude": {Type: "number", Datatype: semanticmodel.DataTypeFloat, Bindings: map[string]semanticmodel.DimensionBinding{"orders": {Field: "orders.longitude"}}},
+		},
+	}
+	spatialInteraction := visualizationir.VisualizationSpatialSelectionInteraction{
+		ID:        "spatial_selection",
+		Latitude:  visualizationir.VisualizationSpatialFieldMapping{TargetFieldID: "latitude"},
+		Longitude: visualizationir.VisualizationSpatialFieldMapping{TargetFieldID: "longitude"},
+		Targets:   []visualizationir.VisualizationInteractionTarget{{VisualID: "orders", Effect: visualizationir.VisualizationInteractionEffectFilter}},
+	}
+	mapVisual := func(id string) visualizationdefinition.Definition {
+		return visualizationdefinition.Definition{ID: id, Spec: visualizationir.VisualizationSpec{Value: &visualizationir.GeographicVisualizationSpec{
+			VisualizationSpecBase: visualizationir.VisualizationSpecBase{Kind: "geographic", Title: id},
+			Kind:                  "geographic", SpatialInteractions: []visualizationir.VisualizationSpatialSelectionInteraction{spatialInteraction},
+		}}}
+	}
+	report := &dashboarddefinition.Definition{Visualizations: map[string]visualizationdefinition.Definition{
+		"map-a": mapVisual("map-a"), "map-b": mapVisual("map-b"), "orders": {ID: "orders"},
+	}}
+	box := visualizationir.VisualizationSpatialSelectionGeometry{Value: &visualizationir.VisualizationSpatialBoxSelection{
+		VisualizationSpatialSelectionGeometryBase: visualizationir.VisualizationSpatialSelectionGeometryBase{Kind: "box"},
+		Kind: "box", Bounds: visualizationir.VisualizationSpatialBounds{West: -50, South: -25, East: -40, North: -15},
+	}}
+	radius := visualizationir.VisualizationSpatialSelectionGeometry{Value: &visualizationir.VisualizationSpatialRadiusSelection{
+		VisualizationSpatialSelectionGeometryBase: visualizationir.VisualizationSpatialSelectionGeometryBase{Kind: "radius"},
+		Kind: "radius", Center: visualizationir.VisualizationSpatialCoordinate{Longitude: -46, Latitude: -23}, RadiusMeters: 10_000,
+	}}
+	filters, err := (&FilterService{}).semanticFilters(context.Background(), &modelRuntime{model: model}, report, dashboard.Filters{SpatialSelections: []dashboard.SpatialInteractionSelection{
+		{VisualID: "map-a", InteractionID: "spatial_selection", Geometry: box},
+		{VisualID: "map-a", InteractionID: "spatial_selection", Geometry: radius},
+		{VisualID: "map-b", InteractionID: "spatial_selection", Geometry: box},
+	}}, "visual", "orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(filters) != 2 || len(filters[0].Groups) != 2 || filters[1].Spatial == nil {
+		t.Fatalf("spatial filters = %#v, want one two-area OR group AND one separate-map predicate", filters)
+	}
+	if filters[0].Groups[0].Filters[0].Spatial.Kind != "box" || filters[0].Groups[1].Filters[0].Spatial.Kind != "radius" {
+		t.Fatalf("additive area group = %#v", filters[0].Groups)
+	}
+}

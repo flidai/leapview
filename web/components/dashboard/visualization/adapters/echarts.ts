@@ -261,13 +261,14 @@ export function echartsUpdatePlan(change: Change, option: EChartsOption): EChart
   if ((change & Change.Data) !== 0) {
     patch.dataset = source.dataset
     patch.series = source.series
+    patch.legend = source.legend ?? []
     patch.visualMap = source.visualMap ?? []
     patch.graphic = source.graphic ?? []
     if (source.aria !== undefined) patch.aria = source.aria
     for (const key of ['xAxis', 'yAxis', 'radar']) {
       if (source[key] !== undefined) patch[key] = source[key]
     }
-    replaceMerge.push('dataset', 'series', 'visualMap', 'graphic')
+    replaceMerge.push('dataset', 'series', 'legend', 'visualMap', 'graphic')
   } else if ((change & Change.Selection) !== 0) {
     patch.dataset = source.dataset
     patch.visualMap = source.visualMap ?? []

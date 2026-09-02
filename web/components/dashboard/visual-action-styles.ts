@@ -10,7 +10,9 @@ export const visualActionStyles = css`
 
   .icon-action {
     display: grid;
+    flex: 0 0 auto;
     width: var(--lv-button-height-xs, var(--control-xsmall-size));
+    min-width: var(--lv-button-height-xs, var(--control-xsmall-size));
     height: var(--lv-button-height-xs, var(--control-xsmall-size));
     min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
     place-items: center;

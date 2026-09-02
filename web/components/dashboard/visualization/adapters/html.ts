@@ -158,9 +158,10 @@ class HTMLHandle implements RendererHandle {
     }
     if (state.highlightAnnouncement) {
       const highlight = document.createElement('small')
-      highlight.className = 'lv-visualization-note'
+      highlight.className = 'lv-visualization-note lv-kpi-highlight'
       highlight.setAttribute('aria-live', 'polite')
       highlight.textContent = state.highlightAnnouncement
+      highlight.title = state.highlightAnnouncement
       article.append(highlight)
     }
     if (state.trend.length > 0) {

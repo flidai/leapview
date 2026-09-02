@@ -69,7 +69,10 @@ export function clampScale(value: number): number {
 
 export function clampFittedScale(value: number): number {
   if (!Number.isFinite(value)) return 1
-  return Math.min(2, Math.max(0.05, value))
+  // Fit modes may shrink a report to its viewport, but upscaling the entire
+  // surface makes DOM text and renderer canvases interpolate and look soft.
+  // Users can still opt into enlargement through the explicit zoom presets.
+  return Math.min(1, Math.max(0.05, value))
 }
 
 export function zoomStorageKey(): string {

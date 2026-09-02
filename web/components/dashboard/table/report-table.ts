@@ -321,7 +321,7 @@ export class ReportTable extends LitElement {
     .visual-options summary:focus-visible,
     .visual-options[open] summary {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
-      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
+      background: color-mix(in srgb, var(--lv-bg-panel) 80%, var(--lv-fg-muted));
       color: var(--lv-fg-default);
       outline: var(--focus-outline, var(--lv-border-default));
       outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
@@ -372,7 +372,7 @@ export class ReportTable extends LitElement {
     .menu button:hover,
     .menu button:focus-visible {
       border-color: var(--lv-button-invisible-border-hover, var(--control-transparent-borderColor-hover, var(--lv-line-default)));
-      background: var(--lv-button-invisible-bg-hover, var(--control-transparent-bgColor-hover, var(--lv-bg-panel-muted)));
+      background: color-mix(in srgb, var(--lv-bg-panel) 80%, var(--lv-fg-muted));
       outline: var(--focus-outline, var(--lv-border-default));
       outline-color: var(--borderColor-accent-emphasis, var(--lv-line-accent));
       outline-offset: var(--focus-outline-offset, var(--base-size-2));
@@ -685,20 +685,6 @@ export class ReportTable extends LitElement {
     .table-scrollport:focus-visible {
       outline: 2px solid var(--lv-fg-accent, currentColor);
       outline-offset: -2px;
-    }
-
-    .table-scroll-hint {
-      display: none;
-      margin: var(--base-size-4) var(--base-size-8) 0;
-      color: var(--lv-fg-muted);
-      font: var(--lv-type-caption);
-      text-align: right;
-    }
-
-    @media (max-width: 640px) {
-      .table-scroll-hint {
-        display: block;
-      }
     }
 
     .table-plane {
@@ -1444,7 +1430,7 @@ export class ReportTable extends LitElement {
               role="columnheader"
               style=${this.pinnedCellStyle(header.column)}
             >
-              <button class="header-button" type="button" @click=${() => this.sortColumn(column)}>
+              <button class="header-button" type="button" title=${column.label} @click=${() => this.sortColumn(column)}>
                 <span>${flexRender(header.column.columnDef.header, header.getContext())}</span>
                 <span class="sort">${sortMark}</span>
               </button>
@@ -1580,6 +1566,7 @@ export class ReportTable extends LitElement {
                 class="cell-action"
                 type="button"
                 aria-label=${`${column.label}: ${String(row[cell.column.id] ?? '')}`}
+                title=${String(row[cell.column.id] ?? '')}
                 @click=${(event: MouseEvent) => {
                   event.stopPropagation()
                   this.selectCell(row, column, index, event)
@@ -1693,7 +1680,6 @@ export class ReportTable extends LitElement {
             </div>
           </div>
         </div>
-        <p class="table-scroll-hint" aria-hidden="true">Swipe horizontally to see more columns <span aria-hidden="true">→</span></p>
         <div class="footer">
           <span><strong>${rowRange}</strong>${this.visibleLoading ? html` · loading` : nothing}${this.table.isCapped ? html` · browsing first ${this.table.rowCap.toLocaleString()}` : nothing}</span>
           <span>${selectedText}</span>
@@ -1814,11 +1800,15 @@ export class ReportTable extends LitElement {
       const cacheIsEmpty = this.blockCache[id].rows.length === 0
       if (carriesRows || carriesNonDefaultStart || cacheIsEmpty) {
         this.blockCache[id] = { ...incoming, rows: incoming.rows }
-        if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
-        const expected = this.expectedBlocks.get(id)
-        if (expected && this.blockMatchesExpected(incoming, expected)) {
-          this.expectedBlocks.delete(id)
-        }
+      }
+
+      // A matching response fulfils the request even when it contains no rows.
+      // Empty windows are valid after a filter reduces a deeply scrolled table;
+      // keeping them pending leaves the table's loading indicator stuck forever.
+      if (incoming.requestSeq > 0) this.latestAcceptedSeq.set(id, incoming.requestSeq)
+      const expected = this.expectedBlocks.get(id)
+      if (expected && this.blockMatchesExpected(incoming, expected)) {
+        this.expectedBlocks.delete(id)
       }
     }
   }
