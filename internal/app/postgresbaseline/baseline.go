@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
@@ -25,6 +26,7 @@ var plan = platformmigrations.Plan{
 	Components: []platformmigrations.Component{
 		{Name: "platform.bootstrap", SQL: platformbootstrappostgres.SchemaSQL()},
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
+		{Name: "physical_pool", SQL: physicalpoolpostgres.SchemaSQL()},
 	},
 	RolePolicySQL: rolePolicySQL,
 }
@@ -79,10 +81,20 @@ BEGIN
         REVOKE DELETE ON access.session, access.api_token, access.service_principal_secret,
             access.desktop_authorization_code, access.device_authorization,
             access.authoring_session, access.authoring_credential FROM leapview_control_runtime;
+        GRANT USAGE ON SCHEMA physical_pool TO leapview_control_runtime;
+        GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_runtime;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+            ON ALL TABLES IN SCHEMA physical_pool FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA access, audit TO leapview_control_maintenance;
         REVOKE ALL ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_maintenance;
+        GRANT USAGE ON SCHEMA physical_pool TO leapview_control_maintenance;
+        GRANT SELECT ON physical_pool.physical_pools,
+            physical_pool.physical_pool_admissions,
+            physical_pool.namespace_ownership_claims TO leapview_control_maintenance;
+        GRANT SELECT, INSERT, UPDATE, DELETE
+            ON physical_pool.namespace_deletion_leases TO leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
@@ -97,6 +109,8 @@ BEGIN
             access.oauth_client_assertion FROM leapview_control_readonly;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_readonly;
+        GRANT USAGE ON SCHEMA physical_pool TO leapview_control_readonly;
+        GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
@@ -106,6 +120,8 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA access, audit TO leapview_control_backup;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_backup;
+        GRANT USAGE ON SCHEMA physical_pool TO leapview_control_backup;
+        GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_backup;
     END IF;
 END
 $$;`

@@ -23,7 +23,7 @@ func repositoryPool(t *testing.T, location string) physicalpool.PhysicalPool {
 	t.Helper()
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
 		StorageLocation: location, StorageNamespace: "tenant-a", Region: "us-east-1",
-		Tenant: "tenant-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1",
+		Tenant: "tenant-a", EncryptionDomain: "encryption-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1",
 		CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention",
 		RetentionPolicy: physicalpool.RetentionPolicy{OrphanGracePeriodSeconds: 3600, ReaderGracePeriodSeconds: 300, BuildGracePeriodSeconds: 60},
 		Compatibility:   repositoryCompatibility(),

@@ -6,6 +6,7 @@ package physicalpool
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -19,6 +20,29 @@ import (
 	"strings"
 	"unicode"
 )
+
+// AdmissionContract is the verified restart contract for one pool tuple.
+// Implementations reconstruct every field from the PostgreSQL authority and
+// run domain validators before returning it. The contract is target-native;
+// legacy adapters may retain their own compatibility-shaped row type.
+type AdmissionContract struct {
+	Pool      PhysicalPool
+	Admission PoolAdmission
+	Evidence  Evidence
+}
+
+// PoolAdmissionRepository is the narrow control-plane authority consumed by
+// runtime composition. Implementations must treat pool identity and evidence
+// as immutable; writes are idempotent only for byte-for-byte equivalent
+// canonical identities/evidence.
+type PoolAdmissionRepository interface {
+	CreateAndAdmit(context.Context, PhysicalPool, Evidence) (PhysicalPool, PoolAdmission, error)
+	CreateAndAdmitWithOwnership(context.Context, PhysicalPool, Evidence, string, NamespaceOwnership) (PhysicalPool, PoolAdmission, error)
+	Admit(context.Context, PhysicalPool, Evidence) (PoolAdmission, error)
+	LoadAdmissionContract(context.Context, PoolID, Compatibility) (AdmissionContract, error)
+	LoadAdmissionContractByCompatibilityDigest(context.Context, PoolID, string) (AdmissionContract, error)
+	LoadAdmissionByEvidence(context.Context, PoolID, string) (AdmissionContract, error)
+}
 
 var (
 	ErrInvalidPool           = errors.New("physical pool is invalid")
@@ -204,6 +228,7 @@ type PoolIdentity struct {
 	StorageNamespace    string          `json:"storage_namespace"`
 	Region              string          `json:"region"`
 	Tenant              string          `json:"tenant"`
+	EncryptionDomain    string          `json:"encryption_domain"`
 	IsolationBoundary   string          `json:"isolation_boundary"`
 	EncryptionKeyRef    string          `json:"encryption_key_ref,omitempty"`
 	CredentialReference string          `json:"credential_reference,omitempty"`
@@ -222,6 +247,7 @@ func (i PoolIdentity) Validate() error {
 		{"storage_namespace", i.StorageNamespace, true},
 		{"region", i.Region, false},
 		{"tenant", i.Tenant, false},
+		{"encryption_domain", i.EncryptionDomain, true},
 		{"isolation_boundary", i.IsolationBoundary, true},
 		{"encryption_key_ref", i.EncryptionKeyRef, false},
 		{"credential_reference", i.CredentialReference, false},
@@ -259,6 +285,7 @@ func (i PoolIdentity) CanonicalJSON() (string, error) {
 		StorageNamespace      string          `json:"storage_namespace"`
 		Region                string          `json:"region"`
 		Tenant                string          `json:"tenant"`
+		EncryptionDomain      string          `json:"encryption_domain"`
 		IsolationBoundary     string          `json:"isolation_boundary"`
 		EncryptionKeyRef      string          `json:"encryption_key_ref,omitempty"`
 		CredentialReference   string          `json:"credential_reference,omitempty"`
@@ -266,7 +293,7 @@ func (i PoolIdentity) CanonicalJSON() (string, error) {
 		RetentionPolicy       RetentionPolicy `json:"retention_policy"`
 		StorageImplementation string          `json:"storage_implementation"`
 		ObjectNamingContract  string          `json:"object_naming_contract"`
-	}{canonicalLocation, i.StorageNamespace, i.Region, i.Tenant, i.IsolationBoundary, i.EncryptionKeyRef, i.CredentialReference, i.RetentionAuthority, i.RetentionPolicy, i.Compatibility.StorageImplementation, i.Compatibility.ObjectNamingContract})
+	}{canonicalLocation, i.StorageNamespace, i.Region, i.Tenant, i.EncryptionDomain, i.IsolationBoundary, i.EncryptionKeyRef, i.CredentialReference, i.RetentionAuthority, i.RetentionPolicy, i.Compatibility.StorageImplementation, i.Compatibility.ObjectNamingContract})
 	if err != nil {
 		return "", fmt.Errorf("marshal pool identity: %w", err)
 	}
@@ -582,7 +609,7 @@ func (p PhysicalPool) ApplyAdmission(admission PoolAdmission) (PhysicalPool, err
 		return p, diagnostics(ErrCompatibilityMismatch, Diagnostic{Code: DiagnosticTupleMismatch, Field: "compatibility"})
 	}
 	p.Admitted = true
-	// This is diagnostic convenience only. SQLite admissions are append-only;
+	// This is diagnostic convenience only. Admissions are append-only;
 	// VerifyAdmission accepts any matching immutable admission record.
 	p.AdmissionDigest = admission.EvidenceDigest
 	return p, nil

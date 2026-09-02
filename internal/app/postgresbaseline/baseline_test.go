@@ -19,8 +19,8 @@ func (r revisionReader) SchemaRevision(context.Context, int64) (platformpostgres
 
 func TestBaselineOwnsOnlyReconciledCapabilities(t *testing.T) {
 	components := Components()
-	if len(components) != 2 || components[0].Name != "platform.bootstrap" || components[1].Name != "access" {
-		t.Fatalf("components = %#v, want bootstrap then access", components)
+	if len(components) != 3 || components[0].Name != "platform.bootstrap" || components[1].Name != "access" || components[2].Name != "physical_pool" {
+		t.Fatalf("components = %#v, want bootstrap, access, then physical pool", components)
 	}
 	for _, unrelated := range []string{"jobs", "cache", "lineage", "deployment", "attribute"} {
 		for _, component := range components {

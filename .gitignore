@@ -41,6 +41,7 @@ internal/*/internal/db/
 internal/access/postgres/internal/db/
 internal/platform/postgres/internal/db/
 internal/platform/bootstrap/postgres/internal/db/
+internal/analytics/physicalpool/postgres/internal/db/
 internal/platform/**/sqlite/*db/
 docs/visuals/examples.gen.json
 web/generated/

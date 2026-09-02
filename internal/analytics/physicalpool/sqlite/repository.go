@@ -48,14 +48,14 @@ func createPhysicalPoolTx(ctx context.Context, tx *sql.Tx, normalized physicalpo
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO physical_pools (
 		  id, identity_digest, storage_location, storage_namespace,
-		  storage_implementation, object_naming_contract, region, tenant,
+		  storage_implementation, object_naming_contract, region, tenant, encryption_domain,
 		  isolation_boundary, encryption_key_ref, credential_reference,
 		  retention_authority, retention_policy_json
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		string(normalized.ID), string(normalized.ID), normalized.Identity.StorageLocation,
 		normalized.Identity.StorageNamespace, normalized.Identity.Compatibility.StorageImplementation,
 		normalized.Identity.Compatibility.ObjectNamingContract, normalized.Identity.Region,
-		normalized.Identity.Tenant, normalized.Identity.IsolationBoundary,
+		normalized.Identity.Tenant, normalized.Identity.EncryptionDomain, normalized.Identity.IsolationBoundary,
 		normalized.Identity.EncryptionKeyRef, normalized.Identity.CredentialReference,
 		normalized.Identity.RetentionAuthority, retentionJSON)
 	if err == nil {
@@ -555,12 +555,12 @@ func loadStoredPoolTx(ctx context.Context, tx *sql.Tx, id string, fallback physi
 	var row poolRow
 	err := tx.QueryRowContext(ctx, `
 		SELECT id, identity_digest, storage_location, storage_namespace,
-		       storage_implementation, object_naming_contract, region, tenant,
+		       storage_implementation, object_naming_contract, region, tenant, encryption_domain,
 		       isolation_boundary, encryption_key_ref, credential_reference,
 		       retention_authority, retention_policy_json
 		FROM physical_pools WHERE id = ?`, id).Scan(
 		&row.ID, &row.IdentityDigest, &row.StorageLocation, &row.StorageNamespace,
-		&row.StorageImplementation, &row.ObjectNamingContract, &row.Region, &row.Tenant,
+		&row.StorageImplementation, &row.ObjectNamingContract, &row.Region, &row.Tenant, &row.EncryptionDomain,
 		&row.IsolationBoundary, &row.EncryptionKeyRef, &row.CredentialReference,
 		&row.RetentionAuthority, &row.RetentionPolicyJSON)
 	if err != nil {
@@ -578,6 +578,7 @@ type poolRow struct {
 	ObjectNamingContract  string
 	Region                string
 	Tenant                string
+	EncryptionDomain      string
 	IsolationBoundary     string
 	EncryptionKeyRef      string
 	CredentialReference   string
@@ -608,7 +609,7 @@ func (r poolRow) pool(compatibility physicalpool.Compatibility) (physicalpool.Ph
 	}
 	identity := physicalpool.PoolIdentity{
 		StorageLocation: r.StorageLocation, StorageNamespace: r.StorageNamespace,
-		Region: r.Region, Tenant: r.Tenant, IsolationBoundary: r.IsolationBoundary,
+		Region: r.Region, Tenant: r.Tenant, EncryptionDomain: r.EncryptionDomain, IsolationBoundary: r.IsolationBoundary,
 		EncryptionKeyRef: r.EncryptionKeyRef, CredentialReference: r.CredentialReference,
 		RetentionAuthority: r.RetentionAuthority, RetentionPolicy: retention,
 		Compatibility: compatibility,
