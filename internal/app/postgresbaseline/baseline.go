@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
@@ -27,6 +28,7 @@ var plan = platformmigrations.Plan{
 		{Name: "platform.bootstrap", SQL: platformbootstrappostgres.SchemaSQL()},
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
 		{Name: "physical_pool", SQL: physicalpoolpostgres.SchemaSQL()},
+		{Name: "ducklake.bootstrap", SQL: ducklakepostgres.SchemaSQL()},
 	},
 	RolePolicySQL: rolePolicySQL,
 }
@@ -85,6 +87,10 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
             ON ALL TABLES IN SCHEMA physical_pool FROM leapview_control_runtime;
+        GRANT USAGE ON SCHEMA ducklake TO leapview_control_runtime;
+        GRANT SELECT ON ALL TABLES IN SCHEMA ducklake TO leapview_control_runtime;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
+            ON ALL TABLES IN SCHEMA ducklake FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA access, audit TO leapview_control_maintenance;
@@ -111,6 +117,8 @@ BEGIN
             ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_readonly;
         GRANT USAGE ON SCHEMA physical_pool TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_readonly;
+        GRANT USAGE ON SCHEMA ducklake TO leapview_control_readonly;
+        GRANT SELECT ON ALL TABLES IN SCHEMA ducklake TO leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
@@ -122,6 +130,8 @@ BEGIN
             ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_backup;
         GRANT USAGE ON SCHEMA physical_pool TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_backup;
+        GRANT USAGE ON SCHEMA ducklake TO leapview_control_backup;
+        GRANT SELECT ON ALL TABLES IN SCHEMA ducklake TO leapview_control_backup;
     END IF;
 END
 $$;`

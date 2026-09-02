@@ -203,6 +203,17 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
+  - engine: "postgresql"
+    queries: "internal/analytics/ducklake/postgres/queries"
+    schema: "internal/analytics/ducklake/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/analytics/ducklake/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
   - engine: "sqlite"
     queries:
       - "internal/dashboard/publication/sqlite/queries"

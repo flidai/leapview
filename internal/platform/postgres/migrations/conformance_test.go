@@ -71,7 +71,7 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 		t.Fatalf("baseline identity = %d/%q/%q", revision, migrationID, checksum)
 	}
 
-	for _, schema := range []string{"platform", "access", "audit"} {
+	for _, schema := range []string{"platform", "access", "audit", "physical_pool", "ducklake"} {
 		var ownerName string
 		if err := admin.QueryRow(ctx,
 			"SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = $1",
@@ -134,5 +134,29 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 		postgresbaseline.BaselineRevision,
 	); err == nil {
 		t.Fatal("schema revision append-only trigger accepted an update")
+	}
+
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := admin.Exec(ctx, `
+		INSERT INTO ducklake.catalog_identity
+		    (physical_pool_id, catalog_database, catalog_id, catalog_uuid,
+		     metadata_schema, compatibility_digest, catalog_schema_version)
+		VALUES ($1, 'leapview_ducklake', $2,
+		        '00000000-0000-5000-8000-000000000001', 'leapview_catalog_test', $3, '0.3')`,
+		"pool-test", "ducklake:pool-test", digest,
+	); err != nil {
+		t.Fatalf("insert catalog identity fixture: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "UPDATE ducklake.catalog_identity SET catalog_id='tampered' WHERE physical_pool_id='pool-test'"); err == nil {
+		t.Fatal("catalog identity immutable trigger accepted an update")
+	}
+	if _, err := runtime.Exec(ctx, `
+		INSERT INTO ducklake.catalog_identity
+		    (physical_pool_id, catalog_database, catalog_id, catalog_uuid,
+		     metadata_schema, compatibility_digest, catalog_schema_version)
+		VALUES ('forged', 'leapview_ducklake', 'ducklake:forged',
+		        '00000000-0000-5000-8000-000000000002', 'leapview_catalog_forged', $1, '0.3')`, digest,
+	); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("runtime catalog identity write error = %v, want permission denied", err)
 	}
 }

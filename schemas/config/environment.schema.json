@@ -2613,6 +2613,27 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {
+      "default": "leapview_ducklake_maintenance",
+      "description": "Least-privilege role granted bounded DuckLake metadata maintenance access.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "admin"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE": {
+      "default": "leapview_ducklake_migrator",
+      "description": "Role expected by the bounded DuckLake catalog initialization connection.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "admin"
+    },
+    "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL": {
+      "description": "Owner-capable PostgreSQL DuckLake catalog initialization URL; never used by serving.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "supported",
+      "x-scope": "admin"
+    },
     "LEAPVIEW_POSTGRES_DUCKLAKE_POOL_MAX_CONNS": {
       "default": "4",
       "description": "Maximum connections allowed in the DuckLake catalog PostgreSQL pool.",

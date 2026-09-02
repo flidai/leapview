@@ -738,7 +738,7 @@ func fixturePoolContractFor(t *testing.T, storageImplementation, dataPath string
 	}
 	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{
 		StorageLocation: storageLocation, StorageNamespace: storageNamespace, IsolationBoundary: "fixture",
-		RetentionAuthority: "fixture", Compatibility: tuple,
+		EncryptionDomain: "fixture", RetentionAuthority: "fixture", Compatibility: tuple,
 	})
 	if err != nil {
 		t.Fatal(err)
