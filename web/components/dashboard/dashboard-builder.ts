@@ -1195,7 +1195,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       grid-row: 1;
       min-height: 0;
       grid-template-rows: minmax(0, 1fr);
-      background: var(--lv-bg-app);
+      background: var(--lv-report-canvas-bg, var(--lv-bg-app));
     }
 
     .page-tabs {
@@ -1260,6 +1260,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       overflow: auto;
       min-width: 0;
       padding: 0;
+      background: var(--lv-report-canvas-bg, var(--lv-bg-app));
     }
 
     .canvas-fit {
@@ -1273,13 +1274,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       position: absolute;
       inset: 0 auto auto 0;
       box-sizing: border-box;
-      width: ${builderCanvasDesktopWidth}px;
-      min-width: ${builderCanvasDesktopWidth}px;
-      min-height: ${builderCanvasMinimumHeight}px;
+      width: var(--builder-canvas-width, ${builderCanvasDesktopWidth}px);
+      min-width: var(--builder-canvas-width, ${builderCanvasDesktopWidth}px);
+      min-height: var(--builder-canvas-min-height, ${builderCanvasMinimumHeight}px);
       border: 0;
       border-radius: 0;
-      background-color: var(--lv-bg-panel);
-      background-image: linear-gradient(to right, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px);
+      background-color: var(--lv-report-page-bg, var(--lv-bg-panel));
+      background-image: none;
       background-size: calc(100% / var(--builder-grid-columns)) var(--builder-grid-row-pitch);
       box-shadow: none;
       transform: scale(var(--builder-canvas-scale, 1));
@@ -1289,6 +1290,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .canvas[data-field-dragging='true'] {
       outline: 2px dashed var(--lv-data-2);
       outline-offset: -4px;
+    }
+
+    .canvas[data-grid-guides='true'],
+    .canvas:has(.ui-draggable-dragging, .ui-resizable-resizing) {
+      background-image: linear-gradient(to right, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px), linear-gradient(to bottom, color-mix(in srgb, var(--lv-line-muted) 55%, transparent) 1px, transparent 1px);
     }
 
     .canvas-field-drop-hint {
@@ -1382,6 +1388,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .grid-stack-item.ui-resizable-disabled > .ui-resizable-handle {
       display: none;
+    }
+
+    .grid-stack-item:not([data-selected='true']) > .ui-resizable-handle {
+      display: none !important;
     }
 
     .visual > .grid-stack-item-content,
@@ -2052,7 +2062,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .filter-component > .grid-stack-item-content {
       grid-template-rows: auto minmax(0, 1fr) auto;
       gap: var(--base-size-8);
-      background: color-mix(in srgb, var(--lv-bg-panel) 92%, var(--lv-data-2-muted));
+      background: var(--lv-bg-panel);
     }
 
     .filter-component:hover > .grid-stack-item-content {
@@ -2497,6 +2507,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       fit?.style.removeProperty('--builder-canvas-fitted-width')
       fit?.style.removeProperty('--builder-canvas-fitted-height')
       canvas?.style.removeProperty('--builder-canvas-scale')
+      canvas?.style.removeProperty('--builder-canvas-width')
+      canvas?.style.removeProperty('--builder-canvas-min-height')
       canvas?.style.removeProperty('min-height')
       return
     }
@@ -2508,7 +2520,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     const availableWidth = scroll.clientWidth
     if (availableWidth <= 0) return
-    const scale = Math.min(1, availableWidth / builderCanvasDesktopWidth)
+    const logicalWidth = page.canvas.width > 0 ? page.canvas.width : builderCanvasDesktopWidth
+    const minimumHeight = page.canvas.height > 0 ? page.canvas.height : builderCanvasMinimumHeight
+    const scale = Math.min(1, availableWidth / logicalWidth)
     const occupiedRows = this.canvasOccupiedRows(page)
     const workingRows = occupiedRows + builderCanvasRunwayRows
     const rowHeight = Math.max(1, page.grid.rowHeight || 48)
@@ -2517,10 +2531,12 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const contentHeight = workingRows > 0
       ? padding * 2 + workingRows * rowHeight + Math.max(0, workingRows - 1) * gap
       : padding * 2
-    const logicalHeight = Math.max(builderCanvasMinimumHeight, contentHeight)
-    fit.style.setProperty('--builder-canvas-fitted-width', `${builderCanvasDesktopWidth * scale}px`)
+    const logicalHeight = Math.max(minimumHeight, contentHeight)
+    fit.style.setProperty('--builder-canvas-fitted-width', `${logicalWidth * scale}px`)
     fit.style.setProperty('--builder-canvas-fitted-height', `${logicalHeight * scale}px`)
     canvas.style.setProperty('--builder-canvas-scale', String(scale))
+    canvas.style.setProperty('--builder-canvas-width', `${logicalWidth}px`)
+    canvas.style.setProperty('--builder-canvas-min-height', `${minimumHeight}px`)
     canvas.style.setProperty('--builder-grid-columns', String(Math.max(1, page.grid.columns || 12)))
     canvas.style.setProperty('--builder-grid-row-pitch', `${rowHeight + gap}px`)
     canvas.style.minHeight = `${logicalHeight}px`
@@ -2800,9 +2816,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="toolbar-actions" aria-label="Builder actions">
           <button type="button" class="icon-action" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>${lucideIcon(Undo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Undo</span></button>
           <button type="button" class="icon-action" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>${lucideIcon(Redo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Redo</span></button>
-          ${builder.preview.href && builder.capabilities.canPreview
-            ? html`<a class="button" data-builder-action="preview" href=${builder.preview.href}>Preview</a>`
-            : builder.capabilities.canPreview ? html`<button disabled title="Preview is not available yet">Preview</button>` : nothing}
           ${hasMoreActions ? html`
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
@@ -3224,12 +3237,15 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return html`<section class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span>${builder.capabilities.canAddPage ? html`<div><button @click=${this.addPage} aria-label="Add page">Add page</button></div>` : nothing}</div></div></section>`
     }
     const width = Math.max(12, page.grid.columns || 12)
+    const pageFormatting = this.inspectorTab === 'format'
+      && !this.effectiveVisualID(builder, page)
+      && !this.selectedFilterComponentID
     return html`
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
           <p id="dashboard-builder-grid-help" class="sr-only">Focus a canvas component. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
           <div class="canvas-fit">
-            <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
+            <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} data-grid-guides=${this.draggedFieldID || pageFormatting ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
               ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0
                 ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
@@ -3301,7 +3317,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             .pending=${this.builderFilterController.pendingFor(binding.key)}
             .stale=${false}
           ></lv-slicer>` : this.renderFilterControlPreview(component)}
-          <span class="filter-runtime-note">${validationMessage || (binding ? 'Interactive draft preview' : `${this.filterControlLabel(component.controlType)} · preparing preview`)}</span>
+          ${validationMessage ? html`<span class="filter-runtime-note" role="alert">${validationMessage}</span>` : nothing}
         </div>
       </div>
     `
@@ -4818,9 +4834,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   private readonly deselectVisualFromCanvas = (event: MouseEvent): void => {
     const target = event.target
     if (target instanceof Element && target.closest('.visual, .filter-component')) return
+    this.clearCanvasSelection()
+  }
+
+  private clearCanvasSelection(): boolean {
     const builder = this.builder
     const page = builder ? this.selectedPage(builder) : undefined
-    if (!page || (!this.effectiveVisualID(builder, page) && !this.selectedFilterComponentID && !this.selectedFilterID && !this.addingSlicer)) return
+    if (!page || (!this.effectiveVisualID(builder, page) && !this.selectedFilterComponentID && !this.selectedFilterID && !this.addingSlicer)) return false
     this.localVisualID = ''
     this.addingSlicer = false
     this.selectedFilterID = ''
@@ -4828,6 +4848,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.inspectorTab = 'build'
     this.visualActionMessage = 'Visual selection cleared.'
     this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
+    return true
   }
 
   private selectVisualOnKey(event: KeyboardEvent, visualID: string): void {
@@ -5007,7 +5028,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const modifier = event.metaKey || event.ctrlKey
     const key = event.key.toLowerCase()
     let handled = false
-    if (modifier && key === 'z' && event.shiftKey) {
+    if (!modifier && !event.shiftKey && event.key === 'Escape') {
+      handled = this.clearCanvasSelection()
+    } else if (modifier && key === 'z' && event.shiftKey) {
       if (this.redoStack.length > 0) { this.redo(); handled = true }
     } else if (modifier && key === 'z') {
       if (this.undoStack.length > 0) { this.undo(); handled = true }
