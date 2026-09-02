@@ -457,6 +457,25 @@ func (AddFilterPayload) RequiredAction() (AuthorizationAction, error) {
 	return AuthorizationActionEdit, nil
 }
 
+// AddSlicerPayload creates one governed filter and places its control on a
+// page in the same revision. It is the builder's atomic convenience intent;
+// the canonical document still stores the ordinary filter definition and
+// filter page component used by dashboards as code.
+type AddSlicerPayload struct {
+	PageID      string `json:"pageId"`
+	FilterID    string `json:"filterId,omitempty"`
+	ComponentID string `json:"componentId,omitempty"`
+	Label       string `json:"label"`
+	Dimension   string `json:"dimension"`
+	Dataset     string `json:"dataset,omitempty"`
+	ControlType string `json:"controlType"`
+}
+
+func (AddSlicerPayload) authoringPayload() {}
+func (AddSlicerPayload) RequiredAction() (AuthorizationAction, error) {
+	return AuthorizationActionEdit, nil
+}
+
 // UpdateFilterPayload changes only builder-owned presentation properties and
 // deliberately preserves authored defaults, operators, targets, and advanced
 // option settings that may have been added in YAML or by an agent.
@@ -619,6 +638,7 @@ type Command struct {
 	SetLayout             *SetLayoutPayload             `json:"setLayout,omitempty"`
 	SetFilters            *SetFiltersPayload            `json:"setFilters,omitempty"`
 	AddFilter             *AddFilterPayload             `json:"addFilter,omitempty"`
+	AddSlicer             *AddSlicerPayload             `json:"addSlicer,omitempty"`
 	UpdateFilter          *UpdateFilterPayload          `json:"updateFilter,omitempty"`
 	SetFilterTargets      *SetFilterTargetsPayload      `json:"setFilterTargets,omitempty"`
 	SetFilterScope        *SetFilterScopePayload        `json:"setFilterScope,omitempty"`
@@ -705,6 +725,9 @@ func (c Command) payloads() []authoringPayload {
 	if c.AddFilter != nil {
 		payloads = append(payloads, c.AddFilter)
 	}
+	if c.AddSlicer != nil {
+		payloads = append(payloads, c.AddSlicer)
+	}
 	if c.UpdateFilter != nil {
 		payloads = append(payloads, c.UpdateFilter)
 	}
@@ -777,7 +800,7 @@ func (c Command) IsBuilderIntent() bool {
 		*UpdatePageLayoutPayload, *AddVisualPayload, *SetPlacementsPayload, *AssignFieldPayload, *RemovePagePayload,
 		*SetVisualTypePayload, *RenameVisualPayload, *DuplicateVisualPayload, *UpdateVisualFormatPayload,
 		*RestoreRevisionPayload, *RemoveFieldPayload, *MoveFieldPayload, *RemoveVisualPayload,
-		*AddFilterPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload,
+		*AddFilterPayload, *AddSlicerPayload, *UpdateFilterPayload, *SetFilterTargetsPayload, *SetFilterScopePayload, *RemoveFilterPayload, *AddFilterComponentPayload, *RemoveFilterComponentPayload,
 		*SetInteractionTargetPayload:
 		return true
 	default:
@@ -1120,6 +1143,26 @@ func validatePayload(payload authoringPayload) error {
 		}
 		if value.FilterID != "" {
 			if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+				return err
+			}
+		}
+		if err := validateBuilderFilterControl(value.ControlType, value.Dataset); err != nil {
+			return err
+		}
+	case *AddSlicerPayload:
+		if err := validateCanonicalObjectID("page id", value.PageID); err != nil {
+			return err
+		}
+		if strings.TrimSpace(value.Label) == "" || strings.TrimSpace(value.Dimension) == "" {
+			return fmt.Errorf("%w: add slicer requires label and dimension", ErrInvalidPayload)
+		}
+		if value.FilterID != "" {
+			if err := validateCanonicalObjectID("filter id", value.FilterID); err != nil {
+				return err
+			}
+		}
+		if value.ComponentID != "" {
+			if err := validateCanonicalObjectID("component id", value.ComponentID); err != nil {
 				return err
 			}
 		}

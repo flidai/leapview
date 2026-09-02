@@ -207,6 +207,14 @@ export function renderVisualTypeIcon(type: string) {
         <path class="visual-icon-primary" d="m14 15 2-2v2h3.5v2H16v2l-2-2-2-2v-2z"></path>
       `
       break
+    case 'slicer':
+      marks = svg`
+        <path class="visual-icon-tertiary" d="M2.5 3h19v18h-19z"></path>
+        <path class="visual-icon-primary" d="M5 6h14l-5.5 6v5.5l-3 1.5v-7z"></path>
+        <circle class="visual-icon-secondary" cx="18.5" cy="17.5" r="3"></circle>
+        <path class="visual-icon-cutout" d="m17.1 17.5.9.9 1.9-2 .8.8-2.7 2.7-1.7-1.7z"></path>
+      `
+      break
     default:
       marks = svg`<path class="visual-icon-primary" d="M3 4h12v4H3zm0 6h18v4H3zm0 6h9v4H3z"></path>`
   }
