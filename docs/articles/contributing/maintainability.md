@@ -76,7 +76,7 @@ Generated sources do not use authored-file exceptions. They are excluded only wh
 
 ### Current decomposition evidence
 
-The first governed extraction moves bootstrap, connection-scope, command-failure, and delivery-authorization policy from `internal/app/runtime_router.go` into `internal/app/runtime_router_policy.go`. The code remains in package `app`, so the change introduces no new dependency edge; existing bootstrap and canonical-authorization characterization tests protect behavior. On the PostgreSQL target branch where the policy landed, the router hotspot falls from 2,583 to 2,121 lines, and the Go-production excess-line measurement improves by 462 lines.
+The first governed extraction moves bootstrap, connection-scope, command-failure, and delivery-authorization policy from `internal/app/runtime_router.go` into `internal/app/runtime_router_policy.go`. The code remains in package `app`, so the change introduces no new dependency edge; existing bootstrap and canonical-authorization characterization tests protect behavior. On the PostgreSQL target branch where the policy landed, the router hotspot falls from 2,583 to 2,121 lines, reducing that file's excess-line contribution by 462 lines.
 
 ## Engineering-quality delivery plan
 
