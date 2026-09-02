@@ -1237,11 +1237,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       align-items: center;
       justify-content: center;
       overflow: hidden;
-      border: 1px solid transparent;
+      border: var(--lv-border-width) solid var(--lv-line-muted);
       border-radius: var(--lv-button-radius, var(--lv-radius-default));
       padding: 0 var(--base-size-8);
       color: inherit;
-      background: transparent;
+      background: var(--lv-bg-panel-muted);
       font: var(--lv-type-body-compact);
       text-align: left;
       text-decoration: none;
@@ -1251,6 +1251,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .page-tab:hover {
+      border-color: var(--lv-line-emphasis);
       background: var(--lv-bg-panel-muted);
     }
 
@@ -1261,11 +1262,11 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .page-tab[aria-selected='true'],
     .page-tab[aria-current='page'] {
-      border-color: var(--lv-data-3);
-      color: var(--lv-fg-default);
-      background: var(--lv-data-3-muted);
+      border-color: var(--lv-fg-accent);
+      color: var(--lv-fg-accent);
+      background: var(--lv-bg-accent-muted);
       font-weight: var(--base-text-weight-semibold);
-      box-shadow: inset 0 -2px 0 var(--lv-data-3);
+      box-shadow: inset 0 -2px 0 var(--lv-fg-accent);
     }
 
     .page-tab[data-page-dragging='true'] {
