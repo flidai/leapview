@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Trash2, Undo2 } from 'lucide'
+import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, Moon, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Sun, Trash2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -58,6 +58,7 @@ type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
 type BuilderFilterScope = 'report' | 'page' | 'visual' | 'custom'
 type BuilderPane = 'filters' | 'visuals' | 'data'
 type BuilderInteractionEffect = 'filter' | 'highlight' | 'none'
+type BuilderResolvedTheme = 'light' | 'dark'
 
 const builderPaneStorageKey = 'leapview-dashboard-builder-collapsed-panes'
 const defaultCollapsedPanes: Record<BuilderPane, boolean> = { filters: false, visuals: false, data: false }
@@ -157,6 +158,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   @state() private terminalFailure: BrowserCommandFailure | null = null
   @state() private collapsedPanes: Record<BuilderPane, boolean> = { ...defaultCollapsedPanes }
   @state() private appearanceOpen = false
+  @state() private resolvedTheme: BuilderResolvedTheme = currentResolvedTheme()
   private commandPending = false
   private activeCommandAction = ''
   private interactionOverridesRevision = ''
@@ -204,6 +206,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     super.connectedCallback()
     this.restoreCollapsedPanes()
     document.addEventListener('datastar-fetch', this.handleDatastarFetch)
+    document.addEventListener('leapview-theme-applied', this.handleThemeApplied)
     this.addEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
     this.addEventListener('lv-filter-options-needed', this.handleBuilderFilterOptionsNeeded as EventListener, { capture: true })
     if (typeof window !== 'undefined') {
@@ -215,6 +218,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   override disconnectedCallback(): void {
     document.removeEventListener('datastar-fetch', this.handleDatastarFetch)
+    document.removeEventListener('leapview-theme-applied', this.handleThemeApplied)
     this.removeEventListener('lv-filter-mutate', this.handleBuilderFilterMutation as EventListener, { capture: true })
     this.removeEventListener('lv-filter-options-needed', this.handleBuilderFilterOptionsNeeded as EventListener, { capture: true })
     if (typeof window !== 'undefined') window.removeEventListener('keydown', this.handleBuilderKeydown)
@@ -2850,6 +2854,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         <div class="toolbar-actions" aria-label="Builder actions">
           <button type="button" class="icon-action" data-builder-action="undo" aria-label="Undo" title="Undo (Ctrl/⌘ Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.undoStack.length === 0} @click=${this.undo}>${lucideIcon(Undo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Undo</span></button>
           <button type="button" class="icon-action" data-builder-action="redo" aria-label="Redo" title="Redo (Ctrl/⌘ Shift Z)" ?disabled=${!builder.capabilities.canEdit || this.commandPending || this.redoStack.length === 0} @click=${this.redo}>${lucideIcon(Redo2, { size: 16, strokeWidth: 2 })}<span class="sr-only">Redo</span></button>
+          ${this.renderThemeToggle()}
           ${hasMoreActions ? html`
             <details class="more-actions">
               <summary aria-label="More dashboard actions">More</summary>
@@ -2876,6 +2881,33 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       <button type="button" @click=${this.reloadAfterFailure}>Reload latest draft</button>
       ${failure.retryable ? html`<button type="button" @click=${this.clearTerminalFailure}>Dismiss</button>` : nothing}
     </div>`
+  }
+
+  private renderThemeToggle() {
+    const targetTheme: BuilderResolvedTheme = this.resolvedTheme === 'dark' ? 'light' : 'dark'
+    const label = `Switch to ${targetTheme} mode`
+    return html`
+      <button
+        type="button"
+        class="icon-action"
+        data-builder-action="theme"
+        data-theme-mode=${this.resolvedTheme}
+        aria-label=${label}
+        title=${label}
+        @click=${this.toggleTheme}
+      ><span data-theme-icon=${targetTheme}>${lucideIcon(targetTheme === 'dark' ? Moon : Sun, { size: 16, strokeWidth: 2 })}</span><span class="sr-only">${label}</span></button>
+    `
+  }
+
+  private readonly handleThemeApplied = (event: Event): void => {
+    const resolvedMode = (event as CustomEvent<{ resolvedMode?: string }>).detail?.resolvedMode
+    this.resolvedTheme = resolvedMode === 'dark' ? 'dark' : resolvedMode === 'light' ? 'light' : currentResolvedTheme()
+  }
+
+  private readonly toggleTheme = (): void => {
+    const mode: BuilderResolvedTheme = this.resolvedTheme === 'dark' ? 'light' : 'dark'
+    this.resolvedTheme = mode
+    document.dispatchEvent(new CustomEvent('leapview-theme-change', { detail: { mode } }))
   }
 
   private readonly handleDatastarFetch = (event: Event): void => {
@@ -5214,6 +5246,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
 function dashboardAppearanceColor(value: string): string {
   return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'
+}
+
+function currentResolvedTheme(): BuilderResolvedTheme {
+  if (typeof document === 'undefined') return 'light'
+  const colorMode = document.documentElement.dataset.colorMode
+  if (colorMode === 'dark' || colorMode === 'light') return colorMode
+  return typeof window !== 'undefined' && window.matchMedia?.('(prefers-color-scheme: dark)').matches ? 'dark' : 'light'
 }
 
 if (!customElements.get('lv-dashboard-builder')) customElements.define('lv-dashboard-builder', LeapViewDashboardBuilder)

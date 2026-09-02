@@ -300,6 +300,46 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
   }
 })
 
+test('dashboard builder toggles the product theme between light and dark', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const changes: string[] = []
+      const onThemeChange = (event: Event) => changes.push((event as CustomEvent).detail?.mode)
+      document.addEventListener('leapview-theme-change', onThemeChange)
+      document.dispatchEvent(new CustomEvent('leapview-theme-applied', { detail: { mode: 'light', resolvedMode: 'light' } }))
+      await element.updateComplete
+      const root = element.shadowRoot
+      const toggle = root.querySelector('[data-builder-action="theme"]') as HTMLButtonElement
+      const light = {
+        mode: toggle.dataset.themeMode,
+        label: toggle.getAttribute('aria-label'),
+        title: toggle.getAttribute('title'),
+        icon: toggle.querySelector('[data-theme-icon]')?.getAttribute('data-theme-icon'),
+      }
+      toggle.click()
+      await element.updateComplete
+      const dark = {
+        mode: toggle.dataset.themeMode,
+        label: toggle.getAttribute('aria-label'),
+        icon: toggle.querySelector('[data-theme-icon]')?.getAttribute('data-theme-icon'),
+      }
+      toggle.click()
+      await element.updateComplete
+      document.removeEventListener('leapview-theme-change', onThemeChange)
+      return { changes, light, dark }
+    })
+    expect(state.light).toEqual({ mode: 'light', label: 'Switch to dark mode', title: 'Switch to dark mode', icon: 'dark' })
+    expect(state.dark).toEqual({ mode: 'dark', label: 'Switch to light mode', icon: 'light' })
+    expect(state.changes).toEqual(['dark', 'light'])
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder creates a slicer from one compatible dimension', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1789,7 +1829,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     expect(state.metadataLines).toBe(1)
     expect(state.metadata).toContain('Saving changes…')
     expect(state.metadata).not.toContain('Unsaved')
-    expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'more', 'Publish'])
+    expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'Switch to dark mode', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
