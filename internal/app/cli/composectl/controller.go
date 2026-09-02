@@ -591,18 +591,26 @@ func initializationEnvironment(existing []byte, options InitOptions, csrfKey, me
 	contents := string(existing)
 	values := environmentValues(contents)
 	controllerOwned := map[string]string{
-		"LEAPVIEW_PRODUCTION":           "1",
-		"LEAPVIEW_ENVIRONMENT":          options.Environment,
-		"LEAPVIEW_ADDR":                 ":8080",
-		"LEAPVIEW_HOME":                 "/var/lib/leapview/home",
-		"LEAPVIEW_MANAGED_DATA_BACKEND": "local",
-		"LEAPVIEW_MANAGED_DATA_DIR":     "/var/lib/leapview/home/managed-data",
-		"LEAPVIEW_LOCAL_AUTH":           "1",
-		"LEAPVIEW_COOKIE_SECURE":        "true",
-		"LEAPVIEW_TRUST_PROXY_HEADERS":  "true",
+		"LEAPVIEW_PRODUCTION":          "1",
+		"LEAPVIEW_ENVIRONMENT":         options.Environment,
+		"LEAPVIEW_ADDR":                ":8080",
+		"LEAPVIEW_HOME":                "/var/lib/leapview/home",
+		"LEAPVIEW_LOCAL_AUTH":          "1",
+		"LEAPVIEW_COOKIE_SECURE":       "true",
+		"LEAPVIEW_TRUST_PROXY_HEADERS": "true",
 	}
 	for key, value := range controllerOwned {
 		values[key] = value
+	}
+	// Storage topology is operator-owned. Supply the self-contained local
+	// defaults only when the input does not select a backend; never replace a
+	// reviewed S3 topology during initialization.
+	if strings.TrimSpace(values["LEAPVIEW_MANAGED_DATA_BACKEND"]) == "" {
+		values["LEAPVIEW_MANAGED_DATA_BACKEND"] = "local"
+	}
+	if strings.TrimSpace(values["LEAPVIEW_MANAGED_DATA_DIR"]) == "" &&
+		strings.EqualFold(strings.TrimSpace(values["LEAPVIEW_MANAGED_DATA_BACKEND"]), "local") {
+		values["LEAPVIEW_MANAGED_DATA_DIR"] = "/var/lib/leapview/home/managed-data"
 	}
 	// These values are derived from the validated init arguments. They are
 	// intentionally refreshed when an operator pre-populates leapview.env.

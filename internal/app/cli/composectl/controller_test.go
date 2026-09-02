@@ -123,6 +123,9 @@ func TestInitializationEnvironmentPreservesProviderSettingsAndGeneratesMissingSe
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=provider_runtime\n" +
 		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-provider\n" +
 		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64) + "\n" +
+		"LEAPVIEW_MANAGED_DATA_BACKEND=s3\n" +
+		"LEAPVIEW_MANAGED_DATA_S3_BUCKET=provider-managed-data\n" +
+		"LEAPVIEW_MANAGED_DATA_S3_ENDPOINT=https://objects.example.com\n" +
 		"LEAPVIEW_CSRF_KEY=<generated-by-leapviewctl>\n" +
 		"LEAPVIEW_METRICS_BEARER_TOKEN=operator-metrics-token\n" +
 		"LEAPVIEW_PRODUCTION=0\n" +
@@ -139,6 +142,9 @@ func TestInitializationEnvironmentPreservesProviderSettingsAndGeneratesMissingSe
 		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=provider_runtime\n",
 		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-provider\n",
 		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64) + "\n",
+		"LEAPVIEW_MANAGED_DATA_BACKEND=s3\n",
+		"LEAPVIEW_MANAGED_DATA_S3_BUCKET=provider-managed-data\n",
+		"LEAPVIEW_MANAGED_DATA_S3_ENDPOINT=https://objects.example.com\n",
 		"LEAPVIEW_CSRF_KEY=generated-csrf\n",
 		"LEAPVIEW_METRICS_BEARER_TOKEN=operator-metrics-token\n",
 		"LEAPVIEW_PUBLIC_URL=https://dash.example.com\n",
@@ -151,6 +157,18 @@ func TestInitializationEnvironmentPreservesProviderSettingsAndGeneratesMissingSe
 			t.Errorf("merged environment missing %q:\n%s", required, got)
 		}
 	}
+	if strings.Contains(got, "LEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data") {
+		t.Fatal("S3 initialization synthesized a local managed-data directory")
+	}
+}
+
+func TestInitializationEnvironmentSuppliesLocalManagedDataDefaults(t *testing.T) {
+	got, err := initializationEnvironment(nil, InitOptions{
+		AdminEmail: "admin@example.com", Domain: "dash.example.com", Environment: "prod",
+	}, "generated-csrf", "generated-metrics")
+	require.NoError(t, err)
+	require.Contains(t, got, "LEAPVIEW_MANAGED_DATA_BACKEND=local\n")
+	require.Contains(t, got, "LEAPVIEW_MANAGED_DATA_DIR=/var/lib/leapview/home/managed-data\n")
 }
 
 func TestInitializeRejectsInvalidPublicDomainBeforeStateMutation(t *testing.T) {
