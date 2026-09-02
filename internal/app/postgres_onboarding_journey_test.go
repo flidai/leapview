@@ -345,6 +345,7 @@ func postgresOnboardingConfig(t *testing.T, control, catalog *postgrestest.Datab
 		ManagedDataMinFreeBytes: 1, ManagedDataUploadSessionTTL: time.Hour, ManagedDataGCInterval: time.Hour, ManagedDataGCGracePeriod: time.Hour,
 		DuckDBExtensionSupplyPath: fixture.SupplyPath, DuckDBExtensionSupplySHA256: fixture.SupplySHA256, DuckDBExtensionCacheDir: fixture.CacheDir,
 		DuckDBNodeMemoryMaxBytes: 256 << 20, DuckDBNodeTempMaxBytes: 1 << 30, DuckDBNodeMaxThreads: 2,
+		DuckLakeRetentionInterval: time.Hour, DuckLakeRetentionFileGracePeriod: 24 * time.Hour,
 		QueryResultMaxRows: 10_000, QueryResultMaxBytes: 32 << 20,
 		QueryCacheRuntimeMaxEntries: 16, QueryCacheRuntimeMaxBytes: 4 << 20, QueryCacheNodeMaxEntries: 64, QueryCacheNodeMaxBytes: 16 << 20,
 		CSRFKey: strings.Repeat("c", 32), TokenHashKey: strings.Repeat("t", 32), MetricsBearerToken: strings.Repeat("m", 32),

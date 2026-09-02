@@ -70,6 +70,8 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	cfg.DuckDBNodeMemoryMaxBytes = 256 << 20
 	cfg.DuckDBNodeTempMaxBytes = 1 << 30
 	cfg.DuckDBNodeMaxThreads = 2
+	cfg.DuckLakeRetentionInterval = time.Hour
+	cfg.DuckLakeRetentionFileGracePeriod = 24 * time.Hour
 	cfg.QueryResultMaxRows = 10_000
 	cfg.QueryResultMaxBytes = 32 << 20
 	cfg.QueryCacheRuntimeMaxEntries = 16
