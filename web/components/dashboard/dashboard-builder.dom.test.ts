@@ -118,11 +118,6 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         filledMarks: button.querySelectorAll('svg .visual-icon-primary, svg .visual-icon-secondary, svg .visual-icon-tertiary').length,
         color: getComputedStyle(button).color,
       }))
-      const tabs = Array.from(root.querySelectorAll('.inspector-tab')).map((tab) => ({
-        id: tab.getAttribute('data-inspector-tab'),
-        label: tab.textContent?.trim(),
-        selected: tab.getAttribute('aria-selected'),
-      }))
       return {
         regions,
         boxes,
@@ -131,8 +126,9 @@ test('dashboard builder places the page tab bar below the canvas without consumi
         pickerColumns: getComputedStyle(pickerGrid).gridTemplateColumns.split(' ').length,
         pickerHasScroll: pickerCatalog.scrollHeight > pickerCatalog.clientHeight || pickerCatalog.scrollWidth > pickerCatalog.clientWidth,
         referenceHref: root.querySelector<HTMLAnchorElement>('.visual-reference-link')?.getAttribute('href'),
-        tabs,
-        panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
+        inspectorTabs: root.querySelectorAll('.inspector-tab').length,
+        panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
+        formatControls: root.querySelectorAll('[data-format-control]').length,
         pageBarBelowCanvas: Boolean(canvas && pageBar && pageBar.top >= canvas.top + canvas.height - 1),
         pageBarSharesCanvasWidth: Boolean(canvas && pageBar && pageBar.left >= canvas.left - 1 && pageBar.right <= canvas.right + 1),
         pageBarBeforeVisualBuilder: Boolean(pageBar && visualBuilder && pageBar.bottom <= visualBuilder.bottom + 1),
@@ -161,11 +157,9 @@ test('dashboard builder places the page tab bar below the canvas without consumi
     expect(state.pickerColumns).toBe(7)
     expect(state.pickerHasScroll).toBe(false)
     expect(state.referenceHref).toBe('/docs/visuals/bar')
-    expect(state.tabs).toEqual([
-      { id: 'build', label: 'Build', selected: 'true' },
-      { id: 'format', label: 'Format', selected: 'false' },
-    ])
-    expect(state.panel).toBe('Build visual')
+    expect(state.inspectorTabs).toBe(0)
+    expect(state.panel).toBe('Visual configuration')
+    expect(state.formatControls).toBe(6)
     expect(state.horizontalOverflow).toBe(false)
     expect(state.verticalOverflow).toBe(false)
   } finally {
@@ -526,14 +520,10 @@ test('dashboard builder remaps normally after an intervening edit instead of rol
       await element.updateComplete
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
       await element.updateComplete
-      ;(root.querySelector('[data-inspector-tab="format"]') as HTMLButtonElement).click()
-      await element.updateComplete
       const legend = root.querySelector('[data-format-control="legend"]') as HTMLSelectElement
       legend.value = 'bottom'
       legend.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
-      await element.updateComplete
-      ;(root.querySelector('[data-inspector-tab="build"]') as HTMLButtonElement).click()
       await element.updateComplete
       ;(root.querySelector('button[data-visual-picker-type="bar"]') as HTMLButtonElement).click()
       await element.updateComplete
@@ -838,7 +828,7 @@ test('dashboard builder exposes field-token remove, role movement, and reorder a
   }
 })
 
-test('dashboard builder keeps format controls visible and persistent across inspector tabs', async () => {
+test('dashboard builder keeps format controls visible and persistent alongside build controls', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -846,9 +836,6 @@ test('dashboard builder keeps format controls visible and persistent across insp
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      const formatTab = root.querySelector<HTMLButtonElement>('[data-inspector-tab="format"]')
-      formatTab?.click()
-      await element.updateComplete
       const controlSelectors = [
         'input[data-format-control="title-text"]',
         'input[data-format-control="title-visible"]',
@@ -883,10 +870,6 @@ test('dashboard builder keeps format controls visible and persistent across insp
         } : visual),
       }))
       mergePatch({ builder: { pages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:def' } } })
-      await element.updateComplete
-      root.querySelector<HTMLButtonElement>('[data-inspector-tab="build"]')?.click()
-      await element.updateComplete
-      root.querySelector<HTMLButtonElement>('[data-inspector-tab="format"]')?.click()
       await element.updateComplete
       return {
         controls,
@@ -1002,11 +985,12 @@ test('dashboard builder edits page name and grid through the page Format contrac
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       ;(root.querySelector('.page-tab[data-page-id="details"]') as HTMLButtonElement).click()
-      ;(root.querySelector('[data-inspector-tab="format"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      ;(root.querySelector('.page-tab[data-page-id="details"]') as HTMLButtonElement).click()
       await element.updateComplete
       const before = {
         heading: root.querySelector('.visual-builder .pane-title')?.textContent?.trim(),
-        panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
+        panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
         controls: Array.from(root.querySelectorAll<HTMLInputElement>('[data-page-control]')).map((control) => ({ key: control.dataset.pageControl, value: control.value, min: control.min })),
       }
       const title = root.querySelector<HTMLInputElement>('[data-page-control="title"]')!
@@ -1022,7 +1006,7 @@ test('dashboard builder edits page name and grid through the page Format contrac
       return { before, commands }
     })
     expect(state.before.heading).toBe('Details')
-    expect(state.before.panel).toBe('Format page')
+    expect(state.before.panel).toBe('Page settings')
     expect(state.before.controls).toEqual([
       { key: 'title', value: 'Details', min: '' },
       { key: 'columns', value: '12', min: '1' },
@@ -1051,11 +1035,11 @@ test('dashboard builder exposes page settings from the active tab and page actio
       await element.updateComplete
       const fromTab = {
         selectedVisuals: root.querySelectorAll('.visual[data-selected="true"]').length,
-        inspectorTab: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
+        inspectorTabs: root.querySelectorAll('.inspector-tab').length,
         paneLabel: root.querySelector('.visual-builder')?.getAttribute('aria-label'),
         title: root.querySelector('.visual-builder .pane-title')?.textContent?.trim(),
         badge: root.querySelector('.visual-builder .visual-type-badge')?.textContent?.trim(),
-        panel: root.querySelector('.visual-builder [role="tabpanel"]')?.getAttribute('aria-label'),
+        panel: root.querySelector('.visual-builder .inspector-panel')?.getAttribute('aria-label'),
       }
       ;(root.querySelector('[data-pane-toggle="visuals"]') as HTMLButtonElement).click()
       await element.updateComplete
@@ -1068,23 +1052,23 @@ test('dashboard builder exposes page settings from the active tab and page actio
         menuLabels: Array.from(menu.querySelectorAll('button')).map((button) => button.textContent?.replace(/\s+/g, ' ').trim()),
         settingsHasIcon: Boolean(menu.querySelector('[data-page-action="settings"] svg[data-lucide="icon"]')),
         paneReopened: root.querySelector('.visual-builder')?.getAttribute('data-collapsed'),
-        inspectorTab: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
+        panel: root.querySelector('.visual-builder .inspector-panel')?.getAttribute('aria-label'),
         menuOpen: menu.open,
         selectionEvents,
       }
     })
     expect(state.fromTab).toEqual({
       selectedVisuals: 0,
-      inspectorTab: 'format',
+      inspectorTabs: 0,
       paneLabel: 'Page properties',
       title: 'Overview',
       badge: 'Page',
-      panel: 'Format page',
+      panel: 'Page settings',
     })
     expect(state.menuLabels[0]).toBe('Page settings')
     expect(state.settingsHasIcon).toBe(true)
     expect(state.paneReopened).toBe('false')
-    expect(state.inspectorTab).toBe('format')
+    expect(state.panel).toBe('Page settings')
     expect(state.menuOpen).toBe(false)
     expect(state.selectionEvents.at(-1)).toMatchObject({ visualId: '' })
   } finally {
@@ -1422,7 +1406,7 @@ test('dashboard builder disables GridStack editing in read-only state and reinit
   }
 })
 
-test('dashboard builder switches Build and Format inspector tabs', async () => {
+test('dashboard builder shows build and format controls in one inspector panel', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -1430,41 +1414,27 @@ test('dashboard builder switches Build and Format inspector tabs', async () => {
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      const format = root.querySelector('[data-inspector-tab="format"]') as HTMLButtonElement
-      const build = root.querySelector('[data-inspector-tab="build"]') as HTMLButtonElement
-      const initial = {
-        selected: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
-        panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
-        dataPaneVisible: Boolean(root.querySelector('.data-pane')),
-        dataSearchCount: root.querySelectorAll('.data-pane input[aria-label="Search fields"]').length,
-      }
-      format.click()
-      await element.updateComplete
-      const formatted = {
-        selected: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
-        panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
+      return {
+        inspectorTabs: root.querySelectorAll('.inspector-tab').length,
+        panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
+        hasVisualPicker: Boolean(root.querySelector('.visual-picker')),
+        hasFieldWells: Boolean(root.querySelector('.field-wells')),
         formatControls: root.querySelectorAll('[data-format-control]').length,
+        formatHeading: root.querySelector('.format-controls-heading')?.textContent?.trim(),
         dataPaneVisible: Boolean(root.querySelector('.data-pane')),
         dataSearchCount: root.querySelectorAll('.data-pane input[aria-label="Search fields"]').length,
       }
-      build.click()
-      await element.updateComplete
-      const rebuilt = {
-        selected: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
-        panel: root.querySelector('[role="tabpanel"]')?.getAttribute('aria-label'),
-        hasFieldBrowser: Boolean(root.querySelector('.field-browser')),
-        dataPaneVisible: Boolean(root.querySelector('.data-pane')),
-        dataSearchCount: root.querySelectorAll('.data-pane input[aria-label="Search fields"]').length,
-      }
-      return { initial, formatted, rebuilt }
     })
-    expect(state.initial).toEqual({ selected: 'build', panel: 'Build visual', dataPaneVisible: true, dataSearchCount: 1 })
-    expect(state.formatted.selected).toBe('format')
-    expect(state.formatted.panel).toBe('Format visual')
-    expect(state.formatted.formatControls).toBe(6)
-    expect(state.formatted.dataPaneVisible).toBe(true)
-    expect(state.formatted.dataSearchCount).toBe(1)
-    expect(state.rebuilt).toEqual({ selected: 'build', panel: 'Build visual', hasFieldBrowser: true, dataPaneVisible: true, dataSearchCount: 1 })
+    expect(state).toEqual({
+      inspectorTabs: 0,
+      panel: 'Visual configuration',
+      hasVisualPicker: true,
+      hasFieldWells: true,
+      formatControls: 6,
+      formatHeading: 'Format',
+      dataPaneVisible: true,
+      dataSearchCount: 1,
+    })
   } finally {
     await page.close()
   }
@@ -2284,7 +2254,8 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
         routeTabRole: root.querySelector('.page-tab')?.getAttribute('role'),
         tablistRole: root.querySelector('.page-tabs')?.getAttribute('role'),
         activeNavigationCanceled,
-        inspectorTab: root.querySelector('.inspector-tab[aria-selected="true"]')?.getAttribute('data-inspector-tab'),
+        inspectorTabs: root.querySelectorAll('.inspector-tab').length,
+        panel: root.querySelector('.inspector-panel')?.getAttribute('aria-label'),
         paneLabel: root.querySelector('.visual-builder')?.getAttribute('aria-label'),
       }
     })
@@ -2294,7 +2265,8 @@ test('dashboard builder can reload a page-scoped preview through page-base-href 
       routeTabRole: null,
       tablistRole: null,
       activeNavigationCanceled: true,
-      inspectorTab: 'format',
+      inspectorTabs: 0,
+      panel: 'Page settings',
       paneLabel: 'Page properties',
     })
   } finally {
