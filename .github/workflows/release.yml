@@ -368,6 +368,11 @@ jobs:
             test -x "dist/$package/qualification/postgres-init.sh"
             test "$(stat -c '%a' "dist/$package/qualification/postgres-init.sh")" = "755"
             test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
+            # The HTTPS proxy reads this bind-mounted file. Preserve its
+            # reviewed readable mode in the archive instead of relying on the
+            # checkout or cp mode.
+            chmod 0644 "dist/$package/Caddyfile"
+            test "$(stat -c '%a' "dist/$package/Caddyfile")" = "644"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
             test -s "dist/$package/Caddyfile"
             test -s "dist/$package/compose.https.yaml"

@@ -105,6 +105,12 @@ jobs:
           test "$(stat -c '%a' "$init_script")" = "755"
           grep -q 'CREATE ROLE leapview_control_owner' "$init_script"
           grep -q 'CREATE ROLE leapview_ducklake_owner' "$init_script"
+          # The release archive may have crossed an artifact boundary that
+          # strips world-readable bits (or was extracted under umask 0077).
+          # Caddy reads this bind-mounted file, so restore the reviewed mode
+          # before starting Compose.
+          chmod 0644 "$PACKAGE_ROOT/Caddyfile"
+          test "$(stat -c '%a' "$PACKAGE_ROOT/Caddyfile")" = "644"
           test -s "$PACKAGE_ROOT/Caddyfile"
           test -s "$PACKAGE_ROOT/compose.https.yaml"
           grep -q 'reverse_proxy leapview:8080' "$PACKAGE_ROOT/Caddyfile"
