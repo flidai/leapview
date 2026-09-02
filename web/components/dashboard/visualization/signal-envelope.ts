@@ -10,12 +10,19 @@ type CachedDataState = {
   value: VisualizationDataState
 }
 
+type CachedEnvelope = {
+  fingerprint: string
+  payload: string
+  value: VisualizationEnvelope
+}
+
 /**
  * Reconstructs canonical visualization envelopes while keeping large data
  * frames opaque to Datastar's recursively reactive signal graph.
  */
 export class DashboardVisualizationSignalDecoder {
   private readonly dataStates = new Map<string, CachedDataState>()
+  private readonly envelopes = new Map<string, CachedEnvelope>()
 
   decodeAll(signals: Record<string, DashboardVisualizationSignal>): Record<string, VisualizationEnvelope> {
     const envelopes: Record<string, VisualizationEnvelope> = {}
@@ -26,6 +33,9 @@ export class DashboardVisualizationSignalDecoder {
     }
     for (const id of this.dataStates.keys()) {
       if (!active.has(id)) this.dataStates.delete(id)
+    }
+    for (const id of this.envelopes.keys()) {
+      if (!active.has(id)) this.envelopes.delete(id)
     }
     return envelopes
   }
@@ -48,7 +58,14 @@ export class DashboardVisualizationSignalDecoder {
       consumerIdentity: _consumerIdentity,
       ...envelope
     } = signal
-    return { ...envelope, dataState: dataState.value }
+    const fingerprint = JSON.stringify(envelope)
+    const cached = this.envelopes.get(signal.visualID)
+    if (cached?.payload === signal.dataState.payload && cached.fingerprint === fingerprint) {
+      return cached.value
+    }
+    const value = { ...envelope, dataState: dataState.value } as VisualizationEnvelope
+    this.envelopes.set(signal.visualID, { fingerprint, payload: signal.dataState.payload, value })
+    return value
   }
 }
 

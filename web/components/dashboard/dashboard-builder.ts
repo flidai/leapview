@@ -3359,6 +3359,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const pageFormatting = this.inspectorTab === 'format'
       && !this.effectiveVisualID(builder, page)
       && !this.selectedFilterComponentID
+    const previews = this.builderVisuals
     return html`
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
@@ -3368,7 +3369,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}
               ${page.visuals.length === 0 && (page.filterComponents?.length ?? 0) === 0
                 ? html`<div class="visual-empty"><div><strong>This page is empty</strong><span>Choose a visual or place a report-filter slicer to begin.</span></div></div>`
-                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}`}
+                : html`${repeat(page.visuals, (visual) => visual.id, (visual) => this.renderVisual(visual, page, previews))}${repeat(page.filterComponents ?? [], (component) => component.id, (component) => this.renderFilterComponent(component, page))}`}
             </div>
           </div>
           <div class="sr-only" aria-live="polite">${this.gridInteractionMessage}</div>
@@ -3377,10 +3378,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     `
   }
 
-  private renderVisual(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal) {
+  private renderVisual(visual: DashboardBuilderVisualSignal, page: DashboardBuilderPageSignal, previews: Record<string, VisualizationEnvelope>) {
     const selected = visual.id === this.effectiveVisualID(this.builder, page)
     const visualType = this.visualTypeForRender(visual)
-    const previewCandidate = this.builderVisuals[this.visualSignalID(visual)]
+    const previewCandidate = previews[this.visualSignalID(visual)]
     const mobileOrder = this.mobileVisualOrder(visual, page)
     const columns = Math.max(1, page.grid.columns || 12)
     const left = `${Math.max(0, visual.placement.col - 1) * (100 / columns)}%`

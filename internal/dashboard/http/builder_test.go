@@ -508,9 +508,17 @@ func TestDashboardBuilderCommandTranslatesExactRevisionRestore(t *testing.T) {
 }
 
 func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
-	fake := &builderAuthoringFake{builder: uisignals.DashboardBuilderSignal{ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1"}}
-	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	selectedPage := "overview"
 	revisionHash := "sha256:" + strings.Repeat("a", 64)
+	fake := &builderAuthoringFake{
+		builder: uisignals.DashboardBuilderSignal{
+			ProjectID: "sales", DashboardID: "revenue", DraftID: "draft-1",
+			Revision: uisignals.DashboardBuilderRevisionSignal{ID: "revision-2", Number: 2, ContentHash: revisionHash},
+			Pages:    []uisignals.DashboardBuilderPageSignal{{ID: selectedPage}}, SelectedPageID: &selectedPage,
+		},
+		compilation: preview.Compilation{SemanticEvidence: preview.SemanticServingStateEvidence{Identity: projectgraph.ServingIdentity{ProjectID: "sales", Environment: "dev", GenerationID: "generation-4"}}},
+	}
+	handler := Handler{Authoring: fake, CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
 	req := builderRequest(nethttp.MethodPost, "/dashboards/revenue/draft/command", map[string]any{"builderCommand": map[string]any{
 		"projectId": "sales", "dashboardId": "revenue", "draftId": "draft-1", "revisionId": "revision-1", "revisionNumber": "1", "revisionContentHash": revisionHash,
 		"pageId": "overview", "action": "set_placements", "placements": []map[string]any{
@@ -531,6 +539,20 @@ func TestDashboardBuilderCommandTranslatesAtomicPlacements(t *testing.T) {
 	placements := fake.executed.SetPlacements.Placements
 	if len(placements) != 2 || placements[0].ComponentID != "orders-component" || placements[0].Placement.ColumnSpan != 6 || placements[1].ComponentID != "summary-component" || placements[1].Placement.Column != 7 {
 		t.Fatalf("translated placements = %#v", placements)
+	}
+	if fake.previewCalls != 0 || fake.compileCalls != 1 {
+		t.Fatalf("layout projection calls preview=%d compile=%d, want 0/1", fake.previewCalls, fake.compileCalls)
+	}
+	patches := ssetest.PatchSignals(t, rec.Body.String())
+	if len(patches) != 1 {
+		t.Fatalf("patches = %#v, want one layout-only patch", patches)
+	}
+	if _, ok := patches[0]["builderVisuals"]; ok {
+		t.Fatalf("layout-only patch replaced builder visuals: %#v", patches[0])
+	}
+	runtime, ok := patches[0]["runtime"].(map[string]any)
+	if !ok || runtime["servingStateId"] != "builder:draft-1:revision-2:"+revisionHash+":generation:generation-4" {
+		t.Fatalf("layout runtime = %#v", patches[0]["runtime"])
 	}
 }
 
