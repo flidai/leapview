@@ -19,12 +19,14 @@ func (r revisionReader) SchemaRevision(context.Context, int64) (platformpostgres
 
 func TestBaselineOwnsOnlyReconciledCapabilities(t *testing.T) {
 	components := Components()
-	if len(components) != 1 || components[0].Name != "access" || components[0].SQL == "" {
-		t.Fatalf("components = %#v, want one access component", components)
+	if len(components) != 2 || components[0].Name != "platform.bootstrap" || components[1].Name != "access" {
+		t.Fatalf("components = %#v, want bootstrap then access", components)
 	}
 	for _, unrelated := range []string{"jobs", "cache", "lineage", "deployment", "attribute"} {
-		if strings.Contains(components[0].SQL, "CREATE SCHEMA "+unrelated) {
-			t.Fatalf("access component contains deferred capability %q", unrelated)
+		for _, component := range components {
+			if strings.Contains(component.SQL, "CREATE SCHEMA "+unrelated) {
+				t.Fatalf("component %q contains deferred capability %q", component.Name, unrelated)
+			}
 		}
 	}
 }

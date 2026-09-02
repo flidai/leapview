@@ -181,6 +181,17 @@ sql:
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true
+  - engine: "postgresql"
+    queries: "internal/platform/bootstrap/postgres/queries"
+    schema: "internal/platform/bootstrap/postgres/schema.sql"
+    gen:
+      go:
+        package: "db"
+        out: "internal/platform/bootstrap/postgres/internal/db"
+        sql_package: "pgx/v5"
+        emit_json_tags: true
+        emit_empty_slices: true
+        omit_unused_structs: true
   - engine: "sqlite"
     queries:
       - "internal/dashboard/publication/sqlite/queries"

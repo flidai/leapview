@@ -9,6 +9,7 @@ import (
 	"fmt"
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 )
@@ -22,6 +23,7 @@ const (
 // capabilities append their own SchemaSQL component when they are reconciled.
 var plan = platformmigrations.Plan{
 	Components: []platformmigrations.Component{
+		{Name: "platform.bootstrap", SQL: platformbootstrappostgres.SchemaSQL()},
 		{Name: "access", SQL: accesspostgres.SchemaSQL()},
 	},
 	RolePolicySQL: rolePolicySQL,
@@ -64,6 +66,10 @@ const rolePolicySQL = `
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON platform.setting TO leapview_control_runtime;
+        GRANT SELECT, INSERT ON platform.instance_identity, platform.instance_environment,
+            platform.instance_project_claim TO leapview_control_runtime;
         GRANT USAGE ON SCHEMA access, audit TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA access TO leapview_control_runtime;
         GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime;
@@ -79,6 +85,9 @@ BEGIN
         REVOKE ALL ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_maintenance;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
+        GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
+        GRANT SELECT ON platform.setting, platform.instance_identity,
+            platform.instance_environment, platform.instance_project_claim TO leapview_control_readonly;
         GRANT USAGE ON SCHEMA access, audit TO leapview_control_readonly;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, audit TO leapview_control_readonly;
         REVOKE SELECT ON access.session, access.local_credential, access.api_token,
@@ -90,6 +99,9 @@ BEGIN
             ON ALL TABLES IN SCHEMA access, audit FROM leapview_control_readonly;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
+        GRANT SELECT ON platform.setting, platform.instance_identity,
+            platform.instance_environment, platform.instance_project_claim TO leapview_control_backup;
         GRANT USAGE ON SCHEMA access, audit TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA access, audit TO leapview_control_backup;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
