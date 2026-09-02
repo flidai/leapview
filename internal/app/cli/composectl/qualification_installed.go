@@ -24,16 +24,25 @@ import (
 // installation but can collide with host services bound to another interface
 // and unnecessarily exposes the disposable test instance. The application
 // service remains on its existing loopback bind from deployment.env.example
-// (127.0.0.1:8080).
-func configureInstalledQualificationDeployment(path, project, image string) error {
-	return updateEnvFile(path, map[string]string{
+// (127.0.0.1:8080). It returns the exact HTTPS origin for browser and CLI
+// qualification clients.
+func configureInstalledQualificationDeployment(path, project, image string) (string, error) {
+	loopbackPorts, err := qualificationLoopbackPorts(2)
+	if err != nil {
+		return "", err
+	}
+	httpPort, httpsPort := loopbackPorts[0], loopbackPorts[1]
+	if err := updateEnvFile(path, map[string]string{
 		"COMPOSE_PROJECT_NAME": project,
 		"LEAPVIEW_IMAGE":       image,
 		"CADDY_DOMAIN":         "localhost",
-		"CADDY_HTTP_BIND":      "127.0.0.1:80",
-		"CADDY_HTTPS_BIND":     "127.0.0.1:443",
-		"CADDY_HTTPS_UDP_BIND": "127.0.0.1:443",
-	})
+		"CADDY_HTTP_BIND":      "127.0.0.1:" + httpPort,
+		"CADDY_HTTPS_BIND":     "127.0.0.1:" + httpsPort,
+		"CADDY_HTTPS_UDP_BIND": "127.0.0.1:" + httpsPort,
+	}); err != nil {
+		return "", err
+	}
+	return "https://localhost:" + httpsPort, nil
 }
 
 func (c *Controller) QualifyInstalledCandidate(
@@ -99,6 +108,7 @@ func (c *Controller) QualifyInstalledCandidate(
 
 	cleanup := qualificationCleanup{}
 	var primaryProject string
+	var target string
 	var nativeTopology *qualificationNativePostgresTopology
 	var nativeComposeLifecycle bool
 	var browserContainer string
@@ -243,9 +253,10 @@ func (c *Controller) QualifyInstalledCandidate(
 	); err != nil {
 		return err
 	}
-	if err := configureInstalledQualificationDeployment(
+	target, err = configureInstalledQualificationDeployment(
 		c.path(deploymentEnvName), primaryProject, imageReference,
-	); err != nil {
+	)
+	if err != nil {
 		return err
 	}
 	if err := c.seedQualificationNativePostgresEnvironment(); err != nil {
@@ -277,6 +288,11 @@ func (c *Controller) QualifyInstalledCandidate(
 		Environment: "evaluation",
 		Image:       imageReference,
 	}); err != nil {
+		return err
+	}
+	if err := appendOrReplaceQualificationEnv(
+		c.path(appEnvName), "LEAPVIEW_PUBLIC_URL", target,
+	); err != nil {
 		return err
 	}
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "instance initialization"); err != nil {
@@ -376,6 +392,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		ComposeProject:  primaryProject,
 		EvidenceDir:     evidenceDir,
 		SourceRevision:  sourceRevision,
+		Target:          target,
 	})
 	if err != nil {
 		return err
@@ -407,7 +424,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	}
 	ctx = phases.Begin(rootContext, "application upgrade", 15*time.Minute)
 	containerID, err = c.runQualificationApplicationUpgrade(
-		ctx, containerID, recoveryControlToken, authoringReport,
+		ctx, containerID, projectDataToken, authoringReport,
 	)
 	if err != nil {
 		return err
@@ -428,6 +445,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		primaryProject,
 		credentialsPath,
 		evidenceDir,
+		target,
 	)
 	if err != nil {
 		return err
@@ -492,6 +510,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		ComposeProject:       primaryProject,
 		ProjectID:            "project:leapview-evaluation",
 		Image:                imageReference,
+		Target:               target,
 	})
 	if err != nil {
 		return err
@@ -760,6 +779,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 	composeProject string,
 	credentialsPath string,
 	evidenceDir string,
+	target string,
 ) (string, error) {
 	if _, err := c.qualificationDocker(ctx, nil, "pull", qualificationBrowserImage); err != nil {
 		return "", err
@@ -776,7 +796,7 @@ func (c *Controller) startQualificationPerformanceBrowser(
 			{Source: evidenceDir, Target: "/evidence"},
 		},
 		Environment: map[string]string{
-			"QUALIFICATION_URL":         "https://localhost",
+			"QUALIFICATION_URL":         target,
 			"QUALIFICATION_CREDENTIALS": "/run/secrets/credentials.json",
 			"QUALIFICATION_SCREENSHOT":  "/evidence/browser-failure.png",
 		},

@@ -52,6 +52,7 @@ type qualificationRecoveryOptions struct {
 	ComposeProject       string
 	ProjectID            string
 	Image                string
+	Target               string
 }
 
 type qualificationRecoveryReport struct {
@@ -142,6 +143,7 @@ func (c *Controller) runQualificationRecovery(
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
 		"image":                  options.Image,
+		"target":                 options.Target,
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
@@ -245,6 +247,7 @@ func (c *Controller) runQualificationRecovery(
 		ctx,
 		recoveryClient,
 		options.PublisherToken,
+		options.Target,
 		filepath.Join(options.EvidenceDir, "recovery-managed-upload.log"),
 		"leapview", "data", "sync",
 		"--project", "/work/project-a/leapview.yaml",
@@ -326,6 +329,7 @@ func (c *Controller) runQualificationRecovery(
 		ctx,
 		recoveryClient,
 		options.PublisherToken,
+		options.Target,
 		"leapview", "data", "sync",
 		"--project", "/work/project-a/leapview.yaml",
 		"--connection", "sample",
@@ -378,7 +382,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	releaseCommand, err := c.startQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, releaseLog,
+		ctx, recoveryClient, options.PublisherToken, options.Target, releaseLog,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-a/leapview.yaml",
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
@@ -401,7 +405,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	_ = releaseCommand.Stop()
 	releaseOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-a/leapview.yaml",
 		"--candidate-key", qualificationRecoveryReleaseCandidateKey,
@@ -436,7 +440,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	deploymentCandidateOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "dev", "--once", "--no-browser",
 		"--project", "/work/project-b/leapview.yaml",
 		"--candidate-key", qualificationRecoveryDeploymentCandidateKey,
@@ -450,7 +454,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	pendingOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "publish", deploymentCandidate.ID,
 		"--format", "json",
 	)
@@ -480,7 +484,7 @@ func (c *Controller) runQualificationRecovery(
 	}
 	deploymentLog := filepath.Join(options.EvidenceDir, "recovery-deployment-activation.log")
 	deploymentCommand, err := c.startQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, deploymentLog,
+		ctx, recoveryClient, options.PublisherToken, options.Target, deploymentLog,
 		"leapview", "publish", deploymentCandidate.ID,
 		"--format", "json",
 	)
@@ -517,7 +521,7 @@ func (c *Controller) runQualificationRecovery(
 		)
 	}
 	committedOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken,
+		ctx, recoveryClient, options.PublisherToken, options.Target,
 		"leapview", "publish", deploymentCandidate.ID,
 		"--format", "json",
 	)
@@ -912,7 +916,8 @@ func (c *Controller) startQualificationRecoveryClient(
 			{Source: certificateFile, Target: "/run/certs/caddy-root.crt", ReadOnly: true},
 		},
 		Environment: map[string]string{
-			"SSL_CERT_FILE": "/run/certs/caddy-root.crt",
+			"SSL_CERT_FILE":   "/run/certs/caddy-root.crt",
+			"LEAPVIEW_TARGET": options.Target,
 		},
 		Entrypoint: []string{"sleep"},
 		Command:    []string{"infinity"},
@@ -925,12 +930,13 @@ func (c *Controller) startQualificationRecoveryClient(
 func qualificationClientExecArguments(
 	container string,
 	token string,
+	target string,
 	arguments ...string,
 ) []string {
 	result := []string{
 		"exec",
 		"--env", "LEAPVIEW_API_TOKEN=" + token,
-		"--env", "LEAPVIEW_TARGET=https://localhost",
+		"--env", "LEAPVIEW_TARGET=" + target,
 		"--env", "LEAPVIEW_HOME=/client-home",
 		container,
 	}
@@ -941,6 +947,7 @@ func (c *Controller) startQualificationClientCommand(
 	ctx context.Context,
 	clientContainer string,
 	token string,
+	target string,
 	logPath string,
 	arguments ...string,
 ) (*qualificationRunningCommand, error) {
@@ -954,6 +961,7 @@ func (c *Controller) startQualificationClientCommand(
 	dockerArguments := qualificationClientExecArguments(
 		clientContainer,
 		token,
+		target,
 		arguments...,
 	)
 	command := exec.CommandContext(ctx, c.dockerBin, dockerArguments...)
@@ -972,6 +980,7 @@ func (c *Controller) runQualificationClientCommand(
 	ctx context.Context,
 	clientContainer string,
 	token string,
+	target string,
 	arguments ...string,
 ) ([]byte, error) {
 	return c.qualificationContainers.Existing(clientContainer).Exec(
@@ -980,7 +989,7 @@ func (c *Controller) runQualificationClientCommand(
 			[]string{
 				"env",
 				"LEAPVIEW_API_TOKEN=" + token,
-				"LEAPVIEW_TARGET=https://localhost",
+				"LEAPVIEW_TARGET=" + target,
 				"LEAPVIEW_HOME=/client-home",
 			},
 			arguments...,

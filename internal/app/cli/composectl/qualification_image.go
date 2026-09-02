@@ -20,16 +20,31 @@ const qualificationRegistryImage = "registry:2.8.3@sha256:a3d8aaa63ed8681a604f1d
 var qualificationPushedDigestPattern = regexp.MustCompile(`digest: (sha256:[0-9a-f]{64})`)
 var qualificationImmutableImagePattern = regexp.MustCompile(`^.+@sha256:[0-9a-f]{64}$`)
 
-func qualificationLoopbackPort() (string, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		return "", fmt.Errorf("allocate qualification loopback port: %w", err)
+func qualificationLoopbackPorts(count int) ([]string, error) {
+	if count < 1 {
+		return nil, errors.New("qualification loopback port count must be positive")
 	}
-	port := strconv.Itoa(listener.Addr().(*net.TCPAddr).Port)
-	if err := listener.Close(); err != nil {
-		return "", fmt.Errorf("release qualification loopback port: %w", err)
+	listeners := make([]net.Listener, 0, count)
+	ports := make([]string, 0, count)
+	for range count {
+		listener, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			for _, opened := range listeners {
+				_ = opened.Close()
+			}
+			return nil, fmt.Errorf("allocate qualification loopback port: %w", err)
+		}
+		listeners = append(listeners, listener)
+		ports = append(ports, strconv.Itoa(listener.Addr().(*net.TCPAddr).Port))
 	}
-	return port, nil
+	var closeErr error
+	for _, listener := range listeners {
+		closeErr = errors.Join(closeErr, listener.Close())
+	}
+	if closeErr != nil {
+		return nil, fmt.Errorf("release qualification loopback ports: %w", closeErr)
+	}
+	return ports, nil
 }
 
 func retryQualificationRegistryPush(
@@ -259,14 +274,11 @@ func (c *Controller) QualifyImage(
 	); err != nil {
 		return err
 	}
-	httpPort, err := qualificationLoopbackPort()
+	loopbackPorts, err := qualificationLoopbackPorts(2)
 	if err != nil {
 		return err
 	}
-	httpsPort, err := qualificationLoopbackPort()
-	if err != nil {
-		return err
-	}
+	httpPort, httpsPort := loopbackPorts[0], loopbackPorts[1]
 	if err := updateEnvFile(filepath.Join(bundleRoot, deploymentEnvName), map[string]string{
 		"COMPOSE_PROJECT_NAME": composeProject,
 		"LEAPVIEW_IMAGE":       imageReference,

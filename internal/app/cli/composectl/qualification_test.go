@@ -17,6 +17,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -151,7 +152,22 @@ func TestInstalledQualificationDeploymentUsesLoopbackCaddyBindings(t *testing.T)
 	require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
 
 	image := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
-	require.NoError(t, configureInstalledQualificationDeployment(path, "leapview-qualification-test", image))
+	target, err := configureInstalledQualificationDeployment(path, "leapview-qualification-test", image)
+	require.NoError(t, err)
+	httpBind, err := envFileValue(path, "CADDY_HTTP_BIND")
+	require.NoError(t, err)
+	httpsBind, err := envFileValue(path, "CADDY_HTTPS_BIND")
+	require.NoError(t, err)
+	httpPort := strings.TrimPrefix(httpBind, "127.0.0.1:")
+	httpsPort := strings.TrimPrefix(httpsBind, "127.0.0.1:")
+	if _, err := strconv.Atoi(httpPort); err != nil || httpPort == "80" {
+		t.Fatalf("qualification HTTP bind = %q, want ephemeral loopback port", httpBind)
+	}
+	if _, err := strconv.Atoi(httpsPort); err != nil || httpsPort == "443" {
+		t.Fatalf("qualification HTTPS bind = %q, want ephemeral loopback port", httpsBind)
+	}
+	require.NotEqual(t, httpPort, httpsPort)
+	require.Equal(t, "https://localhost:"+httpsPort, target)
 
 	for _, test := range []struct {
 		key  string
@@ -160,9 +176,9 @@ func TestInstalledQualificationDeploymentUsesLoopbackCaddyBindings(t *testing.T)
 		{key: "COMPOSE_PROJECT_NAME", want: "leapview-qualification-test"},
 		{key: "LEAPVIEW_IMAGE", want: image},
 		{key: "CADDY_DOMAIN", want: "localhost"},
-		{key: "CADDY_HTTP_BIND", want: "127.0.0.1:80"},
-		{key: "CADDY_HTTPS_BIND", want: "127.0.0.1:443"},
-		{key: "CADDY_HTTPS_UDP_BIND", want: "127.0.0.1:443"},
+		{key: "CADDY_HTTP_BIND", want: httpBind},
+		{key: "CADDY_HTTPS_BIND", want: httpsBind},
+		{key: "CADDY_HTTPS_UDP_BIND", want: httpsBind},
 		{key: "COMPOSE_APP_BIND", want: "127.0.0.1:8080"},
 	} {
 		got, err := envFileValue(path, test.key)
@@ -1018,12 +1034,13 @@ func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	got := qualificationClientExecArguments(
 		"recovery-client",
 		"publisher-secret",
+		"https://localhost:43127",
 		"leapview", "dev",
 	)
 	want := []string{
 		"exec",
 		"--env", "LEAPVIEW_API_TOKEN=publisher-secret",
-		"--env", "LEAPVIEW_TARGET=https://localhost",
+		"--env", "LEAPVIEW_TARGET=https://localhost:43127",
 		"--env", "LEAPVIEW_HOME=/client-home",
 		"recovery-client",
 		"leapview", "dev",
