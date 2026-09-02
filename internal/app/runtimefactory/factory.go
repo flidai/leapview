@@ -34,7 +34,13 @@ type servingStateRuntimeFactory struct {
 	duckDBDir          string
 	runtimeDir         string
 	activationEvidence ActivationEvidenceSource
+	servingArtifacts   ServingArtifactReader
 }
+
+// ServingArtifactReader is the least-privilege object capability needed by a
+// native runtime. PostgreSQL serving-state rows retain a provider-neutral
+// immutable locator rather than a process-local filesystem path.
+type ServingArtifactReader = projectbundle.ArtifactObjectReader
 
 // prepareDashboard is the common sealed path project-artifact loader. The
 // catalog environment is supplied by the caller after durable lease/fence
@@ -62,10 +68,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	if err := os.MkdirAll(targetDir, 0o755); err != nil {
 		return nil, err
 	}
-	if err := projectbundle.ExtractArtifact(input.Artifact.Path, targetDir); err != nil {
-		return nil, err
-	}
-	compiled, _, err := projectbundle.LoadCompiledProjectArtifact(targetDir)
+	compiled, err := f.loadCompiledProjectArtifact(ctx, input.Artifact, targetDir)
 	if err != nil {
 		return nil, err
 	}
@@ -142,6 +145,10 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		return nil, err
 	}
 	return &dashboardRuntimeWithGraph{Service: service, projectID: input.State.ProjectID, servingStateID: string(input.State.ID), authorization: authorization, authoredSources: authoredSources, projectManifest: compiled.Manifest}, nil
+}
+
+func (f servingStateRuntimeFactory) loadCompiledProjectArtifact(ctx context.Context, artifact servingstate.Artifact, targetDir string) (projectbundle.CompiledProjectArtifact, error) {
+	return (projectbundle.ServingArtifactLoader{Objects: f.servingArtifacts}).LoadCompiled(ctx, artifact, targetDir)
 }
 
 func runtimeExtractionIdentity(input runtimehost.RuntimeInput) string {

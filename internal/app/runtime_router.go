@@ -42,6 +42,7 @@ import (
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	uitransport "github.com/flidai/leapview/internal/platform/web/transport"
+	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
@@ -228,6 +229,7 @@ type workflowInputs struct {
 	agentConfig              agentmodule.ModelConfig
 	reloader                 runtimeReloader
 	deploymentConfig         deploymentmodule.Config
+	servingArtifacts         projectbundle.ArtifactObjectReader
 }
 
 type storageInputs struct {
@@ -326,6 +328,7 @@ type workflowAssemblyInputs struct {
 	Reloader                 runtimeReloader
 	Workload                 workloadControl
 	DeploymentConfig         deploymentmodule.Config
+	ServingArtifacts         projectbundle.ArtifactObjectReader
 	RefreshPipelineClock     refreshmodule.Clock
 	RefreshMaterializer      refreshrun.Materializer
 	RefreshTargetRevision    func(context.Context, projectgraph.ServingIdentity) (int64, error)
@@ -751,6 +754,7 @@ func buildApplicationSurfaces(
 	moduleWorkflow.enableRefreshDispatcher = workflow.EnableRefreshDispatcher
 	moduleWorkflow.recoveryLifecycle = workflow.RecoveryLifecycle
 	moduleWorkflow.recoveryInterval = workflow.RecoveryInterval
+	moduleWorkflow.servingArtifacts = workflow.ServingArtifacts
 	runtime.queryAuditProvider = queryAuditProvider
 	runtime.candidateMetrics = func(provider runtimehostmodule.Provider, projectID projectgraph.ResourceID) QueryMetrics {
 		if provider == nil || projectID == "" {

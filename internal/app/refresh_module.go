@@ -77,7 +77,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	config := refreshmodule.Config{
 		Persistence: refreshPersistence, Production: persistence.requireNativePersistence, Service: service,
 		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
-		Artifacts: appruntimefactory.NewRefreshArtifactLoader(),
+		Artifacts: appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },
 			CurrentPrincipal: func(r *http.Request) (refreshmodule.HTTPPrincipal, bool) {

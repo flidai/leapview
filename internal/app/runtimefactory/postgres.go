@@ -72,6 +72,7 @@ func NewPostgresDashboardRuntimeBuilder(config PostgresDashboardRuntimeConfig) S
 // configuration.
 type PostgresSealedFactoryConfig struct {
 	Base                       FactoryConfig
+	ServingArtifacts           ServingArtifactReader
 	Resolve                    SealedRootResolver
 	BuildRuntime               SealedDashboardRuntimeBuilder
 	SnapshotLeases             runtimehost.SnapshotLeaseRepository
@@ -113,7 +114,7 @@ type PostgresServingAuthorizationInput struct {
 // for development/evaluation composition and is never a production fallback.
 func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.RuntimeFactory {
 	return postgresSealedFactory{
-		base:    servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence},
+		base:    servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence, servingArtifacts: config.ServingArtifacts},
 		resolve: config.Resolve, buildRuntime: config.BuildRuntime,
 		credentialBootstrapFactory: config.CredentialBootstrapFactory, extensionAdmission: config.ExtensionAdmission,
 		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,
@@ -215,6 +216,9 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	}
 	if root.ServingStateID != string(input.State.ID) || root.ServingArtifactID != input.Artifact.ID || root.ServingArtifactDigest != input.Artifact.Digest {
 		return nil, fmt.Errorf("%w: persisted root is not bound to requested serving artifact", ErrSealedRootMismatch)
+	}
+	if input.Artifact.Locator != "" && root.ArtifactRoot != input.Artifact.Locator {
+		return nil, fmt.Errorf("%w: persisted artifact root is not bound to requested serving artifact locator", ErrSealedRootMismatch)
 	}
 	poolContract := root.PoolContract
 	if poolContract == nil {
@@ -333,8 +337,13 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		PhysicalPoolID: root.PhysicalPoolID, DuckLakeSecret: duckLakeSecret, PostgresSecret: postgresSecret,
 		MetadataSchema: metadataSchema, Mode: ducklake.PostgresCatalogServing, SnapshotVersion: snapshotID,
 	}
+	runtimeDir := runtimeFirstNonEmpty(input.RuntimeDir, f.base.runtimeDir)
+	if runtimeDir == "" || runtimeDir != strings.TrimSpace(runtimeDir) {
+		_ = leaseHandle.Close()
+		return nil, fmt.Errorf("%w: PostgreSQL runtime directory is unavailable", ErrSealedRootUnavailable)
+	}
 	env, err := ducklake.Open(ctx, ducklake.Config{
-		RootDir: input.RuntimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: poolContract,
+		RootDir: runtimeDir, PhysicalPoolID: root.PhysicalPoolID, PoolContract: poolContract,
 		Compatibility: root.Compatibility, PostgresCatalog: &catalog,
 		CredentialBootstrap: credentialBootstrap, ExtensionAdmission: f.extensionAdmission,
 	})
