@@ -23,8 +23,8 @@ export class ProjectFusesPlugin extends PluginBase<FuseConfig> {
   getHooks() {
     return {
       packageAfterCopy: namedHookWithTaskFn<"packageAfterCopy">(
-        async (
-          _task: ForgeListrTask<unknown> | null,
+        async <Ctx = never>(
+          _task: ForgeListrTask<Ctx> | null,
           resolvedForgeConfig: ResolvedForgeConfig,
           resourcesPath: string,
           _electronVersion: string,
