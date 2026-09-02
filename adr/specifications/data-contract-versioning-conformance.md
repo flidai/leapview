@@ -202,18 +202,19 @@ profile identifier is part of canonical bytes and conformance evidence.
 |---|---|---|
 | RID-01–RID-10 | PostgreSQL identity ledger, collision, tombstone, restore, rollback, concurrency, and reference tests | Implemented by FAI-617 |
 | ADR-0016 structural authority | FAI-619 completed the SemanticModel migration to [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp). The generated [Go DTOs](../../internal/project/contracts/models.gen.go) and [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) are the only production structural authority; the [architecture guard](../../internal/platform/architecture/architecture_test.go) rejects handwritten compiler DTOs and CUE copies. Qualified 2026-09-02 with `task generated:check`, `go test ./internal/platform/architecture -run '^TestSemanticModelStructuralAuthorityIsGeneratedFromTypeSpec$' -count=1`, `go test ./internal/project/contracts ./internal/project/schema -count=1`, and the focused `duckdb_arrow` compiler-lowering tests. | Implemented by FAI-619 |
-| CAN-01–CAN-07 | FAI-620: explicit generated `leapview.contract/v1` projection DTO allowlists plus reviewed exclusion manifests. This work has not started. | Pending (FAI-620) |
-| SRC-01–SRC-02 | Source canonical golden fixtures | Pending |
-| MOD-01–MOD-03 | Model AST and quality-contract golden fixtures | Pending |
-| SEM-01–SEM-03 | FAI-620: SemanticModel and access-contract projection golden fixtures over the generated structural authority. | Pending (FAI-620) |
-| SER-01–SER-10 | FAI-620: one vetted RFC 8785 implementation, typed normalization, cross-language byte equality, and SHA-256 identity corpus. | Pending (FAI-620) |
+| CAN-01–CAN-07 | FAI-620 added the explicit generated [`leapview.contract/v1` projection DTOs](../../api/data-resources/contract-projections.tsp), sealed [projection boundary](../../internal/project/contractprojection/types.go), and reviewed [exclusion manifest](../../internal/project/contractprojection/exclusions.json). The data-resource generator fails when a reachable Source, Model, or SemanticModel field is in neither the generated projection DTO nor the reviewed exclusion manifest. Verified with `go test ./internal/project/contracts/generate -count=1` and `task generated:check`. | Implemented by FAI-620 |
+| SRC-01–SRC-02 | The allowlist projector includes public schema mode and fields, freshness/SLA values, governance, authoritative definitions, and deprecation while excluding connector and physical location data. Golden leak-prevention and digest fixtures are in [`canonical_test.go`](../../internal/project/contractprojection/canonical_test.go). | Implemented by FAI-620 |
+| MOD-01–MOD-03 | The Model projector includes entities, keys, grain, field governance, normalized checks, and a closed allowlist projection of the existing compiler-admitted pinned DuckDB AST. Authored SQL formatting, comments, parser locations, runtime plans, materialization, cache, and physical state are absent. | Implemented by FAI-620 |
+| SEM-01–SEM-03 | The SemanticModel projector includes stable dataset, relationship, binding, dimension/time, filter, metric, format/unit, access-grant, and access-filter identifiers while excluding display, discovery, hidden-presentation, and AI fields. Exact typed scalar and internal-field leak fixtures run in `go test ./internal/project/contractprojection -count=1`. | Implemented by FAI-620 |
+| SER-01–SER-10 | The sealed projection boundary uses the single production dependency `github.com/cyberphone/json-canonicalization` for RFC 8785, applies NFC/control-character, set, exact-number, date/time, and RFC 3986 URL normalization, and emits `sha256:` identities over exact bytes. RFC golden vectors and a language-neutral Go/Bun byte-and-digest corpus verify deterministic independent output. The architecture guard proves existing graph/artifact/release digest paths do not import this boundary. | Implemented by FAI-620 |
 | VER-01–VER-06 | FAI-622, after FAI-620: compatibility/security-impact classification and immutable publication evidence. | Pending (FAI-622) |
 
-The FAI-619 qualification deliberately does not implement standalone
-`DataPolicy` rejection, contextual attribute/type-registry resolution,
-canonical projection, compatibility classification, publication immutability,
-or ODCS. FAI-620 must complete CAN/SRC/MOD/SEM/SER before FAI-622 consumes its
-canonical bytes; ODCS remains a later milestone.
+The FAI-620 qualification deliberately stops at canonical projection bytes and
+digests. Compatibility and security-impact classification plus immutable
+publication evidence remain FAI-622/FAI-623 work, and ODCS adapters have not
+started. The earlier STR-08 boundaries also remain: standalone transitional
+`DataPolicy` rejection and contextual access-reference/type-registry changes
+are not part of FAI-620.
 
 ## Maintained verification
 

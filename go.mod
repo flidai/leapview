@@ -18,6 +18,7 @@ require (
 	github.com/cockroachdb/apd/v3 v3.2.1
 	github.com/coreos/go-oidc/v3 v3.19.0
 	github.com/creachadair/jrpc2 v1.3.5
+	github.com/cyberphone/json-canonicalization v0.0.0-20241213102144-19d51d7fe467
 	github.com/cyphar/filepath-securejoin v0.7.0
 	github.com/distribution/reference v0.6.0
 	github.com/duckdb/duckdb-go/v2 v2.10504.0

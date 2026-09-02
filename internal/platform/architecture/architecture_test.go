@@ -1730,6 +1730,23 @@ func TestProductionDoesNotImportSupersededDuckDBQueryJSON(t *testing.T) {
 	}
 }
 
+func TestContractCanonicalizationIsIsolatedFromExistingArtifactIdentity(t *testing.T) {
+	const (
+		canonicalizer = "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+		projection    = modulePath + "/internal/project/contractprojection"
+	)
+	for _, file := range productionGoFiles(t) {
+		if importListContains(file.imports, canonicalizer) && file.path != "internal/project/contractprojection/canonical.go" {
+			t.Errorf("%s imports the RFC 8785 implementation outside the sealed contract boundary", file.path)
+		}
+		if file.pkgDir == "internal/project/artifact" || file.pkgDir == "internal/project/graph" || file.pkgDir == "internal/release" {
+			if importListContains(file.imports, projection) || importListContains(file.imports, canonicalizer) {
+				t.Errorf("%s changes an existing graph/artifact/release identity boundary", file.path)
+			}
+		}
+	}
+}
+
 func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 	runtimehostModule, ok := ClassifyPackage("internal/runtimehost/module")
 	if !ok || runtimehostModule.Layer != LayerModule {

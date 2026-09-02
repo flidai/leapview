@@ -1,0 +1,19 @@
+{
+  "kind": "Source",
+  "profile": "leapview.contract/v1",
+  "metadata": {
+    "name": "orders",
+    "contract": {"version": "1.2.3", "compatibility": "backward"},
+    "id": "source:orders"
+  },
+  "contract": {
+    "schema": {
+      "fields": {
+        "z_field": {"nullable": true, "datatype": "String"},
+        "a_field": {"criticalDataElement": true, "datatype": "Integer"}
+      },
+      "mode": "strict"
+    }
+  },
+  "apiVersion": "leapview.dev/v1"
+}

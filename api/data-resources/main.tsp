@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "./contract-projections.tsp";
 
 @apigen.`package`(#{
   title: "LeapView v1 data-resource contracts",
