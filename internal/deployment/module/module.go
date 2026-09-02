@@ -309,6 +309,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		return nil, errors.New("native PostgreSQL persistence requires production deployment mode")
 	}
 	if config.Production && config.Persistence.isPostgres() {
+		// Native PostgreSQL delivery is the only production mutation authority.
+		// Requiring this port here prevents a partially composed module from
+		// falling through to the legacy DeliveryMutationPort at request time.
+		if config.NativeDeliveryMutations == nil {
+			return nil, errors.New("production native deployment requires delivery mutation authority")
+		}
 		if config.NativeDeliveryEvents == nil {
 			config.NativeDeliveryEvents = config.Persistence.Events
 		}
@@ -345,6 +351,23 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.NativeDeliveryReader == nil {
 			return nil, errors.New("production native deployment requires a delivery reader")
 		}
+		// Keep the native module from retaining optional legacy seams supplied
+		// by broad application composition. The explicit SQLite path below is
+		// the sole owner of these services and projections; native handlers must
+		// fail closed when their native ports are absent rather than falling back
+		// to them.
+		config.DeliveryMutations = nil
+		config.DeliveryReader = nil
+		config.API.Releases = nil
+		config.DeliveryCandidateBuilder = nil
+		config.CanonicalDeliveryAdapter = nil
+		config.SealedCoordinator = nil
+		config.SealedPublishRequest = nil
+		config.SealedRollbackRequest = nil
+		config.SealedActivationMarker = nil
+		config.SealedReconcile = nil
+		config.SealedRollbackFence = nil
+		config.RequireSealedCoordinator = false
 	}
 	if config.DeliveryCandidateBuilder == nil && config.CanonicalDeliveryAdapter != nil {
 		config.DeliveryCandidateBuilder = config.CanonicalDeliveryAdapter.CandidateDeliveryBuilder()

@@ -14,6 +14,10 @@ import (
 
 type nativeDashboardReconcilerStub struct{}
 
+type legacyRefreshServingStateMutationsStub struct {
+	refreshmodule.ServingStateRepository
+}
+
 func (nativeDashboardReconcilerStub) Reconcile(context.Context, dashboardPublicationServingStateReader, deployment.Deployment) error {
 	return nil
 }
@@ -83,8 +87,9 @@ func TestNativeRuntimeInputsRejectMixedSQLiteAuthorities(t *testing.T) {
 	for _, data := range []dataAssemblyInputs{
 		{DashboardPersistence: &dashboardmodule.NativePersistence{}, DashboardSQLite: &dashboardmodule.SQLitePersistence{}},
 		{DashboardPersistence: &dashboardmodule.NativePersistence{}, AuditRuntime: &auditRuntime{}},
+		{DashboardPersistence: &dashboardmodule.NativePersistence{}, RefreshServingStateMutations: legacyRefreshServingStateMutationsStub{}},
 	} {
-		if err := validateProductionRuntimeInputs(data, capabilityAssemblyInputs{}, runtimeAssemblyInputs{}); err == nil || !strings.Contains(err.Error(), "rejects SQLite") {
+		if err := validateProductionRuntimeInputs(data, capabilityAssemblyInputs{}, runtimeAssemblyInputs{}); err == nil || !strings.Contains(err.Error(), "rejects") {
 			t.Fatalf("mixed native/SQLite inputs error = %v", err)
 		}
 	}

@@ -1027,6 +1027,41 @@ func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	}
 }
 
+func TestQualificationClientRequiresNativeDeliveryIdentities(t *testing.T) {
+	candidate := QualificationCandidate{
+		ID:          "0198f2c0-7c7a-7f00-8a11-000000000103",
+		PlanID:      "0198f2c0-7c7a-7f00-8a11-000000000101",
+		PrincipalID: "0198f2c0-7c7a-7f00-8a11-000000000105",
+	}
+	if err := validateQualificationNativeCandidate(candidate); err != nil {
+		t.Fatalf("native candidate rejected: %v", err)
+	}
+	for name, mutate := range map[string]func(*QualificationCandidate){
+		"candidate": func(value *QualificationCandidate) { value.ID = "cand_opaque" },
+		"plan":      func(value *QualificationCandidate) { value.PlanID = "plan_opaque" },
+		"principal": func(value *QualificationCandidate) { value.PrincipalID = "principal_opaque" },
+	} {
+		t.Run(name, func(t *testing.T) {
+			invalid := candidate
+			mutate(&invalid)
+			if err := validateQualificationNativeCandidate(invalid); err == nil {
+				t.Fatalf("accepted opaque %s identity", name)
+			}
+		})
+	}
+
+	publication := QualificationPublication{
+		DeploymentID: "0198f2c0-7c7a-7f00-8a11-000000000106",
+		CandidateID:  candidate.ID,
+		GenerationID: "0198f2c0-7c7a-7f00-8a11-000000000107",
+		PlanID:       candidate.PlanID,
+		PrincipalID:  candidate.PrincipalID,
+	}
+	if err := validateQualificationNativePublication(publication); err != nil {
+		t.Fatalf("native publication rejected: %v", err)
+	}
+}
+
 type qualificationTestWriteCloser struct{ bytes.Buffer }
 
 func (*qualificationTestWriteCloser) Close() error { return nil }

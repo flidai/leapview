@@ -130,7 +130,15 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}})
+	nativeMutations := NativeDeliveryMutationFuncs{
+		Plan: func(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error) {
+			return NativeDeliveryPlan{}, nil
+		},
+		Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+			return NativeDeliveryBuild{}, nil
+		},
+	}
+	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: nativeMutations, API: APIConfig{Releases: &publishReleaseStub{}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,6 +151,32 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 	if _, ok := m.jobs.Coordinator.(*nativeCoordinator); !ok {
 		t.Fatalf("built production coordinator has type %T, want native coordinator", m.jobs.Coordinator)
 	}
+	if m.api.Releases != nil || m.deliveryMutations != nil || m.deliveryReader != nil {
+		t.Fatalf("native module retained legacy delivery seams: api releases=%T mutations=%T reader=%T", m.api.Releases, m.deliveryMutations, m.deliveryReader)
+	}
+}
+
+func TestBuildProductionNativePersistenceRequiresMutationAuthority(t *testing.T) {
+	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
+	persistence, err := NewPostgresPersistence(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence.Approval, err = testApprovalAuthority(repository)
+	if err != nil {
+		t.Fatal(err)
+	}
+	config := Config{
+		Persistence:          &persistence,
+		Production:           true,
+		InstanceID:           "target",
+		InstanceEnvironment:  "prod",
+		NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{},
+		NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{},
+	}
+	if _, err := Build(t.Context(), config); err == nil {
+		t.Fatal("expected missing native delivery mutation authority rejection")
+	}
 }
 
 func TestBuildProductionNativePersistenceRejectsMissingMutationAuthority(t *testing.T) {
@@ -151,7 +185,11 @@ func TestBuildProductionNativePersistenceRejectsMissingMutationAuthority(t *test
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}}
+	base := Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: NativeDeliveryMutationFuncs{Plan: func(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error) {
+		return NativeDeliveryPlan{}, nil
+	}, Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
+		return NativeDeliveryBuild{}, nil
+	}}}
 	checks := []struct {
 		name   string
 		mutate func(*Config)

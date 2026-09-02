@@ -127,8 +127,6 @@ type NativePhysicalRecoveryInput struct {
 	SnapshotFactory       NativePhysicalSnapshotInspectorFactory
 }
 
-type NativePhysicalRecoveryRequest = NativePhysicalRecoveryInput
-
 // RecoverNativePhysicalBuild reconstructs value-only build evidence from a
 // marker-qualified committed snapshot. It never materializes, opens authored
 // sources, or invokes analytical qualification gates.

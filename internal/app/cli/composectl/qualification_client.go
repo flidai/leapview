@@ -89,6 +89,48 @@ func parseQualificationCandidateWithPlan(output, sourceRevision string, requireP
 	return result, nil
 }
 
+// validateQualificationNativeCandidate keeps image qualification tied to the
+// PostgreSQL delivery identity domain. The general parser remains permissive
+// because local SQLite targets intentionally retain their opaque candidate
+// identifiers; the qualification client, however, only runs against the
+// native production target.
+func validateQualificationNativeCandidate(candidate QualificationCandidate) error {
+	for name, value := range map[string]string{
+		"candidate": candidate.ID,
+		"plan":      candidate.PlanID,
+		"principal": candidate.PrincipalID,
+	} {
+		if err := validateQualificationNativeUUID(value, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateQualificationNativePublication(publication QualificationPublication) error {
+	for name, value := range map[string]string{
+		"publication": publication.DeploymentID,
+		"candidate":   publication.CandidateID,
+		"generation":  publication.GenerationID,
+		"plan":        publication.PlanID,
+		"principal":   publication.PrincipalID,
+	} {
+		if err := validateQualificationNativeUUID(value, name); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func validateQualificationNativeUUID(value, name string) error {
+	value = strings.TrimSpace(value)
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed == uuid.Nil || parsed.String() != value {
+		return fmt.Errorf("native delivery %s identity is not a canonical UUID", name)
+	}
+	return nil
+}
+
 func parseQualificationPublication(
 	output string,
 	candidate QualificationCandidate,
@@ -188,6 +230,9 @@ func (c *Controller) RunQualificationClientWorker(
 				return QualificationCandidate{}, err
 			}
 			currentCandidate, err = parseQualificationCandidate(output, options.SourceRevision)
+			if err == nil {
+				err = validateQualificationNativeCandidate(currentCandidate)
+			}
 			return currentCandidate, err
 		}),
 		"publish": handler.New(func(callCtx context.Context) (QualificationPublication, error) {
@@ -204,7 +249,14 @@ func (c *Controller) RunQualificationClientWorker(
 			if err != nil {
 				return QualificationPublication{}, err
 			}
-			return parseQualificationPublication(output, currentCandidate)
+			publication, err := parseQualificationPublication(output, currentCandidate)
+			if err != nil {
+				return QualificationPublication{}, err
+			}
+			if err := validateQualificationNativePublication(publication); err != nil {
+				return QualificationPublication{}, err
+			}
+			return publication, nil
 		}),
 	}, &jrpc2.ServerOptions{
 		AllowPush:   true,

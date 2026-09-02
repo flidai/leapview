@@ -70,10 +70,6 @@ type nativeBuildOutcome struct {
 	Status                string `json:"status"`
 }
 
-// nativeBuildTerminalOutcome is retained as a descriptive alias for callers
-// that name the persisted document by its terminal property.
-type nativeBuildTerminalOutcome = nativeBuildOutcome
-
 // validateNativeBuildRequest validates the exact immutable command identity.
 // NativeDeliveryBuildRequest already carries a UUID value. Native plans are
 // authority-allocated UUIDv7 records, so a non-v7 plan must fail before a

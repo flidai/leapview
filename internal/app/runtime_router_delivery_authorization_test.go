@@ -24,6 +24,13 @@ type nativeDeliveryAuthorizationReaderFake struct {
 	calls          []string
 }
 
+// legacyDeliveryAuthorizationReaderFake is deliberately methodless: the
+// embedded contract is enough to prove that a legacy projection was supplied
+// to native composition without ever allowing a test call to reach it.
+type legacyDeliveryAuthorizationReaderFake struct {
+	deployment.DeliveryReader
+}
+
 func (r *nativeDeliveryAuthorizationReaderFake) Plan(_ context.Context, id string) (deploymentpostgres.DeliveryPlan, error) {
 	r.calls = append(r.calls, "plan:"+id)
 	return r.plan, nil
@@ -50,7 +57,7 @@ func TestNativeDeliveryAuthorizationPlanResolvesPublicationThroughGeneration(t *
 		publication: deploymentpostgres.DeliveryPublication{PublicationID: "publication-id", GenerationID: "generation-id"},
 	}
 
-	got, err := deliveryAuthorizationPlan(context.Background(), nil, reader, "getDeliveryPublicationEvidence", "publication-id")
+	got, err := nativeDeliveryAuthorizationPlan(context.Background(), reader, "getDeliveryPublicationEvidence", "publication-id")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -66,10 +73,45 @@ func TestNativeDeliveryAuthorizationPlanResolvesPublicationThroughGeneration(t *
 func TestNativeDeliveryAuthorizationPlanMapsUnresolvablePublicationToNoRows(t *testing.T) {
 	for _, readErr := range []error{deploymentpostgres.ErrNotFound, deploymentpostgres.ErrInvalid} {
 		reader := &nativeDeliveryAuthorizationReaderFake{publicationErr: readErr}
-		_, err := deliveryAuthorizationPlan(context.Background(), nil, reader, "getDeliveryPublicationEvidence", "unresolvable-publication")
+		_, err := nativeDeliveryAuthorizationPlan(context.Background(), reader, "getDeliveryPublicationEvidence", "unresolvable-publication")
 		if !errors.Is(err, sql.ErrNoRows) {
 			t.Fatalf("read error %v mapped to %v, want sql.ErrNoRows", readErr, err)
 		}
+	}
+}
+
+func TestNativeDeliveryAssemblyRejectsLegacyDeliveryAndReleaseProjections(t *testing.T) {
+	config := deploymentmodule.Config{
+		NativeDeliveryReader: &nativeDeliveryAuthorizationReaderFake{},
+		DeliveryReader:       &legacyDeliveryAuthorizationReaderFake{},
+	}
+	if err := validateDeliveryAssemblyInputs(config, false); err == nil || !strings.Contains(err.Error(), "legacy delivery/release projections") {
+		t.Fatalf("native delivery validation error = %v, want legacy projection rejection", err)
+	}
+}
+
+func TestNativeDeliveryAssemblyRequiresNativeReader(t *testing.T) {
+	tests := []struct {
+		name       string
+		config     deploymentmodule.Config
+		production bool
+	}{
+		{name: "native mutation", config: deploymentmodule.Config{NativeDeliveryMutations: deploymentmodule.NativeDeliveryMutationFuncs{}}},
+		{name: "production", production: true},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if err := validateDeliveryAssemblyInputs(test.config, test.production); err == nil || !strings.Contains(err.Error(), "native delivery authorization reader") {
+				t.Fatalf("native delivery validation error = %v, want missing native reader", err)
+			}
+		})
+	}
+}
+
+func TestLocalDeliveryAssemblyKeepsExplicitLegacyReader(t *testing.T) {
+	config := deploymentmodule.Config{DeliveryReader: &legacyDeliveryAuthorizationReaderFake{}}
+	if err := validateDeliveryAssemblyInputs(config, false); err != nil {
+		t.Fatalf("explicit local delivery reader rejected: %v", err)
 	}
 }
 

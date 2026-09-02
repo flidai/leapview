@@ -281,8 +281,7 @@ func publishEvaluationProject(
 		client,
 		checkpoints,
 		projectPublishOperations{
-			client:        client,
-			requireActive: true,
+			client: client,
 		},
 		projectcli.PublishOptions{
 			ProjectPath: projectPath,

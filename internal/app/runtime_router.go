@@ -538,11 +538,17 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 	if native && (data.AuditRuntime != nil || data.DashboardSQLite != nil) {
 		return errors.New("native runtime composition rejects SQLite authorities")
 	}
+	if native && data.RefreshServingStateMutations != nil {
+		return errors.New("native runtime composition rejects legacy SQLite refresh serving-state mutations")
+	}
 	if !runtimeConfig.Production {
 		return nil
 	}
 	if data.AuditRuntime != nil || data.DashboardSQLite != nil {
 		return errors.New("production runtime composition rejects SQLite authorities")
+	}
+	if data.RefreshServingStateMutations != nil {
+		return errors.New("production runtime composition rejects legacy SQLite refresh serving-state mutations")
 	}
 	if !dashboardNativeInputsPresent(data) {
 		return errors.New("production runtime composition requires native dashboard persistence")
@@ -591,6 +597,32 @@ func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capab
 	}
 	if !data.DashboardPersistence.MatchesAuthoringApplication(capabilities.Authoring) {
 		return errors.New("native dashboard composition authoring application does not match persistence bundle")
+	}
+	return nil
+}
+
+// nativeDeliveryComposition reports whether the deployment config selects the
+// clean-slate delivery authority. Production is always native; explicit local
+// and evaluation composition remains on the legacy SQLite reader.
+func nativeDeliveryComposition(config deploymentmodule.Config, production bool) bool {
+	return production || config.NativeDeliveryMutations != nil || config.NativeDeliveryPublication != nil ||
+		config.NativeDeliveryApproval != nil || config.NativeDeliveryReader != nil || config.NativeDeliveryEvents != nil ||
+		config.NativeDeliveryAudit != nil || config.NativeDeliveryWorkflow != nil || config.NativeOperationAuthority != nil
+}
+
+// validateDeliveryAssemblyInputs keeps native production routing fail-closed.
+// A native authority must expose its own reader and may not carry legacy
+// delivery/release projections that could be consulted on an error path.
+func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production bool) error {
+	if !nativeDeliveryComposition(config, production) {
+		return nil
+	}
+	if config.NativeDeliveryReader == nil {
+		return errors.New("native delivery composition requires a native delivery authorization reader")
+	}
+	if config.DeliveryReader != nil || config.DeliveryMutations != nil || config.DeliveryCandidateBuilder != nil ||
+		config.CanonicalDeliveryAdapter != nil || config.API.Releases != nil {
+		return errors.New("native delivery composition rejects legacy delivery/release projections")
 	}
 	return nil
 }
@@ -941,7 +973,13 @@ func buildApplicationSurfaces(
 		}
 	}
 	moduleWorkflow.deploymentConfig = workflow.DeploymentConfig
-	platform.nativeDelivery = moduleWorkflow.deploymentConfig.NativeDeliveryMutations != nil
+	if err := validateDeliveryAssemblyInputs(moduleWorkflow.deploymentConfig, runtimeConfig.Production); err != nil {
+		return fail(err)
+	}
+	if nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production) && data.RefreshServingStateMutations != nil {
+		return fail(errors.New("native delivery composition rejects legacy SQLite refresh serving-state mutations"))
+	}
+	platform.nativeDelivery = nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production)
 	policy.managedDataTus = httpConfig.ManagedDataTus
 	storage.jobLeaseTimeout = httpConfig.JobLeaseTimeout
 	if storage.jobLeaseTimeout <= 0 {
@@ -1212,7 +1250,13 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Events: platform.asyncJobs,
 			Logger: platform.logger,
 		}
-		config.API = deploymentmodule.APIConfig{Releases: routes.releaseModule.DeploymentLinkage(), Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
+		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
+		if !nativeDeliveryComposition(config, runtimeConfig.Production) {
+			if routes.releaseModule != nil {
+				apiConfig.Releases = routes.releaseModule.DeploymentLinkage()
+			}
+		}
+		config.API = apiConfig
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
 			States: persistence.servingStateRepo, AuthorizeResource: func(ctx context.Context, actor string, projectID projectgraph.ResourceID, resource access.ResourceRef, capability access.Capability) (bool, error) {
 				return authorizeProjectResources(ctx, routes.accessModule, runtime.runtimeHostModule, actor, projectID, []access.ResourceRef{resource}, capability)
@@ -1828,7 +1872,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			}
 			reader := moduleWorkflow.deploymentConfig.DeliveryReader
 			nativeReader := moduleWorkflow.deploymentConfig.NativeDeliveryReader
-			if reader == nil && nativeReader == nil {
+			native := nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production)
+			if native {
+				if nativeReader == nil {
+					return false, fmt.Errorf("native delivery authorization reader is unavailable")
+				}
+			} else if reader == nil {
 				return false, fmt.Errorf("delivery authorization reader is unavailable")
 			}
 			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
@@ -1843,7 +1892,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return deliveryRoleAllows(snapshot, subjects, capability), nil
 			}
-			plan, err := deliveryAuthorizationPlan(ctx, reader, nativeReader, operationID, objectID)
+			var plan deployment.DeliveryPlan
+			if native {
+				plan, err = nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
+			} else {
+				plan, err = deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
+			}
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return false, nil
@@ -2319,12 +2373,12 @@ func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjec
 	return false, nil
 }
 
-func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, nativeReader deploymentmodule.NativeDeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
+// deliveryAuthorizationPlan resolves the explicit local/evaluation delivery
+// projection. Native production callers use nativeDeliveryAuthorizationPlan
+// directly and never enter this legacy reader path.
+func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
 	if strings.TrimSpace(objectID) == "" {
 		return deployment.DeliveryPlan{}, sql.ErrNoRows
-	}
-	if nativeReader != nil {
-		return nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 	}
 	if reader == nil {
 		return deployment.DeliveryPlan{}, fmt.Errorf("delivery authorization reader is unavailable")
