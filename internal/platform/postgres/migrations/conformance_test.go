@@ -28,11 +28,23 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
 	defer cancel()
 
-	admin, err := pgxpool.New(ctx, database.AdminURL())
+	adminConfig, err := pgxpool.ParseConfig(database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A single pool slot forces each assertion to reuse the same PostgreSQL
+	// session, making role-state cleanup a deterministic conformance property.
+	adminConfig.MaxConns = 1
+	admin, err := pgxpool.NewWithConfig(ctx, adminConfig)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(admin.Close)
+
+	var adminRole string
+	if err := admin.QueryRow(ctx, "SELECT current_user").Scan(&adminRole); err != nil {
+		t.Fatal(err)
+	}
 
 	var ownerCanCreate, migratorCanCreate bool
 	if err := admin.QueryRow(ctx,
@@ -54,7 +66,7 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer conn.Release()
+		defer resetRoleAndRelease(t, conn)
 		if _, err := conn.Exec(ctx, "SET ROLE leapview_control_migrator"); err != nil {
 			t.Fatal(err)
 		}
@@ -72,6 +84,16 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 	}
 	apply()
 	apply()
+
+	// This query must borrow the same physical session used by apply. If SET
+	// ROLE leaked through the pool, current_user would still be the migrator.
+	var pooledRole, sessionRole string
+	if err := admin.QueryRow(ctx, "SELECT current_user, session_user").Scan(&pooledRole, &sessionRole); err != nil {
+		t.Fatal(err)
+	}
+	if pooledRole != adminRole || sessionRole != adminRole {
+		t.Fatalf("pooled role identity = current %q/session %q, want administrator %q", pooledRole, sessionRole, adminRole)
+	}
 
 	var revision int64
 	var migrationID, checksum string
@@ -175,4 +197,19 @@ func TestAccessBaselinePostgreSQL18(t *testing.T) {
 	); err == nil || !strings.Contains(err.Error(), "permission denied") {
 		t.Fatalf("runtime catalog identity write error = %v, want permission denied", err)
 	}
+}
+
+func resetRoleAndRelease(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	resetCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := conn.Exec(resetCtx, "RESET ROLE"); err != nil {
+		// Never return a role-contaminated session to the pool. Closing the
+		// physical connection lets pgxpool replace it on the next acquisition.
+		_ = conn.Conn().Close(resetCtx)
+		conn.Release()
+		t.Errorf("reset migration conformance role before release: %v", err)
+		return
+	}
+	conn.Release()
 }
