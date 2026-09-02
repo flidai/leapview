@@ -28,6 +28,46 @@ func TestPostgresRuntimeBranchRequiresPoolAdmissionAndNoFileCatalog(t *testing.T
 	}
 }
 
+func TestSnapshotSealEvidenceAllowsBoundedCanonicalMarkerDocument(t *testing.T) {
+	marker := CommitMarker{
+		SchemaVersion:  CommitMarkerSchemaVersion,
+		DeliveryID:     "delivery",
+		GenerationID:   "generation",
+		AttemptID:      "attempt",
+		LeaseEpoch:     1,
+		RequestDigest:  digestForRuntimeTest("request"),
+		PlanDigest:     digestForRuntimeTest("plan"),
+		Project:        strings.Repeat("p", 300),
+		Environment:    strings.Repeat("e", 300),
+		PhysicalPoolID: "pool",
+	}
+	canonical, err := marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical) <= MaxCommitMarkerFieldBytes || len(canonical) > MaxCommitMarkerBytes {
+		t.Fatalf("canonical marker length=%d, want >%d and <=%d", len(canonical), MaxCommitMarkerFieldBytes, MaxCommitMarkerBytes)
+	}
+	evidence := PostgresSnapshotSealEvidence{
+		CatalogType: "postgres", MetadataSchema: MetadataSchemaForPool("pool"),
+		DataPath: "/objects", ExtensionVersion: "ducklake:1", CatalogVersion: "ducklake:v1",
+		SnapshotID: 1, CommitMarker: canonical,
+	}
+	if err := validateSnapshotSealEvidenceFields(evidence); err != nil {
+		t.Fatalf("bounded canonical marker rejected: %v", err)
+	}
+	tooLarge := evidence
+	tooLarge.CommitMarker = strings.Repeat("x", MaxCommitMarkerBytes+1)
+	if err := validateSnapshotSealEvidenceFields(tooLarge); err == nil {
+		t.Fatal("oversized marker document accepted")
+	}
+	tooLarge = evidence
+	tooLarge.MetadataSchema = strings.Repeat("m", MaxCommitMarkerFieldBytes+1)
+	if err := validateSnapshotSealEvidenceFields(tooLarge); err == nil {
+		t.Fatal("oversized scalar seal field accepted")
+	}
+}
+
 func TestPostgresRuntimeCommitMarkerReconcilesExactSnapshot(t *testing.T) {
 	ctx := context.Background()
 	digest := func(value string) string { return digestForRuntimeTest(value) }

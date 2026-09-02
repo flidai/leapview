@@ -231,6 +231,25 @@ func TestBuildNativePhysicalSuccess(t *testing.T) {
 	}
 }
 
+func TestBuildNativePhysicalAllowsBoundedCommitMarkerDocument(t *testing.T) {
+	in := nativePhysicalFixtureInput(t)
+	in.Marker.Project = strings.Repeat("p", 300)
+	in.Request.Identity.ProjectID = projectgraph.ResourceID(in.Marker.Project)
+	canonical, err := in.Marker.CanonicalJSON()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(canonical) <= ducklake.MaxCommitMarkerFieldBytes || len(canonical) > ducklake.MaxCommitMarkerBytes {
+		t.Fatalf("canonical marker length=%d, want >%d and <=%d", len(canonical), ducklake.MaxCommitMarkerFieldBytes, ducklake.MaxCommitMarkerBytes)
+	}
+	env := nativePhysicalEnvironment(t, in)
+	if _, err := BuildNativePhysical(t.Context(), in, NativePhysicalBuildEnvironmentFactoryFunc(func(context.Context, catalogartifact.CommitMarker) (NativePhysicalBuildEnvironment, error) {
+		return env, nil
+	})); err != nil {
+		t.Fatalf("bounded canonical marker rejected by native evidence verification: %v", err)
+	}
+}
+
 func TestBuildNativePhysicalObservationEvidenceIsCopyIsolated(t *testing.T) {
 	in := nativePhysicalFixtureInput(t)
 	env := nativePhysicalEnvironment(t, in)

@@ -70,10 +70,8 @@ func (e *Environment) SnapshotSealEvidence(ctx context.Context, snapshotID int64
 	if err != nil || canonical != mustCanonicalMarker(e.commitMarker) {
 		return PostgresSnapshotSealEvidence{}, fmt.Errorf("DuckLake snapshot %d does not carry the exact commit marker", snapshotID)
 	}
-	for name, value := range map[string]string{"catalog type": evidence.CatalogType, "metadata schema": evidence.MetadataSchema, "data path": evidence.DataPath, "extension version": evidence.ExtensionVersion, "catalog version": evidence.CatalogVersion, "commit marker": evidence.CommitMarker} {
-		if len(value) > MaxCommitMarkerFieldBytes {
-			return PostgresSnapshotSealEvidence{}, fmt.Errorf("DuckLake %s evidence exceeds bounded field size", name)
-		}
+	if err := validateSnapshotSealEvidenceFields(evidence); err != nil {
+		return PostgresSnapshotSealEvidence{}, err
 	}
 	encoded, err := json.Marshal(evidence)
 	if err != nil {
@@ -83,6 +81,28 @@ func (e *Environment) SnapshotSealEvidence(ctx context.Context, snapshotID int64
 		return PostgresSnapshotSealEvidence{}, fmt.Errorf("DuckLake snapshot seal evidence exceeds 16384 bytes")
 	}
 	return evidence, nil
+}
+
+// validateSnapshotSealEvidenceFields keeps scalar seal identities bounded by
+// the marker field limit while allowing the canonical marker document itself
+// to use the larger document limit. The marker contract deliberately allows a
+// valid document to exceed one scalar field's bound once JSON keys and all
+// identities are included.
+func validateSnapshotSealEvidenceFields(evidence PostgresSnapshotSealEvidence) error {
+	for name, value := range map[string]string{
+		"catalog type": evidence.CatalogType, "metadata schema": evidence.MetadataSchema,
+		"data path": evidence.DataPath, "extension version": evidence.ExtensionVersion,
+		"catalog version": evidence.CatalogVersion, "commit marker": evidence.CommitMarker,
+	} {
+		limit := MaxCommitMarkerFieldBytes
+		if name == "commit marker" {
+			limit = MaxCommitMarkerBytes
+		}
+		if len(value) > limit {
+			return fmt.Errorf("DuckLake %s evidence exceeds bounded field size", name)
+		}
+	}
+	return nil
 }
 
 func mustCanonicalMarker(marker *CommitMarker) string {

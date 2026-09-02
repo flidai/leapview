@@ -769,7 +769,11 @@ func verifyNativePhysicalEvidence(seal ducklake.PostgresSnapshotSealEvidence, cl
 		return fmt.Errorf("%w: snapshot seal metadata schema differs from physical pool", deploymentnative.ErrConflict)
 	}
 	for label, value := range map[string]string{"catalog type": seal.CatalogType, "metadata schema": seal.MetadataSchema, "data path": seal.DataPath, "extension version": seal.ExtensionVersion, "catalog version": seal.CatalogVersion, "commit marker": seal.CommitMarker} {
-		if err := validateTextField(value, "snapshot seal "+label, ducklake.MaxCommitMarkerFieldBytes); err != nil {
+		limit := ducklake.MaxCommitMarkerFieldBytes
+		if label == "commit marker" {
+			limit = ducklake.MaxCommitMarkerBytes
+		}
+		if err := validateTextField(value, "snapshot seal "+label, limit); err != nil {
 			return err
 		}
 	}
