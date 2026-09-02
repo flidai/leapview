@@ -1,0 +1,109 @@
+{
+  "profile": "leapview.dev/odcs-mapping/v1",
+  "entries": [
+    {
+      "id": "contract.api-version",
+      "sourceField": "adapter profile",
+      "odcsTargetField": "apiVersion",
+      "transformation": "Emit the pinned literal v3.1.0.",
+      "limitations": "Only ODCS 3.1.0 export is supported.",
+      "compatibilityImpact": "Changing the literal requires a new ODCS mapping profile."
+    },
+    {
+      "id": "contract.extension",
+      "sourceField": "publication.{resourceKind,projectionProfile,digest}",
+      "odcsTargetField": "customProperties[leapviewContract].value",
+      "transformation": "Copy immutable publication provenance into the sealed leapview.dev/odcs-extension/v1 value.",
+      "limitations": "The extension carries provenance only and cannot preserve executable or access semantics.",
+      "compatibilityImpact": "Changing its closed shape requires a new extension namespace."
+    },
+    {
+      "id": "contract.id",
+      "sourceField": "publication.{instanceID,authoredID}",
+      "odcsTargetField": "id",
+      "transformation": "Join the existing instance ID and authored resource ID with a slash.",
+      "limitations": "ODCS does not prescribe a global identifier URI format.",
+      "compatibilityImpact": "Either identity component changes the exported ODCS identity."
+    },
+    {
+      "id": "contract.kind",
+      "sourceField": "adapter profile",
+      "odcsTargetField": "kind",
+      "transformation": "Emit the pinned literal DataContract.",
+      "limitations": "None.",
+      "compatibilityImpact": "Changing the literal breaks the ODCS profile."
+    },
+    {
+      "id": "contract.name",
+      "sourceField": "metadata.name",
+      "odcsTargetField": "name",
+      "transformation": "Copy the canonical projection name.",
+      "limitations": "Display names and descriptive prose are excluded by leapview.contract/v1.",
+      "compatibilityImpact": "The value follows the published projection version."
+    },
+    {
+      "id": "contract.status",
+      "sourceField": "publication.publishedAt",
+      "odcsTargetField": "status",
+      "transformation": "Emit active for an immutable published contract version.",
+      "limitations": "ODCS status combines publication and activation lifecycle concepts; LeapView publication evidence does not prove serving activation.",
+      "compatibilityImpact": "Reported as a degraded representation."
+    },
+    {
+      "id": "contract.version",
+      "sourceField": "metadata.contract.version",
+      "odcsTargetField": "version",
+      "transformation": "Copy the authored semantic version preserved in canonical bytes.",
+      "limitations": "Build metadata remains subject to the FAI-622 publication baseline policy.",
+      "compatibilityImpact": "Governed by the existing LeapView SemVer classifier."
+    },
+    {
+      "id": "field.logical-type",
+      "sourceField": "contract.{schema.fields|fields}.*.datatype",
+      "odcsTargetField": "schema[].properties[].logicalType",
+      "transformation": "Map the closed LeapView logical datatype vocabulary to ODCS 3.1 logicalType.",
+      "limitations": "Decimal loses its exact-vs-approximate distinction; Opaque is rejected.",
+      "compatibilityImpact": "Datatype changes remain breaking under the LeapView classifier."
+    },
+    {
+      "id": "field.name",
+      "sourceField": "contract.{schema.fields|fields} map key",
+      "odcsTargetField": "schema[].properties[].name",
+      "transformation": "Emit identifier-keyed fields as a name-sorted ODCS property array.",
+      "limitations": "ODCS array order is normalized lexically and is not semantic.",
+      "compatibilityImpact": "Addition/removal/type compatibility remains governed by FAI-622."
+    },
+    {
+      "id": "field.nullability",
+      "sourceField": "contract.{schema.fields|fields}.*.nullable",
+      "odcsTargetField": "schema[].properties[].required",
+      "transformation": "Invert nullable when specified; omit required when nullability is unspecified.",
+      "limitations": "ODCS required means the value may not be null.",
+      "compatibilityImpact": "Nullability widening remains breaking under the LeapView classifier."
+    },
+    {
+      "id": "model.entity",
+      "sourceField": "contract.{entities,grain}",
+      "odcsTargetField": "schema[].properties[].{primaryKey,primaryKeyPosition,unique}",
+      "transformation": "Map the selected primary grain positionally and lossless single-field unique entities.",
+      "limitations": "Foreign, natural, and composite unique entity semantics require explicit loss entries.",
+      "compatibilityImpact": "Dropped/degraded entity semantics prohibit round-trip conformance."
+    },
+    {
+      "id": "model.quality",
+      "sourceField": "contract.checks[]",
+      "odcsTargetField": "schema[].{quality|properties[].quality|relationships}",
+      "transformation": "Map closed non-null, unique, accepted-values, relationship, and row-count checks to ODCS library metrics or relationships.",
+      "limitations": "ODCS generic arguments do not fully standardize accepted-value or composite-unique execution; those mappings are reported degraded.",
+      "compatibilityImpact": "Unsupported or internally inconsistent checks reject export."
+    },
+    {
+      "id": "schema.object",
+      "sourceField": "metadata.name",
+      "odcsTargetField": "schema[].{name,logicalType}",
+      "transformation": "Emit one object named after the published Source or Model with logicalType object.",
+      "limitations": "Physical names and target bindings are intentionally absent.",
+      "compatibilityImpact": "The object follows the published resource identity and version."
+    }
+  ]
+}

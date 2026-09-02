@@ -208,12 +208,14 @@ profile identifier is part of canonical bytes and conformance evidence.
 | SEM-01–SEM-03 | The SemanticModel projector includes stable dataset, relationship, binding, dimension/time, filter, metric, format/unit, access-grant, and access-filter identifiers while excluding display, discovery, hidden-presentation, and AI fields. Exact typed scalar and internal-field leak fixtures run in `go test ./internal/project/contractprojection -count=1`. | Implemented by FAI-620 |
 | SER-01–SER-10 | The sealed projection boundary uses the single production dependency `github.com/cyberphone/json-canonicalization` for RFC 8785, applies NFC/control-character, set, exact-number, date/time, and RFC 3986 URL normalization, and emits `sha256:` identities over exact bytes. RFC golden vectors and a language-neutral Go/Bun byte-and-digest corpus verify deterministic independent output. The architecture guard proves existing graph/artifact/release digest paths do not import this boundary. | Implemented by FAI-620 |
 | VER-01–VER-06 | FAI-622 added one canonical-byte [compatibility classifier](../../internal/project/contractversion/classifier.go) for structural, semantic, and security changes plus SemVer transition enforcement. Immutable [publication evidence](../../internal/project/identityledger/contract_publication.go) reuses the existing instance-qualified identity ledger and the FAI-620 canonical bytes/digest authority. PostgreSQL [revision 3](../../internal/platform/postgres/migrations/003_contract_publication_evidence.sql) stores authored version, profile, exact bytes, digest, database timestamp, and normalized validation evidence behind append-only triggers. Exact retries replay the first row; build-metadata, content, digest, or evidence drift conflicts. Focused unit, migration, architecture, and PostgreSQL concurrency fixtures are maintained beside the implementation. | Implemented by FAI-622; deployment-plan consumption remains separate |
+| ODX-01–ODX-07 | FAI-623 added the isolated [ODCS 3.1 export adapter](../../internal/project/contractodcs), pinned upstream schema and checksum, explicit mapping manifest, generated mapping/loss reports, sealed provenance extension, security exclusions, and a CI-only independent CLI oracle. The maintained [ODCS export conformance specification](odcs-export-conformance.md) records the exact document/export claim and known loss boundaries. | Implemented by FAI-623; export/document level only |
 
 The FAI-622 boundary classifies and preserves contract evidence without
 changing FAI-620 projection DTOs, canonicalization, or graph/artifact/release
 digests. Feeding the result into affected-graph deployment review and consuming
-explicit security approvals remains delivery-policy integration; ODCS adapters
-remain FAI-623. The earlier STR-08 boundaries also remain: standalone
+explicit security approvals remains delivery-policy integration. FAI-623 adds
+ODCS 3.1 Source/Model export only; ODCS import/round-trip, ODPS, DCAT, and runtime
+transports remain capability-gated. The earlier STR-08 boundaries also remain: standalone
 transitional `DataPolicy` rejection and contextual access-reference/type-
 registry changes are not part of this milestone.
 

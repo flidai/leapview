@@ -1,0 +1,100 @@
+{
+  "version": "1.2.3",
+  "kind": "DataContract",
+  "apiVersion": "v3.1.0",
+  "id": "instance:acme/model:orders",
+  "name": "orders",
+  "status": "active",
+  "schema": [
+    {
+      "name": "orders",
+      "logicalType": "object",
+      "properties": [
+        {
+          "name": "amount",
+          "logicalType": "number",
+          "required": false
+        },
+        {
+          "name": "email",
+          "logicalType": "string",
+          "required": false,
+          "unique": true,
+          "quality": [
+            {
+              "id": "email_values",
+              "name": "email_values",
+              "type": "library",
+              "metric": "invalidValues",
+              "arguments": {
+                "validValues": [
+                  "a@example.com",
+                  "b@example.com"
+                ]
+              },
+              "severity": "warning",
+              "mustBe": 0
+            },
+            {
+              "id": "email_unique",
+              "name": "email_unique",
+              "type": "library",
+              "metric": "duplicateValues",
+              "severity": "error",
+              "mustBe": 0
+            }
+          ]
+        },
+        {
+          "name": "id",
+          "logicalType": "string",
+          "required": true,
+          "primaryKey": true,
+          "primaryKeyPosition": 1,
+          "quality": [
+            {
+              "id": "id_present",
+              "name": "id_present",
+              "type": "library",
+              "metric": "nullValues",
+              "severity": "error",
+              "mustBe": 0
+            }
+          ],
+          "relationships": [
+            {
+              "type": "foreignKey",
+              "to": "customers.id"
+            }
+          ]
+        }
+      ],
+      "quality": [
+        {
+          "id": "row_bounds",
+          "name": "row_bounds",
+          "type": "library",
+          "metric": "rowCount",
+          "severity": "error",
+          "unit": "rows",
+          "mustBeBetween": [
+            1,
+            100
+          ]
+        }
+      ]
+    }
+  ],
+  "customProperties": [
+    {
+      "property": "leapviewContract",
+      "value": {
+        "namespace": "leapview.dev/odcs-extension/v1",
+        "resourceKind": "Model",
+        "projectionProfile": "leapview.contract/v1",
+        "projectionDigest": "sha256:ffd74dcccd84bc4421dc7570188a90eba20f6d7d7b3a3442ae548026fb5af941"
+      },
+      "description": "Immutable LeapView publication provenance; not executable contract semantics."
+    }
+  ]
+}

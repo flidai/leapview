@@ -1,0 +1,13 @@
+Open Data Contract Standard (ODCS)
+Copyright contributors to bitol-io/open-data-contract-standard
+
+The accompanying odcs-json-schema-v3.1.0.json is reproduced from the
+Open Data Contract Standard v3.1.0 tag, commit
+b9d3ffc5aabe9e058afe4469cabe5a218fe9946d, under the Apache License,
+Version 2.0. The repository LICENSE contains the full license text.
+
+Upstream:
+https://github.com/bitol-io/open-data-contract-standard/blob/v3.1.0/schema/odcs-json-schema-v3.1.0.json
+
+Pinned SHA-256:
+2cb7dd6fe43344d2233e0406438622681dc3ebadcf8f0d606a15b40c8f6752c0

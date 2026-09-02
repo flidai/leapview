@@ -78,6 +78,12 @@ jobs:
         with:
           browser: "false"
 
+      - name: Install pinned independent ODCS validator
+        run: cargo install odcs --version '=0.9.1' --locked
+
+      - name: Validate ODCS exports independently
+        run: task odcs:oracle
+
       - name: Validate Prometheus rules and fixtures
         run: task observability:check
 
