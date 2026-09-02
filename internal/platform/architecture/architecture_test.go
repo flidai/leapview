@@ -29,14 +29,14 @@ type goFile struct {
 var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
-	"refresh": {}, "runtimehost": {}, "workload": {}, "platform": {},
+	"refresh": {}, "runtimehost": {}, "workload": {}, "semanticvalue": {}, "platform": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "servingstate": {}, "workload": {}, "extension": {},
+	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "extension": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -138,6 +138,20 @@ func TestArchitectureOwnershipUsesRootTaxonomy(t *testing.T) {
 		if rule.Capability == "api" || rule.Capability == "ui" {
 			t.Errorf("%s retains synthetic %q ownership instead of its physical app, platform, or capability owner", rule.Prefix, rule.Capability)
 		}
+	}
+}
+
+func TestSemanticValueIsAPublishedAnalyticsDependency(t *testing.T) {
+	source, sourceOK := ClassifyPackage("internal/analytics/model")
+	target, targetOK := ClassifyPackage("internal/semanticvalue")
+	if !sourceOK || !targetOK {
+		t.Fatalf("classify analytics/model=%v semanticvalue=%v", sourceOK, targetOK)
+	}
+	if target.Capability != "semanticvalue" || target.Layer != LayerContract {
+		t.Fatalf("semanticvalue classification = %#v, want semanticvalue contract", target)
+	}
+	if violation := CapabilityImportViolation("internal/analytics/model", source, "internal/semanticvalue", target); violation != "" {
+		t.Fatalf("analytics/model -> semanticvalue violation = %q, want published contract", violation)
 	}
 }
 
