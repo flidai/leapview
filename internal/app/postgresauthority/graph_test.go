@@ -33,7 +33,9 @@ import (
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
+	idempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -299,6 +301,15 @@ func TestNewPostgresAuthorityGraphConstructsAndValidatesDashboardAuthorities(t *
 	if err := graph.Validate(); err != nil {
 		t.Fatalf("validate constructed graph: %v", err)
 	}
+	if !graph.Idempotency.Matches(graph.Operation) {
+		t.Fatal("constructed graph did not reuse the operation authority for HTTP idempotency")
+	}
+	originalIdempotency := graph.Idempotency
+	graph.Idempotency = idempotencypostgres.NewStoreFromRepository(operationpostgres.New(runtime))
+	if err := graph.Validate(); err == nil || !strings.Contains(err.Error(), "idempotency authority does not preserve operation identity") {
+		t.Fatalf("mismatched idempotency authority error = %v", err)
+	}
+	graph.Idempotency = originalIdempotency
 	if graph.DashboardTargetID != "target-prod" || !graph.DashboardPersistence.Matches(dashboardmodule.NativePersistenceOptions{
 		Session: graph.DashboardSession, Usage: graph.DashboardUsage, Appearance: graph.DashboardAppearance,
 		Authoring: graph.DashboardAuthoring, Publication: graph.DashboardPublication,

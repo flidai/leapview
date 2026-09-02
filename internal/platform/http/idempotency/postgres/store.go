@@ -42,6 +42,21 @@ func NewStore(db DBTX) *Store {
 	return &Store{repo: operation.New(db)}
 }
 
+// NewStoreFromRepository binds the HTTP transport adapter to an existing
+// operation authority. Production composition uses this constructor so the
+// HTTP and domain operation capabilities retain one repository identity and
+// its lease/retention configuration.
+func NewStoreFromRepository(repo *operation.Repository) *Store {
+	return &Store{repo: repo}
+}
+
+// Matches reports whether the adapter retains the exact operation repository
+// supplied by composition. A nil adapter or authority is never considered a
+// valid match.
+func (s *Store) Matches(repo *operation.Repository) bool {
+	return s != nil && s.repo != nil && s.repo == repo
+}
+
 func NewStoreWithConfig(db DBTX, lease, retention time.Duration) *Store {
 	if db == nil {
 		return &Store{}

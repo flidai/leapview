@@ -36,6 +36,24 @@ func testStore(t *testing.T) (*Store, *pgxpool.Pool) {
 	return NewStoreWithConfig(p, 100*time.Millisecond, time.Hour), p
 }
 
+func TestNewStoreFromRepositoryPreservesOperationIdentity(t *testing.T) {
+	repository := postgres.New(nil)
+	store := NewStoreFromRepository(repository)
+	if !store.Matches(repository) {
+		t.Fatal("HTTP idempotency adapter did not retain the supplied operation repository")
+	}
+	if store.Matches(postgres.New(nil)) {
+		t.Fatal("HTTP idempotency adapter accepted a distinct operation repository")
+	}
+	if NewStoreFromRepository(nil).Matches(repository) {
+		t.Fatal("HTTP idempotency adapter matched a nil operation repository")
+	}
+	var nilStore *Store
+	if nilStore.Matches(repository) {
+		t.Fatal("nil HTTP idempotency adapter matched an operation repository")
+	}
+}
+
 func TestClaimReplayAndExactConflict(t *testing.T) {
 	s, _ := testStore(t)
 	first, execute, err := s.Claim(t.Context(), "principal:path:key", strings.Repeat("a", 64), "owner-1", time.Second, time.Hour)

@@ -384,7 +384,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		Bootstrap: bootstrap, Settings: bootstrap,
 		Operation: operations, OperationMaintenance: operationMaintenance, Jobs: jobs, JobsMaintenance: jobsMaintenance, Events: events,
 		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
-		Idempotency:   idempotencypostgres.NewStore(runtime),
+		Idempotency:   idempotencypostgres.NewStoreFromRepository(operations),
 		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorSigningMaintenance,
 		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Cache: cachepostgres.New(runtime), CacheMaintenance: cacheMaintenance, Lineage: lineagepostgres.New(runtime),
 		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
@@ -498,6 +498,9 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		if isNilAuthority(item.value) {
 			return fmt.Errorf("PostgreSQL authority graph missing %s", item.name)
 		}
+	}
+	if !g.Idempotency.Matches(g.Operation) {
+		return errors.New("PostgreSQL authority graph idempotency authority does not preserve operation identity")
 	}
 	if strings.TrimSpace(g.DashboardTargetID) == "" || g.DashboardTargetID != strings.TrimSpace(g.DashboardTargetID) {
 		return errors.New("PostgreSQL authority graph dashboard target id is not configured")
