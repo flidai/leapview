@@ -18,9 +18,9 @@ func TestValidateMarkdownChecksYAMLSyntaxAndResourceSchemas(t *testing.T) {
 		"",
 		"```yaml",
 		"apiVersion: leapview.dev/v1",
-		"kind: Project",
+		"kind: Connection",
 		"metadata:",
-		"  id: project:commerce",
+		"  id: connection:commerce",
 		"  name: commerce",
 		"spec:",
 		"  unsupported: true",
@@ -55,25 +55,12 @@ filters:
 ~~~
 
 ` + "```yaml\n" + `apiVersion: leapview.dev/v1
-kind: Project
+kind: Connection
 metadata:
-  id: project:commerce
+  id: connection:commerce
   name: commerce
 spec:
-  connections:
-    include: [connections/*.yaml]
-  sources:
-    include: [sources/*.yaml]
-  models:
-    include: [models/*.yaml]
-  semanticModels:
-    include: [semantic-models/*.yaml]
-  pipelines:
-    include: [pipelines/*.yaml]
-  dashboards:
-    include: [dashboards/*.yaml]
-  access:
-    include: [access/*.yaml]
+  type: managed
 ` + "```\n\n```yaml\n" + `apiVersion: apps/v1
 kind: Deployment
 metadata:
