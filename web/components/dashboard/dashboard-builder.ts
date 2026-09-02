@@ -1383,27 +1383,109 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       position: absolute;
       z-index: 2;
       display: block;
-      width: 12px;
-      height: 12px;
+      box-sizing: border-box;
       touch-action: none;
       user-select: none;
     }
 
-    .grid-stack-item > .ui-resizable-se {
-      right: var(--gs-item-margin-right);
-      bottom: var(--gs-item-margin-bottom);
-      cursor: se-resize;
+    .grid-stack-item > .ui-resizable-n,
+    .grid-stack-item > .ui-resizable-s {
+      right: calc(var(--gs-item-margin-right) + 18px);
+      left: calc(var(--gs-item-margin-left) + 18px);
+      height: 12px;
     }
 
-    .grid-stack-item > .ui-resizable-se::after {
+    .grid-stack-item > .ui-resizable-n {
+      top: var(--gs-item-margin-top);
+      cursor: n-resize;
+    }
+
+    .grid-stack-item > .ui-resizable-s {
+      bottom: var(--gs-item-margin-bottom);
+      cursor: s-resize;
+    }
+
+    .grid-stack-item > .ui-resizable-e,
+    .grid-stack-item > .ui-resizable-w {
+      top: calc(var(--gs-item-margin-top) + 18px);
+      bottom: calc(var(--gs-item-margin-bottom) + 18px);
+      width: 12px;
+    }
+
+    .grid-stack-item > .ui-resizable-e {
+      right: var(--gs-item-margin-right);
+      cursor: e-resize;
+    }
+
+    .grid-stack-item > .ui-resizable-w {
+      left: var(--gs-item-margin-left);
+      cursor: w-resize;
+    }
+
+    .grid-stack-item > .ui-resizable-ne,
+    .grid-stack-item > .ui-resizable-nw,
+    .grid-stack-item > .ui-resizable-se,
+    .grid-stack-item > .ui-resizable-sw {
+      width: 20px;
+      height: 20px;
+    }
+
+    .grid-stack-item > .ui-resizable-ne,
+    .grid-stack-item > .ui-resizable-nw { top: var(--gs-item-margin-top); }
+    .grid-stack-item > .ui-resizable-se,
+    .grid-stack-item > .ui-resizable-sw { bottom: var(--gs-item-margin-bottom); }
+    .grid-stack-item > .ui-resizable-ne,
+    .grid-stack-item > .ui-resizable-se { right: var(--gs-item-margin-right); }
+    .grid-stack-item > .ui-resizable-nw,
+    .grid-stack-item > .ui-resizable-sw { left: var(--gs-item-margin-left); }
+
+    .grid-stack-item > .ui-resizable-ne { cursor: ne-resize; }
+    .grid-stack-item > .ui-resizable-nw { cursor: nw-resize; }
+    .grid-stack-item > .ui-resizable-se { cursor: se-resize; }
+    .grid-stack-item > .ui-resizable-sw { cursor: sw-resize; }
+
+    .grid-stack-item > .ui-resizable-handle::after {
       position: absolute;
-      right: 2px;
-      bottom: 2px;
-      width: 6px;
-      height: 6px;
-      border-right: 2px solid var(--lv-fg-muted);
-      border-bottom: 2px solid var(--lv-fg-muted);
+      border: var(--lv-border-default);
+      background: var(--lv-bg-panel);
       content: '';
+      pointer-events: none;
+    }
+
+    .grid-stack-item > .ui-resizable-n::after,
+    .grid-stack-item > .ui-resizable-s::after {
+      left: 50%;
+      width: 18px;
+      height: 4px;
+      border-radius: var(--lv-radius-full);
+      transform: translateX(-50%);
+    }
+
+    .grid-stack-item > .ui-resizable-n::after { top: -2px; }
+    .grid-stack-item > .ui-resizable-s::after { bottom: -2px; }
+
+    .grid-stack-item > .ui-resizable-e::after,
+    .grid-stack-item > .ui-resizable-w::after {
+      top: 50%;
+      width: 4px;
+      height: 18px;
+      border-radius: var(--lv-radius-full);
+      transform: translateY(-50%);
+    }
+
+    .grid-stack-item > .ui-resizable-e::after { right: -2px; }
+    .grid-stack-item > .ui-resizable-w::after { left: -2px; }
+
+    .grid-stack-item > .ui-resizable-ne::after,
+    .grid-stack-item > .ui-resizable-nw::after,
+    .grid-stack-item > .ui-resizable-se::after,
+    .grid-stack-item > .ui-resizable-sw::after {
+      top: 50%;
+      left: 50%;
+      width: 8px;
+      height: 8px;
+      border-radius: var(--lv-radius-small);
+      transform: translate(-50%, -50%);
     }
 
     .grid-stack-item.ui-resizable-disabled > .ui-resizable-handle {
@@ -2515,7 +2597,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
         disableDrag: !builder?.capabilities.canEdit || this.commandPending,
         disableResize: !builder?.capabilities.canEdit || this.commandPending,
         draggable: { handle: '.component-drag-handle' },
-        resizable: { handles: 'se', autoHide: true },
+        resizable: { handles: 'all', autoHide: false },
       }, canvas as GridItemHTMLElement)
       if (this.gridStack) {
         this.gridStack.on('dragstop', (_event: Event, element: GridItemHTMLElement) => this.onGridInteractionStop(element))
@@ -3363,7 +3445,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <section class="canvas-pane" aria-label="Dashboard canvas">
         <div class="canvas-scroll">
-          <p id="dashboard-builder-grid-help" class="sr-only">Focus a canvas component. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
+          <p id="dashboard-builder-grid-help" class="sr-only">Select a canvas component and drag any edge or corner handle to resize it. Use Alt plus an arrow key to move it one grid cell. Use Alt plus Shift plus an arrow key to resize it.</p>
           <div class="canvas-fit">
             <div class="canvas grid-stack" data-field-dragging=${this.draggedFieldID ? 'true' : 'false'} data-grid-guides=${this.draggedFieldID || pageFormatting ? 'true' : 'false'} aria-describedby="dashboard-builder-grid-help" style=${`grid-template-columns: repeat(${width}, 1fr);`} @click=${this.deselectVisualFromCanvas} @dragover=${this.allowFieldDrop} @drop=${this.dropField}>
               ${this.draggedFieldID ? html`<div class="canvas-field-drop-hint" role="status">Drop on the canvas to create a ${this.visualLabel(this.recommendedVisualForDraggedField(builder), builder)} visual</div>` : nothing}

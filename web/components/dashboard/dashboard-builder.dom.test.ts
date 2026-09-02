@@ -1158,6 +1158,9 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
       const root = element.shadowRoot
       const canvas = root.querySelector('.canvas') as any
       const visual = root.querySelector('.visual') as HTMLElement & { gridstackNode?: { id?: string } }
+      const resizeHandles = Array.from(visual.querySelectorAll('.ui-resizable-handle')).map((handle) => (
+        Array.from(handle.classList).find((name) => name.startsWith('ui-resizable-') && name !== 'ui-resizable-handle')?.replace('ui-resizable-', '')
+      )).filter(Boolean).sort()
       return {
         hasGridStack: Boolean(canvas?.gridstack),
         floating: canvas?.gridstack?.getFloat(),
@@ -1166,7 +1169,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
         contentWrapper: Boolean(visual.querySelector('.grid-stack-item-content')),
         dragHeader: visual.querySelector('.visual-drag-header')?.getAttribute('title'),
         cornerHandle: Boolean(visual.querySelector('.visual-drag-handle')),
-        resizeHandle: Boolean(visual.querySelector('.ui-resizable-se')),
+        resizeHandles,
         instructions: visual.getAttribute('aria-describedby'),
       }
     })
@@ -1178,7 +1181,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
       contentWrapper: true,
       dragHeader: 'Drag to move Sales by status',
       cornerHandle: false,
-      resizeHandle: true,
+      resizeHandles: ['e', 'n', 'ne', 'nw', 's', 'se', 'sw', 'w'],
       instructions: 'dashboard-builder-grid-help',
     })
   } finally {
@@ -1270,6 +1273,45 @@ test('dashboard builder preserves pointer drag placement on the fitted canvas', 
     expect(state.command).toBeDefined()
     expect(state.command.placements[0].placement.row).toBeGreaterThan(1)
     expect(state.fittedHeight).toBeGreaterThan(initial.fittedHeight)
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder resizes a selected widget from its left edge', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const element = page.locator('lv-dashboard-builder')
+    const initial = await element.evaluate(async (builder: any) => {
+      await builder.updateComplete
+      const root = builder.shadowRoot
+      ;(window as any).__builderPlacementCommands = []
+      builder.addEventListener('lv-builder-command', (event: CustomEvent) => {
+        if (event.detail?.action === 'set_placements') (window as any).__builderPlacementCommands.push(event.detail)
+      })
+      const canvas = root.querySelector('.canvas') as HTMLElement
+      const visual = root.querySelector('.visual') as any
+      return {
+        columnWidth: canvas.getBoundingClientRect().width / builder.builder.pages[0].grid.columns,
+        column: (visual.gridstackNode?.x ?? 0) + 1,
+        columnSpan: visual.gridstackNode?.w ?? 1,
+      }
+    })
+    const handle = element.locator('.visual[data-selected="true"] > .ui-resizable-w')
+    const box = await handle.boundingBox()
+    expect(box).not.toBeNull()
+    await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(box!.x + box!.width / 2 + initial.columnWidth, box!.y + box!.height / 2, { steps: 8 })
+    await page.mouse.up()
+    await page.waitForTimeout(30)
+    const command = await element.evaluate((builder: any) => (window as any).__builderPlacementCommands.at(-1))
+    const placement = command?.placements?.[0]?.placement
+    expect(placement).toBeDefined()
+    expect(placement.column).toBeGreaterThan(initial.column)
+    expect(placement.columnSpan).toBeLessThan(initial.columnSpan)
   } finally {
     await page.close()
   }
