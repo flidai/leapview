@@ -20,12 +20,14 @@ const (
 	dashboardNativeArrowStreamIdleTimeout     = 5 * time.Second
 	dashboardNativeArrowStreamCleanupBound    = 2 * time.Second
 	dashboardNativeArrowStreamCleanupP95      = time.Second
+	dashboardNativeArrowWriteProgressBytes    = 32 << 10
 )
 
 var (
-	errDashboardNativeArrowStreamHardLimit     = errors.New("native dashboard Arrow stream lifetime exceeded")
-	errDashboardNativeArrowStreamIdle          = errors.New("native dashboard Arrow stream made no write progress")
-	errDashboardNativeArrowStreamIPCIncomplete = errors.New("native dashboard Arrow IPC stream did not close successfully")
+	errDashboardNativeArrowStreamHardLimit      = errors.New("native dashboard Arrow stream lifetime exceeded")
+	errDashboardNativeArrowStreamIdle           = errors.New("native dashboard Arrow stream made no write progress")
+	errDashboardNativeArrowStreamIPCIncomplete  = errors.New("native dashboard Arrow IPC stream did not close successfully")
+	errDashboardNativeArrowStreamBudgetRequired = errors.New("native dashboard Arrow stream requires a shared result budget")
 )
 
 type dashboardNativeArrowStreamPolicy struct {
@@ -267,6 +269,28 @@ type dashboardNativeArrowStreamRequest struct {
 
 type dashboardNativeArrowStreamOperation func(context.Context, *dashboardNativeArrowStream) (string, error)
 
+type dashboardNativeArrowCleanupTiming struct {
+	mu      sync.Mutex
+	started time.Time
+}
+
+func (t *dashboardNativeArrowCleanupTiming) start() {
+	t.mu.Lock()
+	if t.started.IsZero() {
+		t.started = time.Now()
+	}
+	t.mu.Unlock()
+}
+
+func (t *dashboardNativeArrowCleanupTiming) duration() time.Duration {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.started.IsZero() {
+		return 0
+	}
+	return time.Since(t.started)
+}
+
 func runDashboardNativeArrowStream(
 	ctx context.Context,
 	dependencies dashboardNativeArrowStreamDependencies,
@@ -282,6 +306,10 @@ func runDashboardNativeArrowStream(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	budget, budgetFound := dataquery.ResultBudgetFromContext(ctx)
+	if !budgetFound {
+		return observation, errDashboardNativeArrowStreamBudgetRequired
+	}
 	policy := dependencies.Capacity.policy
 	alreadyAdmitted := dependencies.AlreadyAdmitted(ctx)
 	slot, err := dependencies.Capacity.acquire(ctx, request.PrincipalID, request.ProjectID, alreadyAdmitted)
@@ -295,15 +323,13 @@ func runDashboardNativeArrowStream(
 	var stream *dashboardNativeArrowStream
 	var admissionStarted, connectionStarted time.Time
 	transportSucceeded := false
-	cleanupStarted := time.Time{}
+	cleanupTiming := &dashboardNativeArrowCleanupTiming{}
 	defer func() {
 		panicValue := recover()
 		if panicValue != nil {
 			resultErr = errors.New("native dashboard Arrow stream operation panicked")
 		}
-		if cleanupStarted.IsZero() {
-			cleanupStarted = time.Now()
-		}
+		cleanupTiming.start()
 		if stream != nil {
 			stream.stop()
 			if closeErr := stream.closeReader(); resultErr == nil && closeErr != nil {
@@ -332,7 +358,7 @@ func runDashboardNativeArrowStream(
 		if serving != nil {
 			serving.Release()
 		}
-		observation.CleanupDuration = time.Since(cleanupStarted)
+		observation.CleanupDuration = cleanupTiming.duration()
 		observation.CleanupBoundExceeded = observation.CleanupDuration > policy.CleanupBound
 		if resultErr != nil {
 			observation.TimeoutReason = dashboardNativeArrowStreamTimeoutReason(resultErr)
@@ -360,20 +386,27 @@ func runDashboardNativeArrowStream(
 		return observation, err
 	}
 	admissionStarted = time.Now()
-	if admission.Context() == nil {
+	admissionContext := admission.Context()
+	if admissionContext == nil {
 		return observation, errors.New("native dashboard Arrow admission returned no execution context")
+	}
+	admissionBudget, admissionBudgetFound := dataquery.ResultBudgetFromContext(admissionContext)
+	if !admissionBudgetFound || admissionBudget != budget {
+		return observation, errors.New("native dashboard Arrow admission did not preserve the shared result budget")
 	}
 	maximumDeadline := admissionStarted.Add(policy.MaximumLifetime)
 	deadline := maximumDeadline
 	deadlineCause := errDashboardNativeArrowStreamHardLimit
-	if earlier, ok := admission.Context().Deadline(); ok && earlier.Before(deadline) {
+	if earlier, ok := admissionContext.Deadline(); ok && earlier.Before(deadline) {
 		deadline = earlier
 		deadlineCause = context.DeadlineExceeded
 	}
-	deadlineContext, deadlineCancel := context.WithDeadlineCause(admission.Context(), deadline, deadlineCause)
+	deadlineContext, deadlineCancel := context.WithDeadlineCause(admissionContext, deadline, deadlineCause)
 	defer deadlineCancel()
 	streamContext, streamCancel := context.WithCancelCause(deadlineContext)
 	defer streamCancel(nil)
+	stopCleanupWatch := context.AfterFunc(streamContext, cleanupTiming.start)
+	defer stopCleanupWatch()
 
 	serving, err = dependencies.Serving.Acquire(streamContext)
 	if err != nil {
@@ -384,15 +417,22 @@ func runDashboardNativeArrowStream(
 		return observation, err
 	}
 	connectionStarted = time.Now()
-	budget, _ := dataquery.ResultBudgetFromContext(streamContext)
-	stream = newDashboardNativeArrowStream(streamContext, streamCancel, request.Writer, budget, policy.IdleWriteTimeout, deadline, deadlineCause)
+	databaseContext := database.Context()
+	if databaseContext == nil {
+		return observation, errors.New("native dashboard Arrow database lease returned no execution context")
+	}
+	databaseBudget, databaseBudgetFound := dataquery.ResultBudgetFromContext(databaseContext)
+	if !databaseBudgetFound || databaseBudget != budget {
+		return observation, errors.New("native dashboard Arrow database lease did not preserve the shared result budget")
+	}
+	stream = newDashboardNativeArrowStream(databaseContext, streamCancel, request.Writer, budget, policy.IdleWriteTimeout, deadline, deadlineCause)
 
-	cursor, err := operation(streamContext, stream)
+	cursor, err := operation(databaseContext, stream)
+	cleanupTiming.start()
 	// IPC delivery is complete once the operation returns. Stop the no-progress
 	// timer before reader close and cursor publication; the absolute lifecycle
 	// deadline remains active through the cursor decision.
 	stream.stop()
-	cleanupStarted = time.Now()
 	if err == nil {
 		if cause := context.Cause(streamContext); cause != nil {
 			err = cause
@@ -466,24 +506,19 @@ func (s *dashboardNativeArrowStream) RegisterReader(reader io.Closer) error {
 	return nil
 }
 
-func (s *dashboardNativeArrowStream) ChargeSchema(schemaBytes, metadataBytes int64) error {
-	if schemaBytes < 0 || metadataBytes < 0 {
-		return errors.New("native dashboard Arrow schema budget charge is invalid")
+func (s *dashboardNativeArrowStream) ChargeMetadata(metadataBytes int64) error {
+	if metadataBytes < 0 {
+		return errors.New("native dashboard Arrow metadata budget charge is invalid")
 	}
 	if s == nil || s.budget == nil {
-		return nil
+		return errDashboardNativeArrowStreamBudgetRequired
 	}
-	return s.budget.ConsumeSize(0, schemaBytes+metadataBytes)
+	return s.budget.ConsumeSize(0, metadataBytes)
 }
 
-func (s *dashboardNativeArrowStream) ChargeBatch(emittedRows, probeRows int, retainedBytes int64) error {
-	if emittedRows < 0 || probeRows < 0 || probeRows > 1 || retainedBytes < 0 {
-		return errors.New("native dashboard Arrow batch budget charge is invalid")
-	}
-	if s != nil && s.budget != nil {
-		if err := s.budget.ConsumeSize(emittedRows+probeRows, retainedBytes); err != nil {
-			return err
-		}
+func (s *dashboardNativeArrowStream) ObserveBatch(emittedRows, probeRows int) error {
+	if s == nil || emittedRows < 0 || probeRows < 0 || probeRows > 1 {
+		return errors.New("native dashboard Arrow batch observation is invalid")
 	}
 	s.mu.Lock()
 	s.rowsEmitted += int64(emittedRows)
@@ -556,6 +591,22 @@ func (w *dashboardNativeArrowStreamWriter) Write(payload []byte) (int, error) {
 	if w == nil || w.ResponseWriter == nil {
 		return 0, errors.New("native dashboard Arrow writer is unavailable")
 	}
+	written := 0
+	for written < len(payload) {
+		remaining := payload[written:]
+		if len(remaining) > dashboardNativeArrowWriteProgressBytes {
+			remaining = remaining[:dashboardNativeArrowWriteProgressBytes]
+		}
+		progress, err := w.writeProgressChunk(remaining)
+		written += progress
+		if err != nil {
+			return written, err
+		}
+	}
+	return written, nil
+}
+
+func (w *dashboardNativeArrowStreamWriter) writeProgressChunk(payload []byte) (int, error) {
 	if cause := context.Cause(w.ctx); cause != nil {
 		return 0, cause
 	}
@@ -589,7 +640,9 @@ func (w *dashboardNativeArrowStreamWriter) Write(payload []byte) (int, error) {
 		w.cancel(err)
 		return written, err
 	}
-	w.refreshIdleTimer()
+	if written > 0 {
+		w.refreshIdleTimer()
+	}
 	return written, nil
 }
 

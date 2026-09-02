@@ -55,7 +55,7 @@ func TestDashboardNativeArrowStreamRequiresAuditAndObservability(t *testing.T) {
 	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
 	dependencies := fixture.dependencies()
 	dependencies.Observer = nil
-	_, err := runDashboardNativeArrowStream(context.Background(), dependencies, dashboardNativeArrowStreamRequest{
+	_, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), dependencies, dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 		PublishCursor: func(context.Context, string) error { return nil },
 	}, func(context.Context, *dashboardNativeArrowStream) (string, error) {
@@ -121,7 +121,7 @@ func TestDashboardNativeArrowStreamCapacityIsNonQueuingAndActorScoped(t *testing
 		t.Fatalf("nested admission rejection = %v", err)
 	}
 	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
-	_, err = runDashboardNativeArrowStream(admission.Context(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	_, err = runDashboardNativeArrowStream(dashboardNativeArrowTestContext(admission.Context()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 		PublishCursor: func(context.Context, string) error { return nil },
 	}, func(context.Context, *dashboardNativeArrowStream) (string, error) {
@@ -153,7 +153,7 @@ func TestDashboardNativeArrowStreamLifecycleFastEmptyAndMultiBatch(t *testing.T)
 			fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), events, 2)
 			ctx := dataquery.WithResultBudget(context.Background(), dataquery.ResultLimits{MaxRows: 10_000, MaxBytes: 16 << 20})
 			published := "not-called"
-			observation, err := runDashboardNativeArrowStream(ctx, fixture.dependencies(), dashboardNativeArrowStreamRequest{
+			observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(ctx), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 				PrincipalID: "principal-a", ProjectID: "project-a",
 				Writer: fixture.writer, PublishCursor: func(_ context.Context, cursor string) error {
 					events.add("cursor")
@@ -166,7 +166,7 @@ func TestDashboardNativeArrowStreamLifecycleFastEmptyAndMultiBatch(t *testing.T)
 				if err := stream.RegisterReader(reader); err != nil {
 					return "", err
 				}
-				if err := stream.ChargeSchema(48, 16); err != nil {
+				if err := stream.ChargeMetadata(16); err != nil {
 					return "", err
 				}
 				payload := bytes.Repeat([]byte{0x42}, test.writeBytes/max(1, test.batches))
@@ -180,7 +180,7 @@ func TestDashboardNativeArrowStreamLifecycleFastEmptyAndMultiBatch(t *testing.T)
 					if batch == test.batches-1 {
 						probe = test.probe
 					}
-					if err := stream.ChargeBatch(test.rows, probe, int64(len(payload))); err != nil {
+					if err := stream.ObserveBatch(test.rows, probe); err != nil {
 						return "", err
 					}
 					if _, err := stream.Writer().Write(payload); err != nil {
@@ -253,7 +253,7 @@ func TestDashboardNativeArrowStreamFailuresNeverPublishCursor(t *testing.T) {
 			fixture.cancel = cancel
 			defer cancel()
 			published := atomic.Int64{}
-			observation, err := runDashboardNativeArrowStream(ctx, fixture.dependencies(), dashboardNativeArrowStreamRequest{
+			observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(ctx), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 				PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 				PublishCursor: func(context.Context, string) error { published.Add(1); return nil },
 			}, func(ctx context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -285,7 +285,7 @@ func TestDashboardNativeArrowStreamCancellationBeforeCommitSkipsResources(t *tes
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	published := atomic.Int64{}
-	_, err := runDashboardNativeArrowStream(ctx, fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	_, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(ctx), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 		PublishCursor: func(context.Context, string) error { published.Add(1); return nil },
 	}, func(context.Context, *dashboardNativeArrowStream) (string, error) {
@@ -310,7 +310,7 @@ func TestDashboardNativeArrowStreamIdleDeadlineInterruptsSocketWrite(t *testing.
 	socketWriter := &dashboardNativeArrowSocketWriter{header: make(stdhttp.Header), connection: server}
 	started := time.Now()
 	published := atomic.Int64{}
-	observation, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: socketWriter,
 		PublishCursor: func(context.Context, string) error { published.Add(1); return nil },
 	}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -325,6 +325,54 @@ func TestDashboardNativeArrowStreamIdleDeadlineInterruptsSocketWrite(t *testing.
 	}
 	if observation.TimeoutReason != "idle_write_timeout" || observation.CancellationCleanupLatency <= 0 {
 		t.Fatalf("idle observation = %#v", observation)
+	}
+	fixture.assertReleased(t)
+}
+
+func TestDashboardNativeArrowStreamContinuousWriteProgressRefreshesIdleDeadline(t *testing.T) {
+	t.Parallel()
+	policy := dashboardNativeArrowTestStreamPolicy()
+	policy.IdleWriteTimeout = 150 * time.Millisecond
+	policy.MaximumLifetime = 2 * time.Second
+	fixture := newDashboardNativeArrowStreamFixture(t, policy, &dashboardNativeArrowTestEvents{}, 2)
+	server, client := net.Pipe()
+	defer client.Close()
+	defer server.Close()
+	socketWriter := &dashboardNativeArrowSocketWriter{header: make(stdhttp.Header), connection: server}
+	const chunks = 4
+	readerDone := make(chan error, 1)
+	go func() {
+		buffer := make([]byte, dashboardNativeArrowWriteProgressBytes)
+		for range chunks {
+			time.Sleep(60 * time.Millisecond)
+			if _, err := io.ReadFull(client, buffer); err != nil {
+				readerDone <- err
+				return
+			}
+		}
+		readerDone <- nil
+	}()
+	started := time.Now()
+	observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		PrincipalID: "principal-a", ProjectID: "project-a", Writer: socketWriter,
+		PublishCursor: func(context.Context, string) error { return nil },
+	}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
+		if _, err := stream.Writer().Write(bytes.Repeat([]byte{1}, chunks*dashboardNativeArrowWriteProgressBytes)); err != nil {
+			return "", err
+		}
+		return "", stream.MarkIPCClosed()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed <= policy.IdleWriteTimeout || elapsed >= policy.MaximumLifetime {
+		t.Fatalf("continuous-progress write duration = %s", elapsed)
+	}
+	if err := <-readerDone; err != nil {
+		t.Fatal(err)
+	}
+	if !observation.Success || observation.IPCBytes != chunks*dashboardNativeArrowWriteProgressBytes {
+		t.Fatalf("continuous-progress observation = %#v", observation)
 	}
 	fixture.assertReleased(t)
 }
@@ -351,7 +399,7 @@ func TestDashboardNativeArrowStreamHardLimitStopsContinuouslyProgressingClient(t
 		}
 	}()
 	published := atomic.Int64{}
-	observation, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: socketWriter,
 		PublishCursor: func(context.Context, string) error { published.Add(1); return nil },
 	}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -380,7 +428,7 @@ func TestDashboardNativeArrowStreamEarlierDeadlineWins(t *testing.T) {
 	fixture := newDashboardNativeArrowStreamFixture(t, policy, &dashboardNativeArrowTestEvents{}, 2)
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Millisecond)
 	defer cancel()
-	observation, err := runDashboardNativeArrowStream(ctx, fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(ctx), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 		PublishCursor: func(context.Context, string) error { return nil },
 	}, func(ctx context.Context, _ *dashboardNativeArrowStream) (string, error) {
@@ -398,7 +446,7 @@ func TestDashboardNativeArrowStreamAdmissionRejectsBeforeDatabaseAcquisition(t *
 	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
 	fixture.admitter.reject = errors.New("admission exhausted")
 	published := atomic.Int64{}
-	_, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	_, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 		PublishCursor: func(context.Context, string) error { published.Add(1); return nil },
 	}, func(context.Context, *dashboardNativeArrowStream) (string, error) {
@@ -420,7 +468,7 @@ func TestDashboardNativeArrowStreamTwoConnectionPoolPreservesOrdinarySlot(t *tes
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		_, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 			PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 			PublishCursor: func(context.Context, string) error { return nil },
 		}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -451,7 +499,50 @@ func TestDashboardNativeArrowStreamTwoConnectionPoolPreservesOrdinarySlot(t *tes
 	fixture.assertReleased(t)
 }
 
-func TestDashboardNativeArrowStreamBudgetsCoverSchemaMetadataProbeAndWire(t *testing.T) {
+func TestDashboardNativeArrowStreamPassesPinnedDatabaseLeaseContext(t *testing.T) {
+	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
+	_, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
+		PublishCursor: func(context.Context, string) error { return nil },
+	}, func(ctx context.Context, stream *dashboardNativeArrowStream) (string, error) {
+		if err := fixture.database.query(ctx); err != nil {
+			return "", err
+		}
+		nested, err := fixture.database.Acquire(ctx)
+		if err != nil {
+			return "", err
+		}
+		nested.Release()
+		if _, err := stream.Writer().Write([]byte("complete")); err != nil {
+			return "", err
+		}
+		return "", stream.MarkIPCClosed()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fixture.database.acquires.Load() != 1 || fixture.database.queries.Load() != 1 {
+		t.Fatalf("database physical acquisitions/queries = %d/%d, want 1/1", fixture.database.acquires.Load(), fixture.database.queries.Load())
+	}
+	fixture.assertReleased(t)
+}
+
+func TestDashboardNativeArrowStreamRequiresSharedResultBudgetBeforeAcquisition(t *testing.T) {
+	t.Parallel()
+	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
+	_, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
+		PublishCursor: func(context.Context, string) error { return nil },
+	}, func(context.Context, *dashboardNativeArrowStream) (string, error) {
+		t.Fatal("stream ran without a shared result budget")
+		return "", nil
+	})
+	if !errors.Is(err, errDashboardNativeArrowStreamBudgetRequired) || fixture.admitter.calls.Load() != 0 || fixture.database.acquires.Load() != 0 {
+		t.Fatalf("missing budget = %v admission=%d database=%d", err, fixture.admitter.calls.Load(), fixture.database.acquires.Load())
+	}
+}
+
+func TestDashboardNativeArrowStreamBudgetChargesTransportAdditionsOnce(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
 		name      string
@@ -459,14 +550,8 @@ func TestDashboardNativeArrowStreamBudgetsCoverSchemaMetadataProbeAndWire(t *tes
 		operation func(*dashboardNativeArrowStream) error
 		committed bool
 	}{
-		{name: "schema", limits: dataquery.ResultLimits{MaxRows: 10, MaxBytes: 4}, operation: func(stream *dashboardNativeArrowStream) error {
-			return stream.ChargeSchema(5, 0)
-		}},
 		{name: "metadata", limits: dataquery.ResultLimits{MaxRows: 10, MaxBytes: 4}, operation: func(stream *dashboardNativeArrowStream) error {
-			return stream.ChargeSchema(1, 4)
-		}},
-		{name: "probe row", limits: dataquery.ResultLimits{MaxRows: 1, MaxBytes: 1024}, operation: func(stream *dashboardNativeArrowStream) error {
-			return stream.ChargeBatch(1, 1, 8)
+			return stream.ChargeMetadata(5)
 		}},
 		{name: "wire bytes", limits: dataquery.ResultLimits{MaxRows: 10, MaxBytes: 4}, committed: true, operation: func(stream *dashboardNativeArrowStream) error {
 			_, err := stream.Writer().Write([]byte("12345"))
@@ -478,7 +563,7 @@ func TestDashboardNativeArrowStreamBudgetsCoverSchemaMetadataProbeAndWire(t *tes
 			fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
 			ctx := dataquery.WithResultBudget(context.Background(), test.limits)
 			published := atomic.Int64{}
-			observation, err := runDashboardNativeArrowStream(ctx, fixture.dependencies(), dashboardNativeArrowStreamRequest{
+			observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(ctx), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 				PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 				PublishCursor: func(context.Context, string) error { published.Add(1); return nil },
 			}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -493,6 +578,49 @@ func TestDashboardNativeArrowStreamBudgetsCoverSchemaMetadataProbeAndWire(t *tes
 	}
 }
 
+func TestDashboardNativeArrowStreamBudgetDoesNotDoubleChargePhysicalResult(t *testing.T) {
+	t.Parallel()
+	const (
+		physicalRows  = 2
+		physicalBytes = int64(80)
+		metadataBytes = int64(7)
+		wireBytes     = int64(11)
+	)
+	limits := dataquery.ResultLimits{MaxRows: physicalRows, MaxBytes: physicalBytes + metadataBytes + wireBytes}
+	ctx := dataquery.WithResultBudget(context.Background(), limits)
+	budget, ok := dataquery.ResultBudgetFromContext(ctx)
+	if !ok {
+		t.Fatal("shared result budget missing from fixture context")
+	}
+	if err := budget.ConsumeSize(physicalRows, physicalBytes); err != nil {
+		t.Fatal(err)
+	}
+	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
+	_, err := runDashboardNativeArrowStream(ctx, fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
+		PublishCursor: func(context.Context, string) error { return nil },
+	}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
+		if err := stream.ChargeMetadata(metadataBytes); err != nil {
+			return "", err
+		}
+		if err := stream.ObserveBatch(1, 1); err != nil {
+			return "", err
+		}
+		if _, err := stream.Writer().Write(bytes.Repeat([]byte{1}, int(wireBytes))); err != nil {
+			return "", err
+		}
+		return "", stream.MarkIPCClosed()
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rows, usedBytes := budget.Usage()
+	if rows != physicalRows || usedBytes != limits.MaxBytes {
+		t.Fatalf("shared budget usage = %d/%d, want %d/%d", rows, usedBytes, physicalRows, limits.MaxBytes)
+	}
+	fixture.assertReleased(t)
+}
+
 func TestDashboardNativeArrowStreamServingGenerationStaysLeasedDuringBlockedStream(t *testing.T) {
 	policy := dashboardNativeArrowTestStreamPolicy()
 	fixture := newDashboardNativeArrowStreamFixture(t, policy, &dashboardNativeArrowTestEvents{}, 2)
@@ -500,7 +628,7 @@ func TestDashboardNativeArrowStreamServingGenerationStaysLeasedDuringBlockedStre
 	release := make(chan struct{})
 	done := make(chan error, 1)
 	go func() {
-		_, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		_, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 			PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 			PublishCursor: func(context.Context, string) error { return nil },
 		}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -542,7 +670,7 @@ func TestDashboardNativeArrowStreamReportsCleanupBoundViolation(t *testing.T) {
 	policy.CleanupBound = 10 * time.Millisecond
 	policy.CleanupP95Target = 5 * time.Millisecond
 	fixture := newDashboardNativeArrowStreamFixture(t, policy, &dashboardNativeArrowTestEvents{}, 2)
-	observation, err := runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+	observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 		PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 		PublishCursor: func(context.Context, string) error { return nil },
 	}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -566,13 +694,73 @@ func TestDashboardNativeArrowStreamReportsCleanupBoundViolation(t *testing.T) {
 	}
 }
 
+func TestDashboardNativeArrowStreamCleanupIncludesCancellationUnwind(t *testing.T) {
+	tests := []struct {
+		name       string
+		parent     func() (context.Context, context.CancelFunc)
+		wantReason string
+	}{
+		{name: "request cancellation", parent: func() (context.Context, context.CancelFunc) {
+			return context.WithCancel(context.Background())
+		}, wantReason: "canceled"},
+		{name: "hard timeout", parent: func() (context.Context, context.CancelFunc) {
+			return context.WithCancel(context.Background())
+		}, wantReason: "maximum_lifetime"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			policy := dashboardNativeArrowTestStreamPolicy()
+			policy.CleanupBound = 20 * time.Millisecond
+			policy.CleanupP95Target = 10 * time.Millisecond
+			if test.wantReason == "maximum_lifetime" {
+				policy.MaximumLifetime = 20 * time.Millisecond
+			}
+			fixture := newDashboardNativeArrowStreamFixture(t, policy, &dashboardNativeArrowTestEvents{}, 2)
+			ctx, cancel := test.parent()
+			defer cancel()
+			entered := make(chan struct{})
+			type streamResult struct {
+				observation dashboardNativeArrowStreamObservation
+				err         error
+			}
+			done := make(chan streamResult, 1)
+			go func() {
+				observation, err := runDashboardNativeArrowStream(dashboardNativeArrowTestContext(ctx), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+					PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
+					PublishCursor: func(context.Context, string) error { return nil },
+				}, func(operationContext context.Context, _ *dashboardNativeArrowStream) (string, error) {
+					close(entered)
+					<-operationContext.Done()
+					time.Sleep(40 * time.Millisecond)
+					return "", context.Cause(operationContext)
+				})
+				done <- streamResult{observation: observation, err: err}
+			}()
+			<-entered
+			if test.wantReason == "canceled" {
+				cancel()
+			}
+			result := <-done
+			if result.err == nil || result.observation.TimeoutReason != test.wantReason {
+				t.Fatalf("cleanup unwind result = %v observation=%#v", result.err, result.observation)
+			}
+			if result.observation.CleanupDuration < 40*time.Millisecond || !result.observation.CleanupBoundExceeded {
+				t.Fatalf("cleanup unwind duration = %#v", result.observation)
+			}
+			if fixture.capacity.active != 0 || fixture.admitter.active.Load() != 0 || fixture.serving.active.Load() != 0 || fixture.database.active.Load() != 0 {
+				t.Fatalf("cleanup unwind leaked resources: %#v", result.observation)
+			}
+		})
+	}
+}
+
 func TestDashboardNativeArrowStreamPanicCannotRecordSuccessOrLeak(t *testing.T) {
 	t.Parallel()
 	fixture := newDashboardNativeArrowStreamFixture(t, dashboardNativeArrowTestStreamPolicy(), &dashboardNativeArrowTestEvents{}, 2)
 	panicked := false
 	func() {
 		defer func() { panicked = recover() != nil }()
-		_, _ = runDashboardNativeArrowStream(context.Background(), fixture.dependencies(), dashboardNativeArrowStreamRequest{
+		_, _ = runDashboardNativeArrowStream(dashboardNativeArrowTestContext(context.Background()), fixture.dependencies(), dashboardNativeArrowStreamRequest{
 			PrincipalID: "principal-a", ProjectID: "project-a", Writer: fixture.writer,
 			PublishCursor: func(context.Context, string) error { return nil },
 		}, func(_ context.Context, stream *dashboardNativeArrowStream) (string, error) {
@@ -597,6 +785,10 @@ func dashboardNativeArrowTestStreamPolicy() dashboardNativeArrowStreamPolicy {
 	policy.CleanupBound = time.Second
 	policy.CleanupP95Target = 500 * time.Millisecond
 	return policy
+}
+
+func dashboardNativeArrowTestContext(ctx context.Context) context.Context {
+	return dataquery.WithResultBudget(ctx, dataquery.ResultLimits{MaxRows: 100_000, MaxBytes: 64 << 20})
 }
 
 func dashboardNativeArrowStreamRejectionReasonOf(err error) dashboardNativeArrowStreamRejectionReason {
@@ -796,10 +988,33 @@ type dashboardNativeArrowTestDatabaseProvider struct {
 	events   *dashboardNativeArrowTestEvents
 	slots    chan struct{}
 	acquires atomic.Int64
+	queries  atomic.Int64
 	active   atomic.Int64
 }
 
+type dashboardNativeArrowTestDatabaseContextKey struct{}
+
+type dashboardNativeArrowTestDatabaseState struct {
+	owner *dashboardNativeArrowTestDatabaseProvider
+	ctx   context.Context
+	mu    sync.Mutex
+	refs  int
+}
+
 func (p *dashboardNativeArrowTestDatabaseProvider) Acquire(ctx context.Context) (analyticsresource.Lease, error) {
+	if current, ok := ctx.Value(dashboardNativeArrowTestDatabaseContextKey{}).(*dashboardNativeArrowTestDatabaseState); ok && current != nil {
+		if current.owner != p {
+			return nil, errors.New("conflicting native Arrow test database lease")
+		}
+		current.mu.Lock()
+		if current.refs <= 0 {
+			current.mu.Unlock()
+			return nil, errors.New("native Arrow test database lease is released")
+		}
+		current.refs++
+		current.mu.Unlock()
+		return &dashboardNativeArrowTestDatabaseLease{ctx: current.ctx, state: current}, nil
+	}
 	select {
 	case p.slots <- struct{}{}:
 	case <-ctx.Done():
@@ -808,21 +1023,43 @@ func (p *dashboardNativeArrowTestDatabaseProvider) Acquire(ctx context.Context) 
 	p.acquires.Add(1)
 	p.active.Add(1)
 	p.events.add("database-acquire")
-	return &dashboardNativeArrowTestDatabaseLease{ctx: ctx, owner: p}, nil
+	state := &dashboardNativeArrowTestDatabaseState{owner: p, refs: 1}
+	state.ctx = context.WithValue(ctx, dashboardNativeArrowTestDatabaseContextKey{}, state)
+	return &dashboardNativeArrowTestDatabaseLease{ctx: state.ctx, state: state}, nil
+}
+
+func (p *dashboardNativeArrowTestDatabaseProvider) query(ctx context.Context) error {
+	current, ok := ctx.Value(dashboardNativeArrowTestDatabaseContextKey{}).(*dashboardNativeArrowTestDatabaseState)
+	if !ok || current == nil || current.owner != p {
+		return errors.New("native Arrow test query did not receive the pinned database lease")
+	}
+	current.mu.Lock()
+	defer current.mu.Unlock()
+	if current.refs <= 0 {
+		return errors.New("native Arrow test query used a released database lease")
+	}
+	p.queries.Add(1)
+	return nil
 }
 
 type dashboardNativeArrowTestDatabaseLease struct {
 	ctx   context.Context
-	owner *dashboardNativeArrowTestDatabaseProvider
+	state *dashboardNativeArrowTestDatabaseState
 	once  sync.Once
 }
 
 func (l *dashboardNativeArrowTestDatabaseLease) Context() context.Context { return l.ctx }
 func (l *dashboardNativeArrowTestDatabaseLease) Release() {
 	l.once.Do(func() {
-		<-l.owner.slots
-		l.owner.active.Add(-1)
-		l.owner.events.add("database")
+		l.state.mu.Lock()
+		l.state.refs--
+		last := l.state.refs == 0
+		l.state.mu.Unlock()
+		if last {
+			<-l.state.owner.slots
+			l.state.owner.active.Add(-1)
+			l.state.owner.events.add("database")
+		}
 	})
 }
 

@@ -293,19 +293,26 @@ for a future native-v1 route. It does not activate native dashboard serving.
   database connection, release workload admission, release native-stream
   capacity, and finally release the serving-generation lease. The hard cleanup
   bound is two seconds, with a one-second p95 target.
-- Result accounting includes the response schema, server-added metadata,
-  emitted rows, the `limit + 1` probe, retained batch bytes, and actual IPC bytes
-  accepted by the transport. A failure after commitment aborts the stream and
-  suppresses the successful cursor trailer.
+- One result budget is established before lifecycle acquisition and remains
+  shared through governed execution and transport delivery. The governed Arrow
+  producer charges the physical schema, record bytes, emitted rows, and the
+  `limit + 1` probe exactly once. The streaming boundary charges only
+  server-added contract metadata and actual IPC bytes accepted by the
+  transport. A failure after commitment aborts the stream and suppresses the
+  successful cursor trailer.
 - Terminal observations record emitted and probe rows, IPC bytes, connection
   hold time, admission occupancy, timeout reason, cancellation cleanup latency,
   cleanup-bound violations, and post-commit aborts. Success is recorded only
   after clean IPC close and a successful cursor publication decision, while all
   lifecycle resources remain owned.
 
-The foundation requires the underlying analytical lease and Arrow reader to
-release synchronously. It measures cleanup-bound violations but does not add a
-second database pool, asynchronous buffering, or a production routing path.
+The operation executes with the analytical lease context so nested governed
+execution reuses the pinned connection instead of acquiring a second one. The
+foundation requires the lease and Arrow reader to release synchronously. Its
+cleanup interval begins when cancellation, timeout, or operation failure starts
+and includes operation unwind and ordered resource release. It measures
+cleanup-bound violations but does not add a second database pool, asynchronous
+buffering, or a production routing path.
 
 ## Security and governance invariants
 
