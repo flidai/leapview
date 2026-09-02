@@ -6,13 +6,13 @@ This page maps the supported product surface. Generated configuration, CLI, API,
 
 LeapView supports these versioned YAML resource families:
 
-- project discovery: Project;
 - project data access: Connection and Source;
 - analytical data: Model and SemanticModel;
+- orchestration: Pipeline;
 - presentation: Dashboard;
-- access: Group, RoleBinding, Grant, and DataPolicy;
+- transitional authored access: DataPolicy.
 
-All resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. JSON Schemas and generated reference pages define required fields and accepted values.
+All authored resources use the `apiVersion`, `kind`, `metadata`, and `spec` envelope. Groups, role bindings, grants, and dashboard publications are target control-plane state rather than YAML resources. JSON Schemas and generated reference pages define required fields and accepted values.
 
 ## Data access and lifecycle
 
@@ -50,7 +50,7 @@ The supported Hetzner module provides a single-node production topology with Cad
 
 - Cobra-derived CLI command surface.
 - TypeSpec/OpenAPI-derived HTTP API.
-- Project-resource search and catalog/lineage discovery.
+- Analytics-resource search and catalog/lineage discovery.
 - Dashboard and semantic headless BI queries.
 - Principal-owned global agent conversations, messages, runs, events, and turns.
 - An OAuth-protected, tools-only MCP endpoint at `/mcp` using the same twenty-tool governed catalog as the built-in agent—including bounded dashboard authoring tools for private drafts and exact revisions—with embedded PKCE consent or an external JWT issuer. See [Use the agent tool catalog](/docs/guides/integrate/agent-tools).
@@ -60,4 +60,4 @@ The supported Hetzner module provides a single-node production topology with Cad
 
 LeapView is dashboards-as-code: browser edits are not the durable authoring source. Browser clients do not receive unrestricted SQL or credentials. DuckLake snapshots are internal serving consistency and cleanup boundaries, not a general customer-facing time-travel/version browser. The provided single-node deployment is not horizontal high availability.
 
-Use the generated [Configuration](/docs/config/project), [CLI](/docs/cli/reference), [API](/docs/api), and [visual](/docs/visuals/overview) catalogs to confirm exact support in the current version.
+Use the generated [Configuration](/docs/config/connection), [CLI](/docs/cli/reference), [API](/docs/api), and [visual](/docs/visuals/overview) catalogs to confirm exact support in the current version.

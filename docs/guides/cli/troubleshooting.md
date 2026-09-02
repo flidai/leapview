@@ -8,7 +8,7 @@ Check process-wide production requirements, then compile the project without con
 
 ```sh
 leapview config validate --production
-leapview validate --project dashboards/leapview.yaml
+leapview validate --project dashboards
 ```
 
 Validation diagnostics identify the source file and invalid field or reference. Fix the earliest root diagnostic first; later missing-resource messages may be consequences of it. If behavior differs in CI, compare the project revision, working directory, generated files, environment variables, and CLI version.
@@ -31,7 +31,7 @@ Confirm the scheme, hostname, expected environment, and project. Saved credentia
 
 ```sh
 leapview plan \
-  --project dashboards/leapview.yaml \
+  --project dashboards \
   --target https://dash.example.com
 ```
 

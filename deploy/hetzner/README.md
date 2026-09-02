@@ -71,7 +71,7 @@ publisher token with the CLI before it expires:
 
 ```sh
 leapview login "$(terraform output -raw url)" \
-  --project ../../dashboards/leapview.yaml
+  --project ../../dashboards
 ```
 
 Initialization is offline; no unrestricted bootstrap token is created or sent
@@ -81,17 +81,17 @@ over HTTP.
 
 ```sh
 leapview data sync \
-  --project ../../dashboards/leapview.yaml \
+  --project ../../dashboards \
   --connection olist \
   --from /srv/olist \
   --target "$(terraform output -raw url)"
 
 leapview dev --once --no-browser \
-  --project ../../dashboards/leapview.yaml \
+  --project ../../dashboards \
   --target "$(terraform output -raw url)"
 
 leapview publish \
-  --project ../../dashboards/leapview.yaml \
+  --project ../../dashboards \
   --target "$(terraform output -raw url)"
 ```
 

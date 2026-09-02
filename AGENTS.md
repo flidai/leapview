@@ -4,7 +4,7 @@ LeapView is a dashboards-as-code BI monolith. Go owns configuration compilation,
 
 ## Architecture
 
-- `dashboards/leapview.yaml` is the project entrypoint. It references project-wide connections, sources, models, semantic models, pipelines, dashboards, and access declarations.
+- `dashboards/` is the analytics source root. The compiler discovers connections, sources, models, semantic models, pipelines, and dashboards from six fixed directories; instance control resources are not authored there.
 - `internal/project/compiler/` loads, validates, and compiles the complete resource graph into deployable serving-state artifacts.
 - `internal/deployment/`, `internal/servingstate/`, and `internal/runtimehost/` prepare immutable serving-state generations, activate the graph for the instance-bound environment, lease DuckLake snapshots, and drain readers safely during cutover.
 - `internal/manageddata/` implements local and S3-backed ingestion, revisions, upload protocols, runtime views, retention, and binding resolution.

@@ -23,7 +23,7 @@ After `Main artifacts` builds and qualifies an immutable image from `main`,
    rollback path;
 4. downloads the digest-pinned public Olist dataset and synchronizes it as
    managed data;
-5. publishes `dashboards/leapview.yaml` through the normal candidate,
+5. publishes `dashboards` through the normal candidate,
    approval, and activation APIs; and
 6. verifies the Visual Showcase and public readiness.
 

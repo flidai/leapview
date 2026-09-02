@@ -872,7 +872,7 @@ func TestSiteDocumentationPreservesDiataxisTypes(t *testing.T) {
 		"contributing/repository":   "how-to",
 		"concepts/managed-data":     "explanation",
 		"concepts/semantic-models":  "explanation",
-		"config/project":            "reference",
+		"config/connection":         "reference",
 	}
 	for slug, want := range tests {
 		document, ok := siteDocumentBySlug(slug)
@@ -1174,9 +1174,9 @@ func TestSiteServesMachineDocumentationArtifacts(t *testing.T) {
 		{path: "/docs/agent-tools/manifest.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"name": "catalog_search"`, `"inputSchema": {`, `"outputSchema": {`}},
 		{path: "/docs/agent-tools/tools/catalog_search.json", contentType: "application/json", contains: []string{`"name": "catalog_search"`, `"privilege": "RESOURCE_READ"`, `"readOnlyHint": true`}},
 		{path: "/docs/agent-tools/tools/catalog_search.md", contentType: "text/markdown", contains: []string{"# `catalog_search`", "## Input schema", "## Output schema"}},
-		{path: "/docs/api/operations.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"operationId": "getProject"`}},
-		{path: "/docs/api/operations/getProject.json", contentType: "application/json", contains: []string{`"operationId": "getProject"`, `"method": "GET"`, `"schemas": {`, `"ProjectResponse": {`}},
-		{path: "/docs/api/operations/getProject.md", contentType: "text/markdown", contains: []string{"# Get a materialized project", "`GET /api/v1/projects/{project}`", "PROJECT_ADMIN"}},
+		{path: "/docs/api/operations.json", contentType: "application/json", contains: []string{`"schemaVersion": 1`, `"operationId": "search"`}},
+		{path: "/docs/api/operations/search.json", contentType: "application/json", contains: []string{`"operationId": "search"`, `"method": "GET"`, `"schemas": {`, `"SearchResponse": {`}},
+		{path: "/docs/api/operations/search.md", contentType: "text/markdown", contains: []string{"# Search accessible product objects", "`GET /api/v1/search`"}},
 		{path: "/docs/cli/commands/dev.json", contentType: "application/json", contains: []string{`"id": "dev"`, `"usage": "leapview dev`}},
 		{path: "/docs/cli/commands/publish.md", contentType: "text/markdown", contains: []string{"# leapview publish", "## Usage"}},
 		{path: "/docs/cli/commands/semantic-models-query.md", contentType: "text/markdown", contains: []string{"# leapview semantic-models query", "## Usage", "## Behavior", "--body-json"}},
@@ -1262,8 +1262,8 @@ func TestSiteDocumentationMCPTools(t *testing.T) {
 		t.Errorf("search response does not contain line chart:\n%s", search)
 	}
 
-	read := postMCP(t, server.URL, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"docs_read","arguments":{"id":"api:getProject","format":"json"}}}`)
-	if !strings.Contains(read, "getProject") || !strings.Contains(read, "/api/v1/projects/{project}") {
+	read := postMCP(t, server.URL, `{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"docs_read","arguments":{"id":"api:search","format":"json"}}}`)
+	if !strings.Contains(read, "search") || !strings.Contains(read, "/api/v1/search") {
 		t.Errorf("read response does not contain operation slice:\n%s", read)
 	}
 
@@ -1376,34 +1376,34 @@ func TestSiteServesGeneratedConfigurationReferenceAndSchema(t *testing.T) {
 	server := httptest.NewServer(NewHandler())
 	defer server.Close()
 
-	article, err := server.Client().Get(server.URL + "/docs/config/project")
+	article, err := server.Client().Get(server.URL + "/docs/config/connection")
 	if err != nil {
-		t.Fatalf("get generated project configuration reference: %v", err)
+		t.Fatalf("get generated connection configuration reference: %v", err)
 	}
 	defer article.Body.Close()
 	if article.StatusCode != http.StatusOK {
-		t.Fatalf("project configuration status = %d, want %d", article.StatusCode, http.StatusOK)
+		t.Fatalf("connection configuration status = %d, want %d", article.StatusCode, http.StatusOK)
 	}
 	body := readBody(t, article)
-	for _, want := range []string{`<h1 id="project-configuration">Project configuration</h1>`, `<h2 id="example">Example</h2>`, `<h2 id="fields">Fields</h2>`, "/docs/schemas/project.schema.json", `href="/docs/config/project"`} {
+	for _, want := range []string{`<h1 id="connection-configuration">Connection configuration</h1>`, `<h2 id="example">Example</h2>`, `<h2 id="fields">Fields</h2>`, "/docs/schemas/connection.schema.json", `href="/docs/config/connection"`} {
 		if !strings.Contains(body, want) {
-			t.Errorf("project configuration reference missing %q:\n%s", want, body)
+			t.Errorf("connection configuration reference missing %q:\n%s", want, body)
 		}
 	}
 
-	schema, err := server.Client().Get(server.URL + "/docs/schemas/project.schema.json")
+	schema, err := server.Client().Get(server.URL + "/docs/schemas/connection.schema.json")
 	if err != nil {
-		t.Fatalf("get project configuration schema: %v", err)
+		t.Fatalf("get connection configuration schema: %v", err)
 	}
 	defer schema.Body.Close()
 	if schema.StatusCode != http.StatusOK {
-		t.Fatalf("project schema status = %d, want %d", schema.StatusCode, http.StatusOK)
+		t.Fatalf("connection schema status = %d, want %d", schema.StatusCode, http.StatusOK)
 	}
 	if got := schema.Header.Get("Content-Type"); !strings.Contains(got, "application/schema+json") {
-		t.Errorf("project schema content type = %q", got)
+		t.Errorf("connection schema content type = %q", got)
 	}
 	if !strings.Contains(readBody(t, schema), `"kind": {`) {
-		t.Error("project schema does not contain the generated contract")
+		t.Error("connection schema does not contain the generated contract")
 	}
 }
 

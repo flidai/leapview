@@ -122,8 +122,8 @@ From a source checkout, the evaluator is also an ordinary authoring target:
 
 ```sh
 leapview login http://localhost:8080 \
-  --project evaluation/project/leapview.yaml
-PLAN_JSON=$(leapview plan evaluation/project/leapview.yaml \
+  --project evaluation/project
+PLAN_JSON=$(leapview plan evaluation/project \
   --target http://localhost:8080 --format json)
 PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
 BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
@@ -144,7 +144,7 @@ the optional `dev` loop against the same loopback target:
 
 ```sh
 leapview dev --once \
-  --project evaluation/project/leapview.yaml \
+  --project evaluation/project \
   --target http://localhost:8080 --no-browser
 ```
 

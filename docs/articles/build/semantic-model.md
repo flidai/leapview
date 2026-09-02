@@ -89,10 +89,10 @@ Prefer one unambiguous relationship path. If the model needs role-playing dimens
 
 ## Validate the semantic model
 
-Ensure the project manifest includes semantic model files and validate the project:
+Place the file under `dashboards/semantic-models/` and validate the source root:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
+leapview validate --project dashboards
 ```
 
 Validation should reject unknown datasets, fields, metrics, filters, and malformed relationship definitions before deployment. Resolve every diagnostic at its source resource rather than compensating in a dashboard.

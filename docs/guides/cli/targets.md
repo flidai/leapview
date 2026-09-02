@@ -9,7 +9,7 @@ Give development, staging, and production separate URLs and credentials. A proje
 Create a durable plan directly on the intended target:
 
 ```sh
-leapview plan dashboards/leapview.yaml \
+leapview plan dashboards \
   --target https://dash.staging.example.com
 ```
 
@@ -30,7 +30,7 @@ The profile pins the server-reported canonical origin and immutable instance ID.
 [`leapview validate`](/docs/cli/validate) compiles the project locally and does not require a target. Run it before contacting any environment:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
+leapview validate --project dashboards
 ```
 
 Then use an explicit remote target for `plan`, `build`, and `publish`. Keep the

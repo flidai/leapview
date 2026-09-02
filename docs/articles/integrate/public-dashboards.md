@@ -2,27 +2,13 @@
 
 Dashboard publications expose one compiled dashboard as an anonymous, governed read surface. Each publication has a stable standalone URL and an iframe URL. Publishing does not create an API credential, inherit the deployer's permissions, or make arbitrary semantic queries available.
 
-## Declare a publication
+## Configure a publication
 
-Add a `DashboardPublication` resource to the project's publication include path:
-
-```yaml
-apiVersion: leapview.dev/v1
-kind: DashboardPublication
-metadata:
-  id: publication:website-showcase
-  name: website-showcase
-spec:
-  dashboard: visual-showcase
-  defaultPage: overview
-  embedding:
-    allowedOrigins:
-      - https://leapview.dev
-```
+Use the authenticated instance control plane to configure the dashboard, default page, and exact allowed origins. A dashboard publication is target-owned state; it is not authored in the analytics source root.
 
 Origins are exact. Internet origins require HTTPS, and wildcards, credentials, paths, queries, and fragments are rejected. An empty list permits the standalone URL but denies framing.
 
-Deploy the project to production to make the publication effective. The public ID remains stable across later deployments, removal, and re-addition. The publication follows the active production generation.
+Deploy the dashboard to production before enabling the publication. The public ID remains stable across later analytics deployments, suspension, and resume. The publication resolves against the active production generation.
 
 ## Govern anonymous data
 
@@ -57,7 +43,7 @@ Users with `RESOURCE_PUBLISH` on the governed dashboard can use **Admin → Publ
 - Suspension immediately makes documents and commands unavailable and terminates active streams.
 - Resume succeeds only while the publication remains in the active production configuration.
 - Rotation invalidates the prior URL and active streams immediately.
-- Removing the YAML resource disables the publication while preserving its ID for a future re-addition.
+- Removing or disabling the control-plane configuration makes the publication unavailable without placing control state in the analytics repository.
 
 Mutation API requests require an `Idempotency-Key`.
 

@@ -8,8 +8,8 @@ validated, imported, and exported through the project compiler.
 Use the local CLI with a project that declares the referenced Model resources:
 
 ```sh
-leapview semantic-model ossie export --project dashboards/leapview.yaml --semantic-model sales > sales.ossie.json
-leapview semantic-model ossie import --project dashboards/leapview.yaml sales.ossie.json > sales.yaml
+leapview semantic-model ossie export --project dashboards --semantic-model sales > sales.ossie.json
+leapview semantic-model ossie import --project dashboards sales.ossie.json > sales.yaml
 ```
 
 Import resolves each Ossie dataset `source` to an existing project Model. It

@@ -144,17 +144,12 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 #### Configuration
 
 - [Configuration reference](/docs/config): Choose a resource kind and open its generated field reference and JSON Schema.
-- [Project configuration](/docs/config/project): Fields and validation rules for the Project YAML resource.
 - [Connection configuration](/docs/config/connection): Fields and validation rules for the Connection YAML resource.
 - [Source configuration](/docs/config/source): Fields and validation rules for the Source YAML resource.
 - [Model configuration](/docs/config/model): Fields and validation rules for the Model YAML resource.
 - [Semantic Model configuration](/docs/config/semantic-model): Fields and validation rules for the SemanticModel YAML resource.
 - [Pipeline configuration](/docs/config/pipeline): Fields and validation rules for the Pipeline YAML resource.
-- [Group configuration](/docs/config/group): Fields and validation rules for the Group YAML resource.
-- [Role Binding configuration](/docs/config/role-binding): Fields and validation rules for the RoleBinding YAML resource.
-- [Grant configuration](/docs/config/grant): Fields and validation rules for the Grant YAML resource.
 - [Data Policy configuration](/docs/config/data-policy): Fields and validation rules for the DataPolicy YAML resource.
-- [Dashboard Publication configuration](/docs/config/dashboard-publication): Fields and validation rules for the DashboardPublication YAML resource.
 - [Dashboard configuration](/docs/config/dashboard-document): Fields and validation rules for the Dashboard YAML resource.
 
 #### CLI commands
@@ -189,19 +184,18 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [API reference](/docs/api): Browse the generated headless API contract.
 - [System](/docs/api/system): API capabilities and protocol discovery.
 - [Instance](/docs/api/instance): The immutable serving identity of this LeapView installation.
-- [Projects](/docs/api/projects): Active project graph assertion.
-- [Releases](/docs/api/releases): Immutable project releases and artifacts.
+- [Releases](/docs/api/releases): Immutable analytics releases and artifacts.
 - [Current User](/docs/api/current-user): Current principal, sessions, tokens, and capabilities.
-- [Search](/docs/api/search): Progressive project-graph discovery across governed resources.
+- [Search](/docs/api/search): Progressive analytics-graph discovery across governed resources.
 - [BI](/docs/api/bi): Dashboard and semantic model read APIs.
 - [Connections](/docs/api/connections): Target-owned logical connection bindings, tests, refreshes, and redacted health.
-- [Deployments](/docs/api/deployments): Atomic project release deployment.
+- [Deployments](/docs/api/deployments): Atomic analytics release deployment.
 - [Refresh Runs](/docs/api/refresh-runs): Headless refresh run operations.
 - [Agent](/docs/api/agent): Headless agent conversation and run operations.
 - [Access](/docs/api/access): Principals, groups, roles, and role bindings.
-- [Audit](/docs/api/audit): Project audit event discovery.
+- [Audit](/docs/api/audit): Analytics audit event discovery.
 - [Publications](/docs/api/publications): Anonymous public dashboard publication lifecycle.
-- [Managed Data](/docs/api/managed-data): Project-global managed-data revisions and uploads.
+- [Managed Data](/docs/api/managed-data): Instance-bound managed-data revisions and uploads.
 
 #### Visuals
 

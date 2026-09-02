@@ -8,9 +8,9 @@ API documentation.
 
 - A LeapView instance owns one process, one control-plane database, one
   analytical execution plane, and one configured environment.
-- A project is the atomic authored, validated, compiled, deployed, and served
-  unit. `ProjectID` is the canonical graph identity and appears in every
-  serving, authorization, audit, and workload identity that needs a project.
+- An analytics source root is the atomic authored and compiled unit. The
+  target owns deployment and serving scope; internal `ProjectID` fields can
+  carry that scope but are not a public authored resource identity.
 - Environment is instance-bound configuration, not a request-time selector or
   a resource namespace. Development, staging, and production are separate
   instances when they need independent state or failure domains.
@@ -20,10 +20,11 @@ API documentation.
 
 ## Project graph
 
-The project manifest discovers one immutable graph:
+Six fixed directories discover one immutable graph beneath a synthesized
+internal root:
 
 ```text
-Project
+Internal root
 ├── Connections
 ├── Sources
 ├── Model tables

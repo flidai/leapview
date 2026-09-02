@@ -8,7 +8,7 @@ Plan before uploading:
 
 ```sh
 leapview data plan \
-  --project dashboards/leapview.yaml \
+  --project dashboards \
   --connection olist \
   --from /srv/olist
 ```
@@ -23,7 +23,7 @@ Upload missing objects and stage the revision:
 
 ```sh
 leapview data sync \
-  --project dashboards/leapview.yaml \
+  --project dashboards \
   --connection olist \
   --from /srv/olist \
   --target "$LEAPVIEW_TARGET" \
@@ -43,7 +43,7 @@ For a private preview before the reviewed build, run `leapview dev --once` with
 the same project and target.
 
 ```sh
-PLAN_JSON=$(leapview plan dashboards/leapview.yaml --target "$LEAPVIEW_TARGET" --format json)
+PLAN_JSON=$(leapview plan dashboards --target "$LEAPVIEW_TARGET" --format json)
 PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
 BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
 CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)

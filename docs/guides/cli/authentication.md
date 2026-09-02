@@ -14,7 +14,7 @@ Run device login from the project you intend to publish:
 leapview login https://dash.example.com
 ```
 
-LeapView discovers the target's canonical origin, immutable instance identity, and environment; reads the project identity from `dashboards/leapview.yaml`; opens the target's browser approval screen; and requests only `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, and `RESOURCE_PUBLISH` for that project. It does not request connection-secret, approval, or production-activation access. The credential lasts 15 minutes and rotates through a revocable CLI session.
+LeapView discovers the target's canonical origin, immutable instance identity, environment, and deployment scope; validates the `dashboards` analytics source root; opens the target's browser approval screen; and requests only `RESOURCE_USE`, `RESOURCE_READ`, `RESOURCE_EDIT`, and `RESOURCE_PUBLISH` for that target-owned scope. It does not request connection-secret, approval, or production-activation access. The credential lasts 15 minutes and rotates through a revocable CLI session.
 
 Access and refresh credentials are stored only in the operating-system credential store. The versioned CLI profile contains the canonical origin, instance ID, environment, project ID, and a credential-store account reference. It never contains a token. LeapView CLI and LeapView Desktop use separate credential namespaces and cannot reuse each other's sessions.
 
@@ -22,7 +22,7 @@ Use the same target URL or a stable profile name supplied with `--name`:
 
 ```sh
 leapview plan \
-  --project dashboards/leapview.yaml \
+  --project dashboards \
   --target https://dash.example.com
 ```
 
@@ -37,7 +37,7 @@ export LEAPVIEW_TARGET=https://dash.example.com
 export LEAPVIEW_WORKLOAD_CLIENT_ID=sp_project_deployer
 export LEAPVIEW_WORKLOAD_CLIENT_SECRET='<injected by the CI secret manager>'
 export LEAPVIEW_WORKLOAD_PROJECT=analytics
-leapview plan dashboards/leapview.yaml --format json
+leapview plan dashboards --format json
 ```
 
 The CLI exchanges those values immediately before the operation for a credential bound to the discovered instance, exact project, author/publish/request actions, and a 15-minute maximum lifetime. It does not persist the service-principal secret or workload access token.

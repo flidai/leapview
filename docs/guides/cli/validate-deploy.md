@@ -20,7 +20,7 @@ For a local single-node evaluation, follow [Installation](/docs/installation) to
 Before authoring:
 
 1. Confirm the intended target is healthy and reachable from both the CLI and browser.
-2. Confirm the project entrypoint is `dashboards/leapview.yaml`.
+2. Confirm the analytics source root is `dashboards` and uses the six fixed resource directories.
 3. Ask the operator to provision logical connection bindings and representative access grants.
 4. Install a CLI release compatible with the target's advertised API contract.
 5. Keep the project path and target unchanged from login through publication.
@@ -45,7 +45,7 @@ Sign in before starting the candidate loop:
 ```sh
 export LEAPVIEW_TARGET=https://dash.example.com
 leapview login "$LEAPVIEW_TARGET" \
-  --project dashboards/leapview.yaml
+  --project dashboards
 ```
 
 `login` discovers the canonical target origin, immutable instance identity, environment, and released API contract before it creates a project-scoped CLI session. Human login uses the browser/device flow. SSO authentication proves identity but does not grant authoring, publishing, approval, source access, or data-policy bypass.
@@ -59,7 +59,7 @@ For an air-gapped target, the CLI workstation and approval browser must be able 
 Validate the complete resource graph before synchronizing:
 
 ```sh
-leapview validate --project dashboards/leapview.yaml
+leapview validate --project dashboards
 ```
 
 Validation is a credential-free preflight within the same lifecycle, not a second runtime or deployment path. It checks project structure and references but cannot prove target bindings, access policy, source availability, or rendered behavior.
@@ -69,7 +69,7 @@ Validation is a credential-free preflight within the same lifecycle, not a secon
 Create the durable target-owned plan from the exact source snapshot:
 
 ```sh
-leapview plan dashboards/leapview.yaml \
+leapview plan dashboards \
   --target "$LEAPVIEW_TARGET" --format json
 ```
 
@@ -78,7 +78,7 @@ source-attestation digest, plan digest, and target evidence. It does not create
 a candidate or acquire build credentials. Review this evidence before starting
 physical work. The `dev` command remains an optional private watch/preview
 convenience; it is not a substitute for the canonical plan/build/publish
-workflow. Use `leapview dev --once --project dashboards/leapview.yaml` when a
+workflow. Use `leapview dev --once --project dashboards` when a
 private candidate preview is needed.
 
 In production, the target returns a canonical-origin, token-free HTTPS URL; the loopback evaluator uses the same URL shape over local HTTP. `dev` opens it in the system browser by default. Use `--no-browser` only on a headless workstation and open the printed URL in an authenticated browser. The preview does not require LeapView Desktop, and Desktop is not an authoring client; browsers and Desktop may only consume the same authenticated target-hosted page.
