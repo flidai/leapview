@@ -671,6 +671,8 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
       const fieldWellsAfter = root.querySelectorAll('.field-wells').length
       const helperAfter = root.querySelector('.visual-builder .pane-header-details')?.textContent?.replace(/\s+/g, ' ').trim()
       const placeholderAfter = root.querySelectorAll('.visual-builder .format-placeholder').length
+      const pageControlsAfter = root.querySelectorAll('.visual-builder [data-page-control]').length
+      const pagePropertiesAfter = root.querySelector('.visual-builder [aria-label="Page formatting"] h3')?.textContent?.trim()
       const addButtonAfter = root.querySelector('button[data-builder-action="add-visual"]')
       const column = root.querySelector('button[data-visual-type="column"]') as HTMLButtonElement | null
       let command: Record<string, unknown> | undefined
@@ -685,6 +687,8 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
         fieldWellsAfter,
         helperAfter,
         placeholderAfter,
+        pageControlsAfter,
+        pagePropertiesAfter,
         addButtonBefore: Boolean(addButtonBefore),
         addButtonAfter: Boolean(addButtonAfter),
         columnLabel: column?.getAttribute('aria-label'),
@@ -698,6 +702,8 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
     expect(state.fieldWellsAfter).toBe(0)
     expect(state.helperAfter).toBeUndefined()
     expect(state.placeholderAfter).toBe(0)
+    expect(state.pageControlsAfter).toBe(5)
+    expect(state.pagePropertiesAfter).toBe('Page')
     expect(state.addButtonBefore).toBe(false)
     expect(state.addButtonAfter).toBe(false)
     expect(state.columnLabel).toBe('Add Column chart visual')
