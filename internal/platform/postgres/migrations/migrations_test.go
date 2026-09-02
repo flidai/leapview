@@ -117,6 +117,8 @@ func TestIdentityLedgerMigrationHasCompositeIdentity(t *testing.T) {
 	for _, marker := range []string{
 		"PRIMARY KEY (instance_id, authored_id)",
 		"resource_identity_kind_immutable",
+		"resource_identity_no_delete",
+		"resource_identity_history_append_only",
 		"source_bundle_one_active_idx",
 		"project.durable_resource_reference",
 	} {

@@ -127,6 +127,7 @@ func (r *Repository) rollback(ctx context.Context, request identityledger.Rollba
 		return identityledger.Plan{}, err
 	}
 	outcomes := planOutcomes(resources, identities)
+	markRestoredOutcomes(outcomes, nil, true)
 	if err := reconcile(ctx, tx, request.InstanceID, request.BundleID, request.ActorID, request.Reason, resources, identities, nil, true); err != nil {
 		return identityledger.Plan{}, err
 	}
@@ -176,6 +177,7 @@ func (r *Repository) activate(ctx context.Context, candidate identityledger.Cand
 	if err := validateCandidateAgainstLedger(resources, identities, approved); err != nil {
 		return identityledger.Plan{}, err
 	}
+	markRestoredOutcomes(outcomes, approved, false)
 	if _, err := tx.Exec(ctx, `
 		INSERT INTO project.source_bundle(instance_id,bundle_id,state,activated_by)
 		VALUES($1,$2,'superseded',$3)`, candidate.InstanceID, candidate.BundleID, candidate.ActorID); err != nil {
@@ -355,6 +357,18 @@ func planOutcomes(resources []identityledger.Resource, identities map[projectgra
 	}
 	sort.Slice(outcomes, func(i, j int) bool { return outcomes[i].AuthoredID < outcomes[j].AuthoredID })
 	return outcomes
+}
+
+func markRestoredOutcomes(outcomes []identityledger.Outcome, approved map[projectgraph.ResourceID]struct{}, rollback bool) {
+	for i := range outcomes {
+		if outcomes[i].Outcome != identityledger.OutcomeRestoreRequired {
+			continue
+		}
+		if _, ok := approved[outcomes[i].AuthoredID]; rollback || ok {
+			outcomes[i].Outcome = identityledger.OutcomeRestored
+			outcomes[i].Detail = "explicitly restored with immutable kind"
+		}
+	}
 }
 
 func activeBundle(ctx context.Context, tx pgx.Tx, instanceID string, lock bool) (string, error) {

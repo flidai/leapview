@@ -55,6 +55,20 @@ CREATE TRIGGER resource_identity_kind_immutable
     BEFORE UPDATE OF resource_kind ON project.resource_identity
     FOR EACH ROW EXECUTE FUNCTION project.reject_resource_identity_kind_change();
 
+CREATE OR REPLACE FUNCTION project.reject_resource_identity_delete()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'resource identities must be tombstoned, not deleted';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS resource_identity_no_delete ON project.resource_identity;
+CREATE TRIGGER resource_identity_no_delete
+    BEFORE DELETE ON project.resource_identity
+    FOR EACH ROW EXECUTE FUNCTION project.reject_resource_identity_delete();
+
 CREATE TABLE IF NOT EXISTS project.source_bundle_resource (
     instance_id      platform.resource_id NOT NULL,
     bundle_id        platform.resource_id NOT NULL,
@@ -84,6 +98,20 @@ CREATE TABLE IF NOT EXISTS project.resource_identity_history (
     FOREIGN KEY (instance_id, authored_id, resource_kind)
         REFERENCES project.resource_identity(instance_id, authored_id, resource_kind) ON DELETE RESTRICT
 );
+
+CREATE OR REPLACE FUNCTION project.reject_resource_identity_history_mutation()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    RAISE EXCEPTION 'resource identity history is append-only';
+END;
+$$;
+
+DROP TRIGGER IF EXISTS resource_identity_history_append_only ON project.resource_identity_history;
+CREATE TRIGGER resource_identity_history_append_only
+    BEFORE UPDATE OR DELETE ON project.resource_identity_history
+    FOR EACH ROW EXECUTE FUNCTION project.reject_resource_identity_history_mutation();
 
 CREATE TABLE IF NOT EXISTS project.durable_resource_reference (
     instance_id        platform.resource_id NOT NULL,
@@ -126,5 +154,8 @@ GRANT SELECT ON TABLES
     TO leapview_control_readonly;
 
 REVOKE ALL ON FUNCTION project.reject_resource_identity_kind_change() FROM PUBLIC;
+REVOKE ALL ON FUNCTION project.reject_resource_identity_delete() FROM PUBLIC;
+REVOKE ALL ON FUNCTION project.reject_resource_identity_history_mutation() FROM PUBLIC;
+REVOKE UPDATE, DELETE ON project.resource_identity_history FROM leapview_control_runtime, leapview_control_readonly;
 
 RESET ROLE;

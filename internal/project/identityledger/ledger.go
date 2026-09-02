@@ -110,6 +110,7 @@ const (
 	OutcomeCreated         OutcomeKind = "created"
 	OutcomeUpdated         OutcomeKind = "updated"
 	OutcomeTombstoned      OutcomeKind = "tombstoned"
+	OutcomeRestored        OutcomeKind = "restored"
 	OutcomeCollision       OutcomeKind = "collision"
 	OutcomeRestoreRequired OutcomeKind = "restore_required"
 )

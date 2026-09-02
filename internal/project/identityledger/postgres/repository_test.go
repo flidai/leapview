@@ -179,6 +179,12 @@ func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
 	if historyCount < 4 {
 		t.Fatalf("orders history rows = %d, want at least 4", historyCount)
 	}
+	if _, err := admin.Exec(ctx, `DELETE FROM project.resource_identity WHERE instance_id='instance-a' AND authored_id='orders'`); err == nil {
+		t.Fatal("resource identity deletion unexpectedly succeeded")
+	}
+	if _, err := admin.Exec(ctx, `UPDATE project.resource_identity_history SET reason='tampered' WHERE instance_id='instance-a' AND authored_id='orders'`); err == nil {
+		t.Fatal("resource identity history mutation unexpectedly succeeded")
+	}
 }
 
 func TestIdentityLedgerPostgreSQL18ConcurrentActivation(t *testing.T) {
