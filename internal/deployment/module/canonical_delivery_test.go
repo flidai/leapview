@@ -101,7 +101,7 @@ func TestEffectiveCandidateArtifactsRefreshesExecutionContextMismatch(t *testing
 		},
 	}
 	plan := deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate-1", Reason: "execution context identity changed"}}}}
-	effective, err := effectiveCandidateArtifacts(plan, "candidate-1", inspected)
+	effective, err := EffectiveCandidateArtifacts(plan, "candidate-1", inspected)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,7 +128,7 @@ func TestEffectiveCandidateArtifactsRefreshesRetainedBasePartialReuse(t *testing
 		{ResourceID: "model:customers", Reusable: true},
 		{ResourceID: "model:orders", RetainBase: true, Reason: "pipeline scope requires refresh"},
 	}}}
-	effective, err := effectiveCandidateArtifacts(plan, "candidate-1", inspected)
+	effective, err := EffectiveCandidateArtifacts(plan, "candidate-1", inspected)
 	if err != nil {
 		t.Fatal(err)
 	}

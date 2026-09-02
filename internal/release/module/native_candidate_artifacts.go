@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"path"
+	"reflect"
 	"sort"
 	"strings"
 	"unicode"
@@ -336,6 +337,31 @@ func (service *nativeCandidateArtifactPhases) MaterializeCandidateArtifacts(ctx 
 	}
 	compiledProject := inspected.Compiler.Artifact
 	plan := inspected.Compiler.Plan
+	if inspected.Generation.DataMode == release.GenerationDataRefreshSources {
+		activations, err := compiledProject.ConnectionActivations()
+		if err != nil {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+		}
+		requirements, _, authored, err := candidateConnectionRequirements(activations)
+		if err != nil {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
+		}
+		if !reflect.DeepEqual(inspected.Generation.Connections, requirements) {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("effective native target-binding requirements changed"))
+		}
+		if len(inspected.Generation.AuthoredConnections) > 0 && !reflect.DeepEqual(inspected.Generation.AuthoredConnections, authored) {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("effective native authored-connection requirements changed"))
+		}
+		dataRevision, err := release.CandidateSourcesDataRevision(inspected.Artifact.SourceDigest, inspected.Generation.ManagedDataPins)
+		if err != nil || inspected.Generation.DataRevision != dataRevision {
+			return release.CandidateArtifactSet{}, candidateArtifactInvalid(errors.New("effective native source-refresh revision changed"))
+		}
+		// Inspection intentionally omits authored credentials when an unchanged
+		// base appears reusable. A durable plan may conservatively convert that
+		// projection into refresh_sources; restore the exact authored requirement
+		// set from the immutable compiled bundle before connection leasing.
+		inspected.Generation.AuthoredConnections = authored
+	}
 	var content bytes.Buffer
 	manifest, digest, err := projectbundle.PackCompiledProject(compiledProject, plan, &content)
 	if err != nil {

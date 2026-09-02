@@ -71,11 +71,19 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 		t.Fatal(err)
 	}
 	poolID := pool.ID.String()
+	bindings := []deployment.CandidateConnectionEvidence{{
+		BindingID: "binding-assembler", ConnectionID: "connection-assembler", ConnectorKind: "postgres",
+		Revision: 1, ProviderVersion: "provider:assembler", EndpointConfigHash: assemblerDigest('4'),
+	}}
+	bindingFingerprint, err := deployment.BindingFingerprint(bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	now := time.Date(2099, 1, 2, 12, 0, 0, 0, time.UTC)
 	plan, err := deployment.NewDeliveryPlan(deployment.DeliveryPlan{
 		ID: planID, TargetID: "target-assembler", ProjectID: projectID, Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: sourceDigest,
-		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: sourceDigest, CompilerDigest: assemblerDigest('1'), ExecutableDigest: assemblerDigest('2'), DependencyDigest: assemblerDigest('3'), ConfigDigest: assemblerDigest('c'), BindingDigest: assemblerDigest('4'), RuntimeDigest: assemblerDigest('5'), CapabilityDigest: assemblerDigest('6')},
+		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: sourceDigest, CompilerDigest: assemblerDigest('1'), ExecutableDigest: assemblerDigest('2'), DependencyDigest: assemblerDigest('3'), ConfigDigest: assemblerDigest('c'), BindingDigest: bindingFingerprint, RuntimeDigest: assemblerDigest('5'), CapabilityDigest: assemblerDigest('6')},
 		Provenance: deployment.DeliveryProvenance{Builder: "assembler-test"},
 		Governance: deployment.DeliveryGovernance{PolicyDigest: assemblerDigest('7'), AuthorizationDigest: assemblerDigest('d'), QualificationDigest: assemblerDigest('8'), ApprovalPolicyRevision: 1, ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: false},
 		Evidence:   deployment.DeliveryPlanEvidence{ImpactStatement: "impact", PhysicalWorkStatement: "refresh", ReuseStatement: "none", Qualification: deployment.DeliveryQualificationEvidence{Policy: "exact", Steps: []deployment.DeliveryQualificationStep{{ID: "schema", Kind: "contract", Description: "schema", Required: true, Blocking: true}}}, StalePolicy: deployment.DeliveryStalePolicy{Mode: "reject"}, Rollback: deployment.DeliveryRollbackEvidence{Class: deployment.DeliveryServingSafe}},
@@ -104,7 +112,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	// the same constructor path so the assembler verifies real closure evidence.
 	closure = nativeAssemblerClosure(t, "catalog-assembler", poolRoot, namespace, relations)
 	build := NativePhysicalBuildEvidence{AttemptID: attemptID, CatalogID: "catalog-assembler", ObjectRoot: poolRoot, SnapshotID: 42, Marker: marker, CanonicalMarkerJSON: json.RawMessage(markerJSON), Seal: ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(poolID), DataPath: poolRoot, ExtensionVersion: "1", CatalogVersion: "1.0", SnapshotID: 42, CommitMarker: markerJSON}, Closure: closure}
-	artifact := release.CandidateGenerationArtifact{Identity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: "prod", GenerationID: generation}, ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ArtifactDigest: artifactDigest, BundleManifestJSON: `{"version":1}`, NativeArtifact: release.NativeArtifactObjectEvidence{Locator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ContentType: projectbundle.BundleContentType, MetadataDigest: assemblerDigest('9'), SizeBytes: 1}, AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, DataMode: release.GenerationDataRefreshSources}
+	artifact := release.CandidateGenerationArtifact{Identity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: "prod", GenerationID: generation}, ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ArtifactDigest: artifactDigest, BundleManifestJSON: `{"version":1}`, NativeArtifact: release.NativeArtifactObjectEvidence{Locator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ContentType: projectbundle.BundleContentType, MetadataDigest: assemblerDigest('9'), SizeBytes: 1}, AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, DataMode: release.GenerationDataRefreshSources, DataRevision: "sources:assembler"}
 	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: "builder-assembler", PhysicalPoolID: poolID, FencingEpoch: 3, RequestDigest: requestDigest, PlanDigest: plan.Digest, Namespace: namespace, State: deploymentnative.AttemptRunning, LeaseExpiresAt: now.Add(time.Hour)}
 	lease := deploymentnative.DeliveryLease{LeaseID: leaseID, TargetID: "target-assembler", OwnerID: attempt.OwnerID, FencingEpoch: 3, State: "active", ExpiresAt: now.Add(time.Hour), AcquiredAt: now}
 	attemptAdmission := CandidateBuildAttemptAdmissionResult{Attempt: attempt, Lease: lease, Artifact: deploymentnative.BuildArtifactBinding{AttemptID: attemptID, ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest, ServingStateID: generation, BoundAt: now}, DuckLakeAttempt: ducklakepostgres.AttemptEvidence{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: plan.Digest, PhysicalPoolID: poolID, CatalogID: build.CatalogID, OwnerID: attempt.OwnerID, FencingEpoch: 3, State: ducklakepostgres.AttemptRunning, SessionIdentity: "session-assembler", LeaseExpiresAt: now.Add(time.Hour)}}
@@ -112,7 +120,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	if err != nil {
 		t.Fatal(err)
 	}
-	gateEvidence, err := (release.GateEvidence{Version: 1, CandidateID: candidateID, SourceDigest: sourceDigest, BindingGeneration: plan.Execution.BindingDigest, RuntimeVersion: "runtime-assembler", DuckDBVersion: tuple.DuckDBRuntime, Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 5, MaxMillis: 1000}, Outcome: release.GateSuccess, EvaluatedAt: now}).Canonical()
+	gateEvidence, err := (release.GateEvidence{Version: 1, CandidateID: candidateID, SourceDigest: sourceDigest, BindingGeneration: bindingFingerprint, RuntimeVersion: "runtime-assembler", DuckDBVersion: tuple.DuckDBRuntime, Bounds: release.GateBounds{MaxRows: 10, MaxQueries: 5, MaxMillis: 1000}, Outcome: release.GateSuccess, EvaluatedAt: now}).Canonical()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +132,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	if err := json.Unmarshal(qualificationJSON, &qualification); err != nil {
 		t.Fatal(err)
 	}
-	return NativeSealEvidenceAssemblerInput{Build: build, AttemptAdmission: attemptAdmission, PoolContract: &ducklake.PoolContract{Pool: pool, Tuple: tuple, Admission: admission, Evidence: evidence}, CatalogIdentity: ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: build.CatalogID, CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID)}, Compatibility: ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: tuple.DuckDBRuntime, DuckLakeExtension: tuple.DuckLakeExtension, CatalogFormat: tuple.CatalogFormat}, CompatibilityDigest: compatDigest, CatalogSchemaVersion: "schema-v1"}, Plan: plan, Artifacts: release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: assemblerDigest('b'), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1}, AuthorizationFingerprint: assemblerDigest('d'), Generation: artifact, Compiler: release.CandidateCompilerEvidence{Graph: graph}}, RuntimeVersion: "runtime-assembler", Qualification: qualification, SealID: sealID, GenerationID: generation, TenantDomain: identity.Tenant, EncryptionDomain: "encryption-assembler", ObjectNamespace: "objects/assembler"}
+	return NativeSealEvidenceAssemblerInput{Build: build, AttemptAdmission: attemptAdmission, PoolContract: &ducklake.PoolContract{Pool: pool, Tuple: tuple, Admission: admission, Evidence: evidence}, CatalogIdentity: ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: build.CatalogID, CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID)}, Compatibility: ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: tuple.DuckDBRuntime, DuckLakeExtension: tuple.DuckLakeExtension, CatalogFormat: tuple.CatalogFormat}, CompatibilityDigest: compatDigest, CatalogSchemaVersion: "schema-v1"}, Plan: plan, Artifacts: release.CandidateArtifactSet{Artifact: release.ProjectArtifactProvenance{SourceDigest: sourceDigest, ProjectDigest: assemblerDigest('b'), ContentDigest: artifactDigest, CompilerVersion: "compiler", SchemaVersion: 1}, AuthorizationFingerprint: assemblerDigest('d'), Generation: artifact, Compiler: release.CandidateCompilerEvidence{Graph: graph}}, Bindings: bindings, RuntimeVersion: "runtime-assembler", Qualification: qualification, SealID: sealID, GenerationID: generation, TenantDomain: identity.Tenant, EncryptionDomain: "encryption-assembler", ObjectNamespace: "objects/assembler"}
 }
 
 func nativeAssemblerClosure(t *testing.T, catalogID, root, namespace string, relations []ducklake.BaseTable) ducklake.NativeSnapshotClosureEvidence {

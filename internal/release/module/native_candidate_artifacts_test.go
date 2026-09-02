@@ -679,6 +679,35 @@ func TestNativeCandidateMaterializeReplaysContentAddressedObjectAndLostAck(t *te
 	}
 }
 
+func TestNativeCandidateMaterializeRestoresAuthoredRequirementsForEffectiveRefresh(t *testing.T) {
+	fixture := nativeInspectFixtureForConnector(t, "http")
+	store, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reader := &nativeInspectReaderStub{artifact: fixture.artifact, refs: fixture.refs, objects: fixture.objects}
+	service := &nativeCandidateArtifactPhases{reader: reader, artifacts: store, storageDomain: "runtime", environment: "dev", pins: nativeInspectPinsStub{}, extensionPreparation: nativeInspectExtensionStub{}}
+	inspected, err := service.InspectCandidateArtifacts(t.Context(), fixture.request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append([]release.CandidateAuthoredConnection(nil), inspected.Generation.AuthoredConnections...)
+	if len(want) == 0 {
+		t.Fatal("fixture did not produce authored connection requirements")
+	}
+	// EffectiveCandidateArtifacts may convert an unchanged base projection to
+	// refresh_sources after inspection. Reproduce its intentionally empty
+	// authored list and require materialization to restore the immutable set.
+	inspected.Generation.AuthoredConnections = nil
+	materialized, err := service.MaterializeCandidateArtifacts(t.Context(), fixture.request, inspected)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(materialized.Generation.AuthoredConnections, want) {
+		t.Fatalf("materialized authored requirements = %#v, want %#v", materialized.Generation.AuthoredConnections, want)
+	}
+}
+
 func TestNativeCandidateMaterializeRejectsAmbiguousReplayContentIdentityMismatch(t *testing.T) {
 	fixture := nativeInspectFixture(t)
 	baseStore, err := platformobjectstore.NewMemoryStore(platformobjectstore.MemoryStoreConfig{StorageSecurityDomain: "runtime"})
@@ -892,8 +921,16 @@ func nativePolicyInspectFixture(t *testing.T) nativeInspectFixtureValue {
 }
 
 func nativeInspectFixture(t *testing.T) nativeInspectFixtureValue {
+	return nativeInspectFixtureForConnector(t, "managed")
+}
+
+func nativeInspectFixtureForConnector(t *testing.T, connectorKind string) nativeInspectFixtureValue {
 	t.Helper()
 	root := t.TempDir()
+	sourcePath := "orders.csv"
+	if connectorKind == "http" {
+		sourcePath = "https://example.com/native-inspect/orders.csv"
+	}
 	files := map[string]string{
 		"leapview.yaml": `apiVersion: leapview.dev/v1
 kind: Project
@@ -908,8 +945,8 @@ spec:
   access: {include: []}
   publications: {include: []}
 `,
-		"connections/warehouse.yaml": "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: managed}\n",
-		"sources/orders.yaml":        "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n",
+		"connections/warehouse.yaml": fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: connection:warehouse, name: warehouse}\nspec: {type: %s}\n", connectorKind),
+		"sources/orders.yaml":        fmt.Sprintf("apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:orders, name: orders}\nspec: {connection: warehouse, location: {type: path, path: %s, format: csv}}\n", sourcePath),
 		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: {id: {datatype: Integer}}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}}\n",
 	}
 	projectPath := filepath.Join(root, "leapview.yaml")

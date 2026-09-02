@@ -2,12 +2,14 @@ package deploymentpostgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	"github.com/flidai/leapview/internal/analytics/gates"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
@@ -16,6 +18,213 @@ import (
 	"github.com/flidai/leapview/internal/release"
 	"github.com/google/uuid"
 )
+
+// nativeBuildPlanArtifacts stops immediately after materialization.  The
+// coordinator has already reserved the operation and inspected artifacts at
+// this point, so returning the input-unavailable sentinel keeps the test
+// before any attempt or physical side effects while still proving the
+// effective data mode reached the materializer.
+type nativeBuildPlanArtifacts struct {
+	set            release.CandidateArtifactSet
+	materializeErr error
+	materializeCnt int
+	materialized   release.CandidateArtifactSet
+}
+
+func (a *nativeBuildPlanArtifacts) InspectCandidateArtifacts(_ context.Context, request release.CandidateArtifactRequest) (release.CandidateArtifactSet, error) {
+	set := a.set
+	set.Artifact.SourceDigest = request.ArtifactDigest
+	set.Generation.ArtifactDigest = request.ArtifactDigest
+	return set, nil
+}
+
+func (a *nativeBuildPlanArtifacts) MaterializeCandidateArtifacts(_ context.Context, _ release.CandidateArtifactRequest, inspected release.CandidateArtifactSet) (release.CandidateArtifactSet, error) {
+	a.materializeCnt++
+	a.materialized = inspected
+	return release.CandidateArtifactSet{}, a.materializeErr
+}
+
+func (a *nativeBuildPlanArtifacts) HydrateCandidateArtifacts(context.Context, release.CandidateArtifactRequest, release.CandidateArtifactSet, release.CandidateArtifactIdentity) (release.CandidateArtifactSet, error) {
+	return release.CandidateArtifactSet{}, errors.New("native build test hydrator is not configured")
+}
+
+// nativeBuildPlanOperation is a narrow operation authority test double.  It
+// embeds the full interface so the coordinator's unused recovery methods are
+// still present, while reservation and deterministic preflight settlement are
+// fully value-only and do not mutate the operation schema.
+type nativeBuildPlanOperation struct {
+	deploymentmodule.NativeBuildOperationAuthority
+	operation deploymentmodule.NativeOperationRecord
+	lease     deploymentmodule.NativeOperationLease
+}
+
+func (a *nativeBuildPlanOperation) AcquireTx(_ context.Context, _ deploymentmodule.NativeOperationTx, input deploymentmodule.NativeOperationAcquireInput) (deploymentmodule.NativeOperationAcquireResult, error) {
+	const operationID = "0198f2c0-7c7a-7f00-8a11-000000001910"
+	expires := time.Date(2026, 8, 30, 13, 0, 0, 0, time.UTC)
+	a.operation = deploymentmodule.NativeOperationRecord{Scope: input.Scope, OperationType: input.OperationType, IdempotencyKey: input.IdempotencyKey, RequestDigest: input.RequestDigest, OwnerID: input.OwnerID, OperationID: operationID, State: deploymentmodule.NativeOperationStatePending, FencingGeneration: 1, LeaseExpiresAt: expires}
+	a.lease = deploymentmodule.NativeOperationLease{Scope: input.Scope, IdempotencyKey: input.IdempotencyKey, OperationID: operationID, OwnerID: input.OwnerID, FencingGeneration: 1, LeaseExpiresAt: expires}
+	return deploymentmodule.NativeOperationAcquireResult{Status: deploymentmodule.NativeOperationAcquired, Operation: a.operation, Lease: a.lease}, nil
+}
+
+func (a *nativeBuildPlanOperation) RenewLeaseTx(_ context.Context, _ deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, duration time.Duration) (deploymentmodule.NativeOperationLease, error) {
+	lease.LeaseExpiresAt = lease.LeaseExpiresAt.Add(duration)
+	a.lease = lease
+	a.operation.LeaseExpiresAt = lease.LeaseExpiresAt
+	return lease, nil
+}
+
+func (a *nativeBuildPlanOperation) FailTx(_ context.Context, _ deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease, _ json.RawMessage) error {
+	a.operation.State = deploymentmodule.NativeOperationStateFailed
+	a.operation.LeaseExpiresAt = lease.LeaseExpiresAt
+	return nil
+}
+
+type nativeBuildPlanContract struct {
+	physicalPoolID, compatibilityDigest string
+}
+
+func (c nativeBuildPlanContract) Resolve(context.Context, NativeBuildContractRequest) (NativeBuildContract, error) {
+	return NativeBuildContract{PhysicalPoolID: c.physicalPoolID, CompatibilityDigest: c.compatibilityDigest, PoolContract: &ducklake.PoolContract{}}, nil
+}
+
+// These wrappers intentionally carry nil embedded interfaces.  They are
+// non-nil concrete values, satisfying BuildPlan's fail-closed authority
+// checks, and are never reached because the materializer returns first.
+type nativeBuildPlanArtifactRecovery struct {
+	release.CandidateArtifactRecovery
+}
+type nativeBuildPlanManagedData struct {
+	NativeCandidateManagedDataResolver
+}
+type nativeBuildPlanHeartbeat struct{ NativeBuildHeartbeatRunner }
+type nativeBuildPlanAttemptAdmission struct{ CandidateBuildAttemptAdmission }
+type nativeBuildPlanAttemptTermination struct{ AttemptTermination }
+type nativeBuildPlanGenerationAdmission struct{ GenerationAdmission }
+type nativeBuildPlanPhysicalFactory struct {
+	NativePhysicalBuildEnvironmentFactory
+}
+type nativeBuildPlanObservationWriter struct {
+	ducklakepostgres.SourceObservationWriter
+}
+type nativeBuildPlanMarkerFactory struct {
+	NativePhysicalMarkerResolverFactory
+}
+type nativeBuildPlanObservationReader struct{ NativeSourceObservationReader }
+type nativeBuildPlanSnapshotFactory struct {
+	NativePhysicalSnapshotInspectorFactory
+}
+type nativeBuildPlanQualificationFactory struct {
+	NativeQualificationEnvironmentFactory
+}
+type nativeBuildPlanEvents struct {
+	deploymentmodule.NativeDeliveryEventAppender
+}
+type nativeBuildPlanAudit struct {
+	deploymentmodule.NativeDeliveryAuditAppender
+}
+
+func nativeBuildPlanCoordinatorFixture(t *testing.T, exactReusable bool) (*NativeBuildCoordinator, deploymentmodule.NativeDeliveryBuildRequest, *nativeBuildPlanArtifacts, string) {
+	t.Helper()
+	db, repository := nativePlanPostgresDB(t)
+	const projectID = "project_native_plan"
+	const targetID = "target_native_build"
+	const sourceDigest = "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+	const attestationDigest = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	request := deploymentmodule.NativeDeliveryBuildRequest{ProjectID: projectID, TargetID: targetID, Environment: "prod", PlanID: uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000001901"), PrincipalID: "principal-native-build", IdempotencyKey: "native-build-plan"}
+	source, artifactSet := nativePlanPostgresFixture(t, sourceDigest, attestationDigest)
+	planInput := nativePlanFixture(t, deploymentnative.PlanInput{PlanID: request.PlanID.String(), TargetID: targetID, PlanRevision: 1, CompiledGraphDigest: admissionDigest('d'), CompiledConfigDigest: admissionDigest('e'), SecurityDomainFingerprint: admissionDigest('f'), ArtifactDigest: sourceDigest, QualificationDigest: admissionDigest('1')}, projectID)
+	var rich deploymentdomain.DeliveryPlan
+	if err := json.Unmarshal(planInput.PlanDocument, &rich); err != nil {
+		t.Fatalf("decode native build plan fixture: %v", err)
+	}
+	rich.Operation = deploymentdomain.DeliveryOperationRestatement
+	rich.SourceOwnerID = "owner-native-build"
+	rich.Provenance.AttestationDigest = attestationDigest
+	const operationID = "0198f2c0-7c7a-7f00-8a11-000000001910"
+	candidateID, err := nativeBuildConsequenceID(operationID, "candidate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if exactReusable {
+		rich.Evidence.Reuse = []deploymentdomain.DeliveryReuseDecision{{ResourceID: candidateID, Reusable: true, Reason: "exact candidate reuse"}}
+	} else {
+		// A relation-scoped restatement retains the sealed base for unchanged
+		// relations, but is not an exact candidate-level reuse decision.
+		rich.Evidence.Reuse = []deploymentdomain.DeliveryReuseDecision{{ResourceID: "model:orders", RetainBase: true, Reason: "restatement of affected relation"}}
+	}
+	rich, err = deploymentdomain.NewDeliveryPlan(rich)
+	if err != nil {
+		t.Fatalf("rebuild native build plan fixture: %v", err)
+	}
+	planInput.PlanDigest = rich.Digest
+	planInput.PlanDocument, err = json.Marshal(rich)
+	if err != nil {
+		t.Fatalf("encode native build plan fixture: %v", err)
+	}
+	if _, err := repository.CreateTarget(t.Context(), deploymentnative.TargetInput{TargetID: targetID, ProjectID: projectID, Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repository.CreatePlan(t.Context(), planInput); err != nil {
+		t.Fatalf("persist native build plan fixture: %v", err)
+	}
+	artifactSet.Generation.DataMode = release.GenerationDataReuseBase
+	artifactSet.Generation.DataRevision = "base:snapshot-1"
+	artifactSet.Generation.BaseGateEvidence = &release.GateEvidence{}
+	artifactSet.Generation.ArtifactDigest = sourceDigest
+	artifacts := &nativeBuildPlanArtifacts{set: artifactSet, materializeErr: deploymentmodule.ErrDeliveryInputUnavailable}
+	operations := &nativeBuildPlanOperation{}
+	physicalPoolID := "pool-native-build"
+	compatibilityDigest := admissionDigest('a')
+	coordinator := &NativeBuildCoordinator{
+		repository: repository, sources: &nativePlanSourceReader{snap: source}, artifacts: artifacts,
+		artifactRecovery: nativeBuildPlanArtifactRecovery{}, managedData: nativeBuildPlanManagedData{}, contract: nativeBuildPlanContract{physicalPoolID: physicalPoolID, compatibilityDigest: compatibilityDigest},
+		physicalPoolID: physicalPoolID, compatibilityDigest: compatibilityDigest, operations: operations, heartbeat: nativeBuildPlanHeartbeat{},
+		attemptAdmission: nativeBuildPlanAttemptAdmission{}, attemptTermination: nativeBuildPlanAttemptTermination{}, generationAdmission: nativeBuildPlanGenerationAdmission{},
+		physicalFactory: nativeBuildPlanPhysicalFactory{}, observationWriter: nativeBuildPlanObservationWriter{}, markerResolverFactory: nativeBuildPlanMarkerFactory{},
+		observationReader: nativeBuildPlanObservationReader{}, snapshotFactory: nativeBuildPlanSnapshotFactory{}, qualificationFactory: nativeBuildPlanQualificationFactory{},
+		events: nativeBuildPlanEvents{}, audit: nativeBuildPlanAudit{}, leaseDuration: time.Hour, clock: func() time.Time { return time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC) },
+	}
+	_ = db // keep the pool alive through repository use; nativePlanPostgresDB registers cleanup.
+	return coordinator, request, artifacts, sourceDigest
+}
+
+func TestNativeBuildPlanProjectsRestatementReuseToRefreshSourcesBeforeMaterialization(t *testing.T) {
+	coordinator, request, artifacts, sourceDigest := nativeBuildPlanCoordinatorFixture(t, false)
+	_, err := coordinator.BuildPlan(t.Context(), request)
+	if !errors.Is(err, deploymentmodule.ErrDeliveryInputUnavailable) {
+		t.Fatalf("BuildPlan error = %v, want materializer sentinel", err)
+	}
+	if artifacts.materializeCnt != 1 {
+		t.Fatalf("materializer calls = %d, want exactly one", artifacts.materializeCnt)
+	}
+	if artifacts.materialized.Generation.DataMode != release.GenerationDataRefreshSources {
+		t.Fatalf("materialized data mode = %q, want refresh_sources", artifacts.materialized.Generation.DataMode)
+	}
+	wantRevision, err := release.CandidateSourcesDataRevision(sourceDigest, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if artifacts.materialized.Generation.DataRevision != wantRevision {
+		t.Fatalf("materialized data revision = %q, want %q", artifacts.materialized.Generation.DataRevision, wantRevision)
+	}
+	if artifacts.materialized.Generation.BaseGateEvidence != nil {
+		t.Fatal("partial restatement retained base gate evidence after refresh projection")
+	}
+}
+
+func TestNativeBuildPlanKeepsExactCandidateReuseFailClosed(t *testing.T) {
+	coordinator, request, artifacts, _ := nativeBuildPlanCoordinatorFixture(t, true)
+	_, err := coordinator.BuildPlan(t.Context(), request)
+	if !errors.Is(err, deploymentmodule.ErrDeliveryInputUnavailable) {
+		t.Fatalf("BuildPlan error = %v, want native reuse admission sentinel", err)
+	}
+	if !strings.Contains(err.Error(), "native base-snapshot reuse admission is not configured") {
+		t.Fatalf("BuildPlan error = %v, want reuse admission explanation", err)
+	}
+	if artifacts.materializeCnt != 0 {
+		t.Fatalf("materializer calls = %d, want zero for exact candidate reuse", artifacts.materializeCnt)
+	}
+}
 
 func TestNewNativeBuildCoordinatorFailsClosedWithoutRepository(t *testing.T) {
 	_, err := NewNativeBuildCoordinator(NativeBuildConfig{})

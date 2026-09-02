@@ -367,24 +367,29 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("inspect candidate artifacts: %w", err)
 	}
-	if inspected.Generation.DataMode == release.GenerationDataReuseBase {
+	effectiveInspection, err := deploymentmodule.EffectiveCandidateArtifacts(plan.DeliveryPlan, candidateID, inspected)
+	if err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("resolve effective candidate artifacts: %w", err)
+	}
+	if effectiveInspection.Generation.DataMode == release.GenerationDataReuseBase {
 		// Native base reuse needs an exact persisted base snapshot, closure, and
 		// relation-namespace binding. None of those identities may be inferred
-		// from gate evidence, so fail before materialization or attempt admission
-		// until the dedicated reuse admission path is composed.
+		// from gate evidence. Exact whole-candidate reuse therefore remains
+		// fail-closed; restatements and partial-reuse plans are projected to a
+		// fresh source materialization by EffectiveCandidateArtifacts above.
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native base-snapshot reuse admission is not configured", deploymentmodule.ErrDeliveryInputUnavailable)
 	}
-	if inspected.Generation.ArtifactDigest == "" || inspected.Generation.ArtifactDigest != plan.ArtifactDigest {
+	if effectiveInspection.Generation.ArtifactDigest == "" || effectiveInspection.Generation.ArtifactDigest != plan.ArtifactDigest {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: inspected serving artifact differs from planned artifact", deploymentdomain.ErrDeliveryConflict)
 	}
-	if err := validateNativeBuildArtifacts(inspected, normalized, plan.DeliveryPlan); err != nil {
+	if err := validateNativeBuildArtifacts(effectiveInspection, normalized, plan.DeliveryPlan); err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	// Inspection is read-only evidence. Even when it reports a planned
 	// serving identity, acquired execution must materialize through the
 	// authority so the object and bundle bytes are freshly bound to this
 	// deterministic generation.
-	effective, err := c.artifacts.MaterializeCandidateArtifacts(ctx, artifactRequest, inspected)
+	effective, err := c.artifacts.MaterializeCandidateArtifacts(ctx, artifactRequest, effectiveInspection)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("materialize candidate artifacts: %w", err)
 	}
