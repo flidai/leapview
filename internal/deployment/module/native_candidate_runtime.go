@@ -72,7 +72,18 @@ type nativePreviewRuntimeEvidence struct {
 // path, whose candidate lifecycle prepares runtimes during synchronization.
 // Every native input is re-read from durable evidence, making repeated calls
 // after a restart safe and preventing callers from supplying runtime state.
-func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, principalID string) error {
+func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, principalID string) (resultErr error) {
+	defer func() {
+		if resultErr == nil {
+			return
+		}
+		m.candidateLogger().ErrorContext(
+			ctx,
+			"native candidate runtime preparation failed",
+			"candidate", strings.TrimSpace(candidateID),
+			"error", resultErr,
+		)
+	}()
 	if m == nil {
 		return deployment.ErrCandidateUnavailable
 	}
