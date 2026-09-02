@@ -1066,6 +1066,10 @@ func buildController(t *testing.T, targetDir string) string {
 	target := filepath.Join(targetDir, "leapviewctl")
 	command := exec.Command("go", "build", "-o", target, "./cmd/leapviewctl")
 	command.Dir = filepath.Join("..", "..")
+	// Release archives cross-compile this controller without CGO. Keep the
+	// lifecycle test on that exact dependency boundary so an accidental import
+	// of the server's DuckDB graph fails before the release workflow.
+	command.Env = append(os.Environ(), "CGO_ENABLED=0")
 	if output, err := command.CombinedOutput(); err != nil {
 		t.Fatalf("build leapviewctl: %v\n%s", err, output)
 	}
