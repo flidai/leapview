@@ -392,6 +392,7 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	browser := read(t, filepath.Join(root, "deploy", "compose", "qualification", "browser.mjs"))
 	authoringWorker := read(t, filepath.Join(root, "deploy", "compose", "qualification", "authoring-worker.mjs"))
 	performance := read(t, filepath.Join(root, "deploy", "compose", "qualification", "performance.mjs"))
+	reportTable := read(t, filepath.Join(root, "web", "components", "dashboard", "table", "report-table.ts"))
 	performancePolicy := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_performance.go"))
 	runtimeQualification := read(t, filepath.Join(root, "internal", "app", "cli", "composectl", "qualification_image_runtime.go"))
 	runbook := read(t, filepath.Join(root, "deploy", "compose", "QUALIFICATION.md"))
@@ -506,8 +507,11 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 	if !strings.Contains(browser, `button.cell-action[aria-label="state: SP"]`) || !strings.Contains(performance, `button.cell-action[aria-label="state: ${value}"]`) {
 		t.Error("browser qualification must assert the compiled result-frame cell accessibility label")
 	}
-	if !strings.Contains(performance, `hasText: /^order_id(?:\s*[↑↓])?$/`) {
-		t.Error("performance qualification must select only the sortable order_id result-frame header")
+	if !strings.Contains(performance, `button.header-button[data-column-key="order_id"]`) {
+		t.Error("performance qualification must select the sortable order_id result-frame header by its stable column key")
+	}
+	if !strings.Contains(reportTable, `data-column-key=${column.key}`) {
+		t.Error("report table sortable headers must expose their stable column key to qualification and browser automation")
 	}
 	if !strings.Contains(browser, "table diagnostics=") || !strings.Contains(browser, ".slice(0, 24)") {
 		t.Error("browser qualification failures must include bounded table diagnostics")

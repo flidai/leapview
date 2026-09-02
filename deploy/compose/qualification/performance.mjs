@@ -134,7 +134,7 @@ async function runWorkload(path) {
     }
     metricSamples.push(await metricSnapshot())
 
-    const orderSort = table.locator('button.header-button').filter({ hasText: /^order_id(?:\s*[↑↓])?$/ })
+    const orderSort = table.locator('button.header-button[data-column-key="order_id"]')
     for (let index = 0; index < policy.assumptions.samples.tableInteractions; index += 1) {
       const previous = await tableSort(table)
       const startedAt = performance.now()
