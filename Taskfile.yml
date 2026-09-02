@@ -1391,6 +1391,11 @@ tasks:
       - task: apigen:test
       - task: test:go:prepared
 
+  odcs:oracle:
+    desc: Validate ODCS 3.1 golden exports with the pinned independent CI-only CLI
+    cmds:
+      - bash scripts/validate_odcs_oracle.sh
+
   ci:lane:go:packages:
     desc: Run non-application Go package tests
     cmds:
