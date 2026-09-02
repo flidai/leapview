@@ -532,6 +532,36 @@ type workloadControl interface {
 	Drain(context.Context) error
 }
 
+// authorizationSnapshotFromProvider keeps query authorization on the same
+// runtime boundary as the metrics it governs. This matters for candidate
+// previews: their immutable runtime exists before any generation is active.
+func authorizationSnapshotFromProvider(provider runtimehostmodule.Provider) func(context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+	if provider == nil {
+		return nil
+	}
+	return func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
+		lease, err := provider.Acquire(ctx)
+		if err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		if lease == nil {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime provider returned an empty lease")
+		}
+		defer lease.Release()
+		authorizedLease, ok := lease.(interface {
+			AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
+		})
+		if !ok {
+			return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("runtime lease does not expose authorization snapshot")
+		}
+		snapshot := authorizedLease.AuthorizationSnapshot()
+		if err := snapshot.ValidateBound(); err != nil {
+			return accesssnapshot.AuthorizationSnapshot{}, err
+		}
+		return snapshot, nil
+	}
+}
+
 // validateQueryAuthorizationDependencies is the production composition gate
 // for governed queries. The query decorator itself deliberately remains
 // reusable in persistence-free fixtures; production must reject an incomplete
@@ -668,24 +698,7 @@ func buildApplicationSurfaces(
 	}
 	var authorizationSnapshot func(context.Context) (accesssnapshot.AuthorizationSnapshot, error)
 	if runtimeConfig.RuntimeHost != nil {
-		authorizationSnapshot = func(ctx context.Context) (accesssnapshot.AuthorizationSnapshot, error) {
-			lease, err := runtimeConfig.RuntimeHost.Acquire(ctx)
-			if err != nil {
-				return accesssnapshot.AuthorizationSnapshot{}, err
-			}
-			defer lease.Release()
-			authorizedLease, ok := lease.(interface {
-				AuthorizationSnapshot() accesssnapshot.AuthorizationSnapshot
-			})
-			if !ok {
-				return accesssnapshot.AuthorizationSnapshot{}, fmt.Errorf("active runtime lease does not expose authorization snapshot")
-			}
-			snapshot := authorizedLease.AuthorizationSnapshot()
-			if err := snapshot.ValidateBound(); err != nil {
-				return accesssnapshot.AuthorizationSnapshot{}, err
-			}
-			return snapshot, nil
-		}
+		authorizationSnapshot = authorizationSnapshotFromProvider(runtimeConfig.RuntimeHost)
 	}
 	canonicalAuditRecorder, _ := data.AccessRepo.(access.CanonicalAuditRecorder)
 	if err := validateQueryAuthorizationDependencies(metrics, runtimeConfig.RequireQueryAuthorization, authorizationSnapshot, capabilities.AccessModule); err != nil {
@@ -760,14 +773,15 @@ func buildApplicationSurfaces(
 		if provider == nil || projectID == "" {
 			return nil
 		}
+		candidateAuthorizationSnapshot := authorizationSnapshotFromProvider(provider)
 		var candidate QueryMetrics = dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: provider, ProjectID: projectID})
 		candidate = dashboardmodule.WithAdmission(candidate, controller)
-		if err := validateQueryAuthorizationDependencies(candidate, runtimeConfig.RequireQueryAuthorization, authorizationSnapshot, capabilities.AccessModule); err != nil {
+		if err := validateQueryAuthorizationDependencies(candidate, runtimeConfig.RequireQueryAuthorization, candidateAuthorizationSnapshot, capabilities.AccessModule); err != nil {
 			return nil
 		}
-		if authorizationSnapshot != nil && capabilities.AccessModule != nil {
+		if candidateAuthorizationSnapshot != nil && capabilities.AccessModule != nil {
 			candidate = dashboardmodule.WithQueryAuthorization(candidate, dashboardmodule.QueryAuthorizationConfig{
-				SnapshotFromContext: authorizationSnapshot,
+				SnapshotFromContext: candidateAuthorizationSnapshot,
 				SubjectsFromContext: capabilities.AccessModule.AuthorizationSubjects,
 				PrincipalFromContext: func(ctx context.Context) (dashboardmodule.QueryPrincipal, bool) {
 					principal, ok := accessmodule.PrincipalFromContext(ctx)
