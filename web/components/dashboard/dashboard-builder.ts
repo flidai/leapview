@@ -684,6 +684,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       background: var(--lv-bg-control, var(--lv-bg-panel-muted));
     }
 
+    .filter-card-preview {
+      min-width: 0;
+      border-radius: var(--lv-radius-default);
+      outline: var(--lv-border-width) solid transparent;
+      outline-offset: var(--base-size-2);
+    }
+
+    .filter-card-preview[data-selected='true'] {
+      outline-color: var(--lv-line-accent);
+    }
+
+    .filter-card-preview lv-filter-pane-card {
+      display: block;
+      width: 100%;
+    }
+
     .filter-card-title {
       overflow: hidden;
       font: var(--lv-type-body-compact);
@@ -3195,18 +3211,55 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   }
 
   private renderFilterScopeGroup(title: string, filters: DashboardBuilderFilterSignal[], selected: DashboardBuilderFilterSignal | undefined) {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    const visual = page && builder ? this.selectedVisual(page, builder) : undefined
     return html`
       <section class="filter-scope-group" aria-label=${title}>
         <div class="filter-scope-heading"><span>${title}</span><span>${filters.length}</span></div>
         <div class="filter-list">
-          ${repeat(filters, (item) => item.id, (item) => html`
-                <button type="button" class="filter-card" aria-pressed=${selected?.id === item.id} @click=${() => this.selectFilterDefinition(item.id)}>
-                  <span class="filter-card-title">${item.label}</span>
-                  <span class="filter-card-meta">${this.filterControlLabel(item.controlType)}</span>
-                </button>
-              `)}
+          ${repeat(filters, (item) => item.id, (item) => this.renderFilterPanePreview(item, selected?.id === item.id, page, visual))}
         </div>
       </section>
+    `
+  }
+
+  private renderFilterPanePreview(filter: DashboardBuilderFilterSignal, selected: boolean, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined) {
+    const binding = this.compiledBindingForFilter(filter, page, visual)
+    const definition = binding ? this.builderFilterContract.definitions[binding.filter] : undefined
+    if (!binding || !definition) {
+      return html`
+        <button type="button" class="filter-card" aria-pressed=${selected} @click=${() => this.selectFilterDefinition(filter.id)}>
+          <span class="filter-card-title">${filter.label}</span>
+          <span class="filter-card-meta">${this.filterControlLabel(filter.controlType)}</span>
+        </button>
+      `
+    }
+    const projectedState = this.builderFilterController.projected.revision > 0 ? this.builderFilterController.projected : this.builderFilterState
+    const expression = projectedState.draftControls[binding.key] ?? projectedState.appliedControls[binding.key]?.expression ?? binding.default
+    return html`
+      <div
+        class="filter-card-preview"
+        data-selected=${selected}
+        role="group"
+        aria-label=${`${filter.label} filter preview`}
+        @click=${() => this.selectFilterDefinition(filter.id)}
+      >
+        <lv-filter-pane-card
+          .definition=${definition}
+          .binding=${binding}
+          .expression=${expression}
+          .options=${this.builderFilterOptionPages[binding.key]}
+          .optionContext=${this.builderFilterOptionContext(binding, page?.id ?? '')}
+          .optionRequestReady=${this.builderFilterOptionsReady}
+          .pending=${this.builderFilterController.pendingFor(binding.key)}
+          .stale=${false}
+          .active=${expression.kind !== 'unfiltered'}
+          .dirty=${projectedState.dirtyBindings.includes(binding.key)}
+          @lv-filter-clear=${this.handleBuilderFilterClear}
+          @lv-filter-reset-binding=${this.handleBuilderFilterResetBinding}
+        ></lv-filter-pane-card>
+      </div>
     `
   }
 
@@ -4569,6 +4622,22 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.requestUpdate()
   }
 
+  private handleBuilderFilterClear = (event: CustomEvent<{ bindingKey: string }>): void => {
+    event.stopPropagation()
+    const binding = this.builderFilterContract.bindings[event.detail?.bindingKey]
+    if (!binding?.readerEditable) return
+    this.builderFilterController.clear(binding.key)
+    this.requestUpdate()
+  }
+
+  private handleBuilderFilterResetBinding = (event: CustomEvent<{ bindingKey: string }>): void => {
+    event.stopPropagation()
+    const binding = this.builderFilterContract.bindings[event.detail?.bindingKey]
+    if (!binding?.readerEditable) return
+    this.builderFilterController.resetBinding(binding.key)
+    this.requestUpdate()
+  }
+
   private handleBuilderFilterOptionsNeeded = (event: CustomEvent<FilterOptionsNeededDetail>): void => {
     const detail = event.detail
     if (!detail?.bindingKey || !this.builderFilterContract.bindings[detail.bindingKey]) return
@@ -4627,6 +4696,17 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private selectedBuilderFilter(builder: DashboardBuilderSignal): DashboardBuilderFilterSignal | undefined {
     return (builder.filters ?? []).find((filter) => filter.id === this.selectedFilterID)
+  }
+
+  private compiledBindingForFilter(filter: DashboardBuilderFilterSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined): DashboardCompiledFilterBinding | undefined {
+    const candidates = Object.values(this.builderFilterContract.bindings).filter((binding) => binding.filter === filter.id)
+    const scope = this.filterScope(filter, page, visual)
+    if (scope === 'report') return candidates.find((binding) => binding.scope === 'report')
+    if (page) {
+      const pageBinding = candidates.find((binding) => binding.scope === 'page' && binding.pageID === page.id)
+      if (pageBinding) return pageBinding
+    }
+    return candidates.find((binding) => binding.scope === 'report') ?? candidates[0]
   }
 
   private filterScope(filter: DashboardBuilderFilterSignal, page: DashboardBuilderPageSignal | undefined, visual: DashboardBuilderVisualSignal | undefined): BuilderFilterScope {

@@ -2491,21 +2491,28 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       await element.updateComplete
       await element.updateComplete
 
+      const panePreview = root.querySelector('.filter-card-preview') as HTMLElement | null
+      const paneCard = panePreview?.querySelector('lv-filter-pane-card') as any
+      await paneCard?.updateComplete
+      const paneLeaf = paneCard?.shadowRoot?.querySelector('lv-filter-leaf') as any
+      await paneLeaf?.updateComplete
       const slicer = root.querySelector('lv-slicer') as any
       await slicer.updateComplete
       const slicerLeaf = slicer.shadowRoot.querySelector('lv-filter-leaf') as any
       await slicerLeaf.updateComplete
-      ;(slicerLeaf.shadowRoot.querySelector('.dropdown-trigger') as HTMLButtonElement).click()
-      await slicerLeaf.updateComplete
-      const completeOption = slicerLeaf.shadowRoot.querySelector('input[aria-label="Complete"]') as HTMLInputElement
+      ;(paneLeaf.shadowRoot.querySelector('.dropdown-trigger') as HTMLButtonElement).click()
+      await paneLeaf.updateComplete
+      const completeOption = paneLeaf.shadowRoot.querySelector('input[aria-label="Complete"]') as HTMLInputElement
       completeOption.checked = true
       completeOption.dispatchEvent(new Event('change', { bubbles: true, composed: true }))
       await element.updateComplete
+      await slicerLeaf.updateComplete
 
       const tile = root.querySelector('.filter-component') as HTMLElement
       const tileLabel = tile.getAttribute('aria-label')
       const selected = tile.getAttribute('data-selected')
       const slicerTitle = slicerLeaf.shadowRoot.querySelector('.field-title')?.textContent?.trim()
+      const slicerControl = slicerLeaf.shadowRoot.querySelector('.dropdown-trigger')?.getAttribute('aria-label')
       tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
@@ -2519,7 +2526,15 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
         tileLabel,
         selected,
         slicerTitle,
+        slicerControl,
         gridItems: root.querySelectorAll('.canvas > .grid-stack-item').length,
+        panePreview: {
+          present: Boolean(paneCard),
+          selected: panePreview?.getAttribute('data-selected'),
+          title: paneCard?.shadowRoot?.querySelector('.title')?.textContent?.trim(),
+          control: paneLeaf?.shadowRoot?.querySelector('.dropdown-trigger')?.getAttribute('aria-label'),
+          legacyMetadata: panePreview?.querySelectorAll('.filter-card-meta').length ?? -1,
+        },
         duplicateHeaderCount: tile.querySelectorAll('.filter-drag-header').length,
         gripTitle: tile.querySelector('.component-drag-grip')?.getAttribute('title'),
       }
@@ -2529,9 +2544,11 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
     expect(state.commands[1].placements.map((placement: any) => placement.componentId).sort()).toEqual(['sales-chart', 'status-slicer'])
     expect(state.commands[2]).toMatchObject({ action: 'remove_filter_component', pageId: 'overview', componentId: 'status-slicer' })
     expect(state.filterCommands[0]).toMatchObject({ kind: 'mutate', baseRevision: 1, bindingKey: 'dashboard:revenue/report/filter_1', operation: 'set', expression: { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'complete' }] } })
-    expect(state.tileLabel).toContain('selected dashboard slicer')
-    expect(state.selected).toBe('true')
+    expect(state.tileLabel).toContain('dashboard slicer')
+    expect(state.selected).toBe('false')
+    expect(state.panePreview).toEqual({ present: true, selected: 'true', title: 'Status', control: 'Status: Complete', legacyMetadata: 0 })
     expect(state.slicerTitle).toBe('Status')
+    expect(state.slicerControl).toBe('Status: Complete')
     expect(state.duplicateHeaderCount).toBe(0)
     expect(state.gripTitle).toBe('Drag to move Status')
     expect(state.gridItems).toBe(2)
