@@ -257,6 +257,94 @@ func validateQualificationNativePostgresURL(raw, expectedRole, expectedDatabase,
 	return strings.ToLower(parsed.Hostname()) + "|" + strconv.Itoa(port) + "|" + expectedDatabase + "|" + username + "|" + password, nil
 }
 
+// assertQualificationNativeServingCredentialBoundary verifies that the
+// persisted serving environment contains no owner-capable operation URLs.
+// Catalog migrations receive those credentials through one-shot process
+// environment forwarding; retaining either value in leapview.env would make
+// it available to every long-running serving process.
+func assertQualificationNativeServingCredentialBoundary(path string) error {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return errors.New("qualification application environment path is required")
+	}
+	contents, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("read qualification application environment: %w", err)
+	}
+	trackedKeys := map[string]struct{}{
+		"LEAPVIEW_POSTGRES_REQUIRE_TLS":          {},
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {}, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {},
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE": {}, "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {},
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {}, "LEAPVIEW_POSTGRES_CONTROL_URL": {},
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL": {},
+		"LEAPVIEW_POSTGRES_DUCKLAKE_URL": {}, "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL": {},
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL": {}, "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL": {},
+	}
+	seenKeys := make(map[string]struct{}, len(trackedKeys))
+	for _, line := range strings.Split(string(contents), "\n") {
+		name, _, present := strings.Cut(line, "=")
+		if _, tracked := trackedKeys[name]; !present || !tracked {
+			continue
+		}
+		if _, duplicate := seenKeys[name]; duplicate {
+			return fmt.Errorf("qualification serving environment contains duplicate key %s", name)
+		}
+		seenKeys[name] = struct{}{}
+	}
+	values := environmentValues(string(contents))
+	if !strings.EqualFold(strings.TrimSpace(values["LEAPVIEW_POSTGRES_REQUIRE_TLS"]), "true") {
+		return errors.New("qualification serving environment must require PostgreSQL TLS")
+	}
+	roles := map[string]string{
+		"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE":      qualificationNativePostgresControlRuntimeRole,
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE":     qualificationNativePostgresControlMigratorRole,
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE":  qualificationNativePostgresControlMaintenanceRole,
+		"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE":     qualificationNativePostgresDuckLakeRuntimeRole,
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": qualificationNativePostgresDuckLakeMaintenanceRole,
+	}
+	for key, expected := range roles {
+		if strings.TrimSpace(values[key]) != expected {
+			return fmt.Errorf("qualification serving environment role %s must be %q", key, expected)
+		}
+	}
+	urls := []struct {
+		key, role, database string
+	}{
+		{"LEAPVIEW_POSTGRES_CONTROL_URL", qualificationNativePostgresControlRuntimeRole, qualificationNativePostgresControlDatabase},
+		{"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL", qualificationNativePostgresControlMigratorRole, qualificationNativePostgresControlDatabase},
+		{"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL", qualificationNativePostgresControlMaintenanceRole, qualificationNativePostgresControlDatabase},
+		{"LEAPVIEW_POSTGRES_DUCKLAKE_URL", qualificationNativePostgresDuckLakeRuntimeRole, qualificationNativePostgresDuckLakeDatabase},
+		{"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL", qualificationNativePostgresDuckLakeMaintenanceRole, qualificationNativePostgresDuckLakeDatabase},
+	}
+	seenIdentities := make(map[string]string, len(urls))
+	seenPasswords := make(map[string]string, len(urls))
+	for _, connection := range urls {
+		identity, err := validateQualificationNativePostgresURL(values[connection.key], connection.role, connection.database, connection.key)
+		if err != nil {
+			return err
+		}
+		if previous, exists := seenIdentities[identity]; exists {
+			return fmt.Errorf("qualification serving environment URL %s aliases %s", connection.key, previous)
+		}
+		seenIdentities[identity] = connection.key
+		parsed, _ := url.Parse(values[connection.key])
+		password, _ := parsed.User.Password()
+		if previous, exists := seenPasswords[password]; exists {
+			return fmt.Errorf("qualification serving environment credential %s aliases %s", connection.key, previous)
+		}
+		seenPasswords[password] = connection.key
+	}
+	for _, key := range []string{
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL",
+		"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL",
+	} {
+		if _, present := values[key]; present {
+			return fmt.Errorf("qualification serving environment contains operation-only credential %s", key)
+		}
+	}
+	return nil
+}
+
 func removeQualificationNativeOperationURLs(environmentPath string) error {
 	contents, err := os.ReadFile(environmentPath)
 	if err != nil {

@@ -21,7 +21,7 @@ import (
 // container; CI enables it for the required persistence contract.
 func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	ctx := context.Background()
-	h := postgrestest.Start(t)
+	h := postgrestest.StartTLS(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_owner", Password: "ducklake-owner-secret", Login: true})
 	db := h.NewDatabase(t, "ducklake_runtime_test")
 	h.GrantDatabase(t, db.Name, owner, "CONNECT", "CREATE", "TEMPORARY")
@@ -30,7 +30,7 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	contract := fixturePoolContractFor(t, "local", dataPath)
 	poolID := contract.Pool.ID.String()
 	metadataSchema := MetadataSchemaForPool(poolID)
-	admin, err := sql.Open("pgx", db.AdminURL())
+	admin, err := sql.Open("pgx", postgresTLSURL(t, db.AdminURL()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -39,7 +39,7 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	parsed, err := url.Parse(db.URL(owner))
+	parsed, err := url.Parse(postgresTLSURL(t, db.URL(owner)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,7 +52,7 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 		if _, err := execer.ExecContext(ctx, "LOAD postgres_scanner", nil); err != nil {
 			return err
 		}
-		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET leapview_pg (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'disable')", parsed.Hostname(), port, parsed.Path[1:], parsed.User.Username(), password)
+		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET leapview_pg (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'require')", parsed.Hostname(), port, parsed.Path[1:], parsed.User.Username(), password)
 		_, err := execer.ExecContext(ctx, statement, nil)
 		return err
 	}
@@ -196,4 +196,16 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	if _, err := servingEnv.Commit(ctx, "forbidden", nil, func(*sql.Tx) error { return nil }); err != ErrReadOnlyEnvironment {
 		t.Fatalf("serving commit error=%v, want read-only", err)
 	}
+}
+
+func postgresTLSURL(t *testing.T, raw string) string {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL conformance URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("sslmode", "require")
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }

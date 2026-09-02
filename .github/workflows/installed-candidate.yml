@@ -89,6 +89,30 @@ jobs:
           tar --extract --gzip --file "${package}.tar.gz"
           echo "package_root=$RUNNER_TEMP/leapview-public/$package" >> "$GITHUB_OUTPUT"
 
+      - name: Verify native PostgreSQL qualification assets
+        env:
+          PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
+        run: |
+          set -euo pipefail
+          init_script="$PACKAGE_ROOT/qualification/postgres-init.sh"
+          test -s "$init_script"
+          test -x "$init_script"
+          grep -q 'CREATE ROLE leapview_control_owner' "$init_script"
+          grep -q 'CREATE ROLE leapview_ducklake_owner' "$init_script"
+          test -s "$PACKAGE_ROOT/Caddyfile"
+          test -s "$PACKAGE_ROOT/compose.https.yaml"
+          grep -q 'reverse_proxy leapview:8080' "$PACKAGE_ROOT/Caddyfile"
+          grep -q '^LEAPVIEW_POSTGRES_REQUIRE_TLS=true$' "$PACKAGE_ROOT/leapview.env.example"
+          if grep -Rni 'sqlite' \
+            "$PACKAGE_ROOT/compose.yaml" "$PACKAGE_ROOT/compose.https.yaml" \
+            "$PACKAGE_ROOT/leapview.env.example" "$PACKAGE_ROOT/qualification" || \
+            grep -RnE 'LEAPVIEW_(DB|DATABASE|DUCKDB)_' \
+            "$PACKAGE_ROOT/compose.yaml" "$PACKAGE_ROOT/compose.https.yaml" \
+            "$PACKAGE_ROOT/leapview.env.example" "$PACKAGE_ROOT/qualification"; then
+            printf 'installed archive contains an SQLite or file-backed qualification fallback\n' >&2
+            exit 1
+          fi
+
       - name: Resolve candidate image identity
         id: identity
         env:
@@ -129,7 +153,7 @@ jobs:
           PACKAGE_ROOT: ${{ steps.download.outputs.package_root }}
           EVIDENCE_ROOT: ${{ runner.temp }}/qualification-evidence-${{ matrix.arch }}
         run: |
-          args=(qualify installed-candidate --evidence-dir "$EVIDENCE_ROOT")
+          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$EVIDENCE_ROOT")
           env -u GH_TOKEN -u GITHUB_TOKEN \
             "$PACKAGE_ROOT/leapviewctl" "${args[@]}"
 

@@ -345,6 +345,10 @@ jobs:
             "darwin amd64"
             "darwin arm64"
           )
+          canonical_postgres_init="deploy/postgres/init.sh"
+          test -s "$canonical_postgres_init"
+          test -x "$canonical_postgres_init"
+          canonical_postgres_init_sha256="$(sha256sum "$canonical_postgres_init" | awk '{print $1}')"
           for target in "${targets[@]}"; do
             read -r os arch <<<"$target"
             package="leapview-compose-${RELEASE_TAG}-${os}-${arch}"
@@ -355,7 +359,22 @@ jobs:
             cp deploy/host/bootstrap-ubuntu.sh "dist/$package/"
             cp -R deploy/compose/qualification "dist/$package/qualification"
             cp deploy/postgres/init.sh "dist/$package/qualification/postgres-init.sh"
+            test -x "dist/$package/qualification/postgres-init.sh"
+            test "$(sha256sum "dist/$package/qualification/postgres-init.sh" | awk '{print $1}')" = "$canonical_postgres_init_sha256"
             cp deploy/compose/leapview.env.example "dist/$package/leapview.env.example"
+            test -s "dist/$package/Caddyfile"
+            test -s "dist/$package/compose.https.yaml"
+            grep -q 'reverse_proxy leapview:8080' "dist/$package/Caddyfile"
+            grep -q '^LEAPVIEW_POSTGRES_REQUIRE_TLS=true$' "dist/$package/leapview.env.example"
+            if grep -Rni 'sqlite' \
+              "dist/$package/compose.yaml" "dist/$package/compose.https.yaml" \
+              "dist/$package/leapview.env.example" "dist/$package/qualification" || \
+              grep -RnE 'LEAPVIEW_(DB|DATABASE|DUCKDB)_' \
+              "dist/$package/compose.yaml" "dist/$package/compose.https.yaml" \
+              "dist/$package/leapview.env.example" "dist/$package/qualification"; then
+              printf 'release package contains an SQLite or file-backed qualification fallback\n' >&2
+              exit 1
+            fi
             sed "s|ghcr.io/flidai/leapview@sha256:<release-digest>|$IMAGE_REFERENCE|" deploy/compose/deployment.env.example > "dist/$package/deployment.env.example"
             cp image-reference.txt release-identity.json release-transition-policy.json predecessor-verification.json "dist/$package/"
             if [ "$os" = linux ] && [ "$arch" = amd64 ]; then
@@ -488,7 +507,7 @@ jobs:
       - name: Run installed-candidate journey
         run: |
           cd "$PACKAGE_ROOT"
-          args=(qualify installed-candidate --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
+          args=(qualify installed-candidate --bundle "$PACKAGE_ROOT" --evidence-dir "$RUNNER_TEMP/installed-candidate-evidence")
           ./leapviewctl "${args[@]}"
 
       - name: Restore least-privilege GHCR access for historical qualification

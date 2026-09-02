@@ -230,3 +230,65 @@ func TestWaitQualificationContainerValuePreservesOperationErrorWrapping(t *testi
 		t.Fatalf("error %q does not preserve context cancellation", err)
 	}
 }
+
+func TestUpgradeQualificationApplicationForceRecreatesAndWaitsForReady(t *testing.T) {
+	container := &healthQualificationContainer{name: "new-container", inspect: []string{"healthy"}}
+	runtime := &healthQualificationRuntime{container: container}
+	root := t.TempDir()
+	if err := os.WriteFile(root+"/"+deploymentEnvName, []byte("COMPOSE_PROJECT_NAME=qualification-project\nCOMPOSE_HTTPS=0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var requests [][]string
+	executor := qualificationExecutorFunc(func(_ context.Context, request qualificationCommandRequest) ([]byte, error) {
+		requests = append(requests, append([]string(nil), request.Arguments...))
+		joined := strings.Join(request.Arguments, " ")
+		switch {
+		case strings.HasSuffix(joined, "up -d --no-deps --force-recreate leapview"):
+			return nil, nil
+		case strings.HasSuffix(joined, "ps --quiet leapview"):
+			return []byte("new-container\n"), nil
+		default:
+			return nil, errors.New("unexpected qualification compose command: " + joined)
+		}
+	})
+	controller, err := New(Options{
+		Root: root, DockerBin: "docker-probe", qualificationExecutor: executor,
+		qualificationContainers: runtime,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	upgraded, err := controller.upgradeQualificationApplication(t.Context(), "old-container")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if upgraded != "new-container" {
+		t.Fatalf("upgraded container = %q, want new-container", upgraded)
+	}
+	if len(requests) != 2 || !strings.Contains(strings.Join(requests[0], " "), "--force-recreate") {
+		t.Fatalf("qualification upgrade commands = %v", requests)
+	}
+	if len(container.execArguments) != 1 || !strings.Contains(strings.Join(container.execArguments[0], " "), "/readyz") {
+		t.Fatalf("upgrade readiness command = %v", container.execArguments)
+	}
+}
+
+func TestAssertQualificationNativePostgresOnlyChecksKnownSQLiteAuthorities(t *testing.T) {
+	container := &healthQualificationContainer{name: "candidate"}
+	if err := assertQualificationNativePostgresOnly(t.Context(), container); err != nil {
+		t.Fatal(err)
+	}
+	if len(container.execArguments) != 1 {
+		t.Fatalf("SQLite authority probe calls = %d, want 1", len(container.execArguments))
+	}
+	probe := strings.Join(container.execArguments[0], " ")
+	for _, path := range []string{
+		"/var/lib/leapview/home/leapview.db",
+		"/var/lib/leapview/home/libredash.db",
+		"/var/lib/leapview/home/ducklake/catalog.sqlite",
+	} {
+		if !strings.Contains(probe, path) {
+			t.Errorf("SQLite authority probe omits %s", path)
+		}
+	}
+}

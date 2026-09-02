@@ -162,3 +162,56 @@ func TestQualificationNativeEnvironmentRejectsAliasURLsAndRoles(t *testing.T) {
 	_, err := qualificationNativePostgresServingEnvironment(nil)
 	require.Error(t, err)
 }
+
+func TestAssertQualificationNativeServingCredentialBoundary(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, appEnvName)
+	topology := qualificationNativeEnvironmentTopologyFixture()
+	values, err := qualificationNativePostgresServingEnvironment(topology)
+	require.NoError(t, err)
+	lines := make([]string, 0, len(values))
+	for key, value := range values {
+		lines = append(lines, key+"="+value)
+	}
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	require.NoError(t, assertQualificationNativeServingCredentialBoundary(path))
+
+	mutate := func(t *testing.T, key, value string) {
+		t.Helper()
+		contents, readErr := os.ReadFile(path)
+		require.NoError(t, readErr)
+		env := environmentValues(string(contents))
+		env[key] = value
+		updated := make([]string, 0, len(env))
+		for name, setting := range env {
+			updated = append(updated, name+"="+setting)
+		}
+		require.NoError(t, os.WriteFile(path, []byte(strings.Join(updated, "\n")+"\n"), 0o600))
+	}
+
+	t.Run("missing serving URL", func(t *testing.T) {
+		mutate(t, "LEAPVIEW_POSTGRES_CONTROL_URL", "")
+		require.Error(t, assertQualificationNativeServingCredentialBoundary(path))
+	})
+	// Restore a valid environment before the alias and operation-only checks.
+	values, err = qualificationNativePostgresServingEnvironment(topology)
+	require.NoError(t, err)
+	lines = lines[:0]
+	for key, value := range values {
+		lines = append(lines, key+"="+value)
+	}
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	t.Run("aliased credential", func(t *testing.T) {
+		mutate(t, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL", topology.ControlURL)
+		require.Error(t, assertQualificationNativeServingCredentialBoundary(path))
+	})
+	values, err = qualificationNativePostgresServingEnvironment(topology)
+	require.NoError(t, err)
+	values["LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL"] = topology.DuckLakeMigratorURL
+	lines = lines[:0]
+	for key, value := range values {
+		lines = append(lines, key+"="+value)
+	}
+	require.NoError(t, os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o600))
+	require.Error(t, assertQualificationNativeServingCredentialBoundary(path))
+}

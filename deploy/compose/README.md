@@ -85,6 +85,15 @@ and recovery-readiness checks:
 ./leapviewctl qualify installed-candidate
 ```
 
+The release archive carries the canonical PostgreSQL role/bootstrap script at
+`qualification/postgres-init.sh`; release packaging verifies it byte-for-byte
+against `deploy/postgres/init.sh`. Qualification starts an isolated PostgreSQL
+18 sidecar on the Compose-owned network, generates short-lived TLS files in a
+private temporary directory, and requires
+`LEAPVIEW_POSTGRES_REQUIRE_TLS=true`. The sidecar is removed before the
+application network and volumes are torn down. No SQLite or file-backed
+control-plane fallback is used by this journey.
+
 The controller writes only bounded redacted evidence and removes its isolated
 containers, volumes, temporary credentials, and restored instance when it
 finishes.

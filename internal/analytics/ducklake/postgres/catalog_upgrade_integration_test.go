@@ -27,7 +27,7 @@ import (
 // and requires the reviewed DuckLake extension artifact.
 func TestPostgresCatalogUpgradeExistingCatalog(t *testing.T) {
 	ctx := t.Context()
-	h := postgrestest.Start(t)
+	h := postgrestest.StartTLS(t)
 	coordinatorRole := h.EnsureRole(t, postgrestest.Role{Name: DefaultControlUpgradeCoordinatorRole, Password: "upgrade-coordinator-secret", Login: true})
 	catalogRole := h.EnsureRole(t, postgrestest.Role{Name: DefaultDuckLakeCatalogMigratorRole, Password: "upgrade-catalog-secret", Login: true})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_runtime", Password: "upgrade-runtime-secret", Login: true})
@@ -37,7 +37,7 @@ func TestPostgresCatalogUpgradeExistingCatalog(t *testing.T) {
 	h.GrantDatabase(t, catalogDB.Name, catalogRole, "CONNECT", "CREATE", "TEMPORARY")
 	h.GrantDatabase(t, catalogDB.Name, runtimeRole, "CONNECT")
 
-	controlAdmin, err := pgxpool.New(ctx, controlDB.AdminURL())
+	controlAdmin, err := pgxpool.New(ctx, postgresTLSURL(t, controlDB.AdminURL()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -53,17 +53,17 @@ func TestPostgresCatalogUpgradeExistingCatalog(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
-	coordinatorDBConn, err := pgxpool.New(ctx, controlDB.URL(coordinatorRole))
+	coordinatorDBConn, err := pgxpool.New(ctx, postgresTLSURL(t, controlDB.URL(coordinatorRole)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(coordinatorDBConn.Close)
-	catalogAdmin, err := pgxpool.New(ctx, catalogDB.URL(catalogRole))
+	catalogAdmin, err := pgxpool.New(ctx, postgresTLSURL(t, catalogDB.URL(catalogRole)))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(catalogAdmin.Close)
-	catalogBootstrapAdmin, err := pgxpool.New(ctx, catalogDB.AdminURL())
+	catalogBootstrapAdmin, err := pgxpool.New(ctx, postgresTLSURL(t, catalogDB.AdminURL()))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,7 +217,7 @@ func TestPostgresCatalogUpgradeExistingCatalog(t *testing.T) {
 
 func postgresCatalogUpgradeCredentialBootstrap(t *testing.T, database *postgrestest.Database, role postgrestest.Role) ducklake.CredentialBootstrap {
 	t.Helper()
-	parsed, err := url.Parse(database.URL(role))
+	parsed, err := url.Parse(postgresTLSURL(t, database.URL(role)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -233,10 +233,22 @@ func postgresCatalogUpgradeCredentialBootstrap(t *testing.T, database *postgrest
 		if _, err := execer.ExecContext(ctx, "LOAD postgres_scanner", nil); err != nil {
 			return err
 		}
-		secret := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET pg_upgrade_secret (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'disable')", sqlLiteralForUpgrade(parsed.Hostname()), port, sqlLiteralForUpgrade(parsed.Path[1:]), sqlLiteralForUpgrade(parsed.User.Username()), sqlLiteralForUpgrade(password))
+		secret := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET pg_upgrade_secret (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'require')", sqlLiteralForUpgrade(parsed.Hostname()), port, sqlLiteralForUpgrade(parsed.Path[1:]), sqlLiteralForUpgrade(parsed.User.Username()), sqlLiteralForUpgrade(password))
 		_, err := execer.ExecContext(ctx, secret, nil)
 		return err
 	}
+}
+
+func postgresTLSURL(t *testing.T, raw string) string {
+	t.Helper()
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		t.Fatalf("parse PostgreSQL conformance URL: %v", err)
+	}
+	query := parsed.Query()
+	query.Set("sslmode", "require")
+	parsed.RawQuery = query.Encode()
+	return parsed.String()
 }
 
 func sqlLiteralForUpgrade(value string) string { return strings.ReplaceAll(value, "'", "''") }

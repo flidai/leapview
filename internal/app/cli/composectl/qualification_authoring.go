@@ -104,6 +104,8 @@ type qualificationAuthoringReport struct {
 	ReleaseDigest  string                       `json:"releaseDigest"`
 	Principal      string                       `json:"principal"`
 	SourceRevision string                       `json:"sourceRevision"`
+	GenerationID   string                       `json:"generationId"`
+	SnapshotSealID string                       `json:"snapshotSealId"`
 	Phases         []qualificationPhaseEvidence `json:"phases"`
 	Assertions     struct {
 		BrowserApprovedLogin    bool `json:"browserApprovedLogin"`
@@ -533,6 +535,8 @@ func (c *Controller) runQualificationAuthoring(
 	report.ReleaseDigest = candidate.ProvenanceDigest
 	report.Principal = candidate.PrincipalID
 	report.SourceRevision = publication.SourceRevision
+	report.GenerationID = deployment.GenerationID
+	report.SnapshotSealID = deployment.SnapshotSealID
 	report.Assertions.BrowserApprovedLogin = true
 	report.Assertions.NativeKeyring = true
 	report.Assertions.PrivatePreview = true
@@ -810,7 +814,8 @@ func qualificationCanonicalPublicationEvidence(
 		TargetID: candidate.TargetID, PrincipalID: candidate.PrincipalID,
 		ArtifactDigest: generation.Body.ServingArtifactDigest,
 		ReleaseDigest:  candidate.ProvenanceDigest,
-		GenerationID:   generation.Body.Id, PlanID: generation.Body.PlanId,
+		GenerationID:   generation.Body.Id, SnapshotSealID: serverCandidate.Body.SealId,
+		PlanID:     generation.Body.PlanId,
 		PlanDigest: generation.Body.PlanDigest, Status: string(generation.Body.Status),
 	}, nil
 }

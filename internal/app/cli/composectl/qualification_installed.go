@@ -18,26 +18,6 @@ import (
 	"time"
 )
 
-type qualificationInstalledReport struct {
-	SchemaVersion  int                          `json:"schemaVersion"`
-	Result         string                       `json:"result"`
-	Image          string                       `json:"image"`
-	Architecture   string                       `json:"architecture"`
-	StartedAt      string                       `json:"startedAt"`
-	CompletedAt    string                       `json:"completedAt"`
-	ElapsedSeconds int64                        `json:"elapsedSeconds"`
-	Phases         []qualificationPhaseEvidence `json:"phases"`
-	Assertions     struct {
-		OneTimeCredentials   bool `json:"oneTimeCredentials"`
-		BrowserJourney       bool `json:"browserJourney"`
-		PerformanceBudgets   bool `json:"performanceBudgets"`
-		GovernedQuery        bool `json:"governedQuery"`
-		AuditedDenial        bool `json:"auditedDenial"`
-		InterruptionRecovery bool `json:"interruptionRecovery"`
-		RestartPersistence   bool `json:"restartPersistence"`
-	} `json:"assertions"`
-}
-
 func (c *Controller) QualifyInstalledCandidate(
 	ctx context.Context,
 	options QualificationInstalledOptions,
@@ -373,15 +353,19 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	ctx = phases.Begin(rootContext, "enterprise authoring", 30*time.Minute)
-	if _, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
+	authoringReport, err := c.runQualificationAuthoring(ctx, qualificationAuthoringOptions{
 		BundleRoot:      c.root,
 		Image:           imageReference,
 		CredentialsFile: credentialsPath,
 		ComposeProject:  primaryProject,
 		EvidenceDir:     evidenceDir,
 		SourceRevision:  sourceRevision,
-	}); err != nil {
+	})
+	if err != nil {
 		return err
+	}
+	if authoringReport.Result != "success" || authoringReport.Candidate == "" || authoringReport.GenerationID == "" {
+		return errors.New("installed authoring report is incomplete")
 	}
 	if err := c.waitQualificationReadiness(ctx); err != nil {
 		return fmt.Errorf("installed candidate did not become ready after sealed publication: %w", err)
@@ -402,6 +386,18 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 	report.Assertions.BrowserJourney = true
+	if err := phases.Finish(nil); err != nil {
+		return err
+	}
+	ctx = phases.Begin(rootContext, "application upgrade", 15*time.Minute)
+	containerID, err = c.runQualificationApplicationUpgrade(
+		ctx, containerID, recoveryControlToken, authoringReport,
+	)
+	if err != nil {
+		return err
+	}
+	report.Assertions.UpgradePersistence = true
+	report.Assertions.NativePostgresOnly = true
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
@@ -515,6 +511,7 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
+
 	report.Phases = phases.Evidence()
 
 	report.Result = "success"

@@ -101,6 +101,7 @@ type QualificationDeployment struct {
 	ArtifactDigest    string `json:"artifactDigest"`
 	ReleaseDigest     string `json:"releaseDigest"`
 	GenerationID      string `json:"generationId,omitempty"`
+	SnapshotSealID    string `json:"snapshotSealId,omitempty"`
 	PlanID            string `json:"planId,omitempty"`
 	PlanDigest        string `json:"planDigest,omitempty"`
 	Status            string `json:"status"`
