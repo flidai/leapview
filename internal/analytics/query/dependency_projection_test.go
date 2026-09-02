@@ -1,6 +1,7 @@
 package query
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -166,6 +167,30 @@ func TestSemanticModelDigestRotatesForMeaningfulExecutionChange(t *testing.T) {
 	}
 	if changedDigest == baseDigest {
 		t.Fatal("meaningful metric aggregation change did not rotate semantic model digest")
+	}
+}
+
+func TestSemanticModelDigestPreservesNumericLiteralIdentity(t *testing.T) {
+	digestFor := func(value any) string {
+		model := testModel().ExecutionSnapshot()
+		if model.Filters == nil {
+			model.Filters = map[string]semanticmodel.SemanticFilterSpec{}
+		}
+		model.Filters["exact"] = semanticmodel.SemanticFilterSpec{Field: "orders.revenue", Operator: "equals", Value: value}
+		digest, err := SemanticModelDigest(model)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return digest
+	}
+	if digestFor(int(5)) != digestFor(json.Number("5")) {
+		t.Fatal("preserving an integer token changed the existing digest projection")
+	}
+	if digestFor(float64(2.5)) != digestFor(json.Number("2.5")) {
+		t.Fatal("preserving a decimal token changed the existing digest projection")
+	}
+	if digestFor(json.Number("9007199254740992")) == digestFor(json.Number("9007199254740993")) {
+		t.Fatal("distinct integers above 2^53 collapsed to one semantic digest")
 	}
 }
 

@@ -169,8 +169,8 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 		if err != nil {
 			return err
 		}
-		var spec projectSemanticModelSpec
-		if err := envelope.Spec.Decode(&spec); err != nil {
+		spec, aiContext, err := decodeSemanticModelResource(path, content)
+		if err != nil {
 			return resourceError(path, envelopeResourceID(envelope, ""), "spec", "%s spec: %s", path, err)
 		}
 		id, name, err := flatResourceIdentity(project, envelope, path, "semantic_model")
@@ -182,7 +182,7 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 		}
 		project.SemanticModels[name] = spec
 		project.ResourceSources[id] = string(content)
-		project.SemanticModelAIContexts[name] = envelope.AIContext
+		project.SemanticModelAIContexts[name] = aiContext
 		project.SemanticModelIDs[name], project.SemanticModelPaths[name] = id, path
 	}
 	return nil

@@ -69,26 +69,27 @@ spec:
       datatype: String
       bindings:
         orders:
-          field: region
+          field: orders.region
     customerEmail:
       datatype: String
       bindings:
         orders:
-          field: customer_email
+          field: orders.customer_email
       requiredAccessGrants:
         - canViewPII
-  measures:
-    revenue:
-      dataset: orders
-      aggregation: sum
-      input:
-        field: revenue
-    cost:
-      dataset: orders
-      aggregation: sum
-      input:
-        field: cost
   metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.revenue
+    cost:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input:
+        field: orders.cost
     grossMargin:
       type: derived
       expression: revenue - cost
@@ -436,7 +437,7 @@ spec:
 | Requirement range | Evidence | Status |
 |---|---|---|
 | CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
-| STR-01–STR-12 | Generated TypeSpec, JSON Schema, DTO, extracted-YAML, and authoring-registry fixtures | Pending |
+| STR-01–STR-12 | [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp), generated [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) and [Go DTOs](../../internal/project/contracts/models.gen.go), [generated-boundary fixtures](../../internal/project/contracts/contracts_test.go), [structural and extracted-YAML fixtures](../../internal/project/schema/semantic_access_contract_test.go), and the [authority guard](../../internal/platform/architecture/architecture_test.go). Standalone transitional `DataPolicy` rejection and contextual access-reference resolution remain outside this compatibility-preserving cutover. | Partial |
 | ATT-01–ATT-12 | Control-plane attribute registry, mutation, disablement, claim-mapping, and trust-boundary tests | Pending |
 | VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented |
 | VAL-11 | The shared handwritten canonicalizer and analytics semantic-filter consumer are implemented. Generated canonicalization and the control-plane ingestion, claims, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection paths remain unqualified. | Partial |

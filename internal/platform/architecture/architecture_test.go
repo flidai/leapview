@@ -1100,6 +1100,43 @@ func TestApplicationAPIGenRoutesUseGeneratedAggregate(t *testing.T) {
 	}
 }
 
+func TestSemanticModelStructuralAuthorityIsGeneratedFromTypeSpec(t *testing.T) {
+	root := repoRoot(t)
+	typeSpec, err := os.ReadFile(filepath.Join(root, "api", "data-resources", "main.tsp"))
+	require.NoError(t, err)
+	for _, required := range []string{
+		"model SemanticModelSpec",
+		"model SemanticModel {",
+		`@apigen.contract(#{ kind: "resource", tags: #["semantic-model", "data-resource"] })`,
+	} {
+		if !strings.Contains(string(typeSpec), required) {
+			t.Errorf("api/data-resources/main.tsp is missing SemanticModel authority marker %q", required)
+		}
+	}
+
+	legacyCUE, err := os.ReadFile(filepath.Join(root, "internal", "project", "schema", "contracts", "contracts.cue"))
+	require.NoError(t, err)
+	for _, forbidden := range []string{"#SemanticModelResource", "#ProjectSemanticModelSpec", "#SemanticDataset", "#SemanticFilter", "#AggregateMetric"} {
+		if strings.Contains(string(legacyCUE), forbidden) {
+			t.Errorf("contracts.cue retains handwritten SemanticModel structure %q", forbidden)
+		}
+	}
+
+	for _, file := range productionGoFiles(t) {
+		if file.pkgDir != "internal/project/compiler" {
+			continue
+		}
+		if strings.Contains(file.body, "type projectSemanticModelSpec struct") {
+			t.Errorf("%s retains handwritten SemanticModel authoring DTO", file.path)
+		}
+	}
+	projectCompiler, err := os.ReadFile(filepath.Join(root, "internal", "project", "compiler", "project.go"))
+	require.NoError(t, err)
+	if !strings.Contains(string(projectCompiler), "map[string]projectcontracts.SemanticModelSpec") {
+		t.Error("compiler Project does not consume the generated SemanticModelSpec authority")
+	}
+}
+
 func TestApplicationRetainsOnlyProcessFacingSurfaces(t *testing.T) {
 	root := repoRoot(t)
 	found := false

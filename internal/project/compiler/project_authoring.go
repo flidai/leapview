@@ -55,14 +55,6 @@ type dashboardPublicationEmbeddingSpec struct {
 	AllowedOrigins []string `yaml:"allowedOrigins"`
 }
 
-type projectSemanticModelSpec struct {
-	Datasets      map[string]semanticmodel.SemanticDatasetSpec   `yaml:"datasets"`
-	Relationships map[string]semanticmodel.RelationshipSpec      `yaml:"relationships"`
-	Dimensions    map[string]semanticmodel.SemanticDimensionSpec `yaml:"dimensions"`
-	Filters       map[string]semanticmodel.SemanticFilterSpec    `yaml:"filters"`
-	Metrics       map[string]semanticmodel.SemanticMetricSpec    `yaml:"metrics"`
-}
-
 type projectGroupSpec struct {
 	Description string                   `yaml:"description"`
 	Members     []projectGroupMemberSpec `yaml:"members"`

@@ -168,12 +168,12 @@ spec:
       datatype: String
       bindings:
         orders:
-          field: region
+          field: orders.region
     customerEmail:
       datatype: String
       bindings:
         orders:
-          field: customer_email
+          field: orders.customer_email
       requiredAccessGrants: [canViewPII]
 ```
 
