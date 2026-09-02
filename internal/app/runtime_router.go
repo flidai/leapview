@@ -30,6 +30,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
@@ -1886,7 +1887,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
 			}
 			reader := moduleWorkflow.deploymentConfig.DeliveryReader
-			if reader == nil {
+			nativeReader := moduleWorkflow.deploymentConfig.NativeDeliveryReader
+			if reader == nil && nativeReader == nil {
 				return false, fmt.Errorf("delivery authorization reader is unavailable")
 			}
 			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
@@ -1901,7 +1903,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return deliveryRoleAllows(snapshot, subjects, capability), nil
 			}
-			plan, err := deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
+			plan, err := deliveryAuthorizationPlan(ctx, reader, nativeReader, operationID, objectID)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return false, nil
@@ -2376,9 +2378,15 @@ func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjec
 	return false, nil
 }
 
-func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
+func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, nativeReader deploymentmodule.NativeDeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
 	if strings.TrimSpace(objectID) == "" {
 		return deployment.DeliveryPlan{}, sql.ErrNoRows
+	}
+	if nativeReader != nil {
+		return nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
+	}
+	if reader == nil {
+		return deployment.DeliveryPlan{}, fmt.Errorf("delivery authorization reader is unavailable")
 	}
 	loadPlan := func(planID string) (deployment.DeliveryPlan, error) {
 		if strings.TrimSpace(planID) == "" {
@@ -2422,6 +2430,73 @@ func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryRe
 	default:
 		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
 	}
+}
+
+func nativeDeliveryAuthorizationPlan(ctx context.Context, reader deploymentmodule.NativeDeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
+	if strings.TrimSpace(objectID) == "" {
+		return deployment.DeliveryPlan{}, sql.ErrNoRows
+	}
+	loadPlan := func(planID string) (deployment.DeliveryPlan, error) {
+		if strings.TrimSpace(planID) == "" {
+			return deployment.DeliveryPlan{}, sql.ErrNoRows
+		}
+		plan, err := reader.Plan(ctx, planID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return plan.RichPlan()
+	}
+	switch operationID {
+	case "buildDeliveryPlan", "getDeliveryPlanPreview":
+		return loadPlan(objectID)
+	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
+		candidate, err := reader.Candidate(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(candidate.PlanID)
+	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
+		generation, err := reader.Generation(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(generation.PlanID)
+	case "getDeliveryBuildStatus":
+		attempt, err := reader.BuildAttempt(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(attempt.PlanID)
+	case "getDeliverySealStatus":
+		seal, err := reader.SnapshotSeal(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		attempt, err := reader.BuildAttempt(ctx, seal.AttemptID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(attempt.PlanID)
+	case "getDeliveryPublicationEvidence", "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
+		publication, err := reader.Publication(ctx, objectID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		generation, err := reader.Generation(ctx, publication.GenerationID)
+		if err != nil {
+			return deployment.DeliveryPlan{}, nativeDeliveryAuthorizationError(err)
+		}
+		return loadPlan(generation.PlanID)
+	default:
+		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
+	}
+}
+
+func nativeDeliveryAuthorizationError(err error) error {
+	if errors.Is(err, deploymentpostgres.ErrNotFound) || errors.Is(err, deploymentpostgres.ErrInvalid) {
+		return sql.ErrNoRows
+	}
+	return err
 }
 
 func deliveryApprovalDecisionOperation(operationID string) bool {
