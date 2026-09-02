@@ -51,7 +51,6 @@ const emptyStatus: DashboardStatus = {
 }
 
 type BuilderVisualType = string
-type BuilderInspectorTab = 'build' | 'format'
 type BuilderFieldRole = 'dimension' | 'metric' | 'detail'
 type BuilderFieldFilter = 'all' | 'metric' | 'dimension' | 'time'
 type BuilderFilterControl = DashboardBuilderFilterSignal['controlType']
@@ -141,7 +140,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
   // explicit canvas deselection without falling back to the first visual.
   @state() private localVisualID: string | null = null
   @state() private visualType: BuilderVisualType = 'bar'
-  @state() private inspectorTab: BuilderInspectorTab = 'build'
+  @state() private editingPage = false
   @state() private fieldFilter: BuilderFieldFilter = 'all'
   @state() private selectedFilterID = ''
   @state() private selectedFilterComponentID = ''
@@ -1759,28 +1758,6 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       text-decoration: underline;
     }
 
-    .inspector-tabs {
-      display: grid;
-      grid-template-columns: 1fr 1fr;
-      padding: 0 var(--base-size-12);
-      border-bottom: var(--lv-border-muted);
-    }
-
-    .inspector-tab {
-      min-height: var(--control-medium-size);
-      border: 0;
-      border-bottom: 2px solid transparent;
-      border-radius: 0;
-      color: var(--lv-fg-muted);
-      background: transparent;
-    }
-
-    .inspector-tab[aria-selected='true'] {
-      border-bottom-color: var(--lv-data-3);
-      color: var(--lv-fg-default);
-      font-weight: var(--base-text-weight-semibold);
-    }
-
     .inspector-panel {
       display: grid;
       gap: var(--base-size-8);
@@ -2035,6 +2012,19 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     .format-controls {
       display: grid;
       gap: var(--base-size-12);
+    }
+
+    .visual-format-controls {
+      margin-top: var(--base-size-4);
+      border-top: var(--lv-border-muted);
+      padding-top: var(--base-size-12);
+    }
+
+    .format-controls-heading {
+      margin: 0;
+      color: var(--lv-fg-default);
+      font: var(--lv-type-body-compact);
+      font-weight: var(--base-text-weight-semibold);
     }
 
     .format-section {
@@ -3438,7 +3428,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       return html`<section class="canvas-pane" aria-label="Dashboard canvas"><div class="state"><div><strong>No pages yet</strong><span>Create a page to start designing this dashboard.</span>${builder.capabilities.canAddPage ? html`<div><button @click=${this.addPage} aria-label="Add page">Add page</button></div>` : nothing}</div></div></section>`
     }
     const width = Math.max(12, page.grid.columns || 12)
-    const pageFormatting = this.inspectorTab === 'format'
+    const pageFormatting = this.editingPage
       && !this.effectiveVisualID(builder, page)
       && !this.selectedFilterComponentID
     const previews = this.builderVisuals
@@ -3568,7 +3558,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const slicer = page?.filterComponents?.find((component) => component.id === this.selectedFilterComponentID)
     const slicerFilter = slicer ? (builder.filters ?? []).find((filter) => filter.id === slicer.filterId) : undefined
     const slicerActive = Boolean(this.addingSlicer || slicer)
-    const formattingPage = Boolean(page && !visual && !slicerActive && this.inspectorTab === 'format')
+    const formattingPage = Boolean(page && !visual && !slicerActive && this.editingPage)
     return html`
       <aside class="pane properties visual-builder" data-collapsed=${collapsed} aria-label=${formattingPage ? 'Page properties' : 'Visual builder'}>
         <div class="pane-header">
@@ -3585,18 +3575,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
           <p class="sr-only" role="status" aria-live="polite">${this.visualActionMessage}</p>
         </div>
         <div id="builder-visuals-content" class="pane-content" ?hidden=${collapsed}>
-          <div class="inspector-tabs" role="tablist" aria-label="Visual configuration">
-            <button class="inspector-tab" role="tab" data-inspector-tab="build" aria-selected=${this.inspectorTab === 'build'} @click=${() => { this.inspectorTab = 'build' }}>Build</button>
-            <button class="inspector-tab" role="tab" data-inspector-tab="format" aria-selected=${this.inspectorTab === 'format'} ?disabled=${slicerActive} @click=${() => { this.inspectorTab = 'format' }}>Format</button>
-          </div>
-          ${this.inspectorTab === 'build'
-            ? html`<div class="inspector-panel" role="tabpanel" aria-label=${slicerActive ? 'Build slicer' : 'Build visual'}>
+          ${formattingPage
+            ? html`<section class="inspector-panel" aria-label="Page settings">${this.renderPageProperties(page)}</section>`
+            : html`<section class="inspector-panel" aria-label=${slicerActive ? 'Build slicer' : visual ? 'Visual configuration' : 'Add visual'}>
                 ${this.renderVisualPicker(builder, page, visual)}
-                ${slicerActive ? this.renderSlicerFieldWell(slicerFilter) : visual ? html`${this.renderFieldWells(visual)}${this.renderInteractionEditor(builder, page, visual)}` : nothing}
-              </div>`
-            : html`<div class="inspector-panel" role="tabpanel" aria-label=${visual ? 'Format visual' : 'Format page'}>
-                ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
-              </div>`}
+                ${slicerActive
+                  ? this.renderSlicerFieldWell(slicerFilter)
+                  : visual
+                    ? html`${this.renderFieldWells(visual)}${this.renderVisualFormatControls(visual)}${this.renderInteractionEditor(builder, page, visual)}`
+                    : nothing}
+              </section>`}
           ${this.renderInspectorDetails(builder)}
         </div>
       </aside>
@@ -3821,7 +3809,8 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     for (const option of formatOptions) sections.set(option.section, [...(sections.get(option.section) ?? []), option])
     const reference = this.visualCatalogEntry(this.visualTypeForRender(visual))
     return html`
-      <section class="format-controls" aria-label="Visual formatting">
+      <section class="format-controls visual-format-controls" aria-label="Visual formatting">
+        <h3 class="format-controls-heading">Format</h3>
         <div class="format-section">
           <h3>Title</h3>
           <label class="format-text-field">
@@ -3836,7 +3825,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             ${options.map((option) => this.renderFormatOption(visual, option, editable))}
           </div>
         `)}
-        ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no simple Format controls. Configure its governed bindings in Build or dashboards-as-code.</p>` : nothing}
+        ${formatOptions.length === 0 ? html`<p class="pane-hint">This presentation has no additional formatting controls. Configure advanced options in dashboard code.</p>` : nothing}
         ${reference ? html`<a class="visual-reference-link" href=${reference.referenceHref}>View every ${reference.label} option in the visual reference</a>` : nothing}
       </section>
     `
@@ -4556,7 +4545,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.localVisualID = ''
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
-    this.inspectorTab = 'build'
+    this.editingPage = false
     this.fieldFilter = 'all'
     this.visualActionMessage = 'Choose a dimension for the slicer.'
     if (selectedVisualID) this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
@@ -5041,6 +5030,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.localPageID = pageID
     this.localVisualID = ''
     this.addingSlicer = false
+    this.editingPage = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
     this.emit('lv-builder-page-select', { ...this.commandDetail(), pageId: pageID })
@@ -5058,7 +5048,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
-    this.inspectorTab = 'format'
+    this.editingPage = true
     if (this.collapsedPanes.visuals) {
       this.collapsedPanes = { ...this.collapsedPanes, visuals: false }
       this.persistCollapsedPanes()
@@ -5074,6 +5064,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private selectVisual(visualID: string): void {
     this.addingSlicer = false
+    this.editingPage = false
     this.localVisualID = visualID
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
@@ -5106,7 +5097,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.addingSlicer = false
     this.selectedFilterID = ''
     this.selectedFilterComponentID = ''
-    this.inspectorTab = 'build'
+    this.editingPage = false
     this.visualActionMessage = 'Visual selection cleared.'
     this.emit('lv-builder-visual-select', { ...this.commandDetail(), visualId: '' })
     return true
@@ -5138,7 +5129,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
   private selectFilterComponent(component: DashboardBuilderFilterComponentSignal): void {
     this.addingSlicer = false
-    this.inspectorTab = 'build'
+    this.editingPage = false
     this.selectedFilterComponentID = component.id
     this.selectedFilterID = component.filterId
     this.localVisualID = ''
@@ -5346,6 +5337,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (!page || !addedVisual) return
     this.localPageID = page.id
     this.localVisualID = addedVisual.id
+    this.editingPage = false
     if (this.visualCatalogEntry(addedVisual.type, builder)) this.visualType = addedVisual.type
   }
 
@@ -5377,7 +5369,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.localPageID = page.id
     this.localVisualID = ''
     this.addingSlicer = false
-    this.inspectorTab = 'build'
+    this.editingPage = false
     this.selectedFilterID = addedComponent.filterId
     this.selectedFilterComponentID = addedComponent.id
   }
@@ -5399,7 +5391,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.addingSlicer = false
     this.localPageID = page.id
     this.localVisualID = ''
-    this.inspectorTab = 'build'
+    this.editingPage = false
     this.selectedFilterID = addedFilter.id
     this.selectedFilterComponentID = addedComponent.id
   }
