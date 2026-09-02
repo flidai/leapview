@@ -42,7 +42,7 @@ func Emit(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, ty
 	b.WriteString("\tvar tag struct { Value string \x60json:\"" + schema.Discriminator.PropertyName + "\"\x60 }\n")
 	b.WriteString("\tif err := json.Unmarshal(data, &tag); err != nil { return fmt.Errorf(\"decode " + unionName + " discriminator: %w\", err) }\n")
 	b.WriteString("\tif tag.Value == \"\" { return fmt.Errorf(\"" + unionName + " discriminator " + schema.Discriminator.PropertyName + " is required\") }\n")
-	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
 	b.WriteString("\tswitch tag.Value {\n")
 	for _, discriminatorValue := range values {
 		variantSchemaName := schema.Discriminator.Mapping[discriminatorValue]
@@ -225,7 +225,11 @@ func EmitObject(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	b.WriteString("\tvar matched string\n")
 	b.WriteString("\tvar decoded any\n")
 	b.WriteString("\tvar failures []string\n")
-	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	if objectUnionNeedsUseNumber(doc, variants) {
+		b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	} else {
+		b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	}
 	for _, variant := range variants {
 		fmt.Fprintf(b, "\t{ valid := true\n")
 		for _, required := range requiredProperties(doc, variant) {
@@ -273,6 +277,61 @@ func requiredStringLiterals(doc ir.Document, schemaName string) []requiredString
 	}
 	sort.Slice(literals, func(i, j int) bool { return literals[i].Property < literals[j].Property })
 	return literals
+}
+
+func objectUnionNeedsUseNumber(doc ir.Document, variants []string) bool {
+	for _, variant := range variants {
+		schema, ok := doc.Schemas[variant]
+		if !ok {
+			continue
+		}
+		schema = ir.FlattenObjectSchema(doc, schema)
+		for _, property := range schema.Properties {
+			if schemaRefNeedsUseNumber(doc, property.Schema, map[string]bool{}) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func schemaRefNeedsUseNumber(doc ir.Document, ref ir.SchemaRef, active map[string]bool) bool {
+	if ref.Ref != "" {
+		name, ok := ir.NormalizedSchemaRefName(ref)
+		if !ok || active[name] {
+			return false
+		}
+		schema, ok := doc.Schemas[name]
+		if !ok {
+			return false
+		}
+		active[name] = true
+		defer delete(active, name)
+		switch schema.Type {
+		case "union":
+			for _, variant := range schema.OneOf {
+				if strings.EqualFold(variant.Type, "number") || strings.EqualFold(variant.Type, "integer") || schemaRefNeedsUseNumber(doc, variant, active) {
+					return true
+				}
+			}
+		case "array":
+			return schema.Items != nil && schemaRefNeedsUseNumber(doc, *schema.Items, active)
+		case "object":
+			for _, property := range ir.FlattenObjectSchema(doc, schema).Properties {
+				if schemaRefNeedsUseNumber(doc, property.Schema, active) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	if ref.Type == "" && ref.Items == nil && ref.AdditionalProperties == nil {
+		return true
+	}
+	if strings.EqualFold(ref.Type, "array") && ref.Items != nil {
+		return schemaRefNeedsUseNumber(doc, *ref.Items, active)
+	}
+	return ref.AdditionalProperties != nil && ref.AdditionalProperties.Schema == nil && ref.AdditionalProperties.Any
 }
 
 func isScalarUnionVariant(variant ir.SchemaRef) bool {

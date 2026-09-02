@@ -200,7 +200,6 @@ func (value *ConnectionSpec) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -805,7 +804,6 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1053,7 +1051,6 @@ func (value *ModelDefinition) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1345,7 +1342,6 @@ func (value *PathSourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2493,7 +2489,6 @@ func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2711,7 +2706,6 @@ func (value *SemanticRelationshipEndpoint) UnmarshalJSON(data []byte) error {
 	var failures []string
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2836,7 +2830,6 @@ func (value *SourceFreshness) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2982,7 +2975,6 @@ func (value *SourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -3131,7 +3123,6 @@ func (value *SourceSchema) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
-		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
