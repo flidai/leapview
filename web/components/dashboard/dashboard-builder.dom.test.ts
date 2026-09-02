@@ -629,6 +629,11 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
       const root = element.shadowRoot
       const selectedBefore = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id')
       const addButtonBefore = root.querySelector('button[data-builder-action="add-visual"]')
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+      await element.updateComplete
+      const selectedAfterEscape = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id') ?? ''
+      ;(root.querySelector('.visual') as HTMLElement).click()
+      await element.updateComplete
       ;(root.querySelector('.canvas') as HTMLElement).click()
       await element.updateComplete
       const selectedAfter = root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id') ?? ''
@@ -644,6 +649,7 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
       await new Promise((resolve) => setTimeout(resolve, 20))
       return {
         selectedBefore,
+        selectedAfterEscape,
         selectedAfter,
         headingAfter,
         fieldWellsAfter,
@@ -656,6 +662,7 @@ test('dashboard builder deselects on the empty canvas and adds a visual directly
       }
     })
     expect(state.selectedBefore).toBe('sales-chart')
+    expect(state.selectedAfterEscape).toBe('')
     expect(state.selectedAfter).toBe('')
     expect(state.headingAfter).toBe('Add a visual')
     expect(state.fieldWellsAfter).toBe(0)
@@ -1139,7 +1146,7 @@ test('dashboard builder initializes GridStack tiles with stable ids and dedicate
   }
 })
 
-test('dashboard builder fits a stable desktop canvas and grows a drop runway below occupied rows', async () => {
+test('dashboard builder fits the authored desktop canvas and grows a drop runway below occupied rows', async () => {
   const page = await browser.newPage({ viewport: { width: 1600, height: 900 } })
   try {
     await page.goto(baseURL)
@@ -1172,8 +1179,8 @@ test('dashboard builder fits a stable desktop canvas and grows a drop runway bel
         grownCanvasHeight: grownCanvasBox.height,
       }
     })
-    expect(state.logicalWidth).toBe(1366)
-    expect(state.logicalHeight).toBeGreaterThanOrEqual(768)
+    expect(state.logicalWidth).toBe(1200)
+    expect(state.logicalHeight).toBeGreaterThanOrEqual(800)
     expect(state.scale).toBeGreaterThan(0)
     expect(state.scale).toBeLessThanOrEqual(1)
     expect(state.fittedWidth).toBeLessThanOrEqual(state.scrollWidth + 1)
@@ -1782,7 +1789,7 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     expect(state.metadataLines).toBe(1)
     expect(state.metadata).toContain('Saving changes…')
     expect(state.metadata).not.toContain('Unsaved')
-    expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'Preview', 'more', 'Publish'])
+    expect(state.topLevelActions).toEqual(['Undo', 'Redo', 'more', 'Publish'])
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
@@ -1941,6 +1948,10 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
         canvasBorder: getComputedStyle(canvas).border,
         canvasRadius: getComputedStyle(canvas).borderRadius,
         canvasShadow: getComputedStyle(canvas).boxShadow,
+        canvasWidth: getComputedStyle(canvas).width,
+        canvasBackground: getComputedStyle(canvas).backgroundColor,
+        canvasGuides: getComputedStyle(canvas).backgroundImage,
+        workspaceBackground: getComputedStyle(scroll).backgroundColor,
         emptyPreview: root.querySelector('.visual-preview-empty')?.textContent?.trim(),
         addPageHasIcon: Boolean(root.querySelector('button[aria-label="Add page"] svg[data-lucide="icon"]')),
       }
@@ -1950,6 +1961,10 @@ test('dashboard builder uses a full-bleed central canvas and keeps no-preview gu
     expect(state.canvasBorder).toMatch(/^0px none /)
     expect(state.canvasRadius).toBe('0px')
     expect(state.canvasShadow).toBe('none')
+    expect(state.canvasWidth).toBe('1200px')
+    expect(state.canvasBackground).toBe('rgb(251, 252, 254)')
+    expect(state.canvasGuides).toBe('none')
+    expect(state.workspaceBackground).toBe('rgb(238, 241, 244)')
     expect(state.emptyPreview).toContain('Add fields')
     expect(state.addPageHasIcon).toBe(true)
   } finally {
@@ -2232,7 +2247,7 @@ test('dashboard builder retains the draft and exposes terminal command recovery'
   }
 })
 
-test('dashboard builder follows the streamed exact-revision preview href', async () => {
+test('dashboard builder keeps the canvas as the preview instead of exposing separate preview navigation', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -2240,7 +2255,7 @@ test('dashboard builder follows the streamed exact-revision preview href', async
     const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
       await element.updateComplete
       const root = element.shadowRoot
-      const initialHref = root.querySelector('a.button')?.getAttribute('href') ?? ''
+      const initialPreviewAction = root.querySelector('[data-builder-action="preview"]')
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
       mergePatch({
         builder: {
@@ -2249,12 +2264,15 @@ test('dashboard builder follows the streamed exact-revision preview href', async
         },
       })
       await element.updateComplete
-      return { initialHref, updatedHref: root.querySelector('a.button')?.getAttribute('href') ?? '' }
+      return {
+        initialPreviewAction: Boolean(initialPreviewAction),
+        updatedPreviewAction: Boolean(root.querySelector('[data-builder-action="preview"]')),
+        canvasCount: root.querySelectorAll('.canvas').length,
+      }
     })
-    expect(state.initialHref).toContain('revisionNumber=7')
-    expect(state.updatedHref).toContain('revisionNumber=8')
-    expect(state.updatedHref).toContain('revisionId=rev-8')
-    expect(state.updatedHref).not.toContain('revisionNumber=6')
+    expect(state.initialPreviewAction).toBe(false)
+    expect(state.updatedPreviewAction).toBe(false)
+    expect(state.canvasCount).toBe(1)
   } finally {
     await page.close()
   }
@@ -2425,7 +2443,8 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
     expect(state.tileLabel).toContain('selected dashboard slicer')
     expect(state.selected).toBe('true')
     expect(state.preview).toContain('Status')
-    expect(state.preview).toContain('Interactive draft preview')
+    expect(state.preview).not.toContain('Interactive draft preview')
+    expect(state.preview).not.toContain('preparing preview')
     expect(state.gridItems).toBe(2)
   } finally {
     await page.close()
@@ -2565,7 +2584,7 @@ test('dashboard builder gates publishing on exact draft state and visible valida
       const commands: Record<string, unknown>[] = []
       element.addEventListener('lv-builder-command', (event: CustomEvent) => { commands.push(event.detail) })
       const publish = root.querySelector<HTMLButtonElement>('[data-builder-action="publish"]')!
-      const initial = { disabled: publish.disabled, label: publish.textContent?.trim(), preview: root.querySelector<HTMLAnchorElement>('[data-builder-action="preview"]')?.getAttribute('href') }
+      const initial = { disabled: publish.disabled, label: publish.textContent?.trim(), previewAction: Boolean(root.querySelector('[data-builder-action="preview"]')) }
       publish.click()
       await element.updateComplete
       const publishing = { disabled: publish.disabled, label: publish.textContent?.trim() }
@@ -2589,7 +2608,7 @@ test('dashboard builder gates publishing on exact draft state and visible valida
     })
     expect(state.initial.disabled).toBe(false)
     expect(state.initial.label).toBe('Publish')
-    expect(state.initial.preview).toContain('revisionNumber=7')
+    expect(state.initial.previewAction).toBe(false)
     expect(state.publishing).toEqual({ disabled: true, label: 'Publishing…' })
     expect(state.published).toEqual({ disabled: true, label: 'Published' })
     expect(state.blocked.disabled).toBe(true)
@@ -2641,7 +2660,7 @@ function testDocument(): string {
     status: { loading: false, error: '', generation: 0, lastUpdated: '', refreshId: '', setupRequired: false, progressPercent: 100 },
     runtime: { kind: 'dashboard_builder', projectId: 'sales', servingStateId: 'generation-7', dashboardId: 'revenue' },
   }
-  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-data-6:#bf3989;--lv-data-6-muted:#ffeff7;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
+  return `<!doctype html><html><head><style>html,body{margin:0;min-height:100%;}body{${typographyTestTokens}--lv-bg-app:#f6f8fa;--lv-bg-panel:#fff;--lv-bg-panel-muted:#f6f8fa;--lv-bg-control:#f6f8fa;--lv-bg-control-hover:#f3f4f6;--lv-bg-input:#fff;--lv-report-page-bg:#fbfcfe;--lv-report-canvas-bg:#eef1f4;--lv-chart-surface:#fff;--lv-bg-accent-muted:#ddf4ff;--lv-bg-danger-muted:#ffebe9;--lv-fg-default:#24292f;--lv-fg-muted:#57606a;--lv-fg-accent:#0969da;--lv-fg-danger:#d1242f;--lv-fg-warning:#9a6700;--lv-fg-success:#1a7f37;--lv-border-muted:#d8dee4;--lv-border-default:#d0d7de;--lv-line-default:#d0d7de;--lv-line-muted:#d8dee4;--lv-line-emphasis:#57606a;--lv-data-1:#0969da;--lv-data-1-muted:#ddf4ff;--lv-data-2:#1a7f37;--lv-data-2-muted:#dafbe1;--lv-data-3:#8250df;--lv-data-3-muted:#fbefff;--lv-data-4:#cf222e;--lv-data-4-muted:#ffebe9;--lv-data-5:#1b7c83;--lv-data-5-muted:#ddf4ff;--lv-data-6:#bf3989;--lv-data-6-muted:#ffeff7;--lv-border-width:1px;--lv-border-width-focus:2px;--lv-radius-default:6px;--lv-radius-small:4px;--lv-radius-full:999px;--base-size-2:2px;--base-size-4:4px;--base-size-6:6px;--base-size-8:8px;--base-size-12:12px;--base-size-16:16px;--control-medium-size:32px;--control-small-size:28px;--lv-button-radius:6px;--lv-button-padding-inline:12px;--lv-button-fg-rest:#24292f;--lv-button-bg-rest:#fff;--lv-button-bg-hover:#f6f8fa;--lv-button-accent-border-rest:#0969da;--lv-button-accent-fg-rest:#fff;--lv-button-accent-bg-rest:#0969da;--lv-button-accent-bg-hover:#0757b3;--lv-shadow-floating-sm:0 2px 8px rgb(0 0 0 / 12%);}</style></head><body><main data-signals="${escapeHTML(JSON.stringify(signals))}"><lv-dashboard-builder back-href="/" preview-href="/dashboards/revenue/preview?draft=draft-7&revisionId=rev-6&revisionNumber=6&revisionContentHash=sha256%3Aold"></lv-dashboard-builder></main><script type="module" src="/dashboard-builder-under-test.js"></script><script type="module" src="/static/vendor/datastar-1.0.2.js?v=dev"></script></body></html>`
 }
 
 function escapeHTML(value: string): string {
