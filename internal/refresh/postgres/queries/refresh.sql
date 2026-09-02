@@ -75,30 +75,6 @@ UPDATE refresh.schedule_occurrence SET status='pending', lease_owner='', lease_e
 -- name: RequeueScheduleRevision :execrows
 UPDATE refresh.schedule_revision s SET next_run_at=LEAST(s.next_run_at,sqlc.arg(next_run_at)),updated_at=clock_timestamp() WHERE s.project_id=sqlc.arg(project_id) AND s.environment=sqlc.arg(environment) AND s.pipeline_id=sqlc.arg(pipeline_id) AND s.schedule_revision_id = (SELECT o.schedule_revision_id FROM refresh.schedule_occurrence o WHERE o.occurrence_id=sqlc.arg(occurrence_id)) AND s.closed_at IS NULL AND s.enabled;
 
--- name: InsertOperation :execrows
-INSERT INTO refresh.operation(operation_id,project_id,environment,idempotency_key,request_digest,operation_type,owner_id,lease_expires_at) VALUES(sqlc.arg(operation_id),sqlc.arg(project_id),sqlc.arg(environment),sqlc.arg(idempotency_key),sqlc.arg(request_digest),sqlc.arg(operation_type),sqlc.arg(owner_id),clock_timestamp()+sqlc.arg(lease)::interval) ON CONFLICT(project_id,environment,idempotency_key) DO NOTHING;
-
--- name: GetOperationForUpdate :one
-SELECT operation_id,project_id,environment,idempotency_key,request_digest,operation_type,state,owner_id,fence_generation,COALESCE(lease_expires_at,'epoch'::timestamptz),COALESCE(run_id,''),outcome,created_at,updated_at,COALESCE(terminal_at,'epoch'::timestamptz) FROM refresh.operation WHERE project_id=sqlc.arg(project_id) AND environment=sqlc.arg(environment) AND idempotency_key=sqlc.arg(idempotency_key) FOR UPDATE;
-
--- name: RunExists :one
-SELECT EXISTS (SELECT 1 FROM refresh.run WHERE run_id=sqlc.arg(runID));
-
--- name: LinkOperationRun :execrows
-UPDATE refresh.operation o SET run_id=sqlc.arg(run_id)
-WHERE o.operation_id=sqlc.arg(operation_id) AND o.run_id IS NULL
-  AND EXISTS (SELECT 1 FROM refresh.run r WHERE r.run_id=sqlc.arg(run_id)
-    AND r.project_id=o.project_id AND r.environment=o.environment);
-
--- name: TransitionOperation :execrows
-UPDATE refresh.operation SET state=sqlc.arg(state),outcome=sqlc.arg(outcome)::jsonb,terminal_at=CASE WHEN sqlc.arg(state) IN ('succeeded','failed','cancelled') THEN clock_timestamp() ELSE NULL END,owner_id='',lease_expires_at=NULL WHERE operation_id=sqlc.arg(operation_id) AND owner_id=sqlc.arg(owner_id) AND fence_generation=sqlc.arg(fence_generation) AND state IN ('pending','running','prepared') AND lease_expires_at > clock_timestamp();
-
--- name: TakeoverOperation :one
-UPDATE refresh.operation SET owner_id=sqlc.arg(owner_id),fence_generation=fence_generation+1,lease_expires_at=clock_timestamp()+sqlc.arg(lease)::interval WHERE operation_id=sqlc.arg(operation_id) AND state IN ('pending','running','prepared') AND (lease_expires_at <= clock_timestamp() OR owner_id=sqlc.arg(owner_id)) RETURNING fence_generation;
-
--- name: GetOperation :one
-SELECT operation_id,project_id,environment,idempotency_key,request_digest,operation_type,state,owner_id,fence_generation,COALESCE(lease_expires_at,'epoch'::timestamptz),COALESCE(run_id,''),outcome,created_at,updated_at,COALESCE(terminal_at,'epoch'::timestamptz) FROM refresh.operation WHERE project_id=sqlc.arg(project_id) AND environment=sqlc.arg(environment) AND idempotency_key=sqlc.arg(idempotency_key);
-
 -- name: AdvisoryLock :execrows
 SELECT pg_advisory_xact_lock(hashtextextended(sqlc.arg(hashtextextended),0));
 
@@ -326,6 +302,3 @@ SELECT run_id,attempt_number,fence_generation,owner_id,lease_expires_at,status,e
 
 -- name: ListOccurrences :many
 SELECT occurrence_id FROM refresh.schedule_occurrence WHERE project_id=sqlc.arg(project_id) AND environment=sqlc.arg(environment) AND (sqlc.arg(generation_id)::text='' OR generation_id=sqlc.arg(generation_id)::text) ORDER BY nominal_time DESC,occurrence_id DESC LIMIT sqlc.arg(page_limit);
-
--- name: ListOperations :many
-SELECT idempotency_key FROM refresh.operation WHERE project_id=sqlc.arg(project_id) AND environment=sqlc.arg(environment) ORDER BY created_at DESC,operation_id DESC LIMIT sqlc.arg(page_limit);

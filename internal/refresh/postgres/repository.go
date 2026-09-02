@@ -67,36 +67,6 @@ type Occurrence struct {
 	Outcome                                          json.RawMessage
 }
 
-type OperationInput struct {
-	OperationID, ProjectID, Environment, IdempotencyKey string
-	RequestDigest, OperationType, OwnerID               string
-	Lease                                               time.Duration
-}
-type Operation struct {
-	OperationInput
-	State, RunID                                     string
-	FenceGeneration                                  int64
-	LeaseExpiresAt, CreatedAt, UpdatedAt, TerminalAt time.Time
-	Outcome                                          json.RawMessage
-}
-
-// SucceededRunID returns the terminal run identity only for a succeeded
-// operation whose bounded outcome is exactly the canonical {"runId": ...}
-// object. Unknown or duplicate fields are rejected so replay cannot trust
-// ambiguous evidence.
-func (o Operation) SucceededRunID() (string, bool) {
-	if o.State != "succeeded" || o.RunID == "" {
-		return "", false
-	}
-	var evidence struct {
-		RunID string `json:"runId"`
-	}
-	if err := strictjson.DecodeWithOptions(o.Outcome, &evidence, strictjson.Options{MaxBytes: MaxJSONBytes, MaxDepth: 4, DuplicateKeys: strictjson.CaseSensitiveKeys}); err != nil || evidence.RunID == "" || evidence.RunID != o.RunID {
-		return "", false
-	}
-	return evidence.RunID, true
-}
-
 type RunInput struct {
 	RunID, OperationID, ProjectID, Environment, GenerationID string
 	ParentRunID                                              string
@@ -567,6 +537,14 @@ func (r *Repository) CreateRunTreeWithSupersedeHook(ctx context.Context, root Ru
 	return out, outChildren, nil
 }
 
+// CreateRunTreeTx admits a refresh run tree through a caller-owned
+// transaction. External capabilities such as the shared platform operation
+// authority, audit, and events can therefore compose their writes atomically.
+// This method never begins, commits, or rolls back tx.
+func (r *Repository) CreateRunTreeTx(ctx context.Context, tx Tx, root RunInput, children []RunInput, occurrenceID, owner string, fence int64, hook func(context.Context, Tx, Run) (string, error), supersedeHook func(context.Context, Tx, []string) error) (Run, []Run, error) {
+	return r.createRunTreeTx(ctx, tx, root, children, occurrenceID, owner, fence, hook, supersedeHook)
+}
+
 // createRunTreeTx admits the root, scheduler occurrence, canonical queue
 // link, dependency children and supersession transition on a caller-owned
 // transaction. It deliberately performs no transaction control so keyed
@@ -615,79 +593,6 @@ func (r *Repository) createRunTreeTx(ctx context.Context, tx Tx, root RunInput, 
 		return Run{}, nil, err
 	}
 	return out, outChildren, nil
-}
-
-// CreateRunTreeWithOperation is the native keyed admission boundary. The
-// operation reservation, run tree, queue link, audit/event callbacks and
-// terminal {runId} outcome all share one transaction. A replay returns the
-// previously committed tree and does not invoke any callback.
-func (r *Repository) CreateRunTreeWithOperation(ctx context.Context, root RunInput, children []RunInput, occurrenceID, owner string, fence int64, operation OperationInput, hook func(context.Context, Tx, Run) (string, error), supersedeHook func(context.Context, Tx, []string) error, auditHook func(context.Context, Tx, Run) error, eventHook func(context.Context, Tx, Run) error) (Run, []Run, bool, error) {
-	var out Run
-	var outChildren []Run
-	var replay bool
-	err := r.InTx(ctx, func(tx Tx) error {
-		op, isReplay, err := r.ReserveOperationTx(ctx, tx, operation)
-		if err != nil {
-			return err
-		}
-		replay = isReplay
-		if isReplay {
-			if _, ok := op.SucceededRunID(); !ok {
-				return ErrConflict
-			}
-			out, err = r.runByID(contextOrBackground(ctx), tx, op.RunID)
-			if err != nil {
-				return err
-			}
-			if out.ProjectID != op.ProjectID || out.Environment != op.Environment || out.OperationID != op.OperationID {
-				return ErrConflict
-			}
-			ids, listErr := refreshdb.New(tx).ListChildRuns(contextOrBackground(ctx), refreshdb.ListChildRunsParams{ProjectID: op.ProjectID, Environment: op.Environment, ParentRunID: stringPtr(op.RunID), PageLimit: MaxPageSize})
-			if listErr != nil {
-				return listErr
-			}
-			outChildren = make([]Run, 0, len(ids))
-			for _, id := range ids {
-				child, childErr := r.runByID(contextOrBackground(ctx), tx, id)
-				if childErr != nil {
-					return childErr
-				}
-				outChildren = append(outChildren, child)
-			}
-			return nil
-		}
-		root.OperationID = op.OperationID
-		out, outChildren, err = r.createRunTreeTx(ctx, tx, root, children, occurrenceID, owner, fence, hook, supersedeHook)
-		if err != nil {
-			return err
-		}
-		if auditHook != nil {
-			if err := auditHook(contextOrBackground(ctx), tx, out); err != nil {
-				return err
-			}
-		}
-		if eventHook != nil {
-			if err := eventHook(contextOrBackground(ctx), tx, out); err != nil {
-				return err
-			}
-		}
-		if err := r.SetOperationRunTx(ctx, tx, op.OperationID, out.RunID); err != nil {
-			return err
-		}
-		outcome, marshalErr := json.Marshal(map[string]string{"runId": out.RunID})
-		if marshalErr != nil {
-			return marshalErr
-		}
-		if err := r.CompleteOperationTx(ctx, tx, op.OperationID, op.OwnerID, op.FenceGeneration, outcome); err != nil {
-			return err
-		}
-		out, err = r.runByID(contextOrBackground(ctx), tx, out.RunID)
-		return err
-	})
-	if err != nil {
-		return Run{}, nil, false, err
-	}
-	return out, outChildren, replay, nil
 }
 
 func (r *Repository) attachClaimedOccurrenceTx(ctx context.Context, tx Tx, occurrenceID, runID, owner string, fence int64, root Run) error {
@@ -1094,167 +999,6 @@ func (r *Repository) ReleaseOccurrenceTx(ctx context.Context, tx Tx, o Occurrenc
 	return nil
 }
 
-// ReserveOperationTx implements exact idempotency replay.  A duplicate key
-// with a different request digest is a conflict; identical requests return
-// the original durable identity and evidence.
-func (r *Repository) ReserveOperationTx(ctx context.Context, tx Tx, in OperationInput) (Operation, bool, error) {
-	ctx = contextOrBackground(ctx)
-	if tx == nil {
-		return Operation{}, false, ErrInvalid
-	}
-	if err := validateScope(in.ProjectID, in.Environment); err != nil {
-		return Operation{}, false, err
-	}
-	for label, v := range map[string]string{"idempotency key": in.IdempotencyKey, "operation type": in.OperationType} {
-		if err := canonicalID(label, v, 256); err != nil {
-			return Operation{}, false, err
-		}
-	}
-	if err := canonicalID("owner id", in.OwnerID, 256); err != nil {
-		return Operation{}, false, err
-	}
-	if err := digest("request digest", in.RequestDigest); err != nil {
-		return Operation{}, false, err
-	}
-	if in.Lease <= 0 || in.Lease > MaxLease {
-		return Operation{}, false, errors.New("operation lease is outside bound")
-	}
-	id, err := newID(in.OperationID)
-	if err != nil {
-		return Operation{}, false, err
-	}
-	in.OperationID = id
-	tag, err := refreshdb.New(tx).InsertOperation(ctx, refreshdb.InsertOperationParams{OperationID: id, ProjectID: in.ProjectID, Environment: in.Environment, IdempotencyKey: in.IdempotencyKey, RequestDigest: in.RequestDigest, OperationType: in.OperationType, OwnerID: in.OwnerID, Lease: in.Lease})
-	if err != nil {
-		return Operation{}, false, err
-	}
-	row, err := refreshdb.New(tx).GetOperationForUpdate(ctx, refreshdb.GetOperationForUpdateParams{ProjectID: in.ProjectID, Environment: in.Environment, IdempotencyKey: in.IdempotencyKey})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Operation{}, false, ErrNotFound
-	}
-	if err != nil {
-		return Operation{}, false, err
-	}
-	o := operationForUpdateFrom(row)
-	if o.OperationType != in.OperationType {
-		return Operation{}, false, ErrConflict
-	}
-	if o.RequestDigest != in.RequestDigest {
-		return Operation{}, false, ErrConflict
-	}
-	return o, tag == 0, nil
-}
-
-func (r *Repository) ReserveOperation(ctx context.Context, in OperationInput) (Operation, bool, error) {
-	var out Operation
-	var replay bool
-	err := r.withTx(ctx, func(tx pgx.Tx) error { var e error; out, replay, e = r.ReserveOperationTx(ctx, tx, in); return e })
-	return out, replay, err
-}
-func (r *Repository) CreateOperationTx(ctx context.Context, tx Tx, in OperationInput) (Operation, bool, error) {
-	return r.ReserveOperationTx(ctx, tx, in)
-}
-func (r *Repository) CreateOperation(ctx context.Context, in OperationInput) (Operation, bool, error) {
-	return r.ReserveOperation(ctx, in)
-}
-
-func (r *Repository) SetOperationRunTx(ctx context.Context, tx Tx, operationID, runID string) error {
-	if tx == nil {
-		return ErrInvalid
-	}
-	if err := canonicalID("operation id", operationID, 256); err != nil {
-		return err
-	}
-	if err := canonicalID("run id", runID, 256); err != nil {
-		return err
-	}
-	exists, err := refreshdb.New(tx).RunExists(contextOrBackground(ctx), runID)
-	if err != nil {
-		return err
-	}
-	if !exists {
-		return ErrNotFound
-	}
-	tag, err := refreshdb.New(tx).LinkOperationRun(contextOrBackground(ctx), refreshdb.LinkOperationRunParams{RunID: stringPtr(runID), OperationID: operationID})
-	if err != nil {
-		return err
-	}
-	if tag != 1 {
-		return ErrConflict
-	}
-	return nil
-}
-
-func (r *Repository) transitionOperationTx(ctx context.Context, tx Tx, operationID, owner string, fence int64, state string, outcome json.RawMessage) error {
-	if tx == nil || fence <= 0 {
-		return ErrInvalid
-	}
-	if state != "succeeded" && state != "failed" && state != "cancelled" && state != "indeterminate" {
-		return ErrInvalid
-	}
-	ev, err := boundedObject(outcome, MaxJSONBytes)
-	if err != nil {
-		return err
-	}
-	tag, err := refreshdb.New(tx).TransitionOperation(contextOrBackground(ctx), refreshdb.TransitionOperationParams{State: state, Outcome: ev, OperationID: operationID, OwnerID: owner, FenceGeneration: fence})
-	if err != nil {
-		return err
-	}
-	if tag != 1 {
-		return ErrStaleFence
-	}
-	return nil
-}
-func (r *Repository) CompleteOperationTx(ctx context.Context, tx Tx, operationID, owner string, fence int64, outcome json.RawMessage) error {
-	return r.transitionOperationTx(ctx, tx, operationID, owner, fence, "succeeded", outcome)
-}
-func (r *Repository) FailOperationTx(ctx context.Context, tx Tx, operationID, owner string, fence int64, outcome json.RawMessage) error {
-	return r.transitionOperationTx(ctx, tx, operationID, owner, fence, "failed", outcome)
-}
-func (r *Repository) IndeterminateOperationTx(ctx context.Context, tx Tx, operationID, owner string, fence int64, outcome json.RawMessage) error {
-	return r.transitionOperationTx(ctx, tx, operationID, owner, fence, "indeterminate", outcome)
-}
-func (r *Repository) CompleteOperation(ctx context.Context, operationID, owner string, fence int64, outcome json.RawMessage) error {
-	return r.withTx(ctx, func(tx pgx.Tx) error { return r.CompleteOperationTx(ctx, tx, operationID, owner, fence, outcome) })
-}
-func (r *Repository) FailOperation(ctx context.Context, operationID, owner string, fence int64, outcome json.RawMessage) error {
-	return r.withTx(ctx, func(tx pgx.Tx) error { return r.FailOperationTx(ctx, tx, operationID, owner, fence, outcome) })
-}
-func (r *Repository) TakeoverOperationTx(ctx context.Context, tx Tx, operationID, owner string, lease time.Duration) (int64, error) {
-	if tx == nil || lease <= 0 || lease > MaxLease {
-		return 0, ErrInvalid
-	}
-	if err := canonicalID("owner id", owner, 256); err != nil {
-		return 0, err
-	}
-	fence, err := refreshdb.New(tx).TakeoverOperation(contextOrBackground(ctx), refreshdb.TakeoverOperationParams{OwnerID: owner, Lease: lease, OperationID: operationID})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return 0, ErrBusy
-	}
-	return fence, err
-}
-
-func (r *Repository) Operation(ctx context.Context, projectID, environment, idempotencyKey string) (Operation, error) {
-	if err := r.requireDB(); err != nil {
-		return Operation{}, err
-	}
-	if err := validateScope(projectID, environment); err != nil {
-		return Operation{}, err
-	}
-	row, err := refreshdb.New(r.db).GetOperation(contextOrBackground(ctx), refreshdb.GetOperationParams{ProjectID: projectID, Environment: environment, IdempotencyKey: idempotencyKey})
-	if errors.Is(err, pgx.ErrNoRows) {
-		return Operation{}, ErrNotFound
-	}
-	if err != nil {
-		return Operation{}, err
-	}
-	return operationFrom(row), nil
-}
-
-func (r *Repository) GetOperation(ctx context.Context, projectID, environment, idempotencyKey string) (Operation, error) {
-	return r.Operation(ctx, projectID, environment, idempotencyKey)
-}
-
 // CreateRunTx stores the immutable execution identity. A duplicate run ID is
 // an exact replay only when all identity fields (including request-linked
 // operation and plan/artifact digests) match.
@@ -1297,6 +1041,10 @@ func (r *Repository) CreateRunTxWithSupersedeHook(ctx context.Context, tx Tx, in
 	if in.OperationID != "" {
 		if err := canonicalID("operation id", in.OperationID, 256); err != nil {
 			return Run{}, err
+		}
+		operationID, parseErr := uuid.Parse(in.OperationID)
+		if parseErr != nil || operationID.String() != in.OperationID || operationID.Version() != 7 {
+			return Run{}, errors.New("operation id must be a canonical UUIDv7")
 		}
 	}
 	// The active-row SELECT below cannot lock a missing row. Serialize all
@@ -2684,30 +2432,6 @@ func (r *Repository) ListOccurrences(ctx context.Context, scope Scope, limit int
 	var out []Occurrence
 	for _, id := range rows {
 		o, e := occurrenceByID(contextOrBackground(ctx), r.db, id)
-		if e != nil {
-			return nil, e
-		}
-		out = append(out, o)
-	}
-	return out, nil
-}
-func (r *Repository) ListOperations(ctx context.Context, scope Scope, limit int) ([]Operation, error) {
-	if err := r.requireDB(); err != nil {
-		return nil, err
-	}
-	if err := validateScope(scope.ProjectID, scope.Environment); err != nil {
-		return nil, err
-	}
-	if limit < 1 || limit > MaxPageSize {
-		return nil, ErrInvalid
-	}
-	rows, err := refreshdb.New(r.db).ListOperations(contextOrBackground(ctx), refreshdb.ListOperationsParams{ProjectID: scope.ProjectID, Environment: scope.Environment, PageLimit: int32(limit)})
-	if err != nil {
-		return nil, err
-	}
-	var out []Operation
-	for _, key := range rows {
-		o, e := r.Operation(contextOrBackground(ctx), scope.ProjectID, scope.Environment, key)
 		if e != nil {
 			return nil, e
 		}

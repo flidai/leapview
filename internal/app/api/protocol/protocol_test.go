@@ -49,6 +49,62 @@ func TestBuildConstructsProtocolPersistence(t *testing.T) {
 	}
 }
 
+func TestMiddlewareBypassesDurableIdempotencyForConfiguredCommand(t *testing.T) {
+	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
+	protocol, err := Build(t.Context(), Config{
+		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
+		BearerToken:              func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var nextCalls atomic.Int32
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		nextCalls.Add(1)
+		if r.Header.Get("X-Request-ID") == "" {
+			t.Error("request ID was not prepared before bypass")
+		}
+		w.WriteHeader(http.StatusAccepted)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/refresh-runs", strings.NewReader(`{"pipelineId":"pipeline:sales"}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "refresh-key")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	protocol.Middleware(next).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted || nextCalls.Load() != 1 {
+		t.Fatalf("bypassed response = %d calls=%d body=%s", recorder.Code, nextCalls.Load(), recorder.Body.String())
+	}
+	if store.claimCalls.Load() != 0 || store.completeCalls.Load() != 0 || store.markCalls.Load() != 0 {
+		t.Fatalf("bypassed protocol touched store: claim=%d complete=%d mark=%d", store.claimCalls.Load(), store.completeCalls.Load(), store.markCalls.Load())
+	}
+}
+
+func TestMiddlewareNonBypassedCommandStillClaimsDurableIdempotency(t *testing.T) {
+	store := &fakeIdempotencyStore{record: apiidempotencysqlite.Record{State: "pending", LeaseGeneration: 1, LeaseExpires: time.Now().Add(time.Second)}, execute: true}
+	protocol, err := Build(t.Context(), Config{
+		Store: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/groups", strings.NewReader(`{"name":"group"}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "group-key")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	protocol.Middleware(next).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("non-bypassed response = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if store.claimCalls.Load() != 1 {
+		t.Fatalf("non-bypassed Claim calls = %d, want 1", store.claimCalls.Load())
+	}
+}
+
 func TestBrowserMutationMiddlewareDurablyReplaysAfterCurrentAuthorization(t *testing.T) {
 	protocol, err := Build(t.Context(), withSQLiteProtocolConfig(t, Config{
 		PrincipalID: func(*http.Request) (string, bool) {
@@ -379,11 +435,13 @@ type fakeIdempotencyStore struct {
 	record        apiidempotencysqlite.Record
 	execute       bool
 	renew         func() (time.Time, error)
+	claimCalls    atomic.Int32
 	completeCalls atomic.Int32
 	markCalls     atomic.Int32
 }
 
 func (s *fakeIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (apiidempotencysqlite.Record, bool, error) {
+	s.claimCalls.Add(1)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.record.Digest = digest

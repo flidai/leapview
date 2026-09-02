@@ -21,6 +21,7 @@ import (
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
+	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectpipelineplan "github.com/flidai/leapview/internal/project/contracts/pipelineplan"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -107,6 +108,10 @@ func modulePostgresTestDB(t *testing.T) *pgxpool.Pool {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
+	if err := operationpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
 	if err := refreshpostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
@@ -157,6 +162,10 @@ func concreteModulePostgresDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	if err := jobspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := operationpostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -512,11 +521,16 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
+	operationAuthority, err := refreshcomposition.NewPostgresOperationAuthorityAdapter(operationpostgres.New(db))
+	if err != nil {
+		t.Fatal(err)
+	}
 	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
 		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-keyed", "catalog-keyed"),
 		SchedulerOwner:              "scheduler-keyed",
 		Jobs:                        queue,
 		CanonicalVerifier:           integrationCanonicalVerifier{physicalPoolID: "pool-keyed", catalogID: "catalog-keyed"},
+		Operations:                  operationAuthority,
 		CancelAuditWriter:           integrationAuditWriter{},
 		CreateAuditWriter:           auditWriter,
 	})
@@ -569,13 +583,6 @@ func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testin
 	}
 	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
 
-	if _, _, err := refreshRepo.ReserveOperation(t.Context(), refreshpostgres.OperationInput{
-		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, IdempotencyKey: tree.IdempotencyKey,
-		RequestDigest: tree.RequestDigest, OperationType: "other_operation", OwnerID: root.PrincipalID, Lease: time.Minute,
-	}); !errors.Is(err, refreshpostgres.ErrConflict) {
-		t.Fatalf("same key with changed operation type error = %v, want conflict", err)
-	}
-
 	rollbackIdentity := projectgraph.ServingIdentity{ProjectID: "project-keyed-rollback", Environment: "prod", GenerationID: "generation-keyed-rollback"}
 	rollbackPlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
 		ID: "pipeline-plan-keyed-rollback", PipelineID: "pipeline-keyed-rollback", ProjectID: rollbackIdentity.ProjectID.String(), Environment: rollbackIdentity.Environment,
@@ -623,7 +630,7 @@ func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo 
 	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE resource_id=$1 AND operation='create_refresh_run'`, projectID).Scan(&audits); err != nil {
 		t.Fatal(err)
 	}
-	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.operation WHERE project_id=$1 AND environment='prod' AND idempotency_key=$2`, projectID, operationKey).Scan(&operations); err != nil {
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation WHERE scope_id=$1 AND idempotency_key=$2`, refreshOperationScope(projectID, "prod"), operationKey).Scan(&operations); err != nil {
 		t.Fatal(err)
 	}
 	events, err := jobsRepo.ListEvents(t.Context(), "refresh", runID, 0, 100)

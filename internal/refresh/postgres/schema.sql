@@ -100,49 +100,12 @@ BEGIN
     RETURN affected;
 END; $$;
 
-CREATE TABLE IF NOT EXISTS refresh.operation (
-    operation_id text PRIMARY KEY,
-    project_id text NOT NULL,
-    environment text NOT NULL,
-    idempotency_key text NOT NULL,
-    request_digest text NOT NULL,
-    operation_type text NOT NULL,
-    state text NOT NULL DEFAULT 'pending',
-    owner_id text NOT NULL DEFAULT '',
-    lease_expires_at timestamptz,
-    fence_generation bigint NOT NULL DEFAULT 1,
-    run_id text,
-    outcome jsonb NOT NULL DEFAULT '{}'::jsonb,
-    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    terminal_at timestamptz,
-    CHECK (operation_id = btrim(operation_id) AND length(operation_id) BETWEEN 1 AND 256),
-    CHECK (project_id = btrim(project_id) AND length(project_id) BETWEEN 1 AND 255),
-    CHECK (environment = btrim(environment) AND length(environment) BETWEEN 1 AND 128),
-    CHECK (idempotency_key = btrim(idempotency_key) AND length(idempotency_key) BETWEEN 1 AND 256),
-    CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
-    CHECK (operation_type = btrim(operation_type) AND length(operation_type) BETWEEN 1 AND 128),
-    CHECK (state IN ('pending','running','prepared','succeeded','failed','cancelled','indeterminate','superseded')),
-    CHECK (fence_generation > 0),
-    CHECK (jsonb_typeof(outcome) = 'object' AND octet_length(outcome::text) <= 65536),
-    CHECK ((state IN ('succeeded','failed','cancelled','superseded') AND terminal_at IS NOT NULL) OR (state NOT IN ('succeeded','failed','cancelled','superseded') AND terminal_at IS NULL)),
-    UNIQUE (project_id, environment, idempotency_key)
-);
-CREATE INDEX IF NOT EXISTS operation_scope_idx ON refresh.operation(project_id, environment, created_at DESC, operation_id DESC);
-
-CREATE OR REPLACE FUNCTION refresh.guard_operation_insert() RETURNS trigger
-LANGUAGE plpgsql SET search_path = pg_catalog, refresh AS $$
-BEGIN
-    IF NEW.state <> 'pending' OR NEW.fence_generation <> 1 OR NEW.owner_id = '' OR NEW.terminal_at IS NOT NULL OR NEW.outcome IS DISTINCT FROM '{}'::jsonb OR NEW.lease_expires_at IS NULL OR NEW.lease_expires_at <= clock_timestamp() OR NEW.lease_expires_at > clock_timestamp() + interval '24 hours' THEN RAISE EXCEPTION 'operation inserts must begin as leased pending records'; END IF;
-    NEW.created_at := clock_timestamp(); NEW.updated_at := NEW.created_at;
-    RETURN NEW;
-END; $$;
-DROP TRIGGER IF EXISTS operation_insert_guard ON refresh.operation;
-CREATE TRIGGER operation_insert_guard BEFORE INSERT ON refresh.operation FOR EACH ROW EXECUTE FUNCTION refresh.guard_operation_insert();
-
 CREATE TABLE IF NOT EXISTS refresh.run (
     run_id text PRIMARY KEY,
-    operation_id text REFERENCES refresh.operation(operation_id),
+    -- Immutable provenance pointer into platform.operation. It is intentionally
+    -- text and has no cross-schema FK so operation retention can prune terminal
+    -- rows without deleting historical refresh evidence.
+    operation_id text,
     project_id text NOT NULL,
     environment text NOT NULL,
     generation_id text NOT NULL,
@@ -176,6 +139,7 @@ CREATE TABLE IF NOT EXISTS refresh.run (
     started_at timestamptz,
     finished_at timestamptz,
     CHECK (run_id = btrim(run_id) AND length(run_id) BETWEEN 1 AND 256),
+    CHECK (operation_id IS NULL OR operation_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$'),
     CHECK (project_id = btrim(project_id) AND length(project_id) BETWEEN 1 AND 255),
     CHECK (environment = btrim(environment) AND length(environment) BETWEEN 1 AND 128),
     CHECK (generation_id = btrim(generation_id) AND length(generation_id) BETWEEN 1 AND 255),
@@ -569,22 +533,7 @@ LANGUAGE plpgsql SET search_path = pg_catalog, refresh AS $$
 DECLARE recovery_run_status text;
 BEGIN
     NEW.updated_at := clock_timestamp();
-    IF TG_TABLE_NAME = 'operation' THEN
-        IF NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.environment IS DISTINCT FROM OLD.environment OR NEW.idempotency_key IS DISTINCT FROM OLD.idempotency_key OR NEW.request_digest IS DISTINCT FROM OLD.request_digest OR NEW.operation_type IS DISTINCT FROM OLD.operation_type OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN RAISE EXCEPTION 'operation identity is immutable'; END IF;
-        IF NEW.run_id IS DISTINCT FROM OLD.run_id AND (OLD.run_id IS NOT NULL OR NEW.run_id IS NULL) THEN RAISE EXCEPTION 'operation run attachment is immutable after first bind'; END IF;
-        IF OLD.state IN ('succeeded','failed','cancelled','superseded') AND NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'terminal operation is immutable'; END IF;
-        IF NEW.state IN ('succeeded','failed','cancelled','superseded') AND NEW.outcome = '{}'::jsonb THEN RAISE EXCEPTION 'terminal operation requires outcome evidence'; END IF;
-		IF NEW.state='indeterminate' AND NEW.outcome = '{}'::jsonb THEN RAISE EXCEPTION 'indeterminate operation requires evidence'; END IF;
-		IF NEW.state IN ('pending','running','prepared') AND (NEW.owner_id = '' OR NEW.lease_expires_at IS NULL OR NEW.lease_expires_at <= clock_timestamp() OR NEW.lease_expires_at > clock_timestamp() + interval '24 hours') THEN RAISE EXCEPTION 'active operation requires a live bounded lease'; END IF;
-		IF NEW.state IN ('succeeded','failed','cancelled','superseded') AND (NEW.owner_id <> '' OR NEW.lease_expires_at IS NOT NULL OR NEW.terminal_at IS NULL OR NEW.outcome = '{}'::jsonb) THEN RAISE EXCEPTION 'terminal operation requires closed lease and evidence'; END IF;
-		IF NEW.state='indeterminate' AND (NEW.owner_id <> '' OR NEW.lease_expires_at IS NOT NULL) THEN RAISE EXCEPTION 'indeterminate operation cannot retain lease'; END IF;
-		IF OLD.state='pending' AND NEW.state NOT IN ('pending','running','prepared','succeeded','failed','cancelled','indeterminate','superseded') THEN RAISE EXCEPTION 'illegal pending operation transition'; END IF;
-		IF OLD.state='running' AND NEW.state NOT IN ('running','prepared','succeeded','failed','cancelled','indeterminate','superseded') THEN RAISE EXCEPTION 'illegal running operation transition'; END IF;
-		IF OLD.state='prepared' AND NEW.state NOT IN ('prepared','succeeded','failed','cancelled','indeterminate','superseded') THEN RAISE EXCEPTION 'illegal prepared operation transition'; END IF;
-		IF NEW.owner_id IS DISTINCT FROM OLD.owner_id AND NEW.owner_id <> '' AND (NEW.fence_generation <= OLD.fence_generation OR (OLD.lease_expires_at IS NOT NULL AND OLD.lease_expires_at > clock_timestamp())) THEN RAISE EXCEPTION 'operation owner change requires expired lease and higher fence'; END IF;
-		IF NEW.fence_generation > OLD.fence_generation AND NEW.owner_id = '' THEN RAISE EXCEPTION 'operation fence advance requires owner'; END IF;
-		IF NEW.state IN ('succeeded','failed','cancelled','superseded') AND OLD.state NOT IN ('succeeded','failed','cancelled','superseded') THEN NEW.terminal_at := clock_timestamp(); END IF;
-    ELSIF TG_TABLE_NAME = 'run' THEN
+    IF TG_TABLE_NAME = 'run' THEN
         IF NEW.run_id IS DISTINCT FROM OLD.run_id OR NEW.operation_id IS DISTINCT FROM OLD.operation_id OR NEW.project_id IS DISTINCT FROM OLD.project_id OR NEW.environment IS DISTINCT FROM OLD.environment OR NEW.generation_id IS DISTINCT FROM OLD.generation_id OR NEW.parent_run_id IS DISTINCT FROM OLD.parent_run_id OR NEW.pipeline_id IS DISTINCT FROM OLD.pipeline_id OR NEW.semantic_model_id IS DISTINCT FROM OLD.semantic_model_id OR NEW.target_type IS DISTINCT FROM OLD.target_type OR NEW.target_id IS DISTINCT FROM OLD.target_id OR NEW.target_revision IS DISTINCT FROM OLD.target_revision OR NEW.trigger_type IS DISTINCT FROM OLD.trigger_type OR NEW.invocation_source IS DISTINCT FROM OLD.invocation_source OR NEW.trigger_id IS DISTINCT FROM OLD.trigger_id OR NEW.concurrency_policy IS DISTINCT FROM OLD.concurrency_policy OR NEW.schedule_revision_id IS DISTINCT FROM OLD.schedule_revision_id OR NEW.occurrence_id IS DISTINCT FROM OLD.occurrence_id OR NEW.nominal_time IS DISTINCT FROM OLD.nominal_time OR NEW.plan_digest IS DISTINCT FROM OLD.plan_digest OR NEW.artifact_digest IS DISTINCT FROM OLD.artifact_digest OR NEW.matching_schedule_ids IS DISTINCT FROM OLD.matching_schedule_ids OR NEW.materialization_scope IS DISTINCT FROM OLD.materialization_scope OR NEW.principal_id IS DISTINCT FROM OLD.principal_id OR NEW.created_at IS DISTINCT FROM OLD.created_at THEN RAISE EXCEPTION 'run identity is immutable'; END IF;
         IF NEW.job_id IS DISTINCT FROM OLD.job_id AND (OLD.job_id <> '' OR NEW.job_id = '') THEN RAISE EXCEPTION 'run job attachment is immutable after first bind'; END IF;
         IF OLD.status IN ('succeeded','failed','cancelled','superseded','skipped') AND NEW IS DISTINCT FROM OLD THEN RAISE EXCEPTION 'terminal run is immutable'; END IF;
@@ -614,17 +563,13 @@ BEGIN
 		IF NEW.reconciliation_fence > OLD.reconciliation_fence AND (OLD.lease_expires_at IS NULL OR OLD.lease_expires_at > clock_timestamp()) THEN RAISE EXCEPTION 'recovery takeover requires expired authority lease'; END IF;
 		IF NEW.state IN ('reconciled','indeterminate') AND NEW.exact_external_identity = '' THEN RAISE EXCEPTION 'terminal recovery requires exact external identity'; END IF;
     END IF;
-    IF TG_TABLE_NAME = 'operation' THEN
-        IF NEW.fence_generation < OLD.fence_generation THEN RAISE EXCEPTION 'operation fence cannot decrease'; END IF;
-    ELSIF TG_TABLE_NAME = 'run' THEN
+    IF TG_TABLE_NAME = 'run' THEN
         IF NEW.fence_generation < OLD.fence_generation THEN RAISE EXCEPTION 'run fence cannot decrease'; END IF;
     ELSIF TG_TABLE_NAME = 'recovery_state' THEN
         IF NEW.reconciliation_fence < OLD.reconciliation_fence THEN RAISE EXCEPTION 'reconciliation fence cannot decrease'; END IF;
     END IF;
     RETURN NEW;
 END; $$;
-DROP TRIGGER IF EXISTS operation_updated_at ON refresh.operation;
-CREATE TRIGGER operation_updated_at BEFORE UPDATE ON refresh.operation FOR EACH ROW EXECUTE FUNCTION refresh.guard_updated_at();
 DROP TRIGGER IF EXISTS run_updated_at ON refresh.run;
 CREATE TRIGGER run_updated_at BEFORE UPDATE ON refresh.run FOR EACH ROW EXECUTE FUNCTION refresh.guard_updated_at();
 
@@ -764,9 +709,9 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA refresh TO leapview_control_runtime;
-        GRANT SELECT, INSERT, UPDATE ON refresh.schedule_revision, refresh.operation, refresh.run, refresh.schedule_occurrence, refresh.attempt, refresh.publication_link, refresh.recovery_state, refresh.data_version TO leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON refresh.schedule_revision, refresh.run, refresh.schedule_occurrence, refresh.attempt, refresh.publication_link, refresh.recovery_state, refresh.data_version TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION refresh.fail_child_runs(text,text), refresh.complete_child_runs(text), refresh.close_omitted_schedules(text,text,text,text[],text[]) TO leapview_control_runtime;
-        REVOKE DELETE ON refresh.schedule_revision, refresh.operation, refresh.run, refresh.schedule_occurrence, refresh.attempt, refresh.publication_link, refresh.recovery_state, refresh.data_version FROM leapview_control_runtime;
+        REVOKE DELETE ON refresh.schedule_revision, refresh.run, refresh.schedule_occurrence, refresh.attempt, refresh.publication_link, refresh.recovery_state, refresh.data_version FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION refresh.maintenance(integer) FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname='leapview_control_readonly') THEN

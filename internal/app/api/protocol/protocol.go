@@ -24,15 +24,21 @@ import (
 type Config struct {
 	// Store is the durable idempotency capability. Production callers inject
 	// the PostgreSQL-backed implementation.
-	Store           idempotency.Store
-	CursorSigning   cursorsigning.Initializer
-	BearerToken     func(*http.Request) string
-	AcceptsBearer   func(*http.Request) bool
-	PrincipalID     func(*http.Request) (string, bool)
-	ReplayAuthorize func(*http.Request) bool
-	PublicRequest   func(*http.Request) bool
-	CursorSnapshot  func(*http.Request) string
-	ProductName     string
+	Store idempotency.Store
+	// BypassDurableIdempotency lists generated command operation IDs whose
+	// handlers own an exact transactional replay record. Requests for these
+	// operations still pass authentication, cursor handling, and the generated
+	// command boundary; only this protocol's durable Claim/renew/replay path is
+	// skipped.
+	BypassDurableIdempotency map[string]struct{}
+	CursorSigning            cursorsigning.Initializer
+	BearerToken              func(*http.Request) string
+	AcceptsBearer            func(*http.Request) bool
+	PrincipalID              func(*http.Request) (string, bool)
+	ReplayAuthorize          func(*http.Request) bool
+	PublicRequest            func(*http.Request) bool
+	CursorSnapshot           func(*http.Request) string
+	ProductName              string
 }
 
 type Protocol struct {
@@ -107,12 +113,32 @@ func (p *Protocol) Middleware(next http.Handler) http.Handler {
 		if !unwrapAPIPageCursor(w, r) {
 			return
 		}
+		if p.bypassDurableIdempotency(r) {
+			next.ServeHTTP(w, r)
+			return
+		}
 		if !requiresAPIIdempotency(r) {
 			next.ServeHTTP(w, r)
 			return
 		}
 		p.serveIdempotent(w, r, next)
 	})
+}
+
+// bypassDurableIdempotency resolves the generated operation contract before
+// consulting the explicit composition-owned bypass set. Matching through the
+// generated registry keeps operation identity stable and avoids path
+// substring heuristics.
+func (p *Protocol) bypassDurableIdempotency(r *http.Request) bool {
+	if p == nil || r == nil || len(p.config.BypassDurableIdempotency) == 0 {
+		return false
+	}
+	contract, ok := apiaggregate.GetAPIGenOperationContractForRequest(r.Method, r.URL.Path)
+	if !ok || contract.Command == nil || contract.Command.Idempotency != "required" {
+		return false
+	}
+	_, bypass := p.config.BypassDurableIdempotency[contract.OperationID]
+	return bypass
 }
 
 // BrowserMutationMiddleware applies the same durable idempotency protocol as

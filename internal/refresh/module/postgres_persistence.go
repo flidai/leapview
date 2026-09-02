@@ -15,11 +15,13 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshoperation "github.com/flidai/leapview/internal/refresh/operation"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 // PostgresQueueWriter is the transaction-aware bridge to the canonical
@@ -103,7 +105,11 @@ type PostgresPersistenceConfig struct {
 	// verifier proves the refresh result; the finalizer composes native
 	// publication/activation into the same caller-owned transaction. It is
 	// required by production module admission; evaluation fixtures may omit it.
-	NativeFinalizer   PostgresNativeRefreshFinalizer
+	NativeFinalizer PostgresNativeRefreshFinalizer
+	// Operations is the shared platform idempotency authority. Native keyed
+	// create admission composes it with refresh rows and canonical jobs in the
+	// same caller-owned transaction.
+	Operations        refreshoperation.Authority
 	CancelAuditWriter PostgresCancelAuditWriter
 	CreateAuditWriter PostgresRefreshAuditWriter
 }
@@ -148,7 +154,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 		return Persistence{}, err
 	}
 	return Persistence{
-		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, cancelAuditWriter: config.CancelAuditWriter, createAuditWriter: config.CreateAuditWriter},
+		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, operations: config.Operations, cancelAuditWriter: config.CancelAuditWriter, createAuditWriter: config.CreateAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
 		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
 		TerminalRecovery: terminalRecovery, backend: backendPostgres, nativeRepository: repository,
@@ -320,6 +326,7 @@ func (p *postgresSchedulePersistence) DataVersion(ctx context.Context, identity 
 type postgresRunPersistence struct {
 	repository        *refreshpostgres.Repository
 	jobs              PostgresJobsAuthority
+	operations        refreshoperation.Authority
 	cancelAuditWriter PostgresCancelAuditWriter
 	createAuditWriter PostgresRefreshAuditWriter
 }
@@ -332,14 +339,14 @@ func (p *postgresRunPersistence) queueLifecycle() (PostgresQueueLifecycle, error
 }
 
 // LookupIdempotentRun is the preflight replay fast-path for keyed native
-// commands. It reads only the operation scope/digest and linked run tree; a
-// missing operation is reported as a fresh admission, while a digest mismatch
-// remains a durable conflict.
+// commands. It reads only the shared operation scope/digest and terminal
+// {runId} evidence; a missing operation is reported as a fresh admission,
+// while a digest/type mismatch remains a durable conflict.
 func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, key, digest string) (refreshrun.RunRecord, []refreshrun.RunRecord, bool, error) {
-	if p == nil || p.repository == nil {
+	if p == nil || p.repository == nil || p.operations == nil {
 		return refreshrun.RunRecord{}, nil, false, errors.New("refresh PostgreSQL run persistence is unavailable")
 	}
-	op, err := p.repository.GetOperation(ctx, identity.ProjectID.String(), identity.Environment, key)
+	op, err := p.operations.Get(ctx, refreshOperationScope(identity.ProjectID.String(), identity.Environment), key)
 	if errors.Is(err, refreshpostgres.ErrNotFound) {
 		return refreshrun.RunRecord{}, nil, false, nil
 	}
@@ -349,19 +356,23 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 	if op.OperationType != "refresh_pipeline" || op.RequestDigest != digest {
 		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
 	}
-	if _, ok := op.SucceededRunID(); !ok {
-		// A pending reservation can only be observed after an interrupted
-		// transaction from an older producer. Let the final reserve classify it.
-		return refreshrun.RunRecord{}, nil, false, nil
+	runID, ok := operationRunID(op)
+	if !ok {
+		// An in-flight or malformed terminal operation is not a replayable
+		// admission. Let the final reserve classify the durable disposition.
+		if op.State != "completed" {
+			return refreshrun.RunRecord{}, nil, false, nil
+		}
+		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
 	}
-	root, err := p.repository.GetRun(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, op.RunID)
+	root, err := p.repository.GetRun(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, runID)
 	if err != nil {
 		return refreshrun.RunRecord{}, nil, false, err
 	}
 	if root.OperationID != op.OperationID || root.PipelineID != pipelineID.String() {
 		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
 	}
-	children, err := p.repository.ListChildRuns(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, op.RunID, refreshpostgres.MaxPageSize)
+	children, err := p.repository.ListChildRuns(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, runID, refreshpostgres.MaxPageSize)
 	if err != nil {
 		return refreshrun.RunRecord{}, nil, false, err
 	}
@@ -378,6 +389,36 @@ func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identi
 		childRecords = append(childRecords, record)
 	}
 	return rootRecord, childRecords, true, nil
+}
+
+func refreshOperationScope(projectID, environment string) string {
+	// Platform operation scopes are bounded to 255 bytes while authored
+	// project/environment identities may each approach their own maxima. Hash
+	// the canonical pair to preserve separation without truncation collisions.
+	digest := sha256.Sum256([]byte(projectID + "\x00" + environment))
+	return "refresh:" + hex.EncodeToString(digest[:])
+}
+
+// operationRunID accepts only the exact canonical terminal outcome object
+// emitted by keyed refresh admission: {"runId":"..."}. Unknown or duplicate
+// fields are rejected so a replay cannot trust ambiguous evidence.
+func operationRunID(op refreshoperation.Record) (string, bool) {
+	if op.State != "completed" || len(op.Outcome) == 0 {
+		return "", false
+	}
+	var fields map[string]json.RawMessage
+	if err := strictjson.DecodeWithOptions(op.Outcome, &fields, strictjson.Options{MaxBytes: 32768, MaxDepth: 4, DuplicateKeys: strictjson.CaseSensitiveKeys}); err != nil || len(fields) != 1 {
+		return "", false
+	}
+	raw, ok := fields["runId"]
+	if !ok {
+		return "", false
+	}
+	var runID string
+	if err := strictjson.DecodeWithOptions(raw, &runID, strictjson.Options{MaxBytes: 256, MaxDepth: 2}); err != nil || runID == "" || runID != strings.TrimSpace(runID) {
+		return "", false
+	}
+	return runID, true
 }
 
 // CreateRunTree is the PostgreSQL atomic admission boundary used by
@@ -455,6 +496,9 @@ func (p *postgresRunPersistence) CreateRunTree(ctx context.Context, tree refresh
 	if tree.IdempotencyKey != "" && tree.RequestDigest == "" {
 		return refreshrun.RunRecord{}, nil, errors.New("refresh request digest is required with idempotency key")
 	}
+	if tree.IdempotencyKey != "" && p.operations == nil {
+		return refreshrun.RunRecord{}, nil, errors.New("PostgreSQL operation authority is required")
+	}
 	if tree.IdempotencyKey != "" && rootInput.AuditIntent != nil && p.createAuditWriter == nil {
 		return refreshrun.RunRecord{}, nil, errors.New("refresh create audit writer is required")
 	}
@@ -509,7 +553,60 @@ func (p *postgresRunPersistence) CreateRunTree(ctx context.Context, tree refresh
 			}
 			return writer.AppendRefreshQueuedEventTx(hookCtx, tx, created.RunID, string(payload), "refresh.queued")
 		}
-		createdRoot, createdChildren, _, createErr = p.repository.CreateRunTreeWithOperation(ctx, root, childInputs, occurrenceID, owner, fence, refreshpostgres.OperationInput{ProjectID: root.ProjectID, Environment: root.Environment, IdempotencyKey: tree.IdempotencyKey, RequestDigest: tree.RequestDigest, OperationType: "refresh_pipeline", OwnerID: root.PrincipalID, Lease: 2 * time.Minute}, createHook, supersedeHook, auditHook, eventHook)
+		createErr = p.repository.InTx(ctx, func(tx refreshpostgres.Tx) error {
+			acquired, acquireErr := p.operations.AcquireTx(ctx, tx, refreshoperation.AcquireInput{
+				Scope: refreshOperationScope(root.ProjectID, root.Environment), OperationType: "refresh_pipeline",
+				IdempotencyKey: tree.IdempotencyKey, RequestDigest: tree.RequestDigest, OwnerID: root.PrincipalID,
+				Lease: 2 * time.Minute, Retention: 24 * time.Hour,
+			})
+			if acquireErr != nil {
+				return acquireErr
+			}
+			if acquired.Operation.Scope != refreshOperationScope(root.ProjectID, root.Environment) || acquired.Operation.OperationType != "refresh_pipeline" || acquired.Operation.IdempotencyKey != tree.IdempotencyKey || acquired.Operation.RequestDigest != tree.RequestDigest {
+				return refreshpostgres.ErrConflict
+			}
+			if acquired.Status == refreshoperation.Replay || acquired.Replay {
+				runID, replayOK := operationRunID(acquired.Operation)
+				if !replayOK {
+					return refreshpostgres.ErrConflict
+				}
+				replayRoot, replayErr := p.repository.GetRunTx(ctx, tx, refreshpostgres.Scope{ProjectID: root.ProjectID, Environment: root.Environment}, runID)
+				if replayErr != nil {
+					return replayErr
+				}
+				if replayRoot.OperationID != acquired.Operation.OperationID || replayRoot.PipelineID != root.PipelineID {
+					return refreshpostgres.ErrConflict
+				}
+				replayChildren, replayErr := p.repository.WithTx(tx).ListChildRuns(ctx, refreshpostgres.Scope{ProjectID: root.ProjectID, Environment: root.Environment}, runID, refreshpostgres.MaxPageSize)
+				if replayErr != nil {
+					return replayErr
+				}
+				createdRoot, createdChildren = replayRoot, replayChildren
+				return nil
+			}
+			if acquired.Status != refreshoperation.Acquired {
+				return refreshpostgres.ErrConflict
+			}
+			root.OperationID = acquired.Operation.OperationID
+			createdRoot, createdChildren, createErr = p.repository.CreateRunTreeTx(ctx, tx, root, childInputs, occurrenceID, owner, fence, createHook, supersedeHook)
+			if createErr != nil {
+				return createErr
+			}
+			if err := auditHook(ctx, tx, createdRoot); err != nil {
+				return err
+			}
+			if err := eventHook(ctx, tx, createdRoot); err != nil {
+				return err
+			}
+			outcome, marshalErr := json.Marshal(map[string]string{"runId": createdRoot.RunID})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if err := p.operations.CompleteTx(ctx, tx, acquired.Lease, outcome); err != nil {
+				return err
+			}
+			return nil
+		})
 	} else {
 		createdRoot, createdChildren, createErr = p.repository.CreateRunTreeWithSupersedeHook(ctx, root, childInputs, occurrenceID, owner, fence, createHook, supersedeHook)
 	}

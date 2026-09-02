@@ -1,8 +1,13 @@
 package app
 
 import (
+	"context"
+	"net/http"
+	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	"github.com/flidai/leapview/internal/platform/http/idempotency"
@@ -22,5 +27,51 @@ func TestAPIProtocolPersistenceRequiresCompleteExplicitAuthorities(t *testing.T)
 	}).authorities()
 	if err != nil || store == nil || cursor == nil {
 		t.Fatalf("complete explicit protocol authorities = (%T, %T, %v)", store, cursor, err)
+	}
+}
+
+type compositionCountingIdempotencyStore struct{ claims atomic.Int32 }
+
+func (s *compositionCountingIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (idempotency.Record, bool, error) {
+	s.claims.Add(1)
+	return idempotency.Record{State: "pending", Digest: digest, Owner: owner, LeaseGeneration: 1, LeaseExpires: time.Now().Add(lease)}, true, nil
+}
+func (*compositionCountingIdempotencyStore) Load(context.Context, string) (idempotency.Record, error) {
+	return idempotency.Record{}, nil
+}
+func (*compositionCountingIdempotencyStore) Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error) {
+	return time.Now().Add(time.Minute), nil
+}
+func (*compositionCountingIdempotencyStore) Complete(context.Context, string, string, string, int64, int, http.Header, []byte) error {
+	return nil
+}
+func (*compositionCountingIdempotencyStore) MarkIndeterminate(context.Context, string, string, string, int64) error {
+	return nil
+}
+
+func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.T) {
+	store := &compositionCountingIdempotencyStore{}
+	platform := &platformServices{}
+	if err := configureAPIProtocol(&capabilityRoutes{}, &runtimeServices{}, platform, &httpPolicy{}, t.Context(), apiProtocolPersistence{
+		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		BypassDurableIdempotency: map[string]struct{}{"createRefreshRun": {}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/refresh-runs", strings.NewReader(`{"pipelineId":"pipeline:sales"}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "refresh-key")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	called := false
+	platform.apiProtocol.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		called = true
+		w.WriteHeader(http.StatusAccepted)
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusAccepted || !called {
+		t.Fatalf("configured bypass response = %d called=%t body=%s", recorder.Code, called, recorder.Body.String())
+	}
+	if store.claims.Load() != 0 {
+		t.Fatalf("configured bypass claimed durable idempotency %d times", store.claims.Load())
 	}
 }

@@ -16,9 +16,10 @@ import (
 )
 
 type apiProtocolPersistence struct {
-	Idempotency     idempotency.Store
-	CursorSigning   cursorsigning.Initializer
-	RequireExplicit bool
+	Idempotency              idempotency.Store
+	CursorSigning            cursorsigning.Initializer
+	BypassDurableIdempotency map[string]struct{}
+	RequireExplicit          bool
 }
 
 func (p apiProtocolPersistence) authorities() (idempotency.Store, cursorsigning.Initializer, error) {
@@ -48,10 +49,11 @@ func configureAPIProtocol(routes *capabilityRoutes, runtime *runtimeServices, pl
 		return err
 	}
 	protocol, err := apiprotocol.Build(ctx, apiprotocol.Config{
-		Store:         idempotencyStore,
-		CursorSigning: cursorInitializer,
-		ProductName:   brand.Name,
-		BearerToken:   accessmodule.BearerToken,
+		Store:                    idempotencyStore,
+		BypassDurableIdempotency: persistence.BypassDurableIdempotency,
+		CursorSigning:            cursorInitializer,
+		ProductName:              brand.Name,
+		BearerToken:              accessmodule.BearerToken,
 		AcceptsBearer: func(r *http.Request) bool {
 			return platform.auth == nil || platform.auth.AcceptsPublicBearer(r)
 		},

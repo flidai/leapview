@@ -23,6 +23,11 @@ type EventStore interface {
 	jobhttp.EventReader
 }
 
+// CreateRefreshRunOperationID exposes the generated command identity through
+// the refresh module boundary so application composition does not import a
+// product capability's generated transport package directly.
+const CreateRefreshRunOperationID = string(refreshgen.GenOperationCreateRefreshRun)
+
 func (m *Module) verifyRunCreated(ctx context.Context, run refreshrun.RunRecord) error {
 	logger := m.logger
 	if logger == nil {

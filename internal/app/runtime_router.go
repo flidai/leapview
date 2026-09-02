@@ -277,6 +277,10 @@ type dataAssemblyInputs struct {
 	AccessRepo                   access.Repository
 	APIIdempotency               idempotency.Store
 	CursorSigning                cursorsigning.Initializer
+	// BypassDurableIdempotency is an explicit production composition escape
+	// hatch for commands whose domain transaction owns exact replay semantics.
+	// Local/evaluation SQLite composition leaves this unset.
+	BypassDurableIdempotency map[string]struct{}
 	// DashboardPublicationReconciler is the explicit activation projection for
 	// the selected dashboard authority.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
@@ -783,7 +787,8 @@ func buildApplicationSurfaces(
 	if platform.apiProtocol == nil {
 		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
 			Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
-			RequireExplicit: data.RequireExplicitAPIProtocol,
+			BypassDurableIdempotency: data.BypassDurableIdempotency,
+			RequireExplicit:          data.RequireExplicitAPIProtocol,
 		}); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
 		}
