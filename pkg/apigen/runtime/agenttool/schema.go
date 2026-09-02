@@ -70,6 +70,21 @@ func validateSchemaValue(value any, schema map[string]any, path string) error {
 		if !ok {
 			return fmt.Errorf("%s must be an array", path)
 		}
+		if minimum, ok := schemaInteger(schema["minItems"]); ok && len(items) < minimum {
+			return fmt.Errorf("%s must contain at least %d items", path, minimum)
+		}
+		if maximum, ok := schemaInteger(schema["maxItems"]); ok && len(items) > maximum {
+			return fmt.Errorf("%s must contain at most %d items", path, maximum)
+		}
+		if unique, _ := schema["uniqueItems"].(bool); unique {
+			for index := range items {
+				for previous := 0; previous < index; previous++ {
+					if reflect.DeepEqual(items[index], items[previous]) {
+						return fmt.Errorf("%s must contain unique items", path)
+					}
+				}
+			}
+		}
 		if itemSchema, ok := schema["items"].(map[string]any); ok {
 			for index, item := range items {
 				if err := validateSchemaValue(item, itemSchema, fmt.Sprintf("%s[%d]", path, index)); err != nil {

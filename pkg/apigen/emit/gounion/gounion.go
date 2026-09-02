@@ -42,7 +42,7 @@ func Emit(b *strings.Builder, doc ir.Document, name string, schema ir.Schema, ty
 	b.WriteString("\tvar tag struct { Value string \x60json:\"" + schema.Discriminator.PropertyName + "\"\x60 }\n")
 	b.WriteString("\tif err := json.Unmarshal(data, &tag); err != nil { return fmt.Errorf(\"decode " + unionName + " discriminator: %w\", err) }\n")
 	b.WriteString("\tif tag.Value == \"\" { return fmt.Errorf(\"" + unionName + " discriminator " + schema.Discriminator.PropertyName + " is required\") }\n")
-	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
 	b.WriteString("\tswitch tag.Value {\n")
 	for _, discriminatorValue := range values {
 		variantSchemaName := schema.Discriminator.Mapping[discriminatorValue]
@@ -168,10 +168,8 @@ func EmitScalarObject(b *strings.Builder, doc ir.Document, name string, schema i
 	b.WriteString("\tcase '{':\n")
 	b.WriteString("\t\tvar fields map[string]json.RawMessage\n")
 	b.WriteString("\t\tif err := json.Unmarshal(trimmed, &fields); err != nil { return fmt.Errorf(\"decode " + unionName + " object: %w\", err) }\n")
-	if objectSchema, ok := doc.Schemas[objectName]; ok {
-		for _, propertyName := range objectSchema.Required {
-			fmt.Fprintf(b, "\t\tif _, ok := fields[%q]; !ok { return fmt.Errorf(\"decode %s object: required property %s is missing\") }\n", propertyName, unionName, propertyName)
-		}
+	for _, propertyName := range requiredProperties(doc, objectName) {
+		fmt.Fprintf(b, "\t\tif _, ok := fields[%q]; !ok { return fmt.Errorf(\"decode %s object: required property %s is missing\") }\n", propertyName, unionName, propertyName)
 	}
 	b.WriteString("\t\tvar parsed " + objectGoName + "\n")
 	b.WriteString("\t\tdecoder := json.NewDecoder(bytes.NewReader(trimmed)); decoder.DisallowUnknownFields()\n")
@@ -227,12 +225,15 @@ func EmitObject(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	b.WriteString("\tvar matched string\n")
 	b.WriteString("\tvar decoded any\n")
 	b.WriteString("\tvar failures []string\n")
-	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
+	b.WriteString("\tdecode := func(dest any) error { decoder := json.NewDecoder(bytes.NewReader(data)); decoder.UseNumber(); decoder.DisallowUnknownFields(); return decoder.Decode(dest) }\n")
 	for _, variant := range variants {
 		fmt.Fprintf(b, "\t{ valid := true\n")
-		variantSchema := doc.Schemas[variant]
-		for _, required := range variantSchema.Required {
+		for _, required := range requiredProperties(doc, variant) {
 			fmt.Fprintf(b, "\t\tif _, ok := fields[%q]; !ok { valid = false; failures = append(failures, %q) }\n", required, variant+": required property "+required+" is missing")
+		}
+		for _, literal := range requiredStringLiterals(doc, variant) {
+			failure := fmt.Sprintf("%s: required property %s must equal %q", variant, literal.Property, literal.Value)
+			fmt.Fprintf(b, "\t\tif valid { var actual any; if err := json.Unmarshal(fields[%q], &actual); err != nil { valid = false; failures = append(failures, %q) } else if value, ok := actual.(string); !ok || value != %q { valid = false; failures = append(failures, %q) } }\n", literal.Property, failure, literal.Value, failure)
 		}
 		fmt.Fprintf(b, "\t\tif valid { var candidate %s; if err := decode(&candidate); err == nil {\n", typeName(variant))
 		fmt.Fprintf(b, "\t\t\tif matched != \"\" { return fmt.Errorf(\"decode %s: object matches both %%s and %s\", matched) }\n", unionName, variant)
@@ -246,6 +247,32 @@ func EmitObject(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	}
 	b.WriteString("\t}\n\treturn nil\n}\n\n")
 	return nil
+}
+
+type requiredStringLiteral struct {
+	Property string
+	Value    string
+}
+
+func requiredStringLiterals(doc ir.Document, schemaName string) []requiredStringLiteral {
+	schema, ok := doc.Schemas[schemaName]
+	if !ok {
+		return nil
+	}
+	schema = ir.FlattenObjectSchema(doc, schema)
+	required := make(map[string]struct{}, len(schema.Required))
+	for _, property := range schema.Required {
+		required[property] = struct{}{}
+	}
+	literals := make([]requiredStringLiteral, 0)
+	for property, definition := range schema.Properties {
+		if _, ok := required[property]; !ok || !strings.EqualFold(strings.TrimSpace(definition.Schema.Type), "string") || len(definition.Schema.Enum) != 1 {
+			continue
+		}
+		literals = append(literals, requiredStringLiteral{Property: property, Value: definition.Schema.Enum[0]})
+	}
+	sort.Slice(literals, func(i, j int) bool { return literals[i].Property < literals[j].Property })
+	return literals
 }
 
 func isScalarUnionVariant(variant ir.SchemaRef) bool {

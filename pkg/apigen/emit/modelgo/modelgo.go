@@ -81,7 +81,9 @@ func emitSchema(b *strings.Builder, doc ir.Document, name string, schema ir.Sche
 	switch schema.Type {
 	case "union":
 		if schema.Discriminator == nil {
-			if isObjectUnion(doc, schema) {
+			if isArrayUnion(doc, schema) {
+				b.WriteString("type " + typeName + " []any\n\n")
+			} else if isObjectUnion(doc, schema) {
 				if err := gounion.EmitObject(b, doc, name, schema, resolveName); err != nil {
 					return err
 				}
@@ -175,11 +177,34 @@ func emitImports(b *strings.Builder, values map[string]string) {
 
 func hasUnion(doc ir.Document, names []string) bool {
 	for _, name := range names {
-		if doc.Schemas[name].Type == "union" && (doc.Schemas[name].Discriminator != nil || hasNonScalarUnionVariant(doc.Schemas[name])) {
+		if schema := doc.Schemas[name]; schema.Type == "union" && !isArrayUnion(doc, schema) && (schema.Discriminator != nil || hasNonScalarUnionVariant(schema)) {
 			return true
 		}
 	}
 	return false
+}
+
+func isArrayUnion(doc ir.Document, schema ir.Schema) bool {
+	if schema.Type != "union" || schema.Discriminator != nil || len(schema.OneOf) < 2 {
+		return false
+	}
+	for _, variant := range schema.OneOf {
+		if strings.EqualFold(strings.TrimSpace(variant.Type), "array") && variant.Items != nil {
+			continue
+		}
+		if variant.Ref == "" {
+			return false
+		}
+		name, ok := ir.NormalizedSchemaRefName(variant)
+		if !ok {
+			return false
+		}
+		candidate, ok := doc.Schemas[name]
+		if !ok || candidate.Type != "array" {
+			return false
+		}
+	}
+	return true
 }
 
 func hasObjectUnion(doc ir.Document, names []string) bool {

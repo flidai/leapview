@@ -240,6 +240,61 @@ describe("APIGen TypeSpec emitter", () => {
     `, "Invalid @apigen.minProperties usage");
   });
 
+  it("emits minimum and maximum array item constraints", async () => {
+    const doc = await compileSource(`
+      using Http;
+
+      @service(#{ title: "Array constraints" })
+      namespace ArrayConstraints;
+
+      @minItems(1)
+      @maxItems(4)
+      model Tags is string[];
+
+      model Payload {
+        @minItems(2)
+        @maxItems(5)
+        @apigen.uniqueItems
+        values: string[];
+        tags: Tags;
+      }
+
+      @route("/payload") @post
+      op create(@body body: Payload): Payload;
+    `);
+
+    expect(doc.schemas.Payload.properties.values.schema).toEqual({
+      type: "array",
+      items: { type: "string" },
+      min_items: 2,
+      max_items: 5,
+      unique_items: true,
+    });
+    expect(doc.schemas.Payload.properties.tags.schema).toEqual({
+      type: "array",
+      items: { type: "string" },
+      min_items: 1,
+      max_items: 4,
+    });
+  });
+
+  it("rejects uniqueItems on non-array properties", async () => {
+    await expectCompileFails(`
+      using Http;
+
+      @service(#{ title: "Invalid unique items" })
+      namespace InvalidUniqueItems;
+
+      model Payload {
+        @apigen.uniqueItems
+        value: string;
+      }
+
+      @route("/payload") @post
+      op create(@body body: Payload): Payload;
+    `, "Invalid @apigen.uniqueItems usage");
+  });
+
   it("rejects repeated property-name decoration", async () => {
     await expectCompileFails(`
       using Http;

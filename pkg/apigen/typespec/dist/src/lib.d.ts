@@ -41,6 +41,9 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
     "invalid-min-properties": {
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
+    "invalid-unique-items": {
+        readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
+    };
     "unnamed-schema": {
         readonly default: import("@typespec/compiler").CallableMessage<["context"]>;
     };
@@ -48,7 +51,7 @@ export declare const $lib: import("@typespec/compiler").TypeSpecLibrary<{
         readonly default: "The APIGen emitter option 'output-file' is required.";
     };
 }, Record<string, any>, never>;
-export declare const reportDiagnostic: <C extends "invalid-command" | "invalid-extension-key" | "invalid-extension-value" | "invalid-min-properties" | "invalid-operation-kind" | "invalid-property-names" | "missing-output-file" | "multiple-services" | "reserved-extension" | "unnamed-schema" | "unsupported-auth" | "unsupported-cookie" | "unsupported-response-content" | "unsupported-response-status" | "unsupported-shared-route" | "unsupported-type", M extends keyof {
+export declare const reportDiagnostic: <C extends "invalid-command" | "invalid-extension-key" | "invalid-extension-value" | "invalid-min-properties" | "invalid-operation-kind" | "invalid-property-names" | "invalid-unique-items" | "missing-output-file" | "multiple-services" | "reserved-extension" | "unnamed-schema" | "unsupported-auth" | "unsupported-cookie" | "unsupported-response-content" | "unsupported-response-status" | "unsupported-shared-route" | "unsupported-type", M extends keyof {
     "unsupported-type": {
         readonly default: import("@typespec/compiler").CallableMessage<["kind", "context"]>;
     };
@@ -89,6 +92,9 @@ export declare const reportDiagnostic: <C extends "invalid-command" | "invalid-e
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "invalid-min-properties": {
+        readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
+    };
+    "invalid-unique-items": {
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "unnamed-schema": {
@@ -138,6 +144,9 @@ export declare const reportDiagnostic: <C extends "invalid-command" | "invalid-e
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "invalid-min-properties": {
+        readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
+    };
+    "invalid-unique-items": {
         readonly default: import("@typespec/compiler").CallableMessage<["reason"]>;
     };
     "unnamed-schema": {

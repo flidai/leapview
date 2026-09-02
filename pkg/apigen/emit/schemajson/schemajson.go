@@ -47,6 +47,15 @@ func schemaRef(doc ir.Document, ref ir.SchemaRef, active map[string]bool) map[st
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
 	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
+	}
+	if ref.UniqueItems {
+		out["uniqueItems"] = true
+	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties
 	}
@@ -90,6 +99,15 @@ func applySchemaRefConstraints(doc ir.Document, out map[string]any, ref ir.Schem
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
+	}
+	if ref.UniqueItems {
+		out["uniqueItems"] = true
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties

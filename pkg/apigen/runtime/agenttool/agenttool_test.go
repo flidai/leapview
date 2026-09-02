@@ -96,6 +96,26 @@ func TestBuildRequestValidatesNestedSchemasRangesAndTrailingJSON(t *testing.T) {
 	require.ErrorContains(t, err, "trailing JSON")
 }
 
+func TestBuildRequestValidatesArrayBoundsAndUniqueness(t *testing.T) {
+	minItems, maxItems := 1, 2
+	contract := Contract{
+		Name: "query", Method: http.MethodGet, Path: "/query",
+		InputSchema: json.RawMessage(`{"type":"object","properties":{"tags":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":2,"uniqueItems":true}},"additionalProperties":false}`),
+		Bindings: []Binding{{Argument: "tags", Source: "query", WireName: "tag", Mode: "model", Explode: true, Schema: ValueSchema{
+			Type: "array", Items: &ValueSchema{Type: "string"}, MinItems: &minItems, MaxItems: &maxItems, UniqueItems: true,
+		}}},
+	}
+
+	for _, input := range []string{`{"tags":[]}`, `{"tags":["one","one"]}`, `{"tags":["one","two","three"]}`} {
+		if _, err := BuildRequest(contract, json.RawMessage(input), nil); err == nil {
+			t.Fatalf("invalid array accepted: %s", input)
+		}
+	}
+	request, err := BuildRequest(contract, json.RawMessage(`{"tags":["one","two"]}`), nil)
+	require.NoError(t, err)
+	require.Equal(t, []string{"one", "two"}, request.URL.Query()["tag"])
+}
+
 func TestProjectResponseProjectsArraysMapsCountsAndCursor(t *testing.T) {
 	contract := Contract{
 		Name: "query_page",

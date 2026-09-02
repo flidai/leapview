@@ -1,7 +1,7 @@
-import { getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getPattern, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
+import { getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxItems, getMaxLength, getMaxValue, getMinItems, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getPattern, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
-import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getMinProperties, getNamedFailures, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
+import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getMinProperties, getUniqueItems, getNamedFailures, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
 import { reportDiagnostic } from "./lib.js";
 import { discoverHttpServices } from "./phase-discovery.js";
 import { emitDocumentFile } from "./phase-emission.js";
@@ -30,7 +30,10 @@ class IRBuilder {
     schemaRef(type, context) {
         if (type.kind === "Model") {
             if (isArrayModelType(type)) {
-                return { type: "array", items: this.schemaRef(type.indexer.value, `${context} items`) };
+                return withSchemaConstraints(this.program, type, {
+                    type: "array",
+                    items: this.schemaRef(type.indexer.value, `${context} items`),
+                });
             }
             if (isRecordModelType(type)) {
                 return {
@@ -336,6 +339,9 @@ class IRBuilder {
         const minProperties = getMinProperties({ program: this.program }, property);
         if (minProperties !== undefined) {
             schema.min_properties = minProperties;
+        }
+        if (getUniqueItems({ program: this.program }, property)) {
+            schema.unique_items = true;
         }
         const schemaProperty = {
             schema,
@@ -1620,6 +1626,8 @@ function withSchemaConstraints(program, target, schema) {
     const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
     const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
     const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+    const minItems = firstSchemaConstraint(candidates, (candidate) => getMinItems(program, candidate));
+    const maxItems = firstSchemaConstraint(candidates, (candidate) => getMaxItems(program, candidate));
     const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
     return prune({
         ...schema,
@@ -1627,6 +1635,8 @@ function withSchemaConstraints(program, target, schema) {
         maximum,
         min_length: minLength,
         max_length: maxLength,
+        min_items: minItems,
+        max_items: maxItems,
         pattern,
     });
 }

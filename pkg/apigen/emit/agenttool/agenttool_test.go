@@ -83,6 +83,37 @@ func TestBuildCompilesEndpointToolContract(t *testing.T) {
 	require.Equal(t, false, inputSchema["additionalProperties"])
 }
 
+func TestBuildPreservesArrayItemConstraints(t *testing.T) {
+	minItems, maxItems := 1, 4
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/"},
+		Info:          ir.Info{Title: "Tools", Version: "1"},
+		Endpoints: []ir.Endpoint{{
+			Method: "get", Path: "/items", OperationID: "listItems",
+			Parameters: []ir.Parameter{{Name: "tags", In: "query", Schema: ir.SchemaRef{
+				Type: "array", Items: &ir.SchemaRef{Type: "string"}, MinItems: &minItems, MaxItems: &maxItems, UniqueItems: true,
+			}}},
+			Responses: []ir.Response{{StatusCode: 200, Description: "ok"}},
+			Tool:      &ir.Tool{Name: "list_items", Effect: "read", Confirmation: "never", Input: &ir.ToolInput{Fields: []ir.ToolInputField{{Source: "query", Name: "tags"}}}},
+		}},
+	}
+
+	contracts, err := Build(doc)
+	require.NoError(t, err)
+	contract := contracts["list_items"]
+	require.Len(t, contract.Bindings, 1)
+	require.Equal(t, minItems, *contract.Bindings[0].Schema.MinItems)
+	require.Equal(t, maxItems, *contract.Bindings[0].Schema.MaxItems)
+	require.True(t, contract.Bindings[0].Schema.UniqueItems)
+	var schema map[string]any
+	require.NoError(t, json.Unmarshal(contract.InputSchema, &schema))
+	tags := schema["properties"].(map[string]any)["tags"].(map[string]any)
+	require.EqualValues(t, minItems, tags["minItems"])
+	require.EqualValues(t, maxItems, tags["maxItems"])
+	require.Equal(t, true, tags["uniqueItems"])
+}
+
 func TestBuildEmitsUnconstrainedSchemasWithoutEmptyTypes(t *testing.T) {
 	unknown := ir.SchemaRef{}
 	doc := ir.Document{

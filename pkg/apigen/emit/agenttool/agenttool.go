@@ -235,7 +235,11 @@ func projectionKind(doc ir.Document, ref ir.SchemaRef) (string, ir.SchemaRef) {
 
 func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
 	if schema, ok := concreteSchema(doc, ref); ok {
-		result := runtime.ValueSchema{Type: schema.Type, Enum: append([]string(nil), schema.Enum...)}
+		result := runtime.ValueSchema{
+			Type: schema.Type, Enum: append([]string(nil), schema.Enum...),
+			Minimum: ref.Minimum, Maximum: ref.Maximum, MinLength: ref.MinLength, MaxLength: ref.MaxLength,
+			MinItems: ref.MinItems, MaxItems: ref.MaxItems, UniqueItems: ref.UniqueItems,
+		}
 		if schema.Items != nil {
 			item := valueSchema(doc, *schema.Items)
 			result.Items = &item
@@ -245,6 +249,7 @@ func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
 	result := runtime.ValueSchema{
 		Type: ref.Type, Format: ref.Format, Enum: append([]string(nil), ref.Enum...),
 		Minimum: ref.Minimum, Maximum: ref.Maximum, MinLength: ref.MinLength, MaxLength: ref.MaxLength,
+		MinItems: ref.MinItems, MaxItems: ref.MaxItems, UniqueItems: ref.UniqueItems,
 		AdditionalProperties: ref.AdditionalProperties != nil,
 	}
 	if ref.Items != nil {
@@ -284,6 +289,15 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
+	}
+	if ref.UniqueItems {
+		out["uniqueItems"] = true
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties
@@ -411,6 +425,15 @@ func valueSchemaJSON(schema runtime.ValueSchema) map[string]any {
 	}
 	if schema.MaxLength != nil {
 		out["maxLength"] = *schema.MaxLength
+	}
+	if schema.MinItems != nil {
+		out["minItems"] = *schema.MinItems
+	}
+	if schema.MaxItems != nil {
+		out["maxItems"] = *schema.MaxItems
+	}
+	if schema.UniqueItems {
+		out["uniqueItems"] = true
 	}
 	if schema.Items != nil {
 		out["items"] = valueSchemaJSON(*schema.Items)

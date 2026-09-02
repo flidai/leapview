@@ -90,6 +90,9 @@ type ValueSchema struct {
 	Maximum              *float64     `json:"maximum,omitempty"`
 	MinLength            *int         `json:"min_length,omitempty"`
 	MaxLength            *int         `json:"max_length,omitempty"`
+	MinItems             *int         `json:"min_items,omitempty"`
+	MaxItems             *int         `json:"max_items,omitempty"`
+	UniqueItems          bool         `json:"unique_items,omitempty"`
 	Items                *ValueSchema `json:"items,omitempty"`
 	AdditionalProperties bool         `json:"additional_properties,omitempty"`
 }

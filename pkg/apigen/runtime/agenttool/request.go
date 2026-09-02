@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"reflect"
 	"strconv"
 	"strings"
 )
@@ -209,6 +210,21 @@ func matchesSchema(value any, schema ValueSchema) bool {
 		items, ok := value.([]any)
 		if !ok {
 			return false
+		}
+		if schema.MinItems != nil && len(items) < *schema.MinItems {
+			return false
+		}
+		if schema.MaxItems != nil && len(items) > *schema.MaxItems {
+			return false
+		}
+		if schema.UniqueItems {
+			for index := range items {
+				for previous := 0; previous < index; previous++ {
+					if reflect.DeepEqual(items[index], items[previous]) {
+						return false
+					}
+				}
+			}
 		}
 		if schema.Items != nil {
 			for _, item := range items {

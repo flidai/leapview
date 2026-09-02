@@ -341,6 +341,9 @@ type SchemaRef struct {
 	Maximum              *float64              `json:"maximum,omitempty"`
 	MinLength            *int                  `json:"min_length,omitempty"`
 	MaxLength            *int                  `json:"max_length,omitempty"`
+	MinItems             *int                  `json:"min_items,omitempty"`
+	MaxItems             *int                  `json:"max_items,omitempty"`
+	UniqueItems          bool                  `json:"unique_items,omitempty"`
 	MinProperties        *int                  `json:"min_properties,omitempty"`
 	Pattern              string                `json:"pattern,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`
