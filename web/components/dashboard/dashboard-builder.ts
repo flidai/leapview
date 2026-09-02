@@ -1262,9 +1262,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     .page-tab[aria-selected='true'],
     .page-tab[aria-current='page'] {
-      border-color: var(--lv-fg-accent);
-      color: var(--lv-fg-accent);
-      background: var(--lv-bg-accent-muted);
+      border-color: var(--lv-line-muted);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel);
       font-weight: var(--base-text-weight-semibold);
       box-shadow: inset 0 -2px 0 var(--lv-fg-accent);
     }
