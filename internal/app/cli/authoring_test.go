@@ -15,33 +15,26 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestProjectIdentityUsesCanonicalGraphID(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "leapview.yaml")
-	if err := os.WriteFile(path, []byte(`apiVersion: leapview.dev/v1
-kind: Project
-metadata:
-  id: project:canonical
-  name: executable-name
-spec:
-  connections: {include: []}
-  sources: {include: []}
-  models: {include: []}
-  semanticModels: {include: []}
-  pipelines: {include: []}
-  dashboards: {include: []}
-  access: {include: []}
-  publications: {include: []}
+func TestProjectIdentityUsesSynthesizedSourceRootID(t *testing.T) {
+	root := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(root, "connections"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, "connections", "warehouse.yaml"), []byte(`apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
 `), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	got, err := loadProjectID(path)
+	got, err := loadProjectID(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "project:canonical" {
-		t.Fatalf("project identity = %q, want graph ID project:canonical", got)
+	if got != "project:source-root" {
+		t.Fatalf("project identity = %q, want synthesized graph ID project:source-root", got)
 	}
-	identity, err := (applicationProjectIdentity{}).ProjectID(path)
+	identity, err := (applicationProjectIdentity{}).ProjectID(root)
 	if err != nil {
 		t.Fatal(err)
 	}
