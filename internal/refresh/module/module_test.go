@@ -31,7 +31,7 @@ import (
 )
 
 type generatedRefreshAPI interface {
-	CreateRefreshRun(http.ResponseWriter, *http.Request, string)
+	CreateRefreshRun(http.ResponseWriter, *http.Request, string, string)
 	ListRefreshRuns(http.ResponseWriter, *http.Request, string)
 	GetRefreshRun(http.ResponseWriter, *http.Request, string, string)
 	CancelRefreshRun(http.ResponseWriter, *http.Request, string, string)

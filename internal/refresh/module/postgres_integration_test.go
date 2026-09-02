@@ -503,6 +503,144 @@ func TestPostgresConcreteCancelAuditWriterCallerTransaction(t *testing.T) {
 	}
 }
 
+func TestPostgresKeyedRefreshAdmissionReplayConflictsAndAtomicRollback(t *testing.T) {
+	db := concreteModulePostgresDB(t)
+	refreshRepo := refreshpostgres.New(db)
+	jobsRepo := jobspostgres.New(db)
+	queue := NewPostgresJobsAdapter(jobsRepo, refreshRepo)
+	auditWriter, err := refreshcomposition.NewPostgresCancelAuditWriterAdapter(accesspostgres.New())
+	if err != nil {
+		t.Fatal(err)
+	}
+	persistence, err := NewPostgresPersistence(refreshRepo, PostgresPersistenceConfig{
+		PublicationIdentityResolver: staticPublicationIdentityResolver("pool-keyed", "catalog-keyed"),
+		SchedulerOwner:              "scheduler-keyed",
+		Jobs:                        queue,
+		CanonicalVerifier:           integrationCanonicalVerifier{physicalPoolID: "pool-keyed", catalogID: "catalog-keyed"},
+		CancelAuditWriter:           integrationAuditWriter{},
+		CreateAuditWriter:           auditWriter,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	identity := projectgraph.ServingIdentity{ProjectID: "project-keyed", Environment: "prod", GenerationID: "generation-keyed"}
+	plan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline-plan-keyed", PipelineID: "pipeline-keyed", ProjectID: identity.ProjectID.String(), Environment: identity.Environment,
+		SemanticModelID: "semantic-keyed", ServingGenerationID: identity.GenerationID,
+		ArtifactDigest: digest('a'), SelectionDigest: digest('b'), MaterializationScope: []string{"model-keyed"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	audit := &access.AuditIntent{
+		EventID: digest('1'), Source: "refresh", Operation: "create_refresh_run", PrincipalID: "",
+		Action: "refresh.queued", ResourceKind: "project", ResourceID: identity.ProjectID.String(),
+		Capability: access.CapabilityResourceUse, Outcome: "success", RequestID: "request-keyed", CorrelationID: "correlation-keyed",
+		AggregateKey: "project:" + identity.ProjectID.String(), MetadataJSON: `{}`,
+	}
+	root := refreshrun.RunInput{
+		RunID: "run-keyed", Identity: identity, SemanticModelID: "semantic-keyed", PipelineID: "pipeline-keyed", PipelinePlan: &plan,
+		InvocationSource: "manual", PrincipalID: "principal:keyed", EstimatedMemoryBytes: 1,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline-keyed", TriggerType: refreshrun.TriggerManual,
+		JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`, AuditIntent: audit,
+	}
+	tree := refreshrun.RunTreeInput{Root: root, DependencyTargets: []projectgraph.ResourceID{"model-keyed"}, IdempotencyKey: "keyed-refresh", RequestDigest: digest('c')}
+	first, firstChildren, err := persistence.Runs.CreateRunTree(t.Context(), tree)
+	if err != nil {
+		t.Fatalf("first keyed admission: %v", err)
+	}
+	if first.ID != root.RunID || len(firstChildren) != 1 {
+		t.Fatalf("first tree root/children = %q/%d, want %q/1", first.ID, len(firstChildren), root.RunID)
+	}
+	replay, replayChildren, err := persistence.Runs.CreateRunTree(t.Context(), tree)
+	if err != nil {
+		t.Fatalf("keyed replay: %v", err)
+	}
+	if replay.ID != first.ID || len(replayChildren) != len(firstChildren) || replayChildren[0].ID != firstChildren[0].ID {
+		t.Fatalf("replay tree = %q/%v, want root/child %q/%q", replay.ID, replayChildren, first.ID, firstChildren[0].ID)
+	}
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
+
+	conflict := tree
+	conflict.RequestDigest = digest('d')
+	if _, _, err := persistence.Runs.CreateRunTree(t.Context(), conflict); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("same key with changed digest error = %v, want conflict", err)
+	}
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, identity.ProjectID.String(), first.ID, tree.IdempotencyKey, 2, 1, 1, 1, 1)
+
+	if _, _, err := refreshRepo.ReserveOperation(t.Context(), refreshpostgres.OperationInput{
+		ProjectID: identity.ProjectID.String(), Environment: identity.Environment, IdempotencyKey: tree.IdempotencyKey,
+		RequestDigest: tree.RequestDigest, OperationType: "other_operation", OwnerID: root.PrincipalID, Lease: time.Minute,
+	}); !errors.Is(err, refreshpostgres.ErrConflict) {
+		t.Fatalf("same key with changed operation type error = %v, want conflict", err)
+	}
+
+	rollbackIdentity := projectgraph.ServingIdentity{ProjectID: "project-keyed-rollback", Environment: "prod", GenerationID: "generation-keyed-rollback"}
+	rollbackPlan, err := deployment.NewPipelinePlan(deployment.PipelinePlan{
+		ID: "pipeline-plan-keyed-rollback", PipelineID: "pipeline-keyed-rollback", ProjectID: rollbackIdentity.ProjectID.String(), Environment: rollbackIdentity.Environment,
+		SemanticModelID: "semantic-keyed-rollback", ServingGenerationID: rollbackIdentity.GenerationID,
+		ArtifactDigest: digest('e'), SelectionDigest: digest('f'), MaterializationScope: []string{"model-keyed-rollback"}, InvocationSource: "manual",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	badAudit := *audit
+	badAudit.EventID = "not-a-uuid"
+	rollbackRoot := refreshrun.RunInput{
+		RunID: "run-keyed-rollback", Identity: rollbackIdentity, SemanticModelID: "semantic-keyed-rollback", PipelineID: "pipeline-keyed-rollback", PipelinePlan: &rollbackPlan,
+		InvocationSource: "manual", PrincipalID: "principal:keyed-rollback", EstimatedMemoryBytes: 1,
+		TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline-keyed-rollback", TriggerType: refreshrun.TriggerManual,
+		JobKind: refreshrun.JobKindRefreshPipeline, PayloadJSON: `{}`, AuditIntent: &badAudit,
+	}
+	rollbackTree := refreshrun.RunTreeInput{Root: rollbackRoot, IdempotencyKey: "keyed-refresh-rollback", RequestDigest: digest('0')}
+	if _, _, err := persistence.Runs.CreateRunTree(t.Context(), rollbackTree); err == nil {
+		t.Fatal("audit callback failure unexpectedly committed keyed admission")
+	}
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackRoot.RunID, rollbackTree.IdempotencyKey, 0, 0, 0, 0, 0)
+	retryAudit := *audit
+	retryAudit.EventID = digest('2')
+	retryAudit.ResourceID = rollbackIdentity.ProjectID.String()
+	retryAudit.AggregateKey = "project:" + rollbackIdentity.ProjectID.String()
+	rollbackRoot.AuditIntent = &retryAudit
+	rollbackTree.Root = rollbackRoot
+	retried, _, err := persistence.Runs.CreateRunTree(t.Context(), rollbackTree)
+	if err != nil || retried.ID != rollbackRoot.RunID {
+		t.Fatalf("retry after callback rollback root=%#v err=%v", retried, err)
+	}
+	assertKeyedRefreshAdmissionCounts(t, db, jobsRepo, rollbackIdentity.ProjectID.String(), rollbackRoot.RunID, rollbackTree.IdempotencyKey, 1, 1, 1, 1, 1)
+}
+
+func assertKeyedRefreshAdmissionCounts(t *testing.T, db *pgxpool.Pool, jobsRepo *jobspostgres.Repository, projectID, runID, operationKey string, wantRuns, wantJobs, wantAudit, wantEvents, wantOperations int) {
+	t.Helper()
+	var runs, jobs, audits, operations int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.run WHERE project_id=$1 AND environment='prod'`, projectID).Scan(&runs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM jobs.job WHERE resource_kind='refresh_run' AND resource_id=$1`, runID).Scan(&jobs); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM audit.audit_event WHERE resource_id=$1 AND operation='create_refresh_run'`, projectID).Scan(&audits); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM refresh.operation WHERE project_id=$1 AND environment='prod' AND idempotency_key=$2`, projectID, operationKey).Scan(&operations); err != nil {
+		t.Fatal(err)
+	}
+	events, err := jobsRepo.ListEvents(t.Context(), "refresh", runID, 0, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	queued := 0
+	for _, event := range events {
+		if event.EventType == "refresh.queued" {
+			queued++
+		}
+	}
+	if runs != wantRuns || jobs != wantJobs || audits != wantAudit || queued != wantEvents || operations != wantOperations {
+		t.Fatalf("keyed admission counts runs/jobs/audit/events/operations=%d/%d/%d/%d/%d, want %d/%d/%d/%d/%d", runs, jobs, audits, queued, operations, wantRuns, wantJobs, wantAudit, wantEvents, wantOperations)
+	}
+}
+
 func TestPostgresPublicationIdentityUnavailableDoesNotWriteDataVersion(t *testing.T) {
 	db := modulePostgresTestDB(t)
 	refreshRepo := refreshpostgres.New(db)

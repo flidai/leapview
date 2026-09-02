@@ -365,7 +365,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: instanceID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, NativeFinalizer: nativeRefreshFinalizer, CancelAuditWriter: graph.RefreshCancelAudit})
+	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: instanceID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, NativeFinalizer: nativeRefreshFinalizer, CancelAuditWriter: graph.RefreshCancelAudit, CreateAuditWriter: graph.RefreshCancelAudit})
 	if err != nil {
 		return fail(fmt.Errorf("build refresh persistence: %w", err))
 	}

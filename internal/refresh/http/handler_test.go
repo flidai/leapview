@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	"github.com/go-chi/chi/v5"
@@ -93,9 +94,56 @@ func TestHandlerSeparatesPipelineVisibilityFromExecutionAuthorization(t *testing
 
 	createRequest := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh"}`)), map[string]string{"project": "sales"})
 	createResponse := httptest.NewRecorder()
-	handler.CreateRun(createResponse, createRequest, "sales")
+	handler.CreateRun(createResponse, createRequest, "sales", "")
 	if createResponse.Code != http.StatusNotFound || viewChecks != 1 || runChecks != 1 {
 		t.Fatalf("create response=%d viewChecks=%d runChecks=%d body=%s", createResponse.Code, viewChecks, runChecks, createResponse.Body.String())
+	}
+}
+
+func TestHandlerCreateRunPropagatesTypedIdempotencyKeyToQueueAndAudit(t *testing.T) {
+	identity := testIdentity()
+	var queuedKey string
+	var auditedRequestID string
+	var auditedCorrelationID string
+	handler := Handler{
+		Repository:      func() (refreshrun.RunRepository, error) { return &authorizationRunRepository{}, nil },
+		ServingIdentity: func(*http.Request) (projectgraph.ServingIdentity, error) { return identity, nil },
+		CurrentPrincipal: func(*http.Request) (Principal, bool) {
+			return Principal{ID: "principal"}, true
+		},
+		AuthorizePipelineRun: func(*http.Request, projectgraph.ServingIdentity, string) (bool, error) { return true, nil },
+		BuildAuditIntent: func(_ context.Context, _, _, _, requestID, correlationID string) (*access.AuditIntent, error) {
+			auditedRequestID, auditedCorrelationID = requestID, correlationID
+			return &access.AuditIntent{RequestID: requestID, CorrelationID: correlationID}, nil
+		},
+		QueuePipeline: func(ctx context.Context, gotIdentity projectgraph.ServingIdentity, pipelineID, principalID, idempotencyKey string) (refreshrun.RunRecord, error) {
+			queuedKey = idempotencyKey
+			if gotIdentity != identity || pipelineID != "sales-refresh" || principalID != "principal" {
+				t.Fatalf("queue identity/input = %#v/%q/%q, want %#v/sales-refresh/principal", gotIdentity, pipelineID, principalID, identity)
+			}
+			if intent, ok := refreshrun.AuditIntentFromContext(ctx); !ok || intent.RequestID != "typed-refresh-key" {
+				t.Fatalf("queued audit intent = %#v/%v, want typed request identity", intent, ok)
+			}
+			return refreshrun.RunRecord{
+				ID: "run-1", Identity: identity, SemanticModelID: "sales", PipelineID: "sales-refresh",
+				TargetType: refreshrun.TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: refreshrun.TriggerManual,
+				InvocationSource: refreshrun.TriggerManual, Status: refreshrun.RunStatusQueued, CreatedAt: "2026-07-19T06:00:00Z",
+			}, nil
+		},
+	}
+	request := withRouteParams(httptest.NewRequest(http.MethodPost, "/api/v1/projects/sales/refresh-runs", strings.NewReader(`{"pipelineId":"sales-refresh"}`)), map[string]string{"project": "sales"})
+	request.Header.Set("Idempotency-Key", "raw-header-that-must-not-win")
+	request.Header.Set("X-Correlation-ID", "typed-correlation")
+	response := httptest.NewRecorder()
+	handler.CreateRun(response, request, "sales", "typed-refresh-key")
+	if response.Code != http.StatusAccepted {
+		t.Fatalf("response=%d body=%s", response.Code, response.Body.String())
+	}
+	if queuedKey != "typed-refresh-key" {
+		t.Fatalf("queued idempotency key = %q, want typed-refresh-key", queuedKey)
+	}
+	if auditedRequestID != "typed-refresh-key" || auditedCorrelationID != "typed-correlation" {
+		t.Fatalf("audit request identity = (%q, %q), want (typed-refresh-key, typed-correlation)", auditedRequestID, auditedCorrelationID)
 	}
 }
 

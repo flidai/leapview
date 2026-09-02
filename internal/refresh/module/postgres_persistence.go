@@ -29,6 +29,13 @@ type PostgresQueueWriter interface {
 	EnqueueRefreshTx(context.Context, refreshpostgres.Tx, refreshrun.RunInput, string) (string, error)
 }
 
+// PostgresRefreshEventWriter appends the initial refresh lifecycle event in
+// the caller-owned transaction. Implementations are optional only for
+// legacy/non-native fixtures; native production composition supplies one.
+type PostgresRefreshEventWriter interface {
+	AppendRefreshQueuedEventTx(context.Context, refreshpostgres.Tx, string, string, string) error
+}
+
 // PostgresQueue is the module-owned queue capability. It intentionally
 // repeats the queue surface instead of exposing another package's repository
 // type from this public adapter configuration.
@@ -75,6 +82,12 @@ type PostgresCancelAuditWriter interface {
 	RecordRefreshCancelAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error
 }
 
+// PostgresRefreshAuditWriter records the generated create intent through the
+// same caller-owned transaction as operation/run admission.
+type PostgresRefreshAuditWriter interface {
+	RecordRefreshAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error
+}
+
 // PostgresPersistenceConfig supplies the transaction-aware physical
 // publication identity resolver. The refresh authority records the resolved
 // pair as provenance; it never accepts an unqualified snapshot-only data
@@ -92,6 +105,7 @@ type PostgresPersistenceConfig struct {
 	// required by production module admission; evaluation fixtures may omit it.
 	NativeFinalizer   PostgresNativeRefreshFinalizer
 	CancelAuditWriter PostgresCancelAuditWriter
+	CreateAuditWriter PostgresRefreshAuditWriter
 }
 
 // NewPostgresPersistence adapts the clean-slate PostgreSQL authority to the
@@ -134,7 +148,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 		return Persistence{}, err
 	}
 	return Persistence{
-		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, cancelAuditWriter: config.CancelAuditWriter},
+		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, cancelAuditWriter: config.CancelAuditWriter, createAuditWriter: config.CreateAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
 		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
 		TerminalRecovery: terminalRecovery, backend: backendPostgres, nativeRepository: repository,
@@ -307,6 +321,7 @@ type postgresRunPersistence struct {
 	repository        *refreshpostgres.Repository
 	jobs              PostgresJobsAuthority
 	cancelAuditWriter PostgresCancelAuditWriter
+	createAuditWriter PostgresRefreshAuditWriter
 }
 
 func (p *postgresRunPersistence) queueLifecycle() (PostgresQueueLifecycle, error) {
@@ -314,6 +329,55 @@ func (p *postgresRunPersistence) queueLifecycle() (PostgresQueueLifecycle, error
 		return nil, errors.New("canonical platform jobs queue is not configured")
 	}
 	return p.jobs, nil
+}
+
+// LookupIdempotentRun is the preflight replay fast-path for keyed native
+// commands. It reads only the operation scope/digest and linked run tree; a
+// missing operation is reported as a fresh admission, while a digest mismatch
+// remains a durable conflict.
+func (p *postgresRunPersistence) LookupIdempotentRun(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID projectgraph.ResourceID, key, digest string) (refreshrun.RunRecord, []refreshrun.RunRecord, bool, error) {
+	if p == nil || p.repository == nil {
+		return refreshrun.RunRecord{}, nil, false, errors.New("refresh PostgreSQL run persistence is unavailable")
+	}
+	op, err := p.repository.GetOperation(ctx, identity.ProjectID.String(), identity.Environment, key)
+	if errors.Is(err, refreshpostgres.ErrNotFound) {
+		return refreshrun.RunRecord{}, nil, false, nil
+	}
+	if err != nil {
+		return refreshrun.RunRecord{}, nil, false, err
+	}
+	if op.OperationType != "refresh_pipeline" || op.RequestDigest != digest {
+		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
+	}
+	if _, ok := op.SucceededRunID(); !ok {
+		// A pending reservation can only be observed after an interrupted
+		// transaction from an older producer. Let the final reserve classify it.
+		return refreshrun.RunRecord{}, nil, false, nil
+	}
+	root, err := p.repository.GetRun(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, op.RunID)
+	if err != nil {
+		return refreshrun.RunRecord{}, nil, false, err
+	}
+	if root.OperationID != op.OperationID || root.PipelineID != pipelineID.String() {
+		return refreshrun.RunRecord{}, nil, false, refreshpostgres.ErrConflict
+	}
+	children, err := p.repository.ListChildRuns(ctx, refreshpostgres.Scope{ProjectID: identity.ProjectID.String(), Environment: identity.Environment}, op.RunID, refreshpostgres.MaxPageSize)
+	if err != nil {
+		return refreshrun.RunRecord{}, nil, false, err
+	}
+	rootRecord, err := fromPostgresRun(root)
+	if err != nil {
+		return refreshrun.RunRecord{}, nil, false, err
+	}
+	childRecords := make([]refreshrun.RunRecord, 0, len(children))
+	for _, child := range children {
+		record, convertErr := fromPostgresRun(child)
+		if convertErr != nil {
+			return refreshrun.RunRecord{}, nil, false, convertErr
+		}
+		childRecords = append(childRecords, record)
+	}
+	return rootRecord, childRecords, true, nil
 }
 
 // CreateRunTree is the PostgreSQL atomic admission boundary used by
@@ -388,9 +452,69 @@ func (p *postgresRunPersistence) CreateRunTree(ctx context.Context, tree refresh
 	if tree.Occurrence != nil {
 		occurrenceID, owner, fence = tree.Occurrence.OccurrenceID, tree.Occurrence.LeaseOwner, tree.Occurrence.LeaseRevision
 	}
-	createdRoot, createdChildren, err := p.repository.CreateRunTreeWithSupersedeHook(ctx, root, childInputs, occurrenceID, owner, fence, createHook, supersedeHook)
-	if err != nil {
-		return refreshrun.RunRecord{}, nil, err
+	if tree.IdempotencyKey != "" && tree.RequestDigest == "" {
+		return refreshrun.RunRecord{}, nil, errors.New("refresh request digest is required with idempotency key")
+	}
+	if tree.IdempotencyKey != "" && rootInput.AuditIntent != nil && p.createAuditWriter == nil {
+		return refreshrun.RunRecord{}, nil, errors.New("refresh create audit writer is required")
+	}
+	if tree.IdempotencyKey != "" {
+		if _, ok := p.jobs.(PostgresRefreshEventWriter); !ok {
+			return refreshrun.RunRecord{}, nil, errors.New("refresh lifecycle event writer is required")
+		}
+	}
+	var createdRoot refreshpostgres.Run
+	var createdChildren []refreshpostgres.Run
+	var createErr error
+	if tree.IdempotencyKey != "" {
+		auditHook := func(hookCtx context.Context, tx refreshpostgres.Tx, created refreshpostgres.Run) error {
+			if p.createAuditWriter == nil || rootInput.AuditIntent == nil {
+				return nil
+			}
+			intent := *rootInput.AuditIntent
+			intent.RequestDigest = tree.RequestDigest
+			if intent.MetadataJSON != "" {
+				var metadata map[string]any
+				if json.Unmarshal([]byte(intent.MetadataJSON), &metadata) == nil {
+					metadata["id"] = created.RunID
+					metadata["pipelineId"] = created.PipelineID
+					metadata["semanticModel"] = created.SemanticModelID
+					metadata["invocationSource"] = created.InvocationSource
+					metadata["matchingScheduleIds"] = created.MatchingScheduleIDs
+					metadata["planDigest"] = created.PlanDigest
+					metadata["status"] = "queued"
+					if encoded, marshalErr := json.Marshal(metadata); marshalErr == nil {
+						intent.MetadataJSON = string(encoded)
+					}
+				}
+			}
+			return p.createAuditWriter.RecordRefreshAuditTx(hookCtx, tx, intent)
+		}
+		eventHook := func(hookCtx context.Context, tx refreshpostgres.Tx, created refreshpostgres.Run) error {
+			writer, ok := p.jobs.(PostgresRefreshEventWriter)
+			if !ok {
+				return nil
+			}
+			payload, marshalErr := json.Marshal(struct {
+				ID                  string   `json:"id"`
+				PipelineID          string   `json:"pipelineId"`
+				SemanticModel       string   `json:"semanticModel"`
+				InvocationSource    string   `json:"invocationSource"`
+				MatchingScheduleIDs []string `json:"matchingScheduleIds"`
+				PlanDigest          string   `json:"planDigest"`
+				Status              string   `json:"status"`
+			}{created.RunID, created.PipelineID, created.SemanticModelID, created.InvocationSource, created.MatchingScheduleIDs, created.PlanDigest, "queued"})
+			if marshalErr != nil {
+				return marshalErr
+			}
+			return writer.AppendRefreshQueuedEventTx(hookCtx, tx, created.RunID, string(payload), "refresh.queued")
+		}
+		createdRoot, createdChildren, _, createErr = p.repository.CreateRunTreeWithOperation(ctx, root, childInputs, occurrenceID, owner, fence, refreshpostgres.OperationInput{ProjectID: root.ProjectID, Environment: root.Environment, IdempotencyKey: tree.IdempotencyKey, RequestDigest: tree.RequestDigest, OperationType: "refresh_pipeline", OwnerID: root.PrincipalID, Lease: 2 * time.Minute}, createHook, supersedeHook, auditHook, eventHook)
+	} else {
+		createdRoot, createdChildren, createErr = p.repository.CreateRunTreeWithSupersedeHook(ctx, root, childInputs, occurrenceID, owner, fence, createHook, supersedeHook)
+	}
+	if createErr != nil {
+		return refreshrun.RunRecord{}, nil, createErr
 	}
 	rootRecord, err := fromPostgresRun(createdRoot)
 	if err != nil {

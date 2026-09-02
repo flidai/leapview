@@ -74,6 +74,105 @@ func seedRefreshJob(t *testing.T, db *pgxpool.Pool, id, runID, project, environm
 	}
 }
 
+func TestPostgresCreateRunTreeWithOperationReplayAndDigestConflict(t *testing.T) {
+	_, db := refreshTestDB(t)
+	r := New(db)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("a", 64)
+	seedRefreshJob(t, db, "native-op-job", "native-op-root", "native-op-project", "prod", "native-op-principal")
+	root := RunInput{RunID: "native-op-root", ProjectID: "native-op-project", Environment: "prod", GenerationID: "native-op-generation", PipelineID: "native-op-pipeline", SemanticModelID: "native-op-semantic", TargetType: "refresh_pipeline", TargetID: "native-op-pipeline", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "native-op-principal"}
+	child := RunInput{RunID: "native-op-child", ParentRunID: root.RunID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, SemanticModelID: root.SemanticModelID, TargetType: "model_table", TargetID: "native-op-model", TriggerType: "dependency", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: root.PrincipalID}
+	operation := OperationInput{ProjectID: root.ProjectID, Environment: root.Environment, IdempotencyKey: "native-op-key", RequestDigest: digest, OperationType: "refresh_pipeline", OwnerID: root.PrincipalID, Lease: time.Minute}
+	hookCalls, auditCalls, eventCalls := 0, 0, 0
+	hook := func(context.Context, Tx, Run) (string, error) { hookCalls++; return "native-op-job", nil }
+	audit := func(context.Context, Tx, Run) error { auditCalls++; return nil }
+	event := func(context.Context, Tx, Run) error { eventCalls++; return nil }
+	created, children, replay, err := r.CreateRunTreeWithOperation(ctx, root, []RunInput{child}, "", "", 0, operation, hook, nil, audit, event)
+	if err != nil || replay || created.RunID != root.RunID || len(children) != 1 {
+		t.Fatalf("first operation admission created=%#v children=%d replay=%v err=%v", created, len(children), replay, err)
+	}
+	if hookCalls != 1 || auditCalls != 1 || eventCalls != 1 {
+		t.Fatalf("first admission callbacks=%d/%d/%d, want one each", hookCalls, auditCalls, eventCalls)
+	}
+	createdReplay, childrenReplay, replay, err := r.CreateRunTreeWithOperation(ctx, root, []RunInput{child}, "", "", 0, operation, hook, nil, audit, event)
+	if err != nil || !replay || createdReplay.RunID != created.RunID || len(childrenReplay) != 1 {
+		t.Fatalf("replay created=%#v children=%d replay=%v err=%v", createdReplay, len(childrenReplay), replay, err)
+	}
+	if hookCalls != 1 || auditCalls != 1 || eventCalls != 1 {
+		t.Fatalf("replay callbacks=%d/%d/%d, want unchanged", hookCalls, auditCalls, eventCalls)
+	}
+	if _, _, replay, err := r.CreateRunTreeWithOperation(ctx, root, []RunInput{child}, "", "", 0, OperationInput{ProjectID: root.ProjectID, Environment: root.Environment, IdempotencyKey: operation.IdempotencyKey, RequestDigest: "sha256:" + strings.Repeat("b", 64), OperationType: operation.OperationType, OwnerID: operation.OwnerID, Lease: time.Minute}, hook, nil, audit, event); !errors.Is(err, ErrConflict) || replay {
+		t.Fatalf("digest conflict replay=%v err=%v, want conflict", replay, err)
+	}
+	if hookCalls != 1 || auditCalls != 1 || eventCalls != 1 {
+		t.Fatalf("conflict callbacks=%d/%d/%d, want unchanged", hookCalls, auditCalls, eventCalls)
+	}
+	var operationState, linkedRun string
+	if err := db.QueryRow(ctx, `SELECT state,run_id FROM refresh.operation WHERE project_id=$1 AND environment=$2 AND idempotency_key=$3`, root.ProjectID, root.Environment, operation.IdempotencyKey).Scan(&operationState, &linkedRun); err != nil {
+		t.Fatal(err)
+	}
+	if operationState != "succeeded" || linkedRun != created.RunID {
+		t.Fatalf("operation state/run=%s/%s, want succeeded/%s", operationState, linkedRun, created.RunID)
+	}
+}
+
+func TestPostgresCreateRunTreeWithOperationRollbackLeavesNoAdmission(t *testing.T) {
+	_, db := refreshTestDB(t)
+	r := New(db)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("c", 64)
+	seedRefreshJob(t, db, "native-rollback-job", "native-rollback-root", "native-rollback-project", "prod", "native-rollback-principal")
+	root := RunInput{RunID: "native-rollback-root", ProjectID: "native-rollback-project", Environment: "prod", GenerationID: "native-rollback-generation", PipelineID: "native-rollback-pipeline", SemanticModelID: "native-rollback-semantic", TargetType: "refresh_pipeline", TargetID: "native-rollback-pipeline", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "native-rollback-principal"}
+	operation := OperationInput{ProjectID: root.ProjectID, Environment: root.Environment, IdempotencyKey: "native-rollback-key", RequestDigest: digest, OperationType: "refresh_pipeline", OwnerID: root.PrincipalID, Lease: time.Minute}
+	_, _, _, err := r.CreateRunTreeWithOperation(ctx, root, nil, "", "", 0, operation,
+		func(context.Context, Tx, Run) (string, error) { return "native-rollback-job", nil }, nil,
+		func(context.Context, Tx, Run) error { return errors.New("audit failed") }, nil)
+	if err == nil {
+		t.Fatal("rollback admission error = nil")
+	}
+	var runCount, operationCount int
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM refresh.run WHERE run_id=$1`, root.RunID).Scan(&runCount); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(ctx, `SELECT count(*) FROM refresh.operation WHERE project_id=$1 AND idempotency_key=$2`, root.ProjectID, operation.IdempotencyKey).Scan(&operationCount); err != nil {
+		t.Fatal(err)
+	}
+	if runCount != 0 || operationCount != 0 {
+		t.Fatalf("rollback left run/operation rows=%d/%d", runCount, operationCount)
+	}
+}
+
+func TestPostgresOperationRunLinkRejectsCrossScope(t *testing.T) {
+	_, db := refreshTestDB(t)
+	r := New(db)
+	ctx := t.Context()
+	digest := "sha256:" + strings.Repeat("d", 64)
+	seedRefreshJob(t, db, "cross-scope-job", "cross-scope-run", "run-project", "prod", "cross-scope-principal")
+	if _, err := r.CreateRun(ctx, RunInput{
+		RunID: "cross-scope-run", ProjectID: "run-project", Environment: "prod", GenerationID: "cross-scope-generation",
+		PipelineID: "cross-scope-pipeline", SemanticModelID: "cross-scope-semantic", TargetType: "refresh_pipeline", TargetID: "cross-scope-pipeline",
+		TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest,
+		PrincipalID: "cross-scope-principal", JobID: "cross-scope-job",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	tx, err := db.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	operation, _, err := r.ReserveOperationTx(ctx, tx, OperationInput{
+		ProjectID: "operation-project", Environment: "prod", IdempotencyKey: "cross-scope-key",
+		RequestDigest: digest, OperationType: "refresh_pipeline", OwnerID: "cross-scope-principal", Lease: time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.SetOperationRunTx(ctx, tx, operation.OperationID, "cross-scope-run"); !errors.Is(err, ErrConflict) {
+		t.Fatalf("cross-scope operation/run link error = %v, want conflict", err)
+	}
+}
+
 func TestPostgresRefreshSchemaRollbackAndRoleBoundary(t *testing.T) {
 	h := postgrestest.Start(t)
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "refresh_runtime_password", Login: true})

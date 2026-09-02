@@ -145,6 +145,21 @@ func (a *PostgresJobsAdapter) EnqueueRefreshTx(ctx context.Context, tx refreshpo
 	return jobID, nil
 }
 
+// AppendRefreshQueuedEventTx records the initial refresh lifecycle event in
+// the canonical jobs event log through the admission transaction. The caller
+// invokes this only after a fresh operation reservation, so keyed replays do
+// not append duplicate events.
+func (a *PostgresJobsAdapter) AppendRefreshQueuedEventTx(ctx context.Context, tx refreshpostgres.Tx, runID, payload, eventType string) error {
+	if a == nil || a.Jobs == nil {
+		return errors.New("canonical PostgreSQL jobs repository is required")
+	}
+	if tx == nil || runID == "" || eventType == "" {
+		return errors.New("refresh event transaction, run id and event type are required")
+	}
+	_, err := a.Jobs.AppendEventTx(ctx, tx, "refresh", runID, eventType, []byte(payload))
+	return err
+}
+
 func (a *PostgresJobsAdapter) ListExecutableJobs(ctx context.Context, scope refreshrun.ReadScope, limit int) ([]refreshrun.JobRecord, error) {
 	if a == nil || a.Jobs == nil || a.Refresh == nil {
 		return nil, errors.New("canonical PostgreSQL jobs and refresh repositories are required")

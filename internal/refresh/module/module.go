@@ -20,6 +20,7 @@ import (
 	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -33,6 +34,13 @@ type Dispatcher interface {
 
 type Scheduler interface {
 	DispatchDue(context.Context) error
+}
+
+func classifyQueueAdmissionError(err error) error {
+	if errors.Is(err, refreshpostgres.ErrConflict) {
+		return refreshrun.ErrInvocationConflict
+	}
+	return err
 }
 
 // PublishedDataVersion is the durable data snapshot established by the
@@ -203,7 +211,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		return authorizePipeline(r, identity, pipelineID, access.CapabilityResourceUse, config.Authorization)
 	}
 	m.handler.RunCreated = m.verifyRunCreated
-	if config.AuditIntentRecorder != nil {
+	// Native PostgreSQL admission records generated create audit intents
+	// through its transaction-aware persistence writer; it does not expose the
+	// database/sql recorder used by the legacy SQLite outbox.
+	if config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.isPostgres()) {
 		m.handler.BuildAuditIntent = buildRefreshAuditIntent
 	}
 	if config.Persistence == nil {
@@ -281,7 +292,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.handler.Repository = func() (refreshrun.RunRepository, error) { return m.runs, nil }
 	m.handler.DispatchQueued = func() { m.Dispatch(context.Background()) }
-	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID string) (refreshrun.RunRecord, error) {
+	m.handler.QueuePipeline = func(ctx context.Context, identity projectgraph.ServingIdentity, pipelineID, principalID, idempotencyKey string) (refreshrun.RunRecord, error) {
 		pipelineIDValue, parseErr := projectgraph.NewResourceID(pipelineID)
 		if parseErr != nil {
 			return refreshrun.RunRecord{}, parseErr
@@ -293,9 +304,10 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		result, err := m.service.QueuePipelineRefresh(ctx, refreshrun.QueuePipelineInput{
 			Identity: identity, PrincipalID: principalID, EstimatedMemoryBytes: 1,
 			PipelineID: pipelineIDValue, TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual,
-			AuditIntent: intent,
+			AuditIntent: intent, IdempotencyKey: idempotencyKey,
 		})
 		if err != nil {
+			err = classifyQueueAdmissionError(err)
 			m.logger.ErrorContext(ctx, "queue refresh pipeline failed",
 				slog.String("project_id", identity.ProjectID.String()),
 				slog.String("serving_state_id", identity.GenerationID),

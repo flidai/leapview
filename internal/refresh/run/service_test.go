@@ -287,6 +287,142 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 	}
 }
 
+func TestServiceQueuePipelineRefreshTerminalReplayBypassesPreflight(t *testing.T) {
+	repo := newFakeRepo()
+	replayedIdentity := serviceIdentity
+	replayedIdentity.GenerationID = "dep_original"
+	wantRoot := RunRecord{
+		ID:              "run_original",
+		Identity:        replayedIdentity,
+		PipelineID:      "sales-refresh",
+		TargetType:      TargetRefreshPipeline,
+		TargetID:        "sales-refresh",
+		TriggerType:     TriggerManual,
+		Status:          RunStatusSucceeded,
+		PrincipalID:     "principal",
+		SemanticModelID: "sales",
+	}
+	wantChildren := []RunRecord{{
+		ID:          "run_original_child",
+		Identity:    replayedIdentity,
+		PipelineID:  "sales-refresh",
+		TargetType:  TargetModelTable,
+		TargetID:    "customers",
+		TriggerType: TriggerDependency,
+		Status:      RunStatusSucceeded,
+		ParentRunID: wantRoot.ID,
+	}}
+	repo.idempotentRoot = wantRoot
+	repo.idempotentChildren = wantChildren
+	repo.idempotentReplay = true
+	artifactLoads := 0
+	activeResolves := 0
+	targetRevisionResolves := 0
+	sourceDigestResolves := 0
+	service := Service{
+		ServingStates: repo,
+		Runs:          repo,
+		Artifacts:     countingArtifactLoader{calls: &artifactLoads},
+		ResolveActive: func(context.Context, projectgraph.ServingIdentity) (ServingState, error) {
+			activeResolves++
+			return ServingState{}, errors.New("unexpected active preflight")
+		},
+		ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) {
+			targetRevisionResolves++
+			return 1, nil
+		},
+		ResolveSourceDigest: func(context.Context, projectgraph.ServingIdentity) (string, error) {
+			sourceDigestResolves++
+			return "sha256:" + strings.Repeat("c", 64), nil
+		},
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{}, errors.New("unexpected canonical preflight")
+		},
+		Publisher: &fakePublisher{},
+	}
+
+	got, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity:             serviceIdentity,
+		PrincipalID:          "principal",
+		EstimatedMemoryBytes: 1,
+		PipelineID:           "sales-refresh",
+		TriggerType:          TriggerManual,
+		IdempotencyKey:       "terminal-replay",
+	})
+	if err != nil {
+		t.Fatalf("QueuePipelineRefresh() error = %v", err)
+	}
+	if !reflect.DeepEqual(got.Run, wantRoot) || !reflect.DeepEqual(got.DependencyRuns, wantChildren) {
+		t.Fatalf("replayed result = %#v/%#v, want %#v/%#v", got.Run, got.DependencyRuns, wantRoot, wantChildren)
+	}
+	if got.ServingStateID != "dep_original" {
+		t.Fatalf("replayed serving state = %q, want original generation dep_original", got.ServingStateID)
+	}
+	if repo.idempotentLookupCalls != 1 {
+		t.Fatalf("idempotent lookup calls = %d, want 1", repo.idempotentLookupCalls)
+	}
+	if artifactLoads != 0 || activeResolves != 0 || targetRevisionResolves != 0 || sourceDigestResolves != 0 {
+		t.Fatalf("preflight calls = active:%d targetRevision:%d sourceDigest:%d artifact:%d, want all zero", activeResolves, targetRevisionResolves, sourceDigestResolves, artifactLoads)
+	}
+	if len(repo.createdRuns) != 0 {
+		t.Fatalf("created runs = %#v, want none on replay", repo.createdRuns)
+	}
+	if publisher, ok := service.Publisher.(*fakePublisher); !ok || len(publisher.targets) != 0 {
+		t.Fatalf("publish callbacks = %#v, want none on replay", publisher)
+	}
+}
+
+func TestServiceQueuePipelineRefreshIdempotencyConflictBypassesPreflight(t *testing.T) {
+	repo := newFakeRepo()
+	wantErr := errors.New("idempotency digest conflict")
+	repo.idempotentErr = wantErr
+	artifactLoads := 0
+	activeResolves := 0
+	targetRevisionResolves := 0
+	sourceDigestResolves := 0
+	service := Service{
+		ServingStates: repo,
+		Runs:          repo,
+		Artifacts:     countingArtifactLoader{calls: &artifactLoads},
+		ResolveActive: func(context.Context, projectgraph.ServingIdentity) (ServingState, error) {
+			activeResolves++
+			return ServingState{}, errors.New("unexpected active preflight")
+		},
+		ResolveTargetRevision: func(context.Context, projectgraph.ServingIdentity) (int64, error) {
+			targetRevisionResolves++
+			return 1, nil
+		},
+		ResolveSourceDigest: func(context.Context, projectgraph.ServingIdentity) (string, error) {
+			sourceDigestResolves++
+			return "sha256:" + strings.Repeat("c", 64), nil
+		},
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{}, errors.New("unexpected canonical preflight")
+		},
+	}
+
+	_, err := service.QueuePipelineRefresh(t.Context(), QueuePipelineInput{
+		Identity:             serviceIdentity,
+		PrincipalID:          "principal",
+		EstimatedMemoryBytes: 1,
+		PipelineID:           "sales-refresh",
+		TriggerType:          TriggerManual,
+		IdempotencyKey:       "digest-conflict",
+	})
+	if !errors.Is(err, wantErr) {
+		t.Fatalf("QueuePipelineRefresh() error = %v, want %v", err, wantErr)
+	}
+	if repo.idempotentLookupCalls != 1 {
+		t.Fatalf("idempotent lookup calls = %d, want 1", repo.idempotentLookupCalls)
+	}
+	if artifactLoads != 0 || activeResolves != 0 || targetRevisionResolves != 0 || sourceDigestResolves != 0 {
+		t.Fatalf("preflight calls = active:%d targetRevision:%d sourceDigest:%d artifact:%d, want all zero", activeResolves, targetRevisionResolves, sourceDigestResolves, artifactLoads)
+	}
+	if len(repo.createdRuns) != 0 {
+		t.Fatalf("created runs = %#v, want none on digest conflict", repo.createdRuns)
+	}
+}
+
 func TestServiceQueuePipelineRefreshAcceptsImplicitManualInvocation(t *testing.T) {
 	repo := newFakeRepo()
 	service := Service{ServingStates: repo, ServingStateMutations: repo, Runs: repo, Artifacts: fakeArtifactLoader{definition: refreshTestDefinition()}}
@@ -605,6 +741,11 @@ type fakeRepo struct {
 	failedDeployment           servingstate.ID
 	runStatuses                map[string]string
 	createdRuns                []RunInput
+	idempotentRoot             RunRecord
+	idempotentChildren         []RunRecord
+	idempotentReplay           bool
+	idempotentErr              error
+	idempotentLookupCalls      int
 	savedArtifact              servingstate.Artifact
 	savedValidation            servingstate.Validation
 	supersedeErr               error
@@ -728,6 +869,14 @@ func (r *fakeRepo) CreateRunTree(ctx context.Context, tree RunTreeInput) (RunRec
 	return root, children, nil
 }
 
+func (r *fakeRepo) LookupIdempotentRun(_ context.Context, _ projectgraph.ServingIdentity, _ projectgraph.ResourceID, _, _ string) (RunRecord, []RunRecord, bool, error) {
+	r.idempotentLookupCalls++
+	if r.idempotentErr != nil {
+		return RunRecord{}, nil, false, r.idempotentErr
+	}
+	return r.idempotentRoot, append([]RunRecord(nil), r.idempotentChildren...), r.idempotentReplay, nil
+}
+
 func (r *fakeRepo) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
 	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModelTable, TargetID: "customers"}}, nil
 }
@@ -790,6 +939,17 @@ type fakeArtifactLoader struct {
 
 func (l fakeArtifactLoader) Load(context.Context, servingstate.Artifact) (LoadedArtifact, error) {
 	return LoadedArtifact{Definition: l.definition, Graph: projectgraph.ProjectGraph{}, ManagedDataRevisions: l.managedDataRevisions}, nil
+}
+
+type countingArtifactLoader struct {
+	calls *int
+}
+
+func (l countingArtifactLoader) Load(context.Context, servingstate.Artifact) (LoadedArtifact, error) {
+	if l.calls != nil {
+		*l.calls = *l.calls + 1
+	}
+	return LoadedArtifact{}, errors.New("unexpected artifact preflight")
 }
 
 type fakeCandidateValidationHook struct {

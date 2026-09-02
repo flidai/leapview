@@ -1,11 +1,31 @@
 package module
 
 import (
+	"errors"
 	"reflect"
 	"testing"
 
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
+	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 )
+
+func TestClassifyQueueAdmissionConflictAsGeneratedConflict(t *testing.T) {
+	got := classifyQueueAdmissionError(errors.Join(errors.New("wrapped"), refreshpostgres.ErrConflict))
+	if got != refreshrun.ErrInvocationConflict {
+		t.Fatalf("classified queue conflict=%v, want generated invocation conflict", got)
+	}
+}
+
+func TestCreateRefreshAuditIntentUsesAccessOutcomeVocabulary(t *testing.T) {
+	intent, err := buildRefreshAuditIntent(t.Context(), "createRefreshRun", "01900000-0000-7000-8000-000000000001", "project", "request", "correlation")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if intent == nil || intent.Outcome != "success" {
+		t.Fatalf("create audit outcome=%#v, want success", intent)
+	}
+}
 
 func TestRefreshRunLifecycleOperationContracts(t *testing.T) {
 	contracts := refreshgen.GetAPIGenOperationContracts()

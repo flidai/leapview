@@ -31,7 +31,7 @@ type Handler struct {
 	RunCreated            func(context.Context, refreshrun.RunRecord) error
 	AuthorizePipelineView func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
 	AuthorizePipelineRun  func(*nethttp.Request, projectgraph.ServingIdentity, string) (bool, error)
-	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string) (refreshrun.RunRecord, error)
+	QueuePipeline         func(context.Context, projectgraph.ServingIdentity, string, string, string) (refreshrun.RunRecord, error)
 	BuildAuditIntent      func(context.Context, string, string, string, string, string) (*access.AuditIntent, error)
 }
 
@@ -121,7 +121,7 @@ func PipelineRunResponseFor(run refreshrun.RunRecord) (PipelineRunResponse, bool
 	}, true
 }
 
-func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project string) {
+func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project, idempotencyKey string) {
 	operationID := refreshgen.GenCommandOperationCreateRefreshRun()
 	_, identity, ok := h.commandRunRepository(w, r, operationID, project)
 	if !ok {
@@ -172,7 +172,13 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 	}
 	queueCtx := r.Context()
 	if h.BuildAuditIntent != nil {
-		requestID := firstHeader(r, "Idempotency-Key", "X-Request-Id", "X-Request-ID")
+		requestID := strings.TrimSpace(idempotencyKey)
+		if requestID == "" {
+			// Non-generated direct callers may not have a typed idempotency
+			// header; retain their explicit request identity without rereading
+			// the generated Idempotency-Key header.
+			requestID = firstHeader(r, "X-Request-Id", "X-Request-ID")
+		}
 		correlationID := firstHeader(r, "X-Correlation-Id", "X-Correlation-ID")
 		if correlationID == "" {
 			correlationID = requestID
@@ -186,7 +192,7 @@ func (h Handler) CreateRun(w nethttp.ResponseWriter, r *nethttp.Request, project
 			queueCtx = refreshrun.WithAuditIntent(queueCtx, *intent)
 		}
 	}
-	run, err := h.QueuePipeline(queueCtx, identity, input.PipelineID, principalID)
+	run, err := h.QueuePipeline(queueCtx, identity, input.PipelineID, principalID, idempotencyKey)
 	if err != nil {
 		if _, classified := apigenfailure.KindOf(err); !classified {
 			err = apigenfailure.Wrap("unavailable", err)

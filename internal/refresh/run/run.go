@@ -191,6 +191,12 @@ type RunTreeInput struct {
 	Root              RunInput
 	DependencyTargets []projectgraph.ResourceID
 	Occurrence        *refreshschedule.Occurrence
+	// IdempotencyKey and RequestDigest are populated only by an explicitly
+	// keyed manual command. Persistence adapters may use them to reserve the
+	// native operation and replay the original run tree; empty values preserve
+	// fresh scheduled/UI behaviour.
+	IdempotencyKey string
+	RequestDigest  string
 }
 
 // RunTreeRepository is the mandatory atomic batch/tree creation capability. A

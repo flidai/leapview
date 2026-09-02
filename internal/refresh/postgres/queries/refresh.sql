@@ -85,7 +85,10 @@ SELECT operation_id,project_id,environment,idempotency_key,request_digest,operat
 SELECT EXISTS (SELECT 1 FROM refresh.run WHERE run_id=sqlc.arg(runID));
 
 -- name: LinkOperationRun :execrows
-UPDATE refresh.operation SET run_id=sqlc.arg(run_id) WHERE operation_id=sqlc.arg(operation_id) AND run_id IS NULL;
+UPDATE refresh.operation o SET run_id=sqlc.arg(run_id)
+WHERE o.operation_id=sqlc.arg(operation_id) AND o.run_id IS NULL
+  AND EXISTS (SELECT 1 FROM refresh.run r WHERE r.run_id=sqlc.arg(run_id)
+    AND r.project_id=o.project_id AND r.environment=o.environment);
 
 -- name: TransitionOperation :execrows
 UPDATE refresh.operation SET state=sqlc.arg(state),outcome=sqlc.arg(outcome)::jsonb,terminal_at=CASE WHEN sqlc.arg(state) IN ('succeeded','failed','cancelled') THEN clock_timestamp() ELSE NULL END,owner_id='',lease_expires_at=NULL WHERE operation_id=sqlc.arg(operation_id) AND owner_id=sqlc.arg(owner_id) AND fence_generation=sqlc.arg(fence_generation) AND state IN ('pending','running','prepared') AND lease_expires_at > clock_timestamp();

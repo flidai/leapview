@@ -28,14 +28,29 @@ func TestAPIGenDispatcherMapsRefreshEventPagination(t *testing.T) {
 	}
 }
 
+func TestAPIGenDispatcherMapsRefreshCreateIdempotency(t *testing.T) {
+	handler := &recordingRefreshHandler{}
+	NewAPIGenDispatcher(handler).CreateRefreshRun(
+		httptest.NewRecorder(),
+		httptest.NewRequest(stdhttp.MethodPost, "/api/v1/projects/p1/refresh-runs", nil),
+		"p1",
+		refreshgen.GenCreateRefreshRunHeaders{IdempotencyKey: "refresh-create-1"},
+	)
+	if got, want := handler.idempotencyKey, "refresh-create-1"; got != want {
+		t.Fatalf("idempotency key = %q, want %q", got, want)
+	}
+}
+
 type recordingRefreshHandler struct {
-	limit     *int32
-	pageToken *string
+	limit          *int32
+	pageToken      *string
+	idempotencyKey string
 }
 
 func (*recordingRefreshHandler) ListRefreshRuns(stdhttp.ResponseWriter, *stdhttp.Request, string) {
 }
-func (*recordingRefreshHandler) CreateRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string) {
+func (h *recordingRefreshHandler) CreateRefreshRun(_ stdhttp.ResponseWriter, _ *stdhttp.Request, _, key string) {
+	h.idempotencyKey = key
 }
 func (*recordingRefreshHandler) GetRefreshRun(stdhttp.ResponseWriter, *stdhttp.Request, string, string) {
 }

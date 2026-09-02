@@ -2,6 +2,8 @@ package run
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -192,6 +194,45 @@ type QueuePipelineInput struct {
 	// authenticated command transport. Dependency runs are observational and
 	// do not emit duplicate command intents.
 	AuditIntent *access.AuditIntent
+	// IdempotencyKey is carried only by an explicitly keyed manual command.
+	// Scheduled and UI retries leave it empty and therefore create fresh runs.
+	IdempotencyKey string
+}
+
+// IdempotentRunTreeRepository is an optional read fast-path for native
+// operation replay. It runs before mutable serving-state/pipeline preflight so
+// an already accepted command remains replayable after deployment changes.
+type IdempotentRunTreeRepository interface {
+	LookupIdempotentRun(context.Context, projectgraph.ServingIdentity, projectgraph.ResourceID, string, string) (RunRecord, []RunRecord, bool, error)
+}
+
+// RequestDigest binds a keyed refresh command to its actor and stable logical
+// scope. The serving generation is intentionally excluded so a committed
+// result remains replayable after deployment cutover. JSON field order is
+// fixed by the struct declaration,
+// yielding a stable sha256 digest across retries and transports.
+func RequestDigest(identity projectgraph.ServingIdentity, actorID string, pipelineID projectgraph.ResourceID) (string, error) {
+	if err := identity.Validate(); err != nil {
+		return "", err
+	}
+	if err := pipelineID.Validate(); err != nil {
+		return "", err
+	}
+	actorID = strings.TrimSpace(actorID)
+	if actorID == "" {
+		return "", errors.New("refresh actor id is required")
+	}
+	payload, err := json.Marshal(struct {
+		Actor       string `json:"actor"`
+		Project     string `json:"project"`
+		Environment string `json:"environment"`
+		Pipeline    string `json:"pipeline"`
+	}{actorID, identity.ProjectID.String(), identity.Environment, pipelineID.String()})
+	if err != nil {
+		return "", err
+	}
+	digest := sha256.Sum256(payload)
+	return "sha256:" + hex.EncodeToString(digest[:]), nil
 }
 
 // InvocationAdmissionChecker is an optional repository fast-path used before
@@ -233,6 +274,27 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	if input.TriggerType != TriggerManual && input.TriggerType != TriggerSchedule {
 		return QueueAssetResult{}, fmt.Errorf("unsupported refresh pipeline trigger %q", input.TriggerType)
+	}
+	idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
+	if idempotencyKey != "" && input.TriggerType != TriggerManual {
+		return QueueAssetResult{}, fmt.Errorf("idempotency key is supported only for manual refresh commands")
+	}
+	requestDigest := ""
+	if idempotencyKey != "" {
+		var digestErr error
+		requestDigest, digestErr = RequestDigest(input.Identity, input.PrincipalID, input.PipelineID)
+		if digestErr != nil {
+			return QueueAssetResult{}, digestErr
+		}
+		if replayRepo, ok := s.Runs.(IdempotentRunTreeRepository); ok {
+			root, children, replay, replayErr := replayRepo.LookupIdempotentRun(ctx, input.Identity, input.PipelineID, idempotencyKey, requestDigest)
+			if replayErr != nil {
+				return QueueAssetResult{}, replayErr
+			}
+			if replay {
+				return QueueAssetResult{Run: root, DependencyRuns: children, ServingStateID: servingstate.ID(root.Identity.GenerationID)}, nil
+			}
+		}
 	}
 	if s.CanonicalExecutor != nil && s.ResolveTargetRevision == nil {
 		return QueueAssetResult{}, fmt.Errorf("canonical refresh target revision resolver is required")
@@ -344,7 +406,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		}
 		dependencyTargets = append(dependencyTargets, targetID)
 	}
-	root, children, err := s.Runs.CreateRunTree(ctx, RunTreeInput{Root: rootInput, DependencyTargets: dependencyTargets, Occurrence: input.Occurrence})
+	root, children, err := s.Runs.CreateRunTree(ctx, RunTreeInput{Root: rootInput, DependencyTargets: dependencyTargets, Occurrence: input.Occurrence, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest})
 	if err != nil {
 		if s.CanonicalExecutor == nil {
 			_ = s.MarkFailed(ctx, candidate, err)

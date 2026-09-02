@@ -80,6 +80,23 @@ type Operation struct {
 	Outcome                                          json.RawMessage
 }
 
+// SucceededRunID returns the terminal run identity only for a succeeded
+// operation whose bounded outcome is exactly the canonical {"runId": ...}
+// object. Unknown or duplicate fields are rejected so replay cannot trust
+// ambiguous evidence.
+func (o Operation) SucceededRunID() (string, bool) {
+	if o.State != "succeeded" || o.RunID == "" {
+		return "", false
+	}
+	var evidence struct {
+		RunID string `json:"runId"`
+	}
+	if err := strictjson.DecodeWithOptions(o.Outcome, &evidence, strictjson.Options{MaxBytes: MaxJSONBytes, MaxDepth: 4, DuplicateKeys: strictjson.CaseSensitiveKeys}); err != nil || evidence.RunID == "" || evidence.RunID != o.RunID {
+		return "", false
+	}
+	return evidence.RunID, true
+}
+
 type RunInput struct {
 	RunID, OperationID, ProjectID, Environment, GenerationID string
 	ParentRunID                                              string
@@ -541,48 +558,136 @@ func (r *Repository) CreateRunTreeWithSupersedeHook(ctx context.Context, root Ru
 	var outChildren []Run
 	err := r.InTx(ctx, func(tx Tx) error {
 		var err error
-		out, err = r.CreateRunTxWithSupersedeHook(ctx, tx, root, supersedeHook)
-		if err != nil {
-			return err
-		}
-		if occurrenceID != "" {
-			if err := r.attachClaimedOccurrenceTx(ctx, tx, occurrenceID, out.RunID, owner, fence, out); err != nil {
-				return err
-			}
-		}
-		if hook != nil {
-			jobID, hookErr := hook(contextOrBackground(ctx), tx, out)
-			if hookErr != nil {
-				return hookErr
-			}
-			if jobID == "" {
-				return errors.New("canonical queue hook returned an empty job id")
-			}
-			if err := r.AttachJobTx(ctx, tx, out.RunID, jobID); err != nil {
-				return err
-			}
-		}
-		outChildren = make([]Run, 0, len(children))
-		for _, child := range children {
-			if child.ParentRunID == "" {
-				child.ParentRunID = out.RunID
-			}
-			if child.ParentRunID != out.RunID || child.JobID != "" {
-				return ErrInvalid
-			}
-			created, childErr := r.CreateRunTx(ctx, tx, child)
-			if childErr != nil {
-				return childErr
-			}
-			outChildren = append(outChildren, created)
-		}
-		out, err = r.runByID(contextOrBackground(ctx), tx, out.RunID)
+		out, outChildren, err = r.createRunTreeTx(ctx, tx, root, children, occurrenceID, owner, fence, hook, supersedeHook)
 		return err
 	})
 	if err != nil {
 		return Run{}, nil, err
 	}
 	return out, outChildren, nil
+}
+
+// createRunTreeTx admits the root, scheduler occurrence, canonical queue
+// link, dependency children and supersession transition on a caller-owned
+// transaction. It deliberately performs no transaction control so keyed
+// operation admission can add audit/event evidence before committing.
+func (r *Repository) createRunTreeTx(ctx context.Context, tx Tx, root RunInput, children []RunInput, occurrenceID, owner string, fence int64, hook func(context.Context, Tx, Run) (string, error), supersedeHook func(context.Context, Tx, []string) error) (Run, []Run, error) {
+	if tx == nil {
+		return Run{}, nil, ErrInvalid
+	}
+	out, err := r.CreateRunTxWithSupersedeHook(ctx, tx, root, supersedeHook)
+	if err != nil {
+		return Run{}, nil, err
+	}
+	if occurrenceID != "" {
+		if err := r.attachClaimedOccurrenceTx(ctx, tx, occurrenceID, out.RunID, owner, fence, out); err != nil {
+			return Run{}, nil, err
+		}
+	}
+	if hook != nil {
+		jobID, hookErr := hook(contextOrBackground(ctx), tx, out)
+		if hookErr != nil {
+			return Run{}, nil, hookErr
+		}
+		if jobID == "" {
+			return Run{}, nil, errors.New("canonical queue hook returned an empty job id")
+		}
+		if err := r.AttachJobTx(ctx, tx, out.RunID, jobID); err != nil {
+			return Run{}, nil, err
+		}
+	}
+	outChildren := make([]Run, 0, len(children))
+	for _, child := range children {
+		if child.ParentRunID == "" {
+			child.ParentRunID = out.RunID
+		}
+		if child.ParentRunID != out.RunID || child.JobID != "" {
+			return Run{}, nil, ErrInvalid
+		}
+		created, childErr := r.CreateRunTx(ctx, tx, child)
+		if childErr != nil {
+			return Run{}, nil, childErr
+		}
+		outChildren = append(outChildren, created)
+	}
+	out, err = r.runByID(contextOrBackground(ctx), tx, out.RunID)
+	if err != nil {
+		return Run{}, nil, err
+	}
+	return out, outChildren, nil
+}
+
+// CreateRunTreeWithOperation is the native keyed admission boundary. The
+// operation reservation, run tree, queue link, audit/event callbacks and
+// terminal {runId} outcome all share one transaction. A replay returns the
+// previously committed tree and does not invoke any callback.
+func (r *Repository) CreateRunTreeWithOperation(ctx context.Context, root RunInput, children []RunInput, occurrenceID, owner string, fence int64, operation OperationInput, hook func(context.Context, Tx, Run) (string, error), supersedeHook func(context.Context, Tx, []string) error, auditHook func(context.Context, Tx, Run) error, eventHook func(context.Context, Tx, Run) error) (Run, []Run, bool, error) {
+	var out Run
+	var outChildren []Run
+	var replay bool
+	err := r.InTx(ctx, func(tx Tx) error {
+		op, isReplay, err := r.ReserveOperationTx(ctx, tx, operation)
+		if err != nil {
+			return err
+		}
+		replay = isReplay
+		if isReplay {
+			if _, ok := op.SucceededRunID(); !ok {
+				return ErrConflict
+			}
+			out, err = r.runByID(contextOrBackground(ctx), tx, op.RunID)
+			if err != nil {
+				return err
+			}
+			if out.ProjectID != op.ProjectID || out.Environment != op.Environment || out.OperationID != op.OperationID {
+				return ErrConflict
+			}
+			ids, listErr := refreshdb.New(tx).ListChildRuns(contextOrBackground(ctx), refreshdb.ListChildRunsParams{ProjectID: op.ProjectID, Environment: op.Environment, ParentRunID: stringPtr(op.RunID), PageLimit: MaxPageSize})
+			if listErr != nil {
+				return listErr
+			}
+			outChildren = make([]Run, 0, len(ids))
+			for _, id := range ids {
+				child, childErr := r.runByID(contextOrBackground(ctx), tx, id)
+				if childErr != nil {
+					return childErr
+				}
+				outChildren = append(outChildren, child)
+			}
+			return nil
+		}
+		root.OperationID = op.OperationID
+		out, outChildren, err = r.createRunTreeTx(ctx, tx, root, children, occurrenceID, owner, fence, hook, supersedeHook)
+		if err != nil {
+			return err
+		}
+		if auditHook != nil {
+			if err := auditHook(contextOrBackground(ctx), tx, out); err != nil {
+				return err
+			}
+		}
+		if eventHook != nil {
+			if err := eventHook(contextOrBackground(ctx), tx, out); err != nil {
+				return err
+			}
+		}
+		if err := r.SetOperationRunTx(ctx, tx, op.OperationID, out.RunID); err != nil {
+			return err
+		}
+		outcome, marshalErr := json.Marshal(map[string]string{"runId": out.RunID})
+		if marshalErr != nil {
+			return marshalErr
+		}
+		if err := r.CompleteOperationTx(ctx, tx, op.OperationID, op.OwnerID, op.FenceGeneration, outcome); err != nil {
+			return err
+		}
+		out, err = r.runByID(contextOrBackground(ctx), tx, out.RunID)
+		return err
+	})
+	if err != nil {
+		return Run{}, nil, false, err
+	}
+	return out, outChildren, replay, nil
 }
 
 func (r *Repository) attachClaimedOccurrenceTx(ctx context.Context, tx Tx, occurrenceID, runID, owner string, fence int64, root Run) error {
@@ -1031,6 +1136,9 @@ func (r *Repository) ReserveOperationTx(ctx context.Context, tx Tx, in Operation
 		return Operation{}, false, err
 	}
 	o := operationForUpdateFrom(row)
+	if o.OperationType != in.OperationType {
+		return Operation{}, false, ErrConflict
+	}
 	if o.RequestDigest != in.RequestDigest {
 		return Operation{}, false, ErrConflict
 	}

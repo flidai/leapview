@@ -133,8 +133,8 @@ func (m *Module) runFinished(after func(context.Context, refreshrun.RunRecord)) 
 	}
 }
 
-func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request, project string) {
-	m.handler.CreateRun(w, r, project)
+func (m *Module) CreateRefreshRun(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
+	m.handler.CreateRun(w, r, project, idempotencyKey)
 }
 
 func (m *Module) ListRefreshRuns(w http.ResponseWriter, r *http.Request, project string) {
