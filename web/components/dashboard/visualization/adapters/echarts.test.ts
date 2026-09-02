@@ -483,6 +483,20 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   expect(automaticFiltered.series[0].itemStyle.color).toBe(automaticProcessing)
 })
 
+test('ECharts formats cartesian temporal axis ticks instead of exposing epoch milliseconds', () => {
+  const envelope = cartesianFixture('area') as any
+  const category = envelope.spec.datasets[0].fields.find((candidate: any) => candidate.id === 'label')
+  category.dataType = 'date'
+  category.format = { kind: 'temporal' }
+  envelope.dataState.datasets[0].rows = [['2016-12-23', 19.62]]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  const tick = Date.UTC(2016, 11, 23)
+  expect(option.xAxis.type).toBe('time')
+  expect(option.xAxis.axisLabel.formatter(tick)).toBe('2016-12-23')
+  expect(option.xAxis.axisLabel.formatter(tick)).not.toContain(String(tick))
+})
+
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
   const envelope = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
   envelope.spec.presentation.stacked = false

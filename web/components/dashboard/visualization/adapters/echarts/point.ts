@@ -1,6 +1,6 @@
 import type { VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { axis, field, formatField, inlineDataset, labelFormatter, legend, type EChartsTranslation } from './common'
+import { axis, field, inlineDataset, labelFormatter, legend, type EChartsTranslation } from './common'
 import { applyDecisionContext } from './cartesian'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
@@ -74,22 +74,10 @@ function pointAxis(
 ): EChartsTranslation {
   const result = axis(envelope, ref, type, context, 'x')
   if (type !== 'time') return result
-  const definition = field(envelope, ref)
-  const dateFormatter = new Intl.DateTimeFormat(context.locale, {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-    timeZone: 'UTC',
-  })
   result.splitNumber = 6
   result.axisLabel = {
     ...result.axisLabel,
     hideOverlap: true,
-    formatter: (value: unknown) => {
-      if (definition?.format) return formatField(envelope, ref, value, context)
-      const date = new Date(value as string | number)
-      return Number.isFinite(date.getTime()) ? dateFormatter.format(date) : formatField(envelope, ref, value, context)
-    },
   }
   return result
 }
