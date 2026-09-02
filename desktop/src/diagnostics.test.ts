@@ -22,7 +22,7 @@ const environment: DiagnosticEnvironment = {
   applicationVersion: "0.1.0",
   electronVersion: "44.0.0",
   chromiumVersion: "152.0.7977.54",
-  nodeVersion: "24.14.0",
+  nodeVersion: "26.8.1",
   platform: "darwin",
   osRelease: "25.5.0",
   architecture: "arm64",
