@@ -149,6 +149,50 @@ func TestEvaluateDedupeImpliedAndExplicitChecks(t *testing.T) {
 	}
 }
 
+func TestCheckIdentityIsStablePrintableAndUnambiguous(t *testing.T) {
+	minimum := int64(1)
+	base := semanticmodel.ModelCheck{
+		Type: "accepted_values", Field: "state", Fields: []string{"b", "a"},
+		Values: []string{"RJ", "SP", "contains\x00nul"}, Minimum: &minimum,
+	}
+	identity := checkIdentity("model-1", base)
+	reordered := base
+	reordered.Fields = []string{"a", "b"}
+	reordered.Values = []string{"contains\x00nul", "SP", "RJ"}
+	if got := checkIdentity("model-1", reordered); got != identity {
+		t.Fatalf("reordered check identity = %q, want %q", got, identity)
+	}
+	if !strings.HasPrefix(identity, "check:") || len(identity) != len("check:")+64 {
+		t.Fatalf("check identity = %q, want content-addressed identity", identity)
+	}
+	for _, r := range identity {
+		if r < 0x20 || r == 0x7f {
+			t.Fatalf("check identity contains control rune %U: %q", r, identity)
+		}
+	}
+	commaJoined := base
+	commaJoined.Fields = []string{"a,b"}
+	separate := base
+	separate.Fields = []string{"a", "b"}
+	if checkIdentity("model-1", commaJoined) == checkIdentity("model-1", separate) {
+		t.Fatal("structurally distinct field lists produced the same identity")
+	}
+}
+
+func TestEvaluateQualificationEvidenceContainsNoNULIdentityEscape(t *testing.T) {
+	evidence, err := Evaluate(context.Background(), InputWithModel(baseInput(rowsQuery(nil)), modelWithCheck("error")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encoded), `\u0000`) {
+		t.Fatalf("gate evidence contains PostgreSQL-incompatible NUL escape: %s", encoded)
+	}
+}
+
 func TestEvaluateRelationshipCheckRequiresPatternedReference(t *testing.T) {
 	var plans []semanticquery.Plan
 	query := func(_ context.Context, plan semanticquery.Plan) (semanticquery.Rows, error) {

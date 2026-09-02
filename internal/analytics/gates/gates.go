@@ -820,13 +820,20 @@ func checkIdentity(modelID string, check semanticmodel.ModelCheck) string {
 	fields := canonicalFields(check.Fields)
 	values := append([]string(nil), check.Values...)
 	sort.Strings(values)
-	return strings.Join([]string{modelID, check.Type, check.Field, strings.Join(fields, ","), check.To, strings.Join(values, "\x1f"), ptrInt(check.Minimum), ptrInt(check.Maximum)}, "\x00")
-}
-func ptrInt(value *int64) string {
-	if value == nil {
-		return ""
-	}
-	return strconv.FormatInt(*value, 10)
+	identity := digest(struct {
+		ModelID string   `json:"modelId"`
+		Type    string   `json:"type"`
+		Field   string   `json:"field"`
+		Fields  []string `json:"fields"`
+		To      string   `json:"to"`
+		Values  []string `json:"values"`
+		Minimum *int64   `json:"minimum"`
+		Maximum *int64   `json:"maximum"`
+	}{
+		ModelID: modelID, Type: check.Type, Field: check.Field, Fields: fields,
+		To: check.To, Values: values, Minimum: check.Minimum, Maximum: check.Maximum,
+	})
+	return "check:" + strings.TrimPrefix(identity, "sha256:")
 }
 func minInt64(a, b int64) int64 {
 	if a < b {
