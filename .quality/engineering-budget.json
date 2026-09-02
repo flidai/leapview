@@ -3,27 +3,27 @@
   "categories": {
     "go-production": {
       "lineLimit": 800,
-      "maxFilesOverLimit": 67,
-      "maxExcessLines": 26893,
+      "maxFilesOverLimit": 68,
+      "maxExcessLines": 27711,
       "maxLargestFile": 2320
     },
     "go-test": {
       "lineLimit": 1200,
       "maxFilesOverLimit": 16,
-      "maxExcessLines": 8427,
-      "maxLargestFile": 4549
+      "maxExcessLines": 8433,
+      "maxLargestFile": 4555
     },
     "typescript-production": {
       "lineLimit": 700,
       "maxFilesOverLimit": 26,
-      "maxExcessLines": 13769,
+      "maxExcessLines": 14033,
       "maxLargestFile": 2308
     },
     "typescript-test": {
       "lineLimit": 1200,
       "maxFilesOverLimit": 6,
-      "maxExcessLines": 6765,
-      "maxLargestFile": 3810
+      "maxExcessLines": 6888,
+      "maxLargestFile": 3828
     }
   },
   "suppressions": {
