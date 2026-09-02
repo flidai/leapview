@@ -1932,6 +1932,53 @@ test('dashboard builder keeps governed previews interactive beneath a dedicated 
   }
 })
 
+test('dashboard builder keeps headerless runtime visuals free of duplicate authoring titles', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const revision = 'sha256:builder-kpi-preview'
+      const dataState = { kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, datasets: [] }
+      const source = element.builder.pages[0].visuals[0]
+      mergePatch({
+        builder: {
+          pages: [{ ...element.builder.pages[0], visuals: [{ ...source, title: 'Total orders', type: 'kpi' }] }, element.builder.pages[1]],
+        },
+        builderVisuals: {
+          'sales-chart': {
+            schemaVersion: 10, visualID: 'sales-chart', rendererID: 'html', specRevision: revision, dataRevision: 1,
+            spec: { kind: 'kpi', title: 'Total orders', accessibility: { title: 'Total orders', description: 'Total order count.' }, fields: [], value: { dataset: 'primary', field: 'value' }, presentation: { delta: 'absolute', favorableDirection: 'up', missingComparison: 'hide', mode: 'value', ranges: [] } },
+            dataState: { schemaVersion: 1, encoding: 'json', kind: 'inline', specRevision: revision, dataRevision: 1, generation: 1, payload: JSON.stringify(dataState) },
+            selection: [], highlights: [], status: { kind: 'ready' }, diagnostics: [], servingStateID: 'serving-test', streamGeneration: 1, filterRevision: 0, interactionRevision: 0, consumerIdentity: 'visual:sales-chart',
+          },
+        },
+      })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const host = root.querySelector('.visual-preview lv-visualization-host') as any
+      await host?.updateComplete
+      const grip = root.querySelector('.visual .component-drag-grip') as HTMLElement | null
+      return {
+        hostAuthoring: host?.authoring,
+        runtimeToolbar: Boolean(host?.shadowRoot?.querySelector('.toolbar')),
+        duplicateHeaderCount: root.querySelectorAll('.visual-drag-header').length,
+        gripTitle: grip?.getAttribute('title'),
+        gripVisible: grip ? getComputedStyle(grip).opacity : '',
+      }
+    })
+    expect(state.hostAuthoring).toBe(false)
+    expect(state.runtimeToolbar).toBe(false)
+    expect(state.duplicateHeaderCount).toBe(0)
+    expect(state.gripTitle).toBe('Drag to move Total orders')
+    expect(state.gripVisible).toBe('1')
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder uses a full-bleed central canvas and keeps no-preview guidance actionable', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -2418,7 +2465,7 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
       const tile = root.querySelector('.filter-component') as HTMLElement
       const tileLabel = tile.getAttribute('aria-label')
       const selected = tile.getAttribute('data-selected')
-      const preview = tile.textContent?.replace(/\s+/g, ' ').trim()
+      const slicerTitle = slicerLeaf.shadowRoot.querySelector('.field-title')?.textContent?.trim()
       tile.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight', altKey: true, bubbles: true, composed: true }))
       await new Promise((resolve) => setTimeout(resolve, 20))
       document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'finished', el: element } }))
@@ -2431,8 +2478,10 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
         filterCommands,
         tileLabel,
         selected,
-        preview,
+        slicerTitle,
         gridItems: root.querySelectorAll('.canvas > .grid-stack-item').length,
+        duplicateHeaderCount: tile.querySelectorAll('.filter-drag-header').length,
+        gripTitle: tile.querySelector('.component-drag-grip')?.getAttribute('title'),
       }
     })
     expect(state.commands[0]).toMatchObject({ action: 'add_filter_component', pageId: 'overview', filterId: 'filter_1', componentId: '' })
@@ -2442,9 +2491,9 @@ test('dashboard builder places, moves, and removes canonical filter slicers on t
     expect(state.filterCommands[0]).toMatchObject({ kind: 'mutate', baseRevision: 1, bindingKey: 'dashboard:revenue/report/filter_1', operation: 'set', expression: { kind: 'set', operator: 'in', values: [{ kind: 'string', value: 'complete' }] } })
     expect(state.tileLabel).toContain('selected dashboard slicer')
     expect(state.selected).toBe('true')
-    expect(state.preview).toContain('Status')
-    expect(state.preview).not.toContain('Interactive draft preview')
-    expect(state.preview).not.toContain('preparing preview')
+    expect(state.slicerTitle).toBe('Status')
+    expect(state.duplicateHeaderCount).toBe(0)
+    expect(state.gripTitle).toBe('Drag to move Status')
     expect(state.gridItems).toBe(2)
   } finally {
     await page.close()

@@ -1,7 +1,7 @@
 import { LitElement, css, html, nothing } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { GridStack, type GridItemHTMLElement, type GridStackNode } from 'gridstack'
-import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Trash2, Undo2 } from 'lucide'
+import { Archive, ChartColumn, ChevronLeft, ChevronRight, Copy, Database, GripHorizontal, ListFilter, MoreHorizontal, PanelRightClose, PanelRightOpen, Plus, Redo2, Settings2, Trash2, Undo2 } from 'lucide'
 import { repeat } from 'lit/directives/repeat.js'
 import type {
   DashboardBuilderDiagnosticSignal,
@@ -1447,6 +1447,39 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       color: var(--lv-data-4);
     }
 
+    .component-drag-grip {
+      position: absolute;
+      z-index: 3;
+      top: var(--base-size-4);
+      left: 50%;
+      display: grid;
+      width: var(--control-small-size);
+      min-height: 1.25rem;
+      place-items: center;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-full);
+      color: var(--lv-fg-muted);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-sm);
+      opacity: 0;
+      pointer-events: none;
+      transform: translateX(-50%);
+      transition: opacity var(--lv-duration-fast) var(--motion-easing-move);
+    }
+
+    .component-drag-grip svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
+    .visual:hover .component-drag-grip,
+    .visual[data-selected='true'] .component-drag-grip,
+    .filter-component:hover .component-drag-grip,
+    .filter-component[data-selected='true'] .component-drag-grip {
+      opacity: 1;
+      pointer-events: auto;
+    }
+
     .component-drag-handle:active,
     .grid-stack-item.ui-draggable-dragging .component-drag-handle {
       cursor: grabbing;
@@ -2026,6 +2059,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .visual-preview {
+      position: relative;
       display: block;
       width: 100%;
       height: 100%;
@@ -2060,7 +2094,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
 
     .filter-component > .grid-stack-item-content {
-      grid-template-rows: auto minmax(0, 1fr) auto;
+      grid-template-rows: minmax(0, 1fr) auto;
       gap: var(--base-size-8);
       background: var(--lv-bg-panel);
     }
@@ -3274,12 +3308,13 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const previewIssue = this.visualPreviewErrorMessage(visual)
     const previewUnavailable = requirementMessages.length > 0 || Boolean(previewIssue) || Boolean(this.builder?.preview.error && !this.builder.preview.active)
     const preview = previewUnavailable ? undefined : previewCandidate
+    const previewHasHeader = preview ? this.visualPreviewHasHeader(preview) : false
     const fallbackMessage = this.builder?.preview.error ? 'Preview unavailable. Try again after the draft is valid.' : 'Add fields to preview.'
     return html`
       <div class="visual grid-stack-item ${preview ? 'has-preview' : ''}" data-visual-type=${visualType} data-selected=${selected} data-field-drop=${fieldDrop || nothing} gs-id=${visual.id} gs-x=${Math.max(0, visual.placement.col - 1)} gs-y=${Math.max(0, visual.placement.row - 1)} gs-w=${Math.max(1, visual.placement.colSpan)} gs-h=${Math.max(1, visual.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${visual.title}, selected dashboard visual` : `${visual.title}, dashboard visual`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectVisualFromPointer(visual.id) }} @keydown=${(event: KeyboardEvent) => this.selectVisualOnKey(event, visual.id)} @dragover=${this.allowFieldDrop} @drop=${(event: DragEvent) => this.dropFieldOnVisual(event, visual.id)}>
         <div class="grid-stack-item-content">
           ${preview
-            ? html`<span class="visual-preview"><lv-visualization-host authoring .envelope=${preview}><span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span></lv-visualization-host></span>`
+            ? html`<span class="visual-preview"><lv-visualization-host ?authoring=${previewHasHeader} .envelope=${preview}>${previewHasHeader ? html`<span slot="authoring-drag-handle" class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span>` : nothing}</lv-visualization-host>${previewHasHeader ? nothing : this.renderComponentDragGrip(visual.title, () => this.selectVisualFromPointer(visual.id))}</span>`
             : html`<span class="visual-drag-header component-drag-handle" title="Drag to move ${visual.title}" @pointerdown=${() => this.selectVisualFromPointer(visual.id)}>${visual.title}</span><span class="visual-preview-empty" role="status"><strong>${this.visualLabel(visualType)} preview unavailable</strong>${requirementMessages.length > 0 ? requirementMessages.map((message) => html`<span>${message}</span>`) : html`<span>${previewIssue || fallbackMessage}</span>`}</span><span class="visual-type">${visualType} · ${visual.slots.length} field slots</span>`}
         </div>
       </div>
@@ -3306,7 +3341,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`
       <div class="filter-component grid-stack-item" data-selected=${selected} gs-id=${component.id} gs-x=${Math.max(0, component.placement.col - 1)} gs-y=${Math.max(0, component.placement.row - 1)} gs-w=${Math.max(1, component.placement.colSpan)} gs-h=${Math.max(1, component.placement.rowSpan)} role="group" tabindex="0" aria-label=${selected ? `${component.label}, selected dashboard slicer` : `${component.label}, dashboard slicer`} aria-describedby="dashboard-builder-grid-help" style=${`left:${left};top:${top};width:${width};height:${height};--mobile-order:${mobileOrder}`} @click=${(event: MouseEvent) => { event.stopPropagation(); this.selectFilterComponent(component) }} @keydown=${(event: KeyboardEvent) => this.selectFilterComponentOnKey(event, component)}>
         <div class="grid-stack-item-content">
-          <span class="filter-drag-header component-drag-handle" title="Drag to move ${component.label}" @pointerdown=${() => this.selectFilterComponent(component)}>${component.label}</span>
+          ${binding ? this.renderComponentDragGrip(component.label, () => this.selectFilterComponent(component)) : html`<span class="filter-drag-header component-drag-handle" title="Drag to move ${component.label}" @pointerdown=${() => this.selectFilterComponent(component)}>${component.label}</span>`}
           ${binding && definition && expression ? html`<lv-slicer
             .definition=${definition}
             .binding=${binding}
@@ -3329,6 +3364,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     const preview = component.controlType === 'relativePeriod' ? 'Last 30 days' : component.controlType === 'text' ? 'Search values' : 'All'
     return html`<div class="filter-control-preview" aria-label=${`${this.filterControlLabel(component.controlType)} preview`}><div class="filter-preview-input"><span>${preview}</span><span aria-hidden="true">${component.controlType === 'text' ? '⌕' : '⌄'}</span></div></div>`
+  }
+
+  private renderComponentDragGrip(label: string, select: () => void) {
+    return html`<span class="component-drag-grip component-drag-handle" role="button" aria-label=${`Drag to move ${label}`} title=${`Drag to move ${label}`} @pointerdown=${select}>${lucideIcon(GripHorizontal, { size: 16, strokeWidth: 2 })}</span>`
+  }
+
+  private visualPreviewHasHeader(preview: VisualizationEnvelope): boolean {
+    return preview.spec.titleVisible !== false && !['kpi', 'table', 'matrix', 'pivot'].includes(preview.spec.kind)
   }
 
   private builderFilterErrorMessage(): string {
