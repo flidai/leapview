@@ -471,9 +471,13 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		},
 		BuildRuntime: appruntimefactory.NewPostgresDashboardRuntimeBuilder(appruntimefactory.PostgresDashboardRuntimeConfig{Projects: analytics.ProjectRuntimeFactoryForEnvironment, MaxRows: cfg.QueryResultMaxRows, MaxBytes: cfg.QueryResultMaxBytes}),
 	})
-	runtimeHost, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: func(ctx context.Context) (servingstate.ID, error) {
-		return resolvePostgresSealedActiveState(ctx, targetReader, instanceID)
-	}})
+	err = withRuntimeHostStartupAdmission(ctx, workloadBundle.Controller, func(startupCtx context.Context) error {
+		var buildErr error
+		runtimeHost, buildErr = runtimehostmodule.Build(startupCtx, runtimehostmodule.Config{States: graph.ServingState, ProjectID: projectID, Environment: environment, ReadClaimedProject: readClaim, ManagedData: managedResolver, Authorization: accessBundle.AuthorizationInstaller, Factory: postgresFactory, RequireSealedCatalog: true, ResolveSealedActiveState: func(ctx context.Context) (servingstate.ID, error) {
+			return resolvePostgresSealedActiveState(ctx, targetReader, instanceID)
+		}})
+		return buildErr
+	})
 	if err != nil {
 		return fail(fmt.Errorf("build runtime host: %w", err))
 	}

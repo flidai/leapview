@@ -107,6 +107,25 @@ type nativeReadRows struct {
 	publication nativepostgres.DeliveryPublication
 }
 
+type nativeReadRowsWithGeneration struct {
+	nativeReadRows
+	generationOverride nativepostgres.DeliveryGeneration
+}
+
+type nativeReadRowsWithoutGeneration struct{ nativeReadRows }
+
+func (nativeReadRowsWithoutGeneration) ResolveCandidateGeneration(context.Context, string) (nativepostgres.CandidateGenerationResolution, error) {
+	return nativepostgres.CandidateGenerationResolution{}, nativepostgres.ErrNotFound
+}
+
+func (r nativeReadRowsWithGeneration) Generation(context.Context, string) (nativepostgres.DeliveryGeneration, error) {
+	return r.generationOverride, nil
+}
+
+func (r nativeReadRowsWithGeneration) LoadGeneration(ctx context.Context, id string) (nativepostgres.DeliveryGeneration, error) {
+	return r.Generation(ctx, id)
+}
+
 func (r nativeReadRows) Plan(context.Context, string) (nativepostgres.DeliveryPlan, error) {
 	return r.plan, nil
 }
@@ -274,29 +293,69 @@ func TestNativeDeliveryBuildReadProjectsCandidateRevisionSeparately(t *testing.T
 }
 
 func TestNativeDeliveryCandidateReadProjectsResolvedServingState(t *testing.T) {
-	rows := nativeReadRowsFixture(t, "target")
-	m := nativeReadModule(rows)
-	recorder := httptest.NewRecorder()
-	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
-	if recorder.Code != http.StatusOK {
-		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
-	}
-	var response deploymentgen.DeliveryCandidateStatusResponse
-	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-		t.Fatal(err)
-	}
-	if response.ServingStateId != rows.generation.GenerationID {
-		t.Fatalf("serving state id = %q, want %q", response.ServingStateId, rows.generation.GenerationID)
+	for _, status := range []string{"qualified", "admitted"} {
+		t.Run(status, func(t *testing.T) {
+			rows := nativeReadRowsFixture(t, "target")
+			rows.candidate.Status = status
+			m := nativeReadModule(rows)
+			recorder := httptest.NewRecorder()
+			m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var response deploymentgen.DeliveryCandidateStatusResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Status != deploymentgen.DeliveryCandidateStatusReady || response.ServingStateId != rows.generation.GenerationID {
+				t.Fatalf("candidate status = %q, serving state id = %q, want ready and %q", response.Status, response.ServingStateId, rows.generation.GenerationID)
+			}
+		})
 	}
 }
 
 func TestNativeDeliveryPreparingCandidateReadDoesNotRequireGeneration(t *testing.T) {
+	for _, status := range []string{"building", "ready"} {
+		t.Run(status, func(t *testing.T) {
+			rows := nativeReadRowsFixture(t, "target")
+			rows.candidate.Status = status
+			rows.candidate.SnapshotSealID = ""
+			rows.seal = nativepostgres.SnapshotSeal{}
+			rows.generation = nativepostgres.DeliveryGeneration{}
+			m := nativeReadModule(rows)
+			recorder := httptest.NewRecorder()
+			m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+			if recorder.Code != http.StatusOK {
+				t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+			}
+			var response deploymentgen.DeliveryCandidateStatusResponse
+			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+				t.Fatal(err)
+			}
+			if response.Status != deploymentgen.DeliveryCandidateStatusPreparing || response.ServingStateId != "" {
+				t.Fatalf("preparing candidate status = %q, serving state = %q", response.Status, response.ServingStateId)
+			}
+		})
+	}
+}
+
+func TestNativeDeliveryCandidateReadRejectsMismatchedGenerationIdentity(t *testing.T) {
 	rows := nativeReadRowsFixture(t, "target")
-	rows.candidate.Status = "building"
-	rows.candidate.SnapshotSealID = ""
-	rows.seal = nativepostgres.SnapshotSeal{}
-	rows.generation = nativepostgres.DeliveryGeneration{}
-	m := nativeReadModule(rows)
+	generation := rows.generation
+	generation.SnapshotSealID = "0198f2c0-7c7a-7f00-8a11-000000000299"
+	m := nativeReadModule(nativeReadRowsWithGeneration{nativeReadRows: rows, generationOverride: generation})
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+	if recorder.Code != http.StatusConflict {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestNativeDeliveryRetiredUnpublishedCandidateHasNoServingState(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	rows.candidate.Status = "retired"
+	rows.candidate.RetiredAt = rows.candidate.QualifiedAt.Add(time.Minute)
+	m := nativeReadModule(nativeReadRowsWithoutGeneration{nativeReadRows: rows})
 	recorder := httptest.NewRecorder()
 	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
 	if recorder.Code != http.StatusOK {
@@ -306,8 +365,8 @@ func TestNativeDeliveryPreparingCandidateReadDoesNotRequireGeneration(t *testing
 	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
 		t.Fatal(err)
 	}
-	if response.Status != deploymentgen.DeliveryCandidateStatusPreparing || response.ServingStateId != "" {
-		t.Fatalf("preparing candidate status = %q, serving state = %q", response.Status, response.ServingStateId)
+	if response.Status != deploymentgen.DeliveryCandidateStatusRetired || response.ServingStateId != "" {
+		t.Fatalf("retired candidate status = %q, serving state = %q", response.Status, response.ServingStateId)
 	}
 }
 

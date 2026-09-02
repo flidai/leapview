@@ -124,6 +124,9 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	if strings.TrimSpace(candidate.Body.SealId) == "" {
 		candidateMismatches = append(candidateMismatches, "candidate.sealId")
 	}
+	if candidate.Body.ServingStateId != generationID {
+		candidateMismatches = append(candidateMismatches, "candidate.servingStateId")
+	}
 
 	crossMismatches := make([]string, 0, 10)
 	if candidate.Body.ServingStateId != generation.Body.ServingStateId {
@@ -163,6 +166,9 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	}
 	if generation.Body.Status != deploymentgen.DeliveryGenerationStatusActive {
 		generationMismatches = append(generationMismatches, "generation.status")
+	}
+	if generation.Body.ServingStateId != generationID {
+		generationMismatches = append(generationMismatches, "generation.servingStateId")
 	}
 	if len(candidateMismatches) > 0 || len(crossMismatches) > 0 {
 		fields := append(candidateMismatches, crossMismatches...)

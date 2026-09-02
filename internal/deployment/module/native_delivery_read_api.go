@@ -66,7 +66,7 @@ func nativeSealStatus(seal nativepostgres.SnapshotSeal) deploymentgen.DeliverySe
 
 func nativeCandidateStatus(status string) deploymentgen.DeliveryCandidateStatus {
 	switch strings.ToLower(status) {
-	case "qualified", "ready":
+	case "qualified", "admitted":
 		return deploymentgen.DeliveryCandidateStatusReady
 	case "rejected", "failed":
 		return deploymentgen.DeliveryCandidateStatusFailed
@@ -162,11 +162,18 @@ func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan de
 
 func resolveNativeCandidateServingState(ctx context.Context, reader NativeDeliveryReader, candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal) (string, error) {
 	status := nativeCandidateStatus(candidate.Status)
-	if status != deploymentgen.DeliveryCandidateStatusReady && status != deploymentgen.DeliveryCandidateStatusRetired {
+	if (status != deploymentgen.DeliveryCandidateStatusReady && status != deploymentgen.DeliveryCandidateStatusRetired) || candidate.SnapshotSealID == "" {
 		return "", nil
 	}
 	resolution, err := reader.ResolveCandidateGeneration(ctx, candidate.CandidateID)
 	if err != nil {
+		// Retirement is also valid for a rejected or qualified candidate that
+		// was never published. Preserve that terminal status without inventing
+		// a serving identity; malformed multi-generation history still fails
+		// closed as a conflict.
+		if status == deploymentgen.DeliveryCandidateStatusRetired && errors.Is(err, nativepostgres.ErrNotFound) {
+			return "", nil
+		}
 		return "", nativeReadError(err)
 	}
 	if resolution.CandidateID != candidate.CandidateID ||
@@ -182,7 +189,20 @@ func resolveNativeCandidateServingState(ctx context.Context, reader NativeDelive
 		strings.TrimSpace(resolution.GenerationID) == "" {
 		return "", fmt.Errorf("%w: native candidate generation resolution is inconsistent", deployment.ErrDeliveryConflict)
 	}
-	return resolution.GenerationID, nil
+	generation, err := reader.Generation(ctx, resolution.GenerationID)
+	if err != nil {
+		return "", nativeReadError(err)
+	}
+	if generation.GenerationID != resolution.GenerationID ||
+		generation.CandidateID != candidate.CandidateID ||
+		generation.TargetID != candidate.TargetID ||
+		generation.PlanID != candidate.PlanID ||
+		generation.SnapshotSealID != seal.SealID ||
+		generation.PlanDigest != plan.Digest ||
+		generation.ServingArtifactDigest != seal.ServingArtifactDigest {
+		return "", fmt.Errorf("%w: native candidate generation identity is inconsistent", deployment.ErrDeliveryConflict)
+	}
+	return generation.GenerationID, nil
 }
 
 func nativeGenerationResponse(generation nativepostgres.DeliveryGeneration, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, active bool) deploymentgen.DeliveryGenerationStatusResponse {

@@ -91,6 +91,9 @@ func TestQualificationDeliveryPersistenceEvidenceDiagnosesMismatchedFieldsWithou
 		{name: "generation status", field: "generation.status", mutate: func(_ *deploymentgen.DeliveryCandidateStatusResponse, generation *deploymentgen.DeliveryGenerationStatusResponse) {
 			generation.Status = deploymentgen.DeliveryGenerationStatusRetired
 		}},
+		{name: "generation serving state", field: "generation.servingStateId", mutate: func(_ *deploymentgen.DeliveryCandidateStatusResponse, generation *deploymentgen.DeliveryGenerationStatusResponse) {
+			generation.ServingStateId = secret
+		}},
 	}
 	for _, test := range mutations {
 		t.Run(test.name, func(t *testing.T) {

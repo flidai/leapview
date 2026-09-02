@@ -836,6 +836,7 @@ CREATE CONSTRAINT TRIGGER delivery_active_pointer_consistency AFTER INSERT OR UP
 CREATE INDEX IF NOT EXISTS delivery_lease_active_idx ON delivery.delivery_lease(target_id, state, expires_at);
 CREATE UNIQUE INDEX IF NOT EXISTS delivery_lease_one_active_idx ON delivery.delivery_lease(target_id) WHERE state = 'active';
 CREATE INDEX IF NOT EXISTS delivery_generation_target_idx ON delivery.delivery_generation(target_id, generation_revision);
+CREATE INDEX IF NOT EXISTS delivery_generation_candidate_idx ON delivery.delivery_generation(candidate_id);
 CREATE INDEX IF NOT EXISTS delivery_seal_attempt_idx ON delivery.delivery_snapshot_seal(attempt_id);
 CREATE INDEX IF NOT EXISTS delivery_root_snapshot_idx ON delivery.delivery_retention_root(snapshot_seal_id, state);
 CREATE INDEX IF NOT EXISTS delivery_approval_request_publication_idx ON delivery.delivery_approval_request(publication_id, requested_at DESC, request_id DESC);

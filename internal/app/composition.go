@@ -1026,16 +1026,20 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			return fail(factoryErr)
 		}
 	}
-	runtimeHostModule, err = runtimehostmodule.Build(ctx, runtimehostmodule.Config{
-		States:                   servingStateRepo,
-		ProjectID:                projectID,
-		Environment:              environment,
-		ReadClaimedProject:       readClaim,
-		ManagedData:              managedDataResolver,
-		Authorization:            authorizationInstaller,
-		Factory:                  servingFactory,
-		RequireSealedCatalog:     true,
-		ResolveSealedActiveState: sealedActiveState,
+	err = withRuntimeHostStartupAdmission(ctx, workloadController, func(startupCtx context.Context) error {
+		var buildErr error
+		runtimeHostModule, buildErr = runtimehostmodule.Build(startupCtx, runtimehostmodule.Config{
+			States:                   servingStateRepo,
+			ProjectID:                projectID,
+			Environment:              environment,
+			ReadClaimedProject:       readClaim,
+			ManagedData:              managedDataResolver,
+			Authorization:            authorizationInstaller,
+			Factory:                  servingFactory,
+			RequireSealedCatalog:     true,
+			ResolveSealedActiveState: sealedActiveState,
+		})
+		return buildErr
 	})
 	if err != nil {
 		return fail(err)

@@ -326,6 +326,16 @@ func (c *Controller) QualifyInstalledCandidate(
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "application startup"); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
+	containerID, err := c.containerID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := assertQualificationNativePostgresOnly(ctx, c.qualificationContainers.Existing(containerID)); err != nil {
+		return err
+	}
 	var credentialsOutput bytes.Buffer
 	originalOutput := c.stdout
 	c.stdout = &credentialsOutput
@@ -359,10 +369,6 @@ func (c *Controller) QualifyInstalledCandidate(
 		return err
 	}
 
-	containerID, err := c.containerID(ctx)
-	if err != nil {
-		return err
-	}
 	syncOutput, err := c.qualificationContainers.Existing(containerID).Exec(
 		ctx, nil,
 		"env",
@@ -540,6 +546,12 @@ func (c *Controller) QualifyInstalledCandidate(
 		"http://127.0.0.1:8080/api/v1/instance",
 		credentials.PublisherToken, nil, "", &instance,
 	); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
+	if err := assertQualificationNativePostgresOnly(ctx, c.qualificationContainers.Existing(containerID)); err != nil {
 		return err
 	}
 	report.Assertions.RestartPersistence = true
