@@ -17,6 +17,7 @@ mkdir -p "$(dirname "$REPORT_PATH")" "$(dirname "$TRANSCRIPT_PATH")"
 
 go run ./internal/app/tools/bootstrapolist --out .data/olist
 go run ./internal/app/tools/mapassets --shared-cache --out .data/map-assets
+OLIST_ROOT="$(realpath .data/olist)"
 
 TMP_DIR="$(mktemp -d)"
 cleanup() {
@@ -82,7 +83,7 @@ for _ in {1..120}; do
   sleep 0.25
 done
 
-SYNC_OUTPUT="$("$BIN" data sync --project dashboards/leapview.yaml --connection olist --from .data/olist --target "$TARGET" --token "$TOKEN")"
+SYNC_OUTPUT="$("$BIN" data sync --project dashboards/leapview.yaml --connection olist --from "$OLIST_ROOT" --target "$TARGET" --token "$TOKEN")"
 REVISION="$(awk '$1 == "staged" { print $2 }' <<<"$SYNC_OUTPUT")"
 [[ "$REVISION" =~ ^sha256:[0-9a-f]{64}$ ]] || {
   echo "managed data sync did not return a canonical revision" >&2
@@ -96,7 +97,7 @@ CANDIDATE_ID="$(awk '$1 == "candidate" { print $2; exit }' <<<"$DEV_OUTPUT")"
 }
 "$BIN" publish "$CANDIDATE_ID" --token "$TOKEN" >/dev/null
 
-ALLOWED_TOOLS='add_dashboard_page,add_dashboard_visual,assign_dashboard_field,catalog_get,catalog_list,catalog_search,create_dashboard_draft,docs_read,docs_search,execute_dashboard_command,export_dashboard_yaml,fork_dashboard,get_dashboard,get_dashboard_draft,list_dashboards,preview_dashboard_draft,query_dashboard_visual,query_semantic_model,query_visual,set_dashboard_visibility'
+ALLOWED_TOOLS='add_dashboard_page,add_dashboard_visual,assign_dashboard_field,catalog_get,catalog_list,catalog_search,create_dashboard_draft,docs_read,docs_search,edit_dashboard_source,execute_dashboard_command,export_dashboard_yaml,fork_dashboard,get_dashboard,get_dashboard_draft,list_dashboards,preview_dashboard_draft,query_dashboard_visual,query_semantic_model,query_visual,read_dashboard_source,set_dashboard_visibility'
 
 run_agent_scenario() {
   local label="$1"
@@ -198,6 +199,27 @@ elif validator == "documentation":
     values = decoded_results.get("docs_read", [])
     if not values or not any(len(value.get("content", "")) > 2000 for value in values):
         validation_errors.append("documentation read window is incomplete")
+elif validator == "dashboard_source_edit":
+    reads = decoded_results.get("read_dashboard_source", [])
+    edits = decoded_results.get("edit_dashboard_source", [])
+    if len(reads) < 2:
+        validation_errors.append("dashboard source edit lacks before and after reads")
+    if not edits:
+        validation_errors.append("dashboard source edit result is missing")
+    else:
+        edited = edits[-1]
+        if edited.get("changedBlocks") != 1:
+            validation_errors.append("dashboard source edit did not change exactly one block")
+        if "displayName: Agent Eval Sales Edited" not in edited.get("yaml", "") or "displayName: Agent Eval Sales Edited" not in edited.get("diff", ""):
+            validation_errors.append("dashboard source edit lacks canonical YAML or diff evidence")
+    if len(reads) >= 2:
+        before, after = reads[0], reads[-1]
+        if "displayName: Agent Eval Sales" not in before.get("yaml", ""):
+            validation_errors.append("dashboard source before-read lacks the original title")
+        if "displayName: Agent Eval Sales Edited" not in after.get("yaml", ""):
+            validation_errors.append("dashboard source after-read lacks the edited title")
+        if after.get("revision", {}).get("number", 0) <= before.get("revision", {}).get("number", 0):
+            validation_errors.append("dashboard source revision did not advance")
 
 record = {
     "scenario": label,
@@ -235,8 +257,10 @@ run_agent_scenario "documentation" "docs_search,docs_read" "documentation" \
   "Search LeapView documentation for semantic relationships, read at least 80 lines from the relevant document in one docs_read call, and summarize it."
 run_agent_scenario "authoring catalog and export" "list_dashboards,get_dashboard,export_dashboard_yaml" "basic" \
   "Use list_dashboards to find Executive Sales. Use its exact dashboard ID with get_dashboard, then export its canonical project YAML with export_dashboard_yaml and sourceKind project."
-run_agent_scenario "authoring create foundation" "create_dashboard_draft,get_dashboard_draft,add_dashboard_page" "basic" \
+run_agent_scenario "authoring create foundation" "create_dashboard_draft,add_dashboard_page" "basic" \
   "Create a private dashboard draft with dashboardId dashboard:agent-eval-sales, title Agent Eval Sales, slug agent-eval-sales, and semantic model semantic-model:sales. Read that draft, add page details titled Details using its exact revision, then stop."
+run_agent_scenario "authoring source edit" "read_dashboard_source,edit_dashboard_source" "dashboard_source_edit" \
+  "Use read_dashboard_source with the exact dashboard ID dashboard:agent-eval-sales, including its dashboard: prefix. Change only displayName from Agent Eval Sales to Agent Eval Sales Edited with edit_dashboard_source, using the exact draft ID and revision returned by the read and an exact oldText/newText replacement. Then call read_dashboard_source again with dashboard:agent-eval-sales to verify the saved displayName and revision, and stop."
 run_agent_scenario "authoring visual fields" "get_dashboard_draft,add_dashboard_visual,assign_dashboard_field" "basic" \
   "Read dashboard:agent-eval-sales. Add bar visual revenue-by-category to page details. Assign category as its dimension and revenue as its metric, always using the latest returned revision token, then stop."
 run_agent_scenario "authoring visibility preview" "get_dashboard_draft,set_dashboard_visibility,preview_dashboard_draft" "basic" \
@@ -255,6 +279,8 @@ import sys
 transcript, report, allowed_csv = sys.argv[1:4]
 records = [json.loads(line) for line in open(transcript) if line.strip()]
 allowed = [name for name in allowed_csv.split(",") if name]
+selected_scenarios = bool(os.environ.get("AGENT_EVAL_SCENARIO"))
+required = sorted({name for record in records for name in record.get("expected", [])}) if selected_scenarios else allowed
 by_tool = {name: {"calls": 0, "errors": 0, "successes": 0, "errorCodes": collections.Counter()} for name in allowed}
 all_calls = []
 unexpected = 0
@@ -318,11 +344,11 @@ summary = {
     "modelAttributableErrorsByCode": dict(model_failure_codes),
     "platformFailuresByErrorCode": dict(platform_failure_codes),
     "coveredTools": covered,
-    "toolCoverageRate": len(covered) / len(allowed),
-    "missingTools": sorted(set(allowed) - set(covered)),
+    "toolCoverageRate": len(set(covered) & set(required)) / len(required) if required else 0,
+    "missingTools": sorted(set(required) - set(covered)),
     "successfulTools": successful,
-    "successfulToolCoverageRate": len(successful) / len(allowed),
-    "neverSuccessfulTools": sorted(set(allowed) - set(successful)),
+    "successfulToolCoverageRate": len(set(successful) & set(required)) / len(required) if required else 0,
+    "neverSuccessfulTools": sorted(set(required) - set(successful)),
     "hardFailures": hard_failures,
     "byTool": by_tool,
     "scenariosDetail": records,
@@ -335,7 +361,7 @@ github_summary = os.environ.get("GITHUB_STEP_SUMMARY")
 if github_summary:
     with open(github_summary, "a") as target:
         target.write("## Agent tool evaluation\n\n")
-        target.write(f"- Coverage: {len(covered)}/{len(allowed)} tools; successful: {len(successful)}/{len(allowed)}\n")
+        target.write(f"- Required coverage: {len(set(covered) & set(required))}/{len(required)} tools; successful: {len(set(successful) & set(required))}/{len(required)}\n")
         target.write("- Calls: {}; raw errors: {}; argument failures: {}; unexpected selections: {}\n".format(len(all_calls), summary["failedCalls"], argument_failures, unexpected))
         target.write("- Completed scenarios: {}/{}\n".format(summary["completedScenarios"], len(records)))
 if summary["missingTools"] or summary["neverSuccessfulTools"] or argument_failures or hard_failures:
