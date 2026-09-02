@@ -72,7 +72,7 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	}
 	poolID := pool.ID.String()
 
-	now := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2099, 1, 2, 12, 0, 0, 0, time.UTC)
 	plan, err := deployment.NewDeliveryPlan(deployment.DeliveryPlan{
 		ID: planID, TargetID: "target-assembler", ProjectID: projectID, Environment: "prod", Operation: deployment.DeliveryOperationCodeChange, SourceDigest: sourceDigest,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: sourceDigest, CompilerDigest: assemblerDigest('1'), ExecutableDigest: assemblerDigest('2'), DependencyDigest: assemblerDigest('3'), ConfigDigest: assemblerDigest('c'), BindingDigest: assemblerDigest('4'), RuntimeDigest: assemblerDigest('5'), CapabilityDigest: assemblerDigest('6')},
@@ -171,6 +171,9 @@ func TestAssembleNativeGenerationAdmissionInputAcceptsExactEvidence(t *testing.T
 	}
 	if got.Generation.GenerationID != input.GenerationID || got.Seal.CatalogVersion != 1 || got.Seal.DuckDBVersion != input.Compatibility.DuckDBRuntime || got.Seal.DuckLakeExtensionVersion != input.Compatibility.DuckLakeExtension || got.Seal.DuckLakeSpecVersion != "1" {
 		t.Fatalf("assembled identity = %#v", got)
+	}
+	if !got.CandidateExpiresAt.Equal(input.Plan.Governance.ExpiresAt.UTC().Truncate(time.Microsecond)) {
+		t.Fatalf("assembled candidate retention expiry = %v, want %v", got.CandidateExpiresAt, input.Plan.Governance.ExpiresAt)
 	}
 	if got.Bundle.ArtifactLocator != input.Artifacts.Generation.NativeArtifact.Locator || got.Seal.ClosureDigest != input.Build.Closure.ClosureDigest {
 		t.Fatalf("assembled artifact/closure = %#v / %#v", got.Bundle, got.Seal)

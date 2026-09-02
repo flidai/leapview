@@ -16,7 +16,7 @@ import (
 // the returned value when constructing dependent candidate/attempt evidence.
 func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID string) deploymentnative.PlanInput {
 	t.Helper()
-	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
+	now := time.Date(2099, 1, 1, 12, 0, 0, 0, time.UTC)
 	plan, err := deploymentdomain.NewDeliveryPlan(deploymentdomain.DeliveryPlan{
 		ID: input.PlanID, TargetID: input.TargetID, ProjectID: projectgraph.ResourceID(projectID), Environment: "prod",
 		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: input.ArtifactDigest,

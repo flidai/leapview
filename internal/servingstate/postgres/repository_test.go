@@ -29,7 +29,7 @@ func servingDB(t *testing.T) (*pgxpool.Pool, *pgxpool.Pool, *pgxpool.Pool) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := tx.Exec(t.Context(), `CREATE SCHEMA IF NOT EXISTS delivery; CREATE TABLE delivery.delivery_target(target_id text PRIMARY KEY,project_id text NOT NULL,environment text NOT NULL,target_revision bigint NOT NULL DEFAULT 1); CREATE TABLE delivery.delivery_snapshot_seal(seal_id uuid PRIMARY KEY,ducklake_snapshot_id bigint NOT NULL,physical_pool_id text,catalog_id text,catalog_database text,catalog_uuid text); CREATE TABLE delivery.delivery_candidate(candidate_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid REFERENCES delivery.delivery_snapshot_seal(seal_id)); CREATE TABLE delivery.delivery_generation(generation_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),serving_artifact_digest text NOT NULL,compiled_graph_digest text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()); CREATE TABLE delivery.delivery_active_pointer(target_id text PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),publication_id uuid NOT NULL); CREATE TABLE delivery.delivery_publication(publication_id uuid PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation,target_id text NOT NULL,state text NOT NULL,actor_id text NOT NULL,committed_at timestamptz); CREATE TABLE delivery.delivery_retention_root(root_id uuid PRIMARY KEY,target_id text NOT NULL,generation_id uuid,snapshot_seal_id uuid,candidate_id uuid,root_kind text NOT NULL,state text NOT NULL,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),retired_at timestamptz,expired_at timestamptz);`); err != nil {
+	if _, err := tx.Exec(t.Context(), `CREATE SCHEMA IF NOT EXISTS delivery; CREATE TABLE delivery.delivery_target(target_id text PRIMARY KEY,project_id text NOT NULL,environment text NOT NULL,target_revision bigint NOT NULL DEFAULT 1); CREATE TABLE delivery.delivery_snapshot_seal(seal_id uuid PRIMARY KEY,ducklake_snapshot_id bigint NOT NULL,physical_pool_id text,catalog_id text,catalog_database text,catalog_uuid text); CREATE TABLE delivery.delivery_candidate(candidate_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,snapshot_seal_id uuid REFERENCES delivery.delivery_snapshot_seal(seal_id)); CREATE TABLE delivery.delivery_generation(generation_id uuid PRIMARY KEY,target_id text NOT NULL REFERENCES delivery.delivery_target,candidate_id uuid,snapshot_seal_id uuid NOT NULL REFERENCES delivery.delivery_snapshot_seal(seal_id),serving_artifact_digest text NOT NULL,compiled_graph_digest text NOT NULL,created_at timestamptz NOT NULL DEFAULT clock_timestamp()); CREATE TABLE delivery.delivery_active_pointer(target_id text PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),publication_id uuid NOT NULL); CREATE TABLE delivery.delivery_publication(publication_id uuid PRIMARY KEY,generation_id uuid NOT NULL REFERENCES delivery.delivery_generation,target_id text NOT NULL,state text NOT NULL,actor_id text NOT NULL,committed_at timestamptz); CREATE TABLE delivery.delivery_retention_root(root_id uuid PRIMARY KEY,target_id text NOT NULL,generation_id uuid,snapshot_seal_id uuid,candidate_id uuid,root_kind text NOT NULL,state text NOT NULL,expires_at timestamptz,created_at timestamptz NOT NULL DEFAULT clock_timestamp(),retired_at timestamptz,expired_at timestamptz);`); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -96,6 +96,35 @@ func seedGenerationEnvironment(t *testing.T, admin *pgxpool.Pool, generation, ta
 	}
 	_, err = admin.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,generation_id,target_id,state,actor_id,committed_at) VALUES($1::uuid,$2::uuid,$3,'committed','test',clock_timestamp())`, publication, generation, target)
 	if err != nil {
+		t.Fatal(err)
+	}
+}
+
+func seedCandidateGeneration(t *testing.T, admin *pgxpool.Pool, generation, target, candidate, rootCandidate, rootGeneration, seal, rootID string, snapshot int64, expiresAt *time.Time) {
+	t.Helper()
+	ctx := t.Context()
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_target(target_id,project_id,environment) VALUES($1,'project_demo','prod')`, target); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_snapshot_seal(seal_id,ducklake_snapshot_id) VALUES($1::uuid,$2)`, seal, snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,snapshot_seal_id) VALUES($1::uuid,$2,$3::uuid)`, candidate, target, seal); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_generation(generation_id,target_id,candidate_id,snapshot_seal_id,serving_artifact_digest,compiled_graph_digest) VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5,$6)`, generation, target, candidate, seal, "sha256:"+strings.Repeat("a", 64), "sha256:"+strings.Repeat("b", 64)); err != nil {
+		t.Fatal(err)
+	}
+	if rootCandidate == "" {
+		return
+	}
+	if expiresAt == nil {
+		if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state) VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,'candidate','live')`, rootID, target, rootCandidate, rootGeneration, seal); err != nil {
+			t.Fatal(err)
+		}
+		return
+	}
+	if _, err := admin.Exec(ctx, `INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state,expires_at) VALUES($1::uuid,$2,$3::uuid,$4::uuid,$5::uuid,'candidate','live',$6)`, rootID, target, rootCandidate, rootGeneration, seal, expiresAt); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -706,4 +735,91 @@ func TestReaderLeaseBindsSnapshotAndDBClock(t *testing.T) {
 	if _, err := r.CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 7, OwnerID: "reader", ExpiresAt: time.Now().Add(time.Minute)}); err == nil {
 		t.Fatal("lease acquired without a live delivery retention root")
 	}
+}
+
+func TestReaderLeaseAcceptsExactCandidateRetentionRoot(t *testing.T) {
+	const (
+		generation = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+		target     = "target_candidate_root"
+		candidate  = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+		seal       = "cccccccc-cccc-cccc-cccc-cccccccccccc"
+		root       = "dddddddd-dddd-dddd-dddd-dddddddddddd"
+	)
+
+	t.Run("matching root", func(t *testing.T) {
+		admin, pool, _ := servingDB(t)
+		expiresAt := time.Now().UTC().Add(time.Minute)
+		seedCandidateGeneration(t, admin, generation, target, candidate, candidate, generation, seal, root, 61, &expiresAt)
+		lease, err := New(pool).CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{
+			ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 61,
+			OwnerID: "candidate-reader", ExpiresAt: time.Now().Add(time.Minute),
+		})
+		if err != nil {
+			t.Fatalf("candidate-root lease: %v", err)
+		}
+		if lease == "" {
+			t.Fatal("candidate-root lease returned an empty lease ID")
+		}
+	})
+
+	t.Run("missing root", func(t *testing.T) {
+		admin, pool, _ := servingDB(t)
+		seedCandidateGeneration(t, admin, generation, target, candidate, "", generation, seal, root, 61, nil)
+		if _, err := New(pool).CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{
+			ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 61,
+			OwnerID: "candidate-reader", ExpiresAt: time.Now().Add(time.Minute),
+		}); err == nil {
+			t.Fatal("lease acquired without a candidate retention root")
+		}
+	})
+
+	t.Run("unbounded root", func(t *testing.T) {
+		admin, pool, _ := servingDB(t)
+		seedCandidateGeneration(t, admin, generation, target, candidate, candidate, generation, seal, root, 61, nil)
+		if _, err := New(pool).CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{
+			ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 61,
+			OwnerID: "candidate-reader", ExpiresAt: time.Now().Add(time.Minute),
+		}); err == nil {
+			t.Fatal("lease acquired against an unbounded candidate retention root")
+		}
+	})
+
+	t.Run("mismatched candidate", func(t *testing.T) {
+		admin, pool, _ := servingDB(t)
+		expiresAt := time.Now().UTC().Add(time.Minute)
+		seedCandidateGeneration(t, admin, generation, target, candidate, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", generation, seal, root, 61, &expiresAt)
+		if _, err := New(pool).CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{
+			ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 61,
+			OwnerID: "candidate-reader", ExpiresAt: time.Now().Add(time.Minute),
+		}); err == nil {
+			t.Fatal("lease acquired against a mismatched candidate retention root")
+		}
+	})
+
+	t.Run("mismatched generation", func(t *testing.T) {
+		admin, pool, _ := servingDB(t)
+		expiresAt := time.Now().UTC().Add(time.Minute)
+		seedCandidateGeneration(t, admin, generation, target, candidate, candidate, "eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee", seal, root, 61, &expiresAt)
+		if _, err := admin.Exec(t.Context(), `INSERT INTO delivery.delivery_generation(generation_id,target_id,candidate_id,snapshot_seal_id,serving_artifact_digest,compiled_graph_digest) VALUES('eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee',$1,$2::uuid,$3::uuid,$4,$5)`, target, candidate, seal, "sha256:"+strings.Repeat("c", 64), "sha256:"+strings.Repeat("d", 64)); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := New(pool).CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{
+			ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 61,
+			OwnerID: "candidate-reader", ExpiresAt: time.Now().Add(time.Minute),
+		}); err == nil {
+			t.Fatal("lease acquired against a mismatched generation retention root")
+		}
+	})
+
+	t.Run("expired root", func(t *testing.T) {
+		admin, pool, _ := servingDB(t)
+		expiresAt := time.Now().UTC().Add(-time.Minute)
+		seedCandidateGeneration(t, admin, generation, target, candidate, candidate, generation, seal, root, 61, &expiresAt)
+		if _, err := New(pool).CreateQuerySnapshotLease(t.Context(), servingstate.SnapshotLeaseInput{
+			ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 61,
+			OwnerID: "candidate-reader", ExpiresAt: time.Now().Add(time.Minute),
+		}); err == nil {
+			t.Fatal("lease acquired against an expired candidate retention root")
+		}
+	})
 }

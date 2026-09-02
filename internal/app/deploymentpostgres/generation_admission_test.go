@@ -71,6 +71,7 @@ func validGenerationAdmissionInput(t *testing.T) GenerationAdmissionInput {
 		Commit:              CommitEvidence{DeliveryID: "delivery-admission", AttemptID: attemptID, OwnerID: "builder-admission", FencingEpoch: 1, SnapshotID: 42, CommitMarker: json.RawMessage(markerJSON)},
 		Seal:                SnapshotSealEvidence{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: pool, TenantDomain: "tenant", Region: "us-east", EncryptionDomain: "enc", ObjectNamespace: "objects/admission", CatalogDatabase: "ducklake", CatalogID: "catalog-admission", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000108", CatalogVersion: 1, DuckLakeSnapshotID: 42, RelationNamespace: relationNamespace, RelationManifestDigest: admissionDigest('1'), ClosureDigest: admissionDigest('8'), ObjectRoot: "objects/admission/42", ObjectRootDigest: admissionDigest('6'), ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d'), RequestDigest: admissionDigest('f'), PlanDigest: planDigest, CompatibilityDigest: admissionDigest('2'), ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)},
 		QualificationDigest: admissionDigest('3'),
+		CandidateExpiresAt:  time.Date(2099, 1, 1, 13, 0, 0, 0, time.UTC),
 		Fence:               LeaseFenceEvidence{LeaseID: leaseID, TargetID: "target-admission", OwnerID: "builder-admission", FencingEpoch: 1},
 		Generation:          GenerationEvidence{GenerationID: genID, TargetID: "target-admission", CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/admission", ArtifactRootDigest: admissionDigest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: graph.Digest(), CompiledConfigDigest: admissionDigest('c'), SecurityDomainFingerprint: admissionDigest('d')},
 		Bundle:              BundleEvidenceInput{GenerationID: genID, ProjectID: "project_admission", Environment: "prod", Artifact: servingstate.Artifact{ID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ServingStateID: servingstate.ID(genID), Digest: artifactDigest, Format: projectbundle.BundleFormat, ManifestJSON: manifest, SizeBytes: 1}, ArtifactLocator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ArtifactContentType: projectbundle.BundleContentType, ArtifactMetadataDigest: admissionDigest('9'), ProjectDigest: admissionDigest('b'), AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, CreatedBy: "builder-admission"},
@@ -87,6 +88,21 @@ func TestNormalizeGenerationAdmissionAcceptsExactEvidence(t *testing.T) {
 	}
 	if string(got.Commit.CommitMarker) != string(input.Commit.CommitMarker) {
 		t.Fatal("normalization changed canonical commit marker")
+	}
+}
+
+func TestNormalizeGenerationAdmissionRejectsInvalidCandidateExpiry(t *testing.T) {
+	for name, expiry := range map[string]time.Time{
+		"missing": {},
+		"non-UTC": time.Date(2099, 1, 1, 13, 0, 0, 0, time.FixedZone("candidate-expiry", 3600)),
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := validGenerationAdmissionInput(t)
+			input.CandidateExpiresAt = expiry
+			if _, err := normalizeInput(input); err == nil || !errors.Is(err, deploymentnative.ErrInvalid) {
+				t.Fatalf("normalize candidate expiry error = %v, want native invalid", err)
+			}
+		})
 	}
 }
 
@@ -413,6 +429,14 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if root.Kind != ducklakepostgres.RootGeneration || root.State != "live" || root.PhysicalPoolID != input.Seal.PhysicalPoolID || root.CatalogID != input.Seal.CatalogID || root.SnapshotID != input.Commit.SnapshotID {
 		t.Fatalf("DuckLake retention root = %#v", root)
 	}
+	var rootTarget, rootCandidate, rootGeneration, rootSeal, rootKind, rootState string
+	var rootExpiry time.Time
+	if err := p.QueryRow(t.Context(), `SELECT target_id,candidate_id::text,generation_id::text,snapshot_seal_id::text,root_kind,state,expires_at FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, input.Generation.CandidateID).Scan(&rootTarget, &rootCandidate, &rootGeneration, &rootSeal, &rootKind, &rootState, &rootExpiry); err != nil {
+		t.Fatalf("load candidate delivery retention root: %v", err)
+	}
+	if rootTarget != input.Generation.TargetID || rootCandidate != input.Generation.CandidateID || rootGeneration != input.Generation.GenerationID || rootSeal != input.Seal.SealID || rootKind != "candidate" || rootState != "live" || !rootExpiry.Equal(input.CandidateExpiresAt) {
+		t.Fatalf("candidate delivery retention root = %q %q %q %q %q %q expires=%v, want exact candidate tuple and expiry %v", rootTarget, rootCandidate, rootGeneration, rootSeal, rootKind, rootState, rootExpiry, input.CandidateExpiresAt)
+	}
 	retention, err := ducklake.LoadSnapshotRetention(t.Context(), ducklakepostgres.SnapshotRef{PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogID: input.Seal.CatalogID, SnapshotID: input.Commit.SnapshotID})
 	if err != nil {
 		t.Fatalf("load DuckLake retention state: %v", err)
@@ -485,6 +509,13 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if bindings != 0 || seals != 0 || generations != 0 || bundles != 0 {
 		t.Fatalf("rollback retained partial admission: bindings=%d seals=%d generations=%d bundles=%d", bindings, seals, generations, bundles)
 	}
+	var retentionRoots int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, rollbackInput.Generation.CandidateID).Scan(&retentionRoots); err != nil {
+		t.Fatal(err)
+	}
+	if retentionRoots != 0 {
+		t.Fatalf("rollback retained candidate delivery retention root: %d", retentionRoots)
+	}
 	if _, err := ducklake.LoadBinding(t.Context(), rollbackInput.Commit.DeliveryID, rollbackInput.Generation.GenerationID); !errors.Is(err, ducklakepostgres.ErrNotFound) {
 		t.Fatalf("rollback retained DuckLake generation binding, err=%v", err)
 	}
@@ -493,6 +524,30 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	if _, err := ducklake.LoadSnapshotRetention(t.Context(), ducklakepostgres.SnapshotRef{PhysicalPoolID: rollbackInput.Seal.PhysicalPoolID, CatalogID: rollbackInput.Seal.CatalogID, SnapshotID: rollbackInput.Commit.SnapshotID}); !errors.Is(err, ducklakepostgres.ErrNotFound) {
 		t.Fatalf("rollback retained DuckLake snapshot retention, err=%v", err)
+	}
+}
+
+func TestGenerationAdmissionRejectsCandidateExpiryDrift(t *testing.T) {
+	p := generationAdmissionDB(t)
+	delivery := deploymentnative.New(p)
+	serving := servingnative.New(p)
+	ducklake := ducklakepostgres.New(p)
+	admission, err := NewGenerationAdmission(delivery, serving, ducklake, &testManagedDataBindingAdmission{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := validGenerationAdmissionInput(t)
+	seedGenerationAdmission(t, delivery, ducklake, input)
+	input.CandidateExpiresAt = input.CandidateExpiresAt.Add(time.Minute)
+	if _, err := admission.CompleteBuildAndAdmit(t.Context(), input); err == nil || !errors.Is(err, deploymentnative.ErrConflict) {
+		t.Fatalf("candidate expiry drift error = %v, want native conflict", err)
+	}
+	var rootCount int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, input.Generation.CandidateID).Scan(&rootCount); err != nil {
+		t.Fatal(err)
+	}
+	if rootCount != 0 {
+		t.Fatalf("expiry-drift admission created candidate retention root: %d", rootCount)
 	}
 }
 

@@ -149,15 +149,7 @@ INSERT INTO serving_state.reader_lease (
     lease_id, generation_id, ducklake_snapshot_id, owner_id, expires_at
 ) SELECT $1, $2::uuid, $3, $4,
          COALESCE($5::timestamptz, clock_timestamp() + interval '5 minutes')
-WHERE EXISTS (
-    SELECT 1 FROM delivery.delivery_generation g
-    JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
-    JOIN delivery.delivery_retention_root r
-      ON r.generation_id = g.generation_id AND r.snapshot_seal_id = s.seal_id
-    WHERE g.generation_id = $2::uuid AND s.ducklake_snapshot_id = $3
-      AND r.root_kind = 'generation' AND r.state = 'live'
-      AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
-)
+WHERE serving_state.guard_reader_snapshot_retention($2::uuid, $3)
   AND COALESCE($5::timestamptz, clock_timestamp() + interval '5 minutes') > clock_timestamp()
   AND COALESCE($5::timestamptz, clock_timestamp() + interval '5 minutes') <= clock_timestamp() + interval '24 hours';
 
@@ -172,24 +164,18 @@ WITH live_retention AS (
     FROM serving_state.reader_lease l
     JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
     JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
-    JOIN delivery.delivery_retention_root r
-      ON r.generation_id = g.generation_id AND r.snapshot_seal_id = s.seal_id
     WHERE l.lease_id = $1 AND l.released_at IS NULL
       AND l.expires_at > clock_timestamp()
       AND s.ducklake_snapshot_id = l.ducklake_snapshot_id
-      AND r.root_kind = 'generation' AND r.state = 'live'
-      AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
+      AND serving_state.guard_reader_snapshot_retention(g.generation_id, l.ducklake_snapshot_id)
 )
 UPDATE serving_state.reader_lease l
 SET expires_at = $2
 FROM delivery.delivery_generation g
 JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
-JOIN delivery.delivery_retention_root r
-  ON r.generation_id = g.generation_id AND r.snapshot_seal_id = s.seal_id
 WHERE l.lease_id = $1 AND l.generation_id = g.generation_id
   AND l.ducklake_snapshot_id = s.ducklake_snapshot_id
-  AND r.root_kind = 'generation' AND r.state = 'live'
-  AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
+  AND serving_state.guard_reader_snapshot_retention(g.generation_id, s.ducklake_snapshot_id)
   AND EXISTS (SELECT 1 FROM live_retention)
   AND l.released_at IS NULL
   AND l.expires_at > clock_timestamp()

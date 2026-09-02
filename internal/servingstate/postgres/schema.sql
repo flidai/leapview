@@ -78,6 +78,13 @@ CREATE INDEX IF NOT EXISTS asset_generation_idx ON serving_state.asset (generati
 
 -- Row locking is performed by a fixed-search-path, read-only definer so the
 -- runtime role needs no UPDATE privilege on delivery retention evidence.
+--
+-- A candidate preview is allowed to lease the exact snapshot sealed on its
+-- delivery generation while that candidate root remains live.  Activation
+-- still creates the generation root; candidate roots are intentionally bound
+-- through the generation's candidate_id, generation_id and snapshot seal
+-- rather than by a mutable serving pointer. Candidate roots are always
+-- bounded by an explicit expiry; generation roots may remain unbounded.
 CREATE OR REPLACE FUNCTION serving_state.guard_reader_snapshot_retention(p_generation uuid, p_snapshot bigint)
 RETURNS boolean SECURITY DEFINER LANGUAGE plpgsql SET search_path = serving_state, delivery, pg_catalog AS $$
 BEGIN
@@ -86,10 +93,18 @@ BEGIN
         FROM delivery.delivery_generation g
         JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
         JOIN delivery.delivery_retention_root r
-          ON r.generation_id = g.generation_id AND r.snapshot_seal_id = s.seal_id
+          ON r.target_id = g.target_id
+         AND r.snapshot_seal_id = s.seal_id
+         AND (
+             (r.root_kind = 'generation' AND r.generation_id = g.generation_id)
+             OR (r.root_kind = 'candidate' AND r.candidate_id = g.candidate_id AND r.generation_id = g.generation_id)
+         )
         WHERE g.generation_id = p_generation AND s.ducklake_snapshot_id = p_snapshot
-          AND r.root_kind = 'generation' AND r.state = 'live'
-          AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
+          AND r.state = 'live'
+          AND (
+              (r.root_kind = 'generation' AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp()))
+              OR (r.root_kind = 'candidate' AND r.expires_at IS NOT NULL AND r.expires_at > clock_timestamp())
+          )
         FOR SHARE OF r
     );
 END; $$;
@@ -141,13 +156,7 @@ BEGIN
         IF expected_snapshot IS NULL OR expected_snapshot <> NEW.ducklake_snapshot_id THEN
             RAISE EXCEPTION 'reader lease snapshot does not match delivery snapshot seal';
         END IF;
-        IF NOT EXISTS (
-            SELECT 1 FROM delivery.delivery_retention_root r
-             WHERE r.generation_id = NEW.generation_id
-               AND r.snapshot_seal_id = (SELECT g.snapshot_seal_id FROM delivery.delivery_generation g WHERE g.generation_id = NEW.generation_id)
-               AND r.root_kind = 'generation' AND r.state = 'live'
-               AND (r.expires_at IS NULL OR r.expires_at > clock_timestamp())
-        ) THEN
+        IF NOT serving_state.guard_reader_snapshot_retention(NEW.generation_id, NEW.ducklake_snapshot_id) THEN
             RAISE EXCEPTION 'reader lease requires a live delivery retention root';
         END IF;
         IF NEW.expires_at <= clock_timestamp() OR NEW.expires_at > clock_timestamp() + interval '24 hours' THEN

@@ -237,6 +237,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			CatalogSchemaVersion: input.CatalogIdentity.CatalogSchemaVersion, QualificationEvidence: qualification,
 		},
 		QualificationDigest: qualificationDigest,
+		CandidateExpiresAt:  input.Plan.Governance.ExpiresAt.UTC().Truncate(time.Microsecond),
 		Fence:               LeaseFenceEvidence{LeaseID: lease.LeaseID, TargetID: lease.TargetID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch},
 		Generation: GenerationEvidence{
 			GenerationID: generationID, TargetID: input.Plan.TargetID, CandidateID: attempt.CandidateID, SnapshotSealID: sealID,

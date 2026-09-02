@@ -47,9 +47,14 @@ type GenerationAdmissionInput struct {
 	Commit              CommitEvidence
 	Seal                SnapshotSealEvidence
 	QualificationDigest string
-	Fence               LeaseFenceEvidence
-	Generation          GenerationEvidence
-	Bundle              BundleEvidenceInput
+	// CandidateExpiresAt is the canonical plan governance deadline carried
+	// through the value-only assembler. Admission re-reads the authoritative
+	// plan in its caller-owned transaction and rejects any drift before creating
+	// the candidate retention root.
+	CandidateExpiresAt time.Time
+	Fence              LeaseFenceEvidence
+	Generation         GenerationEvidence
+	Bundle             BundleEvidenceInput
 	// ManagedDataPins is the exact content-addressed managed-data identity
 	// selected for this generation. It is retained separately from the
 	// portable graph and admitted atomically with the serving bundle so native
@@ -249,6 +254,10 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if lease.LeaseID != normalized.Fence.LeaseID || lease.TargetID != normalized.Fence.TargetID || lease.OwnerID != normalized.Fence.OwnerID || lease.FencingEpoch != normalized.Fence.FencingEpoch || lease.State != "active" && lease.State != "released" {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission lease fence differs", deploymentnative.ErrConflict)
 	}
+	authoritativeExpiry, err := a.authoritativeCandidateExpiry(ctx, tx, normalized)
+	if err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 
 	// Every cross-ledger attempt transition locks the delivery attempt before
 	// the DuckLake attempt. The artifact bind provides that delivery lock and
@@ -294,6 +303,27 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	}
 	if err := verifyGeneration(generation, normalized.Generation); err != nil {
 		return GenerationAdmissionResult{}, err
+	}
+	// Candidate preview is a qualified, non-active serving path. Keep its exact
+	// generation and snapshot reachable before any runtime reader lease can be
+	// requested. The candidate UUID is the stable root identity, while the
+	// generation and seal links prevent a candidate retry from drifting to a
+	// different physical snapshot.
+	root, err := a.delivery.CreateRetentionRootTx(ctx, tx, deploymentnative.DeliveryRetentionRoot{
+		RootID:         normalized.Generation.CandidateID,
+		TargetID:       normalized.Generation.TargetID,
+		CandidateID:    normalized.Generation.CandidateID,
+		GenerationID:   generation.GenerationID,
+		SnapshotSealID: normalized.Seal.SealID,
+		RootKind:       "candidate",
+		State:          "live",
+		ExpiresAt:      authoritativeExpiry,
+	})
+	if err != nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: create candidate retention root", err)
+	}
+	if root.RootID != normalized.Generation.CandidateID || root.TargetID != normalized.Generation.TargetID || root.CandidateID != normalized.Generation.CandidateID || root.GenerationID != generation.GenerationID || root.SnapshotSealID != normalized.Seal.SealID || root.RootKind != "candidate" || root.State != "live" || !root.ExpiresAt.Equal(authoritativeExpiry) {
+		return GenerationAdmissionResult{}, fmt.Errorf("%w: candidate retention root identity differs after persistence", deploymentnative.ErrConflict)
 	}
 	bundle, err := a.serving.AdmitGenerationBundleTx(ctx, tx, toNativeBundle(normalized.Bundle), normalized.Graph)
 	if err != nil {
@@ -430,6 +460,39 @@ func verifyGeneration(got deploymentnative.DeliveryGeneration, want GenerationEv
 	return nil
 }
 
+// authoritativeCandidateExpiry reads the canonical rich plan through the
+// caller-owned transaction. The assembler carries this value for identity
+// continuity, but the persisted plan remains the authority used to bound the
+// candidate retention root.
+func (a *generationAdmitter) authoritativeCandidateExpiry(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) (time.Time, error) {
+	planProjection, err := a.delivery.PlanTx(ctx, tx, input.Generation.PlanID)
+	if err != nil {
+		return time.Time{}, err
+	}
+	plan, err := planProjection.RichPlan()
+	if err != nil {
+		return time.Time{}, err
+	}
+	if plan.ID != input.Generation.PlanID || plan.TargetID != input.Generation.TargetID || plan.Digest != input.Generation.PlanDigest || plan.ProjectID != input.Bundle.ProjectID || plan.Environment != string(input.Bundle.Environment) {
+		return time.Time{}, fmt.Errorf("%w: persisted delivery plan identity differs from generation admission", deploymentnative.ErrConflict)
+	}
+	expiry, err := canonicalCandidateExpiry(plan.Governance.ExpiresAt)
+	if err != nil {
+		return time.Time{}, err
+	}
+	if !expiry.Equal(input.CandidateExpiresAt) {
+		return time.Time{}, fmt.Errorf("%w: candidate retention expiry differs from plan governance expiry", deploymentnative.ErrConflict)
+	}
+	return expiry, nil
+}
+
+func canonicalCandidateExpiry(value time.Time) (time.Time, error) {
+	if value.IsZero() || value.Location() != time.UTC {
+		return time.Time{}, fmt.Errorf("%w: candidate retention expiry must use the UTC location", deploymentnative.ErrInvalid)
+	}
+	return value.UTC().Truncate(time.Microsecond), nil
+}
+
 func verifyBundle(got servingnative.Bundle, input GenerationAdmissionInput) error {
 	want := input.Bundle
 	if got.GenerationID != want.GenerationID || got.ProjectID != want.ProjectID || got.Environment != want.Environment ||
@@ -527,6 +590,11 @@ func validPersistedTimestamp(value string) bool {
 
 func normalizeInput(input GenerationAdmissionInput) (GenerationAdmissionInput, error) {
 	ctx := input
+	candidateExpiry, err := canonicalCandidateExpiry(ctx.CandidateExpiresAt)
+	if err != nil {
+		return GenerationAdmissionInput{}, err
+	}
+	ctx.CandidateExpiresAt = candidateExpiry
 	if input.ManagedDataPins == nil {
 		return GenerationAdmissionInput{}, fmt.Errorf("%w: managed-data pins evidence is required", deploymentnative.ErrInvalid)
 	}
