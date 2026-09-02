@@ -1,6 +1,7 @@
 package postgres
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -149,6 +150,141 @@ func TestPostgres18MarkerQuarantineSerializesAdmissionAtCatalogScope(t *testing.
 		}
 	case <-time.After(5 * time.Second):
 		t.Fatal("serialized admission did not complete after quarantine commit")
+	}
+}
+
+func TestPostgres18BeginAttemptRejectsActiveRetentionOwner(t *testing.T) {
+	r, _, poolID, catalogID := retentionTestRepository(t, "begin_retention_busy")
+	fence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-owner", LeaseExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.ReleaseRetentionMaintenanceFence(t.Context(), fence) })
+	_, err = r.BeginAttempt(t.Context(), BeginAttemptInput{
+		AttemptID: "0198f2c0-7c7a-0000-0000-000000000714", RequestDigest: digest('b'), PlanDigest: digest('c'),
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "build-owner", FencingEpoch: 1,
+		SessionIdentity: "build-session", LeaseExpiresAt: time.Now().Add(time.Minute),
+	})
+	if !errors.Is(err, ErrRetentionMaintenanceBusy) {
+		t.Fatalf("admission with active retention owner = %v, want ErrRetentionMaintenanceBusy", err)
+	}
+	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{
+		AttemptID: "0198f2c0-7c7a-0000-0000-000000000715", RequestDigest: digest('b'), PlanDigest: digest('c'),
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "build-owner", FencingEpoch: 1,
+		SessionIdentity: "build-session", LeaseExpiresAt: time.Now().Add(time.Minute),
+	}); err == nil {
+		t.Fatal("admission unexpectedly succeeded while retention owner remained active")
+	}
+}
+
+func TestPostgres18BeginAttemptExactReplayBlockedByRetentionFence(t *testing.T) {
+	r, _, poolID, catalogID := retentionTestRepository(t, "begin_retention_replay")
+	in := BeginAttemptInput{
+		AttemptID:       "0198f2c0-7c7a-0000-0000-000000000723",
+		RequestDigest:   digest('b'),
+		PlanDigest:      digest('c'),
+		PhysicalPoolID:  poolID,
+		CatalogID:       catalogID,
+		OwnerID:         "build-owner",
+		FencingEpoch:    1,
+		SessionIdentity: "build-session",
+		LeaseExpiresAt:  time.Now().UTC().Add(time.Minute),
+	}
+	first, err := r.BeginAttempt(t.Context(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{
+		PhysicalPoolID: poolID,
+		CatalogID:      catalogID,
+		OwnerID:        "retention-owner",
+		LeaseExpiresAt: time.Now().UTC().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.ReleaseRetentionMaintenanceFence(t.Context(), fence) })
+	if _, err := r.BeginAttempt(t.Context(), in); !errors.Is(err, ErrRetentionMaintenanceBusy) {
+		t.Fatalf("exact replay with active retention fence = %v, want ErrRetentionMaintenanceBusy", err)
+	}
+	if err := r.ReleaseRetentionMaintenanceFence(t.Context(), fence); err != nil {
+		t.Fatal(err)
+	}
+	replay, err := r.BeginAttempt(t.Context(), in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.AttemptID != first.AttemptID || replay.RequestDigest != first.RequestDigest || replay.PlanDigest != first.PlanDigest || replay.PhysicalPoolID != first.PhysicalPoolID || replay.CatalogID != first.CatalogID || replay.OwnerID != first.OwnerID || replay.FencingEpoch != first.FencingEpoch || replay.SessionIdentity != first.SessionIdentity || !replay.LeaseExpiresAt.Equal(first.LeaseExpiresAt) || replay.State != first.State || !replay.CreatedAt.Equal(first.CreatedAt) || !replay.UpdatedAt.Equal(first.UpdatedAt) {
+		t.Fatalf("exact replay after retention release = %#v, want stored attempt %#v", replay, first)
+	}
+}
+
+func TestPostgres18BeginAttemptWaitsOnRetentionRowLock(t *testing.T) {
+	r, p, poolID, catalogID := retentionTestRepository(t, "begin_retention_lock")
+	fence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-owner", LeaseExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReleaseRetentionMaintenanceFence(t.Context(), fence); err != nil {
+		t.Fatal(err)
+	}
+	lockTx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(t.Context())
+	if _, err := lockTx.Exec(t.Context(), `SELECT 1 FROM ducklake.pool_maintenance_fence WHERE physical_pool_id=$1 AND catalog_id=$2 FOR UPDATE`, poolID, catalogID); err != nil {
+		t.Fatal(err)
+	}
+	shortCtx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, beginErr := r.BeginAttempt(shortCtx, BeginAttemptInput{
+			AttemptID: "0198f2c0-7c7a-0000-0000-000000000716", RequestDigest: digest('b'), PlanDigest: digest('c'),
+			PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "build-owner", FencingEpoch: 1,
+			SessionIdentity: "build-session", LeaseExpiresAt: time.Now().Add(time.Minute),
+		})
+		done <- beginErr
+	}()
+	select {
+	case beginErr := <-done:
+		if !errors.Is(beginErr, context.DeadlineExceeded) {
+			t.Fatalf("admission while retention row held = %v, want deadline", beginErr)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("admission did not honor lock timeout")
+	}
+}
+
+func TestPostgres18SnapshotOrphanIdentityReplayAndConflict(t *testing.T) {
+	r, _, poolID, catalogID := retentionTestRepository(t, "orphan_identity")
+	first, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{
+		OrphanID: "0198f2c0-7c7a-0000-0000-000000000717", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77,
+		Evidence: json.RawMessage(`{"source":"scan"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	replay, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{
+		OrphanID: "0198f2c0-7c7a-0000-0000-000000000718", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77,
+		Evidence: json.RawMessage(`{"source":"scan"}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.OrphanID != first.OrphanID || !evidenceEqual(replay.Evidence, string(first.Evidence)) {
+		t.Fatalf("identity replay = %#v, want original %#v", replay, first)
+	}
+	if _, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{
+		OrphanID: "0198f2c0-7c7a-0000-0000-000000000719", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77,
+		Evidence: json.RawMessage(`{"source":"changed"}`),
+	}); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed identity replay = %v, want ErrConflict", err)
 	}
 }
 
@@ -706,6 +842,7 @@ func TestPostgres18DuckLakeControlRoleGrants(t *testing.T) {
 	h := postgrestest.Start(t)
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "runtime-secret", Login: true})
 	readonlyRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "readonly-secret", Login: true})
+	_ = h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance", Password: "maintenance-secret", Login: true})
 	db := h.NewDatabase(t, "ducklake_control_role_test")
 	admin, err := pgxpool.New(t.Context(), db.AdminURL())
 	if err != nil {
@@ -723,19 +860,26 @@ func TestPostgres18DuckLakeControlRoleGrants(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, readonlyInsert bool
+	var publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, runtimeAdmissionFunction, runtimeOrphanInsert, runtimeOrphanUpdate, maintenanceAdmissionFunction, maintenanceOrphanInsert, readonlyAdmissionFunction, readonlyInsert, readonlyOrphanUpdate bool
 	if err := admin.QueryRow(t.Context(), `
 SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
        has_table_privilege('public', 'ducklake.catalog_identity', 'SELECT'),
        has_function_privilege('public', 'ducklake.reject_immutable_change()', 'EXECUTE'),
        has_table_privilege('leapview_control_runtime', 'ducklake.catalog_identity', 'DELETE'),
        has_function_privilege('leapview_control_runtime', 'ducklake.reject_immutable_change()', 'EXECUTE'),
-       has_table_privilege('leapview_control_readonly', 'ducklake.catalog_identity', 'INSERT')`).
-		Scan(&publicSchema, &publicTable, &publicFunction, &runtimeDelete, &runtimeFunction, &readonlyInsert); err != nil {
+       has_function_privilege('leapview_control_runtime', 'ducklake.assert_attempt_admission_fence(text,text)', 'EXECUTE'),
+       has_table_privilege('leapview_control_runtime', 'ducklake.snapshot_orphan', 'INSERT'),
+       has_table_privilege('leapview_control_runtime', 'ducklake.snapshot_orphan', 'UPDATE'),
+       has_function_privilege('leapview_control_maintenance', 'ducklake.assert_attempt_admission_fence(text,text)', 'EXECUTE'),
+       has_table_privilege('leapview_control_maintenance', 'ducklake.snapshot_orphan', 'INSERT'),
+       has_function_privilege('leapview_control_readonly', 'ducklake.assert_attempt_admission_fence(text,text)', 'EXECUTE'),
+       has_table_privilege('leapview_control_readonly', 'ducklake.catalog_identity', 'INSERT'),
+       has_table_privilege('leapview_control_readonly', 'ducklake.snapshot_orphan', 'UPDATE')`).
+		Scan(&publicSchema, &publicTable, &publicFunction, &runtimeDelete, &runtimeFunction, &runtimeAdmissionFunction, &runtimeOrphanInsert, &runtimeOrphanUpdate, &maintenanceAdmissionFunction, &maintenanceOrphanInsert, &readonlyAdmissionFunction, &readonlyInsert, &readonlyOrphanUpdate); err != nil {
 		t.Fatal(err)
 	}
-	if publicSchema || publicTable || publicFunction || runtimeDelete || runtimeFunction || readonlyInsert {
-		t.Fatalf("DuckLake role grants leaked: public schema=%t table=%t function=%t runtime delete=%t function=%t readonly insert=%t", publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, readonlyInsert)
+	if publicSchema || publicTable || publicFunction || runtimeDelete || runtimeFunction || !runtimeAdmissionFunction || runtimeOrphanInsert || runtimeOrphanUpdate || maintenanceAdmissionFunction || maintenanceOrphanInsert || readonlyAdmissionFunction || readonlyInsert || readonlyOrphanUpdate {
+		t.Fatalf("DuckLake role grants leaked: public schema=%t table=%t function=%t runtime delete=%t function=%t admission=%t runtime orphan insert=%t update=%t maintenance admission=%t orphan insert=%t readonly admission=%t insert=%t update=%t", publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, runtimeAdmissionFunction, runtimeOrphanInsert, runtimeOrphanUpdate, maintenanceAdmissionFunction, maintenanceOrphanInsert, readonlyAdmissionFunction, readonlyInsert, readonlyOrphanUpdate)
 	}
 	runtimeDB, err := pgxpool.New(t.Context(), db.URL(runtimeRole))
 	if err != nil {

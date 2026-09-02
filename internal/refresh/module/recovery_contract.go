@@ -84,13 +84,6 @@ func NewSQLiteRecoveryMetricsCollector(database *sql.DB, clock Clock) prometheus
 	return refreshrecovery.NewMetricsCollector(NewSQLiteRecoveryRepository(database), clock)
 }
 
-// NewSQLiteRecoveryLifecycle binds a local SQLite ledger to a lifecycle
-// definition. Production callers must inject a repository into the lifecycle.
-func NewSQLiteRecoveryLifecycle(database *sql.DB, lifecycle RecoveryLifecycle) *RecoveryLifecycle {
-	lifecycle.Repository = NewSQLiteRecoveryRepository(database)
-	return &lifecycle
-}
-
 func RedactFailure(err error) string {
 	return refreshrecovery.RedactFailure(err)
 }

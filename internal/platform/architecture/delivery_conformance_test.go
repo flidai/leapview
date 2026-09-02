@@ -1,8 +1,12 @@
 package architecture
 
 import (
+	"go/ast"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -112,6 +116,84 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	}
 	if strings.Contains(postgresBuildText, "NewSQLiteSealedFactory") {
 		t.Error("PostgreSQL production composition retains the legacy NewSQLiteSealedFactory")
+	}
+}
+
+// TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors keeps the
+// production assembly boundary explicit. Only the BuildProduction dispatch,
+// PostgreSQL composition, and PostgreSQL serving runtime are roots here; the
+// guarded local SQLite branch remains intentionally outside this scan.
+func TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors(t *testing.T) {
+	root := repoRoot(t)
+	roots := []string{
+		"internal/app/build.go",
+		"internal/app/postgres_build.go",
+		"internal/app/runtimefactory/postgres.go",
+	}
+	forbiddenCalls := map[string]struct{}{
+		"NewSQLiteSealedFactory":      {},
+		"NewSQLiteSealedRootResolver": {},
+		"RunSQLiteGC":                 {},
+		"OpenReadOnlyCatalog":         {},
+	}
+	for _, relative := range roots {
+		path := filepath.Join(root, filepath.FromSlash(relative))
+		source, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		file, err := parser.ParseFile(token.NewFileSet(), path, source, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, spec := range file.Imports {
+			importPath, err := strconv.Unquote(spec.Path.Value)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if importPath == "database/sql" || strings.Contains(importPath, "/sqlite") {
+				t.Errorf("%s imports local persistence implementation %q", relative, importPath)
+			}
+		}
+		ast.Inspect(file, func(node ast.Node) bool {
+			call, ok := node.(*ast.CallExpr)
+			if !ok {
+				return true
+			}
+			var name string
+			switch function := call.Fun.(type) {
+			case *ast.Ident:
+				name = function.Name
+			case *ast.SelectorExpr:
+				name = function.Sel.Name
+			}
+			if _, forbidden := forbiddenCalls[name]; forbidden {
+				t.Errorf("%s reaches local/file-catalog constructor %s", relative, name)
+			}
+			return true
+		})
+		ast.Inspect(file, func(node ast.Node) bool {
+			literal, ok := node.(*ast.CompositeLit)
+			if !ok {
+				return true
+			}
+			selector, ok := literal.Type.(*ast.SelectorExpr)
+			if ok && selector.Sel.Name == "FileCatalog" {
+				t.Errorf("%s constructs a file-backed catalog", relative)
+			}
+			return true
+		})
+	}
+
+	// Keep the explicit local/evaluation branch visible and admissible: this
+	// test must not turn a guarded SQLite fixture into a production ban.
+	local, err := os.ReadFile(filepath.Join(root, "internal/app/composition.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	localText := string(local)
+	if !strings.Contains(localText, "guardSQLiteAuthorityComposition") || !strings.Contains(localText, "NewSQLiteSealedFactory(") {
+		t.Fatal("guarded local SQLite composition is missing its explicit factory branch")
 	}
 }
 

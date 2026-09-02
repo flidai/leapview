@@ -742,13 +742,6 @@ func candidateManagedDataPinMap(managed []string, base map[string]string) map[st
 	return pins
 }
 
-// candidateSourcesDataRevision is retained as a compatibility shim for
-// package-local callers. The canonical hashing implementation lives in the
-// release domain so deployment and both artifact paths share one identity.
-func candidateSourcesDataRevision(artifactDigest string, pins map[string]string) (string, error) {
-	return release.CandidateSourcesDataRevision(artifactDigest, candidateManagedDataPins(pins))
-}
-
 func missingCandidateManagedConnections(connections []string, pins map[string]string) []string {
 	result := make([]string, 0)
 	for _, connection := range connections {

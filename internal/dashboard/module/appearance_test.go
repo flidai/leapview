@@ -1,16 +1,16 @@
 package module_test
 
 import (
-	"encoding/json"
 	"testing"
 
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
+	appearancesqlite "github.com/flidai/leapview/internal/dashboard/appearance/sqlite"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/platform"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-func TestApplySQLiteAppearancePatchesSharesBrowserAppearancePersistence(t *testing.T) {
+func TestSQLiteAppearancePatchSharesBrowserAppearancePersistence(t *testing.T) {
 	store, err := platform.Open(t.Context(), t.TempDir()+"/control.sqlite")
 	if err != nil {
 		t.Fatal(err)
@@ -22,11 +22,9 @@ func TestApplySQLiteAppearancePatchesSharesBrowserAppearancePersistence(t *testi
 		t.Fatal(err)
 	}
 	icon, color := "chart-no-axes-combined", "blue"
-	encoded := map[string]json.RawMessage{
-		"dashboard:executive": json.RawMessage(`{"icon":"` + icon + `","color":"` + color + `"}`),
-	}
 	projectID := projectgraph.ResourceID("project:test")
-	if err := dashboardmodule.ApplySQLiteAppearancePatches(t.Context(), tx, projectID, "principal:deploy", encoded); err != nil {
+	dashboardID := projectgraph.ResourceID("dashboard:executive")
+	if _, err := appearancesqlite.ApplyPatch(t.Context(), tx, dashboardappearance.Key{ProjectID: projectID, DashboardID: dashboardID}, "principal:deploy", dashboardappearance.Patch{Icon: &icon, Color: &color}); err != nil {
 		_ = tx.Rollback()
 		t.Fatal(err)
 	}

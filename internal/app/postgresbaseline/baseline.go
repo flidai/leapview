@@ -199,7 +199,7 @@ BEGIN
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache, physical_pool FROM leapview_control_readonly;
         REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential FROM leapview_control_readonly;
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
-        GRANT SELECT ON platform.schema_revision, platform.operation, platform.api_cursor_signing_key_metadata TO leapview_control_readonly;
+        GRANT SELECT ON platform.schema_revision, platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_key_metadata TO leapview_control_readonly;
         REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
@@ -213,7 +213,7 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA serving_state TO leapview_control_backup;
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_backup;
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
-        GRANT SELECT ON platform.schema_revision, platform.operation, platform.api_cursor_signing_keys TO leapview_control_backup;
+        GRANT SELECT ON platform.schema_revision, platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_keys TO leapview_control_backup;
     END IF;
 END
 $$;`

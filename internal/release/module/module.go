@@ -583,14 +583,6 @@ func (m *Module) PublishCandidate(
 	return m.service.PublishCandidate(ctx, input)
 }
 
-func releaseStores(database *sql.DB, workflow ...jobplatform.WorkflowRecorder) (release.Repository, release.FinalizationUnitOfWork, release.CatalogRepository, release.DeploymentLinkage, error) {
-	var recorder jobplatform.WorkflowRecorder
-	if len(workflow) > 0 {
-		recorder = workflow[0]
-	}
-	return releaseStoresWithAudit(database, recorder, nil)
-}
-
 func releaseStoresWithAudit(database *sql.DB, workflow jobplatform.WorkflowRecorder, audit access.AuditIntentRecorder) (release.Repository, release.FinalizationUnitOfWork, release.CatalogRepository, release.DeploymentLinkage, error) {
 	if database == nil {
 		return nil, nil, nil, nil, errors.New("release database is required")

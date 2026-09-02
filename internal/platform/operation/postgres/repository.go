@@ -274,6 +274,39 @@ type ReconcileAttemptInput struct {
 	Evidence        json.RawMessage
 }
 
+// SuccessorAttemptInput admits one append-only execution leaf after an
+// indeterminate predecessor. The public operation identity and predecessor
+// attempt remain immutable; the leaf carries a fresh executable fence.
+type SuccessorAttemptInput struct {
+	Predecessor         Lease
+	PredecessorID       string
+	PredecessorIdentity string
+	AttemptID           string
+	AttemptIdentity     string
+	OwnerID             string
+	LeaseExpiresAt      time.Time
+}
+
+// SuccessorAttempt is the executable operation leaf. Its lease fields are
+// intentionally shaped like Lease so heartbeat and terminal transitions can
+// use the same fencing predicates without changing the public operation row.
+type SuccessorAttempt struct {
+	Scope, IdempotencyKey      string
+	OperationID                string
+	PredecessorAttemptID       string
+	PredecessorAttemptIdentity string
+	AttemptID                  string
+	AttemptIdentity            string
+	OwnerID                    string
+	FencingGeneration          int64
+	LeaseExpiresAt             time.Time
+	State                      State
+	AttemptEvidence            json.RawMessage
+	ResolutionEvidence         json.RawMessage
+	CreatedAt, UpdatedAt       time.Time
+	TerminalAt                 time.Time
+}
+
 // Repository is safe for concurrent use; state is held in PostgreSQL.
 type Repository struct {
 	db        DBTX
@@ -724,6 +757,20 @@ func (r *Repository) MarkIndeterminateTx(ctx context.Context, tx Tx, lease Lease
 	if err := validateLease(lease); err != nil {
 		return err
 	}
+	if lease.AttemptID != "" {
+		if leaf, leafErr := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID)}); leafErr == nil {
+			stored, mapErr := successorAttemptFromByAttemptRow(leaf)
+			if mapErr != nil {
+				return mapErr
+			}
+			if stored.AttemptIdentity != lease.AttemptIdentity || stored.OwnerID != lease.OwnerID || stored.FencingGeneration != lease.FencingGeneration {
+				return ErrStaleFence
+			}
+			return r.MarkSuccessorIndeterminateTx(ctx, tx, lease, evidence)
+		} else if !errors.Is(leafErr, pgx.ErrNoRows) {
+			return leafErr
+		}
+	}
 	canonicalEvidence, err := canonicalNonEmptyObjectJSON(evidence)
 	if err != nil {
 		return err
@@ -768,6 +815,20 @@ func (r *Repository) ExpireAttemptTx(ctx context.Context, tx Tx, lease Lease, ev
 	}
 	if err := validateLease(lease); err != nil {
 		return err
+	}
+	if lease.AttemptID != "" {
+		if leaf, leafErr := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID)}); leafErr == nil {
+			stored, mapErr := successorAttemptFromByAttemptRow(leaf)
+			if mapErr != nil {
+				return mapErr
+			}
+			if stored.AttemptIdentity != lease.AttemptIdentity || stored.OwnerID != lease.OwnerID || stored.FencingGeneration != lease.FencingGeneration {
+				return ErrStaleFence
+			}
+			return r.ExpireSuccessorAttemptTx(ctx, tx, lease, evidence)
+		} else if !errors.Is(leafErr, pgx.ErrNoRows) {
+			return leafErr
+		}
 	}
 	if lease.AttemptID == "" || lease.AttemptIdentity == "" {
 		return ErrInvalid
@@ -847,6 +908,20 @@ func (r *Repository) RenewLeaseTx(ctx context.Context, tx Tx, lease Lease, durat
 	}
 	if err := validateLease(lease); err != nil {
 		return Lease{}, err
+	}
+	if lease.AttemptID != "" {
+		if leaf, leafErr := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID)}); leafErr == nil {
+			stored, mapErr := successorAttemptFromByAttemptRow(leaf)
+			if mapErr != nil {
+				return Lease{}, mapErr
+			}
+			if stored.AttemptIdentity != lease.AttemptIdentity || stored.OwnerID != lease.OwnerID || stored.FencingGeneration != lease.FencingGeneration {
+				return Lease{}, ErrStaleFence
+			}
+			return r.RenewSuccessorLeaseTx(ctx, tx, lease, duration)
+		} else if !errors.Is(leafErr, pgx.ErrNoRows) {
+			return Lease{}, leafErr
+		}
 	}
 	if duration <= 0 {
 		duration = r.lease
@@ -929,6 +1004,377 @@ func (r *Repository) BeginAttemptTx(ctx context.Context, tx Tx, in BeginAttemptI
 	return Attempt{AttemptID: attemptID, AttemptIdentity: identity, Lease: in.Lease}, nil
 }
 
+// AdmitSuccessorAttemptTx appends an executable operation leaf while leaving
+// the public indeterminate operation row untouched. Replays of the same
+// predecessor return the exact stored successor; any identity drift conflicts.
+func (r *Repository) AdmitSuccessorAttemptTx(ctx context.Context, tx Tx, in SuccessorAttemptInput) (SuccessorAttempt, error) {
+	if r == nil || tx == nil {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	ctx = contextOrBackground(ctx)
+	if err := validateLease(in.Predecessor); err != nil {
+		return SuccessorAttempt{}, err
+	}
+	predecessorID, err := canonicalSuccessorUUID(in.PredecessorID)
+	if err != nil || predecessorID != in.PredecessorID {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	if in.PredecessorIdentity == "" {
+		in.PredecessorIdentity = in.Predecessor.AttemptIdentity
+	}
+	if in.PredecessorIdentity != strings.TrimSpace(in.PredecessorIdentity) || in.PredecessorIdentity == "" || len(in.PredecessorIdentity) > 512 || in.PredecessorIdentity != in.Predecessor.AttemptIdentity {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	attemptID, err := canonicalSuccessorUUID(in.AttemptID)
+	if err != nil || attemptID != in.AttemptID || attemptID == predecessorID {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	if in.AttemptIdentity == "" || in.AttemptIdentity != strings.TrimSpace(in.AttemptIdentity) || len(in.AttemptIdentity) > 512 || in.OwnerID == "" || in.OwnerID != strings.TrimSpace(in.OwnerID) || len(in.OwnerID) > 255 || in.LeaseExpiresAt.IsZero() || !in.LeaseExpiresAt.Equal(in.LeaseExpiresAt.UTC()) {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	if in.AttemptIdentity == in.Predecessor.AttemptIdentity {
+		return SuccessorAttempt{}, ErrConflict
+	}
+	if in.Predecessor.AttemptID == "" || in.Predecessor.AttemptIdentity == "" {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	if in.Predecessor.FencingGeneration == 1<<63-1 {
+		return SuccessorAttempt{}, ErrConflict
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return SuccessorAttempt{}, err
+	}
+	if !in.LeaseExpiresAt.After(now) || in.LeaseExpiresAt.After(now.Add(maxLeaseDuration)) {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	public, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: in.Predecessor.Scope, IdempotencyKey: in.Predecessor.IdempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SuccessorAttempt{}, ErrNotFound
+	}
+	if err != nil {
+		return SuccessorAttempt{}, err
+	}
+	op, err := operationFromForUpdateRow(public)
+	if err != nil {
+		return SuccessorAttempt{}, err
+	}
+	if op.OperationID != in.Predecessor.OperationID || op.State != StateIndeterminate {
+		return SuccessorAttempt{}, ErrConflict
+	}
+	if op.AttemptID != predecessorID || op.AttemptIdentity != in.PredecessorIdentity {
+		// The predecessor may itself be a prior successor leaf. Lock and verify
+		// that immutable chain edge before appending the next leaf.
+		row, leafErr := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(op.OperationID), AttemptID: uuidParam(predecessorID)})
+		if errors.Is(leafErr, pgx.ErrNoRows) {
+			return SuccessorAttempt{}, ErrConflict
+		}
+		if leafErr != nil {
+			return SuccessorAttempt{}, leafErr
+		}
+		leaf, leafErr := successorAttemptFromByAttemptRow(row)
+		if leafErr != nil {
+			return SuccessorAttempt{}, leafErr
+		}
+		if leaf.AttemptIdentity != in.PredecessorIdentity || leaf.State != StateIndeterminate || leaf.FencingGeneration != in.Predecessor.FencingGeneration || leaf.OwnerID != in.Predecessor.OwnerID {
+			return SuccessorAttempt{}, ErrConflict
+		}
+	} else if op.AttemptID != predecessorID || op.AttemptIdentity != in.PredecessorIdentity || op.FencingGeneration != in.Predecessor.FencingGeneration || op.OwnerID != in.Predecessor.OwnerID {
+		return SuccessorAttempt{}, ErrStaleFence
+	}
+	if err := validateSuccessorAttemptID(ctx, tx, op, predecessorID, attemptID); err != nil {
+		return SuccessorAttempt{}, err
+	}
+	if in.Predecessor.FencingGeneration >= 1<<63-1 {
+		return SuccessorAttempt{}, ErrConflict
+	}
+	leafFence := in.Predecessor.FencingGeneration + 1
+	_, err = operationdb.New(tx).InsertOperationSuccessorAttempt(ctx, operationdb.InsertOperationSuccessorAttemptParams{
+		OperationID: uuidParam(op.OperationID), PredecessorAttemptID: uuidParam(predecessorID), PredecessorAttemptIdentity: in.PredecessorIdentity,
+		AttemptID: uuidParam(attemptID), AttemptIdentity: in.AttemptIdentity, OwnerID: in.OwnerID, FencingGeneration: leafFence,
+		LeaseExpiresAt: timestampParam(in.LeaseExpiresAt.UTC().Truncate(time.Microsecond)), CreatedAt: timestampParam(now),
+	})
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		if isUniqueViolation(err) {
+			return SuccessorAttempt{}, ErrConflict
+		}
+		return SuccessorAttempt{}, err
+	}
+	row, err := operationdb.New(tx).GetOperationSuccessorAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptForUpdateParams{OperationID: uuidParam(op.OperationID), PredecessorAttemptID: uuidParam(predecessorID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SuccessorAttempt{}, ErrNotFound
+	}
+	if err != nil {
+		return SuccessorAttempt{}, err
+	}
+	leaf, err := successorAttemptFromRow(row)
+	if err != nil {
+		return SuccessorAttempt{}, err
+	}
+	if leaf.AttemptID != attemptID || leaf.AttemptIdentity != in.AttemptIdentity || leaf.OwnerID != in.OwnerID || leaf.FencingGeneration != leafFence || !leaf.LeaseExpiresAt.Equal(in.LeaseExpiresAt.UTC().Truncate(time.Microsecond)) || leaf.PredecessorAttemptIdentity != in.PredecessorIdentity {
+		return SuccessorAttempt{}, ErrConflict
+	}
+	return leaf, nil
+}
+
+// CurrentSuccessorAttempt returns the sole pending operation leaf, if any.
+func (r *Repository) CurrentSuccessorAttempt(ctx context.Context, operationID string) (SuccessorAttempt, bool, error) {
+	if r == nil || !operationDBConfigured(r.db) {
+		return SuccessorAttempt{}, false, ErrInvalid
+	}
+	id, err := canonicalSuccessorUUID(operationID)
+	if err != nil || id != operationID {
+		return SuccessorAttempt{}, false, ErrInvalid
+	}
+	row, err := operationdb.New(r.db).GetCurrentOperationSuccessorAttempt(contextOrBackground(ctx), uuidParam(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SuccessorAttempt{}, false, nil
+	}
+	if err != nil {
+		return SuccessorAttempt{}, false, err
+	}
+	leaf, err := successorAttemptFromCurrentRow(row)
+	return leaf, err == nil, err
+}
+
+func (r *Repository) RenewSuccessorLeaseTx(ctx context.Context, tx Tx, lease Lease, duration time.Duration) (Lease, error) {
+	if r == nil || tx == nil {
+		return Lease{}, ErrInvalid
+	}
+	if err := validateLease(lease); err != nil {
+		return Lease{}, err
+	}
+	if duration <= 0 {
+		duration = r.lease
+	}
+	if duration < time.Microsecond || duration > maxLeaseDuration {
+		return Lease{}, ErrInvalid
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return Lease{}, err
+	}
+	expires := now.Add(duration).UTC().Truncate(time.Microsecond)
+	command, err := operationdb.New(tx).RenewOperationSuccessorLease(ctx, operationdb.RenewOperationSuccessorLeaseParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration, LeaseExpiresAt: timestampParam(expires), UpdatedAt: timestampParam(now)})
+	if err != nil {
+		return Lease{}, err
+	}
+	if command.RowsAffected() != 1 {
+		return Lease{}, ErrConflict
+	}
+	lease.LeaseExpiresAt = expires
+	return lease, nil
+}
+
+func (r *Repository) MarkSuccessorIndeterminateTx(ctx context.Context, tx Tx, lease Lease, evidence json.RawMessage) error {
+	if r == nil || tx == nil {
+		return ErrInvalid
+	}
+	if err := validateLease(lease); err != nil {
+		return err
+	}
+	canonical, err := canonicalNonEmptyObjectJSON(evidence)
+	if err != nil {
+		return err
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	command, err := operationdb.New(tx).MarkOperationSuccessorIndeterminate(ctx, operationdb.MarkOperationSuccessorIndeterminateParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration, AttemptEvidence: canonical, UpdatedAt: timestampParam(now)})
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (r *Repository) ExpireSuccessorAttemptTx(ctx context.Context, tx Tx, lease Lease, evidence json.RawMessage) error {
+	if r == nil || tx == nil {
+		return ErrInvalid
+	}
+	if err := validateLease(lease); err != nil {
+		return err
+	}
+	canonical, err := canonicalNonEmptyObjectJSON(evidence)
+	if err != nil {
+		return err
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return err
+	}
+	command, err := operationdb.New(tx).ExpireOperationSuccessorAttempt(ctx, operationdb.ExpireOperationSuccessorAttemptParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID), OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration, AttemptEvidence: canonical, UpdatedAt: timestampParam(now)})
+	if err != nil {
+		return err
+	}
+	if command.RowsAffected() != 1 {
+		return ErrConflict
+	}
+	return nil
+}
+
+func (r *Repository) ReconcileSuccessorAttemptTx(ctx context.Context, tx Tx, lease Lease, state State, outcome, evidence json.RawMessage) (Operation, error) {
+	if r == nil || tx == nil || (state != StateCompleted && state != StateFailed) {
+		return Operation{}, ErrInvalid
+	}
+	if err := validateLease(lease); err != nil {
+		return Operation{}, err
+	}
+	canonicalOutcome, err := canonicalObjectJSON(outcome)
+	if err != nil {
+		return Operation{}, err
+	}
+	canonicalEvidence, err := canonicalNonEmptyObjectJSON(evidence)
+	if err != nil {
+		return Operation{}, err
+	}
+	now, err := r.nowTx(ctx, tx)
+	if err != nil {
+		return Operation{}, err
+	}
+	// Lock the public idempotency row before any successor leaf. Every
+	// operation path follows this order, preventing a concurrent admission or
+	// reconciliation from acquiring the inverse leaf→public order.
+	public, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Operation{}, ErrNotFound
+	}
+	if err != nil {
+		return Operation{}, err
+	}
+	op, err := operationFromForUpdateRow(public)
+	if err != nil {
+		return Operation{}, err
+	}
+	if op.State != StateIndeterminate || op.OperationID != lease.OperationID {
+		return Operation{}, ErrConflict
+	}
+	leafRow, err := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID)})
+	if err != nil {
+		return Operation{}, err
+	}
+	leaf, err := successorAttemptFromByAttemptRow(leafRow)
+	if err != nil {
+		return Operation{}, err
+	}
+	if leaf.AttemptIdentity != lease.AttemptIdentity || leaf.OwnerID != lease.OwnerID || leaf.FencingGeneration != lease.FencingGeneration || (leaf.State != StatePending && leaf.State != StateIndeterminate) {
+		return Operation{}, ErrConflict
+	}
+	if leaf.State == StatePending && !leaf.LeaseExpiresAt.After(now) {
+		return Operation{}, ErrLeaseExpired
+	}
+	if _, childErr := operationdb.New(tx).GetOperationSuccessorAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptForUpdateParams{OperationID: uuidParam(lease.OperationID), PredecessorAttemptID: uuidParam(leaf.AttemptID)}); childErr == nil {
+		return Operation{}, ErrConflict
+	} else if !errors.Is(childErr, pgx.ErrNoRows) {
+		return Operation{}, childErr
+	}
+	command, err := operationdb.New(tx).ReconcileOperationSuccessor(ctx, operationdb.ReconcileOperationSuccessorParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID), AttemptIdentity: lease.AttemptIdentity, State: string(state), ResolutionEvidence: canonicalEvidence, UpdatedAt: timestampParam(now)})
+	if err != nil {
+		return Operation{}, err
+	}
+	if command.RowsAffected() != 1 {
+		return Operation{}, ErrConflict
+	}
+	// Settle the public idempotency row against its immutable root attempt. The
+	// successor evidence is retained on the leaf and in the public resolution
+	// document; no predecessor identity is overwritten.
+	if err := validateSuccessorChainRoot(ctx, tx, op, leaf); err != nil {
+		return Operation{}, err
+	}
+	command, err = operationdb.New(tx).ReconcileOperationFromSuccessor(ctx, operationdb.ReconcileOperationFromSuccessorParams{
+		State:                    string(state),
+		Outcome:                  canonicalOutcome,
+		Evidence:                 canonicalEvidence,
+		UpdatedAt:                timestampParam(now),
+		ScopeID:                  op.Scope,
+		IdempotencyKey:           op.IdempotencyKey,
+		AttemptID:                uuidParam(op.AttemptID),
+		AttemptIdentity:          textParam(op.AttemptIdentity),
+		SuccessorAttemptID:       uuidParam(leaf.AttemptID),
+		SuccessorAttemptIdentity: leaf.AttemptIdentity,
+	})
+	if err != nil {
+		return Operation{}, err
+	}
+	if command.RowsAffected() != 1 {
+		return Operation{}, ErrConflict
+	}
+	storedAfter, err := operationdb.New(tx).GetOperation(ctx, operationdb.GetOperationParams{ScopeID: op.Scope, IdempotencyKey: op.IdempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Operation{}, ErrNotFound
+	}
+	if err != nil {
+		return Operation{}, err
+	}
+	return operationFromRow(storedAfter)
+}
+
+func validateSuccessorChainRoot(ctx context.Context, tx Tx, op Operation, leaf SuccessorAttempt) error {
+	cursor := leaf.PredecessorAttemptID
+	seen := map[string]struct{}{leaf.AttemptID: {}}
+	for cursor != op.AttemptID {
+		if _, exists := seen[cursor]; exists {
+			return ErrConflict
+		}
+		seen[cursor] = struct{}{}
+		row, err := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(op.OperationID), AttemptID: uuidParam(cursor)})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		previous, err := successorAttemptFromByAttemptRow(row)
+		if err != nil {
+			return err
+		}
+		if previous.State != StateIndeterminate && previous.State != StateCompleted && previous.State != StateFailed {
+			return ErrConflict
+		}
+		cursor = previous.PredecessorAttemptID
+	}
+	return nil
+}
+
+// validateSuccessorAttemptID rejects an attempt UUID already present on the
+// public root or any predecessor in the append-only chain.  The public row is
+// locked by AdmitSuccessorAttemptTx before this walk; each predecessor leaf
+// is then locked in the same public->leaf order used by reconciliation.
+func validateSuccessorAttemptID(ctx context.Context, tx Tx, op Operation, predecessorID, attemptID string) error {
+	if attemptID == op.AttemptID {
+		return ErrConflict
+	}
+	cursor := predecessorID
+	seen := make(map[string]struct{})
+	for cursor != op.AttemptID {
+		if cursor == attemptID {
+			return ErrConflict
+		}
+		if _, ok := seen[cursor]; ok {
+			return ErrConflict
+		}
+		seen[cursor] = struct{}{}
+		row, err := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{
+			OperationID: uuidParam(op.OperationID), AttemptID: uuidParam(cursor),
+		})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return ErrConflict
+		}
+		if err != nil {
+			return err
+		}
+		previous, err := successorAttemptFromByAttemptRow(row)
+		if err != nil {
+			return err
+		}
+		cursor = previous.PredecessorAttemptID
+	}
+	return nil
+}
+
 func (r *Repository) ReconcileAttempt(ctx context.Context, in ReconcileAttemptInput) (Operation, error) {
 	var result Operation
 	err := r.withTx(ctx, func(tx pgx.Tx) error { var err error; result, err = r.ReconcileAttemptTx(ctx, tx, in); return err })
@@ -976,8 +1422,65 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 	if err != nil {
 		return Operation{}, err
 	}
+	if op.AttemptID != in.AttemptID {
+		if leafRow, leafErr := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(op.OperationID), AttemptID: uuidParam(in.AttemptID)}); leafErr == nil {
+			leaf, mapErr := successorAttemptFromByAttemptRow(leafRow)
+			if mapErr != nil {
+				return Operation{}, mapErr
+			}
+			if leaf.AttemptIdentity != in.AttemptIdentity {
+				return Operation{}, ErrConflict
+			}
+			if op.State != StateIndeterminate {
+				// A terminal public row is replayable through a successor only
+				// when that exact addressed leaf is the terminal leaf. An older
+				// indeterminate predecessor must not be able to replay a newer
+				// descendant's result.
+				if leaf.State != in.State || (leaf.State != StateCompleted && leaf.State != StateFailed) {
+					return Operation{}, ErrConflict
+				}
+				leafEvidence, leafEvidenceErr := canonicalObjectJSON(leaf.ResolutionEvidence)
+				if leafEvidenceErr != nil || string(leafEvidence) != string(canonicalEvidence) {
+					return Operation{}, ErrConflict
+				}
+				if _, childErr := operationdb.New(tx).GetOperationSuccessorAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptForUpdateParams{OperationID: uuidParam(op.OperationID), PredecessorAttemptID: uuidParam(leaf.AttemptID)}); childErr == nil {
+					return Operation{}, ErrConflict
+				} else if !errors.Is(childErr, pgx.ErrNoRows) {
+					return Operation{}, childErr
+				}
+				storedOutcome, outcomeErr := canonicalObjectJSON(op.Outcome)
+				storedEvidence, evidenceErr := canonicalObjectJSON(op.ResolutionEvidence)
+				if outcomeErr != nil || evidenceErr != nil {
+					return Operation{}, errors.New("persisted reconciliation result is invalid")
+				}
+				if op.State == in.State && string(storedOutcome) == string(canonicalOutcome) && string(storedEvidence) == string(canonicalEvidence) {
+					return op, nil
+				}
+				return Operation{}, ErrConflict
+			}
+			return r.ReconcileSuccessorAttemptTx(ctx, tx, Lease{Scope: op.Scope, IdempotencyKey: op.IdempotencyKey, OperationID: op.OperationID, OwnerID: leaf.OwnerID, FencingGeneration: leaf.FencingGeneration, LeaseExpiresAt: leaf.LeaseExpiresAt, AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity}, in.State, in.Outcome, in.Evidence)
+		} else if !errors.Is(leafErr, pgx.ErrNoRows) {
+			return Operation{}, leafErr
+		}
+	}
 	if op.AttemptID != in.AttemptID || op.AttemptIdentity != in.AttemptIdentity {
 		return Operation{}, ErrConflict
+	}
+	// Once a successor has been admitted, the public root is no longer an
+	// executable reconciliation target.  The successor path settles the root
+	// through its dedicated ordered update after first terminalizing the leaf;
+	// callers addressing the stale root directly must conflict even when the
+	// successor is still pending or indeterminate.
+	if op.State == StateIndeterminate {
+		_, successorErr := operationdb.New(tx).GetOperationSuccessorAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptForUpdateParams{
+			OperationID: uuidParam(op.OperationID), PredecessorAttemptID: uuidParam(op.AttemptID),
+		})
+		if successorErr == nil {
+			return Operation{}, ErrConflict
+		}
+		if !errors.Is(successorErr, pgx.ErrNoRows) {
+			return Operation{}, successorErr
+		}
 	}
 	if op.State != StateIndeterminate {
 		storedOutcome, outcomeErr := canonicalObjectJSON(op.Outcome)
@@ -990,13 +1493,16 @@ func (r *Repository) ReconcileAttemptTx(ctx context.Context, tx Tx, in Reconcile
 		}
 		return Operation{}, ErrConflict
 	}
-	_, err = operationdb.New(tx).ReconcileOperation(ctx, operationdb.ReconcileOperationParams{
+	command, err := operationdb.New(tx).ReconcileOperation(ctx, operationdb.ReconcileOperationParams{
 		State: string(in.State), Outcome: canonicalOutcome, Evidence: canonicalEvidence,
 		UpdatedAt: timestampParam(now), ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey,
 		AttemptID: uuidParam(in.AttemptID), AttemptIdentity: textParam(in.AttemptIdentity),
 	})
 	if err != nil {
 		return Operation{}, err
+	}
+	if command.RowsAffected() != 1 {
+		return Operation{}, r.transitionError(ctx, tx, Lease{Scope: in.Scope, IdempotencyKey: in.IdempotencyKey, OperationID: op.OperationID, OwnerID: op.OwnerID, FencingGeneration: op.FencingGeneration, LeaseExpiresAt: op.LeaseExpiresAt, AttemptID: op.AttemptID, AttemptIdentity: op.AttemptIdentity})
 	}
 	storedAfter, err := operationdb.New(tx).GetOperation(ctx, operationdb.GetOperationParams{ScopeID: in.Scope, IdempotencyKey: in.IdempotencyKey})
 	if err == nil {
@@ -1302,6 +1808,21 @@ func validUUID(value string) bool {
 	return true
 }
 
+func contextOrBackground(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func canonicalSuccessorUUID(value string) (string, error) {
+	id, err := uuid.Parse(value)
+	if err != nil || id.String() != value || id.Version() != 7 {
+		return "", ErrInvalid
+	}
+	return value, nil
+}
+
 func newUUID() (string, error) {
 	id, err := uuid.NewV7()
 	if err != nil {
@@ -1315,6 +1836,34 @@ func operationFromRow(row operationdb.GetOperationRow) (Operation, error) {
 		row.OperationID, row.State, row.OwnerID, row.LeaseExpiresAt, row.FencingGeneration,
 		row.Outcome, row.AttemptID, row.AttemptIdentity, row.AttemptEvidence, row.ResolutionEvidence,
 		row.CreatedAt, row.UpdatedAt, row.TerminalAt, row.ExpiresAt)
+}
+
+func successorAttemptFromRow(row operationdb.GetOperationSuccessorAttemptForUpdateRow) (SuccessorAttempt, error) {
+	return successorAttemptValues(row.OperationID, row.PredecessorAttemptID, row.PredecessorAttemptIdentity, row.AttemptID, row.AttemptIdentity, row.OwnerID, row.FencingGeneration, row.LeaseExpiresAt, row.State, row.AttemptEvidence, row.ResolutionEvidence, row.CreatedAt, row.UpdatedAt, row.TerminalAt)
+}
+
+func successorAttemptFromByAttemptRow(row operationdb.GetOperationSuccessorAttemptByAttemptForUpdateRow) (SuccessorAttempt, error) {
+	return successorAttemptValues(row.OperationID, row.PredecessorAttemptID, row.PredecessorAttemptIdentity, row.AttemptID, row.AttemptIdentity, row.OwnerID, row.FencingGeneration, row.LeaseExpiresAt, row.State, row.AttemptEvidence, row.ResolutionEvidence, row.CreatedAt, row.UpdatedAt, row.TerminalAt)
+}
+
+func successorAttemptFromCurrentRow(row operationdb.GetCurrentOperationSuccessorAttemptRow) (SuccessorAttempt, error) {
+	leaf, err := successorAttemptValues(row.OperationID, row.PredecessorAttemptID, row.PredecessorAttemptIdentity, row.AttemptID, row.AttemptIdentity, row.OwnerID, row.FencingGeneration, row.LeaseExpiresAt, row.State, row.AttemptEvidence, row.ResolutionEvidence, row.CreatedAt, row.UpdatedAt, row.TerminalAt)
+	leaf.Scope, leaf.IdempotencyKey = row.ScopeID, row.IdempotencyKey
+	return leaf, err
+}
+
+func successorAttemptValues(operationID, predecessorID, predecessorIdentity, attemptID, attemptIdentity, ownerID string, generation int64, expires pgtype.Timestamptz, state string, attemptEvidence, resolutionEvidence []byte, createdAt, updatedAt, terminalAt pgtype.Timestamptz) (SuccessorAttempt, error) {
+	if !validUUID(operationID) || !validUUID(predecessorID) || !validUUID(attemptID) || predecessorIdentity == "" || attemptIdentity == "" || ownerID == "" || generation <= 0 || !expires.Valid || expires.Time.IsZero() || !createdAt.Valid || !updatedAt.Valid {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	if state != string(StatePending) && state != string(StateIndeterminate) && state != string(StateCompleted) && state != string(StateFailed) {
+		return SuccessorAttempt{}, ErrInvalid
+	}
+	leaf := SuccessorAttempt{OperationID: operationID, PredecessorAttemptID: predecessorID, PredecessorAttemptIdentity: predecessorIdentity, AttemptID: attemptID, AttemptIdentity: attemptIdentity, OwnerID: ownerID, FencingGeneration: generation, LeaseExpiresAt: expires.Time, State: State(state), AttemptEvidence: append(json.RawMessage(nil), attemptEvidence...), ResolutionEvidence: append(json.RawMessage(nil), resolutionEvidence...), CreatedAt: createdAt.Time, UpdatedAt: updatedAt.Time}
+	if terminalAt.Valid {
+		leaf.TerminalAt = terminalAt.Time
+	}
+	return leaf, nil
 }
 
 func operationFromForUpdateRow(row operationdb.GetOperationForUpdateRow) (Operation, error) {
@@ -1389,4 +1938,9 @@ func timestampParam(value time.Time) pgtype.Timestamptz {
 
 func intervalParam(value time.Duration) pgtype.Interval {
 	return pgtype.Interval{Microseconds: value.Microseconds(), Valid: true}
+}
+
+func isUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }

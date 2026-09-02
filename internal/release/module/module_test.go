@@ -22,14 +22,14 @@ import (
 
 var _ NativePersistence = (*releasepostgres.Repository)(nil)
 
-func TestReleaseStoresAreConstructedInsideModule(t *testing.T) {
+func TestSQLiteReleasePersistenceIsConstructedInsideModule(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
 
-	releases, finalization, catalog, deployments, err := releaseStores(store.SQLDB())
+	releases, finalization, catalog, deployments, err := releaseStoresWithAudit(store.SQLDB(), nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,8 +38,8 @@ func TestReleaseStoresAreConstructedInsideModule(t *testing.T) {
 	}
 }
 
-func TestReleaseStoresRequireDatabase(t *testing.T) {
-	if _, _, _, _, err := releaseStores(nil); err == nil {
+func TestSQLiteReleasePersistenceRequiresDatabase(t *testing.T) {
+	if _, _, _, _, err := releaseStoresWithAudit(nil, nil, nil); err == nil {
 		t.Fatal("release module accepted missing persistence")
 	}
 }

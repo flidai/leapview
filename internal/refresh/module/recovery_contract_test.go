@@ -21,8 +21,8 @@ func TestSQLiteRecoveryConstructorsKeepDatabaseAuthorityLocal(t *testing.T) {
 	if repository == nil {
 		t.Fatal("SQLite recovery database did not produce a repository")
 	}
-	lifecycle := NewSQLiteRecoveryLifecycle(store.SQLDB(), RecoveryLifecycle{})
-	if lifecycle == nil || lifecycle.Repository == nil {
+	lifecycle := RecoveryLifecycle{Repository: NewSQLiteRecoveryRepository(store.SQLDB())}
+	if lifecycle.Repository == nil {
 		t.Fatal("SQLite recovery lifecycle did not bind its local repository")
 	}
 }

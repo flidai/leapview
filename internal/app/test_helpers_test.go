@@ -475,7 +475,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 				lifecycle.Repository = data.RefreshPersistence.Recovery
 				options.RecoveryLifecycle = &lifecycle
 			} else {
-				options.RecoveryLifecycle = refreshmodule.NewSQLiteRecoveryLifecycle(options.Database, lifecycle)
+				lifecycle.Repository = refreshmodule.NewSQLiteRecoveryRepository(options.Database)
+				options.RecoveryLifecycle = &lifecycle
 			}
 		}
 	}

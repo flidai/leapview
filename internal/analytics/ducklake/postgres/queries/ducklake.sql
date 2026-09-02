@@ -4,6 +4,9 @@
 -- name: DatabaseClock :one
 SELECT clock_timestamp()::timestamptz AS now;
 
+-- name: AssertAttemptAdmissionFence :exec
+SELECT ducklake.assert_attempt_admission_fence(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id));
+
 -- name: ReadDatabaseIdentity :one
 SELECT current_database()::text AS database_name, current_user::text AS user_name, session_user::text AS session_user_name;
 
@@ -220,11 +223,18 @@ SELECT ducklake.complete_snapshot_cleanup_under_maintenance_fence(sqlc.arg(clean
 
 -- name: InsertSnapshotOrphan :exec
 INSERT INTO ducklake.snapshot_orphan(orphan_id,physical_pool_id,catalog_id,snapshot_id,state,evidence,discovered_at)
-VALUES(sqlc.arg(orphan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),'quarantined',sqlc.arg(evidence)::jsonb,sqlc.arg(discovered_at)) ON CONFLICT(orphan_id) DO NOTHING;
+VALUES(sqlc.arg(orphan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),'quarantined',sqlc.arg(evidence)::jsonb,sqlc.arg(discovered_at)) ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
 
 -- name: GetSnapshotOrphan :one
 SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at
 FROM ducklake.snapshot_orphan WHERE orphan_id=sqlc.arg(orphan_id);
+
+-- name: GetSnapshotOrphanByIdentity :one
+SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at
+FROM ducklake.snapshot_orphan
+WHERE physical_pool_id=sqlc.arg(physical_pool_id)
+  AND catalog_id=sqlc.arg(catalog_id)
+  AND snapshot_id=sqlc.arg(snapshot_id);
 
 -- name: ClaimSnapshotOrphanCleanup :one
 UPDATE ducklake.snapshot_orphan SET cleanup_owner_id=sqlc.arg(cleanup_owner_id),cleanup_fencing_epoch=cleanup_fencing_epoch+1,cleanup_lease_expires_at=sqlc.arg(cleanup_lease_expires_at)

@@ -246,6 +246,34 @@ type NativeOperationAttempt struct {
 	Lease           NativeOperationLease
 }
 
+// NativeOperationSuccessorInput binds a fresh executable leaf to an
+// indeterminate public operation. The predecessor identity is immutable and
+// remains the public row's attempt; the leaf owns the new lease/fence.
+type NativeOperationSuccessorInput struct {
+	Predecessor         NativeOperationLease
+	PredecessorID       string
+	PredecessorIdentity string
+	AttemptID           string
+	AttemptIdentity     string
+	OwnerID             string
+	LeaseExpiresAt      time.Time
+}
+
+type NativeOperationSuccessor struct {
+	AttemptID       string
+	AttemptIdentity string
+	Lease           NativeOperationLease
+}
+
+// NativeBuildOperationSuccessorAuthority is optional on the broad operation
+// interface so existing SQLite/evaluation doubles remain unchanged. Native
+// PostgreSQL BuildPlan recovery requires this capability to execute a
+// successor leaf without mutating the public indeterminate operation row.
+type NativeBuildOperationSuccessorAuthority interface {
+	AdmitSuccessorAttemptTx(context.Context, NativeOperationTx, NativeOperationSuccessorInput) (NativeOperationSuccessor, error)
+	CurrentSuccessorAttempt(context.Context, string) (NativeOperationSuccessor, bool, error)
+}
+
 // NativeOperationReconcileAttemptInput resolves an indeterminate operation
 // using the exact external attempt identity and positive evidence. State must
 // be completed or failed; outcome and evidence are canonical object JSON

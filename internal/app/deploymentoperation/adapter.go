@@ -28,6 +28,7 @@ type Adapter struct {
 
 var _ deploymentmodule.NativeOperationAuthority = (*Adapter)(nil)
 var _ deploymentmodule.NativeBuildOperationAuthority = (*Adapter)(nil)
+var _ deploymentmodule.NativeBuildOperationSuccessorAuthority = (*Adapter)(nil)
 
 // Lookup performs a non-locking exact-idempotency read. Native planners use
 // it only to bypass remote source inspection for an already-terminal replay;
@@ -80,6 +81,51 @@ func (a *Adapter) LockOperationTx(ctx context.Context, tx deploymentmodule.Nativ
 // New returns an adapter backed by the supplied operation authority.
 func New(repository *operationpostgres.Repository) *Adapter {
 	return &Adapter{operations: repository}
+}
+
+func (a *Adapter) AdmitSuccessorAttemptTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, input deploymentmodule.NativeOperationSuccessorInput) (deploymentmodule.NativeOperationSuccessor, error) {
+	if a == nil || a.operations == nil || tx == nil {
+		return deploymentmodule.NativeOperationSuccessor{}, fmt.Errorf("%w: successor operation authority is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(input.Predecessor, true); err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	if input.PredecessorID == "" || input.PredecessorID != input.Predecessor.AttemptID || input.PredecessorIdentity != input.Predecessor.AttemptIdentity {
+		return deploymentmodule.NativeOperationSuccessor{}, fmt.Errorf("%w: successor predecessor identity differs", deploymentmodule.ErrNativeOperationConflict)
+	}
+	if err := validateUUIDv7(input.AttemptID, "successor attempt id"); err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	if input.AttemptIdentity == "" || input.AttemptIdentity != strings.TrimSpace(input.AttemptIdentity) || len(input.AttemptIdentity) > 512 || input.OwnerID == "" || input.OwnerID != strings.TrimSpace(input.OwnerID) || len(input.OwnerID) > 255 || input.LeaseExpiresAt.IsZero() {
+		return deploymentmodule.NativeOperationSuccessor{}, fmt.Errorf("%w: successor operation identity is invalid", deploymentmodule.ErrNativeOperationInvalid)
+	}
+	leaf, err := a.operations.AdmitSuccessorAttemptTx(ctx, tx, operationpostgres.SuccessorAttemptInput{
+		Predecessor: nativeLease(input.Predecessor), PredecessorID: input.PredecessorID, PredecessorIdentity: input.PredecessorIdentity,
+		AttemptID: input.AttemptID, AttemptIdentity: input.AttemptIdentity, OwnerID: input.OwnerID, LeaseExpiresAt: input.LeaseExpiresAt,
+	})
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, mapError(err)
+	}
+	lease, err := projectLease(operationpostgres.Lease{Scope: input.Predecessor.Scope, IdempotencyKey: input.Predecessor.IdempotencyKey, OperationID: input.Predecessor.OperationID, OwnerID: leaf.OwnerID, FencingGeneration: leaf.FencingGeneration, LeaseExpiresAt: leaf.LeaseExpiresAt, AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity})
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	return deploymentmodule.NativeOperationSuccessor{AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, Lease: lease}, nil
+}
+
+func (a *Adapter) CurrentSuccessorAttempt(ctx context.Context, operationID string) (deploymentmodule.NativeOperationSuccessor, bool, error) {
+	if a == nil || a.operations == nil {
+		return deploymentmodule.NativeOperationSuccessor{}, false, fmt.Errorf("%w: successor operation authority is not configured", deploymentpostgres.ErrInvalid)
+	}
+	leaf, found, err := a.operations.CurrentSuccessorAttempt(ctx, operationID)
+	if err != nil || !found {
+		return deploymentmodule.NativeOperationSuccessor{}, found, mapError(err)
+	}
+	lease, err := projectLease(operationpostgres.Lease{Scope: leaf.Scope, IdempotencyKey: leaf.IdempotencyKey, OperationID: leaf.OperationID, OwnerID: leaf.OwnerID, FencingGeneration: leaf.FencingGeneration, LeaseExpiresAt: leaf.LeaseExpiresAt, AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity})
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, false, err
+	}
+	return deploymentmodule.NativeOperationSuccessor{AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, Lease: lease}, true, nil
 }
 
 // AcquireTx forwards the exact caller-owned transaction to the operation

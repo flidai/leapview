@@ -520,6 +520,333 @@ func TestPruneSafety(t *testing.T) {
 	}
 }
 
+func TestSuccessorAttemptLifecycleAndReplay(t *testing.T) {
+	r, p := testRepository(t)
+	acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "successor", IdempotencyKey: "pending", Request: []byte(`{"v":1}`), OwnerID: "owner", Retention: time.Microsecond})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: acquired.Lease, AttemptIdentity: "native-root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkIndeterminate(t.Context(), root.Lease, []byte(`{"marker":"absent"}`)); err != nil {
+		t.Fatal(err)
+	}
+	indeterminate, err := r.Get(t.Context(), "successor", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	predecessor := root.Lease
+	predecessor.FencingGeneration = indeterminate.FencingGeneration
+	predecessor.LeaseExpiresAt = indeterminate.LeaseExpiresAt
+	successorID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	successor, err := r.AdmitSuccessorAttemptTx(t.Context(), tx, SuccessorAttemptInput{
+		Predecessor: predecessor, PredecessorID: root.AttemptID, PredecessorIdentity: root.AttemptIdentity,
+		AttemptID: successorID, AttemptIdentity: "native-successor", OwnerID: predecessor.OwnerID,
+		LeaseExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if successor.FencingGeneration != predecessor.FencingGeneration+1 || successor.OwnerID != predecessor.OwnerID {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("successor=%#v", successor)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	current, found, err := r.CurrentSuccessorAttempt(t.Context(), predecessor.OperationID)
+	if err != nil || !found || current.AttemptID != successor.AttemptID || current.State != StatePending {
+		t.Fatalf("current successor=%#v found=%v err=%v", current, found, err)
+	}
+	// Once a successor exists, the immutable public root is stale even though
+	// its own attempt identity still matches. Only the successor path may
+	// settle the public row.
+	staleRoot := ReconcileAttemptInput{Scope: "successor", IdempotencyKey: "pending", AttemptID: root.AttemptID, AttemptIdentity: root.AttemptIdentity, State: StateCompleted, Outcome: []byte(`{"ok":true}`), Evidence: []byte(`{"commit":"root-stale"}`)}
+	if _, err := r.ReconcileAttempt(t.Context(), staleRoot); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale public root reconciliation=%v, want ErrConflict", err)
+	}
+	reconcile := ReconcileAttemptInput{Scope: "successor", IdempotencyKey: "pending", AttemptID: successor.AttemptID, AttemptIdentity: successor.AttemptIdentity, State: StateCompleted, Outcome: []byte(`{"ok":true}`), Evidence: []byte(`{"commit":"s1"}`)}
+	resolved, err := r.ReconcileAttempt(t.Context(), reconcile)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.State != StateCompleted || resolved.AttemptID != root.AttemptID || string(resolved.Outcome) != `{"ok":true}` {
+		t.Fatalf("resolved public operation=%#v", resolved)
+	}
+	if _, err := r.ReconcileAttempt(t.Context(), reconcile); err != nil {
+		t.Fatalf("successor reconciliation replay: %v", err)
+	}
+	changed := reconcile
+	changed.Evidence = []byte(`{"commit":"different"}`)
+	if _, err := r.ReconcileAttempt(t.Context(), changed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("changed successor replay=%v, want ErrConflict", err)
+	}
+	removed, err := NewMaintenance(p).Prune(t.Context(), time.Now().UTC().Add(time.Hour), 100)
+	if err != nil || removed != 1 {
+		t.Fatalf("prune removed=%d err=%v", removed, err)
+	}
+	var leaves int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM platform.operation_successor_attempt WHERE operation_id=$1::uuid`, predecessor.OperationID).Scan(&leaves); err != nil {
+		t.Fatal(err)
+	}
+	if leaves != 0 {
+		t.Fatalf("successor leaves after cascade prune=%d, want 0", leaves)
+	}
+}
+
+func TestSuccessorAttemptChainAndSQLGuards(t *testing.T) {
+	r, p := testRepository(t)
+	acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "successor", IdempotencyKey: "chain", Request: []byte(`{"v":1}`), OwnerID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: acquired.Lease, AttemptIdentity: "native-root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkIndeterminate(t.Context(), root.Lease, []byte(`{"marker":"absent"}`)); err != nil {
+		t.Fatal(err)
+	}
+	indeterminate, err := r.Get(t.Context(), "successor", "chain")
+	if err != nil {
+		t.Fatal(err)
+	}
+	predecessor := root.Lease
+	predecessor.FencingGeneration = indeterminate.FencingGeneration
+	predecessor.LeaseExpiresAt = indeterminate.LeaseExpiresAt
+	newSuccessor := func(pred Lease, predID, predIdentity, identity string) SuccessorAttempt {
+		t.Helper()
+		id, idErr := newUUID()
+		if idErr != nil {
+			t.Fatal(idErr)
+		}
+		tx, txErr := p.Begin(t.Context())
+		if txErr != nil {
+			t.Fatal(txErr)
+		}
+		leaf, admitErr := r.AdmitSuccessorAttemptTx(t.Context(), tx, SuccessorAttemptInput{Predecessor: pred, PredecessorID: predID, PredecessorIdentity: predIdentity, AttemptID: id, AttemptIdentity: identity, OwnerID: pred.OwnerID, LeaseExpiresAt: time.Now().UTC().Add(time.Hour)})
+		if admitErr != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(admitErr)
+		}
+		if commitErr := tx.Commit(t.Context()); commitErr != nil {
+			t.Fatal(commitErr)
+		}
+		return leaf
+	}
+	leafLease := func(leaf SuccessorAttempt) Lease {
+		return Lease{Scope: "successor", IdempotencyKey: "chain", OperationID: leaf.OperationID, OwnerID: leaf.OwnerID, FencingGeneration: leaf.FencingGeneration, LeaseExpiresAt: leaf.LeaseExpiresAt, AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity}
+	}
+	first := newSuccessor(predecessor, root.AttemptID, root.AttemptIdentity, "native-successor-1")
+	firstLease := leafLease(first)
+	if err := r.MarkIndeterminate(t.Context(), firstLease, []byte(`{"marker":"still-absent"}`)); err != nil {
+		t.Fatal(err)
+	}
+	rootReuseTx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = r.AdmitSuccessorAttemptTx(t.Context(), rootReuseTx, SuccessorAttemptInput{
+		Predecessor: firstLease, PredecessorID: first.AttemptID, PredecessorIdentity: first.AttemptIdentity,
+		AttemptID: root.AttemptID, AttemptIdentity: "native-successor-root-reuse", OwnerID: first.OwnerID,
+		LeaseExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	_ = rootReuseTx.Rollback(t.Context())
+	if !errors.Is(err, ErrConflict) {
+		t.Fatalf("second successor reusing public root attempt ID=%v, want ErrConflict", err)
+	}
+	second := newSuccessor(firstLease, first.AttemptID, first.AttemptIdentity, "native-successor-2")
+	if second.FencingGeneration != first.FencingGeneration+1 {
+		t.Fatalf("second fence=%d, want %d", second.FencingGeneration, first.FencingGeneration+1)
+	}
+	stale := ReconcileAttemptInput{Scope: "successor", IdempotencyKey: "chain", AttemptID: first.AttemptID, AttemptIdentity: first.AttemptIdentity, State: StateCompleted, Outcome: []byte(`{"ok":false}`), Evidence: []byte(`{"commit":"stale"}`)}
+	if _, err := r.ReconcileAttempt(t.Context(), stale); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale earlier leaf reconcile=%v, want ErrConflict", err)
+	}
+	final := ReconcileAttemptInput{Scope: "successor", IdempotencyKey: "chain", AttemptID: second.AttemptID, AttemptIdentity: second.AttemptIdentity, State: StateCompleted, Outcome: []byte(`{"ok":true}`), Evidence: []byte(`{"commit":"s2"}`)}
+	resolved, err := r.ReconcileAttempt(t.Context(), final)
+	if err != nil || resolved.State != StateCompleted || resolved.AttemptID != root.AttemptID {
+		t.Fatalf("second successor resolution=%#v err=%v", resolved, err)
+	}
+	if _, err := r.ReconcileAttempt(t.Context(), final); err != nil {
+		t.Fatalf("second successor exact replay=%v", err)
+	}
+	staleReplay := final
+	staleReplay.AttemptID, staleReplay.AttemptIdentity = first.AttemptID, first.AttemptIdentity
+	if _, err := r.ReconcileAttempt(t.Context(), staleReplay); !errors.Is(err, ErrConflict) {
+		t.Fatalf("stale first-leaf replay=%v, want ErrConflict", err)
+	}
+	changed := final
+	changed.Outcome = []byte(`{"ok":"different"}`)
+	if _, err := r.ReconcileAttempt(t.Context(), changed); !errors.Is(err, ErrConflict) {
+		t.Fatalf("second successor changed replay=%v, want ErrConflict", err)
+	}
+
+	// Direct SQL cannot bypass the predecessor identity or exact fence guard.
+	guarded, err := r.Acquire(t.Context(), AcquireInput{Scope: "successor", IdempotencyKey: "sql-guard", Request: []byte(`{"v":1}`), OwnerID: "owner"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardRoot, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: guarded.Lease, AttemptIdentity: "guard-root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkIndeterminate(t.Context(), guardRoot.Lease, []byte(`{"marker":"absent"}`)); err != nil {
+		t.Fatal(err)
+	}
+	guardOp, err := r.Get(t.Context(), "successor", "sql-guard")
+	if err != nil {
+		t.Fatal(err)
+	}
+	guardPredecessor := guardRoot.Lease
+	guardPredecessor.FencingGeneration = guardOp.FencingGeneration
+	guardPredecessor.LeaseExpiresAt = guardOp.LeaseExpiresAt
+	guardSuccessorID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseInsert := `INSERT INTO platform.operation_successor_attempt
+		(operation_id, predecessor_attempt_id, predecessor_attempt_identity, attempt_id, attempt_identity, owner_id, fencing_generation, lease_expires_at, state, created_at, updated_at)
+		VALUES ($1::uuid, $2::uuid, $3, $4::uuid, $5, $6, $7, clock_timestamp()+interval '1 hour', 'pending', clock_timestamp(), clock_timestamp())`
+	if _, err := p.Exec(t.Context(), baseInsert, guardOp.OperationID, guardRoot.AttemptID, "wrong-identity", guardSuccessorID, "guard-successor", guardRoot.Lease.OwnerID, guardOp.FencingGeneration+1); err == nil {
+		t.Fatal("direct successor insert with mismatched predecessor identity unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), baseInsert, guardOp.OperationID, guardRoot.AttemptID, guardRoot.AttemptIdentity, guardSuccessorID, "guard-successor", guardRoot.Lease.OwnerID, guardOp.FencingGeneration+2); err == nil {
+		t.Fatal("direct successor insert with skipped fence unexpectedly succeeded")
+	}
+	validSuccessorID, err := newUUID()
+	if err != nil {
+		t.Fatal(err)
+	}
+	validTx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid, err := r.AdmitSuccessorAttemptTx(t.Context(), validTx, SuccessorAttemptInput{
+		Predecessor: guardPredecessor, PredecessorID: guardRoot.AttemptID, PredecessorIdentity: guardRoot.AttemptIdentity,
+		AttemptID: validSuccessorID, AttemptIdentity: "guard-valid", OwnerID: guardRoot.Lease.OwnerID, LeaseExpiresAt: time.Now().UTC().Add(time.Hour),
+	})
+	if err != nil {
+		_ = validTx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := validTx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), `
+		UPDATE platform.operation AS operation
+		SET state='completed', outcome='{"forged":true}'::jsonb,
+		    resolution_evidence='{"forged":true}'::jsonb,
+		    updated_at=clock.ts, terminal_at=clock.ts,
+		    expires_at=clock.ts + operation.retention_interval
+		FROM (SELECT clock_timestamp() AS ts) AS clock
+		WHERE operation.operation_id=$1::uuid`, guardOp.OperationID); err == nil {
+		t.Fatal("direct stale public-root reconciliation unexpectedly succeeded")
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE platform.operation_successor_attempt SET attempt_identity='forged' WHERE operation_id=$1::uuid AND attempt_id=$2::uuid`, valid.OperationID, valid.AttemptID); err == nil {
+		t.Fatal("direct successor identity mutation unexpectedly succeeded")
+	}
+	validLease := Lease{
+		Scope: "successor", IdempotencyKey: "sql-guard", OperationID: valid.OperationID,
+		OwnerID: valid.OwnerID, FencingGeneration: valid.FencingGeneration,
+		LeaseExpiresAt: valid.LeaseExpiresAt, AttemptID: valid.AttemptID,
+		AttemptIdentity: valid.AttemptIdentity,
+	}
+	if err := r.MarkIndeterminate(t.Context(), validLease, []byte(`{"marker":"still-absent"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(t.Context(), baseInsert,
+		guardOp.OperationID, valid.AttemptID, valid.AttemptIdentity,
+		guardRoot.AttemptID, "guard-root-reuse", valid.OwnerID,
+		valid.FencingGeneration+1,
+	); err == nil {
+		t.Fatal("direct second successor reused the public root attempt ID")
+	}
+}
+
+func TestSuccessorPendingReconciliationRequiresActiveLease(t *testing.T) {
+	r, p := testRepository(t)
+	acquired, err := r.Acquire(t.Context(), AcquireInput{Scope: "successor", IdempotencyKey: "expired-pending", Request: []byte(`{"v":1}`), OwnerID: "owner", Lease: time.Second})
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := r.BeginAttempt(t.Context(), BeginAttemptInput{Lease: acquired.Lease, AttemptIdentity: "expired-root"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.MarkIndeterminate(t.Context(), root.Lease, []byte(`{"marker":"absent"}`)); err != nil {
+		t.Fatal(err)
+	}
+	indeterminate, err := r.Get(t.Context(), "successor", "expired-pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	predecessor := root.Lease
+	predecessor.FencingGeneration = indeterminate.FencingGeneration
+	predecessor.LeaseExpiresAt = indeterminate.LeaseExpiresAt
+	tx, err := p.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	successorID, err := newUUID()
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	successor, err := r.AdmitSuccessorAttemptTx(t.Context(), tx, SuccessorAttemptInput{
+		Predecessor: predecessor, PredecessorID: root.AttemptID, PredecessorIdentity: root.AttemptIdentity,
+		AttemptID: successorID, AttemptIdentity: "expired-successor", OwnerID: predecessor.OwnerID,
+		LeaseExpiresAt: time.Now().UTC().Add(100 * time.Millisecond),
+	})
+	if err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(250 * time.Millisecond)
+	result, err := r.ReconcileAttempt(t.Context(), ReconcileAttemptInput{
+		Scope: "successor", IdempotencyKey: "expired-pending", AttemptID: successor.AttemptID,
+		AttemptIdentity: successor.AttemptIdentity, State: StateCompleted,
+		Outcome: []byte(`{"ok":true}`), Evidence: []byte(`{"commit":"late"}`),
+	})
+	if !errors.Is(err, ErrLeaseExpired) {
+		t.Fatalf("expired pending successor reconciliation=%v, want ErrLeaseExpired", err)
+	}
+	if result.OperationID != "" {
+		t.Fatalf("expired pending reconciliation returned operation=%#v", result)
+	}
+	current, found, err := r.CurrentSuccessorAttempt(t.Context(), acquired.Operation.OperationID)
+	if err != nil || !found || current.State != StatePending {
+		t.Fatalf("expired pending successor state=%#v found=%v err=%v", current, found, err)
+	}
+
+	// Positive evidence can fence the expired pending leaf to indeterminate;
+	// only then may a later reconciliation settle it.
+	successorLease := Lease{Scope: "successor", IdempotencyKey: "expired-pending", OperationID: successor.OperationID, OwnerID: successor.OwnerID, FencingGeneration: successor.FencingGeneration, LeaseExpiresAt: successor.LeaseExpiresAt, AttemptID: successor.AttemptID, AttemptIdentity: successor.AttemptIdentity}
+	if err := r.ExpireAttempt(t.Context(), successorLease, []byte(`{"expired":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.ReconcileAttempt(t.Context(), ReconcileAttemptInput{
+		Scope: "successor", IdempotencyKey: "expired-pending", AttemptID: successor.AttemptID,
+		AttemptIdentity: successor.AttemptIdentity, State: StateCompleted,
+		Outcome: []byte(`{"ok":true}`), Evidence: []byte(`{"commit":"late"}`),
+	}); err != nil {
+		t.Fatalf("indeterminate successor reconciliation after evidence: %v", err)
+	}
+}
+
 func TestMaintenancePrunePreservesPendingAndIndeterminate(t *testing.T) {
 	r, p := testRepository(t)
 

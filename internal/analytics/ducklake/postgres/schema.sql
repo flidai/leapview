@@ -1449,6 +1449,68 @@ BEGIN
 END;
 $$;
 
+-- Build admission is the one runtime operation that must observe the
+-- migration/retention authorities.  Keep the row locks inside a narrowly
+-- scoped SECURITY DEFINER function: the runtime role may not UPDATE fence
+-- tables directly, yet the locks remain held by the caller's transaction
+-- through the subsequent attempt insert.  The order is global migration ->
+-- pool migration -> pool maintenance, matching every fence claim path.
+CREATE OR REPLACE FUNCTION ducklake.assert_attempt_admission_fence(
+    p_physical_pool_id text,
+    p_catalog_id text
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_owner text;
+    v_expiry timestamptz;
+BEGIN
+    IF p_physical_pool_id = '' OR p_physical_pool_id <> btrim(p_physical_pool_id) OR octet_length(p_physical_pool_id) > 255
+       OR p_catalog_id = '' OR p_catalog_id <> btrim(p_catalog_id) OR octet_length(p_catalog_id) > 255 THEN
+        RAISE EXCEPTION 'invalid attempt admission fence scope';
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM ducklake.catalog_identity ci
+                   WHERE ci.physical_pool_id=p_physical_pool_id AND ci.catalog_id=p_catalog_id) THEN
+        RAISE EXCEPTION 'catalog identity not found';
+    END IF;
+
+    INSERT INTO ducklake.migration_fence(scope,physical_pool_id)
+    VALUES ('global','') ON CONFLICT DO NOTHING;
+    SELECT owner_id,lease_expires_at INTO v_owner,v_expiry
+      FROM ducklake.migration_fence
+     WHERE scope='global' AND physical_pool_id=''
+     FOR UPDATE;
+    IF v_owner IS NOT NULL AND v_expiry > v_now THEN
+        RAISE EXCEPTION 'migration fence busy';
+    END IF;
+
+    INSERT INTO ducklake.migration_fence(scope,physical_pool_id)
+    VALUES ('pool',p_physical_pool_id) ON CONFLICT DO NOTHING;
+    SELECT owner_id,lease_expires_at INTO v_owner,v_expiry
+      FROM ducklake.migration_fence
+     WHERE scope='pool' AND physical_pool_id=p_physical_pool_id
+     FOR UPDATE;
+    IF v_owner IS NOT NULL AND v_expiry > v_now THEN
+        RAISE EXCEPTION 'migration fence busy';
+    END IF;
+
+    SELECT owner_id,lease_expires_at INTO v_owner,v_expiry
+      FROM ducklake.pool_maintenance_fence
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id
+     FOR UPDATE;
+    IF v_owner IS NOT NULL AND v_expiry > v_now THEN
+        RAISE EXCEPTION 'pool maintenance fence busy';
+    END IF;
+END;
+$$;
+
+-- PostgreSQL grants EXECUTE on new functions to PUBLIC by default.  This
+-- runtime-only admission capability must be explicitly private before role
+-- grants are applied below.
+REVOKE EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) FROM PUBLIC;
+
 -- Retention lifecycle writes are capability-gated.  The maintenance role has
 -- no INSERT/UPDATE privilege on these tables; each function validates the
 -- exact pool fence and operation identity before changing state.  Snapshot
@@ -2207,15 +2269,23 @@ BEGIN
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE '
             || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
-            || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
-            || 'ducklake.snapshot_orphan TO leapview_control_runtime';
+            || 'ducklake.snapshot_root, ducklake.snapshot_lease TO leapview_control_runtime';
+        -- Runtime admission does not discover or reconcile physical orphans.
+        -- Keep the row visible for bounded diagnostics, but remove every
+        -- direct lifecycle mutation capability (including grants left by an
+        -- earlier schema revision).
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_orphan TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.marker_quarantine TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.source_observation_capture TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_runtime';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) TO leapview_control_runtime';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_readonly';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) FROM leapview_control_readonly';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON TABLE '
             || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
@@ -2246,10 +2316,12 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_maintenance';
+        EXECUTE 'REVOKE EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) FROM leapview_control_maintenance';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_maintenance';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention FROM leapview_control_maintenance';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.pool_maintenance_fence TO leapview_control_maintenance';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention TO leapview_control_maintenance';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_root, ducklake.snapshot_lease TO leapview_control_maintenance';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_root, ducklake.snapshot_lease, ducklake.snapshot_orphan TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.acquire_pool_maintenance_fence(text,text,text,timestamptz) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.release_pool_maintenance_fence(text,text,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.renew_pool_maintenance_fence(text,text,text,bigint,timestamptz) TO leapview_control_maintenance';

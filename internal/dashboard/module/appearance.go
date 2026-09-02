@@ -9,7 +9,6 @@ import (
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
 	appearancesqlite "github.com/flidai/leapview/internal/dashboard/appearance/sqlite"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -71,33 +70,6 @@ func ApplyAppearancePatchesPostgres(ctx context.Context, repository *appearancep
 			return fmt.Errorf("dashboard ID: %w", err)
 		}
 		if _, err := repository.ApplyPatchTx(ctx, tx, dashboardappearance.Key{ProjectID: projectID, DashboardID: dashboardResourceID}, actorID, patch); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-// ApplySQLiteAppearancePatches applies only fields explicitly authored in a
-// local SQLite deployment. Omitted fields retain the last UI value; "default"
-// clears a stored override so the product default is used. Native production
-// deployment composition must use ApplyAppearancePatchesPostgres instead.
-func ApplySQLiteAppearancePatches(ctx context.Context, tx transaction.Transaction, projectID projectgraph.ResourceID, actorID string, encoded map[string]json.RawMessage) error {
-	if err := projectID.Validate(); err != nil {
-		return fmt.Errorf("project ID: %w", err)
-	}
-	for dashboardID, raw := range encoded {
-		var patch dashboardappearance.Patch
-		if err := json.Unmarshal(raw, &patch); err != nil {
-			return err
-		}
-		if patch.Icon == nil && patch.Color == nil {
-			continue
-		}
-		dashboardResourceID, err := projectgraph.NewResourceID(dashboardID)
-		if err != nil {
-			return fmt.Errorf("dashboard ID: %w", err)
-		}
-		if _, err := appearancesqlite.ApplyPatch(ctx, tx, dashboardappearance.Key{ProjectID: projectID, DashboardID: dashboardResourceID}, actorID, patch); err != nil {
 			return err
 		}
 	}

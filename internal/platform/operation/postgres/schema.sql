@@ -47,6 +47,184 @@ CREATE INDEX IF NOT EXISTS idempotency_operation_attempt_idx
     ON platform.operation (attempt_id)
     WHERE attempt_id IS NOT NULL;
 
+-- Native build recovery keeps the public operation row immutable after an
+-- indeterminate outcome.  A successor execution is therefore an append-only
+-- leaf carrying its own owner, lease and attempt fence.  The public row
+-- remains the idempotency/replay identity; this table is executable state only.
+CREATE TABLE IF NOT EXISTS platform.operation_successor_attempt (
+    operation_id                 uuid NOT NULL REFERENCES platform.operation(operation_id) ON DELETE CASCADE,
+    predecessor_attempt_id       uuid NOT NULL,
+    predecessor_attempt_identity text NOT NULL CHECK (predecessor_attempt_identity = btrim(predecessor_attempt_identity) AND octet_length(predecessor_attempt_identity) BETWEEN 1 AND 512),
+    attempt_id                   uuid NOT NULL,
+    attempt_identity             text NOT NULL CHECK (attempt_identity = btrim(attempt_identity) AND octet_length(attempt_identity) BETWEEN 1 AND 512),
+    owner_id                     text NOT NULL CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
+    fencing_generation           bigint NOT NULL CHECK (fencing_generation > 0),
+    lease_expires_at             timestamptz NOT NULL,
+    state                        text NOT NULL CHECK (state IN ('pending', 'indeterminate', 'completed', 'failed')),
+    attempt_evidence             jsonb,
+    resolution_evidence          jsonb,
+    created_at                   timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at                   timestamptz NOT NULL DEFAULT clock_timestamp(),
+    terminal_at                  timestamptz,
+    PRIMARY KEY (operation_id, predecessor_attempt_id),
+    UNIQUE (operation_id, attempt_id),
+    CONSTRAINT operation_successor_attempt_terminal_at CHECK (
+        (state = 'pending' AND terminal_at IS NULL) OR (state <> 'pending' AND terminal_at IS NOT NULL)
+    ),
+    CONSTRAINT operation_successor_attempt_evidence_pair CHECK (attempt_evidence IS NULL OR attempt_id IS NOT NULL),
+    CONSTRAINT operation_successor_attempt_resolution_pair CHECK (resolution_evidence IS NULL OR state IN ('completed', 'failed')),
+    CONSTRAINT operation_successor_attempt_documents_json CHECK (
+        (attempt_evidence IS NULL OR (jsonb_typeof(attempt_evidence) = 'object' AND octet_length(attempt_evidence::text) <= 32768))
+        AND (resolution_evidence IS NULL OR (jsonb_typeof(resolution_evidence) = 'object' AND octet_length(resolution_evidence::text) <= 32768))
+    )
+);
+
+CREATE INDEX IF NOT EXISTS operation_successor_attempt_current_idx
+    ON platform.operation_successor_attempt (operation_id, created_at DESC);
+
+CREATE UNIQUE INDEX IF NOT EXISTS operation_successor_attempt_one_pending_idx
+    ON platform.operation_successor_attempt (operation_id)
+    WHERE state = 'pending';
+
+CREATE OR REPLACE FUNCTION platform.guard_operation_successor_insert()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog, platform
+AS $$
+DECLARE
+    operation_state text;
+    operation_attempt uuid;
+    operation_identity text;
+    predecessor_state text;
+    predecessor_identity text;
+    predecessor_generation bigint;
+    now_ts timestamptz := clock_timestamp();
+BEGIN
+    IF NEW.state <> 'pending' OR NEW.terminal_at IS NOT NULL
+       OR NEW.attempt_evidence IS NOT NULL OR NEW.resolution_evidence IS NOT NULL THEN
+        RAISE EXCEPTION 'operation successor inserts must begin as empty pending records';
+    END IF;
+    IF NEW.created_at > now_ts OR NEW.updated_at > now_ts
+       OR NEW.updated_at IS DISTINCT FROM NEW.created_at
+       OR NEW.lease_expires_at <= now_ts
+       OR NEW.lease_expires_at > now_ts + interval '24 hours' THEN
+        RAISE EXCEPTION 'operation successor timestamps or lease expiry are outside the bounded window';
+    END IF;
+    SELECT state, attempt_id, attempt_identity
+      INTO operation_state, operation_attempt, operation_identity
+      FROM platform.operation
+     WHERE operation_id = NEW.operation_id
+       FOR UPDATE;
+    IF operation_state IS NULL OR operation_state <> 'indeterminate' THEN
+        RAISE EXCEPTION 'operation successor requires an indeterminate public operation';
+    END IF;
+    IF NEW.predecessor_attempt_id = operation_attempt THEN
+        predecessor_state := operation_state;
+        predecessor_identity := operation_identity;
+        predecessor_generation := (SELECT fencing_generation FROM platform.operation WHERE operation_id = NEW.operation_id);
+    ELSE
+        SELECT state, attempt_identity, fencing_generation
+          INTO predecessor_state, predecessor_identity, predecessor_generation
+          FROM platform.operation_successor_attempt
+         WHERE operation_id = NEW.operation_id AND attempt_id = NEW.predecessor_attempt_id
+         FOR UPDATE;
+    END IF;
+    -- Attempt IDs are globally unique across the public root and all
+    -- successor leaves in one operation chain.  The table-level unique key
+    -- covers existing leaves (and deliberately surfaces SQLSTATE 23505 to
+    -- the repository); the explicit root check closes the gap between the
+    -- public row and its append-only leaves.
+    IF NEW.attempt_id = operation_attempt THEN
+        RAISE EXCEPTION 'operation successor attempt ID is already used by the operation chain';
+    END IF;
+    IF predecessor_state IS NULL OR predecessor_state <> 'indeterminate'
+       OR predecessor_identity IS NULL
+       OR NEW.predecessor_attempt_identity IS DISTINCT FROM predecessor_identity
+       OR NEW.attempt_id = NEW.predecessor_attempt_id
+       OR NEW.attempt_identity = predecessor_identity THEN
+        RAISE EXCEPTION 'operation successor predecessor or fence is invalid';
+    END IF;
+    IF predecessor_generation IS NULL OR predecessor_generation >= 9223372036854775807
+       OR NEW.fencing_generation <> predecessor_generation + 1 THEN
+        RAISE EXCEPTION 'operation successor fence must advance exactly once';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS operation_successor_insert_guard ON platform.operation_successor_attempt;
+CREATE TRIGGER operation_successor_insert_guard
+    BEFORE INSERT ON platform.operation_successor_attempt
+    FOR EACH ROW EXECUTE FUNCTION platform.guard_operation_successor_insert();
+
+CREATE OR REPLACE FUNCTION platform.guard_operation_successor_update()
+RETURNS trigger
+LANGUAGE plpgsql
+SET search_path = pg_catalog
+AS $$
+BEGIN
+    IF NEW.operation_id IS DISTINCT FROM OLD.operation_id
+       OR NEW.predecessor_attempt_id IS DISTINCT FROM OLD.predecessor_attempt_id
+       OR NEW.predecessor_attempt_identity IS DISTINCT FROM OLD.predecessor_attempt_identity
+       OR NEW.attempt_id IS DISTINCT FROM OLD.attempt_id
+       OR NEW.attempt_identity IS DISTINCT FROM OLD.attempt_identity
+       OR NEW.created_at IS DISTINCT FROM OLD.created_at
+       OR NEW.fencing_generation IS DISTINCT FROM OLD.fencing_generation
+       OR NEW.owner_id IS DISTINCT FROM OLD.owner_id THEN
+        RAISE EXCEPTION 'operation successor identity is immutable';
+    END IF;
+    IF NEW.updated_at < OLD.updated_at THEN
+        RAISE EXCEPTION 'operation successor updated_at must be monotonic';
+    END IF;
+    IF NEW.updated_at > clock_timestamp() THEN
+        RAISE EXCEPTION 'operation successor updated_at cannot be in the future';
+    END IF;
+    IF OLD.state = 'pending' AND NEW.state = 'pending' THEN
+        IF NEW.attempt_evidence IS DISTINCT FROM OLD.attempt_evidence
+           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence
+           OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at
+           OR NEW.lease_expires_at < OLD.lease_expires_at THEN
+            RAISE EXCEPTION 'pending operation successor evidence is immutable';
+        END IF;
+        IF NEW.lease_expires_at <= clock_timestamp()
+           OR NEW.lease_expires_at > clock_timestamp() + interval '24 hours' THEN
+            RAISE EXCEPTION 'pending operation successor lease expiry is outside the bounded window';
+        END IF;
+    ELSIF OLD.state = 'pending' AND NEW.state = 'indeterminate' THEN
+        IF NEW.attempt_evidence IS NULL
+           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence
+           OR NEW.terminal_at IS DISTINCT FROM NEW.updated_at THEN
+            RAISE EXCEPTION 'operation successor indeterminate transition is invalid';
+        END IF;
+    ELSIF OLD.state IN ('pending', 'indeterminate') AND NEW.state IN ('completed', 'failed') THEN
+        IF NEW.attempt_evidence IS DISTINCT FROM OLD.attempt_evidence
+           OR NEW.resolution_evidence IS NULL
+           OR NEW.terminal_at IS DISTINCT FROM NEW.updated_at
+           OR NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+            RAISE EXCEPTION 'operation successor reconciliation is invalid';
+        END IF;
+        IF OLD.state = 'pending' AND OLD.lease_expires_at <= clock_timestamp() THEN
+            RAISE EXCEPTION 'pending operation successor lease has expired';
+        END IF;
+    ELSIF OLD.state = NEW.state AND OLD.state IN ('indeterminate', 'completed', 'failed') THEN
+        IF NEW.attempt_evidence IS DISTINCT FROM OLD.attempt_evidence
+           OR NEW.resolution_evidence IS DISTINCT FROM OLD.resolution_evidence
+           OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at
+           OR NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
+            RAISE EXCEPTION 'terminal operation successor is immutable';
+        END IF;
+    ELSE
+        RAISE EXCEPTION 'invalid operation successor state transition from % to %', OLD.state, NEW.state;
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS operation_successor_lifecycle_guard ON platform.operation_successor_attempt;
+CREATE TRIGGER operation_successor_lifecycle_guard
+    BEFORE UPDATE ON platform.operation_successor_attempt
+    FOR EACH ROW EXECUTE FUNCTION platform.guard_operation_successor_update();
+
 -- INSERT is guarded separately from UPDATE: a role with INSERT cannot
 -- manufacture terminal evidence or choose timestamps/fences outside the
 -- repository state machine.
@@ -230,6 +408,30 @@ BEGIN
             RAISE EXCEPTION 'active attempt transition cannot claim lease-expiry evidence';
         END IF;
     ELSIF OLD.state = 'indeterminate' AND NEW.state IN ('completed', 'failed') THEN
+        -- A public root with successor leaves may only be settled by the
+        -- successor path, after its current leaf is terminal and carries the
+        -- same state/evidence.  This preserves direct-SQL protection while
+        -- allowing the repository's public->leaf ordered reconciliation.
+        IF EXISTS (
+               SELECT 1
+               FROM platform.operation_successor_attempt successor
+               WHERE successor.operation_id = OLD.operation_id
+           )
+           AND NOT EXISTS (
+               SELECT 1
+               FROM platform.operation_successor_attempt successor
+               WHERE successor.operation_id = OLD.operation_id
+                 AND successor.state = NEW.state
+                 AND successor.resolution_evidence IS NOT DISTINCT FROM NEW.resolution_evidence
+                 AND NOT EXISTS (
+                     SELECT 1
+                     FROM platform.operation_successor_attempt child
+                     WHERE child.operation_id = successor.operation_id
+                       AND child.predecessor_attempt_id = successor.attempt_id
+                 )
+           ) THEN
+            RAISE EXCEPTION 'public operation root cannot reconcile after a successor exists';
+        END IF;
         IF NEW.fencing_generation <> OLD.fencing_generation
            OR NEW.owner_id IS DISTINCT FROM OLD.owner_id
            OR NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at
@@ -286,6 +488,7 @@ CREATE TRIGGER operation_lifecycle_guard
 -- rows and readonly can only inspect them; PUBLIC receives no access.
 REVOKE ALL ON SCHEMA platform FROM PUBLIC;
 REVOKE ALL ON TABLE platform.operation FROM PUBLIC;
+REVOKE ALL ON TABLE platform.operation_successor_attempt FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.prune_operations(timestamptz, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_operation_insert() FROM PUBLIC;
 REVOKE ALL ON FUNCTION platform.guard_operation_update() FROM PUBLIC;
@@ -293,13 +496,16 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_owner') THEN
         GRANT ALL ON TABLE platform.operation TO leapview_control_owner;
+        GRANT ALL ON TABLE platform.operation_successor_attempt TO leapview_control_owner;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_migrator') THEN
         GRANT ALL ON TABLE platform.operation TO leapview_control_migrator;
+        GRANT ALL ON TABLE platform.operation_successor_attempt TO leapview_control_migrator;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON TABLE platform.operation TO leapview_control_runtime;
+        GRANT SELECT, INSERT, UPDATE ON TABLE platform.operation_successor_attempt TO leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION platform.prune_operations(timestamptz, integer) FROM leapview_control_runtime;
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
@@ -308,7 +514,7 @@ BEGIN
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
-        GRANT SELECT ON TABLE platform.operation TO leapview_control_readonly;
+        GRANT SELECT ON TABLE platform.operation, platform.operation_successor_attempt TO leapview_control_readonly;
     END IF;
 END
 $$;

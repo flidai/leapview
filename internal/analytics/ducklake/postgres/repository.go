@@ -559,6 +559,37 @@ func lockMarkerQuarantineScope(ctx context.Context, db DBTX, physicalPoolID stri
 	return nil
 }
 
+// lockAttemptAdmissionScope serializes build admission against the existing
+// migration and catalog-retention authorities.  All callers that can claim a
+// fence use the same global -> pool -> maintenance row order; keeping that
+// order here avoids a cross-authority deadlock while the row locks make the
+// lease-owner check atomic with the subsequent attempt insert.
+func lockAttemptAdmissionScope(ctx context.Context, db DBTX, physicalPoolID, catalogID string) error {
+	if db == nil || !validID(physicalPoolID) || !validID(catalogID) {
+		return ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	err := querygen(db).AssertAttemptAdmissionFence(ctx, dbgen.AssertAttemptAdmissionFenceParams{PhysicalPoolID: physicalPoolID, CatalogID: catalogID})
+	if err == nil {
+		return nil
+	}
+	message := strings.ToLower(err.Error())
+	switch {
+	case strings.Contains(message, "pool maintenance fence busy"):
+		return ErrRetentionMaintenanceBusy
+	case strings.Contains(message, "migration fence busy"):
+		return ErrMigrationBusy
+	case strings.Contains(message, "catalog identity not found"):
+		return ErrNotFound
+	case strings.Contains(message, "invalid attempt admission fence scope"):
+		return ErrInvalid
+	default:
+		return err
+	}
+}
+
 // BeginAttemptTx persists an exact running-attempt identity through a
 // caller-owned transaction. It never begins, commits, or rolls back tx; app
 // composition uses it to share one control-plane transaction with delivery
@@ -1094,6 +1125,22 @@ func beginAttemptAt(ctx context.Context, tx DBTX, in BeginAttemptInput, now time
 	if err := validateBeginAt(in, now); err != nil {
 		return AttemptEvidence{}, err
 	}
+	// Admission shares the migration/retention authority rows with every
+	// maintenance and migration claim.  Even an exact identity replay must
+	// pass this fence: replay grants permission to resume physical work, so an
+	// active maintenance owner cannot be bypassed by the no-op insert.
+	// Lock in the repository-wide order (global migration, pool migration, pool
+	// maintenance) before checking leases so an active owner cannot pass a
+	// check-then-act race.  The locks execute in a SECURITY DEFINER database
+	// capability because normal runtime admission has no direct fence-table
+	// UPDATE privilege.
+	if err := lockAttemptAdmissionScope(ctx, tx, in.PhysicalPoolID, in.CatalogID); err != nil {
+		return AttemptEvidence{}, err
+	}
+	// Catalog quarantine is the final admission scope lock.  Keeping it after
+	// the authority rows gives this path the same global -> pool -> maintenance
+	// -> catalog/attempt order as every fence claim and avoids a catalog↔fence
+	// lock inversion with concurrent marker reconciliation.
 	if err := lockMarkerQuarantineScope(ctx, tx, in.PhysicalPoolID); err != nil {
 		return AttemptEvidence{}, err
 	}
@@ -2077,9 +2124,24 @@ func RecordSnapshotOrphan(ctx context.Context, tx DBTX, in SnapshotOrphanInput) 
 	}
 	err = querygen(tx).InsertSnapshotOrphan(ctx, dbgen.InsertSnapshotOrphanParams{OrphanID: pgUUID(in.OrphanID), PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, SnapshotID: in.SnapshotID, Evidence: []byte(evidence), DiscoveredAt: pgtype.Timestamptz{Time: discovered, Valid: true}})
 	if err != nil {
+		// A caller-generated orphan id may collide with an existing row for a
+		// different physical identity. Preserve the repository conflict
+		// contract rather than leaking PostgreSQL's unique-violation detail.
+		var pgErr *pgconn.PgError
+		if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+			return SnapshotOrphan{}, err
+		}
+		if existing, loadErr := querygen(tx).GetSnapshotOrphan(ctx, pgUUID(in.OrphanID)); loadErr == nil {
+			_ = existing
+			return SnapshotOrphan{}, fmt.Errorf("%w: orphan %q", ErrConflict, in.OrphanID)
+		}
 		return SnapshotOrphan{}, err
 	}
-	rowOrphan, err := querygen(tx).GetSnapshotOrphan(ctx, pgUUID(in.OrphanID))
+	// Replay is keyed by the immutable physical identity tuple, not by the
+	// caller's orphan UUID.  This returns the original row when a scanner
+	// retries with a fresh UUID and lets the evidence comparison below reject
+	// changed observations.
+	rowOrphan, err := querygen(tx).GetSnapshotOrphanByIdentity(ctx, dbgen.GetSnapshotOrphanByIdentityParams{PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, SnapshotID: in.SnapshotID})
 	o := SnapshotOrphan{OrphanID: rowOrphan.OrphanID, PhysicalPoolID: rowOrphan.PhysicalPoolID, CatalogID: rowOrphan.CatalogID, SnapshotID: rowOrphan.SnapshotID, State: rowOrphan.State, CleanupFencingEpoch: rowOrphan.CleanupFencingEpoch, DiscoveredAt: tsTime(rowOrphan.DiscoveredAt), ResolvedAt: tsTime(rowOrphan.ResolvedAt)}
 	if errors.Is(err, pgx.ErrNoRows) {
 		return SnapshotOrphan{}, ErrNotFound
