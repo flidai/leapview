@@ -18,7 +18,7 @@ visualizationRegistry.register({
   load: async () => (await import('./adapters/tanstack')).adapter,
 })
 visualizationRegistry.register({
-  id: 'maplibre', version: '5.19.0', schemaVersion: currentVisualizationSchemaVersion, kinds: ['geographic'],
+  id: 'maplibre', version: '6.6.0', schemaVersion: currentVisualizationSchemaVersion, kinds: ['geographic'],
   capabilities: { snapshot: true, windowed: true, interactive: true },
   load: async () => (await import('./adapters/maplibre')).adapter,
 })
