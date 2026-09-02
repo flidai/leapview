@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
+	"strings"
 	"testing"
 
 	agentcontracts "github.com/flidai/leapview/internal/agent/contracts"
 	dashboardauthoring "github.com/flidai/leapview/internal/dashboard/authoring"
+	authoringapplication "github.com/flidai/leapview/internal/dashboard/authoring/application"
 	"github.com/flidai/leapview/internal/dashboard/authoring/catalog"
+	authoringservice "github.com/flidai/leapview/internal/dashboard/authoring/service"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 )
 
@@ -56,6 +59,26 @@ func TestDashboardVisibilityContractMatchesDomain(t *testing.T) {
 	for _, value := range got {
 		if !dashboardauthoring.Visibility(value).Valid() {
 			t.Fatalf("generated contract accepts visibility %q but the domain rejects it", value)
+		}
+	}
+}
+
+func TestDashboardSourceToolResultsMatchGeneratedOutputSchemas(t *testing.T) {
+	app := &projectAuthoringFake{
+		source:           authoringapplication.SourceRead{DashboardID: "dashboard_sales", DraftID: "draft_1", Revision: dashboardauthoring.RevisionToken{RevisionID: "revision_1", Number: 1, ContentHash: "sha256:" + strings.Repeat("a", 64)}, YAML: "version: 1\n"},
+		editSourceResult: authoringapplication.SourceEditResult{Result: authoringservice.Result{Revision: dashboardauthoring.RevisionToken{RevisionID: "revision_2", Number: 2, ContentHash: "sha256:" + strings.Repeat("b", 64)}}, YAML: "version: 1\n", Diff: "--- dashboard.yaml\n", ChangedBlocks: 1},
+	}
+	catalog, err := agentcore.NewToolCatalog((DashboardAuthoringProvider{Application: app, ProjectID: projectIDForTest()}).Definitions(Scope{PrincipalID: "principal"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []agentcore.ToolCall{
+		{ID: "source-read", Name: ReadDashboardSourceToolName, Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales"}`)},
+		{ID: "source-edit", Name: EditDashboardSourceToolName, Arguments: json.RawMessage(`{"dashboardId":"dashboard_sales","draftId":"draft_1","expectedRevision":{"revisionId":"revision_1","number":1,"contentHash":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"edits":[{"oldText":"Overview","newText":"Executive overview"}]}`)},
+	} {
+		result, executeErr := catalog.Execute(t.Context(), call)
+		if executeErr != nil || result.IsError {
+			t.Fatalf("%s output failed generated schema validation: result=%#v err=%v", call.Name, result, executeErr)
 		}
 	}
 }

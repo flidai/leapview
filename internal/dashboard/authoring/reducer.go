@@ -162,6 +162,22 @@ func applyCanonicalPayload(value *document.DashboardDocument, payload authoringP
 		return nil
 	case *SetVisibilityPayload:
 		return nil
+	case *ReplaceDocumentPayload:
+		if patch.Document.Metadata.ID != value.Metadata.ID {
+			return fmt.Errorf("%w: replacement document cannot change metadata.id", ErrInvalidPayload)
+		}
+		if patch.Document.Metadata.Name != value.Metadata.Name {
+			return fmt.Errorf("%w: replacement document cannot change metadata.name", ErrInvalidPayload)
+		}
+		if patch.Document.Spec.SemanticModel != value.Spec.SemanticModel {
+			return fmt.Errorf("%w: replacement document cannot change semantic model", ErrInvalidPayload)
+		}
+		replacement, err := patch.Document.Clone()
+		if err != nil {
+			return err
+		}
+		*value = replacement
+		return nil
 	case *AddPagePayload:
 		if len(value.Spec.Pages) >= maxAuthoringPages {
 			return fmt.Errorf("%w: dashboard builder pages exceed bounded limit", ErrInvalidPayload)
