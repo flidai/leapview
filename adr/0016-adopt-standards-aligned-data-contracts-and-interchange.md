@@ -741,8 +741,9 @@ receive production credentials by default.
   directories, and produces one atomic graph without `leapview.yaml`, a public
   Project ID, or include-glob behavior. Public routes, API schemas, grants, and
   audit subjects contain no Project resource.
-- Identity fixtures prove candidate-wide cross-kind ID uniqueness, stable UIDs
-  across source-root and file moves, kind-change rejection, tombstone
+- Identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
+  instance-qualified authored identities across source-root and file moves,
+  kind-change rejection, tombstone
   non-reuse, explicit restore behavior, rollback identity, and durable
   control-plane references that cannot silently rebind.
 - TypeSpec owns the six authored structures, including the shared envelope,
