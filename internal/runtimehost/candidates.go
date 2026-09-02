@@ -167,7 +167,7 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	if err != nil {
 		return nil, err
 	}
-	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData); err != nil {
+	if err := validateCandidateDataMode(state, normalized.Compatibility, managedData, r.manager.requireSealedCatalog); err != nil {
 		return nil, errors.Join(err, releaseManaged(managedData.Lifetime))
 	}
 	candidate := &candidatePreparationContext{runtime: CandidateRuntimeContext{
@@ -438,7 +438,7 @@ func fingerprintCandidateBindings(bindings []CandidateBindingVersion) string {
 	return "sha256:" + fmt.Sprintf("%x", sum)
 }
 
-func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution) error {
+func validateCandidateDataMode(state servingstate.State, compatibility CandidateCompatibility, data ManagedDataResolution, requireSealedCatalog bool) error {
 	// ManagedDataResolution.RevisionID is an aggregate content binding digest
 	// owned by the managed-data resolver. CandidateCompatibility.DataRevision
 	// is release provenance (for example, sources:<digest> or snapshot:<id>).
@@ -451,8 +451,19 @@ func validateCandidateDataMode(state servingstate.State, compatibility Candidate
 			return fmt.Errorf("%w: sealed-base reuse requires an exact serving-state identity and no authored refresh connections", ErrCandidateRuntimeIncompatible)
 		}
 	case CandidateDataRefreshSources:
-		if state.DuckLakeSnapshotID != 0 || (len(compatibility.Bindings) == 0 && len(compatibility.ManagedDataConnections) == 0 && len(compatibility.AuthoredConnections) == 0) {
-			return fmt.Errorf("%w: source refresh requires an unmaterialized state and declared connections", ErrCandidateRuntimeIncompatible)
+		if len(compatibility.Bindings) == 0 && len(compatibility.ManagedDataConnections) == 0 && len(compatibility.AuthoredConnections) == 0 {
+			return fmt.Errorf("%w: source refresh requires declared connections", ErrCandidateRuntimeIncompatible)
+		}
+		// In a sealed target, refresh_sources records how the candidate was
+		// built; serving attaches the exact materialized snapshot admitted by
+		// delivery. Unsealed targets still perform that preparation locally and
+		// therefore require an unmaterialized state at this boundary.
+		if requireSealedCatalog {
+			if state.DuckLakeSnapshotID <= 0 {
+				return fmt.Errorf("%w: sealed source refresh requires a positive serving-state snapshot", ErrCandidateRuntimeIncompatible)
+			}
+		} else if state.DuckLakeSnapshotID != 0 {
+			return fmt.Errorf("%w: source refresh requires an unmaterialized state", ErrCandidateRuntimeIncompatible)
 		}
 	default:
 		return ErrCandidateRuntimeInvalid

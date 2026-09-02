@@ -80,6 +80,38 @@ func TestPinnedSnapshotSealedFactoryReachesExactSnapshot(t *testing.T) {
 	}
 }
 
+func TestSealedRefreshCandidateAllowsPositiveSnapshot(t *testing.T) {
+	now := time.Now().UTC()
+	state := servingstate.State{
+		ID: "generation_sealed_refresh", ProjectID: "project_demo", Environment: "prod",
+		Status:             servingstate.StatusValidated,
+		Digest:             "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		DuckLakeSnapshotID: 42,
+	}
+	repo := &lifecycleRepo{state: state, artifact: servingstate.Artifact{ID: "artifact_sealed_refresh", ServingStateID: state.ID, Digest: state.Digest}}
+	factory := &pinnedLifecycleFactory{reached: make(chan struct{}, 1)}
+	registry := NewRegistryWithFactory(RegistryOptions{
+		Repo: repo, ProjectID: projectgraph.ResourceID("project_demo"), Environment: "prod",
+		Factory: factory, ManagedData: &candidateResolver{lifetime: &candidateManagedData{}},
+		Authorization: &lifecycleAuth{}, Now: func() time.Time { return now }, RequireSealedCatalog: true,
+	})
+	defer registry.Close()
+	registration := candidateRegistration(now.Add(time.Hour))
+	registration.Compatibility.DataMode = CandidateDataRefreshSources
+	registration.Compatibility.DataRevision = "sources:managed"
+	if err := registry.PrepareAndRegisterCandidate(t.Context(), CandidatePreparation{
+		Registration: registration,
+		Identity:     projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: string(state.ID)},
+	}); err != nil {
+		t.Fatalf("sealed refresh candidate with positive snapshot: %v", err)
+	}
+	select {
+	case <-factory.reached:
+	case <-time.After(time.Second):
+		t.Fatal("sealed refresh candidate did not reach pinned sealed preparation")
+	}
+}
+
 func TestLegacySealedFactoryStillRejectsPinnedSnapshot(t *testing.T) {
 	state := servingstate.State{
 		ID: "generation_legacy_pinned", ProjectID: "project_demo", Environment: "prod", Status: servingstate.StatusValidated,
