@@ -304,7 +304,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 		if parseErr != nil {
 			return QueueAssetResult{}, parseErr
 		}
-		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
+		child, childErr := s.Runs.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: pipeline.SemanticModelID, PipelineID: input.PipelineID, PipelinePlan: &pipelinePlan, InvocationSource: input.InvocationSource, MatchingScheduleIDs: matchingScheduleIDs, TriggerID: input.TriggerID, NominalTime: nominalTime, PrincipalID: input.PrincipalID, GroupIDs: append([]string(nil), input.GroupIDs...), EstimatedMemoryBytes: input.EstimatedMemoryBytes, TargetType: TargetModel, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
 		if childErr != nil {
 			_, _ = s.Runs.MarkRunFailed(ctx, root.Identity, root.ID, childErr.Error())
 			if s.CanonicalExecutor == nil {

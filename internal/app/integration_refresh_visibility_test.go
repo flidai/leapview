@@ -89,7 +89,7 @@ func TestEveryCanonicalSemanticModelCanRefreshAndPersistHistory(t *testing.T) {
 			t.Fatalf("semantic model %s history = %#v, want succeeded run %s", id, runs, completedRun.ID)
 		}
 		for modelID := range definition.Tables {
-			modelRuns, err := repository.ListTargetRuns(t.Context(), scope, refreshrun.TargetModelTable, projectgraph.ResourceID(modelID), refreshrun.RunPage{Limit: 10})
+			modelRuns, err := repository.ListTargetRuns(t.Context(), scope, refreshrun.TargetModel, projectgraph.ResourceID(modelID), refreshrun.RunPage{Limit: 10})
 			if err != nil {
 				t.Fatalf("list model %s runs: %v", modelID, err)
 			}
@@ -224,7 +224,7 @@ func TestRefreshVisibilityStreamsAndPersistsSemanticModelRuns(t *testing.T) {
 		t.Fatalf("refresh child runs = %d, want %d (%#v)", len(children), len(h.modelIDs), children)
 	}
 	for _, expectedID := range h.modelIDs {
-		childRuns, listErr := repo.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, expectedID, refreshrun.RunPage{Limit: 10})
+		childRuns, listErr := repo.ListTargetRuns(ctx, scope, refreshrun.TargetModel, expectedID, refreshrun.RunPage{Limit: 10})
 		if listErr != nil {
 			t.Fatalf("list %s child runs: %v", expectedID, listErr)
 		}

@@ -48,7 +48,7 @@ func TestCanonicalAssetSectionHrefUsesResourceAreas(t *testing.T) {
 		want    string
 	}{
 		{name: "source", asset: project.DevelopAssetView{ID: "source:orders", Type: string(project.AssetTypeSource)}, section: "details", want: "/sources/source:orders/details"},
-		{name: "model", asset: project.DevelopAssetView{ID: "model_table:orders", Type: string(project.AssetTypeModelTable)}, section: "details", want: "/models/model_table:orders/details"},
+		{name: "model", asset: project.DevelopAssetView{ID: "model:orders", Type: string(project.AssetTypeModel)}, section: "details", want: "/models/model:orders/details"},
 		{name: "semantic model", asset: project.DevelopAssetView{ID: "semantic_model:sales", Type: string(project.AssetTypeSemanticModel)}, section: "lineage", want: "/semantic-models/semantic_model:sales/lineage"},
 		{name: "pipeline", asset: project.DevelopAssetView{ID: "refresh_pipeline:daily", Type: string(project.AssetTypeRefreshPipeline)}, section: "refreshes", want: "/pipelines/refresh_pipeline:daily/refreshes"},
 		{name: "connection", asset: project.DevelopAssetView{ID: "connection:warehouse", Type: string(project.AssetTypeConnection)}, section: "details", want: "/connections/connection:warehouse/details"},

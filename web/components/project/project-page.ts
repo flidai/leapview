@@ -255,7 +255,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   updated(): void {
     checkSignalContract('project asset page', this.page, { title: 'required', breadcrumbs: 'required', tabs: 'required' })
     const page = this.page
-    const drawerPageKey = page?.asset.type === 'model_table' && page.activeSection === 'details'
+    const drawerPageKey = page?.asset.type === 'model' && page.activeSection === 'details'
       ? page.asset.detailHref
       : ''
     if (drawerPageKey && drawerPageKey !== this.modelFieldDrawerPageKey) {
@@ -480,7 +480,7 @@ class LeapViewProjectAssetPage extends DatastarLit(LitElement) {
   }
 
   private selectedModelField(page: ResourceAssetPageSignal): ModelFieldDrawerRow | null {
-    if (page.asset.type !== 'model_table' || page.activeSection !== 'details') return null
+    if (page.asset.type !== 'model' || page.activeSection !== 'details') return null
     const drawer = this.modelFieldDrawer
     const fieldKey = drawer.fieldKey.trim()
     if (!drawer.open || !fieldKey) return null
@@ -1389,10 +1389,10 @@ const projectStyles = css`
     color: var(--lv-asset-metric-accent, var(--lv-fg-muted));
   }
 
-  .asset-kind-model-table {
-    background: var(--lv-asset-model-table-bg, var(--lv-bg-panel-muted));
-    border-color: var(--lv-asset-model-table-border, var(--lv-line-muted));
-    color: var(--lv-asset-model-table-accent, var(--lv-fg-muted));
+  .asset-kind-model {
+    background: var(--lv-asset-model-bg, var(--lv-bg-panel-muted));
+    border-color: var(--lv-asset-model-border, var(--lv-line-muted));
+    color: var(--lv-asset-model-accent, var(--lv-fg-muted));
   }
 
   .asset-kind-page {

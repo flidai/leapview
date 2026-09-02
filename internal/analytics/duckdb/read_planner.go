@@ -45,7 +45,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 		return planDirectSourceTable(ctx, runtimeDB, model, tableName, table, staged)
 	}
 	if sqlText == "" {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q requires a direct source binding or definition.sql", tableName)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("Model %q requires a direct source binding or definition.sql", tableName)
 	}
 	plannerDB, err := sql.Open("duckdb", "")
 	if err != nil {
@@ -59,23 +59,23 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	}
 	sqlAnalysis, err := modelsql.Analyze(ctx, sqlText)
 	if err != nil {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning model table %q SQL AST: %w", tableName, err)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning Model %q SQL AST: %w", tableName, err)
 	}
 	if evidence := table.SQLAnalysisEvidence; evidence != nil {
 		if !evidence.Validated || !sameStringSet(sortedStrings(evidence.SourceRefs), sortedStrings(sqlAnalysis.SourceRefs)) || !sameStringSet(sortedStrings(evidence.ModelRefs), sortedStrings(sqlAnalysis.ModelRefs)) {
-			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q SQL AST analysis does not match compiled evidence", tableName)
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("Model %q SQL AST analysis does not match compiled evidence", tableName)
 		}
 		table.SourceDependencies = append([]string(nil), evidence.SourceRefs...)
 		table.ModelDependencies = append([]string(nil), evidence.ModelRefs...)
 	} else {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q has no compiled SQL analysis evidence", tableName)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("Model %q has no compiled SQL analysis evidence", tableName)
 	}
 	for _, dependency := range table.ModelDependencies {
 		if dependency == tableName {
-			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q cannot read itself", tableName)
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("Model %q cannot read itself", tableName)
 		}
 		if _, ok := model.Tables[dependency]; !ok {
-			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("model table %q SQL references unknown model %q", tableName, dependency)
+			return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("Model %q SQL references unknown Model %q", tableName, dependency)
 		}
 	}
 	if len(table.SourceDependencies) == 0 && len(table.ModelDependencies) == 0 {
@@ -103,7 +103,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	}
 	explainAnalysis, err := duckdbsql.AnalyzePlan(ctx, plannerDB, sqlText)
 	if err != nil {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning model table %q source reads: %w", tableName, err)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("planning Model %q source reads: %w", tableName, err)
 	}
 	plans, err := sourceReadPlansFromExplain(tableName, table, sourceSchemas, explainAnalysis)
 	if err != nil {
@@ -115,7 +115,7 @@ func planModelTable(ctx context.Context, runtimeDB queryContext, model *semantic
 	}
 	rewritten, err := modelsql.RewriteSources(sqlText, sqlAnalysis, replacements, true)
 	if err != nil {
-		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("rewriting model table %q source refs: %w", tableName, err)
+		return analyticsmaterialize.ModelTablePlan{}, fmt.Errorf("rewriting Model %q source refs: %w", tableName, err)
 	}
 	return materializationPlan(analyticsmaterialize.PlanModeProjectedSourceInline, tableName, rewritten), nil
 }
@@ -204,7 +204,7 @@ func discoverPlanningModelSchemas(ctx context.Context, db queryContext, model *s
 		}
 		table, ok := model.Tables[tableName]
 		if !ok {
-			return nil, fmt.Errorf("unknown model table dependency %q", tableName)
+			return nil, fmt.Errorf("unknown Model dependency %q", tableName)
 		}
 		if len(table.Schema.Columns) > 0 {
 			result[tableName] = table.Schema.Columns
@@ -212,7 +212,7 @@ func discoverPlanningModelSchemas(ctx context.Context, db queryContext, model *s
 		}
 		columns = modelColumnsAsSchema(table)
 		if len(columns) == 0 {
-			return nil, fmt.Errorf("model table dependency %q has no schema for SQL read planning", tableName)
+			return nil, fmt.Errorf("Model dependency %q has no schema for SQL read planning", tableName)
 		}
 		result[tableName] = columns
 	}
@@ -331,7 +331,7 @@ func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, tabl
 	}
 	rows, err := db.QueryContext(ctx, "DESCRIBE "+sqlText)
 	if err != nil {
-		return fmt.Errorf("describing model table %q output: %w", tableName, err)
+		return fmt.Errorf("describing materialized Model %q output: %w", tableName, err)
 	}
 	defer rows.Close()
 	type describedColumn struct{ Name, Type string }
@@ -340,7 +340,7 @@ func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, tabl
 		var column describedColumn
 		var nullable, key, defaultValue, extra sql.NullString
 		if err := rows.Scan(&column.Name, &column.Type, &nullable, &key, &defaultValue, &extra); err != nil {
-			return fmt.Errorf("reading model table %q output schema: %w", tableName, err)
+			return fmt.Errorf("reading materialized Model %q output schema: %w", tableName, err)
 		}
 		columns = append(columns, column)
 	}
@@ -354,22 +354,22 @@ func validateModelOutput(ctx context.Context, db *sql.DB, tableName string, tabl
 	seen := make(map[string]struct{}, len(columns))
 	for _, column := range columns {
 		if _, duplicate := seen[column.Name]; duplicate {
-			return fmt.Errorf("model table %q output contains duplicate field %q", tableName, column.Name)
+			return fmt.Errorf("materialized Model %q output contains duplicate field %q", tableName, column.Name)
 		}
 		seen[column.Name] = struct{}{}
 		declaration, ok := declared[column.Name]
 		if !ok {
-			return fmt.Errorf("model table %q output exposes undeclared field %q", tableName, column.Name)
+			return fmt.Errorf("materialized Model %q output exposes undeclared field %q", tableName, column.Name)
 		}
 		if declaration.Datatype != "" {
 			actual := semanticmodel.LogicalDataTypeFromPhysicalType(column.Type)
 			if actual != declaration.Datatype {
-				return fmt.Errorf("model table %q field %q output type %q is incompatible with declared datatype %q", tableName, column.Name, column.Type, declaration.Datatype)
+				return fmt.Errorf("materialized Model %q field %q output type %q is incompatible with declared datatype %q", tableName, column.Name, column.Type, declaration.Datatype)
 			}
 		}
 	}
 	if len(columns) != len(declared) {
-		return fmt.Errorf("model table %q output fields do not exactly match declared fields", tableName)
+		return fmt.Errorf("materialized Model %q output fields do not exactly match declared fields", tableName)
 	}
 	return nil
 }
@@ -390,7 +390,7 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 			continue
 		}
 		if _, ok := declared[scan.Table]; !ok {
-			return nil, fmt.Errorf("model table %q SQL plan scanned source %q outside governed dependencies", tableName, scan.Table)
+			return nil, fmt.Errorf("Model %q SQL plan scanned source %q outside governed dependencies", tableName, scan.Table)
 		}
 		current := accumulators[scan.Table]
 		if len(scan.Projections) == 0 {
@@ -405,14 +405,14 @@ func sourceReadPlansFromExplain(tableName string, table semanticmodel.Table, sou
 	for _, source := range sortedStrings(table.SourceDependencies) {
 		current := accumulators[source]
 		if current == nil {
-			return nil, fmt.Errorf("model table %q SQL plan did not scan governed source dependency %q", tableName, source)
+			return nil, fmt.Errorf("Model %q SQL plan did not scan governed source dependency %q", tableName, source)
 		}
 		fields := sortedSet(current.fields)
 		if len(fields) == 0 && !current.rowPresenceOnly {
-			return nil, fmt.Errorf("model table %q SQL plan did not expose projections for source %q", tableName, source)
+			return nil, fmt.Errorf("Model %q SQL plan did not expose projections for source %q", tableName, source)
 		}
 		if err := validatePlannedFields(source, sourceSchemas[source], fields); err != nil {
-			return nil, fmt.Errorf("model table %q: %w", tableName, err)
+			return nil, fmt.Errorf("Model %q: %w", tableName, err)
 		}
 		plans = append(plans, sourceReadPlan{
 			Source:          source,

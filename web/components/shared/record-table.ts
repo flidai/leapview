@@ -1397,7 +1397,7 @@ const recordTableStyles = `
   lv-record-table .variant-primary .record-asset-dimension { color: var(--lv-asset-dimension-accent, var(--lv-fg-muted)); }
   lv-record-table .variant-primary .record-asset-filter { color: var(--lv-asset-filter-accent, var(--lv-fg-muted)); }
   lv-record-table .variant-primary .record-asset-metric { color: var(--lv-asset-metric-accent, var(--lv-fg-muted)); }
-  lv-record-table .variant-primary .record-asset-model-table { color: var(--lv-asset-model-table-accent, var(--lv-fg-muted)); }
+  lv-record-table .variant-primary .record-asset-model { color: var(--lv-asset-model-accent, var(--lv-fg-muted)); }
   lv-record-table .variant-primary .record-asset-page { color: var(--lv-asset-page-accent, var(--lv-fg-muted)); }
   lv-record-table .variant-primary .record-asset-semantic-model { color: var(--lv-asset-semantic-model-accent, var(--lv-fg-muted)); }
   lv-record-table .variant-primary .record-asset-source { color: var(--lv-asset-source-accent, var(--lv-fg-muted)); }
@@ -1410,7 +1410,7 @@ const recordTableStyles = `
   lv-record-table .variant-primary .record-asset-dimension:not(.is-plain) { border-color: var(--lv-asset-dimension-border, var(--lv-line-muted)); background: var(--lv-asset-dimension-bg, var(--lv-bg-panel-muted)); }
   lv-record-table .variant-primary .record-asset-filter:not(.is-plain) { border-color: var(--lv-asset-filter-border, var(--lv-line-muted)); background: var(--lv-asset-filter-bg, var(--lv-bg-panel-muted)); }
   lv-record-table .variant-primary .record-asset-metric:not(.is-plain) { border-color: var(--lv-asset-metric-border, var(--lv-line-muted)); background: var(--lv-asset-metric-bg, var(--lv-bg-panel-muted)); }
-  lv-record-table .variant-primary .record-asset-model-table:not(.is-plain) { border-color: var(--lv-asset-model-table-border, var(--lv-line-muted)); background: var(--lv-asset-model-table-bg, var(--lv-bg-panel-muted)); }
+  lv-record-table .variant-primary .record-asset-model:not(.is-plain) { border-color: var(--lv-asset-model-border, var(--lv-line-muted)); background: var(--lv-asset-model-bg, var(--lv-bg-panel-muted)); }
   lv-record-table .variant-primary .record-asset-page:not(.is-plain) { border-color: var(--lv-asset-page-border, var(--lv-line-muted)); background: var(--lv-asset-page-bg, var(--lv-bg-panel-muted)); }
   lv-record-table .variant-primary .record-asset-semantic-model:not(.is-plain) { border-color: var(--lv-asset-semantic-model-border, var(--lv-line-muted)); background: var(--lv-asset-semantic-model-bg, var(--lv-bg-panel-muted)); }
   lv-record-table .variant-primary .record-asset-source:not(.is-plain) { border-color: var(--lv-asset-source-border, var(--lv-line-muted)); background: var(--lv-asset-source-bg, var(--lv-bg-panel-muted)); }

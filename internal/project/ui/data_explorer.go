@@ -67,7 +67,7 @@ func dataExplorerUpdatesURL(command uisignals.DataExplorerCommand) string {
 	explore := command.Explore
 	values.Set("v", "1")
 	values.Set("mode", "explore")
-	values.Set("model", uisignals.ValueOrZero(explore.ModelID))
+	values.Set("semanticModel", uisignals.ValueOrZero(explore.SemanticModelID))
 	values.Set("dataset", uisignals.ValueOrZero(explore.DatasetID))
 	for _, dimension := range explore.Dimensions {
 		values.Add("dimension", dimension)
@@ -127,7 +127,7 @@ func DataExplorerBootstrapSignalsWithAgent(_ catalog.Catalog, page uisignals.Dat
 
 func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer uisignals.DataExplorerSignal) uisignals.AgentContextSignal {
 	command := explorer.Explore.Command
-	modelID := uisignals.ValueOrZero(command.ModelID)
+	modelID := uisignals.ValueOrZero(command.SemanticModelID)
 	datasetID := uisignals.ValueOrZero(command.DatasetID)
 	return uisignals.AgentContextSignal{
 		Surface: "data", ModelID: modelID, DatasetID: &datasetID,

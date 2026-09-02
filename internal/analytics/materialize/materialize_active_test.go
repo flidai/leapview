@@ -161,8 +161,8 @@ func TestActiveModelTableDependencyOrderRejectsCyclesAndUnknownDependencies(t *t
 	unknown := &semanticmodel.Model{Tables: map[string]semanticmodel.Table{
 		"summary": {ModelDependencies: []string{"missing"}},
 	}}
-	if _, err := analyticsmaterialize.ModelTableDependencyOrder(unknown, "summary"); err == nil || !strings.Contains(err.Error(), `unknown model table "missing"`) {
-		t.Fatalf("unknown dependency error = %v, want missing table", err)
+	if _, err := analyticsmaterialize.ModelTableDependencyOrder(unknown, "summary"); err == nil || !strings.Contains(err.Error(), `unknown Model "missing"`) {
+		t.Fatalf("unknown dependency error = %v, want missing Model", err)
 	}
 }
 
@@ -176,8 +176,8 @@ func TestActiveModelTablesNamedValidatesInputsBeforePlanning(t *testing.T) {
 	}}
 	executor := &activeMaterializeExecutor{}
 
-	if err := analyticsmaterialize.ModelTablesNamed(context.Background(), executor, planner, model, []string{"missing"}); err == nil || !strings.Contains(err.Error(), `unknown model table "missing"`) {
-		t.Fatalf("unknown table error = %v, want unknown model table", err)
+	if err := analyticsmaterialize.ModelTablesNamed(context.Background(), executor, planner, model, []string{"missing"}); err == nil || !strings.Contains(err.Error(), `unknown Model "missing"`) {
+		t.Fatalf("unknown table error = %v, want unknown Model", err)
 	}
 	if planner.calls != nil {
 		t.Fatalf("planner calls = %#v, want no planning for unknown table", planner.calls)

@@ -674,7 +674,7 @@ func (r *SQLRunRepository) ListTargetRuns(ctx context.Context, scope refreshrun.
 	if err := scope.Validate(); err != nil {
 		return nil, err
 	}
-	if targetType != refreshrun.TargetModelTable && targetType != refreshrun.TargetRefreshPipeline {
+	if targetType != refreshrun.TargetModel && targetType != refreshrun.TargetRefreshPipeline {
 		return nil, fmt.Errorf("target type is required")
 	}
 	if err := targetID.Validate(); err != nil {
@@ -789,7 +789,7 @@ func (r *SQLRunRepository) LatestSuccessfulTargetRun(ctx context.Context, scope 
 	if err := scope.Validate(); err != nil {
 		return refreshrun.RunRecord{}, false, err
 	}
-	if targetType != refreshrun.TargetModelTable && targetType != refreshrun.TargetRefreshPipeline {
+	if targetType != refreshrun.TargetModel && targetType != refreshrun.TargetRefreshPipeline {
 		return refreshrun.RunRecord{}, false, fmt.Errorf("target type is required")
 	}
 	if err := targetID.Validate(); err != nil {
@@ -1336,7 +1336,7 @@ func validateMappedRun(run refreshrun.RunRecord) error {
 	if err := run.TargetID.Validate(); err != nil {
 		return fmt.Errorf("invalid refresh run target id: %w", err)
 	}
-	if run.TargetType != refreshrun.TargetModelTable && run.TargetType != refreshrun.TargetRefreshPipeline {
+	if run.TargetType != refreshrun.TargetModel && run.TargetType != refreshrun.TargetRefreshPipeline {
 		return fmt.Errorf("unsupported refresh target type %q", run.TargetType)
 	}
 	if run.TriggerType != refreshrun.TriggerDependency && run.TriggerType != refreshrun.TriggerManual && run.TriggerType != refreshrun.TriggerSchedule {
@@ -1364,7 +1364,7 @@ func validateMappedRun(run refreshrun.RunRecord) error {
 			return fmt.Errorf("refresh pipeline run plan evidence is required")
 		}
 	} else if run.PipelineID == "" {
-		return fmt.Errorf("model-table run pipeline id is required")
+		return fmt.Errorf("model run pipeline id is required")
 	}
 	if err := validateStoredID(run.PrincipalID, "principal id", false); err != nil {
 		return err
@@ -1455,8 +1455,8 @@ func normalizeRunInput(input refreshrun.RunInput) (normalizedRunInput, error) {
 			return normalizedRunInput{}, fmt.Errorf("root refresh runs cannot use dependency trigger")
 		}
 	} else {
-		if input.TargetType != refreshrun.TargetModelTable || input.TriggerType != refreshrun.TriggerDependency || input.JobKind != refreshrun.JobKindChildRun {
-			return normalizedRunInput{}, fmt.Errorf("child refresh tasks must be model-table dependencies")
+		if input.TargetType != refreshrun.TargetModel || input.TriggerType != refreshrun.TriggerDependency || input.JobKind != refreshrun.JobKindChildRun {
+			return normalizedRunInput{}, fmt.Errorf("child refresh tasks must be Model dependencies")
 		}
 	}
 	invocationSource := input.InvocationSource

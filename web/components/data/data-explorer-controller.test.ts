@@ -35,7 +35,7 @@ test('data explorer selection controller only reports actual selection changes',
 
 test('query controller advances request and reset sequences', () => {
   const query = new DataExplorerQueryController()
-  const first = { modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 1, resetVersion: 4, columnWidths: {} }
+  const first = { semanticModelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 1, resetVersion: 4, columnWidths: {} }
   const next = query.explore(first, { dimensions: ['orders.status'] })
   expect(next.dimensions).toEqual(['orders.status'])
   expect(next.requestSeq).toBe(2)

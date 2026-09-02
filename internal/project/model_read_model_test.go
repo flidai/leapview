@@ -7,8 +7,8 @@ import (
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
-func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
-	table := semanticmodel.Table{
+func TestModelAssetPayloadProjectsCompiledDefinition(t *testing.T) {
+	model := semanticmodel.Table{
 		Execution:          semanticmodel.ExecutionDefinition{Source: "olist.geolocation", SQL: "SELECT * FROM source.\"olist.geolocation\""},
 		Columns:            map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string", SourceField: "geolocation_zip_code_prefix"}},
 		Entities:           map[string]semanticmodel.EntityDefinition{"location": {Type: "primary", Fields: []string{"zip_prefix", "city"}}},
@@ -19,7 +19,7 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		ModelDependencies:  []string{"model:upstream"},
 	}
 
-	payload := ModelTableAssetPayload(table)
+	payload := ModelAssetPayload(model)
 	definition, _ := payload["Definition"].(map[string]any)
 	if definition["Source"] != "olist.geolocation" || payload["GrainEntity"] != "location" {
 		t.Fatalf("payload metadata = %#v", payload)
@@ -39,8 +39,8 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 		t.Fatalf("payload retains removed top-level SQL alias: %#v", payload)
 	}
 	transform, ok := payload["Definition"].(map[string]any)
-	if !ok || transform["SQL"] != table.Execution.SQL {
-		t.Fatalf("payload definition = %#v, want SQL %q", payload["Definition"], table.Execution.SQL)
+	if !ok || transform["SQL"] != model.Execution.SQL {
+		t.Fatalf("payload definition = %#v, want SQL %q", payload["Definition"], model.Execution.SQL)
 	}
 	if got, ok := payload["SourceDependencies"].([]any); !ok || len(got) != 1 || got[0] != "olist.geolocation" {
 		t.Fatalf("payload source dependencies = %#v", payload["SourceDependencies"])
@@ -63,17 +63,17 @@ func TestModelTableAssetPayloadProjectsCompiledDefinition(t *testing.T) {
 	}
 }
 
-func TestModelTableAssetPayloadUsesAuthoredDefinitionOverTargetExecution(t *testing.T) {
+func TestModelAssetPayloadUsesAuthoredDefinitionOverTargetExecution(t *testing.T) {
 	const authoredSQL = `WITH normalized AS (SELECT * FROM source."olist.geolocation") SELECT * FROM normalized`
 	const authoredSource = "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:zip_geolocations, name: zip_geolocations}\n"
-	table := semanticmodel.Table{
+	model := semanticmodel.Table{
 		// A target-bound runtime may retain only a direct source execution for
 		// materialization. The detail projection must still show authored SQL.
 		Execution: semanticmodel.ExecutionDefinition{Source: "source:olist.geolocation"},
 		Entities:  map[string]semanticmodel.EntityDefinition{"zip": {Type: "primary", Fields: []string{"zip_prefix"}}},
 	}
 	authored := projectmanifest.AuthoredModelDefinition{Type: "sql", SQL: authoredSQL}
-	payload := ModelTableAssetPayloadWithAuthoredSource(table, &authored, authoredSource)
+	payload := ModelAssetPayloadWithAuthoredSource(model, &authored, authoredSource)
 	definition, ok := payload["Definition"].(map[string]any)
 	if !ok || definition["SQL"] != authoredSQL || definition["Source"] != nil {
 		t.Fatalf("payload definition = %#v, want authored SQL", payload["Definition"])
@@ -83,26 +83,26 @@ func TestModelTableAssetPayloadUsesAuthoredDefinitionOverTargetExecution(t *test
 	}
 }
 
-func TestModelTableAssetPayloadDoesNotAliasCompiledMaps(t *testing.T) {
-	table := semanticmodel.Table{
+func TestModelAssetPayloadDoesNotAliasCompiledMaps(t *testing.T) {
+	model := semanticmodel.Table{
 		SourceDependencies: []string{"olist.geolocation"},
 		Columns:            map[string]semanticmodel.ModelColumn{"zip_prefix": {Type: "string"}},
 		Dimensions:         map[string]semanticmodel.MetricDimension{"zip_prefix": {Label: "ZIP prefix"}},
 	}
-	payload := ModelTableAssetPayload(table)
+	payload := ModelAssetPayload(model)
 	if payload == nil {
 		t.Fatal("payload is nil")
 	}
-	table.SourceDependencies[0] = "changed"
-	table.Columns["zip_prefix"] = semanticmodel.ModelColumn{Type: "integer"}
-	table.Dimensions["zip_prefix"] = semanticmodel.MetricDimension{Label: "changed"}
+	model.SourceDependencies[0] = "changed"
+	model.Columns["zip_prefix"] = semanticmodel.ModelColumn{Type: "integer"}
+	model.Dimensions["zip_prefix"] = semanticmodel.MetricDimension{Label: "changed"}
 	if got := payload["SourceDependencies"].([]any)[0]; got != "olist.geolocation" {
-		t.Fatalf("payload source dependencies changed with source table: %#v", got)
+		t.Fatalf("payload source dependencies changed with source model: %#v", got)
 	}
 	if got := payload["Columns"].(map[string]any)["zip_prefix"].(map[string]any)["Type"]; got != "string" {
-		t.Fatalf("payload columns changed with source table: %#v", got)
+		t.Fatalf("payload columns changed with source model: %#v", got)
 	}
 	if got := payload["Dimensions"].(map[string]any)["zip_prefix"].(map[string]any)["Label"]; got != "ZIP prefix" {
-		t.Fatalf("payload dimensions changed with source table: %#v", got)
+		t.Fatalf("payload dimensions changed with source model: %#v", got)
 	}
 }

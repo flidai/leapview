@@ -131,7 +131,7 @@ func (m *Model) validateSemanticDefinitions() error {
 		sort.Strings(fieldNames)
 		for _, field := range fieldNames {
 			dimension := table.Dimensions[field]
-			if err := validateOptionalLogicalDataType("model table "+tableName+" field "+field, dimension.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("semantic dataset "+tableName+" field "+field, dimension.Datatype); err != nil {
 				return err
 			}
 		}
@@ -142,7 +142,7 @@ func (m *Model) validateSemanticDefinitions() error {
 		sort.Strings(columnNames)
 		for _, field := range columnNames {
 			column := table.Columns[field]
-			if err := validateOptionalLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("semantic dataset "+tableName+" column "+field, column.Datatype); err != nil {
 				return err
 			}
 		}

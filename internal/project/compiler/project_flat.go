@@ -393,7 +393,7 @@ func validateFlatProject(project Project) error {
 			alias := sourceAliases[name]
 			aliasedSources[alias] = source
 		}
-		// Validate physical model tables through the same strict dataset/table
+		// Validate Model materializations through the same strict dataset/table
 		// binding contract used by semantic models. A flat Model document does
 		// not author datasets itself, so bind each physical model under its own
 		// alias for this validation snapshot and retain the explicit ModelName
@@ -446,7 +446,7 @@ func validateFlatProject(project Project) error {
 	}
 	for name, model := range project.Models {
 		refs := append([]string{}, model.SourceDependencies...)
-		// A transform may derive solely from upstream model tables. ValidateAuthored
+		// A transform may derive solely from upstream Models. ValidateAuthored
 		// already resolved those physical dependencies before this project-level
 		// source lineage check.
 		if len(refs) == 0 && len(model.ModelDependencies) == 0 {

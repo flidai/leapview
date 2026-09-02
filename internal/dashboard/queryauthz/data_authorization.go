@@ -1098,7 +1098,7 @@ func dataQueryCapability(request dataquery.Query) access.Capability {
 		return access.CapabilityResourceRead
 	}
 	switch request.Kind {
-	case dataquery.KindModelTableRows:
+	case dataquery.KindModelRows:
 		return access.CapabilityResourceRead
 	case dataquery.KindSemanticRows:
 		return access.CapabilityResourceUse
@@ -1111,7 +1111,7 @@ func (m Metrics) dataQueryObjects(resourceIndex projectResourceIndex, request da
 	modelID := request.ModelID
 	objects := []access.ResourceRef{}
 	switch request.Kind {
-	case dataquery.KindModelTableRows:
+	case dataquery.KindModelRows:
 		if object, ok := resourceIndex.byName(request.Target, projectgraph.KindModel); ok {
 			objects = append(objects, object)
 		}

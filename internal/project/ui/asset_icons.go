@@ -22,7 +22,7 @@ var assetPresentationByType = map[string]assetPresentation{
 	"field":          assetPresentationFor(lucide.Ruler, "dimension"),
 	"filter":         assetPresentationFor(lucide.ListFilter, "filter"),
 	"metric":         assetPresentationFor(lucide.Sigma, "metric"),
-	"model_table":    assetPresentationFor(lucide.TableProperties, "model-table"),
+	"model":          assetPresentationFor(lucide.TableProperties, "model"),
 	"page":           assetPresentationFor(lucide.PanelTop, "page"),
 	"page_item":      assetPresentationFor(lucide.Component, "page"),
 	"relationship":   assetPresentationFor(lucide.Workflow, "dimension"),

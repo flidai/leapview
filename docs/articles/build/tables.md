@@ -6,7 +6,7 @@ Use tabular visuals when exact values, comparison across several fields, or reco
 
 ### Data tables
 
-A records query selects fields from a model-table grain:
+A records query selects fields from a Model grain:
 
 ```yaml
 visuals:
@@ -86,6 +86,6 @@ components:
     placement: {column: 1, row: 12, columnSpan: 12, rowSpan: 8}
 ```
 
-Test sorting, loading another window, compact widths, null values, empty results, and row selections. Compare aggregate matrix values with direct semantic queries and confirm data-table rows preserve the declared model-table grain.
+Test sorting, loading another window, compact widths, null values, empty results, and row selections. Compare aggregate matrix values with direct semantic queries and confirm data-table rows preserve the declared Model grain.
 
 The full table, query, and interaction fields are generated in [Dashboard configuration](/docs/config/dashboard-document).

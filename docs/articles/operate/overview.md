@@ -14,7 +14,7 @@ Application releases should use immutable artifacts and should not silently modi
 
 ## Deliver a project
 
-Project delivery changes connections, sources, model tables, semantic models, pipelines, dashboards, access declarations, and managed-data revision pins.
+Project delivery changes connections, sources, Models, semantic models, pipelines, dashboards, access declarations, and managed-data revision pins.
 
 - Use [Develop, review, and publish](/docs/cli/validate-deploy) for the exact-candidate delivery workflow.
 - Use [Targets and environments](/docs/cli/targets) to keep local, staging, and production identities explicit.

@@ -402,7 +402,7 @@ func TestPhysicalProjectModelDeduplicatesDatasetAliases(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := len(physical.Tables); got != 1 {
-		t.Fatalf("physical table count = %d, want one shared Model table", got)
+		t.Fatalf("physical table count = %d, want one shared Model materialization", got)
 	}
 	if _, ok := physical.Tables["sales_orders"]; !ok {
 		t.Fatalf("physical tables = %#v, want sales_orders", physical.Tables)

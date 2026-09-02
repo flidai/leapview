@@ -153,7 +153,7 @@ func canonicalSourceObservationID(sources map[string]string, observationID strin
 }
 
 // deliveryMaterializationDelta maps compiler model-resource changes to the
-// concrete semantic-model tables that can be refreshed independently. A
+// concrete semantic datasets that can be refreshed independently. A
 // source or unknown dependency change conservatively refreshes the complete
 // project; missing relation identity never silently inherits stale state.
 func deliveryMaterializationDelta(artifacts release.CandidateArtifactSet, deliveryPlan deployment.DeliveryPlan) (map[string][]string, []string, bool) {

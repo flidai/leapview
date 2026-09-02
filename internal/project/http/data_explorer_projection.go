@@ -2,7 +2,7 @@ package http
 
 // This file contains the browser-facing Data Explorer projection.  The
 // serving graph decides which resources are visible; the compiled project
-// manifest supplies the semantic model and table metadata that is deliberately
+// manifest supplies the semantic model and model metadata that is deliberately
 // not duplicated in the graph's project.graph.v1 payload.
 
 import (
@@ -22,14 +22,19 @@ import (
 // serving graph and manifest inputs, so a caller can safely retain the result
 // for one response.
 type DataExplorerProjection struct {
-	Objects         []projectsignals.DataExplorerObjectSignal
-	Models          []projectsignals.DataExploreModelSignal
-	SelectedModel   *projectsignals.DataExploreModelSignal
-	Datasets        []projectsignals.DataExploreDatasetSignal
-	SelectedDataset *projectsignals.DataExploreDatasetSignal
-	Fields          []projectsignals.DataExploreFieldSignal
-	Command         projectsignals.DataExploreCommand
-	Warnings        []string
+	Objects               []projectsignals.DataExplorerObjectSignal
+	SemanticModels        []projectsignals.DataExploreSemanticModelSignal
+	SelectedSemanticModel *projectsignals.DataExploreSemanticModelSignal
+	Datasets              []projectsignals.DataExploreDatasetSignal
+	SelectedDataset       *projectsignals.DataExploreDatasetSignal
+	Fields                []projectsignals.DataExploreFieldSignal
+	Command               projectsignals.DataExploreCommand
+	Warnings              []string
+}
+
+type explorerModelBinding struct {
+	SemanticModelID string
+	DatasetID       string
 }
 
 // BuildDataExplorerProjection projects authorized serving assets together
@@ -54,7 +59,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	sort.Strings(semanticIDs)
 
-	models := make([]projectsignals.DataExploreModelSignal, 0, len(semanticIDs))
+	semanticModels := make([]projectsignals.DataExploreSemanticModelSignal, 0, len(semanticIDs))
 	modelByID := make(map[string]*semanticmodel.Model, len(semanticIDs))
 	compiledByID := make(map[string]*semanticquery.CompiledModel, len(semanticIDs))
 	bindingUnavailable := false
@@ -71,7 +76,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 			compiled = &semanticquery.CompiledModel{}
 		}
 		compiledByID[id] = compiled
-		models = append(models, projectsignals.DataExploreModelSignal{
+		semanticModels = append(semanticModels, projectsignals.DataExploreSemanticModelSignal{
 			ID:          id,
 			Title:       firstExplorerNonEmpty(model.Title, model.Name, asset.Title, id),
 			Description: projectsignals.Optional(firstExplorerNonEmpty(model.Description, asset.Description)),
@@ -79,14 +84,14 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		})
 	}
 
-	// A model table is keyed by its canonical model resource ID in the
-	// manifest. Semantic model table names remain authored names, so resolve
+	// A model is keyed by its canonical model resource ID in the
+	// manifest. Semantic dataset names remain authored names, so resolve
 	// them through NameIndex before associating browser objects with a model.
-	semanticForTable := make(map[string][]string)
+	bindingsByModelID := make(map[string][]explorerModelBinding)
 	for _, semanticID := range semanticIDs {
 		model := modelByID[semanticID]
 		compiled := compiledByID[semanticID]
-		for _, datasetTable := range explorerDatasetTableMap(model, compiled) {
+		for datasetID, datasetTable := range explorerDatasetTableMap(model, compiled) {
 			tableName := datasetTable.ModelName
 			modelID := project.NameIndex.Models[tableName]
 			if modelID == "" {
@@ -95,11 +100,20 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 			if modelID == "" {
 				continue
 			}
-			semanticForTable[modelID] = append(semanticForTable[modelID], semanticID)
+			bindingsByModelID[modelID] = append(bindingsByModelID[modelID], explorerModelBinding{
+				SemanticModelID: semanticID,
+				DatasetID:       datasetID,
+			})
 		}
 	}
-	for id := range semanticForTable {
-		sort.Strings(semanticForTable[id])
+	for id := range bindingsByModelID {
+		sort.Slice(bindingsByModelID[id], func(i, j int) bool {
+			left, right := bindingsByModelID[id][i], bindingsByModelID[id][j]
+			if left.SemanticModelID != right.SemanticModelID {
+				return left.SemanticModelID < right.SemanticModelID
+			}
+			return left.DatasetID < right.DatasetID
+		})
 	}
 
 	objects := make([]projectsignals.DataExplorerObjectSignal, 0)
@@ -123,7 +137,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 				RowCountLabel: projectsignals.Pointer("Preview unavailable"),
 				Columns:       projectsignals.OptionalSlice(columns),
 			})
-		case string(projectview.AssetTypeModelTable):
+		case string(projectview.AssetTypeModel):
 			table, ok := project.Models[asset.ID]
 			if !ok {
 				// A malformed or stale manifest must not make the entire catalog
@@ -131,43 +145,43 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 				table = explorerTableByName(project.Models, asset.Key)
 			}
 			columns := explorerTableColumns(table)
-			modelIDs := semanticForTable[asset.ID]
-			if len(modelIDs) == 0 {
-				objects = append(objects, explorerModelTableObject(asset, table, columns, ""))
+			bindings := bindingsByModelID[asset.ID]
+			if len(bindings) == 0 {
+				objects = append(objects, explorerModelObject(asset, table, columns, "", ""))
 				continue
 			}
 			// One object per semantic model keeps field compatibility scoped to
 			// the selected model while preserving a stable canonical asset ID.
-			for _, semanticID := range modelIDs {
-				objects = append(objects, explorerModelTableObject(asset, table, columns, semanticID))
+			for _, binding := range bindings {
+				objects = append(objects, explorerModelObject(asset, table, columns, binding.SemanticModelID, binding.DatasetID))
 			}
 		}
 	}
 	sortExplorerObjects(objects)
 
-	selectedModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.ModelID))
-	selectedModelIndex := -1
-	for index := range models {
-		if models[index].ID == selectedModelID {
-			selectedModelIndex = index
+	selectedSemanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
+	selectedSemanticModelIndex := -1
+	for index := range semanticModels {
+		if semanticModels[index].ID == selectedSemanticModelID {
+			selectedSemanticModelIndex = index
 			break
 		}
 	}
-	if selectedModelIndex < 0 && len(models) > 0 {
-		selectedModelIndex = 0
+	if selectedSemanticModelIndex < 0 && len(semanticModels) > 0 {
+		selectedSemanticModelIndex = 0
 	}
 	warnings := []string(nil)
 	if bindingUnavailable {
 		warnings = append(warnings, "Compiled semantic dataset bindings are unavailable for the active serving generation.")
 	}
-	result := DataExplorerProjection{Objects: objects, Models: models, Command: command, Warnings: warnings}
-	if selectedModelIndex < 0 {
+	result := DataExplorerProjection{Objects: objects, SemanticModels: semanticModels, Command: command, Warnings: warnings}
+	if selectedSemanticModelIndex < 0 {
 		return result
 	}
-	selectedModel := models[selectedModelIndex]
-	result.SelectedModel = &selectedModel
-	command.ModelID = projectsignals.Optional(selectedModel.ID)
-	result.Datasets = append([]projectsignals.DataExploreDatasetSignal(nil), selectedModel.Datasets...)
+	selectedSemanticModel := semanticModels[selectedSemanticModelIndex]
+	result.SelectedSemanticModel = &selectedSemanticModel
+	command.SemanticModelID = projectsignals.Optional(selectedSemanticModel.ID)
+	result.Datasets = append([]projectsignals.DataExploreDatasetSignal(nil), selectedSemanticModel.Datasets...)
 	selectedDatasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
 	for index := range result.Datasets {
 		if result.Datasets[index].ID == selectedDatasetID {
@@ -185,8 +199,8 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		baseTable = result.SelectedDataset.ID
 		command.DatasetID = projectsignals.Optional(baseTable)
 	}
-	model := modelByID[selectedModel.ID]
-	compiled := compiledByID[selectedModel.ID]
+	model := modelByID[selectedSemanticModel.ID]
+	compiled := compiledByID[selectedSemanticModel.ID]
 	if resolvedBase, changed := resolveExplorerBase(model, baseTable, command, compiled); changed {
 		previousBase := baseTable
 		baseTable = resolvedBase
@@ -313,7 +327,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 				}
 			}
 			out = append(out, projectsignals.DataExploreFieldSignal{
-				ID: id, Label: firstExplorerNonEmpty(dimension.Label, explorerLabel(fieldName)), Kind: "dimension", ModelTable: tableName,
+				ID: id, Label: firstExplorerNonEmpty(dimension.Label, explorerLabel(fieldName)), Kind: "dimension", DatasetID: tableName,
 				Description: projectsignals.Optional(dimension.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[id],
 				Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
 				RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
@@ -333,9 +347,9 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		// Aggregate metrics have one root dataset. Derived and ratio metrics
 		// may span multiple roots; keep those visible from every base and let
 		// the governed planner decide whether the selected combination is safe.
-		modelTable := ""
+		datasetID := ""
 		if len(roots) == 1 {
-			modelTable = roots[0]
+			datasetID = roots[0]
 		}
 		compatible := strings.TrimSpace(baseTable) == "" || len(roots) != 1 || roots[0] == baseTable
 		reason := ""
@@ -345,12 +359,12 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 			if rebaseDatasetID != "" {
 				reason = "Select " + firstExplorerNonEmpty(metric.Label, explorerLabel(name)) + " and change grain from " + explorerLabel(baseTable) + " to " + explorerLabel(rebaseDatasetID) + "."
 			} else {
-				reason = "Metric belongs to " + explorerLabel(modelTable) + " and cannot be combined safely with the selected fields."
+				reason = "Metric belongs to " + explorerLabel(datasetID) + " and cannot be combined safely with the selected fields."
 			}
 		}
 		out = append(out, projectsignals.DataExploreFieldSignal{
-			ID: name, Label: firstExplorerNonEmpty(metric.Label, explorerLabel(name)), Kind: "metric", ModelTable: modelTable,
-			Description: projectsignals.Optional(metric.Description), Dataset: projectsignals.Optional(modelTable), Type: projectsignals.Optional(firstExplorerNonEmpty(metric.Aggregation, metric.Type)), Selected: selectedMetrics[name],
+			ID: name, Label: firstExplorerNonEmpty(metric.Label, explorerLabel(name)), Kind: "metric", DatasetID: datasetID,
+			Description: projectsignals.Optional(metric.Description), Type: projectsignals.Optional(firstExplorerNonEmpty(metric.Aggregation, metric.Type)), Selected: selectedMetrics[name],
 			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RebaseDatasetID: projectsignals.Optional(rebaseDatasetID),
 		})
 	}
@@ -551,21 +565,22 @@ func appendUniqueExplorerValue(values []string, value string) []string {
 	return append(out, value)
 }
 
-func explorerModelTableObject(asset projectview.DevelopAssetView, table semanticmodel.Table, columns []projectsignals.DataPreviewColumnSignal, modelID string) projectsignals.DataExplorerObjectSignal {
+func explorerModelObject(asset projectview.DevelopAssetView, table semanticmodel.Table, columns []projectsignals.DataPreviewColumnSignal, semanticModelID, datasetID string) projectsignals.DataExplorerObjectSignal {
+	datasetID = firstExplorerNonEmpty(datasetID, asset.Key, asset.ID)
 	object := projectsignals.DataExplorerObjectSignal{
-		Key:           "model_table:" + asset.ID,
-		AssetID:       projectsignals.Optional(asset.ID),
-		ResourceID:    asset.ID,
-		Layer:         "model_table",
-		ModelID:       projectsignals.Optional(modelID),
-		Table:         projectsignals.Optional(firstExplorerNonEmpty(asset.Key, asset.ID)),
-		Title:         firstExplorerNonEmpty(asset.Title, asset.Key, asset.ID),
-		Description:   projectsignals.Optional(firstExplorerNonEmpty(asset.Description, table.Description)),
-		DetailHref:    projectsignals.Optional(explorerAssetDetailsHref(asset, "details")),
-		Grain:         projectsignals.Optional(table.GrainEntity),
-		ColumnCount:   int64(len(columns)),
-		RowCountLabel: projectsignals.Pointer("Unknown"),
-		Columns:       projectsignals.OptionalSlice(columns),
+		Key:             "model:" + asset.ID,
+		AssetID:         projectsignals.Optional(asset.ID),
+		ResourceID:      asset.ID,
+		Layer:           "model",
+		SemanticModelID: projectsignals.Optional(semanticModelID),
+		DatasetID:       projectsignals.Optional(datasetID),
+		Title:           firstExplorerNonEmpty(asset.Title, asset.Key, asset.ID),
+		Description:     projectsignals.Optional(firstExplorerNonEmpty(asset.Description, table.Description)),
+		DetailHref:      projectsignals.Optional(explorerAssetDetailsHref(asset, "details")),
+		Grain:           projectsignals.Optional(table.GrainEntity),
+		ColumnCount:     int64(len(columns)),
+		RowCountLabel:   projectsignals.Pointer("Unknown"),
+		Columns:         projectsignals.OptionalSlice(columns),
 	}
 	return object
 }
@@ -629,7 +644,7 @@ func explorerTableByName(tables map[string]semanticmodel.Table, name string) sem
 
 func explorerModelIDByName(assets map[string]projectview.DevelopAssetView, name string) string {
 	for id, asset := range assets {
-		if asset.Type == string(projectview.AssetTypeModelTable) && (asset.Key == name || strings.EqualFold(asset.Title, name)) {
+		if asset.Type == string(projectview.AssetTypeModel) && (asset.Key == name || strings.EqualFold(asset.Title, name)) {
 			return id
 		}
 	}
@@ -639,7 +654,7 @@ func explorerModelIDByName(assets map[string]projectview.DevelopAssetView, name 
 func sortedExplorerAssets(assets map[string]projectview.DevelopAssetView) []projectview.DevelopAssetView {
 	out := make([]projectview.DevelopAssetView, 0, len(assets))
 	for _, asset := range assets {
-		if asset.Type == string(projectview.AssetTypeSource) || asset.Type == string(projectview.AssetTypeModelTable) {
+		if asset.Type == string(projectview.AssetTypeSource) || asset.Type == string(projectview.AssetTypeModel) {
 			out = append(out, asset)
 		}
 	}
@@ -682,7 +697,7 @@ func explorerAssetDetailsHref(asset projectview.DevelopAssetView, section string
 	switch asset.Type {
 	case string(projectview.AssetTypeSource):
 		base = "/sources/"
-	case string(projectview.AssetTypeModelTable):
+	case string(projectview.AssetTypeModel):
 		base = "/models/"
 	default:
 		return ""

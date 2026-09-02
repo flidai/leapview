@@ -250,7 +250,7 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 		t.Fatalf("root run = %#v", result.Run)
 	}
 	if len(repo.createdRuns) != 3 {
-		t.Fatalf("created runs = %#v, want pipeline root plus both model-table tasks", repo.createdRuns)
+		t.Fatalf("created runs = %#v, want pipeline root plus both Model tasks", repo.createdRuns)
 	}
 	if repo.createdRuns[0].SemanticModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
 		t.Fatalf("root input = %#v", repo.createdRuns[0])
@@ -637,7 +637,7 @@ func (r *fakeRepo) CreateRun(_ context.Context, input RunInput) (RunRecord, erro
 }
 
 func (r *fakeRepo) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
-	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModelTable, TargetID: "customers"}}, nil
+	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModel, TargetID: "customers"}}, nil
 }
 
 func (r *fakeRepo) MarkRunRunning(_ context.Context, _ projectgraph.ServingIdentity, runID string) (RunRecord, error) {

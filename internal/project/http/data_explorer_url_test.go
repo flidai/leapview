@@ -55,7 +55,7 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 	executor := &countingDataQueryExecutor{}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
-			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model_table", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: modelID, ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
@@ -75,10 +75,10 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.status"},
 	}
 
 	document := httptest.NewRecorder()
@@ -89,7 +89,7 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 	if executor.calls != 0 {
 		t.Fatalf("document executed %d analytical queries, want 0", executor.calls)
 	}
-	for _, want := range []string{"mode=explore", "model=semantic%3Asales", "dataset=orders", "dimension=orders.status"} {
+	for _, want := range []string{"mode=explore", "semanticModel=semantic%3Asales", "dataset=orders", "dimension=orders.status"} {
 		if !strings.Contains(document.Body.String(), want) {
 			t.Fatalf("document shell missing normalized updates URL component %q:\n%s", want, document.Body.String())
 		}
@@ -123,10 +123,10 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 func TestDataExplorerRestoredURLCanonicalizesSpacedOperandsBeforeExecution(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {" semantic:sales "},
-		"dataset":   {" orders "},
-		"dimension": {" orders.status "},
+		"mode":          {"explore"},
+		"semanticModel": {" semantic:sales "},
+		"dataset":       {" orders "},
+		"dimension":     {" orders.status "},
 	}
 	document := httptest.NewRecorder()
 	h.Explore(document, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -170,10 +170,10 @@ func TestDataExploreCommandFromQueryTrimsMetadataButPreservesFilterValues(t *tes
 func TestDataExplorerRestoredURLFailsClosedForStaleField(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.removed_status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.removed_status"},
 	}
 	recorder := httptest.NewRecorder()
 	h.Explore(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -194,10 +194,10 @@ func TestDataExplorerRestoredURLFailsClosedWhenBindingsAreUnavailable(t *testing
 	definition.compiled = nil
 	h.ProjectDefinitionReader = definition
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.status"},
 	}
 	recorder := httptest.NewRecorder()
 	h.Explore(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -218,10 +218,10 @@ func TestDataExplorerRestoredURLFailsClosedForEmptyCompiledModel(t *testing.T) {
 	definition.compiled = map[string]*semanticquery.CompiledModel{"semantic:sales": &semanticquery.CompiledModel{}}
 	h.ProjectDefinitionReader = definition
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.status"},
 	}
 	recorder := httptest.NewRecorder()
 	h.Explore(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -295,11 +295,11 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 		"orders.incompatible": {ID: "orders.incompatible", Kind: "dimension", Compatible: false, CompatibilityReason: projectsignals.Optional("no safe relationship path")},
 	}
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
-		Fields:   make([]projectsignals.DataExploreFieldSignal, 0, len(fields)),
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Fields:         make([]projectsignals.DataExploreFieldSignal, 0, len(fields)),
 		Command: projectsignals.DataExploreCommand{
-			ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 		},
 	}
 	for _, field := range fields {
@@ -318,12 +318,12 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 		command projectsignals.DataExploreCommand
 		want    string
 	}{
-		{name: "dimension wrong kind", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Metrics: []string{"orders.status"}}, want: "not a metric"},
-		{name: "filter wrong kind", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: []projectsignals.DataExploreFilterSignal{{Field: "revenue", Operator: "equals", Values: []string{"1"}}}}, want: "not a dimension"},
-		{name: "filter value cardinality", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Operator: "equals", Values: []string{"paid", "shipped"}}}}, want: "exactly one value"},
-		{name: "sort not selected", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Sort: []projectsignals.DataExploreSortSignal{{Field: "orders.status", Direction: "asc"}}}, want: "not selected"},
-		{name: "incompatible", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Dimensions: []string{"orders.incompatible"}}, want: "no safe relationship path"},
-		{name: "time wrong kind", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Time: &projectsignals.DataExploreTimeSignal{Field: "orders.status", Grain: "month"}}, want: "not a date or timestamp"},
+		{name: "dimension wrong kind", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Metrics: []string{"orders.status"}}, want: "not a metric"},
+		{name: "filter wrong kind", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: []projectsignals.DataExploreFilterSignal{{Field: "revenue", Operator: "equals", Values: []string{"1"}}}}, want: "not a dimension"},
+		{name: "filter value cardinality", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Operator: "equals", Values: []string{"paid", "shipped"}}}}, want: "exactly one value"},
+		{name: "sort not selected", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Sort: []projectsignals.DataExploreSortSignal{{Field: "orders.status", Direction: "asc"}}}, want: "not selected"},
+		{name: "incompatible", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Dimensions: []string{"orders.incompatible"}}, want: "no safe relationship path"},
+		{name: "time wrong kind", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Time: &projectsignals.DataExploreTimeSignal{Field: "orders.status", Grain: "month"}}, want: "not a date or timestamp"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := validateRestoredDataExploreState(test.command, projection, nil, compiledModels); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -335,11 +335,11 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 
 func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testing.T) {
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
-		Fields:   []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("string")}},
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Fields:         []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("string")}},
 		Command: projectsignals.DataExploreCommand{
-			ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 		},
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
@@ -351,7 +351,7 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 	}
 	for _, operator := range []string{"in", "not_in"} {
 		err := validateRestoredDataExploreState(projectsignals.DataExploreCommand{
-			ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 			Filters: []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Operator: operator, Values: []string{}}},
 		}, projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
 		if err == nil || !strings.Contains(err.Error(), "at least one value") {
@@ -362,10 +362,10 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 
 func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T) {
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
 		Command: projectsignals.DataExploreCommand{
-			ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 		},
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
@@ -380,8 +380,8 @@ func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T)
 		command projectsignals.DataExploreCommand
 		want    string
 	}{
-		{name: "model", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:removed")}, want: "model \"semantic:removed\" is no longer available"},
-		{name: "dataset", command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("removed")}, want: "dataset \"removed\" is no longer available"},
+		{name: "semantic model", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:removed")}, want: "semantic model \"semantic:removed\" is no longer available"},
+		{name: "dataset", command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("removed")}, want: "dataset \"removed\" is no longer available"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			if err := validateRestoredDataExploreState(test.command, projection, nil, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -414,19 +414,19 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 	}
 	compiledModels := map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}
 	base := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}, {ID: "customers"}, {ID: "other"}},
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}, {ID: "customers"}, {ID: "other"}},
 		Fields: []projectsignals.DataExploreFieldSignal{
 			{ID: "orders.status", Kind: "dimension", Compatible: true},
 			{ID: "combined", Kind: "metric", Compatible: true},
 		},
-		Command: projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders")},
+		Command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders")},
 	}
 	filter := func(dataset string) []projectsignals.DataExploreFilterSignal {
 		return []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Dataset: projectsignals.Optional(dataset), Operator: "equals", Values: []string{"paid"}}}
 	}
 	singleRoot := projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: filter("customers"),
+		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: filter("customers"),
 	}
 	if err := validateRestoredDataExploreState(singleRoot, base, model, compiledModels); err == nil || !strings.Contains(err.Error(), "does not participate") {
 		t.Fatalf("single-root filter dataset error = %v, want participation diagnostic", err)
@@ -463,14 +463,14 @@ func TestValidateRestoredDataExploreStateChecksDeclaredTimeGrains(t *testing.T) 
 		},
 	}
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
 		Fields: []projectsignals.DataExploreFieldSignal{
 			{ID: "created", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("timestamp")},
 			{ID: "orders.created_at", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("timestamp")},
 		},
 		Command: projectsignals.DataExploreCommand{
-			ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+			SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 		},
 	}
 	compiled, err := semanticquery.CompileModel(model)
@@ -478,14 +478,14 @@ func TestValidateRestoredDataExploreStateChecksDeclaredTimeGrains(t *testing.T) 
 		t.Fatal(err)
 	}
 	err = validateRestoredDataExploreState(projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 		Time: &projectsignals.DataExploreTimeSignal{Field: "created", Grain: "month"},
 	}, projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})
 	if err == nil || !strings.Contains(err.Error(), "does not support grain") {
 		t.Fatalf("time grain validation error = %v, want declared-grain diagnostic", err)
 	}
 	if err := validateRestoredDataExploreState(projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
+		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"),
 		Time: &projectsignals.DataExploreTimeSignal{Field: "orders.created_at", Grain: "month"},
 	}, projection, model, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}); err != nil {
 		t.Fatalf("globally valid grain on physical binding rejected: %v", err)
@@ -508,8 +508,8 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
 	}
 	assets := []projectview.DevelopAssetView{
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
-		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
@@ -517,7 +517,7 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 		t.Fatal(err)
 	}
 	command := projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
+		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
 		Dimensions: []string{"customers.region", "orders.status"},
 	}
 	projection := BuildDataExplorerProjection(assets, project, command, map[string]*semanticquery.CompiledModel{"semantic:sales": compiled})

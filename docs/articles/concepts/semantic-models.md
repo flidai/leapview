@@ -20,7 +20,7 @@ Good dimensions have:
 - grains that do not imply invalid fan-out;
 - stable null and formatting expectations.
 
-Not every physical field needs a named semantic dimension. Dashboard table queries can select model-table fields directly where supported, while governed reusable groupings should be modeled explicitly.
+Not every physical field needs a named semantic dimension. Dashboard table queries can select semantic dataset fields directly where supported, while governed reusable groupings should be modeled explicitly.
 
 ## Aggregate metrics
 
@@ -58,7 +58,7 @@ metrics:
 
 The governed evaluator applies safe division semantics (including empty or zero denominators) centrally; authors do not need to embed a `safe_divide` expression. Metrics are useful for ratios and derived business values that should remain consistent across report pages and headless queries.
 
-Keep expressions small and name their inputs clearly. If an expression requires extensive row-level cleanup, move that work into a model table first.
+Keep expressions small and name their inputs clearly. If an expression requires extensive row-level cleanup, move that work into a Model first.
 
 ## Relationships
 

@@ -148,7 +148,7 @@ export class DataExplorerQueryController {
     const command: DataExploreCommand = {
       ...current,
       ...next,
-      modelId: next.modelId ?? current.modelId ?? '',
+      semanticModelId: next.semanticModelId ?? current.semanticModelId ?? '',
       datasetId: next.datasetId ?? current.datasetId ?? '',
       dimensions: [...(next.dimensions ?? current.dimensions ?? [])],
       metrics: [...(next.metrics ?? current.metrics ?? [])],

@@ -129,7 +129,7 @@ func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
 	for tableID := range semanticModelDef.Tables {
 		id, parseErr := projectgraph.NewResourceID(tableID)
 		if parseErr != nil {
-			t.Fatalf("canonical model table ID %q: %v", tableID, parseErr)
+			t.Fatalf("canonical Model ID %q: %v", tableID, parseErr)
 		}
 		modelIDs = append(modelIDs, id)
 	}

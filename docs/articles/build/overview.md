@@ -5,7 +5,7 @@ Build a LeapView dashboard from governed data resources upward: connect physical
 ## Follow the authoring path
 
 1. [Connect a data source](/docs/guides/build/connect-data) and give physical inputs stable project identities.
-2. [Define model tables](/docs/guides/build/model-tables) with explicit keys, grain, and reusable transformations.
+2. [Define models](/docs/guides/build/models) with explicit keys, grain, and reusable transformations.
 3. [Build a semantic model](/docs/guides/build/semantic-model) containing governed dimensions, metrics, and relationships.
 4. [Create a dashboard](/docs/guides/build/dashboard) with filters, queries, visuals, tables, and an initial report page.
 5. [Compose pages and layout](/docs/guides/build/pages-layout) for desktop and compact widths.
@@ -16,7 +16,7 @@ Each guide owns one outcome and links to the exact generated contract for the re
 
 ## Make sound design choices
 
-Read [Connections and sources](/docs/concepts/connections-sources), [Model tables](/docs/concepts/model-tables), [Semantic models](/docs/concepts/semantic-models), and [Dashboards, pages, and visuals](/docs/concepts/dashboards) when you need to understand why the layers have separate responsibilities.
+Read [Connections and sources](/docs/concepts/connections-sources), [Models](/docs/concepts/models), [Semantic models](/docs/concepts/semantic-models), and [Dashboards, pages, and visuals](/docs/concepts/dashboards) when you need to understand why the layers have separate responsibilities.
 
 Use [Dashboard authoring patterns](/docs/guides/build/patterns) for cross-cutting guidance about grain, stable identities, ownership, bounded queries, and maintainable presentation.
 

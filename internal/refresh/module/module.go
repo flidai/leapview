@@ -512,7 +512,7 @@ func (m *Module) AssetRefreshState(ctx context.Context, projectID projectgraph.R
 	return state, nil
 }
 
-// ModelRefreshState returns the durable child-run history for one model table.
+// ModelRefreshState returns the durable child-run history for one Model.
 // Model runs are targeted explicitly by the refresh service, so the history
 // remains correct when multiple pipelines materialize the same model.
 func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.ResourceID, environment string, modelID projectgraph.ResourceID) (AssetRefreshState, error) {
@@ -532,7 +532,7 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 	if err := scope.Validate(); err != nil {
 		return state, err
 	}
-	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetModelTable, modelID, refreshrun.RunPage{Limit: 50})
+	runs, err := m.runs.ListTargetRuns(ctx, scope, refreshrun.TargetModel, modelID, refreshrun.RunPage{Limit: 50})
 	if err != nil {
 		return state, err
 	}
@@ -543,7 +543,7 @@ func (m *Module) ModelRefreshState(ctx context.Context, projectID projectgraph.R
 	if len(state.Runs) > 0 {
 		state.Latest = state.Runs[0]
 	}
-	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModelTable, modelID)
+	latest, ok, err := m.runs.LatestSuccessfulTargetRun(ctx, scope, refreshrun.TargetModel, modelID)
 	if err != nil {
 		return state, err
 	}

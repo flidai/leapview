@@ -427,14 +427,14 @@ func (p Project) Models() map[string]*semanticmodel.Model {
 	return cloneRuntimeModels(p.manifest.SemanticModels)
 }
 
-// ModelTables returns detached physical model-table projections keyed by
+// ModelTables returns detached model materialization projections keyed by
 // canonical resource ID.
 func (p Project) ModelTables() map[string]semanticmodel.Table {
 	return cloneRuntimeTables(p.manifest.Models)
 }
 
-// RelationExecutionDigests returns per-model-table identities for physical
-// reuse. Each digest includes the table descriptor and transitive model-table
+// RelationExecutionDigests returns per-materialized-Model identities for physical
+// reuse. Each digest includes the table descriptor and transitive Model
 // dependency descriptors; callers supply target-scoped pinned-input context
 // separately so a changed source revision cannot retain stale files.
 func (p Project) RelationExecutionDigests(context string) (map[string]string, error) {
@@ -446,7 +446,7 @@ func (p Project) RelationExecutionDigests(context string) (map[string]string, er
 }
 
 // RelationExecutionDigestsByContext is the relation-scoped form of
-// RelationExecutionDigests. Each model-table digest receives only its own
+// RelationExecutionDigests. Each materialized-Model digest receives only its own
 // transitive source/binding/pin context; callers can therefore change an
 // unrelated source without invalidating untouched physical references.
 func (p Project) RelationExecutionDigestsByContext(contexts map[string]string) (map[string]string, error) {

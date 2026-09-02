@@ -1,6 +1,6 @@
-# Define model tables
+# Define models
 
-A model table transforms permitted project sources into a project-owned analytical table. The goal is not merely to make SQL run; it is to establish a stable grain and field contract that semantic metrics can safely reuse.
+A Model transforms permitted project sources into a project-owned analytical output. The goal is not merely to make SQL run; it is to establish a stable grain and field contract that semantic metrics can safely reuse.
 
 ## Before you begin
 
@@ -14,13 +14,13 @@ Work in this order:
 4. Refresh it with representative data.
 5. Verify keys, types, row counts, and repeatability.
 
-## Design and create the table
+## Design and create the Model
 
 ### Start from the grain
 
 Write one sentence before writing SQL: “One row represents one order,” “one customer,” or “one rating by one user for one movie.” Declare a primary entity (and any composite or foreign entities), select it as `grain.entity`, and determine which source joins preserve that identity.
 
-For an order-grain table, joining raw order items directly would duplicate orders. Aggregate item-level values to `order_id` first, then join the one-row-per-order result.
+For an order-grain Model, joining raw order items directly would duplicate orders. Aggregate item-level values to `order_id` first, then join the one-row-per-order result.
 
 ### Create the resource
 
@@ -63,7 +63,7 @@ The quoted source name is important because logical source IDs can contain dots.
 
 ### Normalize deliberately
 
-Use the model-table boundary for source-specific cleanup:
+Use the Model boundary for source-specific cleanup:
 
 - cast weak source types to stable analytical types;
 - normalize empty strings and sentinel values;
@@ -74,7 +74,7 @@ Use the model-table boundary for source-specific cleanup:
 
 Avoid silent lossy conversions. `try_cast` can keep a refresh running, but unexpected nulls must still be measured and reviewed. If malformed input should block activation, encode or validate that invariant explicitly.
 
-## Validate the table
+## Validate the Model
 
 ### Discover and validate
 
@@ -105,11 +105,11 @@ After deploying and refreshing in development, verify:
 5. Joins have not multiplied the declared grain.
 6. A repeated refresh over the same revision produces equivalent output.
 
-Use the project resource browser and refresh history to inspect the table and its lineage. When several model tables are related, validate each table independently before declaring semantic relationships between them.
+Use the project resource browser and refresh history to inspect the Model and its lineage. When several Models are related, validate each Model independently before declaring semantic relationships between them.
 
 ## Choose the materialization boundary
 
-Keep reusable source cleanup and expensive cross-source shaping here. Put aggregations such as total revenue and average order value in semantic metrics so they remain filter-aware. A model table should only be pre-aggregated when its declared row grain is intentionally aggregated.
+Keep reusable source cleanup and expensive cross-source shaping here. Put aggregations such as total revenue and average order value in semantic metrics so they remain filter-aware. A Model should only be pre-aggregated when its declared row grain is intentionally aggregated.
 
 ## Troubleshooting
 

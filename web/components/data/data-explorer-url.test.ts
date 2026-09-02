@@ -8,7 +8,7 @@ test('exploration URL deterministically includes durable query state only', () =
     requestSeq: 91,
     resetVersion: 18,
     explore: {
-      modelId: 'semantic:sales',
+      semanticModelId: 'semantic:sales',
       datasetId: 'orders',
       dimensions: ['orders.month', 'customers.state'],
       metrics: ['revenue'],
@@ -24,6 +24,8 @@ test('exploration URL deterministically includes durable query state only', () =
   const url = dataExplorerURL(command)
   const parsed = new URL(url, 'https://example.test')
   expect(parsed.searchParams.get('v')).toBe('1')
+  expect(parsed.searchParams.get('semanticModel')).toBe('semantic:sales')
+  expect(parsed.searchParams.has('model')).toBe(false)
   expect(parsed.searchParams.getAll('dimension')).toEqual(['orders.month', 'customers.state'])
   expect(parsed.searchParams.getAll('metric')).toEqual(['revenue'])
   expect(parsed.searchParams.get('limit')).toBe('250')

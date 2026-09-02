@@ -13,7 +13,7 @@ func TestSemanticGraphRejectsUnboundExecutionTableDeterministically(t *testing.T
 		Dimensions:  map[string]MetricDimension{"id": {Datatype: DataTypeInteger}},
 	}
 	err := m.ValidateSemanticGraph()
-	if err == nil || err.Error() != `model table "orphan" is not bound to a semantic dataset` {
+	if err == nil || err.Error() != `Model "orphan" is not bound to a semantic dataset` {
 		t.Fatalf("ValidateSemanticGraph() error = %v", err)
 	}
 }
@@ -37,17 +37,17 @@ func TestSemanticGraphRejectsInvalidEntityAndGrainContracts(t *testing.T) {
 			table := m.Tables["orders"]
 			table.Entities["order"] = EntityDefinition{Type: "primary", Fields: []string{"missing"}}
 			m.Tables["orders"] = table
-		}, `model table "orders" entity "order" field "missing" is not declared`},
+		}, `semantic dataset "orders" entity "order" field "missing" is not declared`},
 		{"grain points to foreign", func(m *Model) {
 			table := m.Tables["orders"]
 			table.GrainEntity = "customer_ref"
 			m.Tables["orders"] = table
-		}, `model table "orders" grain.entity "customer_ref" must be primary or unique`},
+		}, `semantic dataset "orders" grain.entity "customer_ref" must be primary or unique`},
 		{"invalid entity type", func(m *Model) {
 			table := m.Tables["orders"]
 			table.Entities["bad"] = EntityDefinition{Type: "unknown", Fields: []string{"order_id"}}
 			m.Tables["orders"] = table
-		}, `model table "orders" entity "bad" has unsupported type "unknown"`},
+		}, `semantic dataset "orders" entity "bad" has unsupported type "unknown"`},
 	}
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {

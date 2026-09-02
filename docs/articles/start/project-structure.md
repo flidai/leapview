@@ -1,6 +1,6 @@
 # Project structure
 
-A LeapView project is one project-wide resource graph. Connections and sources provide governed inputs; model tables, semantic models, pipelines, dashboards, and access resources are discovered from the same project manifest and can reference one another by stable IDs.
+A LeapView project is one project-wide resource graph. Connections and sources provide governed inputs; Models, semantic models, pipelines, dashboards, and access resources are discovered from the same project manifest and can reference one another by stable IDs.
 
 ```text
 dashboards/
@@ -58,8 +58,8 @@ Paths are resolved relative to the project manifest. Keep include patterns narro
 
 - **Connections** define how LeapView reaches physical data.
 - **Sources** use a connection and provide stable logical names, paths, and field definitions.
-- **Model tables** transform permitted sources into reusable analytical tables.
-- **Semantic models** define dimensions, metrics, and relationships across model tables. Shared dimensions can serve multiple semantic consumers in the same graph.
+- **Models** transform permitted sources into reusable analytical outputs.
+- **Semantic models** define datasets, dimensions, metrics, and relationships across semantic datasets. Shared dimensions can serve multiple semantic consumers in the same graph.
 - **Pipelines** select a semantic model and optionally define named schedules with explicit timezone, late-start, and concurrency policy.
 - **Dashboards** compose semantic queries into filters, visuals, tables, pages, and layout.
 - **Access and publication resources** govern project resources and public delivery without creating another resource container.

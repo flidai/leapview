@@ -22,7 +22,7 @@ Transport completion is therefore not activation. The product must finalize the 
 
 ## Runtime consumption
 
-DuckDB reads the active revision through native file scanners and runtime views. Ingestion does not insert each source row into an application-owned transactional table. Model-table refreshes transform the active inputs into governed analytical state with their own snapshot lifecycle.
+DuckDB reads the active revision through native file scanners and runtime views. Ingestion does not insert each source row into an application-owned transactional table. Model refreshes transform the active inputs into governed analytical state with their own snapshot lifecycle.
 
 Managed source revisions and analytical serving snapshots solve different problems and can have different retention windows. A retained source revision is not automatically a complete customer-facing rollback point unless compatible project artifacts and analytical state are also available.
 

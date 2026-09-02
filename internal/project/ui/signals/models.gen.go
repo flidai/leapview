@@ -1019,17 +1019,17 @@ type DataExploreAgentContextSignal struct {
 }
 
 type DataExploreCommand struct {
-	ColumnWidths *map[string]float64       `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
-	DatasetID    *string                   `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Dimensions   []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters      []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit        int64                     `json:"limit" yaml:"limit"`
-	Metrics      []string                  `json:"metrics" yaml:"metrics"`
-	ModelID      *string                   `json:"modelId,omitempty" yaml:"modelId,omitempty"`
-	RequestSeq   int64                     `json:"requestSeq" yaml:"requestSeq"`
-	ResetVersion int64                     `json:"resetVersion" yaml:"resetVersion"`
-	Sort         []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time         *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
+	ColumnWidths    *map[string]float64       `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
+	DatasetID       *string                   `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Dimensions      []string                  `json:"dimensions" yaml:"dimensions"`
+	Filters         []DataExploreFilterSignal `json:"filters" yaml:"filters"`
+	Limit           int64                     `json:"limit" yaml:"limit"`
+	Metrics         []string                  `json:"metrics" yaml:"metrics"`
+	SemanticModelID *string                   `json:"semanticModelId,omitempty" yaml:"semanticModelId,omitempty"`
+	RequestSeq      int64                     `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion    int64                     `json:"resetVersion" yaml:"resetVersion"`
+	Sort            []DataExploreSortSignal   `json:"sort" yaml:"sort"`
+	Time            *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
 }
 
 type DataExploreDatasetSignal struct {
@@ -1046,11 +1046,10 @@ type DataExploreFieldSignal struct {
 	Compatible          bool      `json:"compatible" yaml:"compatible"`
 	CompatibilityReason *string   `json:"compatibilityReason,omitempty" yaml:"compatibilityReason,omitempty"`
 	Description         *string   `json:"description,omitempty" yaml:"description,omitempty"`
-	Dataset             *string   `json:"dataset,omitempty" yaml:"dataset,omitempty"`
 	ID                  string    `json:"id" yaml:"id"`
 	Kind                string    `json:"kind" yaml:"kind"`
 	Label               string    `json:"label" yaml:"label"`
-	ModelTable          string    `json:"modelTable" yaml:"modelTable"`
+	DatasetID           string    `json:"datasetId" yaml:"datasetId"`
 	RebaseDatasetID     *string   `json:"rebaseDatasetId,omitempty" yaml:"rebaseDatasetId,omitempty"`
 	RelationshipPath    *[]string `json:"relationshipPath,omitempty" yaml:"relationshipPath,omitempty"`
 	Selected            bool      `json:"selected" yaml:"selected"`
@@ -1058,17 +1057,10 @@ type DataExploreFieldSignal struct {
 }
 
 type DataExploreFilterSignal struct {
-	Dataset  *string  `json:"dataset,omitempty" yaml:"dataset,omitempty"`
-	Field    string   `json:"field" yaml:"field"`
-	Operator string   `json:"operator" yaml:"operator"`
-	Values   []string `json:"values" yaml:"values"`
-}
-
-type DataExploreModelSignal struct {
-	Datasets    []DataExploreDatasetSignal `json:"datasets" yaml:"datasets"`
-	Description *string                    `json:"description,omitempty" yaml:"description,omitempty"`
-	ID          string                     `json:"id" yaml:"id"`
-	Title       string                     `json:"title" yaml:"title"`
+	DatasetID *string  `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Field     string   `json:"field" yaml:"field"`
+	Operator  string   `json:"operator" yaml:"operator"`
+	Values    []string `json:"values" yaml:"values"`
 }
 
 type DataExploreResultSignal struct {
@@ -1084,14 +1076,21 @@ type DataExploreResultSignal struct {
 	Warnings     []string                  `json:"warnings" yaml:"warnings"`
 }
 
+type DataExploreSemanticModelSignal struct {
+	Datasets    []DataExploreDatasetSignal `json:"datasets" yaml:"datasets"`
+	Description *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	ID          string                     `json:"id" yaml:"id"`
+	Title       string                     `json:"title" yaml:"title"`
+}
+
 type DataExploreSignal struct {
-	Command         DataExploreCommand         `json:"command" yaml:"command"`
-	Datasets        []DataExploreDatasetSignal `json:"datasets" yaml:"datasets"`
-	Fields          []DataExploreFieldSignal   `json:"fields" yaml:"fields"`
-	Models          []DataExploreModelSignal   `json:"models" yaml:"models"`
-	Result          DataExploreResultSignal    `json:"result" yaml:"result"`
-	SelectedDataset *DataExploreDatasetSignal  `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
-	SelectedModel   *DataExploreModelSignal    `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
+	Command               DataExploreCommand               `json:"command" yaml:"command"`
+	Datasets              []DataExploreDatasetSignal       `json:"datasets" yaml:"datasets"`
+	Fields                []DataExploreFieldSignal         `json:"fields" yaml:"fields"`
+	SemanticModels        []DataExploreSemanticModelSignal `json:"semanticModels" yaml:"semanticModels"`
+	Result                DataExploreResultSignal          `json:"result" yaml:"result"`
+	SelectedDataset       *DataExploreDatasetSignal        `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
+	SelectedSemanticModel *DataExploreSemanticModelSignal  `json:"selectedSemanticModel,omitempty" yaml:"selectedSemanticModel,omitempty"`
 }
 
 type DataExploreSortSignal struct {
@@ -1131,20 +1130,20 @@ type DataExplorerContextSignal struct {
 }
 
 type DataExplorerObjectSignal struct {
-	AssetID       *string                    `json:"assetId,omitempty" yaml:"assetId,omitempty"`
-	ColumnCount   int64                      `json:"columnCount" yaml:"columnCount"`
-	Columns       *[]DataPreviewColumnSignal `json:"columns,omitempty" yaml:"columns,omitempty"`
-	Description   *string                    `json:"description,omitempty" yaml:"description,omitempty"`
-	DetailHref    *string                    `json:"detailHref,omitempty" yaml:"detailHref,omitempty"`
-	Grain         *string                    `json:"grain,omitempty" yaml:"grain,omitempty"`
-	Key           string                     `json:"key" yaml:"key"`
-	Layer         string                     `json:"layer" yaml:"layer"`
-	ModelID       *string                    `json:"modelId,omitempty" yaml:"modelId,omitempty"`
-	RowCountLabel *string                    `json:"rowCountLabel,omitempty" yaml:"rowCountLabel,omitempty"`
-	Source        *string                    `json:"source,omitempty" yaml:"source,omitempty"`
-	Table         *string                    `json:"table,omitempty" yaml:"table,omitempty"`
-	Title         string                     `json:"title" yaml:"title"`
-	ResourceID    string                     `json:"resourceId" yaml:"resourceId"`
+	AssetID         *string                    `json:"assetId,omitempty" yaml:"assetId,omitempty"`
+	ColumnCount     int64                      `json:"columnCount" yaml:"columnCount"`
+	Columns         *[]DataPreviewColumnSignal `json:"columns,omitempty" yaml:"columns,omitempty"`
+	Description     *string                    `json:"description,omitempty" yaml:"description,omitempty"`
+	DetailHref      *string                    `json:"detailHref,omitempty" yaml:"detailHref,omitempty"`
+	Grain           *string                    `json:"grain,omitempty" yaml:"grain,omitempty"`
+	Key             string                     `json:"key" yaml:"key"`
+	Layer           string                     `json:"layer" yaml:"layer"`
+	SemanticModelID *string                    `json:"semanticModelId,omitempty" yaml:"semanticModelId,omitempty"`
+	RowCountLabel   *string                    `json:"rowCountLabel,omitempty" yaml:"rowCountLabel,omitempty"`
+	Source          *string                    `json:"source,omitempty" yaml:"source,omitempty"`
+	DatasetID       *string                    `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Title           string                     `json:"title" yaml:"title"`
+	ResourceID      string                     `json:"resourceId" yaml:"resourceId"`
 }
 
 type DataExplorerPageEnvelope struct {

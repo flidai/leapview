@@ -368,11 +368,11 @@ func assetRefreshable(assetType string) bool {
 }
 
 func assetHasRefreshHistory(assetType string) bool {
-	return assetType == "refresh_pipeline" || assetType == "model_table" || assetType == "semantic_model"
+	return assetType == "refresh_pipeline" || assetType == "model" || assetType == "semantic_model"
 }
 
 func assetDataInspectable(assetType string) bool {
-	return assetType == "semantic_model" || assetType == "model_table"
+	return assetType == "semantic_model" || assetType == "model"
 }
 
 func projectAssetDataHref(asset projectview.DevelopAssetView) string {
