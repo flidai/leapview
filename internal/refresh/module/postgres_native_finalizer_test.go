@@ -81,7 +81,10 @@ func newNativeRefreshFixture(t *testing.T) nativeRefreshFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	plan, _, poolID, _, _ := seedConcreteDelivery(t, db, pipeline)
+	plan, _, poolID, _, _ := seedConcreteDelivery(t, db, digest('9'), pipeline)
+	if plan.ArtifactDigest == pipeline.ArtifactDigest {
+		t.Fatal("fixture must keep serving and source artifact digests distinct")
+	}
 	delivery := deploymentpostgres.NewWithActivationAudit(db, deploymentaudit.NewWithRepository(accesspostgres.New()))
 	basePub, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: "0198f2c0-7c7a-7f00-8a11-000000000106", TargetID: "target_concrete_prod", GenerationID: baseID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-native-finalizer", RequestDigest: digest('8')})
 	if err != nil {

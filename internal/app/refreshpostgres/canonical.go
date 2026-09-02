@@ -225,14 +225,14 @@ func (v *PostgresCanonicalVerifierAdapter) VerifyCanonicalRefreshTx(ctx context.
 	if err != nil {
 		return refreshpostgres.PublicationInput{}, err
 	}
-	if evidence.Generation.GenerationID != result.ServingStateID || evidence.Generation.PlanID != result.PlanID || evidence.Generation.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
+	if evidence.Generation.GenerationID != result.ServingStateID || evidence.Generation.PlanID != result.PlanID || evidence.Generation.ServingArtifactDigest == "" {
 		return refreshpostgres.PublicationInput{}, mismatchError("canonical generation evidence differs from refresh job")
 	}
 	plan, err := v.Deployment.PlanTx(ctx, tx, evidence.Generation.PlanID)
 	if err != nil {
 		return refreshpostgres.PublicationInput{}, unavailableError("load canonical plan: %v", err)
 	}
-	if plan.TargetID != v.TargetID || plan.PlanDigest != evidence.Generation.PlanDigest || plan.ArtifactDigest != job.PipelinePlan.ArtifactDigest {
+	if plan.TargetID != v.TargetID || plan.PlanDigest != evidence.Generation.PlanDigest || plan.ArtifactDigest != evidence.Generation.ServingArtifactDigest {
 		return refreshpostgres.PublicationInput{}, mismatchError("canonical plan evidence differs from refresh job")
 	}
 	richPlan, err := plan.RichPlan()
@@ -247,7 +247,7 @@ func (v *PostgresCanonicalVerifierAdapter) VerifyCanonicalRefreshTx(ctx context.
 		boundPipeline.ServingGenerationID != job.Identity.GenerationID || boundPipeline.ArtifactDigest != job.PipelinePlan.ArtifactDigest {
 		return refreshpostgres.PublicationInput{}, mismatchError("embedded pipeline plan evidence differs from refresh job")
 	}
-	if evidence.Seal.DuckLakeSnapshotID != result.SnapshotID || evidence.Seal.PlanDigest != plan.PlanDigest || evidence.Seal.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
+	if evidence.Seal.DuckLakeSnapshotID != result.SnapshotID || evidence.Seal.PlanDigest != plan.PlanDigest || evidence.Seal.ServingArtifactDigest != evidence.Generation.ServingArtifactDigest {
 		return refreshpostgres.PublicationInput{}, mismatchError("canonical snapshot seal evidence differs from refresh job")
 	}
 	expectedTargetRevision := job.TargetRevision

@@ -174,13 +174,12 @@ func (f *PostgresNativeRefreshFinalizerAdapter) FinalizeCanonicalRefreshTx(ctx c
 	if plan.TargetID != targetID || plan.PlanDigest != generation.PlanDigest || plan.ArtifactDigest != generation.ServingArtifactDigest {
 		return fmt.Errorf("%w: native refresh delivery plan evidence differs", refreshpostgres.ErrConflict)
 	}
-	// The native generation's PlanDigest identifies the delivery plan, while
-	// the refresh job carries the embedded pipeline-plan digest. The verifier
-	// binds those two immutable documents; this adapter only needs to ensure
-	// the serving artifact hand-off agrees with the refresh job.
-	if job.PipelinePlan == nil || generation.ServingArtifactDigest != job.PipelinePlan.ArtifactDigest {
-		return fmt.Errorf("%w: native refresh generation plan evidence differs", refreshpostgres.ErrConflict)
-	}
+	// The delivery plan and generation carry the compiled serving artifact;
+	// the embedded pipeline plan carried by the refresh job identifies the
+	// source artifact from which it was built. Those digests intentionally
+	// differ. The canonical verifier binds the embedded pipeline plan to the
+	// job, while this finalizer binds the delivery plan, generation, candidate,
+	// and seal to one serving artifact.
 	seal, err := f.Deployment.SnapshotSealTx(ctx, tx, generation.SnapshotSealID)
 	if err != nil {
 		return fmt.Errorf("load native refresh snapshot seal: %w", err)

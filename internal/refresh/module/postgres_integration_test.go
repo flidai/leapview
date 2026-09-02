@@ -217,7 +217,7 @@ func accessOnlyPostgresDB(t *testing.T) *pgxpool.Pool {
 	return pool
 }
 
-func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...projectpipelineplan.Plan) (deploymentpostgres.DeliveryPlan, string, string, string, string) {
+func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, servingArtifactDigest string, pipelinePlans ...projectpipelineplan.Plan) (deploymentpostgres.DeliveryPlan, string, string, string, string) {
 	t.Helper()
 	delivery := deploymentpostgres.New(db)
 	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
@@ -253,12 +253,15 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if len(pipelinePlans) > 0 {
 		pipePlan = pipelinePlans[0]
 	}
-	artifactDigest := digest('e')
+	sourceArtifactDigest := digest('e')
 	qualificationDigest := digest('3')
 	compiledGraphDigest, compiledConfigDigest, securityDigest := digest('b'), digest('c'), digest('d')
 	if pipePlan.Digest != "" {
-		artifactDigest = pipePlan.ArtifactDigest
+		sourceArtifactDigest = pipePlan.ArtifactDigest
 		compiledGraphDigest, compiledConfigDigest, securityDigest = pipePlan.ExecutionDigest, pipePlan.ProvenanceDigest, pipePlan.GovernanceDigest
+	}
+	if servingArtifactDigest == "" {
+		servingArtifactDigest = sourceArtifactDigest
 	}
 	if _, err := delivery.CreateTarget(t.Context(), deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_concrete", Environment: "prod"}); err != nil {
 		t.Fatal(err)
@@ -266,9 +269,9 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	now := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	richPlanInput := deployment.DeliveryPlan{
 		ID: planID, TargetID: targetID, ProjectID: "project_concrete", Environment: "prod",
-		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: artifactDigest, ServingArtifactDigest: artifactDigest,
+		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: sourceArtifactDigest, ServingArtifactDigest: servingArtifactDigest,
 		Execution: deployment.DeliveryExecutionInputs{
-			SourceArtifactDigest: artifactDigest, CompilerDigest: compiledGraphDigest, ExecutableDigest: digest('4'), DependencyDigest: digest('5'),
+			SourceArtifactDigest: sourceArtifactDigest, CompilerDigest: compiledGraphDigest, ExecutableDigest: digest('4'), DependencyDigest: digest('5'),
 			ConfigDigest: compiledConfigDigest, BindingDigest: securityDigest, RuntimeDigest: digest('0'), CapabilityDigest: admission.CompatibilityDigest,
 		},
 		Provenance: deployment.DeliveryProvenance{Builder: "refresh-concrete-test"},
@@ -296,18 +299,18 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 		t.Fatal(err)
 	}
 	planDigest := richPlan.Digest
-	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: artifactDigest, QualificationDigest: qualificationDigest, ApprovalRequired: richPlan.Governance.RequiresApproval, ApprovalPolicyRevision: richPlan.Governance.ApprovalPolicyRevision, PlanDocument: planDocument, Evidence: json.RawMessage(`{"source":"concrete"}`)})
+	plan, err := delivery.CreatePlan(t.Context(), deploymentpostgres.PlanInput{PlanID: planID, TargetID: targetID, PlanRevision: 1, PlanDigest: planDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, ArtifactDigest: servingArtifactDigest, QualificationDigest: qualificationDigest, ApprovalRequired: richPlan.Governance.RequiresApproval, ApprovalPolicyRevision: richPlan.Governance.ApprovalPolicyRevision, PlanDocument: planDocument, Evidence: json.RawMessage(`{"source":"concrete"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateCandidate(t.Context(), deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
+	if _, err := delivery.CreateCandidate(t.Context(), deploymentpostgres.CandidateInput{CandidateID: candidateID, TargetID: targetID, PlanID: planID, CandidateRevision: 1, ArtifactDigest: servingArtifactDigest}); err != nil {
 		t.Fatal(err)
 	}
 	attempt, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-concrete", PhysicalPoolID: poolID, FencingEpoch: 1, RequestDigest: digest('f'), PlanDigest: planDigest, Namespace: "candidate/concrete", SessionIdentity: "session-concrete", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.BindBuildArtifact(t.Context(), deploymentpostgres.BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: artifactDigest, ServingStateID: generationID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch}); err != nil {
+	if _, err := delivery.BindBuildArtifact(t.Context(), deploymentpostgres.BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: servingArtifactDigest, ServingStateID: generationID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch}); err != nil {
 		t.Fatal(err)
 	}
 	markerJSON, err := (ducklake.CommitMarker{
@@ -322,13 +325,13 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentpostgres.CommitAttemptInput{AttemptID: attemptID, OwnerID: "builder-concrete", FencingEpoch: 1, SnapshotID: 777, CommitMarker: marker}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: admission.CompatibilityDigest, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: artifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
+	if _, err := delivery.CreateSnapshotSeal(t.Context(), deploymentpostgres.SnapshotSealInput{SealID: sealID, AttemptID: attemptID, CandidateID: candidateID, PhysicalPoolID: poolID, TenantDomain: "tenant-concrete", Region: "us-east", EncryptionDomain: "enc-concrete", ObjectNamespace: "objects/concrete", CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, CatalogVersion: 1, DuckLakeSnapshotID: 777, RelationNamespace: "candidate/concrete", RelationManifestDigest: digest('1'), ClosureDigest: digest('8'), ObjectRoot: "objects/concrete/777", ObjectRootDigest: digest('6'), ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, RequestDigest: digest('f'), PlanDigest: planDigest, CompatibilityDigest: admission.CompatibilityDigest, ServingArtifactID: "artifact-concrete", ServingArtifactDigest: servingArtifactDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-v1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1", QualificationEvidence: json.RawMessage(`{"checks":["schema"]}`)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := delivery.QualifyCandidate(t.Context(), candidateID, sealID, digest('3')); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), ServingArtifactDigest: artifactDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, GenerationRevision: 1}); err != nil {
+	if _, err := delivery.CreateGeneration(t.Context(), deploymentpostgres.GenerationInput{GenerationID: generationID, TargetID: targetID, CandidateID: candidateID, SnapshotSealID: sealID, PlanID: planID, PlanDigest: planDigest, ArtifactRoot: "artifacts/concrete", ArtifactRootDigest: digest('7'), ServingArtifactDigest: servingArtifactDigest, CompiledGraphDigest: compiledGraphDigest, CompiledConfigDigest: compiledConfigDigest, SecurityDomainFingerprint: securityDigest, GenerationRevision: 1}); err != nil {
 		t.Fatal(err)
 	}
 	return plan, generationID, poolID, catalogDB, catalogUUID
@@ -342,7 +345,10 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	deliveryPlan, generationID, poolID, _, _ := seedConcreteDelivery(t, db, plan)
+	deliveryPlan, generationID, poolID, _, _ := seedConcreteDelivery(t, db, digest('9'), plan)
+	if deliveryPlan.ArtifactDigest == plan.ArtifactDigest {
+		t.Fatal("fixture must keep serving and source artifact digests distinct")
+	}
 	delivery := deploymentpostgres.NewWithActivationAudit(db, deploymentaudit.NewWithRepository(accesspostgres.New()))
 	basePublicationID := "0198f2c0-7c7a-7f00-8a11-000000000106"
 	basePublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: basePublicationID, TargetID: "target_concrete_prod", GenerationID: generationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-concrete", RequestDigest: digest('8')})
