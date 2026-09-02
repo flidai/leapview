@@ -16,6 +16,7 @@ import (
 
 	"github.com/flidai/leapview/internal/platform/digest"
 	securefs "github.com/flidai/leapview/internal/platform/filesystem"
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -296,8 +297,7 @@ func (store *TargetStore) Commit(
 			return StoredSnapshot{}, fmt.Errorf("project snapshot exceeds %d bytes", maxTargetSnapshotBytes)
 		}
 	}
-	projectPath := filepath.Join(sourceRoot, filepath.FromSlash(request.ProjectFile))
-	compiled, err := projectcompiler.Compile(projectPath)
+	compiled, err := compileRetainedAuthoringInput(sourceRoot, request.ProjectFile)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -373,8 +373,7 @@ func (store *TargetStore) verifyStoredSnapshot(
 			return StoredSnapshot{}, fmt.Errorf("verify stored project source %q: %w", reference.Path, err)
 		}
 	}
-	projectPath := filepath.Join(sourceRoot, filepath.FromSlash(request.ProjectFile))
-	compiled, err := projectcompiler.Compile(projectPath)
+	compiled, err := compileRetainedAuthoringInput(sourceRoot, request.ProjectFile)
 	if err != nil {
 		return StoredSnapshot{}, err
 	}
@@ -613,13 +612,31 @@ func storedSnapshot(
 	directory, projectDigest string,
 ) StoredSnapshot {
 	artifactPath := filepath.Join(directory, targetProjectArtifact)
+	projectPath := filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile))
+	if request.ProjectFile == sourceRootEntrypoint {
+		projectPath = filepath.Join(directory, "source")
+	}
 	return StoredSnapshot{
 		ProjectID: request.ProjectID, Digest: request.ArtifactDigest,
 		SourceAttestationDigest: sourceAttestationDigest(request),
-		ProjectPath:             filepath.Join(directory, "source", filepath.FromSlash(request.ProjectFile)),
+		ProjectPath:             projectPath,
 		ProjectDigest:           projectDigest, ProjectArtifactPath: artifactPath,
 		SourceRevision: cloneSourceRevision(request.SourceRevision),
 	}
+}
+
+func compileRetainedAuthoringInput(sourceRoot, entrypoint string) (projectartifact.Project, error) {
+	if entrypoint != sourceRootEntrypoint {
+		return projectcompiler.Compile(filepath.Join(sourceRoot, filepath.FromSlash(entrypoint)))
+	}
+	marker, err := os.ReadFile(filepath.Join(sourceRoot, filepath.FromSlash(entrypoint)))
+	if err != nil {
+		return projectartifact.Project{}, fmt.Errorf("read source-root marker: %w", err)
+	}
+	if string(marker) != sourceRootMarker {
+		return projectartifact.Project{}, fmt.Errorf("unsupported source-root marker %q", strings.TrimSpace(string(marker)))
+	}
+	return projectcompiler.CompileSourceRoot(sourceRoot)
 }
 
 func cloneSourceRevision(value *SourceRevision) *SourceRevision {

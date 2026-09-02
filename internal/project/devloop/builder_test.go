@@ -199,6 +199,61 @@ func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
 	}
 }
 
+func TestFilesystemBuilderProducesDeterministicSourceRootArtifacts(t *testing.T) {
+	root := t.TempDir()
+	connectionPath := filepath.Join(root, "connections", "warehouse.yaml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(connectionPath), 0o755))
+	require.NoError(t, os.WriteFile(connectionPath, []byte(`apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`), 0o600))
+	builder := FilesystemBuilder{ProjectPath: root}
+
+	first, err := builder.Build(t.Context())
+	require.NoError(t, err)
+	second, err := builder.Build(t.Context())
+	require.NoError(t, err)
+	if first.ProjectID != "project:source-root" || first.ProjectFile != sourceRootEntrypoint || first.Digest != second.Digest {
+		t.Fatalf("source-root identities = (%q, %q, %q) / (%q, %q, %q)", first.ProjectID, first.ProjectFile, first.Digest, second.ProjectID, second.ProjectFile, second.Digest)
+	}
+	if len(first.Artifacts) != 2 {
+		t.Fatalf("source-root artifacts = %#v, want authored resource and protocol marker", first.Artifacts)
+	}
+	markerFound := false
+	for _, artifact := range first.Artifacts {
+		if artifact.Path == sourceRootEntrypoint {
+			markerFound = string(artifact.Content) == sourceRootMarker
+		}
+	}
+	if !markerFound {
+		t.Fatalf("source-root marker missing or invalid: %#v", first.Artifacts)
+	}
+}
+
+func TestCompileRetainedAuthoringInputRequiresPinnedSourceRootMarker(t *testing.T) {
+	root := t.TempDir()
+	connectionPath := filepath.Join(root, "connections", "warehouse.yaml")
+	markerPath := filepath.Join(root, filepath.FromSlash(sourceRootEntrypoint))
+	require.NoError(t, os.MkdirAll(filepath.Dir(connectionPath), 0o755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(markerPath), 0o755))
+	require.NoError(t, os.WriteFile(connectionPath, []byte(`apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`), 0o600))
+	require.NoError(t, os.WriteFile(markerPath, []byte("leapview.source-root/v999\n"), 0o600))
+	if _, err := compileRetainedAuthoringInput(root, sourceRootEntrypoint); err == nil || !strings.Contains(err.Error(), "unsupported source-root marker") {
+		t.Fatalf("invalid source-root marker error = %v", err)
+	}
+	require.NoError(t, os.WriteFile(markerPath, []byte(sourceRootMarker), 0o600))
+	compiled, err := compileRetainedAuthoringInput(root, sourceRootEntrypoint)
+	require.NoError(t, err)
+	if compiled.ProjectID() != "project:source-root" {
+		t.Fatalf("compiled source-root id = %q", compiled.ProjectID())
+	}
+}
+
 func TestCandidateSetDigestIncludesProjectEntrypoint(t *testing.T) {
 	artifacts := []Artifact{
 		contentArtifact("leapview.yaml", []byte("one")),

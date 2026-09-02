@@ -10,11 +10,16 @@ import (
 	"path/filepath"
 	"sort"
 
+	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
-const stableCaptureAttempts = 3
+const (
+	stableCaptureAttempts = 3
+	sourceRootEntrypoint  = ".leapview/source-root"
+	sourceRootMarker      = "leapview.source-root/v1\n"
+)
 
 type FilesystemBuilder struct {
 	ProjectPath    string
@@ -23,11 +28,16 @@ type FilesystemBuilder struct {
 }
 
 func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
-	projectPath, err := filepath.Abs(builder.ProjectPath)
+	inputPath, err := filepath.Abs(builder.ProjectPath)
 	if err != nil {
 		return Snapshot{}, err
 	}
-	files, err := captureStableProjectSources(ctx, projectPath)
+	inputInfo, err := os.Stat(inputPath)
+	if err != nil {
+		return Snapshot{}, err
+	}
+	sourceRootMode := inputInfo.IsDir()
+	files, err := captureStableProjectSources(ctx, inputPath, sourceRootMode)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -36,7 +46,10 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	defer os.RemoveAll(root)
-	sourceRoot := filepath.Dir(projectPath)
+	sourceRoot := filepath.Dir(inputPath)
+	if sourceRootMode {
+		sourceRoot = inputPath
+	}
 	artifacts := make([]Artifact, 0, len(files))
 	for path, content := range files {
 		relative, err := filepath.Rel(sourceRoot, path)
@@ -52,11 +65,25 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		}
 		artifacts = append(artifacts, contentArtifact(filepath.ToSlash(relative), content))
 	}
-	compiled, err := projectcompiler.Compile(filepath.Join(root, filepath.Base(projectPath)))
+	projectFile := filepath.ToSlash(filepath.Base(inputPath))
+	var compiled projectartifact.Project
+	if sourceRootMode {
+		projectFile = sourceRootEntrypoint
+		markerPath := filepath.Join(root, filepath.FromSlash(sourceRootEntrypoint))
+		if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+			return Snapshot{}, err
+		}
+		if err := os.WriteFile(markerPath, []byte(sourceRootMarker), 0o600); err != nil {
+			return Snapshot{}, err
+		}
+		artifacts = append(artifacts, contentArtifact(sourceRootEntrypoint, []byte(sourceRootMarker)))
+		compiled, err = projectcompiler.CompileSourceRoot(root)
+	} else {
+		compiled, err = projectcompiler.Compile(filepath.Join(root, filepath.Base(inputPath)))
+	}
 	if err != nil {
 		return Snapshot{}, err
 	}
-	projectFile := filepath.ToSlash(filepath.Base(projectPath))
 	projectID := compiled.ProjectID()
 	return normalizeSnapshot(Snapshot{
 		ProjectID: projectID, ProjectFile: projectFile,
@@ -66,13 +93,13 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 	})
 }
 
-func captureStableProjectSources(ctx context.Context, projectPath string) (map[string][]byte, error) {
+func captureStableProjectSources(ctx context.Context, inputPath string, sourceRoot bool) (map[string][]byte, error) {
 	var previous map[string][]byte
 	for attempt := 0; attempt < stableCaptureAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		current, err := readReachableProjectSources(projectPath)
+		current, err := readReachableProjectSources(inputPath, sourceRoot)
 		if err != nil {
 			return nil, err
 		}
@@ -84,8 +111,14 @@ func captureStableProjectSources(ctx context.Context, projectPath string) (map[s
 	return nil, fmt.Errorf("project sources changed during coherent capture")
 }
 
-func readReachableProjectSources(projectPath string) (map[string][]byte, error) {
-	paths, err := projectcompiler.SourceFiles(projectPath)
+func readReachableProjectSources(inputPath string, sourceRoot bool) (map[string][]byte, error) {
+	var paths []string
+	var err error
+	if sourceRoot {
+		paths, err = projectcompiler.SourceRootFiles(inputPath)
+	} else {
+		paths, err = projectcompiler.SourceFiles(inputPath)
+	}
 	if err != nil {
 		return nil, err
 	}
