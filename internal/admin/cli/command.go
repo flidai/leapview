@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"strings"
 
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
@@ -31,6 +32,39 @@ type MaintenanceRequest struct {
 	AuthStateDays     int
 }
 
+const (
+	CatalogUpgradeRecoveryRollback        = "rollback"
+	CatalogUpgradeRecoveryForwardRecovery = "forward_recovery"
+)
+
+// CatalogUpgradeRequest is the operator-supplied contract for upgrading an
+// admitted delivery physical-pool catalog. Pool and Evidence are decoded from
+// the target-owned artifacts named by --pool and --evidence; credentials and
+// catalog connection details remain target-owned and are not part of this
+// request.
+type CatalogUpgradeRequest struct {
+	Pool                 physicalpool.PoolIdentity
+	Evidence             physicalpool.Evidence
+	MigrationID          string
+	CatalogSchemaVersion string
+	RecoveryDecision     string
+	DrainVerified        bool
+	BackupVerified       bool
+	Apply                bool
+}
+
+// CatalogUpgradeResult is the redacted result shape available to native Admin
+// operation implementations for reporting a catalog upgrade. The CLI passes
+// operation output through unchanged and never fabricates this result.
+type CatalogUpgradeResult struct {
+	MigrationID          string `json:"migrationId"`
+	PhysicalPoolID       string `json:"physicalPoolId"`
+	CatalogID            string `json:"catalogId"`
+	CatalogSchemaVersion string `json:"catalogSchemaVersion"`
+	RecoveryDecision     string `json:"recoveryDecision"`
+	Applied              bool   `json:"applied"`
+}
+
 // Options are the values accepted by Admin operations.
 type Options struct {
 	Apply             bool
@@ -48,6 +82,7 @@ type Operations interface {
 	AcknowledgeInitialCredentials(context.Context) error
 	Maintenance(context.Context, MaintenanceRequest, io.Writer) error
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
+	UpgradePhysicalPoolCatalog(context.Context, CatalogUpgradeRequest, io.Writer) error
 	QualificationPoolArtifacts(context.Context) (adminoffline.QualificationPoolArtifacts, error)
 }
 
@@ -131,6 +166,64 @@ func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Comm
 	bootstrap.Flags().StringVar(&poolPath, "pool", "", "path to non-secret physical-pool identity JSON")
 	bootstrap.Flags().StringVar(&evidencePath, "evidence", "", "path to machine-readable shared-pool conformance evidence JSON")
 	bootstrap.Flags().BoolVar(&apply, "apply", false, "persist the pool and admission; without this flag only validate and print digests")
+	var upgradePoolPath, upgradeEvidencePath string
+	var upgradeMigrationID, upgradeCatalogSchemaVersion, upgradeRecoveryDecision string
+	var upgradeDrainVerified, upgradeBackupVerified, upgradeApply bool
+	upgrade := &cobra.Command{
+		Use:   "upgrade",
+		Short: "Upgrade one admitted delivery physical-pool catalog",
+		Args:  cobra.NoArgs,
+		RunE: func(command *cobra.Command, _ []string) error {
+			if operations == nil {
+				return fmt.Errorf("Admin CLI operations are required")
+			}
+			if strings.TrimSpace(upgradePoolPath) == "" || strings.TrimSpace(upgradeEvidencePath) == "" {
+				return fmt.Errorf("--pool and --evidence are required")
+			}
+			if strings.TrimSpace(upgradeMigrationID) == "" {
+				return fmt.Errorf("--migration-id is required")
+			}
+			if strings.TrimSpace(upgradeCatalogSchemaVersion) == "" {
+				return fmt.Errorf("--catalog-schema-version is required")
+			}
+			upgradeRecoveryDecision = strings.TrimSpace(upgradeRecoveryDecision)
+			if upgradeRecoveryDecision != CatalogUpgradeRecoveryRollback && upgradeRecoveryDecision != CatalogUpgradeRecoveryForwardRecovery {
+				return fmt.Errorf("--recovery-decision must be %q or %q", CatalogUpgradeRecoveryRollback, CatalogUpgradeRecoveryForwardRecovery)
+			}
+			if !upgradeDrainVerified || !upgradeBackupVerified {
+				return fmt.Errorf("--drain-verified and --backup-verified are required")
+			}
+			poolBytes, err := os.ReadFile(upgradePoolPath)
+			if err != nil {
+				return fmt.Errorf("read pool contract: %w", err)
+			}
+			evidenceBytes, err := os.ReadFile(upgradeEvidencePath)
+			if err != nil {
+				return fmt.Errorf("read conformance evidence: %w", err)
+			}
+			var identity physicalpool.PoolIdentity
+			if err := json.Unmarshal(poolBytes, &identity); err != nil {
+				return fmt.Errorf("decode pool contract: %w", err)
+			}
+			evidence, err := physicalpool.UnmarshalEvidenceArtifact(evidenceBytes)
+			if err != nil {
+				return fmt.Errorf("decode conformance evidence: %w", err)
+			}
+			return operations.UpgradePhysicalPoolCatalog(ctx, CatalogUpgradeRequest{
+				Pool: identity, Evidence: evidence, MigrationID: strings.TrimSpace(upgradeMigrationID),
+				CatalogSchemaVersion: strings.TrimSpace(upgradeCatalogSchemaVersion), RecoveryDecision: upgradeRecoveryDecision,
+				DrainVerified: upgradeDrainVerified, BackupVerified: upgradeBackupVerified, Apply: upgradeApply,
+			}, command.OutOrStdout())
+		},
+	}
+	upgrade.Flags().StringVar(&upgradePoolPath, "pool", "", "path to target physical-pool identity JSON")
+	upgrade.Flags().StringVar(&upgradeEvidencePath, "evidence", "", "path to target shared-pool conformance evidence JSON")
+	upgrade.Flags().StringVar(&upgradeMigrationID, "migration-id", "", "durable catalog migration UUID")
+	upgrade.Flags().StringVar(&upgradeCatalogSchemaVersion, "catalog-schema-version", "", "target DuckLake catalog schema version")
+	upgrade.Flags().StringVar(&upgradeRecoveryDecision, "recovery-decision", "", "failure recovery decision: rollback or forward_recovery")
+	upgrade.Flags().BoolVar(&upgradeDrainVerified, "drain-verified", false, "assert that active readers were drained before migration")
+	upgrade.Flags().BoolVar(&upgradeBackupVerified, "backup-verified", false, "assert that the required backup was verified before migration")
+	upgrade.Flags().BoolVar(&upgradeApply, "apply", false, "commit the catalog upgrade; without this flag run a dry-run through the operation authority")
 	qualificationBootstrap := &cobra.Command{
 		Use:    "qualify",
 		Short:  "Generate local shared-pool qualification artifacts",
@@ -154,7 +247,7 @@ func deliveryPoolCommand(ctx context.Context, operations Operations) *cobra.Comm
 		},
 	}
 	pool := adminGroupCommand("pool", "Manage the delivery physical-pool admission")
-	pool.AddCommand(bootstrap, qualificationBootstrap)
+	pool.AddCommand(bootstrap, upgrade, qualificationBootstrap)
 	delivery := adminGroupCommand("delivery", "Manage plan-driven delivery state")
 	delivery.AddCommand(pool)
 	return delivery

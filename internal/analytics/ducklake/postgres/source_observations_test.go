@@ -34,7 +34,7 @@ func TestSourceObservationCaptureExactReplayReadMismatchAndImmutability(t *testi
 	}
 	const poolID, catalogID = "pool-observations", "catalog-observations"
 	r := New(p)
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake"}); err != nil {
 		t.Fatal(err)
 	}
 	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000021"

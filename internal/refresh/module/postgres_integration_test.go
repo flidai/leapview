@@ -246,7 +246,7 @@ func seedConcreteDelivery(t *testing.T, db *pgxpool.Pool, pipelinePlans ...proje
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ducklakepostgres.New(db).RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID), CompatibilityDigest: admission.CompatibilityDigest, CatalogSchemaVersion: "catalog-v1"}); err != nil {
+	if _, err := ducklakepostgres.New(db).RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: catalogDB, CatalogID: "catalog-concrete", CatalogUUID: catalogUUID, MetadataSchema: ducklake.MetadataSchemaForPool(poolID)}); err != nil {
 		t.Fatal(err)
 	}
 	pipePlan := projectpipelineplan.Plan{}

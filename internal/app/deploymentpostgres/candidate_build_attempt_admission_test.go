@@ -93,7 +93,7 @@ func seedCandidateAdmissionFixture(t *testing.T, delivery *deploymentnative.Repo
 		CatalogDatabase: "ducklake",
 		CatalogID:       fixture.Input.CatalogID,
 		CatalogUUID:     "0198f2c0-7c7a-7f00-8a11-000000000399",
-		MetadataSchema:  "main", CompatibilityDigest: candidateAdmissionDigest('9'), CatalogSchemaVersion: "v1",
+		MetadataSchema:  "main",
 	}); err != nil {
 		t.Fatal(err)
 	}

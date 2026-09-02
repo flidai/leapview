@@ -265,7 +265,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if err != nil {
 		return result, err
 	}
-	identity, err := ducklakepostgres.DeriveCatalogIdentity(createdPool.ID.String(), registrationEvidence.CatalogDatabase, compatibilityDigest, registrationEvidence.CatalogSchemaVersion)
+	identity, err := ducklakepostgres.DeriveCatalogIdentity(createdPool.ID.String(), registrationEvidence.CatalogDatabase)
 	if err != nil {
 		return result, err
 	}

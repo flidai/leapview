@@ -83,7 +83,6 @@ func retentionTestRepository(t *testing.T, suffix string) (*Repository, *pgxpool
 	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{
 		PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID,
 		CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000041", MetadataSchema: "lake",
-		CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1",
 	}); err != nil {
 		t.Fatal(err)
 	}

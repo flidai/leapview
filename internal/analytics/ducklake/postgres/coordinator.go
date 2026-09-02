@@ -240,32 +240,6 @@ func (e *SQLCatalogExecutor) validateCatalogAdmin(ctx context.Context) error {
 	}
 	return ValidateDatabaseIdentity(identity, database, role)
 }
-func (e *SQLCatalogExecutor) Migrate(ctx context.Context, options CatalogMigrationOptions) error {
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	if e == nil || e.Exec == nil || options.Mode != CatalogMigrationAutomatic || e.CatalogAdmin == nil || !isSQLIdentifier(e.RuntimeRole) || !validID(options.PhysicalPoolID) || !validID(options.CatalogID) || options.Current.validate() != nil || options.Target.validate() != nil {
-		return ErrCatalogExecutor
-	}
-	if err := e.validateCatalogAdmin(ctx); err != nil {
-		return err
-	}
-	config := ducklake.PostgresCatalogConfig{PhysicalPoolID: options.PhysicalPoolID, DuckLakeSecret: e.DuckLakeSecret, PostgresSecret: e.PostgresSecret, MetadataSchema: ducklake.MetadataSchemaForPool(options.PhysicalPoolID), Mode: ducklake.PostgresCatalogMigrate}
-	statements, err := config.MigrationStatements()
-	if err != nil {
-		return err
-	}
-	if options.Renew != nil {
-		if err := options.Renew(ctx); err != nil {
-			return err
-		}
-	}
-	statements = append(statements, `DETACH "lake"`)
-	if err := executeCatalogStatements(ctx, e.Exec, statements); err != nil {
-		return err
-	}
-	return ProvisionCatalogRuntimePrivileges(ctx, e.CatalogAdmin, config.MetadataSchema, e.RuntimeRole)
-}
 func (e *SQLCatalogExecutor) VerifySnapshot(ctx context.Context, snapshot SnapshotRef, compatibility RuntimeCompatibility) (json.RawMessage, error) {
 	if ctx == nil {
 		ctx = context.Background()

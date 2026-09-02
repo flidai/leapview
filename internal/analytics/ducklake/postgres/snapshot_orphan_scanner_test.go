@@ -51,7 +51,7 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 	}
 	const poolID, catalogID = "scanner-pool", "scanner-catalog"
 	adminRepo := New(admin)
-	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000901", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000901", MetadataSchema: "lake"}); err != nil {
 		t.Fatal(err)
 	}
 	fence, err := adminRepo.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "scanner-owner", LeaseExpiresAt: time.Now().Add(time.Minute)})

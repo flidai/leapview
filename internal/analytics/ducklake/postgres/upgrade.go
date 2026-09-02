@@ -98,7 +98,9 @@ type RuntimeCompatibility struct {
 	CatalogSchemaVersion string
 }
 
-// CatalogRuntimeCompatibility is the immutable/current row stored for a pool.
+// CatalogRuntimeCompatibility is the mutable/current runtime tuple stored for
+// a pool. The stable catalog identity is held separately in CatalogIdentity;
+// fenced upgrades replace this row's tuple and qualification epoch.
 type CatalogRuntimeCompatibility struct {
 	PhysicalPoolID string
 	CatalogID      string

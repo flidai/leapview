@@ -105,6 +105,51 @@ func TestNativeBuildContractAuthorityResolvesExactContract(t *testing.T) {
 	}
 }
 
+func TestNativeBuildContractAuthorityResolvesPostUpgradeRuntimeAgainstStableCatalogIdentity(t *testing.T) {
+	fixture := newNativeBuildContractFixture(t)
+	targetTuple := fixture.tuple
+	targetTuple.DuckDBRuntime = "duckdb:2"
+	targetTuple.DuckLakeExtension = "ducklake:2"
+	targetTuple.CatalogFormat = "ducklake:v2"
+	checks := make([]physicalpool.EvidenceCheck, 0, len(ducklake.SharedPoolConformanceChecks))
+	for _, name := range ducklake.SharedPoolConformanceChecks {
+		checks = append(checks, physicalpool.EvidenceCheck{ID: name, Passed: true, ObservationDigest: nativeContractDigest('b')})
+	}
+	evidence, err := physicalpool.NewEvidence(physicalpool.EvidenceInput{Compatibility: targetTuple, ConformanceVersion: ducklake.SharedPoolConformanceVersion, Checks: checks})
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetAdmission, err := fixture.pool.Admit(evidence)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetPool, err := fixture.pool.ApplyAdmission(targetAdmission)
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetDigest, err := targetTuple.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	targetRuntime := ducklakepostgres.CatalogRuntimeCompatibility{
+		PhysicalPoolID: targetPool.ID.String(), CatalogID: fixture.catalog.CatalogID,
+		RuntimeCompatibility: ducklakepostgres.RuntimeCompatibility{
+			RuntimeTuple:        ducklakepostgres.RuntimeTuple{DuckDBRuntime: targetTuple.DuckDBRuntime, DuckLakeExtension: targetTuple.DuckLakeExtension, CatalogFormat: targetTuple.CatalogFormat},
+			CompatibilityDigest: targetDigest, CatalogSchemaVersion: "schema-v2",
+		},
+		CurrentMigrationID: "0198f2c0-7c7a-7f00-0000-000000000011",
+	}
+	admission := physicalpool.AdmissionContract{Pool: targetPool, Admission: targetAdmission, Evidence: evidence}
+	authority := mustNativeBuildContractAuthorityWithReaders(t, &nativeContractPhysicalFake{contract: admission}, &nativeContractCatalogFake{identity: fixture.catalog}, &nativeContractRuntimeFake{compat: targetRuntime}, fixture)
+	resolved, err := authority.Resolve(t.Context(), NativeBuildContractRequest{PhysicalPoolID: targetPool.ID.String(), CompatibilityDigest: targetDigest})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved.Catalog != fixture.catalog || resolved.Compatibility != targetRuntime.RuntimeCompatibility {
+		t.Fatalf("post-upgrade contract = %#v, want stable catalog identity plus target runtime", resolved)
+	}
+}
+
 func TestNativeBuildContractAuthorityRejectsInvalidRequestBeforeLookup(t *testing.T) {
 	fixture := newNativeBuildContractFixture(t)
 	physical := &nativeContractPhysicalFake{contract: fixture.admission}
@@ -157,8 +202,6 @@ func TestNativeBuildContractAuthorityRejectsCatalogAndRuntimeDrift(t *testing.T)
 	cases := map[string]func(*nativeBuildContractFixture){
 		"catalog pool":       func(f *nativeBuildContractFixture) { f.catalog.PhysicalPoolID = "other-pool" },
 		"catalog id runtime": func(f *nativeBuildContractFixture) { f.runtime.CatalogID = "other-catalog" },
-		"catalog digest":     func(f *nativeBuildContractFixture) { f.catalog.CompatibilityDigest = nativeContractDigest('b') },
-		"catalog schema":     func(f *nativeBuildContractFixture) { f.runtime.CatalogSchemaVersion = "schema-v2" },
 		"runtime pool":       func(f *nativeBuildContractFixture) { f.runtime.PhysicalPoolID = "other-pool" },
 		"runtime digest":     func(f *nativeBuildContractFixture) { f.runtime.CompatibilityDigest = nativeContractDigest('b') },
 		"runtime tuple":      func(f *nativeBuildContractFixture) { f.runtime.DuckLakeExtension = "ducklake:2" },
@@ -184,7 +227,6 @@ func TestNativeBuildContractAuthorityRejectsMissingCatalogRuntimeFields(t *testi
 		"catalog pool":   func(f *nativeBuildContractFixture) { f.catalog.PhysicalPoolID = "" },
 		"catalog id":     func(f *nativeBuildContractFixture) { f.catalog.CatalogID = "" },
 		"catalog uuid":   func(f *nativeBuildContractFixture) { f.catalog.CatalogUUID = "00000000-0000-0000-0000-000000000000" },
-		"catalog digest": func(f *nativeBuildContractFixture) { f.catalog.CompatibilityDigest = "" },
 		"runtime pool":   func(f *nativeBuildContractFixture) { f.runtime.PhysicalPoolID = "" },
 		"runtime id":     func(f *nativeBuildContractFixture) { f.runtime.CatalogID = "" },
 		"runtime digest": func(f *nativeBuildContractFixture) { f.runtime.CompatibilityDigest = "" },
@@ -358,8 +400,8 @@ func newNativeBuildContractFixture(t *testing.T) nativeBuildContractFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalog := ducklakepostgres.CatalogIdentity{PhysicalPoolID: pool.ID.String(), CatalogDatabase: "ducklake", CatalogID: "catalog-native", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000001", MetadataSchema: ducklake.MetadataSchemaForPool(pool.ID.String()), CompatibilityDigest: digest, CatalogSchemaVersion: "schema-v1"}
-	runtime := ducklakepostgres.CatalogRuntimeCompatibility{PhysicalPoolID: pool.ID.String(), CatalogID: catalog.CatalogID, RuntimeCompatibility: ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: tuple.DuckDBRuntime, DuckLakeExtension: tuple.DuckLakeExtension, CatalogFormat: tuple.CatalogFormat}, CompatibilityDigest: digest, CatalogSchemaVersion: catalog.CatalogSchemaVersion}, CurrentMigrationID: "0198f2c0-7c7a-7f00-8a11-000000000010"}
+	catalog := ducklakepostgres.CatalogIdentity{PhysicalPoolID: pool.ID.String(), CatalogDatabase: "ducklake", CatalogID: "catalog-native", CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000001", MetadataSchema: ducklake.MetadataSchemaForPool(pool.ID.String())}
+	runtime := ducklakepostgres.CatalogRuntimeCompatibility{PhysicalPoolID: pool.ID.String(), CatalogID: catalog.CatalogID, RuntimeCompatibility: ducklakepostgres.RuntimeCompatibility{RuntimeTuple: ducklakepostgres.RuntimeTuple{DuckDBRuntime: tuple.DuckDBRuntime, DuckLakeExtension: tuple.DuckLakeExtension, CatalogFormat: tuple.CatalogFormat}, CompatibilityDigest: digest, CatalogSchemaVersion: "schema-v1"}, CurrentMigrationID: "0198f2c0-7c7a-7f00-8a11-000000000010"}
 	return nativeBuildContractFixture{pool: pool, tuple: tuple, digest: digest, admission: physicalpool.AdmissionContract{Pool: pool, Admission: admitted, Evidence: evidence}, catalog: catalog, runtime: runtime}
 }
 

@@ -14,7 +14,8 @@ const catalogIdentitySeedPrefix = "leapview/ducklake/catalog/v1\x00"
 // CatalogRegistrationEvidence is read from the owner-capable DuckLake
 // PostgreSQL connection after DuckLake has initialized its metadata tables.
 // CatalogSchemaVersion is DuckLake's global metadata format version, not the
-// mutable schema_version of an individual snapshot.
+// mutable schema_version of an individual snapshot. It seeds the mutable
+// catalog_runtime_compatibility row, never the stable catalog identity.
 type CatalogRegistrationEvidence struct {
 	CatalogDatabase      string
 	CatalogSchemaVersion string
@@ -25,9 +26,7 @@ type CatalogRegistrationEvidence struct {
 // fenced catalog upgrades: bootstrap can only insert a missing exact row or
 // replay the existing one; it cannot change either identity.
 func BootstrapCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity, compatibility RuntimeCompatibility) (CatalogIdentity, CatalogRuntimeCompatibility, error) {
-	if tx == nil || validateCatalog(identity) != nil || compatibility.validate() != nil ||
-		identity.CompatibilityDigest != compatibility.CompatibilityDigest ||
-		identity.CatalogSchemaVersion != compatibility.CatalogSchemaVersion {
+	if tx == nil || validateCatalog(identity) != nil || compatibility.validate() != nil {
 		return CatalogIdentity{}, CatalogRuntimeCompatibility{}, ErrInvalid
 	}
 	if ctx == nil {
@@ -66,16 +65,14 @@ func BootstrapCatalog(ctx context.Context, tx DBTX, identity CatalogIdentity, co
 // DeriveCatalogIdentity constructs the application-owned stable identity for
 // the one DuckLake catalog bound to a physical pool. The UUID is RFC 9562
 // version 5 and therefore repeats exactly across bootstrap retries.
-func DeriveCatalogIdentity(physicalPoolID, catalogDatabase, compatibilityDigest, catalogSchemaVersion string) (CatalogIdentity, error) {
+func DeriveCatalogIdentity(physicalPoolID, catalogDatabase string) (CatalogIdentity, error) {
 	catalogID := "ducklake:" + physicalPoolID
 	identity := CatalogIdentity{
-		PhysicalPoolID:       physicalPoolID,
-		CatalogDatabase:      catalogDatabase,
-		CatalogID:            catalogID,
-		CatalogUUID:          uuid.NewSHA1(uuid.NameSpaceURL, []byte(catalogIdentitySeedPrefix+physicalPoolID)).String(),
-		MetadataSchema:       ducklake.MetadataSchemaForPool(physicalPoolID),
-		CompatibilityDigest:  compatibilityDigest,
-		CatalogSchemaVersion: catalogSchemaVersion,
+		PhysicalPoolID:  physicalPoolID,
+		CatalogDatabase: catalogDatabase,
+		CatalogID:       catalogID,
+		CatalogUUID:     uuid.NewSHA1(uuid.NameSpaceURL, []byte(catalogIdentitySeedPrefix+physicalPoolID)).String(),
+		MetadataSchema:  ducklake.MetadataSchemaForPool(physicalPoolID),
 	}
 	if err := validateCatalog(identity); err != nil {
 		return CatalogIdentity{}, err

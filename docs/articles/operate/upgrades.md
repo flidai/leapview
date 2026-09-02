@@ -145,6 +145,35 @@ configured SQLite catalog is rejected, and an adjacent `catalog.sqlite` file is
 ignored rather than treated as authority. Restore or upgrade only from a
 qualified PostgreSQL/DuckLake recovery set.
 
+When the target release changes the admitted DuckDB, DuckLake, catalog-format,
+or catalog-schema tuple, keep serving stopped and inject the operation-only
+control upgrade coordinator and DuckLake catalog migrator credentials. First
+preview the exact target contract; add `--apply` only after the preview matches
+the reviewed artifacts and the drain and backup assertions are true:
+
+```sh
+leapview admin delivery pool upgrade \
+  --pool /run/leapview/target-pool.json \
+  --evidence /run/leapview/target-conformance.json \
+  --migration-id 0198f2c0-7c7a-7f00-8a11-000000000001 \
+  --catalog-schema-version 1 \
+  --recovery-decision rollback \
+  --drain-verified \
+  --backup-verified
+
+# Repeat the identical command with --apply to execute it.
+```
+
+The preview validates the supplied identities and prints redacted expected
+evidence; it does not connect to or inspect PostgreSQL. Apply appends the target
+pool admission, acquires the global and pool catalog-migration fences, performs
+the explicit DuckLake automatic migration through the owner-only session,
+checks the catalog's resulting schema version, requalifies every retained
+snapshot, and only then advances the mutable catalog-runtime compatibility row.
+Ordinary startup and serving connections cannot invoke this path. Preserve the
+migration ID and output with the release evidence, then remove both operation-
+only credentials before starting the service.
+
 ## Verify after startup
 
 Check more than readiness:

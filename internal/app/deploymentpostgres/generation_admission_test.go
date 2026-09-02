@@ -350,7 +350,6 @@ func seedGenerationAdmission(t *testing.T, repo *deploymentnative.Repository, du
 	if _, err := ducklake.RegisterCatalog(ctx, ducklakepostgres.CatalogIdentity{
 		PhysicalPoolID: input.Seal.PhysicalPoolID, CatalogDatabase: input.Seal.CatalogDatabase,
 		CatalogID: input.Seal.CatalogID, CatalogUUID: input.Seal.CatalogUUID, MetadataSchema: "main",
-		CompatibilityDigest: input.Seal.CompatibilityDigest, CatalogSchemaVersion: input.Seal.CatalogSchemaVersion,
 	}); err != nil && !errors.Is(err, ducklakepostgres.ErrConflict) {
 		t.Fatal(err)
 	}

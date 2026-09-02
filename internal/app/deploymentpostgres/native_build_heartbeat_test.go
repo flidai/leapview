@@ -89,7 +89,7 @@ func newNativeHeartbeatFixtureWithLeaseDuration(t *testing.T, leaseDuration time
 		t.Fatal(err)
 	}
 	const catalogID = "catalog-heartbeat"
-	if _, err := ducklake.RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{PhysicalPoolID: "pool-candidate-admission", CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000999", MetadataSchema: "main", CompatibilityDigest: candidateAdmissionDigest('9'), CatalogSchemaVersion: "v1"}); err != nil {
+	if _, err := ducklake.RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{PhysicalPoolID: "pool-candidate-admission", CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000999", MetadataSchema: "main"}); err != nil {
 		t.Fatal(err)
 	}
 	reserved, err := ReserveNativeBuildOperation(t.Context(), delivery, operations, NativeBuildOperationReservationInput{Request: request, RequestDigest: digest, OwnerID: "0198f2c0-7c7a-7f00-8a11-000000000902", LeaseDuration: leaseDuration})

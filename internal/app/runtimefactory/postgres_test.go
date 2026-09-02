@@ -199,7 +199,7 @@ func TestValidatePostgresCatalogRegistration(t *testing.T) {
 	physicalPoolID := "pool-serving-registration"
 	compatibilityDigest := runtimeFactoryDigest("registration-compatibility")
 	const schemaVersion = "schema-v1"
-	identity, err := ducklakepostgres.DeriveCatalogIdentity(physicalPoolID, ducklakepostgres.DefaultDuckLakeDatabase, compatibilityDigest, schemaVersion)
+	identity, err := ducklakepostgres.DeriveCatalogIdentity(physicalPoolID, ducklakepostgres.DefaultDuckLakeDatabase)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,7 +348,7 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalogIdentity, err := ducklakepostgres.DeriveCatalogIdentity(contract.Pool.ID.String(), ducklakepostgres.DefaultDuckLakeDatabase, compatibilityDigest, "schema-v1")
+	catalogIdentity, err := ducklakepostgres.DeriveCatalogIdentity(contract.Pool.ID.String(), ducklakepostgres.DefaultDuckLakeDatabase)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,7 +437,7 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 	if err != nil {
 		t.Fatal(err)
 	}
-	catalogIdentity, err := ducklakepostgres.DeriveCatalogIdentity(contract.Pool.ID.String(), ducklakepostgres.DefaultDuckLakeDatabase, compatibilityDigest, "schema-v1")
+	catalogIdentity, err := ducklakepostgres.DeriveCatalogIdentity(contract.Pool.ID.String(), ducklakepostgres.DefaultDuckLakeDatabase)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -28,9 +28,10 @@ func (c *captureCatalogSQL) ExecContext(_ context.Context, statement string, _ .
 }
 
 type captureCatalogAdmin struct {
-	identity    DatabaseIdentity
-	schemaOwner string
-	statements  []string
+	identity             DatabaseIdentity
+	schemaOwner          string
+	catalogSchemaVersion string
+	statements           []string
 }
 
 func (c *captureCatalogAdmin) Exec(_ context.Context, statement string, _ ...any) (pgconn.CommandTag, error) {
@@ -43,6 +44,13 @@ func (c *captureCatalogAdmin) Query(context.Context, string, ...any) (pgx.Rows, 
 }
 
 func (c *captureCatalogAdmin) QueryRow(_ context.Context, query string, _ ...any) pgx.Row {
+	if strings.Contains(query, "ducklake_metadata") {
+		version := c.catalogSchemaVersion
+		if version == "" {
+			version = "catalog-v1"
+		}
+		return captureCatalogRegistrationRow{version: version}
+	}
 	if strings.Contains(query, "FROM pg_namespace") {
 		owner := c.schemaOwner
 		if owner == "" {
@@ -73,6 +81,17 @@ func (r captureCatalogSchemaOwnerRow) Scan(dest ...any) error {
 	}
 	*(dest[0].(*string)) = r.currentUser
 	*(dest[1].(*string)) = r.owner
+	return nil
+}
+
+type captureCatalogRegistrationRow struct{ version string }
+
+func (r captureCatalogRegistrationRow) Scan(dest ...any) error {
+	if len(dest) != 2 {
+		return fmt.Errorf("catalog registration scan received %d destinations", len(dest))
+	}
+	*(dest[0].(*string)) = r.version
+	*(dest[1].(*int64)) = 1
 	return nil
 }
 
@@ -437,6 +456,11 @@ func TestSQLCatalogExecutorUsesTypedAttachConstructors(t *testing.T) {
 	if len(exec.statements) != 6 || !strings.Contains(exec.statements[1], "AUTOMATIC_MIGRATION false") || !strings.Contains(exec.statements[1], "CREATE_IF_NOT_EXISTS true") || exec.statements[2] != `DETACH "lake"` || !strings.Contains(exec.statements[4], "AUTOMATIC_MIGRATION true") || !strings.Contains(exec.statements[4], "CREATE_IF_NOT_EXISTS false") || exec.statements[5] != `DETACH "lake"` {
 		t.Fatalf("catalog statements = %#v", exec.statements)
 	}
+	mismatch := *adapter
+	mismatch.CatalogAdmin = &captureCatalogAdmin{identity: admin.identity, catalogSchemaVersion: "catalog-v2"}
+	if err := mismatch.Migrate(t.Context(), CatalogMigrationOptions{PhysicalPoolID: poolID, CatalogID: "catalog-adapter", Current: compat, Target: compat, Mode: CatalogMigrationAutomatic}); !errors.Is(err, ErrCompatibilityMismatch) {
+		t.Fatalf("mismatched migrated catalog version error = %v", err)
+	}
 }
 
 type fakeUpgradeCatalog struct {
@@ -615,7 +639,7 @@ func TestUpgradeCoordinatorRunSequencingAndRecovery(t *testing.T) {
 	setup := func(t *testing.T, suffix string) {
 		t.Helper()
 		poolID, catalogID := "coord-"+suffix, "catalog-"+suffix
-		if _, err := New(admin).RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: catalogDB.Name, CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000014", MetadataSchema: ducklake.MetadataSchemaForPool(poolID), CompatibilityDigest: current.CompatibilityDigest, CatalogSchemaVersion: current.CatalogSchemaVersion}); err != nil {
+		if _, err := New(admin).RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: catalogDB.Name, CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000014", MetadataSchema: ducklake.MetadataSchemaForPool(poolID)}); err != nil {
 			t.Fatal(err)
 		}
 		for _, snapshotID := range []int64{1, 2} {

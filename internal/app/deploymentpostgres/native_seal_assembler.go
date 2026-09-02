@@ -234,7 +234,7 @@ func assembleNativeSealEvidenceWithPolicy(input NativeSealEvidenceAssemblerInput
 			ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest,
 			DuckDBVersion: input.Compatibility.DuckDBRuntime, RuntimeVersion: input.RuntimeVersion,
 			DuckLakeExtensionVersion: input.Compatibility.DuckLakeExtension, DuckLakeSpecVersion: duckLakeSpecVersion,
-			CatalogSchemaVersion: input.CatalogIdentity.CatalogSchemaVersion, QualificationEvidence: qualification,
+			CatalogSchemaVersion: input.Compatibility.CatalogSchemaVersion, QualificationEvidence: qualification,
 		},
 		QualificationDigest: qualificationDigest,
 		CandidateExpiresAt:  input.Plan.Governance.ExpiresAt.UTC().Truncate(time.Microsecond),
@@ -405,16 +405,10 @@ func validateNativeCatalogValues(input NativeSealEvidenceAssemblerInput) error {
 	if identity.MetadataSchema != input.Build.Seal.MetadataSchema || identity.MetadataSchema != ducklake.MetadataSchemaForPool(poolID) {
 		return conflict("catalog metadata schema differs from admitted pool")
 	}
-	if err := validateCanonicalText(identity.CatalogSchemaVersion, "catalog schema version", 128); err != nil {
-		return err
-	}
-	if identity.CatalogSchemaVersion != compatibility.CatalogSchemaVersion {
-		return conflict("catalog schema version differs from runtime compatibility")
-	}
 	if err := compatibilityValidate(compatibility); err != nil {
 		return err
 	}
-	if identity.CompatibilityDigest != compatibility.CompatibilityDigest || input.PoolContract.Admission.CompatibilityDigest != compatibility.CompatibilityDigest {
+	if input.PoolContract.Admission.CompatibilityDigest != compatibility.CompatibilityDigest {
 		return conflict("catalog compatibility digest differs from admitted runtime")
 	}
 	if input.PoolContract.Tuple.DuckDBRuntime != compatibility.DuckDBRuntime || input.PoolContract.Tuple.DuckLakeExtension != compatibility.DuckLakeExtension || input.PoolContract.Tuple.CatalogFormat != compatibility.CatalogFormat {

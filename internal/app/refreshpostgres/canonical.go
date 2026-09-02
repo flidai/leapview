@@ -156,7 +156,7 @@ func loadCanonicalDeliveryEvidence(ctx context.Context, tx refreshpostgres.Tx, d
 	if err != nil {
 		return canonicalDeliveryEvidence{}, unavailableError("load canonical catalog identity: %v", err)
 	}
-	if catalog.PhysicalPoolID != seal.PhysicalPoolID || catalog.CatalogID != seal.CatalogID || catalog.CatalogDatabase != seal.CatalogDatabase || catalog.CatalogUUID != seal.CatalogUUID || catalog.CompatibilityDigest != seal.CompatibilityDigest {
+	if catalog.PhysicalPoolID != seal.PhysicalPoolID || catalog.CatalogID != seal.CatalogID || catalog.CatalogDatabase != seal.CatalogDatabase || catalog.CatalogUUID != seal.CatalogUUID {
 		return canonicalDeliveryEvidence{}, mismatchError("canonical catalog identity differs from snapshot seal")
 	}
 

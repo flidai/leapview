@@ -174,7 +174,7 @@ func validatePostgresCatalogRegistration(root SealedServingRoot) error {
 	if root.CompatibilityDigest == "" || root.CatalogSchemaVersion == "" {
 		return fmt.Errorf("%w: PostgreSQL catalog registration compatibility evidence is incomplete", ErrSealedRootUnavailable)
 	}
-	identity, err := ducklakepostgres.DeriveCatalogIdentity(root.PhysicalPoolID, root.CatalogDatabase, root.CompatibilityDigest, root.CatalogSchemaVersion)
+	identity, err := ducklakepostgres.DeriveCatalogIdentity(root.PhysicalPoolID, root.CatalogDatabase)
 	if err != nil {
 		return fmt.Errorf("%w: derive PostgreSQL catalog registration identity: %v", ErrSealedRootMismatch, err)
 	}

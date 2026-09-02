@@ -94,7 +94,6 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 	if _, err := ducklake.RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{
 		PhysicalPoolID: "pool-recovery-preparation", CatalogDatabase: "ducklake", CatalogID: catalogID,
 		CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000001099", MetadataSchema: "main",
-		CompatibilityDigest: preparationDigest('9'), CatalogSchemaVersion: "v1",
 	}); err != nil {
 		t.Fatal(err)
 	}

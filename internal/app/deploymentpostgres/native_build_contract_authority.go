@@ -247,15 +247,6 @@ func validateNativeBuildContractCatalog(catalog ducklakepostgres.CatalogIdentity
 	if catalog.MetadataSchema != ducklake.MetadataSchemaForPool(request.PhysicalPoolID) {
 		return fmt.Errorf("%w: catalog metadata schema differs from physical pool", deploymentnative.ErrConflict)
 	}
-	if err := validateNativeBuildContractText(catalog.CatalogSchemaVersion, "catalog schema version", nativeBuildContractMaxID); err != nil {
-		return err
-	}
-	if err := validateNativeBuildContractDigest(catalog.CompatibilityDigest, "catalog compatibility digest", nativeBuildContractMaxDigest); err != nil {
-		return err
-	}
-	if catalog.CompatibilityDigest != request.CompatibilityDigest || catalog.CompatibilityDigest != admission.Admission.CompatibilityDigest {
-		return fmt.Errorf("%w: catalog compatibility digest differs", deploymentnative.ErrConflict)
-	}
 	return nil
 }
 
@@ -280,9 +271,6 @@ func validateNativeBuildContractRuntime(runtime ducklakepostgres.CatalogRuntimeC
 	}
 	if runtime.CompatibilityDigest != request.CompatibilityDigest || runtime.CompatibilityDigest != admission.Admission.CompatibilityDigest {
 		return fmt.Errorf("%w: catalog-runtime compatibility digest differs", deploymentnative.ErrConflict)
-	}
-	if runtime.CatalogSchemaVersion != catalog.CatalogSchemaVersion {
-		return fmt.Errorf("%w: catalog-runtime catalog schema version differs", deploymentnative.ErrConflict)
 	}
 	admitted := admission.Admission.Compatibility
 	if runtime.DuckDBRuntime != admitted.DuckDBRuntime || runtime.DuckLakeExtension != admitted.DuckLakeExtension || runtime.CatalogFormat != admitted.CatalogFormat {

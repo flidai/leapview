@@ -17,11 +17,11 @@ WHERE n.nspname=sqlc.arg(metadata_schema);
 
 -- name: InsertCatalogIdentity :exec
 INSERT INTO ducklake.catalog_identity
-(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,compatibility_digest,catalog_schema_version)
-VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_database),sqlc.arg(catalog_id),sqlc.arg(catalog_uuid),sqlc.arg(metadata_schema),sqlc.arg(compatibility_digest),sqlc.arg(catalog_schema_version)) ON CONFLICT (physical_pool_id) DO NOTHING;
+(physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema)
+VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_database),sqlc.arg(catalog_id),sqlc.arg(catalog_uuid),sqlc.arg(metadata_schema)) ON CONFLICT (physical_pool_id) DO NOTHING;
 
 -- name: GetCatalogIdentity :one
-SELECT physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,compatibility_digest,catalog_schema_version,created_at
+SELECT physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,created_at
 FROM ducklake.catalog_identity WHERE physical_pool_id=$1;
 
 -- name: InsertSnapshotRetentionLive :exec

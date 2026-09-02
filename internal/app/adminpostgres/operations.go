@@ -97,6 +97,7 @@ type Dependencies struct {
 	NewAccess       func(AccessPool, []byte) (AccessInitializer, error)
 	NewBootstrap    func(AccessPool) Bootstrap
 	BootstrapPool   func(context.Context, config.Config, adminoffline.PhysicalPoolBootstrapRequest) (adminoffline.PhysicalPoolBootstrapResult, error)
+	UpgradePool     func(context.Context, config.Config, admincli.CatalogUpgradeRequest) (admincli.CatalogUpgradeResult, error)
 	AcquireLock     func(string) (adminoffline.Lock, error)
 	Now             func() time.Time
 }
@@ -145,6 +146,9 @@ func (d Dependencies) withDefaults() Dependencies {
 	}
 	if d.BootstrapPool == nil {
 		d.BootstrapPool = bootstrapNativePhysicalPool
+	}
+	if d.UpgradePool == nil {
+		d.UpgradePool = upgradeNativePhysicalPoolCatalog
 	}
 	if d.AcquireLock == nil {
 		d.AcquireLock = func(home string) (adminoffline.Lock, error) {

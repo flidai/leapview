@@ -16,15 +16,11 @@ CREATE TABLE IF NOT EXISTS ducklake.catalog_identity (
         CHECK (catalog_uuid = btrim(catalog_uuid)
             AND catalog_uuid ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'),
     metadata_schema        text NOT NULL,
-    compatibility_digest   text NOT NULL
-        CHECK (compatibility_digest ~ '^sha256:[0-9a-f]{64}$'),
-    catalog_schema_version text NOT NULL,
     created_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
     UNIQUE (physical_pool_id, catalog_id),
     CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
     CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
-    CHECK (metadata_schema = btrim(metadata_schema) AND metadata_schema ~ '^[A-Za-z_][A-Za-z0-9_]*$'),
-    CHECK (catalog_schema_version = btrim(catalog_schema_version) AND octet_length(catalog_schema_version) BETWEEN 1 AND 128)
+    CHECK (metadata_schema = btrim(metadata_schema) AND metadata_schema ~ '^[A-Za-z_][A-Za-z0-9_]*$')
 );
 
 -- One row is the exact external attempt ledger.  A commit is accepted only
@@ -2191,8 +2187,6 @@ BEGIN
     IF NOT EXISTS (
         SELECT 1 FROM ducklake.catalog_identity
          WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id
-           AND compatibility_digest=p_compatibility_digest
-           AND catalog_schema_version=p_catalog_schema_version
     ) THEN
         RAISE EXCEPTION 'runtime compatibility mismatch';
     END IF;

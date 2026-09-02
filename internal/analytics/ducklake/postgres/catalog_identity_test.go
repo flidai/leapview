@@ -13,12 +13,11 @@ import (
 
 func TestDeriveCatalogIdentityIsDeterministicAndPoolScoped(t *testing.T) {
 	poolID := "sha256:" + strings.Repeat("a", 64)
-	compatibilityDigest := "sha256:" + strings.Repeat("b", 64)
-	first, err := DeriveCatalogIdentity(poolID, "leapview_ducklake", compatibilityDigest, "1.0")
+	first, err := DeriveCatalogIdentity(poolID, "leapview_ducklake")
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := DeriveCatalogIdentity(poolID, "leapview_ducklake", compatibilityDigest, "1.0")
+	replay, err := DeriveCatalogIdentity(poolID, "leapview_ducklake")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -28,7 +27,7 @@ func TestDeriveCatalogIdentityIsDeterministicAndPoolScoped(t *testing.T) {
 	if first.CatalogID != "ducklake:"+poolID || first.MetadataSchema != ducklake.MetadataSchemaForPool(poolID) {
 		t.Fatalf("derived pool identity = %#v", first)
 	}
-	other, err := DeriveCatalogIdentity("sha256:"+strings.Repeat("c", 64), "leapview_ducklake", compatibilityDigest, "1.0")
+	other, err := DeriveCatalogIdentity("sha256:"+strings.Repeat("c", 64), "leapview_ducklake")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,15 +36,12 @@ func TestDeriveCatalogIdentityIsDeterministicAndPoolScoped(t *testing.T) {
 	}
 }
 
-func TestDeriveCatalogIdentityRejectsIncompleteAuthorityEvidence(t *testing.T) {
+func TestDeriveCatalogIdentityRejectsIncompleteCatalogDatabase(t *testing.T) {
 	poolID := "sha256:" + strings.Repeat("a", 64)
-	digest := "sha256:" + strings.Repeat("b", 64)
-	for name, values := range map[string][3]string{
-		"database":      {"", digest, "1.0"},
-		"compatibility": {"leapview_ducklake", "", "1.0"},
-		"version":       {"leapview_ducklake", digest, ""},
+	for name, database := range map[string]string{
+		"database": "",
 	} {
-		if _, err := DeriveCatalogIdentity(poolID, values[0], values[1], values[2]); !errors.Is(err, ErrInvalid) {
+		if _, err := DeriveCatalogIdentity(poolID, database); !errors.Is(err, ErrInvalid) {
 			t.Fatalf("%s error = %v, want ErrInvalid", name, err)
 		}
 	}
