@@ -27,6 +27,7 @@ type CandidateHTTPConfig struct {
 	AuthorizationFingerprint string
 	RouteBasePath            string
 	Restrictions             []CandidateRestriction
+	BootstrapAuthorized      bool
 }
 
 type CandidateRestriction struct {
@@ -102,7 +103,8 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 		return queryauthz.WithCandidateQueryCapability(ctx, queryauthz.CandidateQueryCapability{
 			CandidateID: config.CandidateID, OwnerPrincipalID: config.OwnerPrincipalID,
 			ProjectID: config.ProjectID, PolicyDigest: config.AuthorizationFingerprint,
-			Restrictions: append([]accesssnapshot.DataPolicy(nil), compiledRestrictions...),
+			Restrictions:        append([]accesssnapshot.DataPolicy(nil), compiledRestrictions...),
+			BootstrapAuthorized: config.BootstrapAuthorized,
 		})
 	}
 	currentPrincipalID := handler.CurrentPrincipalID

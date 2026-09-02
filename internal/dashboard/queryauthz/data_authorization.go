@@ -338,13 +338,17 @@ func (m Metrics) GovernDataQuery(ctx context.Context, request dataquery.Query) (
 		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
 		return request, nil, err
 	}
-	if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
-		return request, nil, err
-	} else if !ok {
-		err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
-		_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
-		return request, nil, err
+	bootstrapCandidateOwner := candidateQuery && candidateCapability.BootstrapAuthorized &&
+		!viewAsQuery && request.PrincipalID == candidateCapability.OwnerPrincipalID
+	if !bootstrapCandidateOwner {
+		if ok, err := m.authorizeDataQuery(ctx, snapshot, principalID, capabilityAction, request, objects); err != nil {
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "error", err)
+			return request, nil, err
+		} else if !ok {
+			err := DeniedError{PrincipalID: principalID, Capability: capabilityAction}
+			_ = m.recordDataAccessAudit(ctx, request, capabilityAction, "denied", err)
+			return request, nil, err
+		}
 	}
 	governed, policies, err := m.applyDataPolicies(ctx, request, objects, resourceIndex)
 	if err != nil {

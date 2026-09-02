@@ -31,8 +31,16 @@ func TestProtectCandidateProjectResourcesAllowsFreshTargetPreview(t *testing.T) 
 		runtime,
 		access.CapabilityProjectAdmin,
 		activeProjectResource,
-		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			called = true
+			if !candidatePreviewBootstrapAuthorized(r.Context(), projectID, "owner", access.CapabilityProjectAdmin) {
+				t.Fatal("fresh candidate preview did not carry exact bootstrap authorization")
+			}
+			if candidatePreviewBootstrapAuthorized(r.Context(), projectID, "other", access.CapabilityProjectAdmin) ||
+				candidatePreviewBootstrapAuthorized(r.Context(), "project_other", "owner", access.CapabilityProjectAdmin) ||
+				candidatePreviewBootstrapAuthorized(r.Context(), projectID, "owner", access.CapabilityResourceRead) {
+				t.Fatal("fresh candidate preview bootstrap authorization escaped its exact scope")
+			}
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	)
@@ -226,7 +234,7 @@ func (a candidatePreviewAccessFake) AuthorizationSubjects(context.Context, strin
 	return []access.SubjectRef{{Kind: access.SubjectKindPrincipal, ID: a.principal.ID}}, nil
 }
 
-func (a candidatePreviewAccessFake) IsPlatformAdmin(context.Context, string) (bool, error) {
+func (a candidatePreviewAccessFake) RequestPlatformAdmin(context.Context, *http.Request, string) (bool, error) {
 	return a.admin, a.adminErr
 }
 

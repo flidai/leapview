@@ -209,6 +209,9 @@ func resolveCandidateDashboardHTTP(
 		AuthorizationFingerprint: view.AuthorizationFingerprint,
 		RouteBasePath:            candidateRouteBase(candidate.ID),
 		Restrictions:             restrictions,
+		BootstrapAuthorized: candidatePreviewBootstrapAuthorized(
+			r.Context(), projectID, principalID, access.CapabilityProjectAdmin,
+		),
 	})
 	if err != nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)

@@ -431,6 +431,55 @@ func TestCanonicalPolicyAlgebraAndCandidateRestrictions(t *testing.T) {
 	}
 }
 
+func TestCanonicalCandidateBootstrapAuthorityIsOwnerBound(t *testing.T) {
+	_, _, semantic, physical, _ := canonicalGraph(t)
+	metrics := canonicalMetricsWithSnapshot(t, canonicalSnapshot(t, nil, nil), nil)
+	request := dataquery.Query{
+		ProjectID: canonicalProject,
+		ModelID:   semantic.CanonicalID(),
+		Target:    "orders",
+		Kind:      dataquery.KindSemanticRows,
+	}
+	compiled, err := accesspolicy.Compile("candidate-bootstrap", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	capability := CandidateQueryCapability{
+		CandidateID: "candidate-1", OwnerPrincipalID: "alice", ProjectID: canonicalProject,
+		PolicyDigest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		Restrictions: []accesssnapshot.DataPolicy{{
+			ID: "candidate-bootstrap", Resource: physical, PolicyType: "row_filter",
+			ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`, Compiled: compiled,
+		}},
+	}
+	if _, _, err := metrics.GovernDataQuery(WithCandidateQueryCapability(context.Background(), capability), request); !IsDenied(err) {
+		t.Fatalf("candidate without a data grant or bootstrap authority error = %v, want denial", err)
+	}
+	capability.BootstrapAuthorized = true
+	governed, _, err := metrics.GovernDataQuery(WithCandidateQueryCapability(context.Background(), capability), request)
+	if err != nil {
+		t.Fatalf("fresh-target candidate owner was denied: %v", err)
+	}
+	if governed.CandidateID != capability.CandidateID || governed.PrincipalID != capability.OwnerPrincipalID {
+		t.Fatalf("governed bootstrap candidate identity = %#v", governed)
+	}
+	if len(governed.Filters) != 1 {
+		t.Fatalf("governed bootstrap candidate filters = %#v, want mandatory restriction", governed.Filters)
+	}
+	capability.OwnerPrincipalID = "bob"
+	if _, _, err := metrics.GovernDataQuery(WithCandidateQueryCapability(context.Background(), capability), request); !IsDenied(err) {
+		t.Fatalf("foreign candidate bootstrap authority error = %v, want denial", err)
+	}
+	capability.OwnerPrincipalID = "alice"
+	viewAs := WithViewAsCapability(
+		WithCandidateQueryCapability(context.Background(), capability),
+		ViewAsCapability{ActorPrincipalID: "alice", SubjectPrincipalID: "bob", ProjectID: canonicalProject},
+	)
+	if _, _, err := metrics.GovernDataQuery(viewAs, request); err == nil {
+		t.Fatal("candidate bootstrap authority unexpectedly authorized view-as")
+	}
+}
+
 func TestCanonicalViewAsRequiresProjectAdmin(t *testing.T) {
 	_, _, _, _, _ = canonicalGraph(t)
 	graph, identity, _, _, _ := canonicalGraph(t)

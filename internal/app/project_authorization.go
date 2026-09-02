@@ -343,6 +343,37 @@ func activeProjectResource(_ *http.Request, projectID projectgraph.ResourceID) [
 	return []access.ResourceRef{resource}
 }
 
+type candidatePreviewBootstrapAuthorization struct {
+	ProjectID   projectgraph.ResourceID
+	PrincipalID string
+	Capability  access.Capability
+}
+
+type candidatePreviewBootstrapAuthorizationKey struct{}
+
+func withCandidatePreviewBootstrapAuthorization(
+	ctx context.Context,
+	projectID projectgraph.ResourceID,
+	principalID string,
+	capability access.Capability,
+) context.Context {
+	return context.WithValue(ctx, candidatePreviewBootstrapAuthorizationKey{}, candidatePreviewBootstrapAuthorization{
+		ProjectID: projectID, PrincipalID: strings.TrimSpace(principalID), Capability: capability,
+	})
+}
+
+func candidatePreviewBootstrapAuthorized(
+	ctx context.Context,
+	projectID projectgraph.ResourceID,
+	principalID string,
+	capability access.Capability,
+) bool {
+	authorization, ok := ctx.Value(candidatePreviewBootstrapAuthorizationKey{}).(candidatePreviewBootstrapAuthorization)
+	return ok && authorization.ProjectID == projectID &&
+		authorization.PrincipalID == strings.TrimSpace(principalID) &&
+		authorization.Capability == capability
+}
+
 // protectCandidateProjectResources keeps candidate preview owner checks on
 // their durable candidate/runtime path while retaining the normal immutable
 // project authorization whenever a canonical serving generation exists. A
@@ -350,6 +381,7 @@ func activeProjectResource(_ *http.Request, projectID projectgraph.ResourceID) [
 // prevent candidatePreview/candidateDashboard from reaching
 // ResolveOwnedCandidate and EnsureNativeCandidateRuntime. The candidate
 // handlers remain responsible for proving owner identity and candidate scope.
+// Fresh-target authority is request-local and preserves credential attenuation.
 func protectCandidateProjectResources(
 	accessModule canonicalAccessModule,
 	runtimeHost canonicalRuntimeHost,
@@ -379,13 +411,13 @@ func protectCandidateProjectResources(
 		}
 		if !active {
 			platformAdmin, ok := accessModule.(interface {
-				IsPlatformAdmin(context.Context, string) (bool, error)
+				RequestPlatformAdmin(context.Context, *http.Request, string) (bool, error)
 			})
 			if !ok {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
 			}
-			allowed, err := platformAdmin.IsPlatformAdmin(r.Context(), principal.ID)
+			allowed, err := platformAdmin.RequestPlatformAdmin(r.Context(), r, principal.ID)
 			if err != nil {
 				http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 				return
@@ -394,7 +426,10 @@ func protectCandidateProjectResources(
 				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 				return
 			}
-			next(w, r)
+			marked := r.WithContext(withCandidatePreviewBootstrapAuthorization(
+				r.Context(), runtimeHost.ProjectID(), principal.ID, capability,
+			))
+			next(w, marked)
 			return
 		}
 		// Delegate the active path to the canonical guard so project role,
