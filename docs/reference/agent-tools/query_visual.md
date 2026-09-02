@@ -1510,7 +1510,6 @@ This closed schema is too large to inline usefully. Read the exact generated sch
         },
         "kind": {
           "enum": [
-            "project",
             "connection",
             "source",
             "model",

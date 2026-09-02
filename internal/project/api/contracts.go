@@ -6,7 +6,6 @@ package api
 type SearchKind string
 
 const (
-	SearchKindProject       SearchKind = "project"
 	SearchKindConnection    SearchKind = "connection"
 	SearchKindSource        SearchKind = "source"
 	SearchKindModel         SearchKind = "model"
@@ -24,13 +23,4 @@ type SearchParams struct {
 	Domain *string
 	Limit  *int32
 	Cursor *string
-}
-
-type ProjectResponse struct {
-	ActiveDeploymentID *string `json:"activeDeploymentId,omitempty"`
-	CreatedAt          string  `json:"createdAt"`
-	ID                 string  `json:"id"`
-	LatestReleaseID    *string `json:"latestReleaseId,omitempty"`
-	Title              string  `json:"title"`
-	UpdatedAt          string  `json:"updatedAt"`
 }

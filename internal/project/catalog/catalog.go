@@ -64,7 +64,7 @@ func (r Ref) valid() bool {
 	if _, err := projectgraph.NewResourceID(r.ID.String()); err != nil {
 		return false
 	}
-	return r.Kind.Valid()
+	return r.Kind.Valid() && r.Kind != projectgraph.KindProject
 }
 
 type Result struct {
@@ -151,6 +151,9 @@ func (s *Service) Search(ctx context.Context, request SearchRequest) (Page, erro
 	domain := strings.ToLower(strings.TrimSpace(request.Domain))
 	items := make([]Result, 0)
 	for _, resource := range graph.Resources() {
+		if resource.Kind == projectgraph.KindProject {
+			continue
+		}
 		if len(kinds) != 0 && !containsKind(kinds, resource.Kind) {
 			continue
 		}
@@ -225,6 +228,9 @@ func (s *Service) List(ctx context.Context, request ListRequest) (Page, error) {
 		// project-wide catalog operation and therefore scans every graph node,
 		// filtering each one against the exact generation snapshot.
 		for _, resource := range graph.Resources() {
+			if resource.Kind == projectgraph.KindProject {
+				continue
+			}
 			if len(kinds) != 0 && !containsKind(kinds, resource.Kind) {
 				continue
 			}
@@ -374,12 +380,8 @@ func allowsAny(snapshot accesssnapshot.AuthorizationSnapshot, subjects []access.
 	if err != nil {
 		return false, err
 	}
-	capability := access.CapabilityResourceRead
-	if resource.Kind == projectgraph.KindProject {
-		capability = access.CapabilityProjectAdmin
-	}
 	for _, subject := range subjects {
-		allowed, err := snapshot.Allows(subject, ref, capability)
+		allowed, err := snapshot.Allows(subject, ref, access.CapabilityResourceRead)
 		if err != nil {
 			return false, err
 		}

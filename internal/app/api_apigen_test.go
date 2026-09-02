@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 197
+const expectedAPIGenAggregateOperationCount = 196
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -319,14 +319,13 @@ func TestAPIGenProjectCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenProjectCapabilityOwnsItsOperationSurface(t *testing.T) {
 	projectContracts := projectgen.GetAPIGenOperationContracts()
-	if got, want := len(projectContracts), 2; got != want {
+	if got, want := len(projectContracts), 1; got != want {
 		t.Fatalf("Project generated operations = %d, want %d", got, want)
 	}
 	appContracts := apigenapi.GetAPIGenOperationContracts()
-	allowedTags := map[string]bool{"Projects": true, "Search": true}
 	for operationID, contract := range projectContracts {
-		if len(contract.Tags) != 1 || !allowedTags[contract.Tags[0]] {
-			t.Errorf("Project operation %q tags = %v, want [Projects] or [Search]", operationID, contract.Tags)
+		if operationID != "search" || len(contract.Tags) != 1 || contract.Tags[0] != "Search" {
+			t.Errorf("Project operation %q tags = %v, want the Search-only public surface", operationID, contract.Tags)
 		}
 		if _, exists := appContracts[operationID]; exists {
 			t.Errorf("Project operation %q is still emitted by the application package", operationID)

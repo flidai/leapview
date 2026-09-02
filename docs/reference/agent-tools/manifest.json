@@ -313,7 +313,6 @@
               },
               "kind": {
                 "enum": [
-                  "project",
                   "connection",
                   "source",
                   "model",
@@ -344,7 +343,6 @@
             "properties": {
               "kind": {
                 "enum": [
-                  "project",
                   "connection",
                   "source",
                   "model",
@@ -394,7 +392,6 @@
                   },
                   "kind": {
                     "enum": [
-                      "project",
                       "connection",
                       "source",
                       "model",
@@ -458,7 +455,6 @@
           "childKinds": {
             "items": {
               "enum": [
-                "project",
                 "connection",
                 "source",
                 "model",
@@ -492,7 +488,6 @@
               },
               "kind": {
                 "enum": [
-                  "project",
                   "connection",
                   "source",
                   "model",
@@ -552,7 +547,6 @@
                     },
                     "kind": {
                       "enum": [
-                        "project",
                         "connection",
                         "source",
                         "model",
@@ -628,7 +622,6 @@
           "kinds": {
             "items": {
               "enum": [
-                "project",
                 "connection",
                 "source",
                 "model",
@@ -695,7 +688,6 @@
                     },
                     "kind": {
                       "enum": [
-                        "project",
                         "connection",
                         "source",
                         "model",
@@ -14895,7 +14887,6 @@
               },
               "kind": {
                 "enum": [
-                  "project",
                   "connection",
                   "source",
                   "model",

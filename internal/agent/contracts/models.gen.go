@@ -66,7 +66,6 @@ type CatalogSearchInput struct {
 type CatalogType string
 
 const (
-	CatalogTypeProject       CatalogType = "project"
 	CatalogTypeConnection    CatalogType = "connection"
 	CatalogTypeSource        CatalogType = "source"
 	CatalogTypeModel         CatalogType = "model"

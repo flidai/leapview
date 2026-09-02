@@ -34,7 +34,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_get.json) · [c
         },
         "kind": {
           "enum": [
-            "project",
             "connection",
             "source",
             "model",
@@ -70,7 +69,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_get.json) · [c
       "properties": {
         "kind": {
           "enum": [
-            "project",
             "connection",
             "source",
             "model",
@@ -120,7 +118,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_get.json) · [c
             },
             "kind": {
               "enum": [
-                "project",
                 "connection",
                 "source",
                 "model",

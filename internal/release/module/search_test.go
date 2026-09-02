@@ -40,8 +40,13 @@ func TestSearchUsesActiveCatalogAndMapsStableResults(t *testing.T) {
 	if response.Code != http.StatusOK {
 		t.Fatalf("status=%d body=%s", response.Code, response.Body.String())
 	}
-	if fake.request.PrincipalID != "principal-1" || fake.request.Query != "sales" || len(fake.request.Kinds) != 7 {
+	if fake.request.PrincipalID != "principal-1" || fake.request.Query != "sales" || len(fake.request.Kinds) != 6 {
 		t.Fatalf("catalog request=%#v", fake.request)
+	}
+	for _, kind := range fake.request.Kinds {
+		if kind == projectgraph.KindProject {
+			t.Fatalf("public search requested internal Project kind: %#v", fake.request.Kinds)
+		}
 	}
 	for _, want := range []string{`"kind":"dashboard"`, `"id":"dashboard_sales"`, `"displayName":"Sales dashboard"`, `"href":"/dashboards/dashboard_sales"`, `"nextCursor":"next"`} {
 		if !strings.Contains(response.Body.String(), want) {

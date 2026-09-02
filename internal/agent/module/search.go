@@ -16,8 +16,8 @@ import (
 // fields: callers receive stable graph refs and can pass those exact refs to a
 // governed tool on a later turn.
 var catalogReferenceKinds = []agenttools.CatalogType{
-	agenttools.CatalogType(projectgraph.KindProject), agenttools.CatalogType(projectgraph.KindConnection),
-	agenttools.CatalogType(projectgraph.KindSource), agenttools.CatalogType(projectgraph.KindModel),
+	agenttools.CatalogType(projectgraph.KindConnection), agenttools.CatalogType(projectgraph.KindSource),
+	agenttools.CatalogType(projectgraph.KindModel),
 	agenttools.CatalogType(projectgraph.KindSemanticModel), agenttools.CatalogType(projectgraph.KindPipeline),
 	agenttools.CatalogType(projectgraph.KindDashboard),
 }
@@ -70,9 +70,6 @@ func referenceSignal(item agenttools.CatalogItem) ui.AgentReferenceSignal {
 // catalog result. The catalog item is already authorization-filtered against
 // the active serving snapshot; no browser-supplied metadata is copied.
 func TurnReferenceFromCatalog(item agenttools.CatalogItem, projectID string) agent.TurnReference {
-	if projectID == "" && item.Ref.Kind == agenttools.CatalogType(projectgraph.KindProject) {
-		projectID = item.Ref.ID
-	}
 	return agent.TurnReference{
 		Reference: agent.TurnReferenceKey{Kind: string(item.Ref.Kind), ID: item.Ref.ID},
 		Name:      item.Name, Description: item.Description,

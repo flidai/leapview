@@ -7,29 +7,8 @@ import (
 
 	"github.com/flidai/leapview/internal/access"
 	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
-	projectapi "github.com/flidai/leapview/internal/project/api"
 	releaseapi "github.com/flidai/leapview/internal/release/api"
 )
-
-func (m *Module) GetProject(w http.ResponseWriter, r *http.Request, projectID string) {
-	if m == nil || m.catalog == nil {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project not found", nil)
-		return
-	}
-	row, err := m.catalog.GetProject(r.Context(), projectID)
-	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusNotFound, "PROJECT_NOT_FOUND", "Project not found", nil)
-		return
-	}
-	item := projectapi.ProjectResponse{ID: projectID, Title: projectID, CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
-	if row.LatestReleaseID != "" {
-		item.LatestReleaseID = &row.LatestReleaseID
-	}
-	if row.ActiveDeploymentID != "" {
-		item.ActiveDeploymentID = &row.ActiveDeploymentID
-	}
-	apitransport.WriteJSON(w, http.StatusOK, item)
-}
 
 func (m *Module) ListManagedConnections(w http.ResponseWriter, r *http.Request, projectID string, limit *int32, pageToken *string) {
 	if m == nil || m.catalog == nil {

@@ -23,7 +23,7 @@ type docsSearchInput struct {
 }
 
 type docsReadInput struct {
-	ID     string `json:"id" jsonschema:"stable identifier from catalog or search, such as doc:charts/line, cli:deploy, or api:getProject"`
+	ID     string `json:"id" jsonschema:"stable identifier from catalog or search, such as doc:charts/line, cli:deploy, or api:search"`
 	Format string `json:"format,omitempty" jsonschema:"response format: markdown or json; defaults to markdown"`
 }
 

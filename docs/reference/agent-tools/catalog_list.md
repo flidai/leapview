@@ -26,7 +26,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_list.json) · [
     "childKinds": {
       "items": {
         "enum": [
-          "project",
           "connection",
           "source",
           "model",
@@ -60,7 +59,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_list.json) · [
         },
         "kind": {
           "enum": [
-            "project",
             "connection",
             "source",
             "model",
@@ -125,7 +123,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/catalog_list.json) · [
               },
               "kind": {
                 "enum": [
-                  "project",
                   "connection",
                   "source",
                   "model",

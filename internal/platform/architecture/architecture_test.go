@@ -808,21 +808,21 @@ func TestProjectGeneratedAPIIsCapabilityOwned(t *testing.T) {
 	}
 }
 
-func TestProjectTransportContractsAreCapabilityOwned(t *testing.T) {
+func TestProjectResourceResponseIsAbsentFromPublicContracts(t *testing.T) {
 	root := repoRoot(t)
 	projectContracts, err := os.ReadFile(filepath.Join(root, "internal", "project", "api", "contracts.go"))
 	if err != nil {
 		t.Fatalf("read Project API contracts: %v", err)
 	}
-	if !strings.Contains(string(projectContracts), "type ProjectResponse struct") {
-		t.Fatal("Project capability does not own its handwritten response contract")
+	if strings.Contains(string(projectContracts), "type ProjectResponse struct") {
+		t.Fatal("Project capability still exposes a public Project response contract")
 	}
 	releaseContracts, err := os.ReadFile(filepath.Join(root, "internal", "release", "api", "contracts.go"))
 	if err != nil {
 		t.Fatalf("read Release API contracts: %v", err)
 	}
 	if strings.Contains(string(releaseContracts), "type ProjectResponse struct") {
-		t.Fatal("Release capability still owns the Project response contract")
+		t.Fatal("Release capability exposes a public Project response contract")
 	}
 }
 

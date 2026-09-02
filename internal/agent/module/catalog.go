@@ -74,11 +74,7 @@ func (c CatalogService) Get(ctx context.Context, scope agenttools.Scope, request
 	if err != nil {
 		return agenttools.CatalogGetResult{}, err
 	}
-	capability := access.CapabilityResourceRead
-	if ref.Kind == projectgraph.KindProject {
-		capability = access.CapabilityProjectAdmin
-	}
-	result, err := c.project.Resolve(ctx, scope.PrincipalID, ref, capability, scope.DevAuthBypass)
+	result, err := c.project.Resolve(ctx, scope.PrincipalID, ref, access.CapabilityResourceRead, scope.DevAuthBypass)
 	if err != nil {
 		return agenttools.CatalogGetResult{}, catalogError(err)
 	}

@@ -663,7 +663,7 @@ func (h *BrowserHandler) ConnectionsSearch(w stdhttp.ResponseWriter, r *stdhttp.
 }
 
 func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
+	if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 		return
 	}
 	patch := map[string]any{"status": projectsignals.DashboardStatus{}, "runtime": projectsignals.RouteRuntimeSignal{Kind: projectsignals.RouteKindData}}
@@ -1170,7 +1170,7 @@ func (h *BrowserHandler) ProtectStream(next stdhttp.Handler) stdhttp.Handler {
 		return stdhttp.NotFoundHandler()
 	}
 	protected := stdhttp.HandlerFunc(func(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-		if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
+		if !h.authorizeAny(w, r, []projectgraph.Kind{projectgraph.KindSource, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindPipeline, projectgraph.KindConnection, projectgraph.KindDashboard}) {
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -1361,7 +1361,7 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	if !ok {
 		return projectnavigation.Catalog{}
 	}
-	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindProject, projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
+	page, err := listCatalogAll(r.Context(), h.Catalog, principal.ID, principal.DevBypass, []projectgraph.Kind{projectgraph.KindModel, projectgraph.KindSemanticModel, projectgraph.KindDashboard})
 	if err != nil {
 		return projectnavigation.Catalog{}
 	}
@@ -1372,8 +1372,6 @@ func (h *BrowserHandler) navigationCatalog(r *stdhttp.Request) projectnavigation
 	out := projectnavigation.Catalog{Project: projectnavigation.Project{ID: projectID.String(), Title: projectID.String()}}
 	for _, item := range page.Items {
 		switch item.Ref.Kind {
-		case projectgraph.KindProject:
-			out.Project = projectnavigation.Project{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description}
 		case projectgraph.KindModel:
 			out.Models = append(out.Models, projectnavigation.Model{ID: item.Ref.ID.String(), Title: browserFirstNonEmpty(item.DisplayName, item.Name, item.Ref.ID.String()), Description: item.Description})
 		case projectgraph.KindSemanticModel:

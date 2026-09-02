@@ -85,7 +85,7 @@ func TestDevelopmentBypassReturnsExactActiveGraphWithEmptyGrants(t *testing.T) {
 		t.Fatalf("development search = %#v, %v", search, err)
 	}
 	listed, err := service.List(ctx, ListRequest{PrincipalID: "dev", DevAuthBypass: true, Limit: 20})
-	if err != nil || len(listed.Items) != 4 {
+	if err != nil || len(listed.Items) != 3 {
 		t.Fatalf("development list = %#v, %v", listed, err)
 	}
 	resolved, err := service.Resolve(ctx, "dev", Ref{ID: "model_orders", Kind: projectgraph.KindModel}, access.CapabilityResourceRead, true)
@@ -146,7 +146,7 @@ func TestResolveRejectsUnknownAndWrongKindIDs(t *testing.T) {
 	}
 }
 
-func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
+func TestCatalogNeverExposesInternalProjectRoot(t *testing.T) {
 	project, err := projectgraph.NewProjectGraph([]projectgraph.Resource{
 		{ID: "project_demo", Kind: projectgraph.KindProject, Name: "demo"},
 	}, nil)
@@ -168,8 +168,8 @@ func TestResolveProjectRequiresProjectAdminCapability(t *testing.T) {
 		t.Fatal(err)
 	}
 	service, _ := NewService(testLeases{lease: testLease{snapshot: snapshot}}, testSubjects{byPrincipal: map[string][]access.SubjectRef{principal.ID: {principal}}})
-	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityProjectAdmin, false); err != nil {
-		t.Fatalf("project admin resolve = %v", err)
+	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityProjectAdmin, false); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("project admin resolve = %v, want not found", err)
 	}
 	if _, err := service.Resolve(context.Background(), principal.ID, Ref{ID: project.ProjectID(), Kind: projectgraph.KindProject}, access.CapabilityResourceRead, false); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("project read resolve = %v, want not found", err)

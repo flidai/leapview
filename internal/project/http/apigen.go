@@ -14,7 +14,6 @@ import (
 // A provider may implement it without turning the compile-time Project
 // capability into a synthetic runtime module.
 type Handler interface {
-	GetProject(stdhttp.ResponseWriter, *stdhttp.Request, string)
 	Search(stdhttp.ResponseWriter, *stdhttp.Request, projectapi.SearchParams)
 }
 
@@ -38,10 +37,6 @@ type APIGenDispatcher struct {
 
 func NewAPIGenDispatcher(handler Handler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
-}
-
-func (d *APIGenDispatcher) GetProject(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
-	d.handler.GetProject(w, r, project)
 }
 
 type APIGenTransportErrorResponder struct {

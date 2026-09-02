@@ -14,14 +14,9 @@
       "summary": "The immutable serving identity of this LeapView installation."
     },
     {
-      "slug": "projects",
-      "title": "Projects",
-      "summary": "Active project graph assertion."
-    },
-    {
       "slug": "releases",
       "title": "Releases",
-      "summary": "Immutable project releases and artifacts."
+      "summary": "Immutable analytics releases and artifacts."
     },
     {
       "slug": "current-user",
@@ -31,7 +26,7 @@
     {
       "slug": "search",
       "title": "Search",
-      "summary": "Progressive project-graph discovery across governed resources."
+      "summary": "Progressive analytics-graph discovery across governed resources."
     },
     {
       "slug": "bi",
@@ -46,7 +41,7 @@
     {
       "slug": "deployments",
       "title": "Deployments",
-      "summary": "Atomic project release deployment."
+      "summary": "Atomic analytics release deployment."
     },
     {
       "slug": "refresh-runs",
@@ -66,7 +61,7 @@
     {
       "slug": "audit",
       "title": "Audit",
-      "summary": "Project audit event discovery."
+      "summary": "Analytics audit event discovery."
     },
     {
       "slug": "publications",
@@ -76,7 +71,7 @@
     {
       "slug": "managed-data",
       "title": "Managed Data",
-      "summary": "Project-global managed-data revisions and uploads."
+      "summary": "Instance-bound managed-data revisions and uploads."
     }
   ]
 }

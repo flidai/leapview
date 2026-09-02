@@ -9,7 +9,6 @@ namespace LeapViewAPI.Project;
 scalar SearchQuery extends string;
 
 enum SearchKind {
-  project,
   connection,
   source,
   modelKind: "model",

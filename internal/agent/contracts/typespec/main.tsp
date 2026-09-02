@@ -90,7 +90,6 @@ model DashboardVisualQueryResult {
 }
 
 enum CatalogType {
-  project: "project",
   connection: "connection",
   sourceResource: "source",
   modelResource: "model",

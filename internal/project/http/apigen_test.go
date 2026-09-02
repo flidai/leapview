@@ -12,21 +12,6 @@ import (
 var _ projectgen.GenOperationDispatcher = (*APIGenDispatcher)(nil)
 var _ projectgen.GenTransportErrorResponder = APIGenTransportErrorResponder{}
 
-func TestAPIGenDispatcherForwardsProjectIdentityToCapabilityHandler(t *testing.T) {
-	handler := &recordingProjectHandler{}
-	dispatcher := NewAPIGenDispatcher(handler)
-
-	dispatcher.GetProject(
-		httptest.NewRecorder(),
-		httptest.NewRequest(stdhttp.MethodGet, "/api/v1/projects/project:analytics", nil),
-		"project:analytics",
-	)
-
-	if handler.project != "project:analytics" {
-		t.Fatalf("project = %q, want project:analytics", handler.project)
-	}
-}
-
 func TestAPIGenDispatcherConvertsGeneratedSearchParamsToProjectContract(t *testing.T) {
 	handler := &recordingProjectHandler{}
 	dispatcher := NewAPIGenDispatcher(handler)
@@ -42,12 +27,7 @@ func TestAPIGenDispatcherConvertsGeneratedSearchParamsToProjectContract(t *testi
 }
 
 type recordingProjectHandler struct {
-	project string
-	search  projectapi.SearchParams
-}
-
-func (h *recordingProjectHandler) GetProject(_ stdhttp.ResponseWriter, _ *stdhttp.Request, project string) {
-	h.project = project
+	search projectapi.SearchParams
 }
 
 func (h *recordingProjectHandler) Search(_ stdhttp.ResponseWriter, _ *stdhttp.Request, params projectapi.SearchParams) {
