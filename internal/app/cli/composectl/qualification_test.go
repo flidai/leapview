@@ -308,6 +308,67 @@ func TestQualificationProjectDataCapabilitiesAreReadOnly(t *testing.T) {
 	}
 }
 
+func TestConfigureQualificationPrincipalsBindRuntimeUUIDs(t *testing.T) {
+	projectDir := filepath.Join(t.TempDir(), "project")
+	grantDir := filepath.Join(projectDir, "access")
+	require.NoError(t, os.MkdirAll(grantDir, 0o700))
+	projectPath := filepath.Join(projectDir, "leapview.yaml")
+	require.NoError(t, os.WriteFile(projectPath, []byte("apiVersion: leapview.dev/v1\n"), 0o600))
+	authorGrantPath := filepath.Join(grantDir, "qualification-author-admin.yaml")
+	reviewerGrantPath := filepath.Join(grantDir, "qualification-reviewer-admin.yaml")
+	require.NoError(t, os.WriteFile(authorGrantPath, []byte("spec:\n  subject:\n    principalId: "+qualificationAuthorPrincipalPlaceholder+"\n"), 0o600))
+	require.NoError(t, os.WriteFile(reviewerGrantPath, []byte("spec:\n  subject:\n    principalId: "+qualificationReviewerPrincipalPlaceholder+"\n"), 0o600))
+
+	const authorPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000776"
+	const reviewerPrincipalID = "0198f2c0-7c7a-7f00-8a11-000000000777"
+	require.NoError(t, configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID))
+	authorContents, err := os.ReadFile(authorGrantPath)
+	require.NoError(t, err)
+	reviewerContents, err := os.ReadFile(reviewerGrantPath)
+	require.NoError(t, err)
+	require.Contains(t, string(authorContents), "principalId: "+authorPrincipalID)
+	require.Contains(t, string(reviewerContents), "principalId: "+reviewerPrincipalID)
+	require.NotContains(t, string(authorContents), qualificationAuthorPrincipalPlaceholder)
+	require.NotContains(t, string(reviewerContents), qualificationReviewerPrincipalPlaceholder)
+
+	if err := configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID); err == nil {
+		t.Fatal("already-bound qualification principal grants were accepted")
+	}
+}
+
+func TestConfigureQualificationPrincipalGrantRejectsInvalidIdentityAndFixture(t *testing.T) {
+	projectDir := t.TempDir()
+	projectPath := filepath.Join(projectDir, "leapview.yaml")
+	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, "not-a-uuid"); err == nil {
+		t.Fatal("non-UUID qualification principal was accepted")
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(projectDir, "access"), 0o700))
+	require.NoError(t, os.WriteFile(filepath.Join(projectDir, "access", "qualification-reviewer-admin.yaml"), []byte("spec: {}\n"), 0o600))
+	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, "0198f2c0-7c7a-7f00-8a11-000000000778"); err == nil {
+		t.Fatal("qualification fixture without exact principal placeholder was accepted")
+	}
+}
+
+func TestQualificationEvaluationProjectCarriesRuntimeIdentityPlaceholders(t *testing.T) {
+	root := filepath.Join("..", "..", "..", "..")
+	for _, fixture := range []struct {
+		name        string
+		placeholder string
+	}{
+		{name: "qualification-author-admin.yaml", placeholder: qualificationAuthorPrincipalPlaceholder},
+		{name: "qualification-reviewer-admin.yaml", placeholder: qualificationReviewerPrincipalPlaceholder},
+	} {
+		contents, err := os.ReadFile(filepath.Join(root, "evaluation", "project", "access", fixture.name))
+		require.NoError(t, err)
+		if count := bytes.Count(contents, []byte("principalId: "+fixture.placeholder)); count != 1 {
+			t.Fatalf("%s principal placeholder count = %d, want 1", fixture.name, count)
+		}
+		if bytes.Contains(contents, []byte("principalId: email_")) {
+			t.Fatalf("%s retained a SQLite-derived principal identity", fixture.name)
+		}
+	}
+}
+
 func TestQualificationLoopbackRequestUsesProductionAllowedHost(t *testing.T) {
 	request, err := newQualificationLoopbackRequest(
 		t.Context(),

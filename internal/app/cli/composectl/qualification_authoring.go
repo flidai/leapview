@@ -22,8 +22,7 @@ import (
 const qualificationBrowserImage = "mcr.microsoft.com/playwright:v1.61.1-noble"
 
 const (
-	qualificationReviewerEmail       = "authoring-reviewer@qualification.invalid"
-	qualificationReviewerPrincipalID = "email_6f53ef0fb859d8d683ad4bb70d2e693b"
+	qualificationReviewerEmail = "authoring-reviewer@qualification.invalid"
 )
 
 type qualificationAuthoringOptions struct {
@@ -293,15 +292,24 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	ctx = phases.Begin(rootContext, "reviewer provisioning", 10*time.Minute)
 
-	var authenticated struct {
+	var administrator struct {
 		Authenticated bool `json:"authenticated"`
+		Principal     struct {
+			Id string `json:"id"`
+		} `json:"principal"`
 	}
 	if err := browserWorker.CallContext(ctx, "signInAdministrator", map[string]string{
 		"email":             credentials.Email,
 		"temporaryPassword": credentials.TemporaryPassword,
 		"password":          credentials.QualificationPassword,
-	}, &authenticated, nil); err != nil {
+	}, &administrator, nil); err != nil {
 		return report, err
+	}
+	if !administrator.Authenticated || administrator.Principal.Id == "" {
+		return report, fmt.Errorf("administrator sign-in returned no durable principal")
+	}
+	var authenticated struct {
+		Authenticated bool `json:"authenticated"`
 	}
 	var reviewer struct {
 		Principal struct {
@@ -312,7 +320,6 @@ func (c *Controller) runQualificationAuthoring(
 	if err := browserWorker.CallContext(ctx, "createReviewer", map[string]string{
 		"email":       qualificationReviewerEmail,
 		"displayName": "Authoring Qualification Reviewer",
-		"principalId": qualificationReviewerPrincipalID,
 	}, &reviewer, nil); err != nil {
 		return report, err
 	}
@@ -368,6 +375,8 @@ func (c *Controller) runQualificationAuthoring(
 		"--network", "host",
 		"--volume", certificateFile+":/run/certs/caddy-root.crt:ro",
 		"--env", "QUALIFICATION_KEYRING_PASSWORD",
+		"--env", qualificationAuthorPrincipalEnv+"="+administrator.Principal.Id,
+		"--env", qualificationReviewerPrincipalEnv+"="+reviewer.Principal.Id,
 		"--env", "SSL_CERT_FILE=/run/certs/caddy-root.crt",
 		clientImage,
 		"dbus-run-session", "--",

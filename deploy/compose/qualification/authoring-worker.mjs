@@ -88,7 +88,18 @@ const methods = {
       params.temporaryPassword,
       params.password,
     )
-    return { authenticated: true }
+    const principalResponse = await administratorContext.request.get(
+      new URL('/api/v1/me', baseURL).href,
+      { headers: { accept: 'application/json' } },
+    )
+    if (!principalResponse.ok()) {
+      throw new Error(`resolve administrator principal returned HTTP ${principalResponse.status()}`)
+    }
+    const principal = await principalResponse.json()
+    if (typeof principal?.id !== 'string' || !principal.id.trim()) {
+      throw new Error('resolve administrator principal returned no durable ID')
+    }
+    return { authenticated: true, principal: { id: principal.id.trim() } }
   },
 
   async issueAdministratorToken(params) {
@@ -122,8 +133,22 @@ const methods = {
     if (!temporaryPassword?.trim()) {
       throw new Error(`create reviewer ${params.email} returned no temporary password`)
     }
+    const principalsResponse = await administratorContext.request.get(
+      new URL(`/api/v1/principals?email=${encodeURIComponent(params.email)}`, baseURL).href,
+      { headers: { accept: 'application/json' } },
+    )
+    if (!principalsResponse.ok()) {
+      throw new Error(`resolve reviewer ${params.email} returned HTTP ${principalsResponse.status()}`)
+    }
+    const principals = await principalsResponse.json()
+    const matches = Array.isArray(principals?.items)
+      ? principals.items.filter((principal) => principal?.email === params.email)
+      : []
+    if (matches.length !== 1 || typeof matches[0]?.id !== 'string' || !matches[0].id.trim()) {
+      throw new Error(`resolve reviewer ${params.email} returned ${matches.length} principals`)
+    }
     return {
-      principal: { id: params.principalId },
+      principal: { id: matches[0].id.trim() },
       temporaryPassword: temporaryPassword.trim(),
     }
   },

@@ -9,10 +9,19 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 
 	"github.com/creachadair/jrpc2"
 	"github.com/creachadair/jrpc2/handler"
+	"github.com/google/uuid"
+)
+
+const (
+	qualificationAuthorPrincipalEnv           = "QUALIFICATION_AUTHOR_PRINCIPAL_ID"
+	qualificationAuthorPrincipalPlaceholder   = "0198f2c0-7c7a-7f00-8a11-00000000f649"
+	qualificationReviewerPrincipalEnv         = "QUALIFICATION_REVIEWER_PRINCIPAL_ID"
+	qualificationReviewerPrincipalPlaceholder = "0198f2c0-7c7a-7f00-8a11-00000000f650"
 )
 
 type QualificationClientWorkerOptions struct {
@@ -133,6 +142,9 @@ func (c *Controller) RunQualificationClientWorker(
 	if options.Target == "" || options.Project == "" || options.KeyringPassword == "" {
 		return fmt.Errorf("qualification client worker requires target, project, and keyring password")
 	}
+	if err := configureQualificationPrincipals(options.Project, os.Getenv(qualificationAuthorPrincipalEnv), os.Getenv(qualificationReviewerPrincipalEnv)); err != nil {
+		return err
+	}
 	runtimeDir, err := os.MkdirTemp("", "leapview-qualification-keyring-*")
 	if err != nil {
 		return err
@@ -206,6 +218,38 @@ func (c *Controller) RunQualificationClientWorker(
 		return fmt.Errorf("qualification client worker: %w", err)
 	}
 	return ctx.Err()
+}
+
+func configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID string) error {
+	if err := configureQualificationPrincipalGrant(projectPath, "qualification-author-admin.yaml", qualificationAuthorPrincipalPlaceholder, authorPrincipalID); err != nil {
+		return fmt.Errorf("configure qualification author: %w", err)
+	}
+	if err := configureQualificationPrincipalGrant(projectPath, "qualification-reviewer-admin.yaml", qualificationReviewerPrincipalPlaceholder, reviewerPrincipalID); err != nil {
+		return fmt.Errorf("configure qualification reviewer: %w", err)
+	}
+	return nil
+}
+
+func configureQualificationPrincipalGrant(projectPath, grantName, placeholderID, principalID string) error {
+	principalID = strings.TrimSpace(principalID)
+	parsed, err := uuid.Parse(principalID)
+	if err != nil || parsed == uuid.Nil || parsed.String() != principalID {
+		return fmt.Errorf("principal id is not a canonical UUID")
+	}
+	grantPath := filepath.Join(filepath.Dir(projectPath), "access", grantName)
+	contents, err := os.ReadFile(grantPath)
+	if err != nil {
+		return fmt.Errorf("read principal grant: %w", err)
+	}
+	placeholder := []byte("principalId: " + placeholderID)
+	if bytes.Count(contents, placeholder) != 1 {
+		return fmt.Errorf("principal grant must contain exactly one identity placeholder")
+	}
+	contents = bytes.Replace(contents, placeholder, []byte("principalId: "+principalID), 1)
+	if err := os.WriteFile(grantPath, contents, 0o600); err != nil {
+		return fmt.Errorf("write principal grant: %w", err)
+	}
+	return nil
 }
 
 type qualificationOutputWriteCloser struct{ io.Writer }
