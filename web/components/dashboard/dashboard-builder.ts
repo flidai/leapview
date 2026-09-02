@@ -3514,12 +3514,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
             : html`<div class="inspector-panel" role="tabpanel" aria-label=${visual ? 'Format visual' : 'Format page'}>
                 ${visual ? this.renderVisualFormatControls(visual) : this.renderPageProperties(page)}
               </div>`}
-          <div class="properties-body">
-            <details class="secondary-details" ?open=${builder.diagnostics.some((item) => item.severity === 'error')}>
-              <summary>${builder.diagnostics.some((item) => item.severity === 'error') ? `Fix ${builder.diagnostics.filter((item) => item.severity === 'error').length} validation ${builder.diagnostics.filter((item) => item.severity === 'error').length === 1 ? 'error' : 'errors'}` : 'Diagnostics & source evidence'}</summary>
-              <div class="secondary-details-content">${this.renderDiagnostics(builder.diagnostics)}${this.renderEvidence(builder)}</div>
-            </details>
-          </div>
+          ${this.renderInspectorDetails(builder)}
         </div>
       </aside>
     `
@@ -3903,13 +3898,41 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     return html`<section class="property-group" aria-label="Validation diagnostics"><span class="property-label">Validation</span><div class="diagnostics">${diagnostics.map((item) => html`<div class="diagnostic ${item.severity}" role=${item.severity === 'error' ? 'alert' : 'status'}><strong>${item.code}</strong> ${item.message}</div>`)}</div></section>`
   }
 
-  private renderEvidence(builder: DashboardBuilderSignal) {
+  private renderInspectorDetails(builder: DashboardBuilderSignal) {
+    const diagnostics = builder.diagnostics ?? []
+    const evidence = this.sourceEvidenceLabel(builder)
+    if (diagnostics.length === 0 && !evidence) return nothing
+    const errorCount = diagnostics.filter((item) => item.severity === 'error').length
+    const validationLabel = errorCount > 0
+      ? `Fix ${errorCount} validation ${errorCount === 1 ? 'error' : 'errors'}`
+      : `Validation (${diagnostics.length})`
+    return html`
+      <div class="properties-body">
+        ${diagnostics.length > 0 ? html`
+          <details class="secondary-details validation-details" ?open=${errorCount > 0}>
+            <summary>${validationLabel}</summary>
+            <div class="secondary-details-content">${this.renderDiagnostics(diagnostics)}</div>
+          </details>
+        ` : nothing}
+        ${evidence ? html`
+          <details class="secondary-details technical-details">
+            <summary>Technical details</summary>
+            <div class="secondary-details-content">
+              <section class="property-group" aria-label="Dashboard source">
+                <span class="property-label">Source</span>
+                <div class="evidence"><span>${evidence}</span></div>
+              </section>
+            </div>
+          </details>
+        ` : nothing}
+      </div>
+    `
+  }
+
+  private sourceEvidenceLabel(builder: DashboardBuilderSignal): string {
     const evidence = builder.sourceEvidence
-    if (!evidence) return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>Not available</span></div></section>`
-    if (evidence.kind === 'project' && evidence.projectId && evidence.dashboardId && evidence.generationId) {
-      return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>project · ${evidence.projectId}/${evidence.dashboardId} · ${evidence.generationId}${evidence.path ? ` · ${evidence.path}` : ''}</span></div></section>`
-    }
-    return html`<section class="property-group" aria-label="Source evidence"><span class="property-label">Source evidence</span><div class="evidence"><span>Unavailable</span></div></section>`
+    if (!evidence?.projectId || !evidence.dashboardId || !evidence.generationId) return ''
+    return `${evidence.projectId}/${evidence.dashboardId} · ${evidence.generationId}${evidence.path ? ` · ${evidence.path}` : ''}`
   }
 
   private semanticCatalog(datasets: DashboardBuilderDatasetSignal[]): BuilderCatalogField[] {
