@@ -867,9 +867,72 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	if len(explorer.Explore.Models) != 1 || len(explorer.Explore.Datasets) != 1 || len(explorer.Explore.Fields) != 1 {
 		t.Fatalf("explore signal = %#v", explorer.Explore)
 	}
-	_, semanticExplorer, ok := h.dataExplorerSignals(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore?mode=explore&model=semantic:sales&dataset=orders", nil))
+	_, semanticExplorer, ok := h.dataExplorerSignals(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore?v=1&mode=explore&model=semantic:sales&dataset=orders&dimension=orders.status&filter=%7B%22field%22%3A%22orders.status%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22paid%22%5D%7D&sort=%7B%22field%22%3A%22orders.status%22%2C%22direction%22%3A%22asc%22%7D&limit=25", nil))
 	if !ok || projectsignals.ValueOrZero(semanticExplorer.Command.Mode) != "explore" || semanticExplorer.SelectedObject == nil || semanticExplorer.SelectedObject.ResourceID != "model:orders" {
 		t.Fatalf("semantic deep link = %#v", semanticExplorer)
+	}
+	if !reflect.DeepEqual(semanticExplorer.Explore.Command.Dimensions, []string{"orders.status"}) || len(semanticExplorer.Explore.Command.Filters) != 1 || len(semanticExplorer.Explore.Command.Sort) != 1 || semanticExplorer.Explore.Command.Limit != 25 {
+		t.Fatalf("semantic deep-link state = %#v", semanticExplorer.Explore.Command)
+	}
+}
+
+func TestDataExploreCommandFromQueryRoundTripsDurableState(t *testing.T) {
+	values, err := url.ParseQuery("v=1&mode=explore&model=semantic%3Asales&dataset=orders&dimension=orders.month&dimension=customers.state&metric=revenue&filter=%7B%22field%22%3A%22customers.state%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22CA%22%5D%7D&sort=%7B%22field%22%3A%22revenue%22%2C%22direction%22%3A%22desc%22%7D&time=%7B%22field%22%3A%22orders.created_at%22%2C%22grain%22%3A%22month%22%7D&limit=250")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := dataExploreCommandFromQuery(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if projectsignals.ValueOrZero(command.ModelID) != "semantic:sales" || projectsignals.ValueOrZero(command.DatasetID) != "orders" {
+		t.Fatalf("target = %q/%q", projectsignals.ValueOrZero(command.ModelID), projectsignals.ValueOrZero(command.DatasetID))
+	}
+	if !reflect.DeepEqual(command.Dimensions, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual(command.Metrics, []string{"revenue"}) {
+		t.Fatalf("fields = %#v / %#v", command.Dimensions, command.Metrics)
+	}
+	if len(command.Filters) != 1 || command.Filters[0].Field != "customers.state" || command.Filters[0].Values[0] != "CA" {
+		t.Fatalf("filters = %#v", command.Filters)
+	}
+	if len(command.Sort) != 1 || command.Sort[0].Field != "revenue" || command.Sort[0].Direction != "desc" {
+		t.Fatalf("sort = %#v", command.Sort)
+	}
+	if command.Time == nil || command.Time.Field != "orders.created_at" || command.Time.Grain != "month" || command.Limit != 250 {
+		t.Fatalf("time/limit = %#v / %d", command.Time, command.Limit)
+	}
+	if command.RequestSeq != 0 || command.ResetVersion != 0 {
+		t.Fatalf("runtime state leaked into URL command: %#v", command)
+	}
+}
+
+func TestDataExploreCommandFromQueryAcceptsLegacyAndRejectsMalformedState(t *testing.T) {
+	legacy, err := dataExploreCommandFromQuery(url.Values{"model": {"semantic:sales"}, "dataset": {"orders"}})
+	if err != nil || legacy.Limit != dataExplorerDefaultLimit || legacy.Dimensions == nil || legacy.Metrics == nil {
+		t.Fatalf("legacy query = %#v, %v", legacy, err)
+	}
+
+	tests := []url.Values{
+		{"v": {"2"}},
+		{"limit": {"0"}},
+		{"limit": {"1001"}},
+		{"filter": {`{"field":"status","operator":"equals","values":[],"unexpected":true}`}},
+		{"sort": {`{"field":"revenue","direction":"sideways"}`}},
+		{"time": {`{"field":"created_at","grain":"month"} trailing`}},
+	}
+	for _, values := range tests {
+		if command, err := dataExploreCommandFromQuery(values); err == nil {
+			t.Fatalf("query %#v accepted as %#v", values, command)
+		}
+	}
+}
+
+func TestDataExplorerSignalsRejectsMalformedQueryEscaping(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	if _, _, ok := (&BrowserHandler{}).dataExplorerSignals(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore?mode=explore&filter=%ZZ", nil)); ok {
+		t.Fatal("malformed query escaping was accepted")
+	}
+	if recorder.Code != stdhttp.StatusBadRequest {
+		t.Fatalf("status = %d, want %d", recorder.Code, stdhttp.StatusBadRequest)
 	}
 }
 
