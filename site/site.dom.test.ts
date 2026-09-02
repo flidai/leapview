@@ -855,7 +855,7 @@ test('getting started route directs users through the first learning path', asyn
     const apiGroup = sidebar.locator('details[data-site-docs-group="reference-api"]')
     expect(await apiGroup.count()).toBe(1)
     expect(await apiGroup.locator('a[href="/docs/api"]').getAttribute('href')).toBe('/docs/api')
-    expect(await apiGroup.locator('a[href="/docs/api/projects"]').count()).toBe(1)
+    expect(await apiGroup.locator('a[href="/docs/api/search"]').count()).toBe(1)
     const breadcrumb = page.getByRole('navigation', { name: 'Breadcrumb' })
     expect(await breadcrumb.getByRole('link', { name: 'Start here' }).getAttribute('href')).toBe('/docs/introduction')
     expect(await breadcrumb.getByRole('link', { name: 'Documentation' }).count()).toBe(0)
