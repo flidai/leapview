@@ -285,9 +285,9 @@ func isDeliveryAPIGenOperation(contract APIGenOperationContract) bool {
 
 // isBootstrapDeliveryAPIGenOperation is the exact delivery allowlist needed to
 // establish and resolve a plan before the target has an active generation.
-// It includes reviewer approval so the REST-token path can run before the
-// first generation; authoring credentials use the narrower allowlist below to
-// preserve separation of duties.
+// It includes reviewer approval so its dedicated REST-token path can run
+// before the first generation; authoring credentials use the narrower
+// allowlist below to preserve separation of duties.
 func isBootstrapDeliveryAPIGenOperation(operationID string) bool {
 	switch operationID {
 	case "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview",
@@ -318,12 +318,12 @@ func (a *APIGenAuthorizer) protectDelivery(operationID string, capability access
 }
 
 // protectDeliveryBootstrapAware admits the initial delivery commands through
-// the explicit pre-activation bootstrap decision. The opaque marker binds the
-// exact principal/project/capability for the downstream coordinator, which
-// rechecks the durable active-generation fence before committing publication.
-// The allowlisted delivery operations accept an exact-scope authoring
-// credential through this branch; source-control bootstrap operations have a
-// separate authoring path, while all other bootstrap requests remain
+// the explicit pre-activation bootstrap decision. The opaque markers bind the
+// exact principal/project/capability for downstream coordinators, which
+// recheck their durable active-generation and immutable-snapshot fences before
+// committing state. The allowlisted delivery operations accept an exact-scope
+// authoring credential through this branch; publication approval has its own
+// reviewer-only REST-token marker, while all other bootstrap requests remain
 // restricted to explicit REST API tokens by AuthorizeBootstrapRequest.
 func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, capability access.Capability, next http.Handler) http.Handler {
 	return a.module.Authenticate(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -355,7 +355,7 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 			// for its explicit allowlist. Its durable project/target/capability
 			// and platform-admin checks remain centralized in this validator; do
 			// not broaden the exception to other bootstrap operations.
-			if isAuthoringDeliveryBootstrapOperation(operationID) {
+			if operationID != "approveDeliveryPublicationApproval" && isAuthoringDeliveryBootstrapOperation(operationID) {
 				if credential, found := a.module.requestCredential(r); found && credential.Authoring != nil {
 					authorized, err := a.module.AuthorizeAuthoringBootstrapRequest(r.Context(), r, projectID.String(), capability)
 					if err != nil {
@@ -378,6 +378,36 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 					next.ServeHTTP(w, marked)
 					return
 				}
+			}
+			if operationID == "approveDeliveryPublicationApproval" {
+				// Approval is the sole fresh-target reviewer exception. It accepts
+				// only an explicitly PROJECT_ADMIN-attenuated bearer credential after
+				// the durable bootstrap decision has allowed this exact operation. Do
+				// not route it through the generic platform-admin bootstrap path.
+				if !decision.Allowed {
+					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+					return
+				}
+				authorized, err := a.module.AuthorizePublicationApprovalBootstrapRequest(r.Context(), r, projectID.String())
+				if err != nil {
+					a.module.logger.WarnContext(
+						r.Context(),
+						"generated API publication approval bootstrap credential authorization failed",
+						"operation", operationID,
+						"project", projectID,
+						"capability", capability,
+						"error", err,
+					)
+					http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
+					return
+				}
+				if !authorized {
+					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+					return
+				}
+				marked := r.WithContext(withPublicationApprovalBootstrapAuthorization(r.Context(), projectID, principal.ID))
+				next.ServeHTTP(w, marked)
+				return
 			}
 			if bearerToken(r) == "" {
 				http.Error(w, http.StatusText(http.StatusUnauthorized), http.StatusUnauthorized)

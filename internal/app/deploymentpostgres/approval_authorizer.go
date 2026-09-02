@@ -7,26 +7,44 @@ import (
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmodule "github.com/flidai/leapview/internal/access/module"
 	depauth "github.com/flidai/leapview/internal/deployment/postgres"
 )
 
-// AccessApprovalAuthorizer binds approval authorization to the active,
-// immutable Access capability projection and the process-bound delivery
-// target. It intentionally starts fail-closed: composition must install both
-// resolvers after the runtime host is ready before a production approval can
-// succeed.
+// AccessApprovalAuthorizer binds approval authorization to the process-owned
+// target and either the active immutable capability projection or, for the
+// first reviewer decision only, the exact candidate generation's immutable
+// policy. It starts fail-closed until composition installs those resolvers.
 type AccessApprovalAuthorizer struct {
-	TargetID              string
-	ResolveTarget         func(context.Context, string) (depauth.DeliveryTarget, error)
-	CurrentProject        func(context.Context) (string, error)
-	EffectiveCapabilities func(context.Context, string) ([]access.Capability, error)
+	TargetID                         string
+	ResolveTarget                    func(context.Context, string) (depauth.DeliveryTarget, error)
+	CurrentProject                   func(context.Context) (string, error)
+	EffectiveCapabilities            func(context.Context, string) ([]access.Capability, error)
+	CandidateCapabilities            func(context.Context, string, string) (string, string, []access.Capability, error)
+	bootstrapAuthorization           func(context.Context) (accessmodule.BootstrapAuthorization, bool)
+	publicationApprovalAuthorization func(context.Context) (accessmodule.PublicationApprovalBootstrapAuthorization, bool)
+}
+
+// SetCandidateResolver installs the immutable candidate-generation capability
+// lookup used by the fresh-target reviewer path. The resolver must return the
+// project bound to the exact generation as well as that generation's effective
+// capabilities for the reviewer principal.
+func (a *AccessApprovalAuthorizer) SetCandidateResolver(resolve func(context.Context, string, string) (string, string, []access.Capability, error)) {
+	if a == nil {
+		return
+	}
+	a.CandidateCapabilities = resolve
 }
 
 func NewAccessApprovalAuthorizer(targetID string, resolveTarget func(context.Context, string) (depauth.DeliveryTarget, error)) (*AccessApprovalAuthorizer, error) {
 	if strings.TrimSpace(targetID) == "" || resolveTarget == nil {
 		return nil, errors.New("approval authorizer target and resolver are required")
 	}
-	return &AccessApprovalAuthorizer{TargetID: targetID, ResolveTarget: resolveTarget}, nil
+	return &AccessApprovalAuthorizer{
+		TargetID: targetID, ResolveTarget: resolveTarget,
+		bootstrapAuthorization:           accessmodule.BootstrapAuthorizationFromContext,
+		publicationApprovalAuthorization: accessmodule.PublicationApprovalBootstrapAuthorizationFromContext,
+	}, nil
 }
 
 // SetResolvers installs active runtime and Access capability lookups. Passing
@@ -53,6 +71,33 @@ func (a *AccessApprovalAuthorizer) AuthorizeApproval(ctx context.Context, input 
 	if target.TargetID != a.TargetID || target.ProjectID == "" || target.Environment == "" {
 		return depauth.ErrApprovalUnauthorized
 	}
+	required := access.CapabilityProjectAdmin
+	if input.Action == depauth.ApprovalActionRequest {
+		required = access.CapabilityResourcePublish
+	}
+	if a.bootstrapAuthorization != nil {
+		if marker, marked := a.bootstrapAuthorization(ctx); marked {
+			if input.Action != depauth.ApprovalActionRequest || marker.ProjectID.String() != target.ProjectID || marker.PrincipalID != input.Actor.PrincipalID || marker.Capability != required {
+				return depauth.ErrApprovalUnauthorized
+			}
+			return nil
+		}
+	}
+	if a.publicationApprovalAuthorization != nil {
+		if marker, marked := a.publicationApprovalAuthorization(ctx); marked {
+			if input.Action != depauth.ApprovalActionApprove || marker.ProjectID.String() != target.ProjectID || marker.PrincipalID != input.Actor.PrincipalID || marker.Capability != access.CapabilityProjectAdmin || a.CandidateCapabilities == nil {
+				return depauth.ErrApprovalUnauthorized
+			}
+			project, environment, capabilities, err := a.CandidateCapabilities(ctx, input.Request.GenerationID, input.Actor.PrincipalID)
+			if err != nil {
+				return fmt.Errorf("%w: resolve candidate approval capabilities: %v", depauth.ErrApprovalUnauthorized, err)
+			}
+			if project != target.ProjectID || environment != target.Environment || !capabilityAllowed(capabilities, access.CapabilityProjectAdmin) {
+				return depauth.ErrApprovalUnauthorized
+			}
+			return nil
+		}
+	}
 	if a.CurrentProject == nil || a.EffectiveCapabilities == nil {
 		return depauth.ErrApprovalUnauthorized
 	}
@@ -63,10 +108,6 @@ func (a *AccessApprovalAuthorizer) AuthorizeApproval(ctx context.Context, input 
 	capabilities, err := a.EffectiveCapabilities(ctx, input.Actor.PrincipalID)
 	if err != nil {
 		return fmt.Errorf("%w: resolve effective capabilities: %v", depauth.ErrApprovalUnauthorized, err)
-	}
-	required := access.CapabilityProjectAdmin
-	if input.Action == depauth.ApprovalActionRequest {
-		required = access.CapabilityResourcePublish
 	}
 	if !capabilityAllowed(capabilities, required) {
 		return depauth.ErrApprovalUnauthorized

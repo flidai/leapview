@@ -271,6 +271,41 @@ func (m *Module) AuthorizeBootstrapRequest(ctx context.Context, r *http.Request,
 	return isAdmin && bootstrapTokenAllowsCapability(credential.Token.Capabilities, required), nil
 }
 
+// AuthorizePublicationApprovalBootstrapRequest validates only the credential
+// attenuation for the fresh-target approval ingress. A normal API token must
+// explicitly carry PROJECT_ADMIN. A CLI/workload credential must carry the
+// exact target, project, and PROJECT_ADMIN authoring scope. Neither path uses
+// durable platform administration: the downstream approval authorizer remains
+// responsible for loading the requested generation's immutable authorization
+// snapshot and proving that the principal is one of its project admins.
+func (m *Module) AuthorizePublicationApprovalBootstrapRequest(ctx context.Context, r *http.Request, projectID string) (bool, error) {
+	if m == nil || r == nil || bearerToken(r) == "" {
+		return false, nil
+	}
+	principal, ok := m.CurrentPrincipal(r)
+	if !ok || strings.TrimSpace(principal.ID) == "" {
+		return false, nil
+	}
+	credential, found := m.requestCredential(r)
+	if !found || credential.Principal.ID != principal.ID {
+		return false, nil
+	}
+	if credential.Authoring != nil {
+		authoring := *credential.Authoring
+		if err := validateAuthoringBootstrapCredential(credential, authoring, principal, projectID); err != nil {
+			return false, nil
+		}
+		if targetID := m.authoringInstanceID(); targetID != "" && authoring.Scope.TargetID != targetID {
+			return false, nil
+		}
+		return containsCapability(authoring.Scope.Capabilities, access.CapabilityProjectAdmin), nil
+	}
+	if credential.Token.ID == "" || credential.Token.Capabilities == nil || len(credential.Token.Capabilities) == 0 || credential.Token.PrincipalID != principal.ID {
+		return false, nil
+	}
+	return containsCapability(credential.Token.Capabilities, access.CapabilityProjectAdmin), nil
+}
+
 // bootstrapTokenAllowsCapability preserves the project-admin hierarchy used
 // by the canonical policy. A token explicitly scoped to PROJECT_ADMIN may
 // perform project-scoped resource operations during bootstrap; narrower
