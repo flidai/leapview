@@ -38,6 +38,7 @@ func TestCanonicalizeScalars(t *testing.T) {
 		{name: "decimal fractional", typeName: TypeDecimal, input: "9007199254740993.12500", want: "9007199254740993.125", wantNative: json.Number("9007199254740993.125")},
 		{name: "date", typeName: TypeDate, input: "2024-02-29", want: "2024-02-29", wantNative: "2024-02-29"},
 		{name: "timestamp UTC", typeName: TypeTimestamp, input: "2024-01-02T03:04:05.1200+02:30", want: "2024-01-02T00:34:05.12Z", wantNative: "2024-01-02T00:34:05.12Z"},
+		{name: "timestamp nanosecond precision", typeName: TypeTimestamp, input: "2024-01-02T03:04:05.123456789Z", want: "2024-01-02T03:04:05.123456789Z", wantNative: "2024-01-02T03:04:05.123456789Z"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -75,6 +76,13 @@ func TestCanonicalizeRejectsInvalidOrCrossTypeValues(t *testing.T) {
 		{name: "date timestamp", typeName: TypeDate, input: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
 		{name: "timestamp without zone", typeName: TypeTimestamp, input: "2024-01-02T03:04:05"},
 		{name: "leap second", typeName: TypeTimestamp, input: "2016-12-31T23:59:60Z"},
+		{name: "timestamp ten fractional zeroes", typeName: TypeTimestamp, input: "2024-01-02T03:04:05.1234567890Z"},
+		{name: "timestamp ten fractional digits one", typeName: TypeTimestamp, input: "2024-01-02T03:04:05.1234567891Z"},
+		{name: "timestamp ten fractional digits nine", typeName: TypeTimestamp, input: "2024-01-02T03:04:05.1234567899Z"},
+		{name: "timestamp comma fraction", typeName: TypeTimestamp, input: "2024-01-02T03:04:05,123Z"},
+		{name: "timestamp offset without colon", typeName: TypeTimestamp, input: "2024-01-02T03:04:05+0230"},
+		{name: "timestamp offset hour out of range", typeName: TypeTimestamp, input: "2024-01-02T03:04:05+24:00"},
+		{name: "timestamp offset minute out of range", typeName: TypeTimestamp, input: "2024-01-02T03:04:05+02:60"},
 		{name: "unsupported float type", typeName: Type("Float"), input: 1.5},
 	}
 	for _, tt := range tests {
@@ -83,6 +91,20 @@ func TestCanonicalizeRejectsInvalidOrCrossTypeValues(t *testing.T) {
 				t.Fatalf("Canonicalize(%q, %#v) accepted invalid value", tt.typeName, tt.input)
 			}
 		})
+	}
+}
+
+func TestEquivalentTimestampsCanonicalizeConsistently(t *testing.T) {
+	utc, err := Canonicalize(TypeTimestamp, "2024-01-02T03:04:05.123456789Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	offset, err := Canonicalize(TypeTimestamp, "2024-01-02T05:34:05.123456789+02:30")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if utc.Canonical() != offset.Canonical() || utc.Digest() != offset.Digest() {
+		t.Fatalf("equivalent timestamps produced different identities: %q and %q", utc.Canonical(), offset.Canonical())
 	}
 }
 

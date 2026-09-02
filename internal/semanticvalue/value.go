@@ -299,11 +299,85 @@ func canonicalTimestamp(input any) (string, error) {
 	if !ok {
 		return "", fmt.Errorf("value of type %T is not an RFC 3339 timestamp string", input)
 	}
+	if err := validateRFC3339Timestamp(value); err != nil {
+		return "", fmt.Errorf("value %q is not a strict RFC 3339 timestamp: %v", value, err)
+	}
 	parsed, err := time.Parse(time.RFC3339Nano, value)
 	if err != nil {
 		return "", fmt.Errorf("value %q is not an RFC 3339 timestamp", value)
 	}
 	return parsed.UTC().Format(time.RFC3339Nano), nil
+}
+
+func validateRFC3339Timestamp(value string) error {
+	if len(value) < len("2006-01-02T15:04:05Z") {
+		return errors.New("timestamp is too short")
+	}
+	for index := 0; index < len("2006-01-02T15:04:05"); index++ {
+		switch index {
+		case 4, 7:
+			if value[index] != '-' {
+				return errors.New("date components must use hyphens")
+			}
+		case 10:
+			if value[index] != 'T' {
+				return errors.New("date and time must use an uppercase T separator")
+			}
+		case 13, 16:
+			if value[index] != ':' {
+				return errors.New("time components must use colons")
+			}
+		default:
+			if !asciiDigit(value[index]) {
+				return errors.New("date and time components must contain only ASCII digits")
+			}
+		}
+	}
+
+	timezoneStart := len("2006-01-02T15:04:05")
+	if value[timezoneStart] == '.' {
+		fractionStart := timezoneStart + 1
+		timezoneStart = fractionStart
+		for timezoneStart < len(value) && asciiDigit(value[timezoneStart]) {
+			timezoneStart++
+		}
+		fractionDigits := timezoneStart - fractionStart
+		if fractionDigits == 0 {
+			return errors.New("fractional seconds require at least one digit")
+		}
+		if fractionDigits > 9 {
+			return errors.New("fractional seconds exceed nanosecond precision")
+		}
+	}
+
+	if timezoneStart >= len(value) {
+		return errors.New("timestamp requires a timezone")
+	}
+	if value[timezoneStart] == 'Z' {
+		if timezoneStart != len(value)-1 {
+			return errors.New("UTC designator must terminate the timestamp")
+		}
+		return nil
+	}
+	if len(value)-timezoneStart != len("+00:00") ||
+		(value[timezoneStart] != '+' && value[timezoneStart] != '-') ||
+		value[timezoneStart+3] != ':' ||
+		!asciiDigit(value[timezoneStart+1]) ||
+		!asciiDigit(value[timezoneStart+2]) ||
+		!asciiDigit(value[timezoneStart+4]) ||
+		!asciiDigit(value[timezoneStart+5]) {
+		return errors.New("timezone must be uppercase Z or a signed HH:MM offset")
+	}
+	offsetHour := 10*int(value[timezoneStart+1]-'0') + int(value[timezoneStart+2]-'0')
+	offsetMinute := 10*int(value[timezoneStart+4]-'0') + int(value[timezoneStart+5]-'0')
+	if offsetHour >= 24 || offsetMinute >= 60 {
+		return errors.New("timezone offset is outside the RFC 3339 range")
+	}
+	return nil
+}
+
+func asciiDigit(value byte) bool {
+	return value >= '0' && value <= '9'
 }
 
 // Set is an immutable homogeneous set sorted by canonical bytes.
