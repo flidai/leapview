@@ -7,7 +7,6 @@ package app
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -44,7 +43,6 @@ import (
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -105,15 +103,11 @@ func candidateApprovalCapabilities(
 	if compiled.ProjectID != state.ProjectID || compiled.ProjectDigest != state.ProjectDigest {
 		return "", "", nil, errors.New("candidate approval compiled project differs from its generation")
 	}
-	var policy projectmanifest.AccessPolicy
-	if err := json.Unmarshal([]byte(state.AccessPolicyJSON), &policy); err != nil {
-		return "", "", nil, fmt.Errorf("decode candidate approval policy: %w", err)
-	}
 	identity, err := projectgraph.NewServingIdentity(state.ProjectID, string(state.Environment), string(state.ID))
 	if err != nil {
 		return "", "", nil, fmt.Errorf("bind candidate approval identity: %w", err)
 	}
-	snapshot, err := projectmanifest.CompileAuthorizationSnapshot(identity, compiled.Graph, policy)
+	snapshot, err := projectmodule.CompileAuthorizationSnapshotJSON(identity, compiled.Graph, state.AccessPolicyJSON)
 	if err != nil {
 		return "", "", nil, fmt.Errorf("compile candidate approval policy: %w", err)
 	}
@@ -740,18 +734,19 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	deploymentConfig := deploymentmodule.Config{
 		Persistence: graph.DeploymentPersistence, Production: true, Protected: true,
 		InstanceID: instanceID, InstanceEnvironment: string(environment),
-		CanonicalOrigin:           publicURL,
-		CandidateConnections:      candidateConnections,
-		CandidateRuntime:          runtimeHost,
-		CandidateArtifactRecovery: release,
-		CandidateRuntimeLifecycle: runtimeHost,
-		CandidateAdmission:        candidatePreparationAdmitter(workloadBundle.Controller, workloadmodule.ControlRequest("candidate.prepare")),
-		RuntimeVersion:            runtimeVersion,
-		NativeDeliveryMutations:   nativeDelivery,
-		NativeDeliveryReader:      nativeDeliveryReader,
-		ProjectClaims:             graph.DeploymentRepository,
-		CandidateSources:          nativeProjectSource.CandidateSourceReader,
-		BindClaimedProject:        bindClaimedProject(runtimeHost, environment),
+		CanonicalOrigin:             publicURL,
+		CandidateConnections:        candidateConnections,
+		CandidateRuntime:            runtimeHost,
+		CandidateArtifactRecovery:   release,
+		CandidateRuntimeLifecycle:   runtimeHost,
+		CandidateAdmission:          candidatePreparationAdmitter(workloadBundle.Controller, workloadmodule.ControlRequest("candidate.prepare")),
+		NativeMetadataSchemaForPool: ducklake.MetadataSchemaForPool,
+		RuntimeVersion:              runtimeVersion,
+		NativeDeliveryMutations:     nativeDelivery,
+		NativeDeliveryReader:        nativeDeliveryReader,
+		ProjectClaims:               graph.DeploymentRepository,
+		CandidateSources:            nativeProjectSource.CandidateSourceReader,
+		BindClaimedProject:          bindClaimedProject(runtimeHost, environment),
 		CurrentApprovalActor: func(r *http.Request) (deploymentmodule.ApprovalActor, bool) {
 			evidence, ok := accessBundle.Module.CurrentCredentialEvidence(r)
 			if !ok {

@@ -32,6 +32,7 @@ type Module struct {
 	candidateArtifacts        release.CandidateArtifactPreparer
 	candidateArtifactRecovery release.CandidateArtifactRecovery
 	candidateAdmission        CandidatePreparationAdmitter
+	nativeMetadataSchema      func(string) string
 	deliveryCandidateBuilder  func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
 	logger                    *slog.Logger
 	jobs                      JobConfig
@@ -212,6 +213,10 @@ type Config struct {
 	// preparation so preview cannot recompile mutable authoring state.
 	CandidateArtifactRecovery release.CandidateArtifactRecovery
 	CandidateAdmission        CandidatePreparationAdmitter
+	// NativeMetadataSchemaForPool derives Analytics' deterministic DuckLake
+	// metadata namespace without coupling Deployment to an Analytics adapter.
+	// Native candidate preview preparation fails closed when it is absent.
+	NativeMetadataSchemaForPool func(string) string
 	// DeliveryCandidateBuilder is the canonical plan -> build -> seal adapter.
 	// When configured, candidate synchronization delegates to it after the
 	// immutable source snapshot is committed. Production composition sets
@@ -521,6 +526,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
 		candidateArtifacts: config.CandidateArtifacts, candidateArtifactRecovery: config.CandidateArtifactRecovery,
 		candidateAdmission:       config.CandidateAdmission,
+		nativeMetadataSchema:     config.NativeMetadataSchemaForPool,
 		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
 		candidateSourceAudit:     config.CandidateSourceAudit,
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,

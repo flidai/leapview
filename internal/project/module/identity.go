@@ -26,9 +26,9 @@ func EnsureIdentity(ctx context.Context, repository project.IdentityRepository, 
 	return repository.EnsureIdentity(ctx, id)
 }
 
-// NewSQLiteIdentityRepository keeps the development/test adapter behind the
-// project module boundary. Production composition injects the PostgreSQL
-// implementation and never selects this path.
+// NewSQLiteIdentityRepository keeps the explicitly local development/test
+// adapter behind Project's module boundary. Production composition injects
+// the PostgreSQL implementation and never selects this constructor.
 func NewSQLiteIdentityRepository(database *sql.DB) project.IdentityRepository {
 	if database == nil {
 		return nil

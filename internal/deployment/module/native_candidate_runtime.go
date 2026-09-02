@@ -15,7 +15,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/extension"
@@ -99,6 +98,9 @@ func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, 
 	if m.candidateAdmission == nil {
 		return deployment.ErrCandidateUnavailable
 	}
+	if m.nativeMetadataSchema == nil {
+		return deployment.ErrCandidateUnavailable
+	}
 	candidateID = strings.TrimSpace(candidateID)
 	principalID = strings.TrimSpace(principalID)
 	if candidateID == "" || principalID == "" {
@@ -177,7 +179,7 @@ func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, 
 	if err != nil {
 		return nativeCandidateRuntimeUnavailable(err.Error())
 	}
-	if evidence.CandidateID != candidate.CandidateID || evidence.AttemptID != attempt.AttemptID || evidence.PhysicalPoolID != seal.PhysicalPoolID || evidence.CatalogID != seal.CatalogID || evidence.SnapshotID != seal.DuckLakeSnapshotID || evidence.ObjectRoot != seal.ObjectRoot || evidence.RelationNamespace != seal.RelationNamespace || evidence.RelationManifestDigest != seal.RelationManifestDigest || evidence.ClosureDigest != seal.ClosureDigest || evidence.Digest != candidate.QualificationDigest || evidence.Runtime.SnapshotID != seal.DuckLakeSnapshotID || evidence.Runtime.CatalogType != "postgres" || evidence.Runtime.DataPath != seal.ObjectRoot || evidence.Runtime.MetadataSchema != ducklake.MetadataSchemaForPool(seal.PhysicalPoolID) || evidence.Runtime.CompatibilityDigest != seal.CompatibilityDigest || evidence.Runtime.DuckDBRuntime != seal.DuckDBVersion || evidence.Runtime.DuckLakeExtension != seal.DuckLakeExtensionVersion || evidence.Runtime.CatalogFormat != seal.DuckLakeSpecVersion || evidence.Runtime.CatalogSchemaVersion != seal.CatalogSchemaVersion {
+	if evidence.CandidateID != candidate.CandidateID || evidence.AttemptID != attempt.AttemptID || evidence.PhysicalPoolID != seal.PhysicalPoolID || evidence.CatalogID != seal.CatalogID || evidence.SnapshotID != seal.DuckLakeSnapshotID || evidence.ObjectRoot != seal.ObjectRoot || evidence.RelationNamespace != seal.RelationNamespace || evidence.RelationManifestDigest != seal.RelationManifestDigest || evidence.ClosureDigest != seal.ClosureDigest || evidence.Digest != candidate.QualificationDigest || evidence.Runtime.SnapshotID != seal.DuckLakeSnapshotID || evidence.Runtime.CatalogType != "postgres" || evidence.Runtime.DataPath != seal.ObjectRoot || evidence.Runtime.MetadataSchema != m.nativeMetadataSchema(seal.PhysicalPoolID) || evidence.Runtime.CompatibilityDigest != seal.CompatibilityDigest || evidence.Runtime.DuckDBRuntime != seal.DuckDBVersion || evidence.Runtime.DuckLakeExtension != seal.DuckLakeExtensionVersion || evidence.Runtime.CatalogFormat != seal.DuckLakeSpecVersion || evidence.Runtime.CatalogSchemaVersion != seal.CatalogSchemaVersion {
 		return nativeCandidateRuntimeUnavailable("candidate qualification evidence identity is inconsistent")
 	}
 	gate := evidence.Gates

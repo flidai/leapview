@@ -1469,7 +1469,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 				},
 				ActivationPrincipal: actor,
 			}
-			if err := reconcileActivatedDashboardPublications(publishCtx, store.SQLDB(), servingStateRepo, activated); err != nil {
+			if err := reconcileSQLiteActivatedDashboardPublications(publishCtx, store.SQLDB(), servingStateRepo, activated); err != nil {
 				logDashboardPublicationReconciliationFailure(slog.Default(), err, request.Generation.ServingStateID)
 			}
 			return sealedDelivery.DeliveryPublicationByID(publishCtx, request.Publication.ID)
@@ -1507,7 +1507,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 				},
 				ActivationPrincipal: actor,
 			}
-			if err := reconcileActivatedDashboardPublications(rollbackCtx, store.SQLDB(), servingStateRepo, activated); err != nil {
+			if err := reconcileSQLiteActivatedDashboardPublications(rollbackCtx, store.SQLDB(), servingStateRepo, activated); err != nil {
 				logDashboardPublicationReconciliationFailure(slog.Default(), err, request.Request.GenerationID)
 			}
 			return sealedDelivery.DeliveryPublicationByID(rollbackCtx, request.Request.ID)

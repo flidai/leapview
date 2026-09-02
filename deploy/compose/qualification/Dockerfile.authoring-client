@@ -11,12 +11,12 @@ RUN apt-get update && \
 
 RUN groupadd --system author && \
     useradd --system --gid author --home-dir /home/author --create-home --shell /bin/bash author && \
-    mkdir -p /workspace && \
-    cp -a /app/evaluation /workspace/evaluation && \
-    chown -R author:author /home/author /workspace
+    mkdir -p /qualification && \
+    cp -a /app/evaluation /qualification/evaluation && \
+    chown -R author:author /home/author /qualification
 
 USER author
-WORKDIR /workspace
+WORKDIR /qualification
 
 ENV HOME=/home/author \
     LEAPVIEW_HOME=/home/author/.local/share/leapview

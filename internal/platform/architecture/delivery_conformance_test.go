@@ -140,8 +140,9 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	postgresBuild := string(postgresBuildBytes)
+	normalizedPostgresBuild := strings.Join(strings.Fields(postgresBuild), " ")
 	for _, required := range []string{"NewPostgresSealedFactory", "RequireSealedCatalog: true", "ResolveSealedActiveState", "NativeDeliveryMutations: nativeDelivery", "NativeDeliveryReader:    nativeDeliveryReader"} {
-		if !strings.Contains(postgresBuild, required) {
+		if !strings.Contains(normalizedPostgresBuild, strings.Join(strings.Fields(required), " ")) {
 			t.Errorf("native PostgreSQL composition missing FAI-575 target contract %q", required)
 		}
 	}

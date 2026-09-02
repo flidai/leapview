@@ -363,6 +363,13 @@ type NativeDeliveryReader interface {
 	OperatorSnapshot(context.Context, string) (deploymentpostgres.DeliveryOperatorSnapshot, error)
 }
 
+// IsNativeDeliveryMissing translates the concrete PostgreSQL reader's bounded
+// absence/invalid-input vocabulary without exposing its adapter package to
+// application routing.
+func IsNativeDeliveryMissing(err error) bool {
+	return errors.Is(err, deploymentpostgres.ErrNotFound) || errors.Is(err, deploymentpostgres.ErrInvalid)
+}
+
 // NativeActivationRepository is the fence/CAS activation surface.  Both
 // forms accept a caller-owned transaction where supplied; neither crosses
 // into a DuckLake transaction.

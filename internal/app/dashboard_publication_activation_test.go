@@ -21,7 +21,7 @@ func (f dashboardPublicationServingStateFixture) ByID(_ context.Context, id serv
 	return f.state, nil
 }
 
-func TestReconcileActivatedDashboardPublicationsProjectsCompiledDefinitions(t *testing.T) {
+func TestReconcileSQLiteActivatedDashboardPublicationsProjectsCompiledDefinitions(t *testing.T) {
 	store := testStore(t)
 	state := servingstate.State{
 		ID:                        "generation_publication",
@@ -39,7 +39,7 @@ func TestReconcileActivatedDashboardPublicationsProjectsCompiledDefinitions(t *t
 		ActivationPrincipal: "principal:publisher",
 	}
 	states := dashboardPublicationServingStateFixture{state: state}
-	if err := reconcileActivatedDashboardPublications(t.Context(), store.SQLDB(), states, activated); err != nil {
+	if err := reconcileSQLiteActivatedDashboardPublications(t.Context(), store.SQLDB(), states, activated); err != nil {
 		t.Fatalf("reconcile activated dashboard publications: %v", err)
 	}
 
@@ -57,7 +57,7 @@ func TestReconcileActivatedDashboardPublicationsProjectsCompiledDefinitions(t *t
 	state.DashboardPublicationsJSON = `{}`
 	states.state = state
 	activated.ActivationPrincipal = "principal:publisher-2"
-	if err := reconcileActivatedDashboardPublications(t.Context(), store.SQLDB(), states, activated); err != nil {
+	if err := reconcileSQLiteActivatedDashboardPublications(t.Context(), store.SQLDB(), states, activated); err != nil {
 		t.Fatalf("disable removed dashboard publication: %v", err)
 	}
 	publication, err = publicationsqlite.NewRepository(store.SQLDB()).Get(t.Context(), projectgraph.ResourceID("project:publication"), "website")

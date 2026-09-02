@@ -1,12 +1,5 @@
 package app
 
-import (
-	"context"
-	"database/sql"
-
-	"github.com/flidai/leapview/internal/deployment"
-)
-
 import dashboardpublication "github.com/flidai/leapview/internal/app/dashboardpublication"
 
 // dashboardPublicationServingStateReader and dashboardPublicationActivationReconciler
@@ -21,19 +14,4 @@ type NativeDashboardPublicationReconciler = dashboardpublication.NativeDashboard
 
 func NewNativeDashboardPublicationReconciler(config NativeDashboardPublicationActivationConfig) (*NativeDashboardPublicationReconciler, error) {
 	return dashboardpublication.NewNativeDashboardPublicationReconciler(config)
-}
-
-type sqliteDashboardPublicationReconciler struct {
-	database *sql.DB
-}
-
-func newSQLiteDashboardPublicationReconciler(database *sql.DB) dashboardPublicationActivationReconciler {
-	if database == nil {
-		return nil
-	}
-	return &sqliteDashboardPublicationReconciler{database: database}
-}
-
-func (r *sqliteDashboardPublicationReconciler) Reconcile(ctx context.Context, states dashboardPublicationServingStateReader, activated deployment.Deployment) error {
-	return reconcileActivatedDashboardPublications(ctx, r.database, states, activated)
 }

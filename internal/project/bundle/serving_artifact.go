@@ -26,18 +26,18 @@ type ServingArtifactLoader struct {
 	Objects ArtifactObjectReader
 }
 
-func (l ServingArtifactLoader) LoadCompiled(ctx context.Context, artifact servingstate.Artifact, workspace string) (CompiledProjectArtifact, error) {
+func (l ServingArtifactLoader) LoadCompiled(ctx context.Context, artifact servingstate.Artifact, extractDir string) (CompiledProjectArtifact, error) {
 	if artifact.Path != "" {
 		if artifact.Locator != "" {
 			return CompiledProjectArtifact{}, fmt.Errorf("serving artifact cannot have both a filesystem path and native locator")
 		}
-		if artifact.Path != strings.TrimSpace(artifact.Path) || strings.TrimSpace(workspace) == "" {
+		if artifact.Path != strings.TrimSpace(artifact.Path) || strings.TrimSpace(extractDir) == "" {
 			return CompiledProjectArtifact{}, fmt.Errorf("serving artifact filesystem input is not canonical")
 		}
-		if err := ExtractArtifact(artifact.Path, workspace); err != nil {
+		if err := ExtractArtifact(artifact.Path, extractDir); err != nil {
 			return CompiledProjectArtifact{}, err
 		}
-		compiled, _, err := LoadCompiledProjectArtifact(workspace)
+		compiled, _, err := LoadCompiledProjectArtifact(extractDir)
 		return compiled, err
 	}
 	if l.Objects == nil {
