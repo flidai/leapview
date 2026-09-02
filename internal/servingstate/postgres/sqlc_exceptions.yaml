@@ -1,4 +1,4 @@
-# ADR-0016 exception inventory. Keep entries exact; static SQL is never allowlisted.
+# ADR-0018 exception inventory. Keep entries exact; static SQL is never allowlisted.
 entries:
   - file: internal/servingstate/postgres/repository.go
     line: 284

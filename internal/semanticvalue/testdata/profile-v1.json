@@ -1,0 +1,41 @@
+{
+  "profile": "leapview.semantic-access/v1",
+  "cases": [
+    {
+      "name": "string-nfc",
+      "type": "String",
+      "input": "Cafe\u0301",
+      "canonical": "Café"
+    },
+    {
+      "name": "boolean",
+      "type": "Boolean",
+      "input": true,
+      "canonical": "true"
+    },
+    {
+      "name": "integer",
+      "type": "Integer",
+      "input": -9223372036854775808,
+      "canonical": "-9223372036854775808"
+    },
+    {
+      "name": "decimal-fixed",
+      "type": "Decimal",
+      "input": "9007199254740993.12500",
+      "canonical": "9007199254740993.125"
+    },
+    {
+      "name": "date",
+      "type": "Date",
+      "input": "2024-02-29",
+      "canonical": "2024-02-29"
+    },
+    {
+      "name": "timestamp-utc",
+      "type": "Timestamp",
+      "input": "2024-01-02T03:04:05.1200+02:30",
+      "canonical": "2024-01-02T00:34:05.12Z"
+    }
+  ]
+}

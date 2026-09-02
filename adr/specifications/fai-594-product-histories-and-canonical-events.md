@@ -4,7 +4,7 @@ Status: accepted mutable companion specification
 
 Date: 2026-08-31
 
-Governing decision: [ADR-0016](../0016-adopt-a-postgresql-centered-target-data-architecture.md)
+Governing decision: [ADR-0018](../0018-adopt-a-postgresql-centered-target-data-architecture.md)
 
 Related: [FAI-592 canonical Watermill envelope](watermill-canonical-envelope.md),
 [FAI-593 Watermill Router/subscriber runtime](watermill-router-runtime.md), and
@@ -14,7 +14,7 @@ FAI-596 (the narrow dashboard publication relay removal)
 
 This specification records which rows are product history, which rows are
 canonical asynchronous-event or delivery state, and which rows are merely
-mutable operational state. It is a companion to ADR-0016, not a replacement
+mutable operational state. It is a companion to ADR-0018, not a replacement
 for capability schemas or a new retention policy. The owning capability remains
 the authority for writes, reads, authorization, identity, ordering, cursors,
 holds, and retention of its product history.

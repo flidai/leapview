@@ -10,7 +10,7 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
-Superseded by: [ADR-0016](0016-adopt-a-postgresql-centered-target-data-architecture.md),
+Superseded by: [ADR-0018](0018-adopt-a-postgresql-centered-target-data-architecture.md),
 private file-backed catalog and catalog-object mechanics only; the
 candidate-isolation, immutable-publication, exact-identity, fencing, lease,
 retention, and reconciliation decisions remain accepted

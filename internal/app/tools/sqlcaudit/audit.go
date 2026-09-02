@@ -4,7 +4,7 @@
 // string literals are handled by the syntax tree, while sqlc output in the
 // repository's generated-package layout and test files are excluded before
 // inspection. A source comment is never sufficient to claim generated status.
-// sqlc_exceptions.yaml contains only the narrowly scoped ADR-0016 exceptions
+// sqlc_exceptions.yaml contains only the narrowly scoped ADR-0018 exceptions
 // (DDL, dynamic identifiers/result shapes, or analyzer-incompatible protocol
 // statements). Static handwritten SQL is never allowlisted: every static call
 // must be converted to a generated sqlc query.

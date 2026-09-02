@@ -1,4 +1,4 @@
-export const DESKTOP_UPDATE_ELECTRON_MAJOR = 43;
+export const DESKTOP_UPDATE_ELECTRON_MAJOR = 44;
 export const DESKTOP_UPDATE_ORIGIN = "https://releases.leapview.dev";
 export const DESKTOP_UPDATE_CHANNEL = "stable";
 

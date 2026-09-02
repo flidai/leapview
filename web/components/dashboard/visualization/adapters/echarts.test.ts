@@ -556,7 +556,11 @@ test('ECharts renders labels inside colored cartesian marks in outlined white', 
     colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', surface: '#0d1117', data: ['#1f6feb'] },
   } as any
   const darkOption = echartsOption(envelope, darkContext) as any
-  expect(darkOption.series[0].label.color).toBe('#fff')
+  expect(darkOption.series[0].label).toMatchObject({
+    color: '#fff',
+    textBorderColor: 'rgba(255, 255, 255, 0.45)',
+    textBorderWidth: 1,
+  })
 
   const orangeDarkContext = {
     ...darkContext,
@@ -948,6 +952,16 @@ test('ECharts honors proportional presentation and hierarchy/network layout', ()
       expect(option.series[0].labelLayout).toEqual({ hideOverlap: false })
     } else {
       expect(option.series[0].label).toMatchObject({ color: '#fff', textBorderColor: 'rgba(0, 0, 0, 0.55)', textBorderWidth: 2 })
+      const darkOption = echartsOption(envelope, {
+        ...defaultRendererContext,
+        theme: 'dark',
+        colors: { ...defaultRendererContext.colors, foreground: '#f0f6fc', surface: '#0d1117' },
+      }) as any
+      expect(darkOption.series[0].label).toMatchObject({
+        color: '#fff',
+        textBorderColor: 'rgba(255, 255, 255, 0.45)',
+        textBorderWidth: 1,
+      })
     }
   }
 })

@@ -4,7 +4,7 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 
 const braceExpansion = require("brace-expansion");
-const minimatch = require("minimatch");
+const minimatch = require("minimatch-legacy");
 const modernMinimatch = require("minimatch-modern");
 
 test("preserves brace-expansion callable and named APIs", () => {

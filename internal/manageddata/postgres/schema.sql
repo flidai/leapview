@@ -1,4 +1,4 @@
--- Clean-slate managed-data control authority (ADR-0016).
+-- Clean-slate managed-data control authority (ADR-0018).
 -- Object storage owns bytes and DuckLake owns analytical metadata.  These
 -- tables contain only identity, admission, serving, lease and reconciliation
 -- evidence.  The schema intentionally does not recreate legacy SQLite names.

@@ -162,6 +162,7 @@ func TestEmitYAMLIncludesTypedCommandMetadata(t *testing.T) {
 
 	content, err := EmitYAML(doc, Options{})
 	require.NoError(t, err)
+	require.NotContains(t, string(content), "!!float")
 	var raw map[string]any
 	require.NoError(t, yaml.Unmarshal(content, &raw))
 	operation := raw["paths"].(map[string]any)["/workspaces/{workspace}/bindings/{binding}"].(map[string]any)["delete"].(map[string]any)
@@ -169,7 +170,7 @@ func TestEmitYAMLIncludesTypedCommandMetadata(t *testing.T) {
 		"owner": "CommandAPI.Access",
 		"audit": map[string]any{"required": true, "success_action": "binding.deleted", "guarantee": "transactional"},
 		"failures": []any{map[string]any{
-			"kind": "conflict", "status_code": float64(409), "code": "BINDING_CONFLICT", "public_detail": "The binding conflicts with its current state.",
+			"kind": "conflict", "status_code": 409, "code": "BINDING_CONFLICT", "public_detail": "The binding conflicts with its current state.",
 		}},
 		"additional_exposures": []any{"ui"},
 		"ui":                   map[string]any{"action_id": "workspace.access.binding.delete"},

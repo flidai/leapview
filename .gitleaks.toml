@@ -9,6 +9,7 @@ stopwords = [
   "replace-with-at-least-32-characters",
   "s3DeletionLeaseKey",
   "prefixed/blobs",
+  "allowed_regions_2",
 ]
 
 [[allowlists]]

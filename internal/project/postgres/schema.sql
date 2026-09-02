@@ -1,4 +1,4 @@
--- Clean-slate project identity authority (ADR-0016).
+-- Clean-slate project identity authority (ADR-0018).
 --
 -- The compiler remains authoritative for the project graph.  This schema
 -- stores only the durable project identity and the bounded authored metadata

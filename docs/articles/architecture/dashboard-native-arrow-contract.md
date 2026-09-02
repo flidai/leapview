@@ -154,17 +154,80 @@ headers before the body is committed:
 | `X-LeapView-Arrow-Contract` | `native-v1` |
 | `Trailer` | Declares `X-Next-Cursor` |
 
-The server executes a `limit + 1` pagination probe under the same governed
-query. At most `limit` rows are written. If the probe row exists and the stream
-closes successfully, the server writes an opaque `X-Next-Cursor` trailer. The
-cursor identifies the next offset, is bound to the normalized query scope and
-serving snapshot, and expires according to the dashboard cursor policy. A
-client must not parse it. A cursor for a different query scope is invalid; a
-cursor for a different or unavailable serving snapshot is a conflict.
+### Version negotiation
 
-The final page has no `X-Next-Cursor` trailer value. The trailer name is still
-declared so clients can consume both cases uniformly. Probe rows count toward
-physical execution and result budgets even though they are not emitted.
+The legacy and native contracts share the dashboard visual query route but are
+separate, explicitly negotiated representations. A native request supplies
+both:
+
+```http
+Accept: application/vnd.apache.arrow.stream
+X-LeapView-Arrow-Contract: native-v1
+```
+
+Legacy behavior remains unchanged: an unversioned Arrow request receives the
+all-string schema, the existing initial `X-Next-Cursor` header semantics, and
+the existing exact-or-capped `AvailableRows` behavior.
+
+A successful native response echoes
+`X-LeapView-Arrow-Contract: native-v1`. An Arrow request without the contract
+marker remains on the legacy all-string representation. A marker without the
+Arrow media type, or any unknown contract version, fails closed with `406 Not
+Acceptable`; the server must never silently downgrade it. This foundation does
+not activate the native representation in the production dashboard handler.
+Activation remains a separate adoption change.
+
+### Native-v1 page model
+
+The default page limit is 100 rows. The accepted range is 1 through 1,000 rows,
+inclusive. Native interactive pagination emits at most 10,000 cumulative rows
+for one cursor chain. The server executes a `limit + 1` probe under the same
+governed query while there is capacity below that cumulative cap, emits at most
+`limit` rows, and uses only the probe row to decide whether continuation exists.
+It does not calculate or promise an exact total and does not expose
+`AvailableRows`. Clients that require exact or capped totals remain on the
+legacy contract.
+
+The first request has offset zero. A middle page resumes from the offset in a
+validated native cursor. If the probe row exists and the IPC writer closes
+successfully, the server writes an opaque `X-Next-Cursor` trailer. The final
+page, an empty result, and a page that reaches the 10,000-row cap have no trailer
+value. Exactly `limit` physical rows is a final page; `limit + 1` physical rows
+is the first condition that permits a cursor. At offsets where a full requested
+page would cross the cumulative cap, the emitted/query limit is reduced to the
+remaining allowance and no continuation probe is executed beyond the cap.
+
+The trailer name is declared before commitment on every successful native
+response so clients can consume final and continuing pages uniformly. Initial
+headers and Arrow schema metadata never contain the native cursor. Probe rows
+count toward physical execution and result budgets even though they are not
+emitted. The empty response remains a complete native schema with zero rows and
+no cursor.
+
+### Dashboard-native cursor domain
+
+Native-v1 uses the signed `d3` cursor domain. Legacy dashboard `d1` cursors and
+semantic-query `q1` cursors are not interchangeable with `d3`; every decoder
+rejects cursors from the other domains. A native cursor expires after 15 minutes
+and binds:
+
+- the `native-v1` contract version;
+- dashboard, page, and visual identity;
+- server-computed canonical digests of normalized filters, selections, and
+  effective sorting;
+- the requested page limit;
+- the final governed effective-policy identity;
+- the serving snapshot;
+- the next offset, cumulative rows consumed, and 10,000-row cap; and
+- its expiry.
+
+The signed payload contains a digest of the request/governance scope rather
+than raw filters, selections, sort definitions, policies, principals, SQL,
+source identifiers, or physical connection details. Governance and
+authorization are recomputed for each page before the cursor binding is
+accepted. A changed contract, identity, normalized request state, limit, or
+policy identity is an invalid cursor (`400`). A different serving snapshot is a
+cursor conflict (`409`). Clients treat the entire cursor as opaque.
 
 ## Error and commit boundary
 
@@ -177,6 +240,7 @@ headers. Existing resource-concealment rules remain authoritative.
 | Authentication failure | `401` problem response |
 | Authorization failure | `403`, or `404` where the route conceals inaccessible resources |
 | Malformed or wrong-scope cursor | `400` problem response |
+| Expired, wrong-contract, changed-filter, changed-selection, changed-sort, changed-limit, or changed-policy cursor | `400` problem response |
 | Cursor serving-snapshot mismatch | `409` problem response |
 | Row or byte budget failure | `422` problem response |
 | Admission rejection or resource exhaustion | `503` problem response, including `Retry-After` where applicable |
@@ -199,6 +263,56 @@ query, IPC, cancellation, or transport failure terminates the stream. There is
 no JSON suffix or fallback, no successful completion signal, and no
 `X-Next-Cursor` trailer value. Consumers must treat an unreadable or incomplete
 IPC stream as failed even if the HTTP status was already `200`.
+
+Cursor publication is ordered after successful IPC close. Cancellation,
+timeout, row/byte budget failure, admission failure, partial write, IPC write
+failure, or IPC close failure therefore cannot publish a successful cursor.
+
+## Direct-stream resource policy
+
+The unrouted FAI-602 lifecycle foundation defines bounded synchronous delivery
+for a future native-v1 route. It does not activate native dashboard serving.
+
+- Native streaming is disabled unless the analytical pool has at least two
+  connections. The initial limit is one stream per instance, one per principal,
+  and one per project. Future limits remain no greater than `pool size - 1` and
+  approximately 25 percent of the analytical pool, preserving at least one
+  ordinary-query connection.
+- Stream-capacity acquisition is non-queuing and occurs before workload
+  admission, serving-generation leasing, or database acquisition. A request
+  already holding another workload permit is rejected rather than nested or
+  queued.
+- The workload admission occupancy starts at its grant and spans planning,
+  execution, synchronous IPC delivery, IPC close, cursor publication decision,
+  and terminal audit recording.
+- The absolute lifetime is 30 seconds from admission grant. An earlier request,
+  workload, shutdown, or serving deadline wins. Every socket write has a
+  five-second no-progress deadline; forward progress refreshes only the idle
+  deadline and never extends the absolute lifetime.
+- Cleanup is synchronous and ordered: close the Arrow reader, release the
+  database connection, release workload admission, release native-stream
+  capacity, and finally release the serving-generation lease. The hard cleanup
+  bound is two seconds, with a one-second p95 target.
+- One result budget is established before lifecycle acquisition and remains
+  shared through governed execution and transport delivery. The governed Arrow
+  producer charges the physical schema, record bytes, emitted rows, and the
+  `limit + 1` probe exactly once. The streaming boundary charges only
+  server-added contract metadata and actual IPC bytes accepted by the
+  transport. A failure after commitment aborts the stream and suppresses the
+  successful cursor trailer.
+- Terminal observations record emitted and probe rows, IPC bytes, connection
+  hold time, admission occupancy, timeout reason, cancellation cleanup latency,
+  cleanup-bound violations, and post-commit aborts. Success is recorded only
+  after clean IPC close and a successful cursor publication decision, while all
+  lifecycle resources remain owned.
+
+The operation executes with the analytical lease context so nested governed
+execution reuses the pinned connection instead of acquiring a second one. The
+foundation requires the lease and Arrow reader to release synchronously. Its
+cleanup interval begins when cancellation, timeout, or operation failure starts
+and includes operation unwind and ordered resource release. It measures
+cleanup-bound violations but does not add a second database pool, asynchronous
+buffering, or a production routing path.
 
 ## Security and governance invariants
 
@@ -258,9 +372,8 @@ No first-party browser component currently decodes this API Arrow stream, but
 API and generated-client consumers may rely on the current string/null
 projection. Therefore:
 
-- native delivery requires an explicit, documented request opt-in or a new
-  versioned route; merely sending the Arrow media type is not sufficient to
-  silently reinterpret the existing stream;
+- native delivery requires the two-header `native-v1` opt-in above; merely
+  sending the Arrow media type continues to select the existing legacy stream;
 - the response must return `X-LeapView-Arrow-Contract: native-v1`, and clients
   must reject unknown contract versions;
 - clients must support native Arrow types, validity bitmaps, dictionaries, and
@@ -268,6 +381,7 @@ projection. Therefore:
 - generated clients continue to prefer JSON unless native Arrow support is
   explicitly selected.
 
-The precise opt-in mechanism is an implementation decision for the production
-migration issue. It must be added to TypeSpec/OpenAPI before activation. FAI-541
-locks response semantics; it does not add a production negotiation path.
+The request marker must be added to TypeSpec/OpenAPI when production activation
+is proposed. This contract foundation intentionally remains unrouted so the
+generated and live endpoint cannot claim support before native serving,
+resource policy, and client qualification are complete.

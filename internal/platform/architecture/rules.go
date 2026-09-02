@@ -32,18 +32,19 @@ type PackageRule struct {
 // import as a synchronous contract. Adapter and module packages are never
 // made public merely because their capability has an allowed edge.
 var PublicContractPrefixes = map[string][]string{
-	"access":       {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
-	"agent":        {"internal/agent/api", "internal/agent/ui/signals"},
-	"analytics":    {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogseal", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
-	"dashboard":    {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/document", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
-	"manageddata":  {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
-	"project":      {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/contracts", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
-	"release":      {"internal/release"},
-	"deployment":   {"internal/deployment"},
-	"servingstate": {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
-	"refresh":      {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/presentation", "internal/refresh/run", "internal/refresh/schedule"},
-	"runtimehost":  {"internal/runtimehost"},
-	"workload":     {"internal/workload"},
+	"access":        {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
+	"agent":         {"internal/agent/api", "internal/agent/ui/signals"},
+	"analytics":     {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogseal", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
+	"dashboard":     {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/document", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
+	"manageddata":   {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
+	"project":       {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/contracts", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
+	"release":       {"internal/release"},
+	"semanticvalue": {"internal/semanticvalue"},
+	"deployment":    {"internal/deployment"},
+	"servingstate":  {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
+	"refresh":       {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/presentation", "internal/refresh/run", "internal/refresh/schedule"},
+	"runtimehost":   {"internal/runtimehost"},
+	"workload":      {"internal/workload"},
 }
 
 // DeferredPackageEdges are the explicit ownership exceptions retained for
@@ -167,21 +168,22 @@ func IsDeferredPackageEdge(sourcePath, targetCapability string) bool {
 }
 
 var CapabilityDependencies = map[string]map[string]bool{
-	"project":      {"analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
-	"access":       {},
-	"manageddata":  {"servingstate": true},
-	"analytics":    {"access": true, "manageddata": true, "servingstate": true},
-	"dashboard":    {"access": true, "analytics": true, "runtimehost": true, "workload": true},
-	"agent":        {"access": true, "analytics": true, "dashboard": true, "project": true},
-	"admin":        {"access": true, "agent": true, "analytics": true, "dashboard": true},
-	"release":      {"access": true, "project": true, "servingstate": true, "analytics": true},
-	"deployment":   {"access": true, "project": true, "release": true, "servingstate": true, "manageddata": true, "runtimehost": true, "analytics": true},
-	"servingstate": {"access": true, "workload": true},
-	"refresh":      {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
-	"runtimehost":  {"manageddata": true, "servingstate": true},
-	"lineage":      {"project": true},
-	"workload":     {},
-	"platform":     {},
+	"project":       {"analytics": true, "dashboard": true, "access": true, "refresh": true, "servingstate": true},
+	"access":        {},
+	"manageddata":   {"servingstate": true},
+	"analytics":     {"access": true, "manageddata": true, "semanticvalue": true, "servingstate": true},
+	"dashboard":     {"access": true, "analytics": true, "runtimehost": true, "workload": true},
+	"agent":         {"access": true, "analytics": true, "dashboard": true, "project": true},
+	"admin":         {"access": true, "agent": true, "analytics": true, "dashboard": true},
+	"release":       {"access": true, "project": true, "servingstate": true, "analytics": true},
+	"deployment":    {"access": true, "project": true, "release": true, "servingstate": true, "manageddata": true, "runtimehost": true, "analytics": true},
+	"servingstate":  {"access": true, "workload": true},
+	"refresh":       {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
+	"runtimehost":   {"manageddata": true, "servingstate": true},
+	"lineage":       {"project": true},
+	"workload":      {},
+	"semanticvalue": {},
+	"platform":      {},
 }
 
 func IsPublicContractImport(capability, packagePath string) bool {
@@ -243,6 +245,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "pkg/strictjson", Capability: "platform", Layer: LayerPlatform},
 	{Prefix: "pkg/arrowresult", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "pkg/workload", Capability: "workload", Layer: LayerContract},
+	{Prefix: "internal/semanticvalue", Capability: "semanticvalue", Layer: LayerContract},
 	{Prefix: "internal/project/graph", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/contracts", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/project/catalog", Capability: "project", Layer: LayerContract},

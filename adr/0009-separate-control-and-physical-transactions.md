@@ -10,7 +10,7 @@ Deciders: LeapView maintainers
 
 Supersedes: none
 
-Superseded by: [ADR-0016](0016-adopt-a-postgresql-centered-target-data-architecture.md),
+Superseded by: [ADR-0018](0018-adopt-a-postgresql-centered-target-data-architecture.md),
 control-store selection only; the separation and cross-store reconciliation
 decision remains accepted
 

@@ -32,14 +32,14 @@ type goFile struct {
 var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
-	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "platform": {},
+	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "semanticvalue": {}, "platform": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
 	"app": {}, "platform": {},
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
-	"runtimehost": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
+	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
@@ -141,6 +141,20 @@ func TestArchitectureOwnershipUsesRootTaxonomy(t *testing.T) {
 		if rule.Capability == "api" || rule.Capability == "ui" {
 			t.Errorf("%s retains synthetic %q ownership instead of its physical app, platform, or capability owner", rule.Prefix, rule.Capability)
 		}
+	}
+}
+
+func TestSemanticValueIsAPublishedAnalyticsDependency(t *testing.T) {
+	source, sourceOK := ClassifyPackage("internal/analytics/model")
+	target, targetOK := ClassifyPackage("internal/semanticvalue")
+	if !sourceOK || !targetOK {
+		t.Fatalf("classify analytics/model=%v semanticvalue=%v", sourceOK, targetOK)
+	}
+	if target.Capability != "semanticvalue" || target.Layer != LayerContract {
+		t.Fatalf("semanticvalue classification = %#v, want semanticvalue contract", target)
+	}
+	if violation := CapabilityImportViolation("internal/analytics/model", source, "internal/semanticvalue", target); violation != "" {
+		t.Fatalf("analytics/model -> semanticvalue violation = %q, want published contract", violation)
 	}
 }
 
@@ -2429,8 +2443,8 @@ func TestProductionContainerContractExists(t *testing.T) {
 	}
 	text := string(dockerfile)
 	for _, want := range []string{
-		"FROM node:24-bookworm@sha256:",
-		"FROM golang:1.25.14-bookworm@sha256:",
+		"FROM node:26-bookworm@sha256:",
+		"FROM golang:1.27.0-bookworm@sha256:",
 		"AS go-deps",
 		"FROM go-deps AS sourcegen",
 		"COPY --from=node /usr/local/bin/node /usr/local/bin/node",
@@ -2442,7 +2456,7 @@ func TestProductionContainerContractExists(t *testing.T) {
 		"go run ./internal/app/tools/schemadocgen",
 		"go run ./internal/app/tools/openapidocgen",
 		"go run ./internal/app/tools/docsitegen",
-		"FROM oven/bun:1.3.14@sha256:",
+		"FROM oven/bun:1.4.0@sha256:",
 		"COPY --from=go-deps /usr/local/go/bin/gofmt /usr/local/bin/gofmt",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
@@ -2644,19 +2658,19 @@ func TestPublicSiteProductionContainerContractExists(t *testing.T) {
 	}
 	text := string(dockerfile)
 	for _, want := range []string{
-		"FROM node:24-bookworm@sha256:",
-		"FROM golang:1.25.14-bookworm@sha256:",
+		"FROM node:26-bookworm@sha256:",
+		"FROM golang:1.27.0-bookworm@sha256:",
 		"./scripts/generate_build_sources.sh",
 		"go run -tags=duckdb_arrow ./internal/app/tools/ducklakeprepare",
 		"go run -tags=duckdb_arrow ./internal/app/tools/visualdocgen",
-		"FROM oven/bun:1.3.14@sha256:",
+		"FROM oven/bun:1.4.0@sha256:",
 		"COPY --from=sourcegen /src/api/gen ./api/gen",
 		"COPY --from=sourcegen /src/api/visualization ./api/visualization",
 		"COPY --from=sourcegen /src/web/generated ./web/generated",
 		"RUN bun install --frozen-lockfile --no-cache",
 		"bun scripts/generate_visualization_validator.ts",
 		"bun run build:site",
-		"FROM golang:1.25.14-bookworm@sha256:",
+		"FROM golang:1.27.0-bookworm@sha256:",
 		"CGO_ENABLED=0 go build -trimpath",
 		"./cmd/leapview-site",
 		"FROM gcr.io/distroless/static-debian12:nonroot@sha256:",

@@ -91,7 +91,7 @@ prepare config receives its short-lived database URI through an environment
 variable; credentials and sqlc Cloud are not used. The audit enforces zero
 static handwritten PostgreSQL SQL: every static `Exec`, `Query`, or `QueryRow`
 call must be a generated sqlc method. Dynamic SQL is allowed only for a
-narrowly justified ADR-0016 exception, marked adjacent to the call or recorded
+narrowly justified ADR-0018 exception, marked adjacent to the call or recorded
 in an exact capability inventory with rationale and verification.
 
 Use `task docs:check` and `task config:check` to validate generated output. `task generated:check` detects drift in the public snapshots. CI verifies deterministic build-only inputs and shares them with downstream jobs.

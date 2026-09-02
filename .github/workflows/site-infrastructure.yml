@@ -40,7 +40,7 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
 
       - name: Fetch production infrastructure secrets
-        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
           method: "oidc"
           identity-id: "7e92da75-ac4f-49f2-8924-4561c3547902"
@@ -150,7 +150,7 @@ jobs:
           ref: ${{ needs.plan.outputs.revision }}
 
       - name: Fetch production infrastructure secrets
-        uses: Infisical/secrets-action@77ab1f4ccd183a543cb5b42435fbd181189f4995 # v1.0.16
+        uses: Infisical/secrets-action@6cd3f7c0e4cc0d2395ee4ef414eb6eeb5d3e73db # v1.0.17
         with:
           method: "oidc"
           identity-id: "7e92da75-ac4f-49f2-8924-4561c3547902"

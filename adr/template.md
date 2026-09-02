@@ -10,6 +10,8 @@ Deciders: responsible team or names
 
 Supersedes: ADR-NNNN or none
 
+Amends: ADR-NNNN with the amended boundary, or none
+
 Related: issue, pull request, specification, or none
 
 ## Context and problem statement

@@ -62,8 +62,12 @@ func PatchOnce(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPa
 }
 
 func PatchAndWait(w http.ResponseWriter, r *http.Request, patch pagestream.SignalPatch) {
-	if err := PatchOnce(w, r, patch); err != nil {
+	if _, err := EnsureClientID(w, r); err != nil {
 		return
 	}
-	<-r.Context().Done()
+	updates := pagestream.NewSignalStream(w, r)
+	if err := updates.Patch(patch); err != nil {
+		return
+	}
+	updates.Wait(r.Context())
 }

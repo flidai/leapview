@@ -1,4 +1,4 @@
--- Durable, immutable lineage graph authority (ADR-0016 / FAI-568).
+-- Durable, immutable lineage graph authority (ADR-0018 / FAI-568).
 --
 -- This is a capability-owned schema.  It is deliberately independent from
 -- the control-plane baseline so conformance tests (and a future deployment

@@ -621,7 +621,7 @@ func (h Handler) patchAndWait(w nethttp.ResponseWriter, r *nethttp.Request, patc
 	if err := updates.Patch(patch); err != nil {
 		return
 	}
-	<-r.Context().Done()
+	updates.Wait(r.Context())
 }
 
 func (h Handler) layout(r *nethttp.Request) webpage.Provider {

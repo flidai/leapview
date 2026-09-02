@@ -1,4 +1,4 @@
--- Clean-slate PostgreSQL physical-pool authority (ADR-0016).
+-- Clean-slate PostgreSQL physical-pool authority (ADR-0018).
 --
 -- DuckLake remains authoritative for table and object membership.  This
 -- capability stores only the stable, non-secret namespace identity and

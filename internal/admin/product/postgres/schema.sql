@@ -1,4 +1,4 @@
--- Clean-slate admin product identity authority (ADR-0016).
+-- Clean-slate admin product identity authority (ADR-0018).
 -- Product identity is mutable through revision-guarded writes; logo bytes are
 -- intentionally external to this capability and only their validated metadata
 -- is persisted here.

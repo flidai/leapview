@@ -116,8 +116,13 @@ export function hierarchyOption(envelope: VisualizationEnvelope, context: Render
     common.label = {
       ...(common.label ?? {}),
       color: '#fff',
-      textBorderColor: 'rgba(0, 0, 0, 0.55)',
-      textBorderWidth: 2,
+      ...(context.theme === 'light' ? {
+        textBorderColor: 'rgba(0, 0, 0, 0.55)',
+        textBorderWidth: 2,
+      } : {
+        textBorderColor: 'rgba(255, 255, 255, 0.45)',
+        textBorderWidth: 1,
+      }),
     }
   }
   if (spec.mark === 'sunburst') {
