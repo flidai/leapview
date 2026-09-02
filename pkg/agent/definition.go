@@ -192,8 +192,10 @@ var portableToolSchemaKeywords = map[string]bool{
 	"enum":                 true,
 	"items":                true,
 	"maximum":              true,
+	"maxItems":             true,
 	"maxLength":            true,
 	"minimum":              true,
+	"minItems":             true,
 	"minLength":            true,
 	"oneOf":                true,
 	"allOf":                true,
@@ -202,4 +204,5 @@ var portableToolSchemaKeywords = map[string]bool{
 	"pattern":              true,
 	"required":             true,
 	"type":                 true,
+	"uniqueItems":          true,
 }
