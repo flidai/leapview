@@ -126,7 +126,7 @@ async function runWorkload(path) {
       await waitForDashboardGeneration(page, generation, 30_000)
       await page.keyboard.press('Escape')
       await options.waitFor({ state: 'hidden', timeout: 30_000 })
-      await page.getByRole('cell', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
+      await page.getByRole('button', { name: `State: ${value}`, exact: true }).first().waitFor({ state: 'visible', timeout: 30_000 })
       filterToSettleMs.push(round(performance.now() - startedAt))
       controlled.requests += 1
     }

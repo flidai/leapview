@@ -503,8 +503,9 @@ func TestInstalledCandidateQualificationContract(t *testing.T) {
 		!strings.Contains(performance, `getByRole('checkbox', { name: 'All State', exact: true })`) {
 		t.Error("browser qualification must exercise deterministic State multi-select values")
 	}
-	if !strings.Contains(browser, `name: 'State: SP'`) || !strings.Contains(performance, "name: `State: ${value}`") {
-		t.Error("browser qualification must assert the table cell accessibility label")
+	if !strings.Contains(browser, `getByRole('button', { name: 'State: SP', exact: true })`) ||
+		!strings.Contains(performance, "getByRole('button', { name: `State: ${value}`, exact: true })") {
+		t.Error("browser qualification must assert the interactive table cell accessibility label")
 	}
 	if !strings.Contains(performance, `name: /^Order(?: [↑↓])?$/`) {
 		t.Error("performance qualification must select only the sortable Order header")
