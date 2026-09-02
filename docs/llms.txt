@@ -240,6 +240,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
+- [PostgreSQL authority reconciliation](/docs/architecture/postgresql-authority-reconciliation): Understand the reconciled PostgreSQL ownership, transaction, role, and compatibility boundaries.
 - [Evidence-gated Arrow optimization](/docs/architecture/arrow-optimization-evidence): Measure dashboard Arrow boundaries before approving a production migration.
 - [Dashboard native Arrow response contract](/docs/architecture/dashboard-native-arrow-contract): Define the native-v1 schema, protocol, governance, pagination, and compatibility oracle for future dashboard Arrow experiments.
 - [Cross-role journey qualification](/docs/architecture/journey-qualification): Map FAI-492 consumer, creator, and operator states to executable assembled-app checks and evidence rules.

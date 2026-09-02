@@ -1,0 +1,215 @@
+package migrations_test
+
+import (
+	"context"
+	"os"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/flidai/leapview/internal/app/postgresbaseline"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5/pgxpool"
+)
+
+func TestAccessBaselinePostgreSQL18(t *testing.T) {
+	h := postgrestest.Start(t, postgrestest.Required(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED")))
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance"})
+	readonlyRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly", Password: "leapview-conformance-secret", Login: true})
+	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
+	h.GrantRole(t, owner, migrator)
+
+	database := h.NewDatabase(t, "leapview_control")
+	h.GrantDatabase(t, database.Name, migrator, "CONNECT")
+	h.GrantDatabase(t, database.Name, owner, "CREATE")
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	adminConfig, err := pgxpool.ParseConfig(database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A single pool slot forces each assertion to reuse the same PostgreSQL
+	// session, making role-state cleanup a deterministic conformance property.
+	adminConfig.MaxConns = 1
+	admin, err := pgxpool.NewWithConfig(ctx, adminConfig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+
+	var adminRole string
+	if err := admin.QueryRow(ctx, "SELECT current_user").Scan(&adminRole); err != nil {
+		t.Fatal(err)
+	}
+
+	var ownerCanCreate, migratorCanCreate bool
+	if err := admin.QueryRow(ctx,
+		"SELECT has_database_privilege($1::name, $2::name, 'CREATE'), has_database_privilege($3::name, $2::name, 'CREATE')",
+		owner.Name, database.Name, migrator.Name,
+	).Scan(&ownerCanCreate, &migratorCanCreate); err != nil {
+		t.Fatal(err)
+	}
+	if !ownerCanCreate {
+		t.Fatalf("current DDL role %q lacks database CREATE", owner.Name)
+	}
+	if migratorCanCreate {
+		t.Fatalf("least-privileged migrator role %q has database CREATE", migrator.Name)
+	}
+
+	apply := func() {
+		t.Helper()
+		conn, err := admin.Acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resetRoleAndRelease(t, conn)
+		if _, err := conn.Exec(ctx, "SET ROLE leapview_control_migrator"); err != nil {
+			t.Fatal(err)
+		}
+		tx, err := conn.Begin(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := postgresbaseline.Apply(ctx, tx); err != nil {
+			_ = tx.Rollback(ctx)
+			t.Fatalf("apply baseline: %v", err)
+		}
+		if err := tx.Commit(ctx); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply()
+	apply()
+
+	// This query must borrow the same physical session used by apply. If SET
+	// ROLE leaked through the pool, current_user would still be the migrator.
+	var pooledRole, sessionRole string
+	if err := admin.QueryRow(ctx, "SELECT current_user, session_user").Scan(&pooledRole, &sessionRole); err != nil {
+		t.Fatal(err)
+	}
+	if pooledRole != adminRole || sessionRole != adminRole {
+		t.Fatalf("pooled role identity = current %q/session %q, want administrator %q", pooledRole, sessionRole, adminRole)
+	}
+
+	var revision int64
+	var migrationID, checksum string
+	if err := admin.QueryRow(ctx,
+		"SELECT revision, migration_id, checksum FROM platform.schema_revision WHERE revision = $1",
+		postgresbaseline.BaselineRevision,
+	).Scan(&revision, &migrationID, &checksum); err != nil {
+		t.Fatal(err)
+	}
+	if revision != postgresbaseline.BaselineRevision ||
+		migrationID != postgresbaseline.BaselineMigrationID ||
+		checksum != postgresbaseline.Checksum() {
+		t.Fatalf("baseline identity = %d/%q/%q", revision, migrationID, checksum)
+	}
+
+	for _, schema := range []string{"platform", "access", "audit", "physical_pool", "ducklake"} {
+		var ownerName string
+		if err := admin.QueryRow(ctx,
+			"SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = $1",
+			schema,
+		).Scan(&ownerName); err != nil {
+			t.Fatal(err)
+		}
+		if ownerName != owner.Name {
+			t.Errorf("schema %s owner = %q, want %q", schema, ownerName, owner.Name)
+		}
+	}
+	for _, deferred := range []string{"delivery", "jobs", "cache", "lineage", "attribute"} {
+		var exists bool
+		if err := admin.QueryRow(ctx,
+			"SELECT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = $1)",
+			deferred,
+		).Scan(&exists); err != nil {
+			t.Fatal(err)
+		}
+		if exists {
+			t.Errorf("deferred schema %q was installed", deferred)
+		}
+	}
+
+	runtime, err := pgxpool.New(ctx, database.URL(runtimeRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(runtime.Close)
+	readonly, err := pgxpool.New(ctx, database.URL(readonlyRole))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(readonly.Close)
+
+	if _, err := runtime.Exec(ctx, `
+		INSERT INTO audit.audit_event
+		    (audit_id, source, operation, action, capability, outcome,
+		     aggregate_key, aggregate_sequence, intent_digest)
+		VALUES ('00000000-0000-0000-0000-000000000001', 'test', 'append',
+		        'test.append', '', 'success', 'test:append', 0,
+		        'sha256:0000000000000000000000000000000000000000000000000000000000000000')`); err != nil {
+		t.Fatalf("runtime audit append: %v", err)
+	}
+	if _, err := runtime.Exec(ctx,
+		"UPDATE audit.audit_event SET action = 'tampered' WHERE audit_id = '00000000-0000-0000-0000-000000000001'",
+	); err == nil {
+		t.Fatal("runtime updated immutable audit evidence")
+	}
+	if _, err := readonly.Exec(ctx, "SELECT id FROM access.principal LIMIT 0"); err != nil {
+		t.Fatalf("readonly safe metadata: %v", err)
+	}
+	for _, table := range []string{"session", "local_credential", "api_token", "service_principal_secret", "authoring_credential"} {
+		if _, err := readonly.Exec(ctx, "SELECT * FROM access."+table+" LIMIT 0"); err == nil || !strings.Contains(err.Error(), "permission denied") {
+			t.Errorf("readonly credential access %s error = %v, want permission denied", table, err)
+		}
+	}
+	if _, err := admin.Exec(ctx,
+		"UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1",
+		postgresbaseline.BaselineRevision,
+	); err == nil {
+		t.Fatal("schema revision append-only trigger accepted an update")
+	}
+
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := admin.Exec(ctx, `
+		INSERT INTO ducklake.catalog_identity
+		    (physical_pool_id, catalog_database, catalog_id, catalog_uuid,
+		     metadata_schema, compatibility_digest, catalog_schema_version)
+		VALUES ($1, 'leapview_ducklake', $2,
+		        '00000000-0000-5000-8000-000000000001', 'leapview_catalog_test', $3, '0.3')`,
+		"pool-test", "ducklake:pool-test", digest,
+	); err != nil {
+		t.Fatalf("insert catalog identity fixture: %v", err)
+	}
+	if _, err := admin.Exec(ctx, "UPDATE ducklake.catalog_identity SET catalog_id='tampered' WHERE physical_pool_id='pool-test'"); err == nil {
+		t.Fatal("catalog identity immutable trigger accepted an update")
+	}
+	if _, err := runtime.Exec(ctx, `
+		INSERT INTO ducklake.catalog_identity
+		    (physical_pool_id, catalog_database, catalog_id, catalog_uuid,
+		     metadata_schema, compatibility_digest, catalog_schema_version)
+		VALUES ('forged', 'leapview_ducklake', 'ducklake:forged',
+		        '00000000-0000-5000-8000-000000000002', 'leapview_catalog_forged', $1, '0.3')`, digest,
+	); err == nil || !strings.Contains(err.Error(), "permission denied") {
+		t.Fatalf("runtime catalog identity write error = %v, want permission denied", err)
+	}
+}
+
+func resetRoleAndRelease(t *testing.T, conn *pgxpool.Conn) {
+	t.Helper()
+	resetCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	if _, err := conn.Exec(resetCtx, "RESET ROLE"); err != nil {
+		// Never return a role-contaminated session to the pool. Closing the
+		// physical connection lets pgxpool replace it on the next acquisition.
+		_ = conn.Conn().Close(resetCtx)
+		conn.Release()
+		t.Errorf("reset migration conformance role before release: %v", err)
+		return
+	}
+	conn.Release()
+}

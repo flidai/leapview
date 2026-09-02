@@ -20,7 +20,10 @@ import (
 )
 
 type Config struct {
+	// Persistence is the preferred capability-owned authority bundle.
+	Persistence                  *Persistence
 	Database                     *sql.DB
+	Production                   bool
 	Auth                         AuthConfig
 	ExistingAuth                 *Auth
 	PublicURL                    string
@@ -33,19 +36,30 @@ type Config struct {
 	AvatarBlobs                  avatar.BlobStore
 }
 
-func newRepository(database *sql.DB) access.Repository { return accesssqlite.NewRepository(database) }
-
-// NewAuditStore constructs the Access-owned durable audit adapter without
-// exposing its SQLite implementation to process composition.
+// NewAuditStore is retained for explicit legacy SQLite callers. PostgreSQL
+// callers inject a transaction-bound audit recorder from their authority.
 func NewAuditStore(database *sql.DB) access.AuditStore {
+	if database == nil {
+		return nil
+	}
 	return accesssqlite.NewRepository(database)
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
-	if config.Database == nil {
+	if config.Persistence != nil && config.Database != nil {
+		return nil, errors.New("access persistence is mutually exclusive with database inputs")
+	}
+	if config.Production && config.Database != nil {
+		return nil, errors.New("production access build rejects SQLite database injection; use PostgreSQL persistence")
+	}
+	if config.Production && config.Persistence == nil {
+		return nil, errors.New("production access build requires injected PostgreSQL persistence")
+	}
+	if config.Persistence == nil && config.Database == nil {
 		auth := config.ExistingAuth
 		surface := surfaceConfig{
-			Auth: auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
+			Persistence: config.Persistence,
+			Auth:        auth, CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 			CurrentProjectID: config.CurrentProjectID,
 			Presentation:     config.Presentation, Assets: config.Assets,
 		}
@@ -55,10 +69,21 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		}
 		return newSurface(surface)
 	}
-	if err := accesssqlite.Initialize(ctx, config.Database); err != nil {
+	if config.Persistence == nil {
+		persistence, err := NewSQLitePersistence(ctx, SQLitePersistenceConfig{Database: config.Database})
+		if err != nil {
+			return nil, err
+		}
+		config.Persistence = &persistence
+	}
+	if config.Production && !config.Persistence.isPostgres() {
+		return nil, errors.New("production access build requires PostgreSQL persistence")
+	}
+	if err := config.Persistence.Validate(); err != nil {
 		return nil, err
 	}
-	repository := newRepository(config.Database)
+	oauth := config.Persistence.OAuth
+	repository := config.Persistence.Repository
 	var avatarService *avatar.Service
 	if config.AvatarBlobs != nil {
 		avatarRepository, ok := repository.(avatar.Repository)
@@ -100,6 +125,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		auth.authoringAuth = authoringAuth
 	}
 	surface := surfaceConfig{
+		Persistence:                  config.Persistence,
 		Repository:                   func() (access.Repository, error) { return repository, nil },
 		Auth:                         auth,
 		CurrentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
@@ -123,13 +149,18 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if auth == nil {
 		return module, nil
 	}
-	if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
+	if oauth != nil {
+		module.oauth = oauth
+		module.oauthResource = oauth
+	} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
 		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
-	} else {
+	} else if config.Database != nil {
 		module.oauth, err = mcpoauth.New(config.Database, repository, mcpoauth.Config{
 			IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
 		})
 		module.oauthResource = module.oauth
+	} else {
+		return nil, errors.New("MCP OAuth requires injected PostgreSQL-backed service or external resource")
 	}
 	if err != nil {
 		return nil, err

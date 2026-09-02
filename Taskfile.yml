@@ -575,6 +575,11 @@ tasks:
       - internal/platform/db/models.go
       - internal/platform/db/*.sql.go
       - internal/*/internal/db/*.go
+      - internal/access/postgres/internal/db/*.go
+      - internal/platform/postgres/internal/db/*.go
+      - internal/platform/bootstrap/postgres/internal/db/*.go
+      - internal/analytics/physicalpool/postgres/internal/db/*.go
+      - internal/analytics/ducklake/postgres/internal/db/*.go
       - internal/platform/**/sqlite/*db/*.go
     cmds:
       - go run github.com/sqlc-dev/sqlc/cmd/sqlc@v1.30.0 generate
@@ -1029,6 +1034,14 @@ tasks:
     desc: Run container-backed external-service integration tests serially
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
+      - task: test:go:postgres-conformance
+
+  test:go:postgres-conformance:
+    desc: Run required PostgreSQL 18 container-backed conformance packages against a pinned image
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+    cmds:
+      - go test ./internal/platform/postgres/... ./internal/platform/bootstrap/postgres ./internal/access/postgres ./internal/analytics/physicalpool/postgres ./internal/access/http/mcpoauth -count=1 -v
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView

@@ -45,6 +45,9 @@ type Config struct {
 	RootDir     string
 	CatalogPath string
 	DataPath    string
+	// PostgresCatalog selects the controlled initialize-only PostgreSQL
+	// metadata catalog path. CatalogPath is never opened when this is set.
+	PostgresCatalog *PostgresCatalogConfig
 	// PhysicalPoolID marks this catalog as a member of a shared LeapView
 	// physical pool. Shared-pool catalogs may not invoke catalog-local cleanup.
 	PhysicalPoolID string
@@ -253,6 +256,22 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	if !nativeArrowEnabled {
 		return nil, fmt.Errorf("LeapView analytical runtime requires the duckdb_arrow build tag")
 	}
+	postgresMode := config.PostgresCatalog != nil
+	if postgresMode {
+		if strings.TrimSpace(config.CatalogPath) != "" {
+			return nil, fmt.Errorf("PostgreSQL DuckLake initialization must not provide a file catalog path")
+		}
+		copy := *config.PostgresCatalog
+		config.PostgresCatalog = &copy
+		if err := copy.Validate(); err != nil {
+			return nil, fmt.Errorf("PostgreSQL DuckLake catalog: %w", err)
+		}
+		if config.PoolContract == nil || copy.PhysicalPoolID != config.PoolContract.Pool.ID.String() {
+			return nil, fmt.Errorf("PostgreSQL DuckLake initialization requires the admitted physical-pool contract")
+		}
+		config.PhysicalPoolID = copy.PhysicalPoolID
+		config.DataPath = copy.DataPath
+	}
 	sharedRequested := config.SharedPool || strings.TrimSpace(config.PhysicalPoolID) != "" || config.PoolContract != nil
 	if sharedRequested {
 		if config.PoolContract == nil {
@@ -272,24 +291,39 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		config.Compatibility = config.PoolContract.Tuple
 		config.SharedPool = true
 	}
-	layout, err := config.layout()
-	if err != nil {
-		return nil, err
+	var layout Layout
+	var err error
+	if postgresMode {
+		layout = Layout{RootDir: strings.TrimSpace(config.RootDir), CatalogPath: "postgres:" + config.PostgresCatalog.MetadataSchema, DataPath: config.PostgresCatalog.DataPath}
+		if layout.RootDir == "" {
+			layout.RootDir = "."
+		}
+	} else {
+		layout, err = config.layout()
+		if err != nil {
+			return nil, err
+		}
 	}
 	if sharedRequested {
 		if err := config.PoolContract.ValidateDataPathBinding(layout.DataPath); err != nil {
 			return nil, fmt.Errorf("shared physical-pool DATA_PATH binding: %w", err)
 		}
 	}
-	if config.ReadOnly {
+	if postgresMode && config.ReadOnly {
+		return nil, fmt.Errorf("PostgreSQL DuckLake initialization cannot be read-only")
+	} else if config.ReadOnly {
 		if err := validateReadOnlyLayout(layout); err != nil {
 			return nil, err
 		}
-	} else if err := prepareLayout(layout); err != nil {
+	} else if !postgresMode {
+		if err := prepareLayout(layout); err != nil {
+			return nil, err
+		}
+	} else if err := securefs.EnsurePrivateDir(layout.RootDir); err != nil {
 		return nil, err
 	}
 	migrated := false
-	if !config.ReadOnly {
+	if !config.ReadOnly && !postgresMode {
 		migrated, err = migrateLegacySQLiteCatalog(ctx, layout.CatalogPath, config.ExtensionAdmission)
 		if err != nil {
 			return nil, err
@@ -310,11 +344,19 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 	// Keep both process and attach defaults explicit. DuckLake persisted
 	// global/schema/table options take precedence, so they are inspected by
 	// DataInliningPolicy before a catalog is sealed.
-	attachOptions := fmt.Sprintf("DATA_PATH '%s', DATA_INLINING_ROW_LIMIT 0", sqlLiteral(layout.DataPath))
-	if config.ReadOnly {
-		attachOptions += ", READ_ONLY, CREATE_IF_NOT_EXISTS false"
+	var attachStatements []string
+	if postgresMode {
+		attachStatements, err = config.PostgresCatalog.Statements()
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		attachOptions := fmt.Sprintf("DATA_PATH '%s', DATA_INLINING_ROW_LIMIT 0", sqlLiteral(layout.DataPath))
+		if config.ReadOnly {
+			attachOptions += ", READ_ONLY, CREATE_IF_NOT_EXISTS false"
+		}
+		attachStatements = []string{fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)}
 	}
-	attach := fmt.Sprintf("ATTACH IF NOT EXISTS 'ducklake:%s' AS %s (%s)", sqlLiteral(layout.CatalogPath), catalogAlias, attachOptions)
 	var initializeOnce sync.Once
 	var initializeErr error
 	admissionCtx := ctx
@@ -365,8 +407,10 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 				return fmt.Errorf("bootstrap DuckLake connector credentials: %w", err)
 			}
 		}
-		if _, err := execer.ExecContext(context.Background(), attach, nil); err != nil {
-			return err
+		for _, statement := range attachStatements {
+			if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
+				return err
+			}
 		}
 		for _, statement := range []string{"USE " + catalogAlias} {
 			if _, err := execer.ExecContext(context.Background(), statement, nil); err != nil {
@@ -405,9 +449,11 @@ func Open(ctx context.Context, config Config) (*Environment, error) {
 		_ = db.Close()
 		return nil, fmt.Errorf("lock DuckDB configuration: %w", err)
 	}
-	if err := secureDuckDBCatalogFiles(layout.CatalogPath); err != nil {
-		_ = db.Close()
-		return nil, err
+	if !postgresMode {
+		if err := secureDuckDBCatalogFiles(layout.CatalogPath); err != nil {
+			_ = db.Close()
+			return nil, err
+		}
 	}
 	return env, nil
 }

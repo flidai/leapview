@@ -243,6 +243,9 @@ func (c Config) Validate(profile Profile) error {
 	if err := configspec.Validate(values); err != nil {
 		return err
 	}
+	if err := c.ValidatePostgres(); err != nil {
+		return err
+	}
 	if err := c.WorkloadConfig().Validate(); err != nil {
 		return fmt.Errorf("invalid workload configuration: %w", err)
 	}

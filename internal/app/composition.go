@@ -1304,7 +1304,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			if storageLocationErr != nil {
 				poolErr = fmt.Errorf("resolve local physical-pool storage location: %w", storageLocationErr)
 			} else {
-				pool, newPoolErr := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: deliveryStorageLocation, StorageNamespace: "delivery", IsolationBoundary: instanceID, RetentionAuthority: instanceID, RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600}, Compatibility: tuple})
+				pool, newPoolErr := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: deliveryStorageLocation, StorageNamespace: "delivery", EncryptionDomain: instanceID, IsolationBoundary: instanceID, RetentionAuthority: instanceID, RetentionPolicy: physicalpool.RetentionPolicy{ReaderGracePeriodSeconds: 1800, OrphanGracePeriodSeconds: 3600, BuildGracePeriodSeconds: 3600}, Compatibility: tuple})
 				if newPoolErr != nil {
 					poolErr = newPoolErr
 				} else {

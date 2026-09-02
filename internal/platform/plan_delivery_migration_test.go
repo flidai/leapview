@@ -86,10 +86,10 @@ func TestPlanDeliveryMigrationCreatesConstrainedControlState(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(ctx, `
 		INSERT INTO physical_pools (
 		  id, identity_digest, storage_location, storage_namespace,
-		  storage_implementation, object_naming_contract, isolation_boundary,
+		  storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 		  retention_authority, retention_policy_json
 		) VALUES (?, ?, 's3://warehouse', 'tenant-a', 's3',
-		  'sha256-object-names-v1', 'target-1', 'retention-1', '{}')`, poolID, sha); err != nil {
+		  'sha256-object-names-v1', 'target-1', 'target-1', 'retention-1', '{}')`, poolID, sha); err != nil {
 		t.Fatalf("insert physical pool: %v", err)
 	}
 	if _, err := store.SQLDB().ExecContext(ctx, `
@@ -289,10 +289,10 @@ func TestDeliveryBuildAttemptBaseGenerationAllowsFullRefresh(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(ctx, `
 		INSERT INTO physical_pools (
 		  id, identity_digest, storage_location, storage_namespace,
-		  storage_implementation, object_naming_contract, isolation_boundary,
+		  storage_implementation, object_naming_contract, encryption_domain, isolation_boundary,
 		  retention_authority, retention_policy_json
 		) VALUES (?, ?, 's3://warehouse', 'full-refresh', 's3',
-		  'sha256-object-names-v1', 'target-full-refresh', 'retention-full-refresh', '{}')`, poolID, sha); err != nil {
+		  'sha256-object-names-v1', 'target-full-refresh', 'target-full-refresh', 'retention-full-refresh', '{}')`, poolID, sha); err != nil {
 		t.Fatalf("insert physical pool: %v", err)
 	}
 	if _, err := store.SQLDB().ExecContext(ctx, `

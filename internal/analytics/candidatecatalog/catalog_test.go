@@ -430,7 +430,7 @@ func testDuckLakeConfig(t *testing.T, config ducklake.Config) ducklake.Config {
 func testPoolContract(t *testing.T, dataPath string) *ducklake.PoolContract {
 	t.Helper()
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:test", DuckLakeExtension: "ducklake:test", CatalogFormat: "ducklake:v1", StorageImplementation: "local", ObjectNamingContract: "uuidv7:v1"}
-	identity := physicalpool.PoolIdentity{StorageLocation: filepath.Dir(dataPath), StorageNamespace: filepath.Base(dataPath), IsolationBoundary: "candidate-test", RetentionAuthority: "candidate-test", Compatibility: tuple}
+	identity := physicalpool.PoolIdentity{StorageLocation: filepath.Dir(dataPath), StorageNamespace: filepath.Base(dataPath), EncryptionDomain: "candidate-test", IsolationBoundary: "candidate-test", RetentionAuthority: "candidate-test", Compatibility: tuple}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
 		t.Fatal(err)

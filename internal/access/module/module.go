@@ -20,6 +20,7 @@ import (
 
 type Module struct {
 	handler                      accesshttp.Handler
+	persistence                  *Persistence
 	auth                         *Auth
 	currentPrincipal             func(*http.Request) (Principal, bool)
 	repository                   func() (access.Repository, error)
@@ -35,6 +36,7 @@ type Module struct {
 }
 
 type surfaceConfig struct {
+	Persistence                  *Persistence
 	Repository                   func() (access.Repository, error)
 	CurrentPrincipal             func(*http.Request) (Principal, bool)
 	CurrentCredential            func(*http.Request) (access.APICredential, bool)
@@ -42,8 +44,6 @@ type surfaceConfig struct {
 	CurrentProjectID             func(context.Context) (projectgraph.ResourceID, error)
 	Auth                         *Auth
 	Logger                       *slog.Logger
-	OAuth                        *mcpoauth.Service
-	OAuthResource                mcpoauth.ResourceServer
 	AuthoringAuth                *access.AuthoringAuthService
 	Avatar                       *avatar.Service
 	Presentation                 webpage.Presentation
@@ -96,8 +96,8 @@ func newSurface(config surfaceConfig) (*Module, error) {
 		}
 		return session.ID, true
 	}
-	module := &Module{auth: config.Auth, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
-		oauth: config.OAuth, oauthResource: config.OAuthResource, authoringAuth: config.AuthoringAuth,
+	module := &Module{auth: config.Auth, persistence: config.Persistence, currentPrincipal: config.CurrentPrincipal, repository: config.Repository, logger: logger,
+		authoringAuth:                config.AuthoringAuth,
 		currentEffectiveCapabilities: config.CurrentEffectiveCapabilities,
 		currentProjectID:             config.CurrentProjectID,
 		presentation:                 config.Presentation, assets: config.Assets, handler: accesshttp.Handler{

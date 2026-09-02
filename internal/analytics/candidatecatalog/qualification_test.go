@@ -288,7 +288,7 @@ func TestProbeClosureCanonicalizesAndDeduplicatesReferences(t *testing.T) {
 
 func TestRemotePoolRequiresTargetObjectProbe(t *testing.T) {
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:test", DuckLakeExtension: "ducklake:test", CatalogFormat: "ducklake:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
-	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://bucket/base", StorageNamespace: "tenant", IsolationBoundary: "test", RetentionAuthority: "test", Compatibility: tuple})
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: "s3://bucket/base", StorageNamespace: "tenant", EncryptionDomain: "test", IsolationBoundary: "test", RetentionAuthority: "test", Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)
 	}
