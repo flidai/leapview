@@ -2,8 +2,11 @@ package deploymentpostgres
 
 import (
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
+	"time"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
@@ -33,6 +36,18 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 	}
 	if contract.PhysicalPoolID != c.physicalPoolID || contract.CompatibilityDigest != c.compatibilityDigest || contract.PoolContract == nil || contract.Catalog.CatalogID == "" {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: resolved native build recovery contract identity differs", deploymentnative.ErrConflict)
+	}
+	// A successor leaf is the executable recovery tip once admitted. The
+	// root-only preparation path intentionally refuses to reinterpret that leaf
+	// as the deterministic root attempt; a dedicated leaf marker-resolution
+	// continuation must resolve it before appending another child. This guard
+	// prevents a retry from blindly re-executing the root physical build.
+	if successorAuthority, ok := c.operations.(deploymentmodule.NativeBuildOperationSuccessorAuthority); ok {
+		if _, found, successorErr := successorAuthority.CurrentSuccessorAttempt(ctx, reservation.Operation.OperationID); successorErr != nil {
+			return deploymentmodule.NativeDeliveryBuild{}, successorErr
+		} else if found {
+			return c.recoverNativeBuildSuccessor(ctx, request, requestDigest, reservation, plan, contract, successorAuthority)
+		}
 	}
 	prepared, err := PrepareNativeBuildRecovery(ctx, c.repository, c.operations, c.attemptTermination, NativeBuildRecoveryPreparationInput{
 		Request: request, RequestDigest: requestDigest, Operation: reservation.Operation,
@@ -73,8 +88,41 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 	}
 	physical, err := RecoverNativePhysicalBuild(ctx, physicalInput)
 	if err != nil {
-		// In particular, marker absence remains indeterminate/retryable. No
-		// terminal operation transition is attempted on this path.
+		if errors.Is(err, ErrNativePhysicalMarkerAbsent) {
+			resolvedAt := time.Now().UTC()
+			if c.clock != nil {
+				if candidate := c.clock().UTC(); !candidate.IsZero() {
+					resolvedAt = candidate
+				}
+			}
+			resolution, marshalErr := json.Marshal(deploymentnative.BuildAttemptMarkerResolutionEvidence{
+				SchemaVersion: 1, PhysicalPoolID: prepared.DeliveryAttempt.PhysicalPoolID, CatalogID: contract.Catalog.CatalogID,
+				AttemptID: prepared.DeliveryAttempt.AttemptID, RequestDigest: prepared.DeliveryAttempt.RequestDigest,
+				PlanDigest: prepared.DeliveryAttempt.PlanDigest, MarkerAbsent: true, ResolvedAt: resolvedAt,
+			})
+			if marshalErr != nil {
+				return deploymentmodule.NativeDeliveryBuild{}, marshalErr
+			}
+			var duckLake CandidateBuildAttemptSuccessorDuckLakeAdmission
+			if candidate, ok := c.attemptAdmission.(CandidateBuildAttemptSuccessorDuckLakeAdmission); ok {
+				duckLake = candidate
+			}
+			successorAuthority, authorityOK := c.operations.(deploymentmodule.NativeBuildOperationSuccessorAuthority)
+			if !authorityOK {
+				return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build successor operation authority is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
+			}
+			successor, admissionErr := AdmitNativeBuildSuccessor(ctx, c.repository, successorAuthority, NativeBuildSuccessorAdmissionInput{
+				Operation: prepared.Operation, DeliveryAttempt: prepared.DeliveryAttempt, DeliveryLease: prepared.Lease,
+				Artifact:  CandidateBuildArtifactInput{ServingArtifactID: artifactBinding.ServingArtifactID, ServingArtifactDigest: artifactBinding.ServingArtifactDigest, ServingStateID: artifactBinding.ServingStateID},
+				CatalogID: contract.Catalog.CatalogID, Resolution: resolution, DuckLake: duckLake,
+			})
+			if admissionErr != nil {
+				return deploymentmodule.NativeDeliveryBuild{}, admissionErr
+			}
+			return c.executeNativeBuildSuccessor(ctx, request, requestDigest, reservation, plan, contract, artifacts, successor)
+		}
+		// Resolver, close, anomaly, snapshot, and evidence errors remain
+		// unresolved and never authorize a successor.
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	sources, models, err := nativeQualificationInputs(artifacts, physical.SourceObservations)

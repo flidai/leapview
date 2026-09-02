@@ -211,6 +211,67 @@ func TestDecodeNativeBuildOutcomeRejectsUnknownOversizedAndNoncanonicalData(t *t
 	}
 }
 
+func TestNativeBuildOutcomeRootsSuccessorIdentityAndSupportsDepthTwo(t *testing.T) {
+	request := nativeBuildIdentityRequest(t)
+	outcome, operationInput := nativeBuildIdentityOutcome(t, request)
+	rootAttempt, err := nativeBuildConsequenceID(outcome.OperationID, "attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstAttempt, err := nativeBuildSuccessorID(rootAttempt, "attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstLease, err := nativeBuildSuccessorID(rootAttempt, "lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	validFirst := outcome
+	validFirst.AttemptID, validFirst.LeaseID = firstAttempt, firstLease
+	validFirst.AttemptIdentity = "native-build-successor/" + firstAttempt
+	validFirst.PredecessorAttemptID = rootAttempt
+	validFirst.SuccessorDepth = 1
+	if _, err := encodeNativeBuildOutcome(validFirst, request, operationInput); err != nil {
+		t.Fatalf("depth-one successor outcome rejected: %v", err)
+	}
+	secondAttempt, err := nativeBuildSuccessorID(firstAttempt, "attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondLease, err := nativeBuildSuccessorID(firstAttempt, "lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	valid := outcome
+	valid.AttemptID, valid.LeaseID = secondAttempt, secondLease
+	valid.AttemptIdentity = "native-build-successor/" + secondAttempt
+	valid.PredecessorAttemptID = firstAttempt
+	valid.SuccessorDepth = 2
+	if _, err := encodeNativeBuildOutcome(valid, request, operationInput); err != nil {
+		t.Fatalf("depth-two successor outcome rejected: %v", err)
+	}
+	// A UUIDv7 pair derived from an unrelated seed is not accepted merely
+	// because the pair is internally consistent; it must be rooted at the
+	// operation's deterministic attempt chain.
+	arbitraryPredecessor := "0198f2c0-7c7a-7f00-8a11-000000009999"
+	arbitraryAttempt, err := nativeBuildSuccessorID(arbitraryPredecessor, "attempt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	arbitraryLease, err := nativeBuildSuccessorID(arbitraryPredecessor, "lease")
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged := outcome
+	forged.AttemptID, forged.LeaseID = arbitraryAttempt, arbitraryLease
+	forged.AttemptIdentity = "native-build-successor/" + arbitraryAttempt
+	forged.PredecessorAttemptID = arbitraryPredecessor
+	forged.SuccessorDepth = 1
+	if _, err := encodeNativeBuildOutcome(forged, request, operationInput); !errors.Is(err, deployment.ErrDeliveryConflict) {
+		t.Fatalf("unrooted successor outcome error = %v", err)
+	}
+}
+
 func TestReplayFailedNativeBuildValidatesExactSanitizedEvidence(t *testing.T) {
 	attemptID := "0198f2c0-7c7a-7f00-8a11-000000001020"
 	requestDigest := buildIdentityDigest('a')

@@ -250,6 +250,20 @@ func TestOpenPostgresControlPlaneRejectsMissingPoolConfiguration(t *testing.T) {
 	}
 }
 
+func TestPostgresDuckLakeMaintenanceConfigIsDedicatedSingleConnection(t *testing.T) {
+	cfg := config.Config{
+		PostgresDuckLakeMaintenanceURL:  "postgres://maintenance:secret@localhost/ducklake?sslmode=require",
+		PostgresDuckLakeMaintenanceRole: "leapview_ducklake_maintenance",
+	}
+	got := cfg.PostgresDuckLakeMaintenanceConfig()
+	if got.MinConns != 1 || got.MaxConns != 1 {
+		t.Fatalf("DuckLake maintenance pool bounds = %d/%d, want 1/1", got.MinConns, got.MaxConns)
+	}
+	if got.RuntimeRole != "leapview_ducklake_maintenance" {
+		t.Fatalf("DuckLake maintenance role = %q", got.RuntimeRole)
+	}
+}
+
 func TestValidatePostgresDuckLakeRuntimeIdentity(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -297,5 +311,15 @@ func TestValidatePostgresDuckLakeRuntimeIdentity(t *testing.T) {
 				t.Fatalf("validation error = %v, want ErrWrongDatabaseCredential", err)
 			}
 		})
+	}
+}
+
+func TestValidatePostgresDuckLakeMaintenanceIdentityUsesDedicatedRole(t *testing.T) {
+	identity := postgresducklake.DatabaseIdentity{Database: postgresducklake.DefaultDuckLakeDatabase, User: "maintenance", SessionUser: "maintenance"}
+	if err := validatePostgresDuckLakeMaintenanceIdentity(postgresducklake.DefaultDuckLakeDatabase, identity, "maintenance"); err != nil {
+		t.Fatalf("maintenance identity validation error = %v", err)
+	}
+	if err := validatePostgresDuckLakeMaintenanceIdentity(postgresducklake.DefaultDuckLakeDatabase, identity, "runtime"); !errors.Is(err, postgresducklake.ErrWrongDatabaseCredential) {
+		t.Fatalf("maintenance identity accepted wrong role: %v", err)
 	}
 }

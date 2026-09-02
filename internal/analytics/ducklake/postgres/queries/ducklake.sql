@@ -221,39 +221,50 @@ SELECT ducklake.quarantine_snapshot_under_maintenance_fence(sqlc.arg(quarantine_
 -- name: CompleteSnapshotCleanupUnderMaintenanceFence :execresult
 SELECT ducklake.complete_snapshot_cleanup_under_maintenance_fence(sqlc.arg(cleanup_evidence)::jsonb,sqlc.arg(cleanup_completed_at),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(cleanup_owner_id),sqlc.arg(cleanup_fencing_epoch),sqlc.arg(maintenance_id),sqlc.arg(maintenance_owner_id),sqlc.arg(maintenance_fencing_epoch));
 
--- name: InsertSnapshotOrphan :exec
-INSERT INTO ducklake.snapshot_orphan(orphan_id,physical_pool_id,catalog_id,snapshot_id,state,evidence,discovered_at)
-VALUES(sqlc.arg(orphan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),'quarantined',sqlc.arg(evidence)::jsonb,sqlc.arg(discovered_at)) ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
-
--- name: GetSnapshotOrphan :one
-SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at
-FROM ducklake.snapshot_orphan WHERE orphan_id=sqlc.arg(orphan_id);
-
--- name: GetSnapshotOrphanByIdentity :one
-SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at
+-- name: ListSnapshotOrphanCleanupEligible :many
+SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,cleanup_not_before,resolved_at
 FROM ducklake.snapshot_orphan
 WHERE physical_pool_id=sqlc.arg(physical_pool_id)
   AND catalog_id=sqlc.arg(catalog_id)
-  AND snapshot_id=sqlc.arg(snapshot_id);
+  AND state='quarantined'
+  AND cleanup_not_before <= clock_timestamp()
+  AND snapshot_id > sqlc.arg(cursor_snapshot_id)
+ORDER BY snapshot_id
+LIMIT sqlc.arg(page_limit);
 
--- name: ClaimSnapshotOrphanCleanup :one
-UPDATE ducklake.snapshot_orphan SET cleanup_owner_id=sqlc.arg(cleanup_owner_id),cleanup_fencing_epoch=cleanup_fencing_epoch+1,cleanup_lease_expires_at=sqlc.arg(cleanup_lease_expires_at)
-WHERE orphan_id=sqlc.arg(orphan_id) AND state='quarantined' RETURNING cleanup_fencing_epoch;
+-- name: BeginSnapshotOrphanScan :exec
+SELECT ducklake.begin_snapshot_orphan_scan(sqlc.arg(scan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(page_size),sqlc.arg(grace_micros),sqlc.arg(request_evidence)::jsonb);
 
--- name: LockSnapshotOrphanCleanup :one
-SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence FROM ducklake.snapshot_orphan WHERE orphan_id=sqlc.arg(orphan_id) FOR UPDATE;
+-- name: RecordSnapshotOrphanScanPage :one
+SELECT (r).next_cursor::bigint AS next_cursor, (r).orphan_count::integer AS orphan_count
+FROM ducklake.record_snapshot_orphan_scan_page(sqlc.arg(scan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(page_number),sqlc.arg(cursor_before),sqlc.arg(cursor_after),sqlc.arg(snapshot_ids)::bigint[],sqlc.arg(page_digest),sqlc.arg(evidence)::jsonb,sqlc.arg(terminal)) AS r;
 
--- name: CompleteSnapshotOrphanCleanup :execresult
-UPDATE ducklake.snapshot_orphan SET state='cleanup-complete',evidence=sqlc.arg(evidence)::jsonb,resolved_at=sqlc.arg(resolved_at)
-WHERE orphan_id=sqlc.arg(orphan_id) AND state='quarantined' AND cleanup_owner_id=sqlc.arg(cleanup_owner_id) AND cleanup_fencing_epoch=sqlc.arg(cleanup_fencing_epoch) AND cleanup_lease_expires_at > sqlc.arg(resolved_at);
+-- name: ComputeSnapshotOrphanScanPageDigest :one
+SELECT ('sha256:' || encode(public.digest(convert_to(sqlc.arg(evidence)::jsonb::text, 'UTF8'), 'sha256'), 'hex'))::text;
 
--- name: ListSnapshotOrphans :many
-SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at
-FROM ducklake.snapshot_orphan ORDER BY discovered_at,orphan_id;
+-- name: CompleteSnapshotOrphanScan :exec
+SELECT ducklake.complete_snapshot_orphan_scan(sqlc.arg(scan_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(completion_evidence)::jsonb);
 
--- name: ListSnapshotOrphansQuarantined :many
-SELECT orphan_id::text,physical_pool_id,catalog_id,snapshot_id,state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence,discovered_at,resolved_at
-FROM ducklake.snapshot_orphan WHERE state='quarantined' ORDER BY discovered_at,orphan_id;
+-- name: PruneSnapshotOrphanScanPages :one
+SELECT ducklake.prune_snapshot_orphan_scan_pages(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(min_age_micros),sqlc.arg(max_scans));
+
+-- name: GetSnapshotOrphanScan :one
+SELECT scan_id::text,physical_pool_id,catalog_id,owner_id,fencing_epoch,page_size,grace_micros,cursor_snapshot_id,pages_scanned,snapshots_scanned,orphans_recorded,state,request_evidence,completion_evidence,cleanup_not_before,pruned_at,pruned_page_count,pruned_page_digest,started_at,updated_at,completed_at
+FROM ducklake.snapshot_orphan_scan WHERE scan_id=sqlc.arg(scan_id);
+
+-- name: GetSnapshotOrphanScanPage :one
+SELECT scan_id::text,physical_pool_id,catalog_id,page_number,cursor_before,cursor_after,snapshot_ids,orphan_count,terminal,page_digest,evidence,created_at
+FROM ducklake.snapshot_orphan_scan_page WHERE scan_id=sqlc.arg(scan_id) AND page_number=sqlc.arg(page_number);
+
+-- name: ListSnapshotOrphanScanPages :many
+SELECT scan_id::text,physical_pool_id,catalog_id,page_number,cursor_before,cursor_after,snapshot_ids,orphan_count,terminal,page_digest,evidence,created_at
+FROM ducklake.snapshot_orphan_scan_page WHERE scan_id=sqlc.arg(scan_id) ORDER BY page_number;
+
+-- name: ClaimSnapshotOrphanCleanupUnderPoolFence :one
+SELECT ducklake.claim_snapshot_orphan_cleanup_under_pool_fence(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(owner_id),sqlc.arg(cleanup_lease_expires_at),sqlc.arg(fence_owner_id),sqlc.arg(fencing_epoch));
+
+-- name: CompleteSnapshotOrphanCleanupUnderPoolFence :exec
+SELECT ducklake.complete_snapshot_orphan_cleanup_under_pool_fence(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(evidence)::jsonb,sqlc.arg(fence_owner_id),sqlc.arg(pool_fencing_epoch));
 
 -- name: GetSnapshotLease :one
 SELECT lease_id::text,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,expires_at,acquired_at,released_at

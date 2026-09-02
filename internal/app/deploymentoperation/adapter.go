@@ -29,6 +29,7 @@ type Adapter struct {
 var _ deploymentmodule.NativeOperationAuthority = (*Adapter)(nil)
 var _ deploymentmodule.NativeBuildOperationAuthority = (*Adapter)(nil)
 var _ deploymentmodule.NativeBuildOperationSuccessorAuthority = (*Adapter)(nil)
+var _ deploymentmodule.NativeBuildOperationSuccessorLockAuthority = (*Adapter)(nil)
 
 // Lookup performs a non-locking exact-idempotency read. Native planners use
 // it only to bypass remote source inspection for an already-terminal replay;
@@ -110,7 +111,15 @@ func (a *Adapter) AdmitSuccessorAttemptTx(ctx context.Context, tx deploymentmodu
 	if err != nil {
 		return deploymentmodule.NativeOperationSuccessor{}, err
 	}
-	return deploymentmodule.NativeOperationSuccessor{AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, Lease: lease}, nil
+	state, err := mapState(leaf.State)
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	return deploymentmodule.NativeOperationSuccessor{
+		AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, PredecessorID: leaf.PredecessorAttemptID, PredecessorIdentity: leaf.PredecessorAttemptIdentity, Lease: lease,
+		State: state, AttemptEvidence: append(json.RawMessage(nil), leaf.AttemptEvidence...),
+		ResolutionEvidence: append(json.RawMessage(nil), leaf.ResolutionEvidence...),
+	}, nil
 }
 
 func (a *Adapter) CurrentSuccessorAttempt(ctx context.Context, operationID string) (deploymentmodule.NativeOperationSuccessor, bool, error) {
@@ -125,7 +134,43 @@ func (a *Adapter) CurrentSuccessorAttempt(ctx context.Context, operationID strin
 	if err != nil {
 		return deploymentmodule.NativeOperationSuccessor{}, false, err
 	}
-	return deploymentmodule.NativeOperationSuccessor{AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, Lease: lease}, true, nil
+	state, err := mapState(leaf.State)
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, false, err
+	}
+	return deploymentmodule.NativeOperationSuccessor{
+		AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, PredecessorID: leaf.PredecessorAttemptID, PredecessorIdentity: leaf.PredecessorAttemptIdentity, Lease: lease,
+		State: state, AttemptEvidence: append(json.RawMessage(nil), leaf.AttemptEvidence...),
+		ResolutionEvidence: append(json.RawMessage(nil), leaf.ResolutionEvidence...),
+	}, true, nil
+}
+
+// LockSuccessorAttemptTx acquires the public-operation then exact successor
+// leaf lock in one caller-owned transaction, preserving the global lock order
+// before delivery/DuckLake completion or settlement begins.
+func (a *Adapter) LockSuccessorAttemptTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease) (deploymentmodule.NativeOperationSuccessor, error) {
+	if a == nil || a.operations == nil || tx == nil {
+		return deploymentmodule.NativeOperationSuccessor{}, fmt.Errorf("%w: successor operation authority is not configured", deploymentpostgres.ErrInvalid)
+	}
+	if err := validateNativeLease(lease, true); err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	leaf, found, err := a.operations.LookupSuccessorAttemptTx(ctx, tx, operationpostgres.Lease{Scope: lease.Scope, IdempotencyKey: lease.IdempotencyKey, OperationID: lease.OperationID, OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration, LeaseExpiresAt: lease.LeaseExpiresAt, AttemptID: lease.AttemptID, AttemptIdentity: lease.AttemptIdentity})
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, mapError(err)
+	}
+	if !found {
+		return deploymentmodule.NativeOperationSuccessor{}, fmt.Errorf("%w: successor operation leaf was not found", deploymentmodule.ErrNativeOperationConflict)
+	}
+	state, err := mapState(leaf.State)
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	projected, err := projectLease(operationpostgres.Lease{Scope: leaf.Scope, IdempotencyKey: leaf.IdempotencyKey, OperationID: leaf.OperationID, OwnerID: leaf.OwnerID, FencingGeneration: leaf.FencingGeneration, LeaseExpiresAt: leaf.LeaseExpiresAt, AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity})
+	if err != nil {
+		return deploymentmodule.NativeOperationSuccessor{}, err
+	}
+	return deploymentmodule.NativeOperationSuccessor{AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity, PredecessorID: leaf.PredecessorAttemptID, PredecessorIdentity: leaf.PredecessorAttemptIdentity, Lease: projected, State: state, AttemptEvidence: append(json.RawMessage(nil), leaf.AttemptEvidence...), ResolutionEvidence: append(json.RawMessage(nil), leaf.ResolutionEvidence...)}, nil
 }
 
 // AcquireTx forwards the exact caller-owned transaction to the operation
@@ -375,6 +420,17 @@ func (a *Adapter) CompleteTx(ctx context.Context, tx deploymentmodule.NativeOper
 	if err != nil {
 		return fmt.Errorf("%w: operation outcome: %v", deploymentmodule.ErrNativeOperationInvalid, err)
 	}
+	if successor, found, successorErr := a.lookupSuccessorLeaseTx(ctx, tx, lease); successorErr != nil {
+		return successorErr
+	} else if found {
+		// CompleteTx predates the explicit reconciliation evidence parameter. A
+		// successor completion still must use the append-only leaf primitive; the
+		// canonical outcome serves as bounded positive evidence for this legacy
+		// surface. Native recovery uses ReconcileAttemptTx directly with richer
+		// evidence.
+		_, err := a.operations.ReconcileSuccessorAttemptTx(ctx, tx, successor, operationpostgres.StateCompleted, canonical, canonical)
+		return mapError(err)
+	}
 	err = a.operations.CompleteTx(ctx, tx, nativeLease(lease), canonical)
 	return mapError(err)
 }
@@ -551,7 +607,15 @@ func (a *Adapter) RenewLeaseTx(ctx context.Context, tx deploymentmodule.NativeOp
 	if duration <= 0 {
 		return deploymentmodule.NativeOperationLease{}, fmt.Errorf("%w: lease renewal duration must be positive", deploymentmodule.ErrNativeOperationInvalid)
 	}
-	renewed, err := a.operations.RenewLeaseTx(ctx, tx, nativeLease(lease), duration)
+	var renewed operationpostgres.Lease
+	var err error
+	if successor, found, successorErr := a.lookupSuccessorLeaseTx(ctx, tx, lease); successorErr != nil {
+		return deploymentmodule.NativeOperationLease{}, successorErr
+	} else if found {
+		renewed, err = a.operations.RenewSuccessorLeaseTx(ctx, tx, successor, duration)
+	} else {
+		renewed, err = a.operations.RenewLeaseTx(ctx, tx, nativeLease(lease), duration)
+	}
 	if err != nil {
 		return deploymentmodule.NativeOperationLease{}, mapError(err)
 	}
@@ -581,6 +645,12 @@ func (a *Adapter) FailTx(ctx context.Context, tx deploymentmodule.NativeOperatio
 	if err != nil {
 		return fmt.Errorf("%w: operation failure outcome: %v", deploymentmodule.ErrNativeOperationInvalid, err)
 	}
+	if successor, found, successorErr := a.lookupSuccessorLeaseTx(ctx, tx, lease); successorErr != nil {
+		return successorErr
+	} else if found {
+		_, err := a.operations.ReconcileSuccessorAttemptTx(ctx, tx, successor, operationpostgres.StateFailed, canonical, canonical)
+		return mapError(err)
+	}
 	return mapError(a.operations.FailTx(ctx, tx, nativeLease(lease), canonical))
 }
 
@@ -599,6 +669,11 @@ func (a *Adapter) MarkIndeterminateTx(ctx context.Context, tx deploymentmodule.N
 	canonical, err := canonicalObjectJSON(evidence, true)
 	if err != nil {
 		return fmt.Errorf("%w: operation indeterminate evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
+	}
+	if successor, found, successorErr := a.lookupSuccessorLeaseTx(ctx, tx, lease); successorErr != nil {
+		return successorErr
+	} else if found {
+		return mapError(a.operations.MarkSuccessorIndeterminateTx(ctx, tx, successor, canonical))
 	}
 	return mapError(a.operations.MarkIndeterminateTx(ctx, tx, nativeLease(lease), canonical))
 }
@@ -622,6 +697,11 @@ func (a *Adapter) ExpireAttemptTx(ctx context.Context, tx deploymentmodule.Nativ
 	if err != nil {
 		return fmt.Errorf("%w: operation expiry evidence: %v", deploymentmodule.ErrNativeOperationInvalid, err)
 	}
+	if successor, found, successorErr := a.lookupSuccessorLeaseTx(ctx, tx, lease); successorErr != nil {
+		return successorErr
+	} else if found {
+		return mapError(a.operations.ExpireSuccessorAttemptTx(ctx, tx, successor, canonical))
+	}
 	return mapError(a.operations.ExpireAttemptTx(ctx, tx, nativeLease(lease), canonical))
 }
 
@@ -642,6 +722,14 @@ func (a *Adapter) ConfirmExpiredAttemptTx(ctx context.Context, tx deploymentmodu
 	if expectedFencingGeneration <= 0 || lease.FencingGeneration == 1<<63-1 || expectedFencingGeneration != lease.FencingGeneration+1 {
 		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: expected expiry fencing generation must be predecessor plus one", deploymentmodule.ErrNativeOperationInvalid)
 	}
+	if _, found, successorErr := a.lookupSuccessorLeaseTx(ctx, tx, lease); successorErr != nil {
+		return deploymentmodule.NativeOperationRecord{}, successorErr
+	} else if found {
+		// Successor expiry does not advance the public root generation. Callers
+		// must use ExpireAttemptTx, which routes to ExpireSuccessorAttemptTx and
+		// records leaf evidence without mutating the immutable root lease.
+		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: successor lease cannot use public expiry confirmation", deploymentmodule.ErrNativeOperationConflict)
+	}
 	stored, err := a.operations.ConfirmExpiredAttemptTx(ctx, tx, nativeLease(lease), expectedFencingGeneration)
 	if err != nil {
 		return deploymentmodule.NativeOperationRecord{}, mapError(err)
@@ -654,6 +742,24 @@ func (a *Adapter) ConfirmExpiredAttemptTx(ctx context.Context, tx deploymentmodu
 		return deploymentmodule.NativeOperationRecord{}, fmt.Errorf("%w: operation authority returned a mismatched expired-attempt confirmation", deploymentmodule.ErrNativeOperationConflict)
 	}
 	return record, nil
+}
+
+// lookupSuccessorLeaseTx locks the public operation and exact successor leaf
+// in the caller-owned transaction. Routing decisions therefore cannot race a
+// concurrent successor admission or reconciliation.
+func (a *Adapter) lookupSuccessorLeaseTx(ctx context.Context, tx deploymentmodule.NativeOperationTx, lease deploymentmodule.NativeOperationLease) (operationpostgres.Lease, bool, error) {
+	if a == nil || a.operations == nil {
+		return operationpostgres.Lease{}, false, fmt.Errorf("%w: successor operation authority is not configured", deploymentpostgres.ErrInvalid)
+	}
+	leaf, found, err := a.operations.LookupSuccessorAttemptTx(ctx, tx, operationpostgres.Lease{
+		Scope: lease.Scope, IdempotencyKey: lease.IdempotencyKey, OperationID: lease.OperationID,
+		OwnerID: lease.OwnerID, FencingGeneration: lease.FencingGeneration, LeaseExpiresAt: lease.LeaseExpiresAt,
+		AttemptID: lease.AttemptID, AttemptIdentity: lease.AttemptIdentity,
+	})
+	if err != nil || !found {
+		return operationpostgres.Lease{}, found, mapError(err)
+	}
+	return operationpostgres.Lease{Scope: leaf.Scope, IdempotencyKey: leaf.IdempotencyKey, OperationID: leaf.OperationID, OwnerID: leaf.OwnerID, FencingGeneration: leaf.FencingGeneration, LeaseExpiresAt: leaf.LeaseExpiresAt, AttemptID: leaf.AttemptID, AttemptIdentity: leaf.AttemptIdentity}, true, nil
 }
 
 func mapStatus(status operationpostgres.AcquireStatus) (deploymentmodule.NativeOperationStatus, error) {

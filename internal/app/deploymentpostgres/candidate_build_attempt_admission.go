@@ -54,6 +54,23 @@ type CandidateBuildAttemptAdmission interface {
 	AdmitCandidateBuildAttemptTx(context.Context, deploymentnative.Tx, CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error)
 }
 
+// CandidateBuildAttemptSuccessorDuckLakeAdmission is the transaction-aware
+// capability used by native recovery. Delivery and operation successor rows
+// are admitted first; this method appends the matching DuckLake attempt on
+// the same caller-owned PostgreSQL transaction so a successor can execute and
+// be reconciled normally. Implementations that cannot provide this capability
+// are not valid native successor authorities.
+type CandidateBuildAttemptSuccessorDuckLakeAdmission interface {
+	BeginSuccessorDuckLakeAttemptTx(context.Context, deploymentnative.Tx, deploymentnative.DeliveryBuildAttempt, string) (ducklakepostgres.AttemptEvidence, error)
+}
+
+// CandidateBuildAttemptSuccessorDuckLakeReader is the read half used by
+// successor-leaf recovery. It remains separate from the admission interface
+// so test doubles that only exercise first-child admission are unaffected.
+type CandidateBuildAttemptSuccessorDuckLakeReader interface {
+	LoadSuccessorDuckLakeAttempt(context.Context, string) (ducklakepostgres.AttemptEvidence, error)
+}
+
 // CandidateBuildAttemptDuckLakeAuthority is the narrow transaction-aware
 // surface required by candidate admission. BeginAttemptTx receives the
 // delivery-owned transaction, so this authority never opens or commits a
@@ -69,6 +86,8 @@ type candidateBuildAttemptAdmitter struct {
 }
 
 var _ CandidateBuildAttemptAdmission = (*candidateBuildAttemptAdmitter)(nil)
+var _ CandidateBuildAttemptSuccessorDuckLakeAdmission = (*candidateBuildAttemptAdmitter)(nil)
+var _ CandidateBuildAttemptSuccessorDuckLakeReader = (*candidateBuildAttemptAdmitter)(nil)
 var _ CandidateBuildAttemptDuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 
 // NewCandidateBuildAttemptAdmission constructs the native candidate admission
@@ -85,6 +104,38 @@ func NewCandidateBuildAttemptAdmission(delivery *deploymentnative.Repository, du
 
 func deliveryConfigured(delivery *deploymentnative.Repository) bool {
 	return delivery != nil && delivery.Configured()
+}
+
+// BeginSuccessorDuckLakeAttemptTx appends the DuckLake attempt ledger for a
+// delivery successor. The caller owns tx; this method never commits or rolls
+// it back. It intentionally accepts only the already-authoritative delivery
+// attempt projection, preventing caller-selected fences or namespaces.
+func (a *candidateBuildAttemptAdmitter) BeginSuccessorDuckLakeAttemptTx(ctx context.Context, tx deploymentnative.Tx, attempt deploymentnative.DeliveryBuildAttempt, catalogID string) (ducklakepostgres.AttemptEvidence, error) {
+	if a == nil || a.ducklake == nil || !a.ducklake.Configured() || tx == nil {
+		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake admission authority is unavailable", deploymentnative.ErrInvalid)
+	}
+	duckTx, ok := tx.(ducklakepostgres.Tx)
+	if !ok {
+		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+	return a.ducklake.BeginAttemptTx(ctx, duckTx, ducklakepostgres.BeginAttemptInput{
+		AttemptID: attempt.AttemptID, RequestDigest: attempt.RequestDigest, PlanDigest: attempt.PlanDigest,
+		PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: catalogID, OwnerID: attempt.OwnerID,
+		FencingEpoch: attempt.FencingEpoch, SessionIdentity: attempt.SessionIdentity, LeaseExpiresAt: attempt.LeaseExpiresAt,
+	})
+}
+
+func (a *candidateBuildAttemptAdmitter) LoadSuccessorDuckLakeAttempt(ctx context.Context, attemptID string) (ducklakepostgres.AttemptEvidence, error) {
+	if a == nil || a.ducklake == nil || !a.ducklake.Configured() {
+		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake reader is unavailable", deploymentnative.ErrInvalid)
+	}
+	reader, ok := a.ducklake.(interface {
+		LoadAttempt(context.Context, string) (ducklakepostgres.AttemptEvidence, error)
+	})
+	if !ok {
+		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake reader is unavailable", deploymentnative.ErrInvalid)
+	}
+	return reader.LoadAttempt(ctx, attemptID)
 }
 
 // AdmitCandidateBuildAttempt atomically admits the target lease, delivery

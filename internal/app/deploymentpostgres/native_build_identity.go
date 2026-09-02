@@ -24,6 +24,10 @@ import (
 const (
 	nativeBuildOperationType   = "delivery.plan.build"
 	maxNativeBuildOutcomeBytes = 16 << 10
+	// Successor depth is persisted in the terminal outcome so replay can root
+	// the append edge at the operation-derived attempt rather than trusting an
+	// arbitrary UUID supplied as predecessor evidence.
+	maxNativeBuildSuccessorDepth = 64
 )
 
 // nativeBuildOutcome is the terminal, replayable evidence persisted against a
@@ -36,12 +40,17 @@ const (
 // target, environment, plan, and principal binding makes the terminal record
 // self-describing and prevents cross-scope consequence reuse.
 type nativeBuildOutcome struct {
-	OperationID           string `json:"operationId"`
-	OperationOwnerID      string `json:"operationOwnerId"`
-	PlanID                string `json:"planId"`
-	CandidateID           string `json:"candidateId"`
-	AttemptID             string `json:"attemptId"`
-	LeaseID               string `json:"leaseId"`
+	OperationID      string `json:"operationId"`
+	OperationOwnerID string `json:"operationOwnerId"`
+	PlanID           string `json:"planId"`
+	CandidateID      string `json:"candidateId"`
+	AttemptID        string `json:"attemptId"`
+	LeaseID          string `json:"leaseId"`
+	// Successor outcomes carry the exact append edge.  Root outcomes leave
+	// these fields empty and use operation-derived attempt/lease identities.
+	AttemptIdentity       string `json:"attemptIdentity,omitempty"`
+	PredecessorAttemptID  string `json:"predecessorAttemptId,omitempty"`
+	SuccessorDepth        int    `json:"successorDepth,omitempty"`
 	GenerationID          string `json:"generationId"`
 	SealID                string `json:"sealId"`
 	ServingArtifactID     string `json:"servingArtifactId"`
@@ -154,6 +163,35 @@ func nativeBuildConsequenceID(operationID, role string) (string, error) {
 	return id.String(), nil
 }
 
+// nativeBuildSuccessorDepth returns the deterministic chain distance from the
+// operation-derived root attempt to predecessorID.  It is intentionally
+// bounded: an outcome that cannot be rooted within this limit is rejected
+// instead of accepting an unanchored UUID pair.
+func nativeBuildSuccessorDepth(operationID, predecessorID string) (int, error) {
+	root, err := nativeBuildConsequenceID(operationID, "attempt")
+	if err != nil {
+		return 0, err
+	}
+	canonical, err := canonicalUUIDv7(predecessorID)
+	if err != nil || canonical != predecessorID {
+		return 0, fmt.Errorf("%w: predecessor attempt identity is not canonical", deployment.ErrDeliveryConflict)
+	}
+	if predecessorID == root {
+		return 0, nil
+	}
+	cursor := root
+	for depth := 1; depth <= maxNativeBuildSuccessorDepth; depth++ {
+		cursor, err = nativeBuildSuccessorID(cursor, "attempt")
+		if err != nil {
+			return 0, err
+		}
+		if cursor == predecessorID {
+			return depth, nil
+		}
+	}
+	return 0, fmt.Errorf("%w: successor predecessor is outside the bounded chain", deployment.ErrDeliveryConflict)
+}
+
 // encodeNativeBuildOutcome validates and bounds a terminal outcome before it
 // is persisted. The exact request and operation bindings are required so a
 // programmer cannot persist a well-formed consequence document under the
@@ -237,6 +275,19 @@ func validateNativeBuildOutcome(outcome nativeBuildOutcome, request *deploymentm
 	if err := validateText(outcome.ServingArtifactID, "serving artifact id", 255); err != nil {
 		return fmt.Errorf("%w: native build outcome serving artifact id is not canonical: %v", deployment.ErrDeliveryConflict, err)
 	}
+	if outcome.AttemptIdentity != "" {
+		if err := validateText(outcome.AttemptIdentity, "attempt identity", 512); err != nil {
+			return fmt.Errorf("%w: native build outcome attempt identity is not canonical: %v", deployment.ErrDeliveryConflict, err)
+		}
+	}
+	if outcome.PredecessorAttemptID != "" {
+		if _, err := canonicalUUIDv7(outcome.PredecessorAttemptID); err != nil {
+			return fmt.Errorf("%w: native build outcome predecessor attempt identity: %v", deployment.ErrDeliveryConflict, err)
+		}
+	}
+	if outcome.SuccessorDepth < 0 || outcome.SuccessorDepth > maxNativeBuildSuccessorDepth {
+		return fmt.Errorf("%w: native build outcome successor depth is outside the bounded chain", deployment.ErrDeliveryConflict)
+	}
 	switch outcome.Status {
 	case "sealed":
 	default:
@@ -247,12 +298,47 @@ func validateNativeBuildOutcome(outcome nativeBuildOutcome, request *deploymentm
 		return fmt.Errorf("%w: native build candidate identity differs from operation", deployment.ErrDeliveryConflict)
 	}
 	for role, actual := range map[string]string{
-		"attempt": outcome.AttemptID, "lease": outcome.LeaseID, "generation": outcome.GenerationID,
-		"seal": outcome.SealID, "event": outcome.EventID, "audit": outcome.AuditID,
+		"generation": outcome.GenerationID, "seal": outcome.SealID, "event": outcome.EventID, "audit": outcome.AuditID,
 	} {
 		expected, err := nativeBuildConsequenceID(outcome.OperationID, role)
 		if err != nil || actual != expected {
 			return fmt.Errorf("%w: native build %s identity differs from operation", deployment.ErrDeliveryConflict, role)
+		}
+	}
+	// The initial attempt and lease use operation-derived identities. Every
+	// successor carries its predecessor attempt ID and exact identity, allowing
+	// arbitrary-depth deterministic chains without accepting arbitrary UUIDv7
+	// pairs in a replay payload.
+	rootAttempt, rootErr := nativeBuildConsequenceID(outcome.OperationID, "attempt")
+	if rootErr != nil {
+		return fmt.Errorf("%w: native build attempt identity differs from operation", deployment.ErrDeliveryConflict)
+	}
+	if outcome.SuccessorDepth == 0 {
+		if outcome.PredecessorAttemptID != "" || outcome.AttemptIdentity != "" || outcome.AttemptID != rootAttempt {
+			return fmt.Errorf("%w: native build root attempt identity differs from operation", deployment.ErrDeliveryConflict)
+		}
+		rootLease, leaseErr := nativeBuildConsequenceID(outcome.OperationID, "lease")
+		if leaseErr != nil || outcome.LeaseID != rootLease {
+			return fmt.Errorf("%w: native build lease identity differs from operation", deployment.ErrDeliveryConflict)
+		}
+	} else {
+		// Walk from the operation-derived root exactly SuccessorDepth edges and
+		// require the persisted predecessor/child pair to match that path.
+		predecessor := rootAttempt
+		var successorAttempt string
+		var attemptErr error
+		for depth := 1; depth <= outcome.SuccessorDepth; depth++ {
+			successorAttempt, attemptErr = nativeBuildSuccessorID(predecessor, "attempt")
+			if attemptErr != nil {
+				break
+			}
+			if depth < outcome.SuccessorDepth {
+				predecessor = successorAttempt
+			}
+		}
+		successorLease, leaseErr := nativeBuildSuccessorID(predecessor, "lease")
+		if attemptErr != nil || leaseErr != nil || outcome.PredecessorAttemptID != predecessor || outcome.AttemptID != successorAttempt || outcome.LeaseID != successorLease || outcome.AttemptIdentity != "native-build-successor/"+successorAttempt {
+			return fmt.Errorf("%w: native build successor attempt or lease identity differs from predecessor", deployment.ErrDeliveryConflict)
 		}
 	}
 

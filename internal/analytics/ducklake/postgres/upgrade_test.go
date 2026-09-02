@@ -78,6 +78,81 @@ func TestPostgres18RetentionStateConstraintUpgrade(t *testing.T) {
 	}
 }
 
+func TestPostgres18SnapshotOrphanCleanupNotBeforeUpgrade(t *testing.T) {
+	h := postgrestest.Start(t)
+	db := h.NewDatabase(t, "ducklake_snapshot_orphan_upgrade_test")
+	p, err := pgxpool.New(t.Context(), db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(p.Close)
+	apply := func() {
+		t.Helper()
+		tx, txErr := p.Begin(t.Context())
+		if txErr != nil {
+			t.Fatal(txErr)
+		}
+		if txErr = ApplySchema(t.Context(), tx); txErr != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(txErr)
+		}
+		if txErr = tx.Commit(t.Context()); txErr != nil {
+			t.Fatal(txErr)
+		}
+	}
+	apply()
+
+	r := New(p)
+	const poolID, catalogID = "orphan-upgrade-pool", "orphan-upgrade-catalog"
+	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-0000-000000000701", MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "v1"}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Model a pre-column installation by removing the current column before
+	// inserting an observation that an older coordinator would have written.
+	if _, err := p.Exec(t.Context(), `ALTER TABLE ducklake.snapshot_orphan DROP COLUMN cleanup_not_before`); err != nil {
+		t.Fatal(err)
+	}
+	discovered := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	const orphanID = "0198f2c0-7c7a-7f00-0000-000000000702"
+	if _, err := p.Exec(t.Context(), `INSERT INTO ducklake.snapshot_orphan(orphan_id,physical_pool_id,catalog_id,snapshot_id,state,evidence,discovered_at) VALUES ($1,$2,$3,701,'quarantined','{}'::jsonb,$4)`, orphanID, poolID, catalogID, discovered); err != nil {
+		t.Fatal(err)
+	}
+	apply()
+
+	var cleanupNotBefore, storedDiscovered time.Time
+	if err := p.QueryRow(t.Context(), `SELECT cleanup_not_before, discovered_at FROM ducklake.snapshot_orphan WHERE orphan_id=$1`, orphanID).Scan(&cleanupNotBefore, &storedDiscovered); err != nil {
+		t.Fatal(err)
+	}
+	if !cleanupNotBefore.Equal(storedDiscovered) {
+		t.Fatalf("cleanup_not_before=%s, discovered_at=%s; want backfill to discovery time", cleanupNotBefore, storedDiscovered)
+	}
+	var nullable string
+	if err := p.QueryRow(t.Context(), `SELECT is_nullable FROM information_schema.columns WHERE table_schema='ducklake' AND table_name='snapshot_orphan' AND column_name='cleanup_not_before'`).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "NO" {
+		t.Fatalf("cleanup_not_before is_nullable=%s, want NO", nullable)
+	}
+
+	// The fresh default must populate new rows, while the restored check must
+	// reject a grace deadline earlier than discovery.
+	const secondOrphanID = "0198f2c0-7c7a-7f00-0000-000000000703"
+	if _, err := p.Exec(t.Context(), `INSERT INTO ducklake.snapshot_orphan(orphan_id,physical_pool_id,catalog_id,snapshot_id,state,evidence) VALUES ($1,$2,$3,702,'quarantined','{}'::jsonb)`, secondOrphanID, poolID, catalogID); err != nil {
+		t.Fatal(err)
+	}
+	var defaultCleanup, defaultDiscovered time.Time
+	if err := p.QueryRow(t.Context(), `SELECT cleanup_not_before, discovered_at FROM ducklake.snapshot_orphan WHERE orphan_id=$1`, secondOrphanID).Scan(&defaultCleanup, &defaultDiscovered); err != nil {
+		t.Fatal(err)
+	}
+	if defaultCleanup.Before(defaultDiscovered) {
+		t.Fatalf("default cleanup_not_before=%s precedes discovered_at=%s", defaultCleanup, defaultDiscovered)
+	}
+	if _, err := p.Exec(t.Context(), `UPDATE ducklake.snapshot_orphan SET cleanup_not_before=discovered_at-interval '1 second' WHERE orphan_id=$1`, secondOrphanID); err == nil {
+		t.Fatal("cleanup_not_before check accepted a deadline before discovered_at")
+	}
+}
+
 func TestPostgres18UpgradeAuthorityLifecycleAndRuntimeGate(t *testing.T) {
 	h := postgrestest.Start(t)
 	migratorRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_upgrade_coordinator", Password: "migrator-secret", Login: true})

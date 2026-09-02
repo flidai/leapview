@@ -21,6 +21,13 @@ import (
 
 var ErrNativePhysicalRecoveryUnresolved = errors.New("native physical build commit outcome is unresolved")
 
+// ErrNativePhysicalMarkerAbsent identifies the one safe, positive result of a
+// marker lookup that completed successfully and found no exact marker.  It is
+// deliberately distinct from ErrNativePhysicalRecoveryUnresolved: resolver,
+// close, quarantine, snapshot, and evidence errors all remain unresolved but
+// must never authorize a successor admission.
+var ErrNativePhysicalMarkerAbsent = errors.New("native physical build commit marker is absent")
+
 // NativePhysicalSnapshotInspector is the least-privilege read-only view used
 // during recovery. It deliberately omits Query, materialization, and all
 // mutation capabilities exposed by the normal qualification environment.
@@ -174,7 +181,7 @@ func RecoverNativePhysicalBuild(ctx context.Context, input NativePhysicalRecover
 		return NativePhysicalBuildEvidence{}, errors.Join(ErrNativePhysicalRecoveryUnresolved, fmt.Errorf("%w: marker resolver returned contradictory resolution", deploymentnative.ErrConflict))
 	}
 	if !resolution.Found {
-		return NativePhysicalBuildEvidence{}, fmt.Errorf("%w: exact commit marker was not found", ErrNativePhysicalRecoveryUnresolved)
+		return NativePhysicalBuildEvidence{}, errors.Join(ErrNativePhysicalRecoveryUnresolved, ErrNativePhysicalMarkerAbsent)
 	}
 
 	capture, err := input.ObservationReader.LoadSourceObservationCapture(ctx, normalized.Attempt.AttemptID)

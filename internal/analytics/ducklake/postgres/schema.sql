@@ -5,6 +5,8 @@
 -- DuckLake PostgreSQL database and is accessed by local DuckDB connectors.
 -- These rows carry only immutable identities and lifecycle evidence; they do
 -- not duplicate DuckLake's table/file manifest.
+CREATE EXTENSION IF NOT EXISTS pgcrypto;
+
 CREATE SCHEMA IF NOT EXISTS ducklake;
 
 CREATE TABLE IF NOT EXISTS ducklake.catalog_identity (
@@ -337,17 +339,118 @@ CREATE TABLE IF NOT EXISTS ducklake.snapshot_orphan (
     cleanup_lease_expires_at timestamptz,
     evidence         jsonb NOT NULL CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
     discovered_at    timestamptz NOT NULL DEFAULT clock_timestamp(),
+    cleanup_not_before timestamptz NOT NULL DEFAULT clock_timestamp(),
     resolved_at      timestamptz,
     FOREIGN KEY (physical_pool_id, catalog_id) REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
     UNIQUE (physical_pool_id, catalog_id, snapshot_id),
     CHECK ((state = 'quarantined' AND resolved_at IS NULL) OR (state = 'cleanup-complete' AND resolved_at IS NOT NULL)),
     CHECK ((cleanup_fencing_epoch = 0 AND cleanup_owner_id IS NULL AND cleanup_lease_expires_at IS NULL) OR (cleanup_fencing_epoch > 0 AND cleanup_owner_id IS NOT NULL AND cleanup_lease_expires_at IS NOT NULL)),
     CHECK (cleanup_owner_id IS NULL OR (cleanup_owner_id = btrim(cleanup_owner_id) AND octet_length(cleanup_owner_id) BETWEEN 1 AND 255)),
-    CHECK (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at > discovered_at)
+    CHECK (cleanup_lease_expires_at IS NULL OR cleanup_lease_expires_at > discovered_at),
+    CHECK (cleanup_not_before >= discovered_at)
 );
+
+-- Older installations predate orphan cleanup grace.  Add the column in place,
+-- backfill existing observations from their discovery timestamp, and restore
+-- the same default, nullability, and ordering invariant as fresh databases.
+ALTER TABLE ducklake.snapshot_orphan
+    ADD COLUMN IF NOT EXISTS cleanup_not_before timestamptz;
+-- The current immutable-row trigger also protects cleanup_not_before.  Drop it
+-- for the transactional backfill; the schema's trigger definition is recreated
+-- below after this migration block has completed.
+DROP TRIGGER IF EXISTS snapshot_orphan_identity_immutable ON ducklake.snapshot_orphan;
+UPDATE ducklake.snapshot_orphan
+   SET cleanup_not_before = CASE
+       WHEN cleanup_not_before IS NULL OR cleanup_not_before < discovered_at THEN discovered_at
+       ELSE cleanup_not_before
+   END
+ WHERE cleanup_not_before IS NULL OR cleanup_not_before < discovered_at;
+ALTER TABLE ducklake.snapshot_orphan
+    ALTER COLUMN cleanup_not_before SET DEFAULT clock_timestamp(),
+    ALTER COLUMN cleanup_not_before SET NOT NULL;
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conrelid = 'ducklake.snapshot_orphan'::regclass
+           AND conname = 'snapshot_orphan_cleanup_not_before_check'
+    ) THEN
+        ALTER TABLE ducklake.snapshot_orphan
+            ADD CONSTRAINT snapshot_orphan_cleanup_not_before_check
+            CHECK (cleanup_not_before >= discovered_at);
+    END IF;
+END $$;
 
 CREATE INDEX IF NOT EXISTS ducklake_snapshot_orphan_backlog_idx
     ON ducklake.snapshot_orphan (physical_pool_id, catalog_id, state, discovered_at);
+
+-- A snapshot-orphan scan is a durable, resumable walk over one exact
+-- physical pool/catalog.  The catalog metadata lives in the separately
+-- provisioned DuckLake database; this control-side ledger stores only the
+-- bounded page identities and evidence supplied by that catalog adapter.
+CREATE TABLE IF NOT EXISTS ducklake.snapshot_orphan_scan (
+    scan_id             uuid PRIMARY KEY,
+    physical_pool_id    text NOT NULL,
+    catalog_id          text NOT NULL,
+    owner_id            text NOT NULL,
+    fencing_epoch       bigint NOT NULL CHECK (fencing_epoch > 0),
+    page_size           integer NOT NULL CHECK (page_size BETWEEN 1 AND 256),
+    grace_micros        bigint NOT NULL CHECK (grace_micros BETWEEN 1 AND 2592000000000),
+    cursor_snapshot_id  bigint NOT NULL DEFAULT 0 CHECK (cursor_snapshot_id >= 0),
+    pages_scanned       integer NOT NULL DEFAULT 0 CHECK (pages_scanned >= 0),
+    snapshots_scanned   bigint NOT NULL DEFAULT 0 CHECK (snapshots_scanned >= 0),
+    orphans_recorded    bigint NOT NULL DEFAULT 0 CHECK (orphans_recorded >= 0),
+    state               text NOT NULL CHECK (state IN ('running','completed')),
+    request_evidence    jsonb NOT NULL DEFAULT '{}'::jsonb
+        CHECK (jsonb_typeof(request_evidence) = 'object' AND octet_length(request_evidence::text) <= 32768),
+    completion_evidence jsonb,
+    cleanup_not_before  timestamptz NOT NULL,
+    pruned_at           timestamptz,
+    pruned_page_count   integer NOT NULL DEFAULT 0 CHECK (pruned_page_count >= 0),
+    pruned_page_digest  text NOT NULL DEFAULT '' CHECK (pruned_page_digest = '' OR pruned_page_digest ~ '^sha256:[0-9a-f]{64}$'),
+    started_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    updated_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    completed_at        timestamptz,
+    FOREIGN KEY (physical_pool_id, catalog_id)
+        REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
+    UNIQUE (scan_id, physical_pool_id, catalog_id),
+    CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
+    CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
+    CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
+    CHECK (completed_at IS NULL OR (state = 'completed' AND completed_at >= started_at)),
+    CHECK (cleanup_not_before >= started_at),
+    CHECK (completion_evidence IS NULL OR (jsonb_typeof(completion_evidence) = 'object' AND octet_length(completion_evidence::text) <= 32768)),
+    CHECK ((pruned_at IS NULL AND pruned_page_count = 0 AND pruned_page_digest = '') OR (state = 'completed' AND pruned_at IS NOT NULL AND pruned_page_count >= 0 AND pruned_page_digest ~ '^sha256:[0-9a-f]{64}$'))
+);
+
+CREATE TABLE IF NOT EXISTS ducklake.snapshot_orphan_scan_page (
+    scan_id             uuid NOT NULL REFERENCES ducklake.snapshot_orphan_scan(scan_id) ON DELETE RESTRICT,
+    physical_pool_id    text NOT NULL,
+    catalog_id          text NOT NULL,
+    page_number         integer NOT NULL CHECK (page_number > 0),
+    cursor_before       bigint NOT NULL CHECK (cursor_before >= 0),
+    cursor_after        bigint NOT NULL CHECK (cursor_after >= cursor_before),
+    snapshot_ids        bigint[] NOT NULL,
+    orphan_count        integer NOT NULL DEFAULT 0 CHECK (orphan_count >= 0 AND orphan_count <= 256),
+    terminal            boolean NOT NULL DEFAULT false,
+    page_digest         text NOT NULL CHECK (page_digest ~ '^sha256:[0-9a-f]{64}$'),
+    evidence            jsonb NOT NULL
+        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
+    created_at          timestamptz NOT NULL DEFAULT clock_timestamp(),
+    PRIMARY KEY (scan_id, page_number),
+    FOREIGN KEY (scan_id, physical_pool_id, catalog_id)
+        REFERENCES ducklake.snapshot_orphan_scan(scan_id, physical_pool_id, catalog_id),
+    CHECK (cardinality(snapshot_ids) <= 256),
+    CHECK (snapshot_ids = '{}'::bigint[] OR snapshot_ids[1] > cursor_before),
+    CHECK (snapshot_ids = '{}'::bigint[] OR snapshot_ids[array_length(snapshot_ids,1)] <= cursor_after)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS ducklake_snapshot_orphan_scan_page_cursor_idx
+    ON ducklake.snapshot_orphan_scan_page (scan_id, cursor_before, cursor_after);
+
+CREATE INDEX IF NOT EXISTS ducklake_snapshot_orphan_scan_backlog_idx
+    ON ducklake.snapshot_orphan_scan (physical_pool_id, catalog_id, state, updated_at);
 
 -- The clean-slate upgrade authority is deliberately separate from the
 -- catalog identity and serving evidence above.  Runtime attachments only
@@ -634,8 +737,8 @@ BEGIN
        OR NEW.plan_digest <> OLD.plan_digest
        OR NEW.physical_pool_id <> OLD.physical_pool_id
        OR NEW.catalog_id <> OLD.catalog_id
-       OR NEW.owner_id <> OLD.owner_id
-       OR NEW.fencing_epoch <> OLD.fencing_epoch
+       OR ((NEW.owner_id <> OLD.owner_id OR NEW.fencing_epoch <> OLD.fencing_epoch)
+           AND NOT (OLD.state = 'running' AND NEW.state = 'running' AND NEW.fencing_epoch > OLD.fencing_epoch))
        OR NEW.session_identity <> OLD.session_identity THEN
         RAISE EXCEPTION 'DuckLake attempt identity is immutable';
     END IF;
@@ -913,7 +1016,8 @@ BEGIN
        OR NEW.physical_pool_id <> OLD.physical_pool_id
        OR NEW.catalog_id <> OLD.catalog_id
        OR NEW.snapshot_id <> OLD.snapshot_id
-       OR NEW.discovered_at IS DISTINCT FROM OLD.discovered_at THEN
+       OR NEW.discovered_at IS DISTINCT FROM OLD.discovered_at
+       OR NEW.cleanup_not_before IS DISTINCT FROM OLD.cleanup_not_before THEN
         RAISE EXCEPTION 'DuckLake snapshot orphan identity is immutable';
     END IF;
     IF OLD.state = 'cleanup-complete' THEN
@@ -941,6 +1045,81 @@ BEGIN
     IF NEW.cleanup_fencing_epoch > OLD.cleanup_fencing_epoch
        AND (NEW.state <> 'quarantined' OR NEW.cleanup_owner_id IS NULL OR NEW.cleanup_lease_expires_at IS NULL) THEN
         RAISE EXCEPTION 'DuckLake orphan cleanup claim requires a quarantined orphan';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.reject_snapshot_orphan_scan_change()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
+BEGIN
+    IF TG_OP = 'DELETE'
+       OR NEW.scan_id <> OLD.scan_id
+       OR NEW.physical_pool_id <> OLD.physical_pool_id
+       OR NEW.catalog_id <> OLD.catalog_id
+       OR NEW.page_size <> OLD.page_size
+       OR NEW.grace_micros <> OLD.grace_micros
+       OR NEW.cleanup_not_before <> OLD.cleanup_not_before
+       OR NEW.started_at <> OLD.started_at
+       OR NEW.request_evidence IS DISTINCT FROM OLD.request_evidence THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan identity is immutable';
+    END IF;
+    IF OLD.state = 'completed' AND
+       (NEW.state <> OLD.state OR NEW.cursor_snapshot_id <> OLD.cursor_snapshot_id
+        OR NEW.pages_scanned <> OLD.pages_scanned OR NEW.snapshots_scanned <> OLD.snapshots_scanned
+        OR NEW.orphans_recorded <> OLD.orphans_recorded OR NEW.updated_at IS DISTINCT FROM OLD.updated_at
+        OR NEW.completed_at IS DISTINCT FROM OLD.completed_at
+        OR NEW.completion_evidence IS DISTINCT FROM OLD.completion_evidence
+        OR (NEW.pruned_at IS DISTINCT FROM OLD.pruned_at
+            OR NEW.pruned_page_count <> OLD.pruned_page_count
+            OR NEW.pruned_page_digest <> OLD.pruned_page_digest)
+           AND NOT (OLD.pruned_at IS NULL AND NEW.pruned_at IS NOT NULL
+                    AND NEW.pruned_page_count >= 0
+                    AND NEW.pruned_page_digest ~ '^sha256:[0-9a-f]{64}$')) THEN
+        RAISE EXCEPTION 'DuckLake terminal snapshot orphan scan is immutable';
+    END IF;
+    IF NEW.fencing_epoch < OLD.fencing_epoch
+       OR (NEW.fencing_epoch = OLD.fencing_epoch AND NEW.owner_id IS DISTINCT FROM OLD.owner_id) THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan fence epoch cannot move backwards';
+    END IF;
+    IF NEW.updated_at < OLD.updated_at THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan updated_at cannot move backwards';
+    END IF;
+    IF NEW.cursor_snapshot_id < OLD.cursor_snapshot_id
+       OR NEW.pages_scanned < OLD.pages_scanned
+       OR NEW.snapshots_scanned < OLD.snapshots_scanned
+       OR NEW.orphans_recorded < OLD.orphans_recorded THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan progress cannot move backwards';
+    END IF;
+    IF (NEW.state = 'running' AND (NEW.completed_at IS NOT NULL OR NEW.completion_evidence IS NOT NULL))
+       OR (NEW.state = 'completed' AND (NEW.completed_at IS NULL OR NEW.completion_evidence IS NULL)) THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan terminal evidence is inconsistent';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.reject_snapshot_orphan_scan_page_change()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
+BEGIN
+    IF TG_OP = 'DELETE' THEN
+        IF current_setting('ducklake.scan_prune', true) = 'on' THEN RETURN OLD; END IF;
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan page evidence is immutable';
+    END IF;
+    IF TG_OP <> 'UPDATE'
+       OR NEW.scan_id <> OLD.scan_id
+       OR NEW.physical_pool_id <> OLD.physical_pool_id
+       OR NEW.catalog_id <> OLD.catalog_id
+       OR NEW.page_number <> OLD.page_number
+       OR NEW.cursor_before <> OLD.cursor_before
+       OR NEW.cursor_after <> OLD.cursor_after
+       OR NEW.snapshot_ids IS DISTINCT FROM OLD.snapshot_ids
+       OR NEW.orphan_count <> OLD.orphan_count
+       OR NEW.terminal <> OLD.terminal
+       OR NEW.page_digest <> OLD.page_digest
+       OR NEW.evidence IS DISTINCT FROM OLD.evidence
+       OR NEW.created_at <> OLD.created_at THEN
+        RAISE EXCEPTION 'DuckLake snapshot orphan scan page evidence is immutable';
     END IF;
     RETURN NEW;
 END;
@@ -985,6 +1164,16 @@ DROP TRIGGER IF EXISTS snapshot_orphan_identity_immutable ON ducklake.snapshot_o
 CREATE TRIGGER snapshot_orphan_identity_immutable
     BEFORE UPDATE OR DELETE ON ducklake.snapshot_orphan
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_orphan_identity_change();
+
+DROP TRIGGER IF EXISTS snapshot_orphan_scan_immutable ON ducklake.snapshot_orphan_scan;
+CREATE TRIGGER snapshot_orphan_scan_immutable
+    BEFORE UPDATE OR DELETE ON ducklake.snapshot_orphan_scan
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_orphan_scan_change();
+
+DROP TRIGGER IF EXISTS snapshot_orphan_scan_page_immutable ON ducklake.snapshot_orphan_scan_page;
+CREATE TRIGGER snapshot_orphan_scan_page_immutable
+    BEFORE UPDATE OR DELETE ON ducklake.snapshot_orphan_scan_page
+    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_orphan_scan_page_change();
 
 CREATE OR REPLACE FUNCTION ducklake.reject_catalog_migration_change()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, ducklake AS $$
@@ -1385,6 +1574,16 @@ BEGIN
                 AND f.owner_id IS NOT NULL AND f.lease_expires_at > v_now) THEN
         RAISE EXCEPTION 'pool maintenance fence busy';
     END IF;
+    -- Admission serializes on the same global→pool→maintenance lock order;
+    -- once this maintenance row is locked, no admitted running writer can
+    -- appear after this check. A running attempt must drain before a
+    -- maintenance fence can be acquired.
+    IF EXISTS (SELECT 1 FROM ducklake.attempt_evidence a
+               WHERE a.physical_pool_id=p_physical_pool_id
+                 AND a.catalog_id=p_catalog_id
+                 AND a.state='running') THEN
+        RAISE EXCEPTION 'pool maintenance fence busy: running attempt';
+    END IF;
     UPDATE ducklake.pool_maintenance_fence f
        SET owner_id=p_owner_id, fencing_epoch=f.fencing_epoch+1,
            lease_expires_at=v_lease, updated_at=v_now
@@ -1496,6 +1695,12 @@ BEGIN
         RAISE EXCEPTION 'migration fence busy';
     END IF;
 
+    -- Materialize and lock the exact pool/catalog maintenance row before
+    -- checking its owner. Without this first-use insert, admission could
+    -- observe no row while a concurrent retention claim creates and activates
+    -- the fence, then proceed to insert a running attempt after the check.
+    INSERT INTO ducklake.pool_maintenance_fence(physical_pool_id,catalog_id)
+    VALUES (p_physical_pool_id,p_catalog_id) ON CONFLICT DO NOTHING;
     SELECT owner_id,lease_expires_at INTO v_owner,v_expiry
       FROM ducklake.pool_maintenance_fence
      WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id
@@ -2254,6 +2459,413 @@ BEGIN
 END;
 $$;
 
+-- The orphan UUID is derived from the exact physical identity tuple.  The
+-- unique relational key remains authoritative; this deterministic value makes
+-- replay independent of caller-generated UUIDs.
+CREATE OR REPLACE FUNCTION ducklake.snapshot_orphan_uuid(
+    p_physical_pool_id text, p_catalog_id text, p_snapshot_id bigint
+) RETURNS uuid
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+SET search_path = pg_catalog, ducklake
+AS $$
+    SELECT md5(length(p_physical_pool_id)::text || ':' || p_physical_pool_id
+             || length(p_catalog_id)::text || ':' || p_catalog_id
+             || p_snapshot_id::text)::uuid
+$$;
+
+-- Begin a bounded scanner under the exact catalog-wide maintenance fence.
+-- The control role receives EXECUTE only; all scan state and cursor evidence
+-- remain in the immutable ledger tables below.
+CREATE OR REPLACE FUNCTION ducklake.begin_snapshot_orphan_scan(
+    p_scan_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_fencing_epoch bigint, p_page_size integer,
+    p_grace_micros bigint, p_request_evidence jsonb
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_existing record;
+BEGIN
+    IF p_physical_pool_id = '' OR p_physical_pool_id <> btrim(p_physical_pool_id) OR octet_length(p_physical_pool_id) > 255
+       OR p_catalog_id = '' OR p_catalog_id <> btrim(p_catalog_id) OR octet_length(p_catalog_id) > 255
+       OR p_owner_id = '' OR p_owner_id <> btrim(p_owner_id) OR octet_length(p_owner_id) > 255
+       OR p_fencing_epoch <= 0 OR p_page_size < 1 OR p_page_size > 256
+       OR p_grace_micros < 1 OR p_grace_micros > 2592000000000
+       OR jsonb_typeof(COALESCE(p_request_evidence, '{}'::jsonb)) <> 'object'
+       OR octet_length(COALESCE(p_request_evidence, '{}'::jsonb)::text) > 32768 THEN
+        RAISE EXCEPTION 'invalid snapshot orphan scan request';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_existing FROM ducklake.snapshot_orphan_scan
+     WHERE scan_id=p_scan_id FOR UPDATE;
+    IF FOUND THEN
+        IF v_existing.physical_pool_id IS DISTINCT FROM p_physical_pool_id
+           OR v_existing.catalog_id IS DISTINCT FROM p_catalog_id
+           OR v_existing.page_size IS DISTINCT FROM p_page_size
+           OR v_existing.grace_micros IS DISTINCT FROM p_grace_micros
+           OR v_existing.request_evidence IS DISTINCT FROM COALESCE(p_request_evidence, '{}'::jsonb) THEN
+            RAISE EXCEPTION 'snapshot orphan scan conflict';
+        END IF;
+        IF v_existing.state <> 'running' THEN RETURN; END IF;
+        IF v_existing.owner_id IS DISTINCT FROM p_owner_id
+           OR v_existing.fencing_epoch IS DISTINCT FROM p_fencing_epoch THEN
+            IF p_fencing_epoch <= v_existing.fencing_epoch THEN
+                RAISE EXCEPTION 'snapshot orphan scan owned by another fence';
+            END IF;
+            -- The active exact pool fence has already advanced, so a
+            -- successor may take over the durable cursor without resetting
+            -- page evidence or counters.
+            UPDATE ducklake.snapshot_orphan_scan
+               SET owner_id=p_owner_id,fencing_epoch=p_fencing_epoch,updated_at=v_now
+             WHERE scan_id=p_scan_id;
+        END IF;
+        RETURN;
+    END IF;
+    INSERT INTO ducklake.snapshot_orphan_scan
+      (scan_id,physical_pool_id,catalog_id,owner_id,fencing_epoch,page_size,grace_micros,cleanup_not_before,state,request_evidence,started_at,updated_at)
+    VALUES
+      (p_scan_id,p_physical_pool_id,p_catalog_id,p_owner_id,p_fencing_epoch,p_page_size,p_grace_micros,v_now + p_grace_micros * interval '1 microsecond','running',COALESCE(p_request_evidence, '{}'::jsonb),v_now,v_now);
+END;
+$$;
+
+-- Record exactly one catalog page. The adapter supplies sorted snapshot IDs
+-- and an object keyed by snapshot ID containing the catalog's bounded evidence.
+-- Every candidate is rechecked against all control-plane authorities before a
+-- deterministic orphan row is inserted. Replaying an existing page requires
+-- byte-equivalent identities/evidence and never advances the cursor twice.
+CREATE OR REPLACE FUNCTION ducklake.record_snapshot_orphan_scan_page(
+    p_scan_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_fencing_epoch bigint, p_page_number integer,
+    p_cursor_before bigint, p_cursor_after bigint, p_snapshot_ids bigint[],
+    p_page_digest text, p_evidence jsonb, p_terminal boolean
+) RETURNS TABLE(next_cursor bigint, orphan_count integer)
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_scan record;
+    v_page record;
+    v_len integer := COALESCE(cardinality(p_snapshot_ids), 0);
+    v_prev bigint := p_cursor_before;
+    v_id bigint;
+    v_i integer;
+    v_orphans integer := 0;
+    v_protected boolean;
+    v_item jsonb;
+    v_expected_digest text;
+BEGIN
+    p_snapshot_ids := COALESCE(p_snapshot_ids, '{}'::bigint[]);
+    p_evidence := COALESCE(p_evidence, '{}'::jsonb);
+    IF p_fencing_epoch <= 0 OR p_page_number <= 0 OR p_cursor_before < 0
+       OR p_cursor_after < p_cursor_before OR v_len > 256
+       OR p_page_digest IS NULL OR p_page_digest !~ '^sha256:[0-9a-f]{64}$'
+       OR jsonb_typeof(p_evidence) <> 'object'
+       OR octet_length(p_evidence::text) > 32768 THEN
+        RAISE EXCEPTION 'invalid snapshot orphan scan page';
+    END IF;
+    IF v_len = 0 AND p_cursor_after <> p_cursor_before THEN
+        RAISE EXCEPTION 'empty terminal snapshot orphan page must preserve cursor';
+    END IF;
+    v_expected_digest := 'sha256:' || encode(public.digest(convert_to(p_evidence::text, 'UTF8'), 'sha256'), 'hex');
+    IF p_page_digest <> v_expected_digest THEN
+        RAISE EXCEPTION 'snapshot orphan scan page digest mismatch';
+    END IF;
+    IF v_len = 0 AND NOT COALESCE(p_terminal, false) THEN
+        RAISE EXCEPTION 'empty non-terminal snapshot orphan scan page';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_scan FROM ducklake.snapshot_orphan_scan s
+     WHERE s.scan_id=p_scan_id FOR UPDATE;
+    IF NOT FOUND OR v_scan.physical_pool_id <> p_physical_pool_id OR v_scan.catalog_id <> p_catalog_id THEN
+        RAISE EXCEPTION 'snapshot orphan scan not found';
+    END IF;
+    IF v_scan.owner_id <> p_owner_id OR v_scan.fencing_epoch <> p_fencing_epoch THEN
+        RAISE EXCEPTION 'snapshot orphan scan fence stale';
+    END IF;
+    SELECT * INTO v_page FROM ducklake.snapshot_orphan_scan_page
+     WHERE scan_id=p_scan_id AND page_number=p_page_number FOR UPDATE;
+    IF FOUND THEN
+        IF v_page.physical_pool_id <> p_physical_pool_id OR v_page.catalog_id <> p_catalog_id
+           OR v_page.cursor_before <> p_cursor_before OR v_page.cursor_after <> p_cursor_after
+           OR v_page.snapshot_ids IS DISTINCT FROM p_snapshot_ids
+           OR v_page.page_digest <> p_page_digest OR v_page.evidence IS DISTINCT FROM COALESCE(p_evidence, '{}'::jsonb) THEN
+            RAISE EXCEPTION 'snapshot orphan scan page conflict';
+        END IF;
+        IF v_page.terminal IS DISTINCT FROM COALESCE(p_terminal, false) THEN
+            RAISE EXCEPTION 'snapshot orphan scan page conflict';
+        END IF;
+        RETURN QUERY SELECT v_page.cursor_after, v_page.orphan_count;
+        RETURN;
+    END IF;
+    IF v_scan.state <> 'running' THEN RAISE EXCEPTION 'snapshot orphan scan terminal'; END IF;
+    IF v_scan.pages_scanned + 1 <> p_page_number OR v_scan.cursor_snapshot_id <> p_cursor_before THEN
+        RAISE EXCEPTION 'snapshot orphan scan cursor mismatch';
+    END IF;
+    IF v_len > v_scan.page_size THEN RAISE EXCEPTION 'snapshot orphan scan page exceeds bound'; END IF;
+    IF v_len > 0 AND p_cursor_after <> p_snapshot_ids[v_len] THEN
+        RAISE EXCEPTION 'snapshot orphan scan cursor must equal final snapshot';
+    END IF;
+    FOR v_i IN 1..v_len LOOP
+        v_id := p_snapshot_ids[v_i];
+        IF v_id IS NULL OR v_id <= v_prev OR NOT (p_evidence ? v_id::text) THEN
+            RAISE EXCEPTION 'snapshot orphan scan page is not strictly ordered or lacks evidence';
+        END IF;
+        v_prev := v_id;
+    END LOOP;
+    FOR v_i IN 1..v_len LOOP
+        v_id := p_snapshot_ids[v_i];
+        -- A snapshot is protected if any authoritative control row knows it.
+        -- Retention rows (including terminal rows), any attempt evidence,
+        -- active leases, generation bindings, maintenance children, or live
+        -- durable roots all suppress orphan classification.
+        SELECT EXISTS (
+            SELECT 1 FROM ducklake.snapshot_retention r
+             WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=v_id
+            UNION ALL
+            SELECT 1 FROM ducklake.snapshot_root root
+             WHERE root.physical_pool_id=p_physical_pool_id AND root.catalog_id=p_catalog_id AND root.snapshot_id=v_id
+                   AND root.state IN ('live','retiring')
+            UNION ALL
+            SELECT 1 FROM ducklake.snapshot_lease l
+             WHERE l.physical_pool_id=p_physical_pool_id AND l.catalog_id=p_catalog_id AND l.snapshot_id=v_id
+                   AND l.state='active'
+            UNION ALL
+            SELECT 1 FROM ducklake.generation_binding b
+             WHERE b.physical_pool_id=p_physical_pool_id AND b.catalog_id=p_catalog_id AND b.snapshot_id=v_id
+            UNION ALL
+            SELECT 1 FROM ducklake.attempt_evidence a
+             WHERE a.physical_pool_id=p_physical_pool_id AND a.catalog_id=p_catalog_id AND a.snapshot_id=v_id
+            UNION ALL
+            SELECT 1 FROM ducklake.retention_maintenance_snapshot m
+             WHERE m.physical_pool_id=p_physical_pool_id AND m.catalog_id=p_catalog_id AND m.snapshot_id=v_id
+        ) INTO v_protected;
+        IF NOT v_protected THEN
+            v_item := p_evidence -> (v_id::text);
+            IF jsonb_typeof(v_item) <> 'object' THEN RAISE EXCEPTION 'snapshot orphan evidence must be an object'; END IF;
+            INSERT INTO ducklake.snapshot_orphan
+              (orphan_id,physical_pool_id,catalog_id,snapshot_id,state,evidence,discovered_at,cleanup_not_before)
+            VALUES
+              (ducklake.snapshot_orphan_uuid(p_physical_pool_id,p_catalog_id,v_id),p_physical_pool_id,p_catalog_id,v_id,'quarantined',
+               jsonb_build_object('catalog',v_item,'snapshot_id',v_id),v_now,v_scan.cleanup_not_before)
+            ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
+            IF FOUND THEN
+                v_orphans := v_orphans + 1;
+            ELSE
+                SELECT evidence INTO v_item FROM ducklake.snapshot_orphan
+                 WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=v_id FOR UPDATE;
+                IF (v_item -> 'catalog') IS DISTINCT FROM (COALESCE(p_evidence, '{}'::jsonb) -> (v_id::text)) THEN
+                    RAISE EXCEPTION 'snapshot orphan evidence conflict';
+                END IF;
+            END IF;
+        END IF;
+    END LOOP;
+    INSERT INTO ducklake.snapshot_orphan_scan_page
+      (scan_id,physical_pool_id,catalog_id,page_number,cursor_before,cursor_after,snapshot_ids,orphan_count,terminal,page_digest,evidence,created_at)
+    VALUES
+      (p_scan_id,p_physical_pool_id,p_catalog_id,p_page_number,p_cursor_before,p_cursor_after,p_snapshot_ids,v_orphans,COALESCE(p_terminal,false),p_page_digest,p_evidence,v_now);
+    UPDATE ducklake.snapshot_orphan_scan
+       SET cursor_snapshot_id=p_cursor_after,pages_scanned=pages_scanned+1,
+           snapshots_scanned=snapshots_scanned+v_len,orphans_recorded=orphans_recorded+v_orphans,
+           updated_at=v_now
+     WHERE scan_id=p_scan_id;
+    RETURN QUERY SELECT p_cursor_after, v_orphans;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.complete_snapshot_orphan_scan(
+    p_scan_id uuid, p_physical_pool_id text, p_catalog_id text,
+    p_owner_id text, p_fencing_epoch bigint, p_completion_evidence jsonb
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_scan record;
+    v_terminal boolean;
+BEGIN
+    IF p_fencing_epoch <= 0 OR jsonb_typeof(COALESCE(p_completion_evidence, '{}'::jsonb)) <> 'object' THEN
+        RAISE EXCEPTION 'invalid snapshot orphan scan completion';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT * INTO v_scan FROM ducklake.snapshot_orphan_scan WHERE scan_id=p_scan_id FOR UPDATE;
+    IF NOT FOUND OR v_scan.physical_pool_id <> p_physical_pool_id OR v_scan.catalog_id <> p_catalog_id THEN RAISE EXCEPTION 'snapshot orphan scan not found'; END IF;
+    IF v_scan.owner_id <> p_owner_id OR v_scan.fencing_epoch <> p_fencing_epoch THEN RAISE EXCEPTION 'snapshot orphan scan fence stale'; END IF;
+    IF v_scan.state = 'completed' THEN
+        IF v_scan.completion_evidence IS DISTINCT FROM COALESCE(p_completion_evidence, '{}'::jsonb) THEN RAISE EXCEPTION 'snapshot orphan scan completion conflict'; END IF;
+        RETURN;
+    END IF;
+    IF v_scan.state <> 'running' THEN RAISE EXCEPTION 'snapshot orphan scan terminal'; END IF;
+    SELECT p.terminal INTO v_terminal FROM ducklake.snapshot_orphan_scan_page p
+     WHERE p.scan_id=p_scan_id ORDER BY p.page_number DESC LIMIT 1;
+    IF NOT FOUND OR NOT v_terminal THEN RAISE EXCEPTION 'snapshot orphan scan requires a terminal page'; END IF;
+    UPDATE ducklake.snapshot_orphan_scan
+       SET state='completed',updated_at=v_now,completed_at=v_now,
+           completion_evidence=COALESCE(p_completion_evidence, '{}'::jsonb)
+     WHERE scan_id=p_scan_id;
+END;
+$$;
+
+-- Prune page payloads only after a completed scan has aged past the bounded
+-- policy window. The scan summary, counters, completion evidence, and a
+-- server-computed digest of the removed page sequence remain as audit proof.
+CREATE OR REPLACE FUNCTION ducklake.prune_snapshot_orphan_scan_pages(
+    p_physical_pool_id text, p_catalog_id text, p_owner_id text,
+    p_fencing_epoch bigint, p_min_age_micros bigint, p_max_scans integer
+) RETURNS integer
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE
+    v_now timestamptz := clock_timestamp();
+    v_cutoff timestamptz;
+    v_scan record;
+    v_count integer := 0;
+    v_pages integer;
+    v_digest text;
+BEGIN
+    IF p_physical_pool_id = '' OR p_catalog_id = '' OR p_owner_id = ''
+       OR p_fencing_epoch <= 0 OR p_min_age_micros < 86400000000
+       OR p_min_age_micros > 2592000000000 OR p_max_scans < 1 OR p_max_scans > 64 THEN
+        RAISE EXCEPTION 'invalid snapshot orphan scan prune request';
+    END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_owner_id AND f.fencing_epoch=p_fencing_epoch
+       AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    v_cutoff := v_now - p_min_age_micros * interval '1 microsecond';
+    FOR v_scan IN
+        SELECT s.scan_id FROM ducklake.snapshot_orphan_scan s
+         WHERE s.physical_pool_id=p_physical_pool_id AND s.catalog_id=p_catalog_id
+           AND s.state='completed' AND s.completed_at IS NOT NULL
+           AND s.completed_at <= v_cutoff AND s.pruned_at IS NULL
+         ORDER BY s.completed_at,s.scan_id
+         LIMIT p_max_scans
+         FOR UPDATE
+    LOOP
+        SELECT count(*)::integer,
+               COALESCE('sha256:' || encode(public.digest(convert_to(string_agg(p.page_digest, ',' ORDER BY p.page_number), 'UTF8'), 'sha256'), 'hex'), 'sha256:' || encode(public.digest(convert_to('', 'UTF8'), 'sha256'), 'hex'))
+          INTO v_pages,v_digest
+          FROM ducklake.snapshot_orphan_scan_page p WHERE p.scan_id=v_scan.scan_id;
+        PERFORM set_config('ducklake.scan_prune', 'on', true);
+        DELETE FROM ducklake.snapshot_orphan_scan_page WHERE scan_id=v_scan.scan_id;
+        PERFORM set_config('ducklake.scan_prune', 'off', true);
+        UPDATE ducklake.snapshot_orphan_scan
+           SET pruned_at=v_now,pruned_page_count=v_pages,pruned_page_digest=v_digest
+         WHERE scan_id=v_scan.scan_id;
+        v_count := v_count + 1;
+    END LOOP;
+    RETURN v_count;
+END;
+$$;
+
+-- Fenced orphan cleanup capabilities. Existing direct DML remains denied to
+-- the maintenance role; these functions validate the exact pool fence and
+-- enforce monotonic lifecycle transitions under row locks.
+CREATE OR REPLACE FUNCTION ducklake.claim_snapshot_orphan_cleanup_under_pool_fence(
+    p_physical_pool_id text, p_catalog_id text, p_snapshot_id bigint,
+    p_owner_id text, p_cleanup_lease_expires_at timestamptz,
+    p_fence_owner_id text, p_fencing_epoch bigint
+) RETURNS bigint
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_epoch bigint; v_owner text; v_expiry timestamptz; v_state text;
+BEGIN
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_fence_owner_id AND f.fencing_epoch=p_fencing_epoch AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at INTO v_state,v_owner,v_epoch,v_expiry
+      FROM ducklake.snapshot_orphan WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'snapshot orphan not found'; END IF;
+    IF v_state <> 'quarantined' THEN RAISE EXCEPTION 'snapshot orphan is terminal'; END IF;
+    IF v_owner IS NOT NULL AND v_expiry > v_now THEN
+        IF v_owner = p_owner_id THEN RETURN v_epoch; END IF;
+        RAISE EXCEPTION 'snapshot orphan cleanup busy';
+    END IF;
+    IF p_cleanup_lease_expires_at IS NULL OR p_cleanup_lease_expires_at <= v_now OR p_cleanup_lease_expires_at > v_now + interval '24 hours' THEN RAISE EXCEPTION 'invalid orphan cleanup lease'; END IF;
+    IF (SELECT cleanup_not_before FROM ducklake.snapshot_orphan
+         WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id) > v_now THEN
+        RAISE EXCEPTION 'snapshot orphan cleanup grace is active';
+    END IF;
+    -- Recheck every protected authority while the exact fence and orphan row
+    -- remain locked. The admission path takes the same pool-fence row first,
+    -- so no new running writer can slip in after this check.
+    IF EXISTS (SELECT 1 FROM ducklake.snapshot_retention r
+               WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id)
+       OR EXISTS (SELECT 1 FROM ducklake.snapshot_root root
+                  WHERE root.physical_pool_id=p_physical_pool_id AND root.catalog_id=p_catalog_id AND root.snapshot_id=p_snapshot_id
+                    AND root.state IN ('live','retiring'))
+       OR EXISTS (SELECT 1 FROM ducklake.snapshot_lease l
+                  WHERE l.physical_pool_id=p_physical_pool_id AND l.catalog_id=p_catalog_id AND l.snapshot_id=p_snapshot_id
+                    AND l.state='active' AND l.expires_at > v_now)
+       OR EXISTS (SELECT 1 FROM ducklake.generation_binding b
+                  WHERE b.physical_pool_id=p_physical_pool_id AND b.catalog_id=p_catalog_id AND b.snapshot_id=p_snapshot_id)
+       OR EXISTS (SELECT 1 FROM ducklake.attempt_evidence a
+                  WHERE a.physical_pool_id=p_physical_pool_id AND a.catalog_id=p_catalog_id AND a.snapshot_id=p_snapshot_id)
+       OR EXISTS (SELECT 1 FROM ducklake.retention_maintenance_snapshot m
+                  WHERE m.physical_pool_id=p_physical_pool_id AND m.catalog_id=p_catalog_id AND m.snapshot_id=p_snapshot_id) THEN
+        RAISE EXCEPTION 'snapshot orphan became protected';
+    END IF;
+    UPDATE ducklake.snapshot_orphan
+       SET cleanup_owner_id=p_owner_id,cleanup_fencing_epoch=v_epoch+1,cleanup_lease_expires_at=p_cleanup_lease_expires_at
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+    RETURN v_epoch+1;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION ducklake.complete_snapshot_orphan_cleanup_under_pool_fence(
+    p_physical_pool_id text, p_catalog_id text, p_snapshot_id bigint,
+    p_owner_id text, p_fencing_epoch bigint, p_evidence jsonb,
+    p_fence_owner_id text, p_pool_fencing_epoch bigint
+) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER
+SET search_path = pg_catalog, ducklake
+AS $$
+DECLARE v_now timestamptz := clock_timestamp(); v_state text; v_owner text; v_epoch bigint; v_expiry timestamptz; v_existing jsonb;
+BEGIN
+    IF jsonb_typeof(COALESCE(p_evidence, '{}'::jsonb)) <> 'object' OR p_evidence = '{}'::jsonb THEN RAISE EXCEPTION 'cleanup evidence is required'; END IF;
+    PERFORM 1 FROM ducklake.pool_maintenance_fence f
+     WHERE f.physical_pool_id=p_physical_pool_id AND f.catalog_id=p_catalog_id
+       AND f.owner_id=p_fence_owner_id AND f.fencing_epoch=p_pool_fencing_epoch AND f.lease_expires_at > v_now FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'maintenance fence expired'; END IF;
+    SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,evidence INTO v_state,v_owner,v_epoch,v_expiry,v_existing
+      FROM ducklake.snapshot_orphan WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id FOR UPDATE;
+    IF NOT FOUND THEN RAISE EXCEPTION 'snapshot orphan not found'; END IF;
+    IF v_state='cleanup-complete' THEN
+        IF (v_existing -> 'cleanup') IS DISTINCT FROM p_evidence THEN
+            RAISE EXCEPTION 'snapshot orphan cleanup evidence conflict';
+        END IF;
+        RETURN;
+    END IF;
+    IF v_state <> 'quarantined' OR v_owner IS DISTINCT FROM p_owner_id OR v_epoch <> p_fencing_epoch OR v_expiry IS NULL OR v_expiry <= v_now THEN RAISE EXCEPTION 'snapshot orphan cleanup fence stale'; END IF;
+    -- Preserve the immutable discovery/catalog proof and append cleanup
+    -- evidence under a bounded namespaced object. Replays compare only this
+    -- subobject, never replacing the original observation.
+    UPDATE ducklake.snapshot_orphan
+       SET state='cleanup-complete',
+           evidence=jsonb_set(v_existing, '{cleanup}', p_evidence, true),
+           resolved_at=v_now
+     WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id;
+END;
+$$;
+
 -- DuckLake control state is capability-gated.  PUBLIC receives no schema,
 -- relation, sequence, or trigger-function privileges; application roles are
 -- granted only the exact lifecycle operations exposed by the repository.
@@ -2276,6 +2888,7 @@ BEGIN
         -- earlier schema revision).
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_orphan TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.marker_quarantine TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.source_observation_capture TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
@@ -2291,6 +2904,7 @@ BEGIN
             || 'ducklake.generation_binding, ducklake.snapshot_retention, '
             || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
             || 'ducklake.snapshot_orphan, ducklake.marker_quarantine, ducklake.snapshot_reader_drain, '
+            || 'ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page, '
             || 'ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, '
             || 'ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, '
             || 'ducklake.catalog_migration, ducklake.snapshot_requalification, '
@@ -2318,10 +2932,11 @@ BEGIN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_maintenance';
         EXECUTE 'REVOKE EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) FROM leapview_control_maintenance';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_maintenance';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page FROM leapview_control_maintenance';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention FROM leapview_control_maintenance';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.pool_maintenance_fence TO leapview_control_maintenance';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention TO leapview_control_maintenance';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_root, ducklake.snapshot_lease, ducklake.snapshot_orphan TO leapview_control_maintenance';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_root, ducklake.snapshot_lease, ducklake.snapshot_orphan, ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.acquire_pool_maintenance_fence(text,text,text,timestamptz) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.release_pool_maintenance_fence(text,text,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.renew_pool_maintenance_fence(text,text,text,bigint,timestamptz) TO leapview_control_maintenance';
@@ -2333,6 +2948,12 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_snapshot_cleanup_under_maintenance_fence(text,text,bigint,text,timestamptz,uuid,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.quarantine_snapshot_under_maintenance_fence(jsonb,timestamptz,text,text,bigint,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_snapshot_cleanup_under_maintenance_fence(jsonb,timestamptz,text,text,bigint,text,bigint,uuid,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.begin_snapshot_orphan_scan(uuid,text,text,text,bigint,integer,bigint,jsonb) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.record_snapshot_orphan_scan_page(uuid,text,text,text,bigint,integer,bigint,bigint,bigint[],text,jsonb,boolean) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_snapshot_orphan_scan(uuid,text,text,text,bigint,jsonb) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.prune_snapshot_orphan_scan_pages(text,text,text,bigint,bigint,integer) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_snapshot_orphan_cleanup_under_pool_fence(text,text,bigint,text,timestamptz,text,bigint) TO leapview_control_maintenance';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_snapshot_orphan_cleanup_under_pool_fence(text,text,bigint,text,bigint,jsonb,text,bigint) TO leapview_control_maintenance';
     END IF;
 END
 $$;

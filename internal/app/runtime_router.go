@@ -304,6 +304,9 @@ type dataAssemblyInputs struct {
 	// RequireExplicitAPIProtocol prevents a production assembly from silently
 	// selecting the process-local or SQLite protocol implementations.
 	RequireExplicitAPIProtocol bool
+	// AdditionalWorkers are optional capability-owned lifecycle workers. They
+	// join the same bounded worker group and stop before runtime/resources.
+	AdditionalWorkers []platformlifecycle.Component
 }
 
 type capabilityAssemblyInputs struct {
@@ -953,7 +956,7 @@ func buildApplicationSurfaces(
 	if routes.projectBrowser != nil {
 		routes.projectBrowser.RefreshState = routes.refreshModule
 	}
-	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage); err != nil {
+	if err := configureModules(routes, runtime, platform, policy, runtimeConfig, ctx, persistence, moduleWorkflow, storage, data.AdditionalWorkers); err != nil {
 		return fail(err)
 	}
 	if platform.asyncJobs != nil {
@@ -977,7 +980,7 @@ func buildApplicationSurfaces(
 	return routes, runtime, platform, policy, nil
 }
 
-func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs) error {
+func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platform *platformServices, policy *httpPolicy, runtimeConfig runtimeAssemblyInputs, ctx context.Context, persistence persistenceInputs, moduleWorkflow workflowInputs, storage storageInputs, additionalWorkers []platformlifecycle.Component) error {
 	if routes == nil || runtime == nil || platform == nil || policy == nil {
 		return errors.New("runtime router is required")
 	}
@@ -2045,7 +2048,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
-	workerComponents := make([]platformlifecycle.Component, 0, 5)
+	workerComponents := make([]platformlifecycle.Component, 0, 5+len(additionalWorkers))
 	if platform.auditDispatcher != nil {
 		// Start the dispatcher before audit producers and stop it after them, so
 		// shutdown does not strand intents emitted while workers are draining.
@@ -2060,6 +2063,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		platformlifecycle.Component{Start: routes.dashboardModule.Start, Stop: routes.dashboardModule.Stop},
 		platformlifecycle.Component{Start: platform.jobModule.Start, Stop: platform.jobModule.Stop},
 	)
+	workerComponents = append(workerComponents, additionalWorkers...)
 	platform.workers = platformlifecycle.New(workerComponents...)
 	return nil
 }

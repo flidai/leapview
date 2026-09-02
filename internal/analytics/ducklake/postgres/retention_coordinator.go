@@ -690,8 +690,14 @@ type RetentionMaintenanceRequest struct {
 	OwnerID        string
 	LeaseExpiresAt time.Time
 	FileGrace      time.Duration
-	DryRun         bool
-	Evidence       json.RawMessage
+	// OrphanGracePeriod and OrphanScanID bind the optional bounded snapshot
+	// orphan reconciliation to this exact maintenance operation. They are
+	// populated by production composition; zero values preserve legacy callers
+	// that do not install an orphan coordinator.
+	OrphanGracePeriod time.Duration
+	OrphanScanID      string
+	DryRun            bool
+	Evidence          json.RawMessage
 }
 
 type RetentionMaintenanceResult struct {
@@ -704,6 +710,7 @@ type RetentionMaintenanceResult struct {
 type RetentionCoordinator struct {
 	Control        *Repository
 	OpenSessionFor RetentionCatalogSessionFactoryFor
+	Orphans        *SnapshotOrphanCoordinator
 }
 
 func nilRetentionSession(session RetentionCatalogSession) bool {
@@ -763,6 +770,23 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 		return result, err
 	}
 	result.Maintenance = operation
+	var orphanScanEnabled bool
+	if c.Orphans != nil && !in.DryRun {
+		// Bind the orphan scan identity before opening a native session. A caller
+		// supplied ID is accepted only when it is the deterministic derivation
+		// from this UUIDv7 maintenance operation and exact pool/catalog tuple;
+		// this also makes the canonical ID visible to session factories and
+		// replay logs, including operations already beyond the expiry phase.
+		derivedScanID := SnapshotOrphanScanIDForMaintenance(in.MaintenanceID, in.PhysicalPoolID, in.CatalogID)
+		if derivedScanID == "" {
+			return result, fmt.Errorf("%w: maintenance ID must be UUIDv7 for snapshot orphan scan identity", ErrInvalid)
+		}
+		if in.OrphanScanID != "" && in.OrphanScanID != derivedScanID {
+			return result, fmt.Errorf("%w: snapshot orphan scan ID is not bound to maintenance ID", ErrConflict)
+		}
+		in.OrphanScanID = derivedScanID
+		orphanScanEnabled = true
+	}
 	if operation.State == "completed" {
 		result.Snapshots, _ = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)
 		return result, nil
@@ -915,6 +939,21 @@ func (c *RetentionCoordinator) Run(ctx context.Context, in RetentionMaintenanceR
 					return result, err
 				}
 			}
+		}
+	}
+	// Snapshot-orphan reconciliation is deliberately completed while the
+	// catalog-wide fence is still in its expiry phase. The coordinator owns
+	// bounded direct catalog scanning, durable scan completion, cleanup claims,
+	// native expiry+verification, and durable orphan cleanup. Existing file
+	// grace phases run only after this sequence succeeds. A replay whose
+	// operation phase already advanced beyond expiry has completed this step.
+	if orphanScanEnabled && operation.Phase == "expiry" {
+		if _, err := c.Orphans.Run(ctx, SnapshotOrphanMaintenanceRequest{
+			MaintenanceID: in.MaintenanceID, ScanID: in.OrphanScanID, PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID,
+			OwnerID: in.OwnerID, LeaseExpiresAt: fence.LeaseExpiresAt,
+			GracePeriod: in.OrphanGracePeriod, RequestEvidence: in.Evidence,
+		}, &fence, session, c.beforeNativePhase); err != nil {
+			return result, err
 		}
 	}
 	items, err = c.Control.ListRetentionMaintenanceSnapshots(ctx, in.MaintenanceID)

@@ -1770,6 +1770,37 @@
       "x-error-message": "managed-data limits, durations, and free-space thresholds must be positive"
     },
     {
+      "description": "DuckLake catalog retention interval and file grace period are positive.",
+      "if": {
+        "properties": {
+          "LEAPVIEW_PRODUCTION": {
+            "enum": [
+              "1",
+              "t",
+              "T",
+              "true",
+              "TRUE",
+              "True"
+            ]
+          }
+        },
+        "required": [
+          "LEAPVIEW_PRODUCTION"
+        ]
+      },
+      "then": {
+        "allOf": [
+          {
+            "x-runtime-positive": "LEAPVIEW_DUCKLAKE_RETENTION_INTERVAL"
+          },
+          {
+            "x-runtime-positive": "LEAPVIEW_DUCKLAKE_RETENTION_FILE_GRACE_PERIOD"
+          }
+        ]
+      },
+      "x-error-message": "production DuckLake retention interval and file grace period must be positive"
+    },
+    {
       "description": "The managed-data revision limit is at least the per-file limit.",
       "if": {
         "properties": {
@@ -2441,6 +2472,22 @@
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve,admin"
+    },
+    "LEAPVIEW_DUCKLAKE_RETENTION_FILE_GRACE_PERIOD": {
+      "default": "24h",
+      "description": "Minimum age of DuckLake files before bounded retention cleanup.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
+    "LEAPVIEW_DUCKLAKE_RETENTION_INTERVAL": {
+      "default": "1h",
+      "description": "Interval between bounded DuckLake catalog retention passes.",
+      "pattern": "^-?[0-9]+(ns|us|µs|ms|s|m|h)([0-9]+(ns|us|µs|ms|s|m|h))*$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
     },
     "LEAPVIEW_ENVIRONMENT": {
       "description": "Single serving environment permanently bound to this LeapView instance.",

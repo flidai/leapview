@@ -260,9 +260,18 @@ type NativeOperationSuccessorInput struct {
 }
 
 type NativeOperationSuccessor struct {
-	AttemptID       string
-	AttemptIdentity string
-	Lease           NativeOperationLease
+	AttemptID           string
+	AttemptIdentity     string
+	PredecessorID       string
+	PredecessorIdentity string
+	Lease               NativeOperationLease
+	// State and evidence describe the current executable leaf. They are
+	// projected so recovery can distinguish a still-pending external attempt
+	// from one already marked indeterminate before deciding whether to resolve
+	// or append another successor.
+	State              NativeOperationState
+	AttemptEvidence    json.RawMessage
+	ResolutionEvidence json.RawMessage
 }
 
 // NativeBuildOperationSuccessorAuthority is optional on the broad operation
@@ -272,6 +281,14 @@ type NativeOperationSuccessor struct {
 type NativeBuildOperationSuccessorAuthority interface {
 	AdmitSuccessorAttemptTx(context.Context, NativeOperationTx, NativeOperationSuccessorInput) (NativeOperationSuccessor, error)
 	CurrentSuccessorAttempt(context.Context, string) (NativeOperationSuccessor, bool, error)
+}
+
+// NativeBuildOperationSuccessorLockAuthority extends successor recovery with
+// an in-transaction public->leaf lock. Long-running completion and settlement
+// must acquire the append-only leaf before touching delivery/DuckLake rows.
+type NativeBuildOperationSuccessorLockAuthority interface {
+	NativeBuildOperationSuccessorAuthority
+	LockSuccessorAttemptTx(context.Context, NativeOperationTx, NativeOperationLease) (NativeOperationSuccessor, error)
 }
 
 // NativeOperationReconcileAttemptInput resolves an indeterminate operation

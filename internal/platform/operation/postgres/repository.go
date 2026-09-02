@@ -1137,6 +1137,61 @@ func (r *Repository) CurrentSuccessorAttempt(ctx context.Context, operationID st
 	return leaf, err == nil, err
 }
 
+// LookupSuccessorAttemptTx locks the public operation row and then the exact
+// successor leaf addressed by lease. It is the routing seam for heartbeat and
+// terminal transitions: callers never decide based on an out-of-transaction
+// "current leaf" read, and terminal leaves remain addressable for exact
+// replay. The lock order is public operation -> successor leaf, matching all
+// successor admission/reconciliation paths.
+func (r *Repository) LookupSuccessorAttemptTx(ctx context.Context, tx Tx, lease Lease) (SuccessorAttempt, bool, error) {
+	if r == nil || tx == nil {
+		return SuccessorAttempt{}, false, ErrInvalid
+	}
+	if err := validateLease(lease); err != nil {
+		return SuccessorAttempt{}, false, err
+	}
+	ctx = contextOrBackground(ctx)
+	publicRow, err := operationdb.New(tx).GetOperationForUpdate(ctx, operationdb.GetOperationForUpdateParams{ScopeID: lease.Scope, IdempotencyKey: lease.IdempotencyKey})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SuccessorAttempt{}, false, ErrNotFound
+	}
+	if err != nil {
+		return SuccessorAttempt{}, false, err
+	}
+	public, err := operationFromForUpdateRow(publicRow)
+	if err != nil {
+		return SuccessorAttempt{}, false, err
+	}
+	if public.OperationID != lease.OperationID {
+		return SuccessorAttempt{}, false, ErrConflict
+	}
+	// The public operation attempt is not a successor. Let callers use the
+	// ordinary operation primitives for that immutable root lease.
+	if public.AttemptID == lease.AttemptID && public.AttemptIdentity == lease.AttemptIdentity {
+		return SuccessorAttempt{}, false, nil
+	}
+	row, err := operationdb.New(tx).GetOperationSuccessorAttemptByAttemptForUpdate(ctx, operationdb.GetOperationSuccessorAttemptByAttemptForUpdateParams{OperationID: uuidParam(lease.OperationID), AttemptID: uuidParam(lease.AttemptID)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return SuccessorAttempt{}, false, nil
+	}
+	if err != nil {
+		return SuccessorAttempt{}, false, err
+	}
+	leaf, err := successorAttemptFromByAttemptRow(row)
+	if err != nil {
+		return SuccessorAttempt{}, false, err
+	}
+	// The exact-leaf query intentionally reads only the append ledger. Restore
+	// the public routing identity from the row we already locked so adapters can
+	// project a complete lease without a second, unlocked lookup.
+	leaf.Scope = public.Scope
+	leaf.IdempotencyKey = public.IdempotencyKey
+	if leaf.OperationID != lease.OperationID || leaf.AttemptIdentity != lease.AttemptIdentity || leaf.OwnerID != lease.OwnerID || leaf.FencingGeneration != lease.FencingGeneration || !leaf.LeaseExpiresAt.Equal(lease.LeaseExpiresAt.UTC().Truncate(time.Microsecond)) {
+		return SuccessorAttempt{}, false, ErrConflict
+	}
+	return leaf, true, nil
+}
+
 func (r *Repository) RenewSuccessorLeaseTx(ctx context.Context, tx Tx, lease Lease, duration time.Duration) (Lease, error) {
 	if r == nil || tx == nil {
 		return Lease{}, ErrInvalid

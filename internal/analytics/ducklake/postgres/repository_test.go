@@ -179,7 +179,7 @@ func TestPostgres18BeginAttemptRejectsActiveRetentionOwner(t *testing.T) {
 	}
 }
 
-func TestPostgres18BeginAttemptExactReplayBlockedByRetentionFence(t *testing.T) {
+func TestPostgres18MaintenanceFenceRejectsRunningAttempt(t *testing.T) {
 	r, _, poolID, catalogID := retentionTestRepository(t, "begin_retention_replay")
 	in := BeginAttemptInput{
 		AttemptID:       "0198f2c0-7c7a-0000-0000-000000000723",
@@ -196,28 +196,16 @@ func TestPostgres18BeginAttemptExactReplayBlockedByRetentionFence(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	fence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{
+	if _, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{
 		PhysicalPoolID: poolID,
 		CatalogID:      catalogID,
 		OwnerID:        "retention-owner",
 		LeaseExpiresAt: time.Now().UTC().Add(time.Minute),
-	})
-	if err != nil {
-		t.Fatal(err)
+	}); !errors.Is(err, ErrRetentionMaintenanceBusy) {
+		t.Fatalf("maintenance fence with running attempt = %v, want ErrRetentionMaintenanceBusy", err)
 	}
-	t.Cleanup(func() { _ = r.ReleaseRetentionMaintenanceFence(t.Context(), fence) })
-	if _, err := r.BeginAttempt(t.Context(), in); !errors.Is(err, ErrRetentionMaintenanceBusy) {
-		t.Fatalf("exact replay with active retention fence = %v, want ErrRetentionMaintenanceBusy", err)
-	}
-	if err := r.ReleaseRetentionMaintenanceFence(t.Context(), fence); err != nil {
-		t.Fatal(err)
-	}
-	replay, err := r.BeginAttempt(t.Context(), in)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay.AttemptID != first.AttemptID || replay.RequestDigest != first.RequestDigest || replay.PlanDigest != first.PlanDigest || replay.PhysicalPoolID != first.PhysicalPoolID || replay.CatalogID != first.CatalogID || replay.OwnerID != first.OwnerID || replay.FencingEpoch != first.FencingEpoch || replay.SessionIdentity != first.SessionIdentity || !replay.LeaseExpiresAt.Equal(first.LeaseExpiresAt) || replay.State != first.State || !replay.CreatedAt.Equal(first.CreatedAt) || !replay.UpdatedAt.Equal(first.UpdatedAt) {
-		t.Fatalf("exact replay after retention release = %#v, want stored attempt %#v", replay, first)
+	if _, err := r.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: first.AttemptID, OwnerID: first.OwnerID, FencingEpoch: first.FencingEpoch, Evidence: json.RawMessage(`{"aborted":"test"}`)}); err != nil {
+		t.Fatalf("abort running attempt: %v", err)
 	}
 }
 
@@ -258,33 +246,6 @@ func TestPostgres18BeginAttemptWaitsOnRetentionRowLock(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("admission did not honor lock timeout")
-	}
-}
-
-func TestPostgres18SnapshotOrphanIdentityReplayAndConflict(t *testing.T) {
-	r, _, poolID, catalogID := retentionTestRepository(t, "orphan_identity")
-	first, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{
-		OrphanID: "0198f2c0-7c7a-0000-0000-000000000717", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77,
-		Evidence: json.RawMessage(`{"source":"scan"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	replay, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{
-		OrphanID: "0198f2c0-7c7a-0000-0000-000000000718", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77,
-		Evidence: json.RawMessage(`{"source":"scan"}`),
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay.OrphanID != first.OrphanID || !evidenceEqual(replay.Evidence, string(first.Evidence)) {
-		t.Fatalf("identity replay = %#v, want original %#v", replay, first)
-	}
-	if _, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{
-		OrphanID: "0198f2c0-7c7a-0000-0000-000000000719", PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 77,
-		Evidence: json.RawMessage(`{"source":"changed"}`),
-	}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("changed identity replay = %v, want ErrConflict", err)
 	}
 }
 
@@ -765,76 +726,55 @@ func TestPostgres18CleanupClaimFencesStaleWorkers(t *testing.T) {
 	}
 }
 
-func TestPostgres18OrphanCleanupClaimFencesStaleWorkers(t *testing.T) {
-	h := postgrestest.Start(t)
-	db := h.NewDatabase(t, "ducklake_orphan_cleanup_claim_test")
-	p, err := pgxpool.New(t.Context(), db.AdminURL())
-	if err != nil {
+func TestPostgres18FirstUseMaintenanceAndAttemptAdmissionAreSerialized(t *testing.T) {
+	r, p, poolID, catalogID := retentionTestRepository(t, "first_use_race")
+	start := make(chan struct{})
+	attemptDone := make(chan error, 1)
+	fenceDone := make(chan struct {
+		fence RetentionMaintenanceFence
+		err   error
+	}, 1)
+	go func() {
+		<-start
+		_, err := r.BeginAttempt(t.Context(), BeginAttemptInput{
+			AttemptID: "0198f2c0-7c7a-0000-0000-000000000724", RequestDigest: digest('b'), PlanDigest: digest('c'),
+			PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "first-use-attempt", FencingEpoch: 1,
+			SessionIdentity: "first-use-session", LeaseExpiresAt: time.Now().Add(time.Minute),
+		})
+		attemptDone <- err
+	}()
+	go func() {
+		<-start
+		fence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{
+			PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "first-use-maintenance", LeaseExpiresAt: time.Now().Add(time.Minute),
+		})
+		fenceDone <- struct {
+			fence RetentionMaintenanceFence
+			err   error
+		}{fence: fence, err: err}
+	}()
+	close(start)
+	attemptErr := <-attemptDone
+	fenceResult := <-fenceDone
+	if (attemptErr == nil) == (fenceResult.err == nil) {
+		t.Fatalf("first-use admission outcomes attempt=%v maintenance=%v; exactly one must win", attemptErr, fenceResult.err)
+	}
+	if attemptErr == nil {
+		if _, err := r.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: "0198f2c0-7c7a-0000-0000-000000000724", OwnerID: "first-use-attempt", FencingEpoch: 1, Evidence: json.RawMessage(`{"aborted":"race"}`)}); err != nil {
+			t.Fatalf("abort first-use attempt: %v", err)
+		}
+	}
+	if fenceResult.err == nil {
+		if err := r.ReleaseRetentionMaintenanceFence(t.Context(), fenceResult.fence); err != nil {
+			t.Fatalf("release first-use fence: %v", err)
+		}
+	}
+	var rows int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM ducklake.pool_maintenance_fence WHERE physical_pool_id=$1 AND catalog_id=$2`, poolID, catalogID).Scan(&rows); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(p.Close)
-	tx, err := p.Begin(t.Context())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
-		_ = tx.Rollback(t.Context())
-		t.Fatal(err)
-	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatal(err)
-	}
-	r := New(p)
-	const poolID, catalogID = "orphan-cleanup-pool", "orphan-cleanup-catalog"
-	if _, err := r.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: testCatalogUUID, MetadataSchema: "lake", CompatibilityDigest: digest('a'), CatalogSchemaVersion: "ducklake-v1"}); err != nil {
-		t.Fatal(err)
-	}
-	const orphanID = "0198f2c0-7c7a-7f00-8a11-000000000077"
-	orphan, err := r.RecordSnapshotOrphan(t.Context(), SnapshotOrphanInput{OrphanID: orphanID, PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 88, Evidence: json.RawMessage(`{"source":"scan"}`)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if orphan.State != "quarantined" || orphan.CleanupFencingEpoch != 0 {
-		t.Fatalf("orphan=%#v", orphan)
-	}
-	var dbNow time.Time
-	if err := p.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
-		t.Fatal(err)
-	}
-	fenceA, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-a", dbNow.Add(100*time.Millisecond))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if replay, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-a", dbNow.Add(time.Second)); err != nil || replay.FencingEpoch != fenceA.FencingEpoch {
-		t.Fatalf("same-owner orphan claim replay=%#v err=%v", replay, err)
-	}
-	if _, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-b", dbNow.Add(time.Second)); !errors.Is(err, ErrCleanupBusy) {
-		t.Fatalf("active-owner orphan contention err=%v", err)
-	}
-	time.Sleep(200 * time.Millisecond)
-	if err := p.QueryRow(t.Context(), `SELECT clock_timestamp()`).Scan(&dbNow); err != nil {
-		t.Fatal(err)
-	}
-	fenceB, err := r.ClaimSnapshotOrphanCleanup(t.Context(), orphanID, "orphan-cleanup-b", dbNow.Add(time.Second))
-	if err != nil || fenceB.FencingEpoch <= fenceA.FencingEpoch {
-		t.Fatalf("successor orphan cleanup claim=%#v err=%v", fenceB, err)
-	}
-	if err := r.CompleteSnapshotOrphanCleanup(t.Context(), orphanID, json.RawMessage(`{"worker":"b","deleted":true}`), time.Time{}, fenceA); !errors.Is(err, ErrStaleFence) {
-		t.Fatalf("stale orphan completion err=%v", err)
-	}
-	if err := r.CompleteSnapshotOrphanCleanup(t.Context(), orphanID, json.RawMessage(`{"worker":"b","deleted":true}`), time.Time{}, fenceB); err != nil {
-		t.Fatal(err)
-	}
-	time.Sleep(1100 * time.Millisecond)
-	if err := r.CompleteSnapshotOrphanCleanup(t.Context(), orphanID, json.RawMessage(`{"worker":"b","deleted":true}`), time.Time{}, fenceB); err != nil {
-		t.Fatalf("exact orphan completion replay err=%v", err)
-	}
-	orphans, err := r.ListSnapshotOrphans(t.Context(), true)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(orphans) != 1 || orphans[0].State != "cleanup-complete" || orphans[0].CleanupOwnerID != fenceB.OwnerID || orphans[0].CleanupFencingEpoch != fenceB.FencingEpoch || !evidenceEqual(orphans[0].Evidence, `{"worker":"b","deleted":true}`) {
-		t.Fatalf("orphans=%#v", orphans)
+	if rows != 1 {
+		t.Fatalf("first-use maintenance row count=%d, want 1", rows)
 	}
 }
 
