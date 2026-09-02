@@ -140,7 +140,7 @@ func nativeSealResponse(seal nativepostgres.SnapshotSeal, plan deployment.Delive
 	}
 }
 
-func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal) deploymentgen.DeliveryCandidateStatusResponse {
+func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, servingStateID string) deploymentgen.DeliveryCandidateStatusResponse {
 	catalogDigest := seal.ClosureDigest
 	if catalogDigest == "" {
 		catalogDigest = seal.RelationManifestDigest
@@ -152,11 +152,37 @@ func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan de
 		BaseGenerationId: optionalText(plan.BaseGenerationID), BaseTargetRevision: plan.BaseTargetRevision,
 		SealId: candidate.SnapshotSealID, CatalogDigest: catalogDigest, CompatibilityDigest: seal.CompatibilityDigest,
 		PhysicalPoolId: seal.PhysicalPoolID, ServingArtifactId: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest,
-		Status: nativeCandidateStatus(candidate.Status), ResolvedInputs: []deploymentgen.DeliveryResolvedInputView{},
+		ServingStateId: servingStateID,
+		Status:         nativeCandidateStatus(candidate.Status), ResolvedInputs: []deploymentgen.DeliveryResolvedInputView{},
 		CreatedAt: isoTime(candidate.CreatedAt), ReadyAt: optionalText(isoTime(candidate.QualifiedAt)), RetiredAt: optionalText(isoTime(candidate.RetiredAt)),
 		QualificationDigest: optionalText(candidate.QualificationDigest),
 	}
 	return response
+}
+
+func resolveNativeCandidateServingState(ctx context.Context, reader NativeDeliveryReader, candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal) (string, error) {
+	status := nativeCandidateStatus(candidate.Status)
+	if status != deploymentgen.DeliveryCandidateStatusReady && status != deploymentgen.DeliveryCandidateStatusRetired {
+		return "", nil
+	}
+	resolution, err := reader.ResolveCandidateGeneration(ctx, candidate.CandidateID)
+	if err != nil {
+		return "", nativeReadError(err)
+	}
+	if resolution.CandidateID != candidate.CandidateID ||
+		resolution.TargetID != candidate.TargetID ||
+		resolution.PlanID != candidate.PlanID ||
+		resolution.SnapshotSealID != seal.SealID ||
+		resolution.Status != candidate.Status ||
+		resolution.CandidateRevision != candidate.CandidateRevision ||
+		resolution.ArtifactDigest != candidate.ArtifactDigest ||
+		resolution.ProjectID != plan.ProjectID.String() ||
+		resolution.Environment != plan.Environment ||
+		resolution.GenerationCount != 1 ||
+		strings.TrimSpace(resolution.GenerationID) == "" {
+		return "", fmt.Errorf("%w: native candidate generation resolution is inconsistent", deployment.ErrDeliveryConflict)
+	}
+	return resolution.GenerationID, nil
 }
 
 func nativeGenerationResponse(generation nativepostgres.DeliveryGeneration, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, active bool) deploymentgen.DeliveryGenerationStatusResponse {

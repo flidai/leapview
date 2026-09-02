@@ -43,6 +43,9 @@ func (nativeReadFixture) Candidate(context.Context, string) (nativepostgres.Deli
 func (nativeReadFixture) LoadCandidate(context.Context, string) (nativepostgres.DeliveryCandidate, error) {
 	return nativeReadFixture{}.Candidate(context.Background(), "")
 }
+func (nativeReadFixture) ResolveCandidateGeneration(context.Context, string) (nativepostgres.CandidateGenerationResolution, error) {
+	return nativepostgres.CandidateGenerationResolution{}, nativepostgres.ErrNotFound
+}
 func (nativeReadFixture) Generation(context.Context, string) (nativepostgres.DeliveryGeneration, error) {
 	return nativepostgres.DeliveryGeneration{}, nativepostgres.ErrNotFound
 }
@@ -142,6 +145,15 @@ func (r nativeReadRows) LoadPublication(ctx context.Context, id string) (nativep
 }
 func (r nativeReadRows) OperatorSnapshot(context.Context, string) (nativepostgres.DeliveryOperatorSnapshot, error) {
 	return nativepostgres.DeliveryOperatorSnapshot{ProjectID: "finance", Environment: "prod", TargetID: "target", TargetRevision: 3, ActiveGenerationID: r.generation.GenerationID}, nil
+}
+func (r nativeReadRows) ResolveCandidateGeneration(context.Context, string) (nativepostgres.CandidateGenerationResolution, error) {
+	return nativepostgres.CandidateGenerationResolution{
+		CandidateID: r.candidate.CandidateID, TargetID: r.candidate.TargetID,
+		PlanID: r.candidate.PlanID, SnapshotSealID: r.candidate.SnapshotSealID,
+		Status: r.candidate.Status, CandidateRevision: r.candidate.CandidateRevision,
+		ArtifactDigest: r.candidate.ArtifactDigest, ProjectID: "finance", Environment: "prod",
+		GenerationCount: 1, GenerationID: r.generation.GenerationID,
+	}, nil
 }
 
 func nativeReadDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
@@ -258,6 +270,44 @@ func TestNativeDeliveryBuildReadProjectsCandidateRevisionSeparately(t *testing.T
 	}
 	if response.Revision != rows.attempt.FencingEpoch || response.CandidateRevision == nil || *response.CandidateRevision != rows.candidate.CandidateRevision {
 		t.Fatalf("build revisions = attempt %d candidate %v, want attempt %d candidate %d", response.Revision, response.CandidateRevision, rows.attempt.FencingEpoch, rows.candidate.CandidateRevision)
+	}
+}
+
+func TestNativeDeliveryCandidateReadProjectsResolvedServingState(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryCandidateStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.ServingStateId != rows.generation.GenerationID {
+		t.Fatalf("serving state id = %q, want %q", response.ServingStateId, rows.generation.GenerationID)
+	}
+}
+
+func TestNativeDeliveryPreparingCandidateReadDoesNotRequireGeneration(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	rows.candidate.Status = "building"
+	rows.candidate.SnapshotSealID = ""
+	rows.seal = nativepostgres.SnapshotSeal{}
+	rows.generation = nativepostgres.DeliveryGeneration{}
+	m := nativeReadModule(rows)
+	recorder := httptest.NewRecorder()
+	m.GetDeliveryCandidateStatus(recorder, httptest.NewRequest(http.MethodGet, "/", nil), "finance", rows.candidate.CandidateID)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	var response deploymentgen.DeliveryCandidateStatusResponse
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.Status != deploymentgen.DeliveryCandidateStatusPreparing || response.ServingStateId != "" {
+		t.Fatalf("preparing candidate status = %q, serving state = %q", response.Status, response.ServingStateId)
 	}
 }
 

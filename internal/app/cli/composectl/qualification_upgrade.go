@@ -109,18 +109,74 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	if err != nil {
 		return qualificationDeliveryPersistenceEvidence{}, fmt.Errorf("read delivery generation identity: %w", err)
 	}
-	if candidate.Body.Id != candidateID || candidate.Body.Status != deploymentgen.DeliveryCandidateStatusReady ||
-		candidate.Body.SealId == "" || candidate.Body.ServingStateId != generation.Body.ServingStateId ||
-		candidate.Body.PlanId != generation.Body.PlanId || candidate.Body.PlanDigest != generation.Body.PlanDigest ||
-		candidate.Body.TargetId != generation.Body.TargetId || candidate.Body.PhysicalPoolId != generation.Body.PhysicalPoolId ||
-		candidate.Body.CatalogDigest != generation.Body.CatalogDigest ||
-		candidate.Body.CompatibilityDigest != generation.Body.CompatibilityDigest ||
-		candidate.Body.ServingArtifactId != generation.Body.ServingArtifactId ||
-		candidate.Body.ServingArtifactDigest != generation.Body.ServingArtifactDigest {
-		return qualificationDeliveryPersistenceEvidence{}, errors.New("delivery candidate and generation identity differ")
+	// Keep mismatch diagnostics structural and value-free. These responses carry
+	// immutable IDs and digests; including their values (or the bearer token)
+	// in an upgrade qualification error would turn a useful diagnosis into a
+	// credential/evidence disclosure. Field paths identify the broken binding
+	// while preserving that boundary.
+	candidateMismatches := make([]string, 0, 3)
+	if candidate.Body.Id != candidateID {
+		candidateMismatches = append(candidateMismatches, "candidate.id")
 	}
-	if generation.Body.Id != generationID || generation.Body.Status != deploymentgen.DeliveryGenerationStatusActive {
-		return qualificationDeliveryPersistenceEvidence{}, errors.New("delivery generation is not the active generation")
+	if candidate.Body.Status != deploymentgen.DeliveryCandidateStatusReady {
+		candidateMismatches = append(candidateMismatches, "candidate.status")
+	}
+	if strings.TrimSpace(candidate.Body.SealId) == "" {
+		candidateMismatches = append(candidateMismatches, "candidate.sealId")
+	}
+
+	crossMismatches := make([]string, 0, 10)
+	if candidate.Body.ServingStateId != generation.Body.ServingStateId {
+		crossMismatches = append(crossMismatches, "candidate.servingStateId vs generation.servingStateId")
+	}
+	if candidate.Body.PlanId != generation.Body.PlanId {
+		crossMismatches = append(crossMismatches, "candidate.planId vs generation.planId")
+	}
+	if candidate.Body.PlanDigest != generation.Body.PlanDigest {
+		crossMismatches = append(crossMismatches, "candidate.planDigest vs generation.planDigest")
+	}
+	if candidate.Body.TargetId != generation.Body.TargetId {
+		crossMismatches = append(crossMismatches, "candidate.targetId vs generation.targetId")
+	}
+	if candidate.Body.PhysicalPoolId != generation.Body.PhysicalPoolId {
+		crossMismatches = append(crossMismatches, "candidate.physicalPoolId vs generation.physicalPoolId")
+	}
+	if candidate.Body.CatalogDigest != generation.Body.CatalogDigest {
+		crossMismatches = append(crossMismatches, "candidate.catalogDigest vs generation.catalogDigest")
+	}
+	if candidate.Body.CompatibilityDigest != generation.Body.CompatibilityDigest {
+		crossMismatches = append(crossMismatches, "candidate.compatibilityDigest vs generation.compatibilityDigest")
+	}
+	if candidate.Body.ServingArtifactId != generation.Body.ServingArtifactId {
+		crossMismatches = append(crossMismatches, "candidate.servingArtifactId vs generation.servingArtifactId")
+	}
+	if candidate.Body.ServingArtifactDigest != generation.Body.ServingArtifactDigest {
+		crossMismatches = append(crossMismatches, "candidate.servingArtifactDigest vs generation.servingArtifactDigest")
+	}
+	if generation.Body.CandidateId != candidateID {
+		crossMismatches = append(crossMismatches, "generation.candidateId")
+	}
+
+	generationMismatches := make([]string, 0, 2)
+	if generation.Body.Id != generationID {
+		generationMismatches = append(generationMismatches, "generation.id")
+	}
+	if generation.Body.Status != deploymentgen.DeliveryGenerationStatusActive {
+		generationMismatches = append(generationMismatches, "generation.status")
+	}
+	if len(candidateMismatches) > 0 || len(crossMismatches) > 0 {
+		fields := append(candidateMismatches, crossMismatches...)
+		// Include generation lifecycle mismatches too when another binding is
+		// broken, so one qualification run reports every known bad field.
+		fields = append(fields, generationMismatches...)
+		return qualificationDeliveryPersistenceEvidence{}, fmt.Errorf(
+			"delivery candidate and generation identity differ: %s", strings.Join(fields, ", "),
+		)
+	}
+	if len(generationMismatches) > 0 {
+		return qualificationDeliveryPersistenceEvidence{}, fmt.Errorf(
+			"delivery generation is not the active generation: %s", strings.Join(generationMismatches, ", "),
+		)
 	}
 	return qualificationDeliveryPersistenceEvidence{
 		CandidateID: candidate.Body.Id, GenerationID: generation.Body.Id,

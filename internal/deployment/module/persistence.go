@@ -397,6 +397,7 @@ type NativeDeliveryReader interface {
 	LoadSnapshotSeal(context.Context, string) (deploymentpostgres.SnapshotSeal, error)
 	Candidate(context.Context, string) (deploymentpostgres.DeliveryCandidate, error)
 	LoadCandidate(context.Context, string) (deploymentpostgres.DeliveryCandidate, error)
+	ResolveCandidateGeneration(context.Context, string) (deploymentpostgres.CandidateGenerationResolution, error)
 	Generation(context.Context, string) (deploymentpostgres.DeliveryGeneration, error)
 	LoadGeneration(context.Context, string) (deploymentpostgres.DeliveryGeneration, error)
 	Publication(context.Context, string) (deploymentpostgres.DeliveryPublication, error)

@@ -1103,7 +1103,12 @@ func (m *Module) GetDeliveryCandidateStatus(w http.ResponseWriter, r *http.Reque
 				return
 			}
 		}
-		apitransport.WriteJSON(w, http.StatusOK, nativeCandidateResponse(candidate, plan, seal))
+		servingStateID, err := resolveNativeCandidateServingState(r.Context(), m.nativeDeliveryReader, candidate, plan, seal)
+		if err != nil {
+			m.writeDeliveryReadError(w, r, err)
+			return
+		}
+		apitransport.WriteJSON(w, http.StatusOK, nativeCandidateResponse(candidate, plan, seal, servingStateID))
 		return
 	}
 	candidate, err := m.deliveryReader.DeliveryCandidateByID(r.Context(), candidateID)

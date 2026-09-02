@@ -25,14 +25,6 @@ import (
 	"github.com/google/uuid"
 )
 
-// nativeCandidateGenerationResolver is optional on NativeDeliveryReader so
-// existing read-only test doubles and non-native callers do not gain a new
-// obligation. The production PostgreSQL reader implements this exact
-// cardinality-checked lookup.
-type nativeCandidateGenerationResolver interface {
-	ResolveCandidateGeneration(context.Context, string) (nativepostgres.CandidateGenerationResolution, error)
-}
-
 // nativeQualificationEvidenceEnvelope mirrors the bounded native seal
 // evidence only at the fields needed by preview preparation. The complete
 // envelope is decoded with unknown fields rejected so a future writer cannot
@@ -156,11 +148,7 @@ func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, 
 	if err != nil {
 		return nativeCandidateRuntimeUnavailable(err.Error())
 	}
-	resolver, ok := reader.(nativeCandidateGenerationResolver)
-	if !ok {
-		return nativeCandidateRuntimeUnavailable("candidate generation resolver is unavailable")
-	}
-	resolution, err := resolver.ResolveCandidateGeneration(ctx, candidateID)
+	resolution, err := reader.ResolveCandidateGeneration(ctx, candidateID)
 	if err != nil {
 		return nativeCandidateRuntimeReadError(err)
 	}
