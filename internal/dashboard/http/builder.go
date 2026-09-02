@@ -240,7 +240,7 @@ func (h Handler) DashboardBuilderUpdates(w nethttp.ResponseWriter, r *nethttp.Re
 	if err := updates.Patch(ui.DashboardBuilderBootstrapSignals(h.dashboardBuilderEnvelopeWithPreviewForProject(r.Context(), project, actorID, builder))); err != nil {
 		return
 	}
-	<-r.Context().Done()
+	updates.Wait(r.Context())
 }
 
 // DashboardBuilderCommand accepts the bounded builder intents and routes them

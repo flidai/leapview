@@ -24,4 +24,6 @@ merely because Datastar provides them.
 The broker never blocks publishers or silently drops an individual patch. Each
 subscription has a configurable pending limit (256 by default); reaching it
 closes that slow subscription so the browser reconnects and rebuilds from
-server-owned state.
+server-owned state. Persistent streams send an SSE comment every 25 seconds so
+quiet pages remain live through LeapView's stream-idle guard and ordinary HTTP
+proxy idle windows without producing a Datastar event.

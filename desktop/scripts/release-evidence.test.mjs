@@ -20,9 +20,9 @@ const packageDocument = {
   productName: "LeapView",
   version: "0.1.0",
   devDependencies: {
-    electron: "43.2.0",
+    electron: "44.0.0",
     node: "24.14.0",
-    "@electron-forge/cli": "8.0.0-alpha.9",
+    "@electron-forge/cli": "8.0.0-alpha.10",
   },
 };
 
@@ -51,11 +51,11 @@ const policy = {
     },
   },
   runtime: {
-    electron: "43.2.0",
-    electronMajor: 43,
-    chromium: "150.0.7871.129",
+    electron: "44.0.0",
+    electronMajor: 44,
+    chromium: "152.0.7977.54",
     node: "24.14.0",
-    forge: "8.0.0-alpha.9",
+    forge: "8.0.0-alpha.10",
     bun: "1.3.14",
   },
   updates: {
@@ -64,7 +64,7 @@ const policy = {
     channel: "stable",
     productName: "LeapView",
     applicationId: "dev.leapview.desktop",
-    electronMajor: 43,
+    electronMajor: 44,
     windowsPackageId: "leapview",
   },
   supportMatrix: [
@@ -121,8 +121,8 @@ const packageVerification = {
   packageFormat: "dmg",
   asarOnly: true,
   runtime: {
-    electron: "43.2.0",
-    chromium: "150.0.7871.129",
+    electron: "44.0.0",
+    chromium: "152.0.7977.54",
     node: "24.14.0",
   },
   fuses: {
@@ -150,7 +150,7 @@ const packageVerification = {
     channel: "stable",
     productName: "LeapView",
     applicationId: "dev.leapview.desktop",
-    electronMajor: 43,
+    electronMajor: 44,
     delivery: "electron-auto-updater",
   },
   installer: {
@@ -175,7 +175,7 @@ test("release policy pins the supported Electron line and packaging contract", (
   );
 
   const mutable = structuredClone(packageDocument);
-  mutable.devDependencies.electron = "^43.2.0";
+  mutable.devDependencies.electron = "^44.0.0";
   assert.throws(
     () => validateReleasePolicy(policy, mutable),
     /exact Electron version/,
@@ -188,9 +188,9 @@ test("release policy pins the supported Electron line and packaging contract", (
         createdAt: "2026-07-29T12:00:00.000Z",
         files: [],
         lock: {
-          workspaces: { "": { devDependencies: { electron: "^43.0.0" } } },
+          workspaces: { "": { devDependencies: { electron: "^44.0.0" } } },
           packages: {
-            electron: ["electron@^43.0.0", "", {}, "sha512-ZWx1Y3Ryb24="],
+            electron: ["electron@^44.0.0", "", {}, "sha512-ZWx1Y3Ryb24="],
           },
         },
         packageDocument,
@@ -206,14 +206,14 @@ test("SPDX document covers every locked dependency and packaged runtime file", (
     workspaces: {
       "": {
         devDependencies: {
-          electron: "43.2.0",
+          electron: "44.0.0",
           rxjs: "7.8.2",
         },
       },
     },
     packages: {
       electron: [
-        "electron@43.2.0",
+        "electron@44.0.0",
         "",
         { dependencies: { "@electron/get": "^3.0.0" } },
         "sha512-ZWx1Y3Ryb24=",
@@ -335,6 +335,7 @@ test("SPDX relationships preserve Bun alias install paths and wrapper edges", ()
         devDependencies: {
           "brace-expansion": "file:vendor/brace-expansion-compat",
           "image-size": "file:vendor/image-size-next-compat",
+          "minimatch-legacy": "npm:minimatch@3.1.5",
           "minimatch-modern": "npm:minimatch@10.2.6",
         },
       },
@@ -350,6 +351,15 @@ test("SPDX relationships preserve Bun alias install paths and wrapper edges", ()
         { dependencies: { "image-size-next": "1.2.2" } },
       ],
       "image-size-next": ["image-size-next@1.2.2", "", {}],
+      "minimatch-legacy": [
+        "minimatch@3.1.5",
+        "",
+        { dependencies: { "brace-expansion": "^1.1.7" } },
+      ],
+      "minimatch-legacy/brace-expansion": [
+        "brace-expansion@file:vendor/brace-expansion-compat",
+        { dependencies: { "brace-expansion-next": "npm:brace-expansion@5.0.9" } },
+      ],
       "minimatch-modern": [
         "minimatch@10.2.6",
         "",
@@ -395,6 +405,8 @@ test("SPDX relationships preserve Bun alias install paths and wrapper edges", ()
         entry.relatedSpdxElement === packageIdForPath(childInstallPath),
     );
 
+  assert.ok(dependsOn("", "minimatch-legacy"));
+  assert.ok(dependsOn("minimatch-legacy", "minimatch-legacy/brace-expansion"));
   assert.ok(dependsOn("", "minimatch-modern"));
   assert.ok(dependsOn("minimatch-modern", "minimatch-modern/brace-expansion"));
   assert.ok(dependsOn("brace-expansion", "brace-expansion-next"));

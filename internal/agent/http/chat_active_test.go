@@ -151,6 +151,43 @@ func TestChatConversationQueuesTitleRepairOnlyAfterOwnedRestore(t *testing.T) {
 	}
 }
 
+func TestChatConversationDefersTranscriptAndConversationBootstrapToUpdatesStream(t *testing.T) {
+	fixture := newActiveChatFixture(t)
+	conversation, err := fixture.service.CreateConversation(t.Context(), agent.Scope{PrincipalID: fixture.owner}, "Owned")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatSignalCalls := 0
+	chatSignalWithCalls := 0
+	handler := NewHandler(Options{
+		Service: fixture.service, CurrentPrincipal: fixture.ownerRequest,
+		ChatSignal: func(context.Context, agent.Scope, string, string, bool) ui.ChatViewState {
+			chatSignalCalls++
+			return ui.ChatViewState{}
+		},
+		ChatSignalWith: func(context.Context, agent.Scope, string, []agent.ChatTranscriptItem, agent.ChatArtifactSignals, string, bool) ui.ChatViewState {
+			chatSignalWithCalls++
+			return ui.ChatViewState{}
+		},
+	})
+	router := chi.NewRouter()
+	router.Get("/chats/{conversation}", handler.ChatConversation)
+
+	request := httptest.NewRequest(http.MethodGet, "/chats/"+conversation.ID, nil)
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	if response.Code != http.StatusOK {
+		t.Fatalf("conversation status=%d body=%s", response.Code, response.Body.String())
+	}
+	if chatSignalCalls != 0 || chatSignalWithCalls != 0 {
+		t.Fatalf("page request bootstrapped chat state: ChatSignal=%d ChatSignalWith=%d", chatSignalCalls, chatSignalWithCalls)
+	}
+	if !strings.Contains(response.Body.String(), "conversation="+conversation.ID) {
+		t.Fatalf("page stream URL does not retain active conversation: %s", response.Body.String())
+	}
+}
+
 func TestChatRestoreStreamsOwnedStateAndClearsUnauthorizedState(t *testing.T) {
 	fixture := newActiveChatFixture(t)
 	owned, err := fixture.service.CreateConversation(t.Context(), agent.Scope{PrincipalID: fixture.owner}, "Owned")
