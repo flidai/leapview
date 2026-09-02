@@ -80,6 +80,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != BaselineRevision {
 		t.Fatalf("schema revision = %d, want %d", revision, BaselineRevision)
 	}
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, IdentityLedgerMigrationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != IdentityLedgerRevision {
+		t.Fatalf("identity ledger schema revision = %d, want %d", revision, IdentityLedgerRevision)
+	}
 	var canUpdateAudit, canUpdateRevision bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),

@@ -11,11 +11,9 @@ import (
 )
 
 type recordingTx struct {
-	sqls             []string
-	revision         int64
-	migrationID      string
-	recordedChecksum string
-	queryErr         error
+	sqls      []string
+	revisions map[int64]recordingRow
+	queryErr  error
 }
 
 func (r *recordingTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.CommandTag, error) {
@@ -23,8 +21,12 @@ func (r *recordingTx) Exec(_ context.Context, sql string, _ ...any) (pgconn.Comm
 	return pgconn.CommandTag{}, nil
 }
 
-func (r *recordingTx) QueryRow(_ context.Context, _ string, _ ...any) pgx.Row {
-	return recordingRow{revision: r.revision, migrationID: r.migrationID, checksum: r.recordedChecksum, err: r.queryErr}
+func (r *recordingTx) QueryRow(_ context.Context, _ string, args ...any) pgx.Row {
+	if r.queryErr != nil {
+		return recordingRow{err: r.queryErr}
+	}
+	revision, _ := args[0].(int64)
+	return r.revisions[revision]
 }
 
 type recordingRow struct {
@@ -87,12 +89,12 @@ func TestBaselineMetadata(t *testing.T) {
 }
 
 func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
-	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: BaselineChecksum()}
+	recorder := &recordingTx{revisions: validRevisions()}
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 2 || recorder.sqls[0] != BaselineSQL() {
-		t.Fatal("Apply() did not execute the authored baseline SQL")
+	if len(recorder.sqls) != 4 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() {
+		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
@@ -100,8 +102,42 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 }
 
 func TestApplyRejectsRevisionChecksumMismatch(t *testing.T) {
-	recorder := &recordingTx{revision: BaselineRevision, migrationID: BaselineMigrationID, recordedChecksum: strings.Repeat("f", 64)}
+	revisions := validRevisions()
+	revisions[IdentityLedgerRevision] = recordingRow{
+		revision: IdentityLedgerRevision, migrationID: IdentityLedgerMigrationID, checksum: strings.Repeat("f", 64),
+	}
+	recorder := &recordingTx{revisions: revisions}
 	if err := Apply(context.Background(), recorder); err == nil {
 		t.Fatal("Apply() accepted a mismatched recorded checksum")
+	}
+}
+
+func TestIdentityLedgerMigrationHasCompositeIdentity(t *testing.T) {
+	sql := IdentityLedgerSQL()
+	for _, marker := range []string{
+		"PRIMARY KEY (instance_id, authored_id)",
+		"resource_identity_kind_immutable",
+		"source_bundle_one_active_idx",
+		"project.durable_resource_reference",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("identity ledger migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{"resource_uid", "uuid_generate", "gen_random_uuid"} {
+		if strings.Contains(strings.ToLower(sql), forbidden) {
+			t.Errorf("identity ledger migration introduces forbidden surrogate identity %q", forbidden)
+		}
+	}
+}
+
+func validRevisions() map[int64]recordingRow {
+	return map[int64]recordingRow{
+		BaselineRevision: {
+			revision: BaselineRevision, migrationID: BaselineMigrationID, checksum: BaselineChecksum(),
+		},
+		IdentityLedgerRevision: {
+			revision: IdentityLedgerRevision, migrationID: IdentityLedgerMigrationID, checksum: IdentityLedgerChecksum(),
+		},
 	}
 }
