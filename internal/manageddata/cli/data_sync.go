@@ -99,7 +99,7 @@ func dataSyncCommand(ctx context.Context, planner dataPlanner, dependencies Depe
 			})
 		},
 	}
-	command.Flags().StringVar(&projectPath, "project", filepath.Join("dashboards", "leapview.yaml"), "project catalog path")
+	command.Flags().StringVar(&projectPath, "project", "dashboards", "analytics source root")
 	command.Flags().StringVar(&connection, "connection", "", "project-global managed connection")
 	command.Flags().StringVar(&from, "from", "", "local filesystem root to ingest")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")

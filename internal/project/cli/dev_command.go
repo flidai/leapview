@@ -8,7 +8,6 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -52,7 +51,7 @@ func DevCommand(
 	planOperations ...DeliveryPlanOperations,
 ) *cobra.Command {
 	values := DevOptions{
-		ProjectPath:       filepath.Join("dashboards", "leapview.yaml"),
+		ProjectPath:       "dashboards",
 		UploadConcurrency: 4,
 		CandidateKey:      "default",
 		Format:            "text",

@@ -14,7 +14,7 @@ import (
 )
 
 func TestOssieCommandRoutesExportAndImportThroughProjectCompiler(t *testing.T) {
-	projectPath := "../../../dashboards/leapview.yaml"
+	projectPath := "../../../dashboards"
 	var exported bytes.Buffer
 	export := OssieCommand(context.Background())
 	export.SetOut(&exported)
@@ -45,7 +45,7 @@ func TestOssieCommandRoutesExportAndImportThroughProjectCompiler(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(projectCopy, "semantic-models", "sales.yaml"), imported.Bytes(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := projectcompiler.LoadProject(filepath.Join(projectCopy, "leapview.yaml")); err != nil {
+	if _, err := projectcompiler.LoadSourceRoot(projectCopy); err != nil {
 		t.Fatalf("import command output did not compile as native project resource: %v", err)
 	}
 }

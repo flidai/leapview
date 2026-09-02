@@ -41,7 +41,7 @@ func ValidateCommand(ctx context.Context) *cobra.Command {
 			return runValidate(ctx, opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&opts.catalog, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	cmd.Flags().StringVar(&opts.catalog, "project", "dashboards", "analytics source root")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "emit JSON diagnostics")
 	return cmd
 }
@@ -70,7 +70,7 @@ func PlanCommand(ctx context.Context, operations ...any) *cobra.Command {
 			return runPlan(ctx, opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&opts.catalog, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	cmd.Flags().StringVar(&opts.catalog, "project", "dashboards", "analytics source root")
 	cmd.Flags().BoolVar(&opts.jsonOutput, "json", false, "emit JSON plan")
 	return cmd
 }

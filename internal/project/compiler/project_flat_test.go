@@ -838,12 +838,12 @@ spec:
 }
 
 func TestCompileProjectGraphShowcase(t *testing.T) {
-	project, err := LoadProject(filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"))
+	project, err := LoadSourceRoot(filepath.Join("..", "..", "..", "dashboards"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	graph := project.Graph
-	if graph.ProjectID() != "project:leapview-showcase" {
+	if graph.ProjectID() != syntheticSourceRootID {
 		t.Fatalf("project id = %q", graph.ProjectID())
 	}
 	if len(graph.Resources()) < 10 {

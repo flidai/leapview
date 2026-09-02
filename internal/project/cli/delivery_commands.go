@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"path/filepath"
 	"strings"
 
 	"github.com/flidai/leapview/internal/platform/cliapi"
@@ -144,7 +143,7 @@ type DeliveryPlanOperations interface {
 // DeliveryPlanCommand constructs the canonical target-owned plan command.
 func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations) *cobra.Command {
 	values := DeliveryPlanOptions{
-		ProjectPath:       filepath.Join("dashboards", "leapview.yaml"),
+		ProjectPath:       "dashboards",
 		TargetID:          "",
 		Operation:         "code_change",
 		CandidateKey:      "plan",
@@ -175,7 +174,7 @@ func DeliveryPlanCommand(ctx context.Context, operations DeliveryPlanOperations)
 			return writeDeliveryPlanResult(command.OutOrStdout(), values.Format, result)
 		},
 	}
-	command.Flags().StringVar(&values.ProjectPath, "project", values.ProjectPath, "project manifest path")
+	command.Flags().StringVar(&values.ProjectPath, "project", values.ProjectPath, "analytics source root")
 	command.Flags().StringVar(&values.Credentials.Target, "target", "", "LeapView target profile or URL (bound into this plan)")
 	command.Flags().StringVar(&values.Credentials.Token, "token", "", "ephemeral API token for one-shot automation")
 	command.Flags().StringVar(&values.Operation, "operation", values.Operation, "delivery operation: code_change, restatement, binding_change, or policy_change")

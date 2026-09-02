@@ -13,7 +13,7 @@ import (
 // the validated native semantic model. The adapter never creates a source,
 // connection, or model from an Ossie source string.
 func ImportOssie(projectPath string, data []byte) (*semanticmodel.Model, error) {
-	project, err := LoadProject(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -24,7 +24,7 @@ func ImportOssie(projectPath string, data []byte) (*semanticmodel.Model, error) 
 // model as deterministic JSON accepted by the pinned Ossie schema. ref may be
 // either the authored semantic-model name or its stable resource ID.
 func ExportOssie(projectPath, ref string) ([]byte, error) {
-	project, err := LoadProject(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return nil, err
 	}
@@ -34,7 +34,7 @@ func ExportOssie(projectPath, ref string) ([]byte, error) {
 // ExportOssieYAML is the YAML spelling of ExportOssie for documentation and
 // interchange workflows that prefer authored YAML files.
 func ExportOssieYAML(projectPath, ref string) ([]byte, error) {
-	project, err := LoadProject(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return nil, err
 	}

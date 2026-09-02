@@ -12,7 +12,7 @@ import (
 )
 
 func TestValidateCommandRejectsAmbiguousProjectArgs(t *testing.T) {
-	project := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	project := filepath.Join("..", "..", "..", "dashboards")
 	opts := &rootOptions{}
 	cmd := validateCommand(context.Background(), opts)
 	cmd.SetArgs([]string{"--project", project, project})
@@ -26,7 +26,7 @@ func TestValidateCommandRejectsAmbiguousProjectArgs(t *testing.T) {
 }
 
 func TestValidateCommandAcceptsShowcaseProject(t *testing.T) {
-	project := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	project := filepath.Join("..", "..", "..", "dashboards")
 	opts := &rootOptions{}
 	cmd := validateCommand(context.Background(), opts)
 	var out bytes.Buffer

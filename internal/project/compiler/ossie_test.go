@@ -6,7 +6,7 @@ import (
 )
 
 func TestCanonicalProjectOssieSurfaceRoundTripsSemanticModel(t *testing.T) {
-	project, err := LoadProject("../../../dashboards/leapview.yaml")
+	project, err := LoadSourceRoot("../../../dashboards")
 	if err != nil {
 		t.Fatal(err)
 	}

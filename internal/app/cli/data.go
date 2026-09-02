@@ -23,7 +23,7 @@ func dataCommand(ctx context.Context, _ *rootOptions) *cobra.Command {
 }
 
 func loadManagedDataPlanProject(path string) (localplan.Project, error) {
-	project, err := projectcompiler.LoadProject(path)
+	project, err := projectcompiler.LoadSourceRoot(path)
 	if err != nil {
 		return localplan.Project{}, err
 	}
@@ -48,7 +48,7 @@ func loadManagedDataPlanProject(path string) (localplan.Project, error) {
 }
 
 func loadProjectID(path string) (string, error) {
-	project, err := projectcompiler.LoadProject(path)
+	project, err := projectcompiler.LoadSourceRoot(path)
 	if err != nil {
 		return "", err
 	}

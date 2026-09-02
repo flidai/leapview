@@ -341,7 +341,7 @@ canonical_source_root() {
 
 publish_project() {
 	local port="$1"
-	local project="${2:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
+	local project="${2:-${LEAPVIEW_DEV_PROJECT:-dashboards}}"
 	local connection="${3:-}"
 	local token="${LEAPVIEW_DEV_API_TOKEN:-dev}"
 	local from="${4:-}"
@@ -349,7 +349,7 @@ publish_project() {
     echo "Skipping dev candidate publication"
     return 0
   fi
-	if [[ "$project" == "dashboards/leapview.yaml" ]]; then
+	if [[ "$project" == "dashboards" ]]; then
 		connection="${connection:-olist}"
 		from="${from:-.data/olist}"
 	fi
@@ -381,7 +381,7 @@ publish_project() {
 }
 
 publish_running() {
-	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
+	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards}}"
 	local connection="${2:-}"
 	local from="${3:-}"
 	local port
@@ -425,7 +425,7 @@ attach_server() {
 }
 
 start() {
-	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards/leapview.yaml}}"
+	local project="${1:-${LEAPVIEW_DEV_PROJECT:-dashboards}}"
 	local connection="${2:-}"
 	local from="${3:-}"
   if [[ "${LEAPVIEW_DEV_RESTART:-}" != "1" ]]; then

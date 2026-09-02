@@ -194,7 +194,7 @@ func canonicalProjectPath(t *testing.T) string {
 		t.Fatalf("resolve test working directory: %v", err)
 	}
 	for dir := workingDir; ; dir = filepath.Dir(dir) {
-		candidate := filepath.Join(dir, "dashboards", "leapview.yaml")
+		candidate := filepath.Join(dir, "dashboards")
 		if _, err := os.Stat(candidate); err == nil {
 			return candidate
 		}
@@ -203,7 +203,7 @@ func canonicalProjectPath(t *testing.T) string {
 			break
 		}
 	}
-	t.Fatalf("canonical project dashboards/leapview.yaml not found from %s", workingDir)
+	t.Fatalf("canonical analytics source root dashboards not found from %s", workingDir)
 	return ""
 }
 

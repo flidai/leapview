@@ -66,7 +66,7 @@ func (applicationTargetDiscovery) Discover(ctx context.Context, target string) (
 type applicationProjectIdentity struct{}
 
 func (applicationProjectIdentity) ProjectID(path string) (string, error) {
-	project, err := projectcompiler.LoadProject(path)
+	project, err := projectcompiler.LoadSourceRoot(path)
 	if err != nil {
 		return "", err
 	}

@@ -111,7 +111,7 @@ func TestDeliveryPlanInvocationsUseFreshOperationKeys(t *testing.T) {
 func stringPointer(value string) *string { return &value }
 
 func TestDeliveryPlanRetainsSourceWhenCandidateIdentityIsIncomplete(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	snapshot, err := (devloop.FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
 	if err != nil {
 		t.Fatal(err)
@@ -231,7 +231,7 @@ func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, reques
 }
 
 func TestDeliveryPlanRejectsRetainedSourceIdentityMismatch(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	snapshot, err := (devloop.FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
 	if err != nil {
 		t.Fatal(err)

@@ -15,7 +15,7 @@ import (
 
 func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing.T) {
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		ProjectPath: filepath.Join("..", "..", "..", "dashboards"),
 	}).Build(t.Context())
 	require.NoError(t, err)
 	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())
@@ -86,7 +86,7 @@ func TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads(t *testing
 func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		ProjectPath: filepath.Join("..", "..", "..", "dashboards"),
 	}).Build(t.Context())
 	require.NoError(t, err)
 	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
@@ -115,7 +115,7 @@ func TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart(t *testing.T)
 func TestCandidateSourceSnapshotRetainsRevisionAcrossRestart(t *testing.T) {
 	root := t.TempDir()
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		ProjectPath: filepath.Join("..", "..", "..", "dashboards"),
 	}).Build(t.Context())
 	require.NoError(t, err)
 	scope := project.CandidateSourceScope{ProjectID: snapshot.ProjectID, OwnerID: "principal_1"}
@@ -162,7 +162,7 @@ func TestCandidateSourceSnapshotRetainsRevisionAcrossRestart(t *testing.T) {
 
 func TestCandidateSourceSynchronizerRejectsWhitespaceProjectIdentity(t *testing.T) {
 	snapshot, err := (projectdevloop.FilesystemBuilder{
-		ProjectPath: filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"),
+		ProjectPath: filepath.Join("..", "..", "..", "dashboards"),
 	}).Build(t.Context())
 	require.NoError(t, err)
 	synchronizer, err := projectmodule.NewCandidateSourceSynchronizer(t.TempDir())

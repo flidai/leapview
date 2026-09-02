@@ -90,15 +90,15 @@ func (edit devloopBenchmarkEdit) apply(tb testing.TB, alternate bool) {
 
 func copyBenchmarkProject(b *testing.B) (string, []devloopBenchmarkEdit) {
 	b.Helper()
-	original, err := filepath.Abs(filepath.Join("..", "..", "..", "dashboards", "leapview.yaml"))
+	original, err := filepath.Abs(filepath.Join("..", "..", "..", "dashboards"))
 	if err != nil {
 		b.Fatal(err)
 	}
-	paths, err := projectcompiler.SourceFiles(original)
+	paths, err := projectcompiler.SourceRootFiles(original)
 	if err != nil {
 		b.Fatal(err)
 	}
-	originalRoot := filepath.Dir(original)
+	originalRoot := original
 	targetRoot := b.TempDir()
 	editable := make([]devloopBenchmarkEdit, 0, 3)
 	for _, source := range paths {
@@ -124,7 +124,7 @@ func copyBenchmarkProject(b *testing.B) (string, []devloopBenchmarkEdit) {
 			}
 		}
 	}
-	return filepath.Join(targetRoot, "leapview.yaml"), editable
+	return targetRoot, editable
 }
 
 func benchmarkDashboardTitleVariant(body []byte) ([]byte, bool) {
@@ -168,16 +168,16 @@ func reportDevloopLatencyPercentiles(b *testing.B, durations []time.Duration) {
 	b.ReportMetric(float64(durations[(len(durations)*95-1)/100])/float64(time.Millisecond), "p95-ms")
 }
 
-func TestFilesystemBuilderProducesDeterministicProjectArtifacts(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+func TestFilesystemBuilderProducesDeterministicCanonicalSourceRootArtifacts(t *testing.T) {
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	builder := FilesystemBuilder{ProjectPath: projectPath}
 
 	first, err := builder.Build(t.Context())
 	require.NoError(t, err)
 	second, err := builder.Build(t.Context())
 	require.NoError(t, err)
-	if first.ProjectID != "project:leapview-showcase" ||
-		first.ProjectFile != "leapview.yaml" ||
+	if first.ProjectID != "project:source-root" ||
+		first.ProjectFile != sourceRootEntrypoint ||
 		first.Digest != second.Digest {
 		t.Fatalf(
 			"candidate identities = (%q, %q) and (%q, %q)",

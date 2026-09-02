@@ -84,7 +84,7 @@ func (devCommandRemote) Synchronize(
 }
 
 func TestDevCommandOwnsOneAuthenticatedRemoteWorkflow(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	checkpoints := NewCandidateCheckpointStore(
 		filepath.Join(t.TempDir(), "authoring.json"),
 	)
@@ -186,7 +186,7 @@ func (recorder *devPlanRecorder) Create(context.Context, DeliveryPlanOptions) (D
 }
 
 func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	checkpoints := NewCandidateCheckpointStore(filepath.Join(t.TempDir(), "authoring.json"))
 	plan := &devPlanRecorder{}
 	command := DevCommand(
@@ -212,7 +212,7 @@ func TestDevCommandBootstrapSkipsDeliveryPlanResolution(t *testing.T) {
 }
 
 func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	tests := []struct {
 		name        string
 		args        []string
@@ -278,7 +278,7 @@ func TestDevCommandCanRemainHeadlessAndTreatsBrowserFailureAsRecoverable(t *test
 }
 
 func TestDevCommandEmitsVersionedJSONResult(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	command := DevCommand(
 		t.Context(),
 		&devCommandClient{},

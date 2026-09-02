@@ -31,7 +31,7 @@ func TestLocalhostAndProtectedTargetsUseTheSamePublicAuthoringCommands(t *testin
 		}
 	}
 
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	journeys := []authoringJourney{
 		{
 			name: "localhost evaluation", target: "http://localhost:8080",

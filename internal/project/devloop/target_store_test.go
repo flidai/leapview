@@ -53,7 +53,7 @@ func TestTargetStoreRejectsDigestMismatchWithoutRetainingBlob(t *testing.T) {
 }
 
 func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	snapshot, err := (FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
 	require.NoError(t, err)
 	root := t.TempDir()
@@ -127,7 +127,7 @@ func TestTargetStoreCommitsValidatedSnapshotIdempotently(t *testing.T) {
 }
 
 func TestTargetStoreRejectsTamperedRetainedProjectArtifact(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	snapshot, err := (FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
 	require.NoError(t, err)
 	store, err := NewTargetStore(t.TempDir())
@@ -149,7 +149,7 @@ func TestTargetStoreRejectsTamperedRetainedProjectArtifact(t *testing.T) {
 }
 
 func TestTargetStoreRepairsLegacySnapshotMissingRetainedProjectArtifact(t *testing.T) {
-	projectPath := filepath.Join("..", "..", "..", "dashboards", "leapview.yaml")
+	projectPath := filepath.Join("..", "..", "..", "dashboards")
 	snapshot, err := (FilesystemBuilder{ProjectPath: projectPath}).Build(t.Context())
 	require.NoError(t, err)
 	store, err := NewTargetStore(t.TempDir())

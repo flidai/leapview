@@ -29,7 +29,7 @@ func DashboardExportCommand(ctx context.Context) *cobra.Command {
 			if err != nil {
 				return err
 			}
-			project, err := projectcompiler.LoadProject(projectPath)
+			project, err := projectcompiler.LoadSourceRoot(projectPath)
 			if err != nil {
 				return err
 			}
@@ -55,7 +55,7 @@ func DashboardExportCommand(ctx context.Context) *cobra.Command {
 			return writeExpandedExport(output, content)
 		},
 	}
-	command.Flags().StringVar(&projectPath, "project", filepath.Join("dashboards", "leapview.yaml"), "project path")
+	command.Flags().StringVar(&projectPath, "project", "dashboards", "analytics source root")
 	command.Flags().StringVar(&layoutValue, "layout", string(projectcompiler.DashboardExportExpanded), "dashboard export layout: expanded or fragmented")
 	command.Flags().StringVar(&output, "out", "", "expanded output file or empty fragmented output directory")
 	return command

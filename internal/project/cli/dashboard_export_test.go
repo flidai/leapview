@@ -59,12 +59,11 @@ func TestDashboardExportFragmentedCLIWritesReviewableSources(t *testing.T) {
 	write("dashboards/fragments/visuals.yaml", "visuals:\n  order_count:\n    type: kpi\n    query: {type: aggregate, dimensions: [], metrics: [order_count]}\n    presentation: {type: kpi}\n")
 	write("dashboards/fragments/pages.yaml", "pages:\n  - id: overview\n    title: Overview\n    components: []\n")
 	write("dashboards/sales.yaml", "apiVersion: leapview.dev/v1\nkind: Dashboard\nmetadata: {id: dashboard:sales, name: sales_dashboard}\nspec:\n  semanticModel: sales\n  filters: []\n  includes: {visuals: [fragments/visuals.yaml], pages: [fragments/pages.yaml]}\n  visuals: {}\n  pages: []\n")
-	write("leapview.yaml", "apiVersion: leapview.dev/v1\nkind: Project\nmetadata: {id: project:test, name: test}\nspec:\n  connections: {include: [connections/*.yaml]}\n  sources: {include: [sources/*.yaml]}\n  models: {include: [models/*.yaml]}\n  semanticModels: {include: [semantic-models/*.yaml]}\n  pipelines: {include: []}\n  dashboards: {include: [dashboards/*.yaml]}\n  access: {include: []}\n  publications: {include: []}\n")
 	output := filepath.Join(root, "export")
 	var stdout bytes.Buffer
 	command := DashboardExportCommand(context.Background())
 	command.SetOut(&stdout)
-	command.SetArgs([]string{"dashboard:sales", "--project", filepath.Join(root, "leapview.yaml"), "--layout", "fragmented", "--out", output})
+	command.SetArgs([]string{"dashboard:sales", "--project", root, "--layout", "fragmented", "--out", output})
 	if err := command.Execute(); err != nil {
 		t.Fatalf("fragmented dashboard export: %v", err)
 	}

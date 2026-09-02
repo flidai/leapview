@@ -82,13 +82,13 @@ for _ in {1..120}; do
   sleep 0.25
 done
 
-SYNC_OUTPUT="$("$BIN" data sync --project dashboards/leapview.yaml --connection olist --from .data/olist --target "$TARGET" --token "$TOKEN")"
+SYNC_OUTPUT="$("$BIN" data sync --project dashboards --connection olist --from .data/olist --target "$TARGET" --token "$TOKEN")"
 REVISION="$(awk '$1 == "staged" { print $2 }' <<<"$SYNC_OUTPUT")"
 [[ "$REVISION" =~ ^sha256:[0-9a-f]{64}$ ]] || {
   echo "managed data sync did not return a canonical revision" >&2
   exit 1
 }
-DEV_OUTPUT="$("$BIN" dev --once --no-browser --target "$TARGET" --token "$TOKEN" --project dashboards/leapview.yaml)"
+DEV_OUTPUT="$("$BIN" dev --once --no-browser --target "$TARGET" --token "$TOKEN" --project dashboards)"
 CANDIDATE_ID="$(awk '$1 == "candidate" { print $2; exit }' <<<"$DEV_OUTPUT")"
 [[ "$CANDIDATE_ID" =~ ^cand_[A-Za-z0-9_-]+$ ]] || {
   echo "development candidate publication did not return a canonical candidate ID" >&2

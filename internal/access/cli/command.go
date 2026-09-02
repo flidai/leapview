@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -31,7 +30,7 @@ type ProjectIdentityResolver interface {
 
 func LoginCommand(ctx context.Context, authentication AuthenticationService, discovery TargetDiscovery, projects ProjectIdentityResolver) *cobra.Command {
 	var name string
-	projectPath := filepath.Join("dashboards", "leapview.yaml")
+	projectPath := "dashboards"
 	var headless bool
 	format := "text"
 	command := &cobra.Command{
@@ -105,7 +104,7 @@ func LoginCommand(ctx context.Context, authentication AuthenticationService, dis
 		},
 	}
 	command.Flags().StringVar(&name, "name", "", "stable local name for this target")
-	command.Flags().StringVar(&projectPath, "project", projectPath, "project entrypoint used to scope authoring credentials")
+	command.Flags().StringVar(&projectPath, "project", projectPath, "analytics source root used to scope authoring credentials")
 	command.Flags().BoolVar(&headless, "no-browser", false, "show the verification URL and code without opening a browser")
 	command.Flags().StringVar(&format, "format", format, "output format: text or json")
 	return command

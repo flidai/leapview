@@ -35,7 +35,7 @@ func (fakeDiscovery) Discover(_ context.Context, origin string) (TargetMetadata,
 type fakeProjectResolver struct{}
 
 func (fakeProjectResolver) ProjectID(path string) (string, error) {
-	if path != "dashboards/leapview.yaml" {
+	if path != "dashboards" {
 		return "", nil
 	}
 	return "analytics", nil
