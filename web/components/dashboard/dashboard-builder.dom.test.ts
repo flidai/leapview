@@ -79,7 +79,7 @@ test('dashboard builder renders bottom page tabs, canvas, and visual builder wit
     expect(state.pageTabs).toBe(2)
     expect(state.visuals).toBe(1)
     expect(state.diagnostics).toBe(1)
-    expect(state.evidence).toContain('project')
+    expect(state.evidence).toContain('sales/revenue')
     expect(state.back).toEqual({ href: '/', label: 'Back to dashboards' })
     expect(state.builderCommand).toBe(true)
   } finally {
@@ -1833,6 +1833,47 @@ test('dashboard builder keeps metadata quiet and groups secondary actions behind
     expect(state.moreLabel).toBe('More')
     expect(state.moreAriaLabel).toBe('More dashboard actions')
     expect(state.visibilityCommand).toMatchObject({ action: 'set_visibility', visibility: 'organization' })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder hides empty technical details and separates validation from provenance', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const root = element.shadowRoot
+      mergePatch({ builder: { diagnostics: [], sourceEvidence: null } })
+      await element.updateComplete
+      const empty = {
+        body: Boolean(root.querySelector('.properties-body')),
+        details: root.querySelectorAll('.secondary-details').length,
+        unavailable: root.textContent?.includes('Not available') || root.textContent?.includes('Unavailable'),
+      }
+      mergePatch({ builder: { diagnostics: [{ severity: 'warning', code: 'FIELD_REQUIRED', message: 'Add a metric.' }] } })
+      await element.updateComplete
+      const validation = {
+        summary: root.querySelector('.validation-details summary')?.textContent?.trim(),
+        message: root.querySelector('.diagnostic')?.textContent?.replace(/\s+/g, ' ').trim(),
+        technical: Boolean(root.querySelector('.technical-details')),
+      }
+      mergePatch({ builder: { diagnostics: [], sourceEvidence: { kind: 'project', projectId: 'sales', dashboardId: 'revenue', generationId: 'generation-7', path: 'dashboards/revenue.yaml' } } })
+      await element.updateComplete
+      const provenance = {
+        summary: root.querySelector('.technical-details summary')?.textContent?.trim(),
+        sourceLabel: root.querySelector('.technical-details .property-label')?.textContent?.trim(),
+        source: root.querySelector('.technical-details .evidence')?.textContent?.replace(/\s+/g, ' ').trim(),
+        validation: Boolean(root.querySelector('.validation-details')),
+      }
+      return { empty, validation, provenance }
+    })
+    expect(state.empty).toEqual({ body: false, details: 0, unavailable: false })
+    expect(state.validation).toEqual({ summary: 'Validation (1)', message: 'FIELD_REQUIRED Add a metric.', technical: false })
+    expect(state.provenance).toEqual({ summary: 'Technical details', sourceLabel: 'Source', source: 'sales/revenue · generation-7 · dashboards/revenue.yaml', validation: false })
   } finally {
     await page.close()
   }
