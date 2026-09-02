@@ -981,17 +981,9 @@ func TestAPIGenPublicationApprovalBootstrapUsesReviewerToken(t *testing.T) {
 	if !ok || protected == nil {
 		t.Fatal("delivery approval authorizer was not created")
 	}
-	reviewerScope, err := access.NewAuthoringScope("instance-prod", projectID, []access.Capability{access.CapabilityProjectAdmin})
-	if err != nil {
-		t.Fatal(err)
-	}
 	credential := access.APICredential{
 		Principal: access.Principal{ID: "reviewer", Kind: access.PrincipalKindUser},
-		Token:     access.APIToken{ID: "reviewer-authoring-token", PrincipalID: "reviewer"},
-		Authoring: &access.AuthoringSession{
-			ID: "reviewer-session", Kind: access.AuthoringSessionHumanCLI, ClientID: access.AuthoringCLIClientID,
-			PrincipalID: "reviewer", Scope: reviewerScope,
-		},
+		Token:     access.APIToken{ID: "reviewer-token", PrincipalID: "reviewer", Capabilities: []access.Capability{access.CapabilityProjectAdmin}},
 	}
 	request := apigenRequest(http.MethodPost, "/api/v1/projects/project_demo/delivery/publications/publication_1/approval-requests/approval_1/approve", map[string]string{
 		"project": projectID.String(), "publication": "publication_1", "approval": "approval_1",

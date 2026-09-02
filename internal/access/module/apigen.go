@@ -381,14 +381,14 @@ func (a *APIGenAuthorizer) protectDeliveryBootstrapAware(operationID string, cap
 			}
 			if operationID == "approveDeliveryPublicationApproval" {
 				// Approval is the sole fresh-target reviewer exception. It accepts
-				// only an explicitly PROJECT_ADMIN-attenuated bearer credential after
+				// only an explicitly PROJECT_ADMIN-attenuated API token after
 				// the durable bootstrap decision has allowed this exact operation. Do
 				// not route it through the generic platform-admin bootstrap path.
 				if !decision.Allowed {
 					http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
 					return
 				}
-				authorized, err := a.module.AuthorizePublicationApprovalBootstrapRequest(r.Context(), r, projectID.String())
+				authorized, err := a.module.AuthorizePublicationApprovalBootstrapRequest(r)
 				if err != nil {
 					a.module.logger.WarnContext(
 						r.Context(),

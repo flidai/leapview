@@ -272,13 +272,14 @@ func (m *Module) AuthorizeBootstrapRequest(ctx context.Context, r *http.Request,
 }
 
 // AuthorizePublicationApprovalBootstrapRequest validates only the credential
-// attenuation for the fresh-target approval ingress. A normal API token must
-// explicitly carry PROJECT_ADMIN. A CLI/workload credential must carry the
-// exact target, project, and PROJECT_ADMIN authoring scope. Neither path uses
-// durable platform administration: the downstream approval authorizer remains
-// responsible for loading the requested generation's immutable authorization
-// snapshot and proving that the principal is one of its project admins.
-func (m *Module) AuthorizePublicationApprovalBootstrapRequest(ctx context.Context, r *http.Request, projectID string) (bool, error) {
+// attenuation for the fresh-target approval ingress. Only a normal API token
+// that explicitly carries PROJECT_ADMIN is admitted. Authoring credentials are
+// deliberately rejected so the credential that creates and publishes a
+// candidate cannot also approve it. This ingress does not use durable platform
+// administration: the downstream approval authorizer remains responsible for
+// loading the requested generation's immutable authorization snapshot and
+// proving that the principal is one of its project admins.
+func (m *Module) AuthorizePublicationApprovalBootstrapRequest(r *http.Request) (bool, error) {
 	if m == nil || r == nil || bearerToken(r) == "" {
 		return false, nil
 	}
@@ -291,14 +292,7 @@ func (m *Module) AuthorizePublicationApprovalBootstrapRequest(ctx context.Contex
 		return false, nil
 	}
 	if credential.Authoring != nil {
-		authoring := *credential.Authoring
-		if err := validateAuthoringBootstrapCredential(credential, authoring, principal, projectID); err != nil {
-			return false, nil
-		}
-		if targetID := m.authoringInstanceID(); targetID != "" && authoring.Scope.TargetID != targetID {
-			return false, nil
-		}
-		return containsCapability(authoring.Scope.Capabilities, access.CapabilityProjectAdmin), nil
+		return false, nil
 	}
 	if credential.Token.ID == "" || credential.Token.Capabilities == nil || len(credential.Token.Capabilities) == 0 || credential.Token.PrincipalID != principal.ID {
 		return false, nil
