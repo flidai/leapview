@@ -90,7 +90,7 @@ func TestPostgres18MarkerQuarantineIsImmutableAndGatesAttempts(t *testing.T) {
 	}
 }
 
-func TestPostgres18MarkerQuarantineSerializesAdmissionAtCatalogScope(t *testing.T) {
+func TestPostgres18MarkerQuarantineSerializesAdmissionAtPoolScope(t *testing.T) {
 	h := postgrestest.Start(t)
 	db := h.NewDatabase(t, "ducklake_marker_quarantine_lock_test")
 	p, err := pgxpool.New(t.Context(), db.AdminURL())
@@ -269,6 +269,13 @@ func TestPostgres18RuntimeRoleCanUseMarkerQuarantineLockAndInsert(t *testing.T) 
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
+	var runtimeIdentityUpdate bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_table_privilege('leapview_control_runtime', 'ducklake.catalog_identity', 'UPDATE')`).Scan(&runtimeIdentityUpdate); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeIdentityUpdate {
+		t.Fatal("runtime role retained catalog identity UPDATE privilege")
+	}
 	const poolID, catalogID = "quarantine-role-pool", "quarantine-role-catalog"
 	adminRepo := New(admin)
 	if _, err := adminRepo.RegisterCatalog(t.Context(), CatalogIdentity{PhysicalPoolID: poolID, CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-0000-0000-000000000721", MetadataSchema: "lake"}); err != nil {
@@ -287,6 +294,9 @@ func TestPostgres18RuntimeRoleCanUseMarkerQuarantineLockAndInsert(t *testing.T) 
 	}
 	if _, err := runtimeRepo.QuarantineMarker(t.Context(), MarkerQuarantineInput{PhysicalPoolID: poolID, CatalogID: catalogID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, Reason: MarkerQuarantineIdentityMismatch, Evidence: json.RawMessage(`{"anomaly":"identity_mismatch"}`), ObservedMarkerDigest: digest('d'), ObservedSnapshotIDs: []int64{102}}); err != nil {
 		t.Fatalf("runtime role marker quarantine insert = %v", err)
+	}
+	if _, err := runtimeDB.Exec(t.Context(), `UPDATE ducklake.catalog_identity SET catalog_id='tampered' WHERE physical_pool_id=$1`, poolID); err == nil {
+		t.Fatal("runtime catalog identity mutation unexpectedly succeeded")
 	}
 }
 

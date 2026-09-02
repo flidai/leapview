@@ -265,6 +265,35 @@ psql --host 127.0.0.1 --username leapview_control_readonly --dbname leapview_con
 	return nil
 }
 
+// AssertNativeDeliveryReads proves that the exact long-running control role
+// retains and can exercise the identity-table reads required before a native
+// build.
+// Keeping this at the qualification boundary catches role-policy drift before
+// browser authoring turns it into an opaque delivery-plan failure.
+func (topology *qualificationNativePostgresTopology) AssertNativeDeliveryReads(ctx context.Context) error {
+	if topology == nil || topology.Container == nil {
+		return errors.New("qualification PostgreSQL topology is unavailable")
+	}
+	// sqlc-exception: analyzer-incompatible. Qualification executes psql through
+	// a sidecar container command, outside the generated PostgreSQL query boundary.
+	output, err := topology.Container.Exec(
+		ctx,
+		nil,
+		"sh", "-ec",
+		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD" PGSSLMODE=require
+psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database() || '|' || has_table_privilege(current_user, 'ducklake.catalog_identity', 'SELECT')::text || '|' || has_table_privilege(current_user, 'ducklake.generation_binding', 'SELECT')::text" --command "SELECT physical_pool_id FROM ducklake.catalog_identity LIMIT 0" --command "SELECT delivery_id FROM ducklake.generation_binding LIMIT 0"`,
+	)
+	if err != nil {
+		return qualificationContainerOperationError(ctx, topology.Container, "verify native delivery PostgreSQL reads", err)
+	}
+	const expected = "leapview_control_runtime|leapview_control|true|true"
+	actual := strings.TrimSpace(string(redactQualificationLog(output, 1)))
+	if actual != expected {
+		return fmt.Errorf("native delivery PostgreSQL read boundary = %q, want %q", actual, expected)
+	}
+	return nil
+}
+
 // startQualificationNativePostgresTopology is the Controller seam used by
 // future installed-candidate wiring. Keeping the runtime injected preserves
 // deterministic unit tests and avoids testcontainers in production code.
@@ -382,7 +411,7 @@ cp /run/secrets/leapview-postgres-server.key /tmp/leapview-postgres-tls/server.k
 chown -R postgres:postgres /tmp/leapview-postgres-tls
 chmod 0644 /tmp/leapview-postgres-tls/ca.pem /tmp/leapview-postgres-tls/server.pem
 chmod 0600 /tmp/leapview-postgres-tls/server.key
-exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/leapview-postgres-tls/ca.pem -c ssl_cert_file=/tmp/leapview-postgres-tls/server.pem -c ssl_key_file=/tmp/leapview-postgres-tls/server.key`
+exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/leapview-postgres-tls/ca.pem -c ssl_cert_file=/tmp/leapview-postgres-tls/server.pem -c ssl_key_file=/tmp/leapview-postgres-tls/server.key -c log_line_prefix='%m [%p] %u@%d '`
 
 type qualificationNativePostgresTLSFiles struct{ ca, cert, key string }
 

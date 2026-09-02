@@ -2870,9 +2870,10 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.catalog_identity, ducklake.generation_binding TO leapview_control_runtime';
+        EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE '
-            || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
-            || 'ducklake.generation_binding, ducklake.snapshot_retention, '
+            || 'ducklake.attempt_evidence, ducklake.snapshot_retention, '
             || 'ducklake.snapshot_root, ducklake.snapshot_lease TO leapview_control_runtime';
         -- Runtime admission does not discover or reconcile physical orphans.
         -- Keep the row visible for bounded diagnostics, but remove every

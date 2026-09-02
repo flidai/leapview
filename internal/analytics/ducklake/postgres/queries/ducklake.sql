@@ -156,11 +156,10 @@ WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalo
 -- name: HasMarkerQuarantineForPool :one
 SELECT EXISTS (SELECT 1 FROM ducklake.marker_quarantine WHERE physical_pool_id=sqlc.arg(physical_pool_id));
 
--- name: LockCatalogQuarantineScope :one
-SELECT physical_pool_id
-FROM ducklake.catalog_identity
-WHERE physical_pool_id=sqlc.arg(physical_pool_id)
-FOR UPDATE;
+-- name: AcquireMarkerQuarantineScopeLock :exec
+SELECT pg_advisory_xact_lock(
+  hashtextextended('leapview:ducklake:marker-quarantine:' || sqlc.arg(physical_pool_id)::text, 0)
+);
 
 -- name: GetGenerationBindingSnapshot :one
 SELECT physical_pool_id,catalog_id,snapshot_id,fencing_epoch

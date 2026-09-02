@@ -93,6 +93,30 @@ func TestQualificationNativePostgresBootstrapInvariant(t *testing.T) {
 	require.Contains(t, err.Error(), "closed before candidate publication")
 }
 
+func TestQualificationNativePostgresNativeDeliveryReadInvariant(t *testing.T) {
+	container := &nativePostgresContainerFixture{
+		execOutput: []byte("leapview_control_runtime|leapview_control|true|true\n"),
+	}
+	topology := &qualificationNativePostgresTopology{Container: container}
+	require.NoError(t, topology.AssertNativeDeliveryReads(t.Context()))
+	require.Len(t, container.probes, 1)
+	require.Contains(t, container.probes[0], "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD")
+	require.Contains(t, container.probes[0], "PGSSLMODE=require")
+	require.Contains(t, container.probes[0], "ducklake.catalog_identity")
+	require.Contains(t, container.probes[0], "LIMIT 0")
+	require.NotContains(t, container.probes[0], "postgres://")
+
+	container.execOutput = []byte("leapview_control_runtime|leapview_control|false|false\n")
+	err := topology.AssertNativeDeliveryReads(t.Context())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "read boundary")
+
+	container.execOutput = []byte("Authorization: Bearer unexpected-secret\n")
+	err = topology.AssertNativeDeliveryReads(t.Context())
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), "unexpected-secret")
+}
+
 func (*nativePostgresContainerFixture) CopyTo(context.Context, string, string) ([]byte, error) {
 	return nil, nil
 }
@@ -146,6 +170,7 @@ func TestQualificationNativePostgresTopologyStartsPinnedTLSNetworkSidecar(t *tes
 	require.Contains(t, runtime.request.Command[1], "ssl_ca_file=")
 	require.Contains(t, runtime.request.Command[1], "ssl_cert_file=")
 	require.Contains(t, runtime.request.Command[1], "ssl_key_file=")
+	require.Contains(t, runtime.request.Command[1], "log_line_prefix=")
 	require.Contains(t, runtime.request.Command[1], "chmod 0600")
 	require.Equal(t, []string{
 		"/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m",

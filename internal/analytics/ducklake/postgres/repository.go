@@ -520,8 +520,11 @@ func markerQuarantineExistsForPool(ctx context.Context, db DBTX, physicalPoolID 
 
 // lockMarkerQuarantineScope serializes every operation that can admit or
 // reconcile a build attempt with insertion of a pool quarantine row. Callers
-// must acquire this catalog-identity row lock before locking any attempt row,
-// preserving the repository-wide catalog-before-attempt lock order.
+// must acquire this transaction-scoped pool lock before locking any attempt
+// row, preserving the repository-wide quarantine-before-attempt lock order.
+// db must be a caller-owned transaction. Repository entrypoints supply one;
+// low-level transaction variants require their callers to preserve the same
+// boundary.
 func lockMarkerQuarantineScope(ctx context.Context, db DBTX, physicalPoolID string) error {
 	if db == nil || !validID(physicalPoolID) {
 		return ErrInvalid
@@ -529,14 +532,18 @@ func lockMarkerQuarantineScope(ctx context.Context, db DBTX, physicalPoolID stri
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	locked, err := querygen(db).LockCatalogQuarantineScope(ctx, physicalPoolID)
+	queries := querygen(db)
+	if err := queries.AcquireMarkerQuarantineScopeLock(ctx, physicalPoolID); err != nil {
+		return err
+	}
+	identity, err := queries.GetCatalogIdentity(ctx, physicalPoolID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ErrNotFound
 	}
 	if err != nil {
 		return err
 	}
-	if locked != physicalPoolID {
+	if identity.PhysicalPoolID != physicalPoolID {
 		return fmt.Errorf("%w: marker quarantine catalog identity differs", ErrConflict)
 	}
 	return nil
@@ -1122,8 +1129,8 @@ func beginAttemptAt(ctx context.Context, tx DBTX, in BeginAttemptInput, now time
 	}
 	// Catalog quarantine is the final admission scope lock.  Keeping it after
 	// the authority rows gives this path the same global -> pool -> maintenance
-	// -> catalog/attempt order as every fence claim and avoids a catalog↔fence
-	// lock inversion with concurrent marker reconciliation.
+	// -> quarantine/attempt order as every fence claim and avoids a
+	// quarantine↔fence lock inversion with concurrent marker reconciliation.
 	if err := lockMarkerQuarantineScope(ctx, tx, in.PhysicalPoolID); err != nil {
 		return AttemptEvidence{}, err
 	}
@@ -1375,7 +1382,7 @@ func reconcileAttemptTx(ctx context.Context, tx DBTX, in ReconcileAttemptInput) 
 	}
 
 	// Attempt identity is immutable, so an unlocked read is sufficient to
-	// discover the pool scope. Acquire the catalog scope before taking the
+	// discover the pool scope. Acquire the quarantine scope before taking the
 	// attempt row lock, matching Begin/Commit/Quarantine lock order.
 	identity, err := LoadAttempt(ctx, tx, in.AttemptID)
 	if err != nil {

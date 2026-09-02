@@ -312,6 +312,14 @@ func (c *Controller) QualifyImage(
 			result = errors.Join(result, ignoreQualificationNotFound(removeErr))
 		}
 		if nativeTopology != nil {
+			if nativeTopology.Container != nil {
+				postgresOutput, _ := nativeTopology.Container.Logs(cleanupCtx, 500)
+				_ = os.WriteFile(
+					filepath.Join(evidenceDir, "postgres.log"),
+					redactQualificationLog(postgresOutput, 500),
+					0o600,
+				)
+			}
 			removeErr := nativeTopology.Remove(cleanupCtx)
 			result = errors.Join(result, removeErr)
 			if nativeTopology.Container != nil {
@@ -389,6 +397,9 @@ func (c *Controller) QualifyImage(
 	if err := nativeTopology.AssertBootstrapOpen(ctx, "application startup"); err != nil {
 		return err
 	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
 	credentialsPath := filepath.Join(bundleRoot, ".qualification-credentials.json")
 	var credentialsOutput bytes.Buffer
 	instanceController.stdout = &credentialsOutput
@@ -451,7 +462,10 @@ func (c *Controller) QualifyImage(
 		Target:          target,
 	})
 	if err != nil {
-		return err
+		if ctx.Err() != nil {
+			return err
+		}
+		return errors.Join(err, nativeTopology.AssertNativeDeliveryReads(ctx))
 	}
 	if err := instanceController.waitQualificationReadiness(ctx); err != nil {
 		return fmt.Errorf("production image did not become ready after sealed publication: %w", err)
