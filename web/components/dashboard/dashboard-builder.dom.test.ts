@@ -195,6 +195,12 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
         agent: {
           bodyHidden: (root.querySelector('#builder-agent-content') as HTMLElement).hidden,
           hasDrawer: Boolean(root.querySelector('.agent-pane lv-chat-drawer[open][embedded]')),
+          toggleIconHidden: getComputedStyle(root.querySelector('[data-pane-toggle="agent"] svg') as SVGElement).display === 'none',
+          toggleCoversRail: (() => {
+            const pane = (root.querySelector('.agent-pane') as HTMLElement).getBoundingClientRect()
+            const toggle = (root.querySelector('[data-pane-toggle="agent"]') as HTMLElement).getBoundingClientRect()
+            return Math.abs(pane.width - toggle.width) < 1 && Math.abs(pane.height - toggle.height) < 1
+          })(),
         },
       }
     })
@@ -227,6 +233,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
         hidden: content.hidden,
         width: pane.getBoundingClientRect().width,
         embeddedTitleHidden: getComputedStyle(title).display === 'none',
+        expandedToggleIconVisible: getComputedStyle(root.querySelector('[data-pane-toggle="agent"] svg') as SVGElement).display !== 'none',
         hasComposer: Boolean(drawer.shadowRoot.querySelector('lv-chat-composer')),
       }
       ;(root.querySelector('[data-pane-toggle="agent"]') as HTMLButtonElement).click()
@@ -252,6 +259,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
         dataHidden: (root.querySelector('#builder-data-content') as HTMLElement).hidden,
         filtersExpanded: root.querySelector('[data-pane-toggle="filters"]')?.getAttribute('aria-expanded'),
         filterToggleTitle: root.querySelector('[data-pane-toggle="filters"]')?.getAttribute('title'),
+        hiddenCollapsedToggleIcons: ['filters', 'data', 'agent'].every((pane) => getComputedStyle(root.querySelector(`[data-pane-toggle="${pane}"] svg`) as SVGElement).display === 'none'),
       }
     })
 
@@ -300,7 +308,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     })
 
     expect(before.panes).toEqual(['false', 'false', 'false', 'true'])
-    expect(before.agent).toEqual({ bodyHidden: true, hasDrawer: true })
+    expect(before.agent).toEqual({ bodyHidden: true, hasDrawer: true, toggleIconHidden: true, toggleCoversRail: true })
     expect(before.historyIcons).toEqual([
       { label: 'Undo', hasIcon: true, text: 'Undo' },
       { label: 'Redo', hasIcon: true, text: 'Redo' },
@@ -312,7 +320,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
       { pane: 'agent', controls: 'builder-agent-content', controlsExistingTarget: true, hasIcon: true },
     ])
     expect(visualsToggle).toEqual({ collapsed: { pane: 'true', hidden: true, expanded: 'false' }, reopened: 'false' })
-    expect(agentToggle).toMatchObject({ collapsed: 'false', hidden: false, embeddedTitleHidden: true, hasComposer: true, recollapsed: 'true' })
+    expect(agentToggle).toMatchObject({ collapsed: 'false', hidden: false, embeddedTitleHidden: true, expandedToggleIconVisible: true, hasComposer: true, recollapsed: 'true' })
     expect(agentToggle.width).toBeGreaterThanOrEqual(280)
     expect(collapsed.canvasWidth).toBeGreaterThan(before.canvasWidth + 200)
     expect(collapsed.filtersCollapsed).toBe('true')
@@ -321,6 +329,7 @@ test('dashboard builder collapses right panes, persists the choice, and uses ico
     expect(collapsed.dataHidden).toBe(true)
     expect(collapsed.filtersExpanded).toBe('false')
     expect(collapsed.filterToggleTitle).toBe('Expand Filters pane')
+    expect(collapsed.hiddenCollapsedToggleIcons).toBe(true)
     expect(restored).toEqual({ filters: 'true', visuals: 'false', data: 'true', agent: 'true' })
     expect(responsive).toEqual({ dockOverflow: false, filtersOverflow: false, dataOverflow: false, agentOverflow: false })
     expect(stacked.filtersHeight).toBeLessThanOrEqual(57)
