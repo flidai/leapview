@@ -93,11 +93,36 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 4 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() {
+	if len(recorder.sqls) != 6 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
+	}
+}
+
+func TestContractPublicationMigrationIsImmutableAndIdentityQualified(t *testing.T) {
+	sql := ContractPublicationSQL()
+	for _, marker := range []string{
+		"PRIMARY KEY (instance_id, authored_id, resource_kind, version_baseline)",
+		"REFERENCES project.resource_identity(instance_id, authored_id, resource_kind)",
+		"projection_profile = 'leapview.contract/v1'",
+		"canonical_bytes",
+		"canonical_digest",
+		"validation_evidence_json",
+		"contract_publication_immutable",
+		"contract_publication_no_truncate",
+		"BEFORE UPDATE OR DELETE",
+		"BEFORE TRUNCATE",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("contract publication migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{"resource_uid", "publication_id", "gen_random_uuid", "uuid_generate"} {
+		if strings.Contains(strings.ToLower(sql), forbidden) {
+			t.Errorf("contract publication migration introduces forbidden identity %q", forbidden)
+		}
 	}
 }
 
@@ -140,6 +165,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		IdentityLedgerRevision: {
 			revision: IdentityLedgerRevision, migrationID: IdentityLedgerMigrationID, checksum: IdentityLedgerChecksum(),
+		},
+		ContractPublicationRevision: {
+			revision: ContractPublicationRevision, migrationID: ContractPublicationMigrationID, checksum: ContractPublicationChecksum(),
 		},
 	}
 }

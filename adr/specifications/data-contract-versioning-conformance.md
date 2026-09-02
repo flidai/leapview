@@ -207,14 +207,15 @@ profile identifier is part of canonical bytes and conformance evidence.
 | MOD-01–MOD-03 | The Model projector includes entities, keys, grain, field governance, normalized checks, and a closed allowlist projection of the existing compiler-admitted pinned DuckDB AST. Authored SQL formatting, comments, parser locations, runtime plans, materialization, cache, and physical state are absent. | Implemented by FAI-620 |
 | SEM-01–SEM-03 | The SemanticModel projector includes stable dataset, relationship, binding, dimension/time, filter, metric, format/unit, access-grant, and access-filter identifiers while excluding display, discovery, hidden-presentation, and AI fields. Exact typed scalar and internal-field leak fixtures run in `go test ./internal/project/contractprojection -count=1`. | Implemented by FAI-620 |
 | SER-01–SER-10 | The sealed projection boundary uses the single production dependency `github.com/cyberphone/json-canonicalization` for RFC 8785, applies NFC/control-character, set, exact-number, date/time, and RFC 3986 URL normalization, and emits `sha256:` identities over exact bytes. RFC golden vectors and a language-neutral Go/Bun byte-and-digest corpus verify deterministic independent output. The architecture guard proves existing graph/artifact/release digest paths do not import this boundary. | Implemented by FAI-620 |
-| VER-01–VER-06 | FAI-622, after FAI-620: compatibility/security-impact classification and immutable publication evidence. | Pending (FAI-622) |
+| VER-01–VER-06 | FAI-622 added one canonical-byte [compatibility classifier](../../internal/project/contractversion/classifier.go) for structural, semantic, and security changes plus SemVer transition enforcement. Immutable [publication evidence](../../internal/project/identityledger/contract_publication.go) reuses the existing instance-qualified identity ledger and the FAI-620 canonical bytes/digest authority. PostgreSQL [revision 3](../../internal/platform/postgres/migrations/003_contract_publication_evidence.sql) stores authored version, profile, exact bytes, digest, database timestamp, and normalized validation evidence behind append-only triggers. Exact retries replay the first row; build-metadata, content, digest, or evidence drift conflicts. Focused unit, migration, architecture, and PostgreSQL concurrency fixtures are maintained beside the implementation. | Implemented by FAI-622; deployment-plan consumption remains separate |
 
-The FAI-620 qualification deliberately stops at canonical projection bytes and
-digests. Compatibility and security-impact classification plus immutable
-publication evidence remain FAI-622/FAI-623 work, and ODCS adapters have not
-started. The earlier STR-08 boundaries also remain: standalone transitional
-`DataPolicy` rejection and contextual access-reference/type-registry changes
-are not part of FAI-620.
+The FAI-622 boundary classifies and preserves contract evidence without
+changing FAI-620 projection DTOs, canonicalization, or graph/artifact/release
+digests. Feeding the result into affected-graph deployment review and consuming
+explicit security approvals remains delivery-policy integration; ODCS adapters
+remain FAI-623. The earlier STR-08 boundaries also remain: standalone
+transitional `DataPolicy` rejection and contextual access-reference/type-
+registry changes are not part of this milestone.
 
 ## Maintained verification
 

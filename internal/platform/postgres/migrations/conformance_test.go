@@ -86,15 +86,22 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != IdentityLedgerRevision {
 		t.Fatalf("identity ledger schema revision = %d, want %d", revision, IdentityLedgerRevision)
 	}
-	var canUpdateAudit, canUpdateRevision bool
-	if err := db.QueryRow(ctx, `
-		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
-		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'UPDATE')`).
-		Scan(&canUpdateAudit, &canUpdateRevision); err != nil {
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, ContractPublicationMigrationID).Scan(&revision); err != nil {
 		t.Fatal(err)
 	}
-	if canUpdateAudit || canUpdateRevision {
-		t.Fatalf("runtime mutation grants leaked: audit update=%t revision update=%t", canUpdateAudit, canUpdateRevision)
+	if revision != ContractPublicationRevision {
+		t.Fatalf("contract publication schema revision = %d, want %d", revision, ContractPublicationRevision)
+	}
+	var canUpdateAudit, canUpdateRevision, canUpdatePublication bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'UPDATE')`).
+		Scan(&canUpdateAudit, &canUpdateRevision, &canUpdatePublication); err != nil {
+		t.Fatal(err)
+	}
+	if canUpdateAudit || canUpdateRevision || canUpdatePublication {
+		t.Fatalf("runtime mutation grants leaked: audit update=%t revision update=%t contract publication update=%t", canUpdateAudit, canUpdateRevision, canUpdatePublication)
 	}
 	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, BaselineRevision); err == nil {
 		t.Fatal("schema revision append-only trigger did not reject an update")

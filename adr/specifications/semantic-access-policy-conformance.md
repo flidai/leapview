@@ -447,7 +447,7 @@ spec:
 | FLT-01–FLT-10 | Semantic planner, parameterization, cardinality, and fail-closed tests | Pending |
 | PLN-01–PLN-09 | Security-barrier IR validation and join, aggregate, rollup, and rewrite golden plans | Pending |
 | ENF-01–ENF-11 | Catalog, dashboard, Explore, agent, export, API, and embed integration tests | Pending |
-| CMP-01–CMP-06 | Policy-diff, compatibility, security-impact, version, and approval fixtures | Pending |
+| CMP-01–CMP-06 | The FAI-622 [unified classifier](../../internal/project/contractversion/classifier.go) emits one ordered structural/semantic/security diff, aggregate compatibility class, independent tightening/widening impact, major-version requirement, and widening-approval signal. Fixtures cover required-grant tightening, allowed-value widening, unreferenced grants, semantic member changes, and version enforcement. The classifier does not inspect current principals or data. Delivery-policy consumption of the approval signal and contextual registry-aware indeterminate outcomes remain pending. | Partial: classification implemented; deployment consumption pending |
 | LIF-01–LIF-08 | Cache partitioning, invalidation, planning, and durable-audit tests | Pending |
 | OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
 

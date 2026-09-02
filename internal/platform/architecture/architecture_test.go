@@ -1747,6 +1747,21 @@ func TestContractCanonicalizationIsIsolatedFromExistingArtifactIdentity(t *testi
 	}
 }
 
+func TestContractVersionPolicyReusesCanonicalAndIdentityAuthorities(t *testing.T) {
+	const canonicalizer = "github.com/cyberphone/json-canonicalization/go/src/webpki.org/jsoncanonicalizer"
+	for _, file := range productionGoFiles(t) {
+		policyFile := strings.HasPrefix(file.path, "internal/project/contractversion/") ||
+			file.path == "internal/project/identityledger/contract_publication.go" ||
+			file.path == "internal/project/identityledger/postgres/contract_publication.go"
+		if !policyFile {
+			continue
+		}
+		if importListContains(file.imports, "crypto/sha256") || importListContains(file.imports, canonicalizer) {
+			t.Errorf("%s introduces a second contract hashing/canonicalization authority", file.path)
+		}
+	}
+}
+
 func TestCapabilityModulesRequireDeclaredPublicContractEdges(t *testing.T) {
 	runtimehostModule, ok := ClassifyPackage("internal/runtimehost/module")
 	if !ok || runtimehostModule.Layer != LayerModule {

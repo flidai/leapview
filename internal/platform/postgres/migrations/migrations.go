@@ -30,12 +30,21 @@ var baselineSQL string
 //go:embed 002_project_identity_ledger.sql
 var identityLedgerSQL string
 
+//go:embed 003_contract_publication_evidence.sql
+var contractPublicationSQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
 
 // IdentityLedgerMigrationID is the immutable revision-two identifier.
 const IdentityLedgerMigrationID = "002_project_identity_ledger"
+
+// ContractPublicationRevision adds FAI-622 immutable version evidence without
+// introducing a new identity or publication-store authority.
+const ContractPublicationRevision int64 = 3
+
+const ContractPublicationMigrationID = "003_contract_publication_evidence"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -54,6 +63,13 @@ func IdentityLedgerSQL() string { return identityLedgerSQL }
 // IdentityLedgerChecksum is the SHA-256 recorded for revision two.
 func IdentityLedgerChecksum() string {
 	sum := sha256.Sum256([]byte(identityLedgerSQL))
+	return hex.EncodeToString(sum[:])
+}
+
+func ContractPublicationSQL() string { return contractPublicationSQL }
+
+func ContractPublicationChecksum() string {
+	sum := sha256.Sum256([]byte(contractPublicationSQL))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -84,6 +100,7 @@ func Apply(ctx context.Context, tx Tx) error {
 	}{
 		{BaselineRevision, BaselineMigrationID, baselineSQL, BaselineChecksum()},
 		{IdentityLedgerRevision, IdentityLedgerMigrationID, identityLedgerSQL, IdentityLedgerChecksum()},
+		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
 	}
 	for _, migration := range migrations {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {
