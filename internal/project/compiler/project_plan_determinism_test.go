@@ -34,7 +34,11 @@ func TestPlanProjectAgainstArtifactDetectsSQLChangeWithStableGraphIdentity(t *te
 		"models/orders.yaml":         "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:orders, name: orders_model}\nspec: {definition: {type: sql, sql: 'SELECT id FROM source.orders'}, fields: {id: {datatype: Integer}}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}}\n",
 	}
 	projectPath := writeFlatProjectFixture(t, files)
-	retained, err := LoadProject(projectPath)
+	root := filepath.Dir(projectPath)
+	if err := os.Remove(projectPath); err != nil {
+		t.Fatal(err)
+	}
+	retained, err := LoadSourceRoot(root)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -42,7 +46,7 @@ func TestPlanProjectAgainstArtifactDetectsSQLChangeWithStableGraphIdentity(t *te
 	if err != nil {
 		t.Fatal(err)
 	}
-	modelPath := filepath.Join(filepath.Dir(projectPath), "models", "orders.yaml")
+	modelPath := filepath.Join(root, "models", "orders.yaml")
 	modelBytes, err := os.ReadFile(modelPath)
 	if err != nil {
 		t.Fatal(err)
@@ -51,7 +55,7 @@ func TestPlanProjectAgainstArtifactDetectsSQLChangeWithStableGraphIdentity(t *te
 	if err := os.WriteFile(modelPath, []byte(updated), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plan, err := PlanProjectAgainstArtifact(projectPath, active)
+	plan, err := PlanProjectAgainstArtifact(root, active)
 	if err != nil {
 		t.Fatal(err)
 	}

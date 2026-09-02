@@ -68,6 +68,24 @@ func TestLoadSourceRootPreservesDuplicateIDValidation(t *testing.T) {
 	}
 }
 
+func TestPublicCompileAndPlanRejectLegacyProjectManifest(t *testing.T) {
+	root := t.TempDir()
+	manifest := filepath.Join(root, "leapview.yaml")
+	writeAuthoredDiscoveryFiles(t, root, map[string]string{
+		"leapview.yaml": authoredDiscoveryFixture("Project", "project:test", "test"),
+	})
+	for name, run := range map[string]func() error{
+		"compile": func() error { _, err := CompileProject(manifest); return err },
+		"plan":    func() error { _, err := PlanProject(manifest); return err },
+	} {
+		t.Run(name, func(t *testing.T) {
+			if err := run(); err == nil || !strings.Contains(err.Error(), "Project authoring was removed") {
+				t.Fatalf("legacy manifest error = %v", err)
+			}
+		})
+	}
+}
+
 func sourceRootConnectionFixture(id, name string) string {
 	return "apiVersion: leapview.dev/v1\nkind: Connection\nmetadata: {id: " + id + ", name: " + name + "}\nspec: {type: managed}\n"
 }

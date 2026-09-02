@@ -163,7 +163,7 @@ func TestVisualDocumentReferenceUsesCompiledRendererAndResultShape(t *testing.T)
 
 func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	docsDir := filepath.Join("..", "..", "..", "..", "docs", "visuals")
-	artifact, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project", "leapview.yaml"), filepath.Join("testdata", "data"))
+	artifact, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project"), filepath.Join("testdata", "data"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestGenerateVisualExamplesExecutesEveryDocumentedQuery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	regenerated, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project", "leapview.yaml"), filepath.Join("testdata", "data"))
+	regenerated, err := generateVisualExamples(docsDir, filepath.Join("testdata", "project"), filepath.Join("testdata", "data"))
 	if err != nil {
 		t.Fatal(err)
 	}

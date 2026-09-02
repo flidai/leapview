@@ -133,7 +133,7 @@ func (c *Controller) runQualificationRecovery(
 ) (report qualificationRecoveryReport, runErr error) {
 	rootContext := ctx
 	if options.ProjectID == "" {
-		options.ProjectID = "project:leapview-evaluation"
+		options.ProjectID = "project:source-root"
 	}
 	for label, value := range map[string]string{
 		"bundle root":            options.BundleRoot,

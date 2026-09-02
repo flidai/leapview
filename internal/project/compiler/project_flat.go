@@ -119,7 +119,7 @@ func loadFlatModels(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}
@@ -158,7 +158,7 @@ func loadFlatSemanticModels(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}
@@ -194,7 +194,7 @@ func loadFlatPipelines(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}
@@ -264,7 +264,7 @@ func loadFlatPublications(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}
@@ -291,7 +291,7 @@ func loadFlatAccess(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}

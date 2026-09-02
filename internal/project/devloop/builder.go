@@ -10,7 +10,6 @@ import (
 	"path/filepath"
 	"sort"
 
-	projectartifact "github.com/flidai/leapview/internal/project/artifact"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -36,8 +35,10 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 	if err != nil {
 		return Snapshot{}, err
 	}
-	sourceRootMode := inputInfo.IsDir()
-	files, err := captureStableProjectSources(ctx, inputPath, sourceRootMode)
+	if !inputInfo.IsDir() {
+		return Snapshot{}, fmt.Errorf("Project authoring was removed; pass the analytics source root directory %q instead of %q", filepath.Dir(inputPath), inputPath)
+	}
+	files, err := captureStableProjectSources(ctx, inputPath)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -46,10 +47,7 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		return Snapshot{}, err
 	}
 	defer os.RemoveAll(root)
-	sourceRoot := filepath.Dir(inputPath)
-	if sourceRootMode {
-		sourceRoot = inputPath
-	}
+	sourceRoot := inputPath
 	artifacts := make([]Artifact, 0, len(files))
 	for path, content := range files {
 		relative, err := filepath.Rel(sourceRoot, path)
@@ -65,22 +63,16 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 		}
 		artifacts = append(artifacts, contentArtifact(filepath.ToSlash(relative), content))
 	}
-	projectFile := filepath.ToSlash(filepath.Base(inputPath))
-	var compiled projectartifact.Project
-	if sourceRootMode {
-		projectFile = sourceRootEntrypoint
-		markerPath := filepath.Join(root, filepath.FromSlash(sourceRootEntrypoint))
-		if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
-			return Snapshot{}, err
-		}
-		if err := os.WriteFile(markerPath, []byte(sourceRootMarker), 0o600); err != nil {
-			return Snapshot{}, err
-		}
-		artifacts = append(artifacts, contentArtifact(sourceRootEntrypoint, []byte(sourceRootMarker)))
-		compiled, err = projectcompiler.CompileSourceRoot(root)
-	} else {
-		compiled, err = projectcompiler.Compile(filepath.Join(root, filepath.Base(inputPath)))
+	projectFile := sourceRootEntrypoint
+	markerPath := filepath.Join(root, filepath.FromSlash(sourceRootEntrypoint))
+	if err := os.MkdirAll(filepath.Dir(markerPath), 0o700); err != nil {
+		return Snapshot{}, err
 	}
+	if err := os.WriteFile(markerPath, []byte(sourceRootMarker), 0o600); err != nil {
+		return Snapshot{}, err
+	}
+	artifacts = append(artifacts, contentArtifact(sourceRootEntrypoint, []byte(sourceRootMarker)))
+	compiled, err := projectcompiler.CompileSourceRoot(root)
 	if err != nil {
 		return Snapshot{}, err
 	}
@@ -93,13 +85,13 @@ func (builder FilesystemBuilder) Build(ctx context.Context) (Snapshot, error) {
 	})
 }
 
-func captureStableProjectSources(ctx context.Context, inputPath string, sourceRoot bool) (map[string][]byte, error) {
+func captureStableProjectSources(ctx context.Context, inputPath string) (map[string][]byte, error) {
 	var previous map[string][]byte
 	for attempt := 0; attempt < stableCaptureAttempts; attempt++ {
 		if err := ctx.Err(); err != nil {
 			return nil, err
 		}
-		current, err := readReachableProjectSources(inputPath, sourceRoot)
+		current, err := readReachableProjectSources(inputPath)
 		if err != nil {
 			return nil, err
 		}
@@ -111,14 +103,8 @@ func captureStableProjectSources(ctx context.Context, inputPath string, sourceRo
 	return nil, fmt.Errorf("project sources changed during coherent capture")
 }
 
-func readReachableProjectSources(inputPath string, sourceRoot bool) (map[string][]byte, error) {
-	var paths []string
-	var err error
-	if sourceRoot {
-		paths, err = projectcompiler.SourceRootFiles(inputPath)
-	} else {
-		paths, err = projectcompiler.SourceFiles(inputPath)
-	}
+func readReachableProjectSources(inputPath string) (map[string][]byte, error) {
+	paths, err := projectcompiler.SourceRootFiles(inputPath)
 	if err != nil {
 		return nil, err
 	}

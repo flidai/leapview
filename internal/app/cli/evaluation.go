@@ -37,10 +37,10 @@ const (
 	evaluationCompleteFileName      = ".evaluation-complete.json"
 	evaluationAuthoringFileName     = ".evaluation-authoring.json"
 	evaluationFirstLoginLockName    = ".evaluation-first-login.lock"
-	evaluationProjectRelativePath   = "project/leapview.yaml"
+	evaluationProjectRelativePath   = "project"
 	evaluationDataRelativePath      = "data"
 	evaluationConnection            = "sample"
-	evaluationProjectID             = "project:leapview-evaluation"
+	evaluationProjectID             = "project:source-root"
 	evaluationDashboardID           = "dashboard:sales-overview"
 )
 
@@ -359,11 +359,13 @@ func evaluationAssetsRoot() (string, error) {
 }
 
 func evaluationAssetsExist(root string) bool {
-	for _, relative := range []string{evaluationProjectRelativePath, filepath.Join(evaluationDataRelativePath, "orders.csv")} {
-		info, err := os.Stat(filepath.Join(root, relative))
-		if err != nil || !info.Mode().IsRegular() {
-			return false
-		}
+	project, err := os.Stat(filepath.Join(root, evaluationProjectRelativePath))
+	if err != nil || !project.IsDir() {
+		return false
+	}
+	data, err := os.Stat(filepath.Join(root, evaluationDataRelativePath, "orders.csv"))
+	if err != nil || !data.Mode().IsRegular() {
+		return false
 	}
 	return true
 }

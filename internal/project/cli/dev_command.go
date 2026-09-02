@@ -86,7 +86,7 @@ func DevCommand(
 		&values.ProjectPath,
 		"project",
 		values.ProjectPath,
-		"project manifest path",
+		"analytics source-root path",
 	)
 	command.Flags().StringVar(
 		&values.Credentials.Target,

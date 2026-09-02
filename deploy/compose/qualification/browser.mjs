@@ -55,7 +55,7 @@ try {
   await stateCells.first().waitFor({ state: 'visible', timeout: 30_000 })
 
   const denialRequestID = `qualification-denial-${Date.now()}`
-  const projectPath = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
+  const projectPath = process.env.QUALIFICATION_PROJECT_ID || 'project:source-root'
   const denial = await context.request.get(new URL(`/api/v1/projects/${projectPath}/grants`, baseURL).href, {
     headers: {
       Authorization: `Bearer ${credentials.publisherToken}`,

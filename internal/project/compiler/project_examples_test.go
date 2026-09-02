@@ -7,11 +7,11 @@ import (
 	"testing"
 )
 
-// TestAuthoredProjectFixturesUseFlatGraph keeps checked-in evaluation and
-// visual-documentation projects aligned with the project-wide authoring
-// contract. A legacy workspace directory or metadata field must not silently
-// become an accepted example again.
-func TestAuthoredProjectFixturesUseFlatGraph(t *testing.T) {
+// TestAuthoredProjectFixturesUseSourceRoot keeps checked-in evaluation and
+// visual-documentation projects aligned with the fixed-directory authoring
+// contract. Legacy manifests, workspace directories, and workspace metadata
+// must not silently become accepted examples again.
+func TestAuthoredProjectFixturesUseSourceRoot(t *testing.T) {
 	root := filepath.Join("..", "..", "..")
 	fixtures := []string{
 		filepath.Join(root, "evaluation", "project"),
@@ -20,9 +20,8 @@ func TestAuthoredProjectFixturesUseFlatGraph(t *testing.T) {
 	for _, dir := range fixtures {
 		dir := dir
 		t.Run(filepath.ToSlash(dir), func(t *testing.T) {
-			projectPath := filepath.Join(dir, "leapview.yaml")
-			if _, err := LoadProject(projectPath); err != nil {
-				t.Fatalf("LoadProject(%q): %v", projectPath, err)
+			if _, err := LoadSourceRoot(dir); err != nil {
+				t.Fatalf("LoadSourceRoot(%q): %v", dir, err)
 			}
 			err := filepath.WalkDir(dir, func(path string, entry os.DirEntry, err error) error {
 				if err != nil {
@@ -33,6 +32,9 @@ func TestAuthoredProjectFixturesUseFlatGraph(t *testing.T) {
 						return &legacyWorkspaceFixtureError{path: path}
 					}
 					return nil
+				}
+				if entry.Name() == "leapview.yaml" {
+					return &legacyProjectManifestFixtureError{path: path}
 				}
 				contents, readErr := os.ReadFile(path)
 				if readErr != nil {
@@ -54,4 +56,10 @@ type legacyWorkspaceFixtureError struct{ path string }
 
 func (e *legacyWorkspaceFixtureError) Error() string {
 	return "legacy workspace field in authored fixture: " + e.path
+}
+
+type legacyProjectManifestFixtureError struct{ path string }
+
+func (e *legacyProjectManifestFixtureError) Error() string {
+	return "legacy Project manifest in authored fixture: " + e.path
 }

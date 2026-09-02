@@ -103,19 +103,22 @@ spec:
 	// The artifact digest includes graph, manifest, normalized Dashboard DTO,
 	// and relative source provenance, so equality is the semantic equivalence
 	// contract rather than a layout/text comparison.
-	originalArtifact, err := CompileProject(projectPath)
+	requireNoFile(t, projectPath)
+	originalArtifact, err := CompileProject(root)
 	if err != nil {
 		t.Fatalf("compile original fragmented project: %v", err)
 	}
 	expandedRoot := copyProjectWithoutDashboard(t, root, files)
+	requireNoFile(t, filepath.Join(expandedRoot, "leapview.yaml"))
 	writeExportFiles(t, expandedRoot, expanded.Files)
-	expandedArtifact, err := CompileProject(filepath.Join(expandedRoot, "leapview.yaml"))
+	expandedArtifact, err := CompileProject(expandedRoot)
 	if err != nil {
 		t.Fatalf("compile expanded export: %v", err)
 	}
 	fragmentedRoot := copyProjectWithoutDashboard(t, root, files)
+	requireNoFile(t, filepath.Join(fragmentedRoot, "leapview.yaml"))
 	writeExportFiles(t, fragmentedRoot, fragmented.Files)
-	fragmentedArtifact, err := CompileProject(filepath.Join(fragmentedRoot, "leapview.yaml"))
+	fragmentedArtifact, err := CompileProject(fragmentedRoot)
 	if err != nil {
 		t.Fatalf("compile fragmented export: %v", err)
 	}
@@ -126,6 +129,13 @@ spec:
 		left, _ := json.Marshal(got)
 		right, _ := json.Marshal(want)
 		t.Fatalf("compiled dashboard definitions differ:\n%s\n%s", left, right)
+	}
+}
+
+func requireNoFile(t *testing.T, path string) {
+	t.Helper()
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		t.Fatal(err)
 	}
 }
 

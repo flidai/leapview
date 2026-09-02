@@ -627,7 +627,7 @@ func storedSnapshot(
 
 func compileRetainedAuthoringInput(sourceRoot, entrypoint string) (projectartifact.Project, error) {
 	if entrypoint != sourceRootEntrypoint {
-		return projectcompiler.Compile(filepath.Join(sourceRoot, filepath.FromSlash(entrypoint)))
+		return projectcompiler.CompileRetainedProjectManifest(filepath.Join(sourceRoot, filepath.FromSlash(entrypoint)))
 	}
 	marker, err := os.ReadFile(filepath.Join(sourceRoot, filepath.FromSlash(entrypoint)))
 	if err != nil {

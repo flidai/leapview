@@ -2045,8 +2045,8 @@
       "x-scope": "dev server"
     },
     "LEAPVIEW_DEV_PROJECT": {
-      "default": "dashboards/leapview.yaml",
-      "description": "Project published by the managed development server.",
+      "default": "dashboards",
+      "description": "Analytics source root published by the managed development server.",
       "type": "string",
       "x-lifecycle": "development",
       "x-scope": "dev server"

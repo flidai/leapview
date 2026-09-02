@@ -19,7 +19,7 @@ tasks:
       - task: generate
       - task: build
       - task: bootstrap:movielens
-      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 ./scripts/dev-server.sh start dashboards/experiments/movielens/leapview.yaml movielens .data/movielens
+      - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 ./scripts/dev-server.sh start dashboards/experiments/movielens movielens .data/movielens
 
   bootstrap:
     desc: Download/sync Olist CSVs if missing
@@ -793,17 +793,12 @@ tasks:
       - internal/app/tools/schemadocgen/**/*.go
       - dashboards/**/*.yaml
     generates:
-      - schemas/json/project.schema.json
       - schemas/json/connection.schema.json
       - schemas/json/source.schema.json
       - schemas/json/model.schema.json
       - schemas/json/semantic-model.schema.json
       - schemas/json/pipeline.schema.json
-      - schemas/json/group.schema.json
-      - schemas/json/role-binding.schema.json
-      - schemas/json/grant.schema.json
       - schemas/json/data-policy.schema.json
-      - schemas/json/dashboard-publication.schema.json
       - docs/reference/config/catalog.json
     cmds:
       - go run ./cmd/leapview schema export --format json-schema --out schemas/json

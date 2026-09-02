@@ -62,7 +62,7 @@ type ProjectPlanDependencyChange struct {
 }
 
 func PlanProject(projectPath string) (ProjectPlan, error) {
-	project, err := loadAuthoredInput(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return ProjectPlan{}, err
 	}
@@ -72,7 +72,7 @@ func PlanProject(projectPath string) (ProjectPlan, error) {
 // PlanProjectAgainstGraph compares authored project graph bytes with an
 // active graph. The active graph is portable and contains no serving identity.
 func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGraph) (ProjectPlan, error) {
-	project, err := loadAuthoredInput(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return ProjectPlan{}, err
 	}
@@ -87,7 +87,7 @@ func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGrap
 // intentionally carry only identity/metadata, so comparing the graph alone
 // cannot detect SQL, source, or model-table changes at an unchanged ID/path.
 func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Project) (ProjectPlan, error) {
-	project, err := loadAuthoredInput(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return ProjectPlan{}, err
 	}

@@ -101,6 +101,23 @@ func ValidateFile(kind Kind, path string) error {
 }
 
 func ValidateBytes(kind Kind, filename string, content []byte) error {
+	if removedPublicAuthoringKind(kind) {
+		return &Error{Diagnostics: []Diagnostic{{
+			File: filename, Line: 1, Column: 1, Severity: SeverityError, Code: "schema.kind.removed",
+			Message: fmt.Sprintf("%s is not a public authored resource; administer instance control state through the control API", kind),
+		}}}
+	}
+	return validateBytes(kind, filename, content)
+}
+
+// ValidateRetainedBytes exists only for verification and replay of source
+// snapshots captured before ADR-0016 removed Project and control resources
+// from public authoring. New authoring paths must call ValidateBytes.
+func ValidateRetainedBytes(kind Kind, filename string, content []byte) error {
+	return validateBytes(kind, filename, content)
+}
+
+func validateBytes(kind Kind, filename string, content []byte) error {
 	if kind == KindDashboard {
 		return validateDashboardDocument(filename, content)
 	}
@@ -138,7 +155,19 @@ func ValidateBytes(kind Kind, filename string, content []byte) error {
 	return nil
 }
 
+func removedPublicAuthoringKind(kind Kind) bool {
+	switch kind {
+	case KindProject, KindGroup, KindRoleBinding, KindGrant, KindDashboardPublication:
+		return true
+	default:
+		return false
+	}
+}
+
 func JSONSchema(kind Kind) ([]byte, error) {
+	if removedPublicAuthoringKind(kind) {
+		return nil, fmt.Errorf("public authoring schema %q was removed; administer instance control state through the control API", kind)
+	}
 	if kind == KindDashboard {
 		return append([]byte(nil), canonicalschemas.DashboardDocumentSchema...), nil
 	}
@@ -244,7 +273,10 @@ func compiledDefinition(kind Kind) (*cue.Context, cue.Value, string, error) {
 }
 
 func JSONSchemaFiles() (map[string][]byte, error) {
-	kinds := []Kind{KindProject, KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard, KindGroup, KindRoleBinding, KindGrant, KindDataPolicy, KindDashboardPublication}
+	// DataPolicy remains a temporary exported schema until ADR-0017's
+	// qualification removes its transitional authoring path. Project and the
+	// instance-owned control resources are deliberately absent.
+	kinds := []Kind{KindConnection, KindSource, KindModel, KindSemanticModel, KindPipeline, KindDashboard, KindDataPolicy}
 	files := map[string][]byte{}
 	for _, kind := range kinds {
 		content, err := JSONSchema(kind)
@@ -474,7 +506,7 @@ func dashboardFieldPath(path []string) string {
 func definitionName(kind Kind) (string, error) {
 	switch kind {
 	case KindProject:
-		return "Project", nil
+		return "LegacyProject", nil
 	case KindSemanticModel:
 		return "SemanticModelResource", nil
 	case KindPipeline:
@@ -482,15 +514,15 @@ func definitionName(kind Kind) (string, error) {
 	case KindDashboard:
 		return "DashboardResource", nil
 	case KindGroup:
-		return "GroupResource", nil
+		return "LegacyGroupResource", nil
 	case KindRoleBinding:
-		return "RoleBindingResource", nil
+		return "LegacyRoleBindingResource", nil
 	case KindGrant:
-		return "GrantResource", nil
+		return "LegacyGrantResource", nil
 	case KindDataPolicy:
 		return "DataPolicyResource", nil
 	case KindDashboardPublication:
-		return "DashboardPublicationResource", nil
+		return "LegacyDashboardPublicationResource", nil
 	default:
 		return "", fmt.Errorf("unknown schema kind %q", kind)
 	}
@@ -637,12 +669,12 @@ var schemaOverlays = map[Kind]schemaOverlay{
 	KindProject: {
 		required: []string{"apiVersion", "kind", "metadata", "spec"},
 		collections: []collectionRule{
-			definitionCollection("#Project", "connections", collectionMapping),
-			definitionCollection("#Project", "sources", collectionMapping),
-			definitionCollection("#Project", "models", collectionMapping),
-			definitionCollection("#Project", "semanticModels", collectionMapping),
-			definitionCollection("#Project", "pipelines", collectionMapping),
-			definitionCollection("#Project", "dashboards", collectionMapping),
+			definitionCollection("#LegacyProject", "connections", collectionMapping),
+			definitionCollection("#LegacyProject", "sources", collectionMapping),
+			definitionCollection("#LegacyProject", "models", collectionMapping),
+			definitionCollection("#LegacyProject", "semanticModels", collectionMapping),
+			definitionCollection("#LegacyProject", "pipelines", collectionMapping),
+			definitionCollection("#LegacyProject", "dashboards", collectionMapping),
 		},
 	},
 	KindConnection: {

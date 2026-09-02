@@ -47,9 +47,10 @@ func TestRunSchemaExportWritesJSONSchemas(t *testing.T) {
 		t.Fatalf("runSchemaExport() error = %v", err)
 	}
 	for _, name := range []string{
-		configschema.JSONSchemaFilename(configschema.KindProject),
+		configschema.JSONSchemaFilename(configschema.KindConnection),
 		configschema.JSONSchemaFilename(configschema.KindModel),
 		configschema.JSONSchemaFilename(configschema.KindDashboard),
+		configschema.JSONSchemaFilename(configschema.KindDataPolicy),
 	} {
 		content, err := os.ReadFile(filepath.Join(outDir, name))
 		if err != nil {

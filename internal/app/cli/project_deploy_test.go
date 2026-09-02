@@ -29,7 +29,7 @@ func TestDeployComposesCanonicalPlanBuildAndPublication(t *testing.T) {
 	credentials := cliapi.Credentials{Target: "https://example.test", Token: "secret"}
 
 	err := operations.Deploy(context.Background(), projectcli.DeployOptions{
-		ProjectPath: "dashboards/leapview.yaml", Credentials: credentials, Environment: "prod",
+		ProjectPath: "dashboards", Credentials: credentials, Environment: "prod",
 	}, &bytes.Buffer{})
 	require.NoError(t, err)
 	require.Equal(t, []string{"plan", "build", "publish"}, sequence)
@@ -48,7 +48,7 @@ func TestDeployDoesNotBuildOrPublishWhenPlanFails(t *testing.T) {
 	operations := projectDeployOperations{client: &deployLifecycleClient{environment: "prod"}, planner: planner, builder: builder, publisher: publisher}
 
 	err := operations.Deploy(context.Background(), projectcli.DeployOptions{
-		ProjectPath: "dashboards/leapview.yaml", Credentials: cliapi.Credentials{Target: "https://example.test"},
+		ProjectPath: "dashboards", Credentials: cliapi.Credentials{Target: "https://example.test"},
 	}, &bytes.Buffer{})
 	require.ErrorIs(t, err, planErr)
 	require.Empty(t, builder.order)

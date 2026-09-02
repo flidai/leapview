@@ -18,7 +18,7 @@ func IsProjectConfigFile(path string) bool {
 }
 
 func LoadProject(projectPath string) (Project, error) {
-	envelope, err := readEnvelope(projectPath)
+	envelope, err := readRetainedEnvelope(projectPath)
 	if err != nil {
 		return Project{}, err
 	}
@@ -37,6 +37,7 @@ func LoadProject(projectPath string) (Project, error) {
 		projectPath,
 		projectgraph.Metadata{DisplayName: firstNonEmpty(envelope.Metadata.DisplayName, envelope.Metadata.Title, envelope.Metadata.Name), Description: envelope.Metadata.Description, Owner: envelope.Metadata.Owner, Domain: envelope.Metadata.Domain, Tags: append([]string(nil), envelope.Metadata.Tags...), Documentation: envelope.Metadata.Documentation},
 	)
+	project.RetainedManifest = true
 	if envelope.Metadata.ID == "" {
 		return Project{}, resourceError(projectPath, envelopeResourceID(envelope, ""), "metadata.id", "%s metadata.id is required", projectPath)
 	}
@@ -71,7 +72,7 @@ func loadConnections(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}
@@ -119,7 +120,7 @@ func loadSources(project *Project, includes []string) error {
 		return err
 	}
 	for _, path := range paths {
-		envelope, err := readEnvelope(path)
+		envelope, err := readProjectEnvelope(project, path)
 		if err != nil {
 			return err
 		}
@@ -163,12 +164,28 @@ func loadSources(project *Project, includes []string) error {
 }
 
 func readEnvelope(path string) (resourceEnvelope, error) {
+	return readEnvelopeWithValidation(path, false)
+}
+
+func readRetainedEnvelope(path string) (resourceEnvelope, error) {
+	return readEnvelopeWithValidation(path, true)
+}
+
+func readProjectEnvelope(project *Project, path string) (resourceEnvelope, error) {
+	return readEnvelopeWithValidation(path, project != nil && project.RetainedManifest)
+}
+
+func readEnvelopeWithValidation(path string, retained bool) (resourceEnvelope, error) {
 	content, err := os.ReadFile(path)
 	if err != nil {
 		return resourceEnvelope{}, err
 	}
 	if kind, ok := schemaKindForEnvelope(content); ok {
-		if err := configschema.ValidateBytes(kind, path, content); err != nil {
+		validate := configschema.ValidateBytes
+		if retained {
+			validate = configschema.ValidateRetainedBytes
+		}
+		if err := validate(kind, path, content); err != nil {
 			return resourceEnvelope{}, annotateSchemaError(err, path, resourceIDForHeader(content, ""), "spec")
 		}
 	}

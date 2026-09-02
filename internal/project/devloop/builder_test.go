@@ -231,6 +231,13 @@ spec: {type: managed}
 	}
 }
 
+func TestFilesystemBuilderRejectsLegacyProjectManifest(t *testing.T) {
+	manifest := filepath.Join(t.TempDir(), "leapview.yaml")
+	require.NoError(t, os.WriteFile(manifest, []byte("apiVersion: leapview.dev/v1\nkind: Project\n"), 0o600))
+	_, err := (FilesystemBuilder{ProjectPath: manifest}).Build(t.Context())
+	require.ErrorContains(t, err, "Project authoring was removed")
+}
+
 func TestCompileRetainedAuthoringInputRequiresPinnedSourceRootMarker(t *testing.T) {
 	root := t.TempDir()
 	connectionPath := filepath.Join(root, "connections", "warehouse.yaml")

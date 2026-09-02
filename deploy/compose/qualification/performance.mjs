@@ -4,7 +4,7 @@ import { request } from 'node:http'
 import process from 'node:process'
 
 const baseURL = process.env.QUALIFICATION_URL || 'https://localhost'
-const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:leapview-evaluation'
+const projectID = process.env.QUALIFICATION_PROJECT_ID || 'project:source-root'
 const semanticModelID = 'semantic-model:sales'
 const pipelineID = 'pipeline:evaluation-refresh'
 const credentialsPath = process.env.QUALIFICATION_CREDENTIALS || '/run/secrets/credentials.json'

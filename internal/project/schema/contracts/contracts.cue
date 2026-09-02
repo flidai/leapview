@@ -54,7 +54,9 @@ package contracts
 	include!: [...string]
 })
 
-#Project: close({
+// Legacy replay-only contracts preserve validation of retained candidate
+// snapshots. They are intentionally absent from public JSON Schema export.
+#LegacyProject: close({
 	apiVersion!: #APIVersion
 	kind!:       "Project"
 	metadata!:   #Metadata
@@ -70,14 +72,14 @@ package contracts
 	})
 })
 
-#GroupResource: close({
+#LegacyGroupResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "Group"
 	metadata!:   #Metadata
 	spec!: #Group
 })
 
-#RoleBindingResource: close({
+#LegacyRoleBindingResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "RoleBinding"
 	metadata!:   #Metadata
@@ -127,7 +129,7 @@ package contracts
 	publication?: #ResourceID
 })
 
-#GrantResource: close({
+#LegacyGrantResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "Grant"
 	metadata!:   #Metadata
@@ -158,7 +160,7 @@ package contracts
 	spec!:        #ProjectSemanticModelSpec
 })
 
-#DashboardPublicationResource: close({
+#LegacyDashboardPublicationResource: close({
 	apiVersion!: #APIVersion
 	kind!:       "DashboardPublication"
 	metadata!:   #Metadata

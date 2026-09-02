@@ -171,7 +171,7 @@ type visualExampleReference = visualdocs.ExampleReference
 
 func main() {
 	docsDir := flag.String("docs", "docs/visuals", "visual documentation directory")
-	project := flag.String("project", "internal/app/tools/visualdocgen/testdata/project/leapview.yaml", "fixture project")
+	project := flag.String("project", "internal/app/tools/visualdocgen/testdata/project", "fixture analytics source root")
 	data := flag.String("data", "internal/app/tools/visualdocgen/testdata/data", "fixture managed-data root")
 	out := flag.String("out", "docs/visuals/examples.gen.json", "generated artifact")
 	check := flag.Bool("check", false, "verify the generated artifact is current")

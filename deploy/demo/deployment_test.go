@@ -95,7 +95,7 @@ func TestDemoDeploymentIsAutomaticAndDigestPinned(t *testing.T) {
 
 	script := read(t, filepath.Join(root, "scripts", "deploy_demo.sh"))
 	for _, required := range []string{
-		"dashboards/leapview.yaml",
+		"dashboards",
 		"bootstrapolist",
 		"cd -P",
 		"data sync",

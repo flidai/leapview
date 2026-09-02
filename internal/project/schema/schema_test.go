@@ -18,7 +18,7 @@ import (
 )
 
 func TestValidateBytesRejectsUnknownEnvelopeField(t *testing.T) {
-	err := ValidateBytes(KindProject, "leapview.yaml", []byte(`
+	err := ValidateRetainedBytes(KindProject, "leapview.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Project
 metadata:
@@ -37,7 +37,7 @@ surprise: true
 }
 
 func TestValidateBytesRejectsRemovedWorkspaceAgentPolicyInclude(t *testing.T) {
-	err := ValidateBytes(KindGroup, "group.yaml", []byte(`
+	err := ValidateRetainedBytes(KindGroup, "group.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Group
 metadata:
@@ -51,7 +51,7 @@ spec:
 }
 
 func TestValidateBytesRejectsWrongEnvelopeType(t *testing.T) {
-	err := ValidateBytes(KindGroup, "group.yaml", []byte(`
+	err := ValidateRetainedBytes(KindGroup, "group.yaml", []byte(`
 apiVersion: leapview.dev/v1
 kind: Group
 metadata:
@@ -763,7 +763,11 @@ spec:
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			err := ValidateBytes(tt.kind, tt.name+".yaml", []byte(tt.content))
+			validate := ValidateBytes
+			if tt.kind == KindProject {
+				validate = ValidateRetainedBytes
+			}
+			err := validate(tt.kind, tt.name+".yaml", []byte(tt.content))
 			assertDiagnosticMessage(t, err, "schema.contract", tt.contains)
 		})
 	}
@@ -805,32 +809,6 @@ func TestGeneratedJSONSchemasRejectInvalidDocuments(t *testing.T) {
 		kind     Kind
 		instance any
 	}{
-		{
-			name: "project missing spec",
-			kind: KindProject,
-			instance: map[string]any{
-				"apiVersion": "leapview.dev/v1",
-				"kind":       "Project",
-				"metadata":   map[string]any{"name": "test"},
-			},
-		},
-		{
-			name: "project missing access",
-			kind: KindProject,
-			instance: map[string]any{
-				"apiVersion": "leapview.dev/v1",
-				"kind":       "Project",
-				"metadata":   map[string]any{"id": "project:sales", "name": "sales"},
-				"spec": map[string]any{
-					"connections":    map[string]any{"include": []any{"connections/*.yaml"}},
-					"sources":        map[string]any{"include": []any{"sources/*.yaml"}},
-					"models":         map[string]any{"include": []any{"models/*.yaml"}},
-					"semanticModels": map[string]any{"include": []any{"semantic-models/*.yaml"}},
-					"pipelines":      map[string]any{"include": []any{"pipelines/*.yaml"}},
-					"dashboards":     map[string]any{"include": []any{"dashboards/*.yaml"}},
-				},
-			},
-		},
 		{
 			name: "model missing primary key",
 			kind: KindModel,
@@ -913,6 +891,18 @@ func TestJSONSchemaFilesAreFresh(t *testing.T) {
 	if err != nil {
 		t.Fatalf("JSONSchemaFiles() error = %v", err)
 	}
+	wantNames := []string{
+		"connection.schema.json", "dashboard-document.schema.json", "data-policy.schema.json",
+		"model.schema.json", "pipeline.schema.json", "semantic-model.schema.json", "source.schema.json",
+	}
+	gotNames := make([]string, 0, len(files))
+	for name := range files {
+		gotNames = append(gotNames, name)
+	}
+	sort.Strings(gotNames)
+	if !reflect.DeepEqual(gotNames, wantNames) {
+		t.Fatalf("public authoring schemas = %v, want six analytics kinds plus transitional DataPolicy %v", gotNames, wantNames)
+	}
 	for name, content := range files {
 		path := filepath.Join("..", "..", "..", "schemas", "json", name)
 		onDisk, err := os.ReadFile(path)
@@ -921,6 +911,16 @@ func TestJSONSchemaFilesAreFresh(t *testing.T) {
 		}
 		if string(onDisk) != string(content) {
 			t.Fatalf("%s is stale; run leapview schema export --format json-schema --out schemas/json", path)
+		}
+	}
+	for _, removed := range []string{"project.schema.json", "group.schema.json", "role-binding.schema.json", "grant.schema.json", "dashboard-publication.schema.json"} {
+		if _, err := os.Stat(filepath.Join("..", "..", "..", "schemas", "json", removed)); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("removed authoring schema %s is still published", removed)
+		}
+	}
+	for _, removed := range []Kind{KindProject, KindGroup, KindRoleBinding, KindGrant, KindDashboardPublication} {
+		if _, err := JSONSchema(removed); err == nil || !strings.Contains(err.Error(), "was removed") {
+			t.Fatalf("JSONSchema(%s) error = %v, want removed public schema diagnostic", removed, err)
 		}
 	}
 }
@@ -939,7 +939,7 @@ func TestDashboardGeneratedSchemaBytesMatchTrackedContract(t *testing.T) {
 	}
 }
 
-func TestProjectContractIsProjectWide(t *testing.T) {
+func TestRetainedProjectContractIsProjectWide(t *testing.T) {
 	valid := []byte(`
 apiVersion: leapview.dev/v1
 kind: Project
@@ -960,13 +960,13 @@ spec:
   access: {include: [access/*.yaml]}
   publications: {include: [publications/*.yaml]}
 `)
-	if err := ValidateBytes(KindProject, "project.yaml", valid); err != nil {
-		t.Fatalf("ValidateBytes() error = %v", err)
+	if err := ValidateRetainedBytes(KindProject, "project.yaml", valid); err != nil {
+		t.Fatalf("ValidateRetainedBytes() error = %v", err)
 	}
 	for _, legacy := range []string{"workspace", "workspaces"} {
 		content := strings.Replace(string(valid), "  access:", "  "+legacy+": {include: [workspaces/*.yaml]}\n  access:", 1)
-		if err := ValidateBytes(KindProject, "project.yaml", []byte(content)); err == nil {
-			t.Fatalf("ValidateBytes() accepted removed project field %q", legacy)
+		if err := ValidateRetainedBytes(KindProject, "project.yaml", []byte(content)); err == nil {
+			t.Fatalf("ValidateRetainedBytes() accepted removed project field %q", legacy)
 		}
 	}
 }
@@ -977,8 +977,8 @@ func TestProjectContractRejectsLegacyWorkspaceJSON(t *testing.T) {
 		strings.Replace(valid, `"access":{"include":["access/*.yaml"]}`, `"workspaces":{"include":["workspaces/*/workspace.yaml"]},"access":{"include":["access/*.yaml"]}`, 1),
 		strings.Replace(valid, `"metadata":{"id":"project:showcase","name":"showcase"}`, `"metadata":{"id":"project:showcase","name":"showcase","workspace":"sales"}`, 1),
 	} {
-		if err := ValidateBytes(KindProject, "project.json", []byte(legacy)); err == nil {
-			t.Fatalf("ValidateBytes() accepted legacy workspace JSON: %s", legacy)
+		if err := ValidateRetainedBytes(KindProject, "project.json", []byte(legacy)); err == nil {
+			t.Fatalf("ValidateRetainedBytes() accepted legacy workspace JSON: %s", legacy)
 		}
 	}
 }
@@ -1014,7 +1014,7 @@ spec:
 	}
 }
 
-func TestProjectSidecarsAndCanonicalGrantContract(t *testing.T) {
+func TestRetainedProjectSidecarsAndCanonicalGrantContract(t *testing.T) {
 	tests := []struct {
 		name string
 		kind Kind
@@ -1053,8 +1053,12 @@ spec: {dashboard: dashboard:sales, defaultPage: overview, embedding: {allowedOri
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			if err := ValidateBytes(tt.kind, tt.name+".yaml", []byte(tt.doc)); err != nil {
-				t.Fatalf("ValidateBytes() error = %v", err)
+			validate := ValidateRetainedBytes
+			if tt.kind == KindDataPolicy {
+				validate = ValidateBytes
+			}
+			if err := validate(tt.kind, tt.name+".yaml", []byte(tt.doc)); err != nil {
+				t.Fatalf("validate retained bytes error = %v", err)
 			}
 		})
 	}
@@ -1064,9 +1068,16 @@ spec: {dashboard: dashboard:sales, defaultPage: overview, embedding: {allowedOri
 		if strings.HasPrefix(legacy, "object:") {
 			content = strings.Replace(grant, "object: {id: dashboard:sales, kind: dashboard}", legacy, 1)
 		}
-		if err := ValidateBytes(KindGrant, "grant.yaml", []byte(content)); err == nil {
+		if err := ValidateRetainedBytes(KindGrant, "grant.yaml", []byte(content)); err == nil {
 			t.Fatalf("accepted removed Grant contract %q", legacy)
 		}
+	}
+}
+
+func TestValidateBytesRejectsRemovedPublicAuthoringKinds(t *testing.T) {
+	for _, kind := range []Kind{KindProject, KindGroup, KindRoleBinding, KindGrant, KindDashboardPublication} {
+		err := ValidateBytes(kind, string(kind)+".yaml", []byte("apiVersion: leapview.dev/v1\n"))
+		assertDiagnostic(t, err, "schema.kind.removed", "not a public authored resource")
 	}
 }
 

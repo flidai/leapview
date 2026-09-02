@@ -1,9 +1,6 @@
 package compiler
 
 import (
-	"fmt"
-	"os"
-
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/dashboard/document"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -16,6 +13,9 @@ import (
 const projectAPIVersion = "leapview.dev/v1"
 
 type Project struct {
+	// RetainedManifest permits legacy schema validation only while replaying a
+	// snapshot captured before Project authoring was removed.
+	RetainedManifest bool
 	// ID and Metadata identify the project-wide authored graph.
 	ID                      projectgraph.ResourceID
 	Metadata                projectgraph.Metadata
@@ -61,7 +61,7 @@ type Project struct {
 }
 
 func CompileProject(projectPath string) (projectartifact.Project, error) {
-	project, err := loadAuthoredInput(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return projectartifact.Project{}, err
 	}
@@ -70,20 +70,9 @@ func CompileProject(projectPath string) (projectartifact.Project, error) {
 
 // CompileProjectGraph compiles a project into the portable project graph.
 func CompileProjectGraph(projectPath string) (projectgraph.ProjectGraph, error) {
-	project, err := loadAuthoredInput(projectPath)
+	project, err := LoadSourceRoot(projectPath)
 	if err != nil {
 		return projectgraph.ProjectGraph{}, err
 	}
 	return project.Graph, nil
-}
-
-func loadAuthoredInput(path string) (Project, error) {
-	info, err := os.Stat(path)
-	if err != nil {
-		return Project{}, fmt.Errorf("inspect analytics authoring input %q: %w", path, err)
-	}
-	if info.IsDir() {
-		return LoadSourceRoot(path)
-	}
-	return LoadProject(path)
 }

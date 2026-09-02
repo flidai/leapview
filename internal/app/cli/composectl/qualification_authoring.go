@@ -557,10 +557,10 @@ func normalizeQualificationAuthoringOptions(options qualificationAuthoringOption
 		options.Target = "https://localhost"
 	}
 	if options.Project == "" {
-		options.Project = "/app/evaluation/project/leapview.yaml"
+		options.Project = "/app/evaluation/project"
 	}
 	if options.ProjectID == "" {
-		options.ProjectID = "project:leapview-evaluation"
+		options.ProjectID = "project:source-root"
 	}
 	if options.Environment == "" {
 		options.Environment = "evaluation"

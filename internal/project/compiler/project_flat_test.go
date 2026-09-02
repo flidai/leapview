@@ -800,11 +800,14 @@ spec:
   pages: [{id: overview, title: Overview, components: []}]
 `)
 
-	compiled, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
+	if err := os.Remove(filepath.Join(root, "leapview.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	compiled, err := CompileProjectGraph(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if compiled.ProjectID() != "project:demo" {
+	if compiled.ProjectID() != syntheticSourceRootID {
 		t.Fatalf("project id = %q", compiled.ProjectID())
 	}
 	resources := compiled.Resources()
@@ -928,7 +931,10 @@ spec:
 	write("sources/s.yaml", "apiVersion: leapview.dev/v1\nkind: Source\nmetadata: {id: source:id, name: orders}\nspec: {connection: warehouse, location: {type: path, path: orders.csv, format: csv}}\n")
 	write("models/m.yaml", "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:id, name: orders_model}\nspec: {definition: {type: direct, source: source:id}, entities: {id: {type: primary, fields: [id]}}, grain: {entity: id}, fields: {id: {datatype: String}}}\n")
 	write("semantic-models/s.yaml", "apiVersion: leapview.dev/v1\nkind: SemanticModel\nmetadata: {id: semantic-model:id, name: sales}\nspec: {datasets: {orders: {model: orders_model}}, metrics: {count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.id}, empty: zero}}}\n")
-	graph, err := CompileProjectGraph(filepath.Join(root, "leapview.yaml"))
+	if err := os.Remove(filepath.Join(root, "leapview.yaml")); err != nil {
+		t.Fatal(err)
+	}
+	graph, err := CompileProjectGraph(root)
 	if err != nil {
 		t.Fatal(err)
 	}

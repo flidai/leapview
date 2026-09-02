@@ -431,7 +431,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		"LEAPVIEW_API_TOKEN="+credentials.PublisherToken,
 		"LEAPVIEW_TARGET=http://localhost:8080",
 		"leapview", "data", "sync",
-		"--project", "/app/evaluation/project/leapview.yaml",
+		"--project", "/app/evaluation/project",
 		"--connection", "sample",
 		"--from", "/app/evaluation/data",
 		"--format", "json",
@@ -553,7 +553,7 @@ func (c *Controller) QualifyInstalledCandidate(
 		MetricsToken:         metricsToken,
 		ContainerID:          containerID,
 		ComposeProject:       primaryProject,
-		ProjectID:            "project:leapview-evaluation",
+		ProjectID:            "project:source-root",
 		Image:                imageReference,
 	})
 	if err != nil {
