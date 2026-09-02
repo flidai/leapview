@@ -85,6 +85,12 @@ func (m *Module) CandidateHTTP(config CandidateHTTPConfig) (HTTP, error) {
 
 	handler := m.handler
 	handler.Metrics = config.Metrics
+	// Candidate traffic is bound to the immutable project identity recovered
+	// from the candidate artifact. The shared handler may carry the active
+	// serving-state resolver, which is unavailable on a fresh target and must
+	// not override the candidate's independently proven identity.
+	handler.ProjectID = config.ProjectID
+	handler.ResolveProjectID = nil
 	handler.RouteScope = dashboardui.RouteScope{BasePath: config.RouteBasePath}
 	handler.StreamNamespace = "candidate:" + config.CandidateID
 	handler.AgentBootstrap = nil
