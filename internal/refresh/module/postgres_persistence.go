@@ -157,7 +157,7 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 		Runs:             &postgresRunPersistence{repository: repository, jobs: config.Jobs, operations: config.Operations, cancelAuditWriter: config.CancelAuditWriter, createAuditWriter: config.CreateAuditWriter},
 		Schedules:        &postgresSchedulePersistence{repository: repository, schedulerOwner: config.SchedulerOwner, identityResolver: config.PublicationIdentityResolver},
 		Publication:      &postgresPublicationPersistence{repository: repository, identityResolver: config.PublicationIdentityResolver, canonicalVerifier: config.CanonicalVerifier, nativeFinalizer: config.NativeFinalizer, cancelAuditWriter: config.CancelAuditWriter, queueLifecycle: lifecycle, queueRecovery: recoveryQueue},
-		TerminalRecovery: terminalRecovery, backend: backendPostgres, nativeRepository: repository,
+		TerminalRecovery: terminalRecovery, nativeRepository: repository,
 	}, nil
 }
 

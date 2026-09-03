@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -81,24 +80,5 @@ func TestBuildProductionNativePersistenceRequiresMaintenanceCleanupAuthority(t *
 	_, err = Build(t.Context(), Config{Persistence: &persistence, Production: true, CleanupAcker: typedNil})
 	if err == nil || !strings.Contains(err.Error(), "maintenance cleanup authority") {
 		t.Fatalf("production typed-nil build error = %v, want maintenance cleanup authority requirement", err)
-	}
-}
-
-func TestBuildRejectsSQLitePersistenceWithoutAuditRecorder(t *testing.T) {
-	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: new(sql.DB)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = Build(t.Context(), Config{
-		Persistence: &persistence,
-		Product: ProductConfig{
-			Backend:          "local",
-			Dir:              t.TempDir(),
-			UploadSessionTTL: time.Hour,
-			GCGracePeriod:    time.Hour,
-		},
-	})
-	if err == nil || !strings.Contains(err.Error(), "audit intent recorder is required") {
-		t.Fatalf("SQLite build error = %v, want missing audit intent recorder", err)
 	}
 }

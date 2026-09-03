@@ -9,7 +9,6 @@ import (
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
-	analyticssqlite "github.com/flidai/leapview/internal/analytics/sqlite"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -18,13 +17,6 @@ func TestBuildProductionRequiresInjectedConnectionBindingAuthority(t *testing.T)
 	_, err := Build(context.Background(), Config{Production: true})
 	if err == nil || !strings.Contains(err.Error(), "requires PostgreSQL connection binding authority") {
 		t.Fatalf("production authority error = %v, want explicit requirement", err)
-	}
-}
-
-func TestBuildProductionRejectsSQLiteBindingAuthority(t *testing.T) {
-	_, err := Build(context.Background(), Config{Production: true, ConnectionBindings: analyticssqlite.NewConnectionBindingRepository(nil)})
-	if err == nil || !strings.Contains(err.Error(), "native PostgreSQL") {
-		t.Fatalf("production SQLite authority error = %v, want explicit rejection", err)
 	}
 }
 

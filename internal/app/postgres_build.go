@@ -359,7 +359,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	managedData, err := manageddatamodule.Build(ctx, manageddatamodule.Config{Persistence: managedPersistence, Production: true, CleanupAcker: graph.ManagedDataMaintenance, Product: managedDataProductConfig(cfg), ServingStates: graph.ServingState, Environment: string(environment), CurrentPrincipal: func(r *http.Request) (manageddatamodule.Principal, bool) {
 		p, ok := accessBundle.Module.CurrentPrincipal(r)
 		return manageddatamodule.Principal{ID: p.ID, DevBypass: p.DevBypass}, ok
-	}, Jobs: workloadBundle.Jobs, Workflow: workloadBundle.Jobs, Worker: manageddatamodule.MaintenanceWorkerConfig{Interval: cfg.ManagedDataGCInterval, Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
+	}, Jobs: workloadBundle.Jobs, Worker: manageddatamodule.MaintenanceWorkerConfig{Interval: cfg.ManagedDataGCInterval, Acquire: func(ctx context.Context) (manageddatamodule.MaintenanceLease, error) {
 		return workloadBundle.Controller.Acquire(ctx, workloadmodule.MaintenanceRequest("managed_data.collect"))
 	}, Logger: slog.Default()}})
 	if err != nil {

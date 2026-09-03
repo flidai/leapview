@@ -236,14 +236,13 @@ func (m *Module) CancelRefreshRun(w http.ResponseWriter, r *http.Request, projec
 			}
 			row, replayed, err = keyed.CancelRunWithAuditKeyed(cancelCtx, prior.Identity, runID, principalID, idempotencyKey, requestDigest, nil)
 		} else {
-			// Legacy SQLite and evaluation repositories do not expose the native
-			// operation port. Their surrounding API idempotency layer remains the
-			// authority, so preserve the historical cancellation call.
+			// Repositories without the keyed operation port rely on their
+			// surrounding API idempotency layer for replay handling.
 			row, err = cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
 		}
 	} else {
-		// Direct/local callers that do not carry a generated idempotency key
-		// retain the legacy cancellation behavior (notably SQLite).
+		// Direct callers without a generated idempotency key use the
+		// repository's non-keyed cancellation operation.
 		row, err = cancel.CancelRunWithAudit(cancelCtx, prior.Identity, runID, nil)
 	}
 	if err != nil {

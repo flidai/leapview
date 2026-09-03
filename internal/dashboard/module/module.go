@@ -3,7 +3,6 @@ package module
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -23,7 +22,6 @@ import (
 	dashboardhttp "github.com/flidai/leapview/internal/dashboard/http"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	publicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
-	publicationsqlite "github.com/flidai/leapview/internal/dashboard/publication/sqlite"
 	"github.com/flidai/leapview/internal/dashboard/queryruntime"
 	semanticapi "github.com/flidai/leapview/internal/dashboard/semanticapi"
 	dashboardsession "github.com/flidai/leapview/internal/dashboard/session"
@@ -67,19 +65,15 @@ type Module struct {
 }
 
 type Config struct {
-	// SQLitePersistence is the explicit local/evaluation dashboard authority.
-	// Build never selects an adapter from a raw database handle.
-	SQLitePersistence *SQLitePersistence
 	// NativePersistence is the only accepted source of dashboard persistence
 	// when RequireNativePersistence is enabled. Its constructor checks that all
 	// authorities are the concrete PostgreSQL implementations, so callers cannot
-	// accidentally label a memory or SQLite store as production native state.
+	// accidentally label a non-native store as production state.
 	NativePersistence *NativePersistence
 	// SessionStore, UsageRecorder/UsageReader, and AppearanceStore are the
 	// product-owned persistence seams. Native production composition supplies
 	// PostgreSQL implementations. Sessions use the concurrency-safe in-process
-	// MemoryStore when no native store is supplied; appearance and publication
-	// retain explicit SQLite fallbacks for legacy tests.
+	// MemoryStore when no native store is supplied.
 	SessionStore             dashboardsession.Store
 	AppearanceStore          dashboardappearance.Store
 	RequireNativePersistence bool
@@ -100,42 +94,6 @@ type Config struct {
 	UsageReader     usage.Reader
 	UsageNow        func() time.Time
 	RuntimeMetrics  queryruntime.Metrics
-}
-
-// SQLitePersistence is the opaque local/evaluation dashboard authority.
-type SQLitePersistence struct {
-	appearance   dashboardappearance.Store
-	publication  PublicationRepository
-	streams      publication.StreamRegistry
-	auditEnabled bool
-}
-
-// NewSQLitePersistence constructs the complete durable SQLite dashboard
-// authority used by local development and evaluation runtimes.
-func NewSQLitePersistence(database *sql.DB, audit access.AuditIntentRecorder) (*SQLitePersistence, error) {
-	if database == nil {
-		return nil, fmt.Errorf("SQLite dashboard database is required")
-	}
-	if audit == nil {
-		return nil, errPublicationCommandAuditUnavailable
-	}
-	return &SQLitePersistence{
-		appearance:   NewSQLiteAppearanceStore(database),
-		publication:  newSQLitePublicationRepository(database, audit),
-		streams:      newSQLitePublicationStreams(database),
-		auditEnabled: true,
-	}, nil
-}
-
-func (p *SQLitePersistence) valid() bool {
-	return p != nil && p.appearance != nil && p.publication != nil && p.streams != nil && p.auditEnabled
-}
-
-func (p *SQLitePersistence) AppearanceStore() dashboardappearance.Store {
-	if !p.valid() {
-		return nil
-	}
-	return p.appearance
 }
 
 // NativePersistence is an opaque, validated bundle of dashboard PostgreSQL
@@ -210,7 +168,7 @@ func (p *NativePersistence) MatchesAuthoringApplication(application *AuthoringAp
 
 // NewNativePersistence validates the complete dashboard persistence bundle.
 // Production composition should construct this only from native PostgreSQL
-// repositories; legacy SQLite and memory stores are intentionally rejected.
+// repositories.
 func NewNativePersistence(options NativePersistenceOptions) (*NativePersistence, error) {
 	if options.Session == nil || !options.Session.IsNative() {
 		return nil, fmt.Errorf("dashboard native persistence requires a constructed PostgreSQL session store")
@@ -276,8 +234,7 @@ type SignalBroker interface {
 type DeliveryBroker = dashboardstream.DeliveryBroker
 
 // PublicationRepository is the capability-neutral dashboard publication
-// authority. SQLite and native PostgreSQL adapters both satisfy this port;
-// module code never depends on a concrete storage package.
+// authority. Module code never depends on a concrete storage package.
 type PublicationRepository interface {
 	publication.ServiceRepository
 	Get(context.Context, projectgraph.ResourceID, string) (publication.Publication, error)
@@ -288,13 +245,6 @@ type PublicationRepository interface {
 }
 
 var _ PublicationRepository = (*publicationpostgres.Repository)(nil)
-
-func newSQLitePublicationRepository(db *sql.DB, audit access.AuditIntentRecorder) PublicationRepository {
-	return publicationsqlite.NewRepositoryWithAudit(db, audit)
-}
-func newSQLitePublicationStreams(db *sql.DB) publication.StreamRegistry {
-	return publicationsqlite.NewStreamRegistry(db)
-}
 
 func NewDeliveryBroker() *DeliveryBroker {
 	return dashboardstream.NewDeliveryBroker()
@@ -335,9 +285,6 @@ type Telemetry interface {
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	if config.RequireNativePersistence {
-		if config.SQLitePersistence != nil {
-			return nil, fmt.Errorf("dashboard native persistence rejects SQLite persistence")
-		}
 		if config.NativePersistence == nil {
 			return nil, fmt.Errorf("dashboard native persistence bundle is required")
 		}
@@ -349,8 +296,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		}
 	} else if config.NativePersistence != nil {
 		return nil, fmt.Errorf("dashboard native persistence bundle requires RequireNativePersistence")
-	} else if config.SQLitePersistence != nil && !config.SQLitePersistence.valid() {
-		return nil, fmt.Errorf("dashboard SQLite persistence bundle is incomplete")
 	}
 	if config.RequireAuthoring && config.Authoring == nil {
 		return nil, fmt.Errorf("dashboard authoring authority is required")
@@ -362,14 +307,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	publicationAuditConfigured := false
 	if config.RequireNativePersistence {
-		// Native repositories own their transaction-scoped audit port. Keep the
-		// same generated-command contract validation as the SQLite path, but do
-		// not require (or accept) the legacy process-local recorder.
-		if err := validatePublicationCommandAuditContracts(); err != nil {
-			return nil, err
-		}
-		publicationAuditConfigured = true
-	} else if config.SQLitePersistence != nil {
+		// Native repositories own their transaction-scoped audit port.
 		if err := validatePublicationCommandAuditContracts(); err != nil {
 			return nil, err
 		}
@@ -396,8 +334,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sessionStore = config.NativePersistence.session
 		usageRecorder, usageReader = config.NativePersistence.usage, config.NativePersistence.usage
 		appearanceStore = config.NativePersistence.appearance
-	} else if config.SQLitePersistence != nil {
-		appearanceStore = config.SQLitePersistence.appearance
 	}
 	if sessionStore == nil {
 		sessionStore = dashboardsession.NewMemoryStore()
@@ -533,10 +469,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		// Streams and broker must be installed before constructing the service so
 		// revocation closes the durable native registry, never the memory default.
 		module.publications = config.NativePersistence.publication
-		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
-	} else if config.SQLitePersistence != nil {
-		module.publications = config.SQLitePersistence.publication
-		module.streams = config.SQLitePersistence.streams
 		module.publicationService = publication.NewService(module.publications, module.streams.ClosePublication)
 	}
 	return module, nil

@@ -2,13 +2,11 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 
 	dashboardappearance "github.com/flidai/leapview/internal/dashboard/appearance"
 	appearancepostgres "github.com/flidai/leapview/internal/dashboard/appearance/postgres"
-	appearancesqlite "github.com/flidai/leapview/internal/dashboard/appearance/sqlite"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
@@ -23,20 +21,7 @@ func ResolveAppearance(value Appearance) Appearance {
 	return dashboardappearance.Resolve(value)
 }
 
-// NewSQLiteAppearanceStore constructs the local development/evaluation SQLite
-// dashboard appearance authority. Native production composition injects the
-// validated PostgreSQL repository through NativePersistence instead of
-// calling this constructor.
-func NewSQLiteAppearanceStore(database *sql.DB) dashboardappearance.Store {
-	if database == nil {
-		return nil
-	}
-	return appearancesqlite.NewRepository(database)
-}
-
 // NewNativeAppearanceStore accepts the capability-owned native repository.
-// SQLite remains explicit through NewSQLiteAppearanceStore for local
-// development, evaluation, and tests.
 func NewNativeAppearanceStore(repository dashboardappearance.Store) (dashboardappearance.Store, error) {
 	if repository == nil {
 		return nil, fmt.Errorf("dashboard appearance native store is required")

@@ -56,11 +56,9 @@ type PublishedDataVersionResolver func(context.Context, projectgraph.ServingIden
 
 type Config struct {
 	// Persistence is the capability-owned refresh store.  Production callers
-	// inject a complete bundle. SQLite callers must construct
-	// NewSQLitePersistence explicitly.
+	// inject a complete PostgreSQL bundle.
 	Persistence *Persistence
-	// Production requires the typed PostgreSQL persistence bundle. The module
-	// never infers a backend from the repository interfaces in Persistence.
+	// Production requires the typed PostgreSQL persistence bundle.
 	Production          bool
 	HTTP                HTTPConfig
 	Authorization       AuthorizationConfig
@@ -146,18 +144,18 @@ type Module struct {
 }
 
 func durableRefreshAudit(config Config) bool {
-	// Build validates a PostgreSQL backend's concrete native repository before
-	// this value can reach a live module. Inspecting the backend marker here
-	// keeps the audit guarantee independent of repository implementation detail.
-	return config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.backend == backendPostgres)
+	// Build validates the concrete native repository before this value can
+	// reach a live module. Keep the audit guarantee independent of repository
+	// implementation detail.
+	return config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.isNative())
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
 	if config.Production {
-		if config.Persistence == nil || !config.Persistence.isPostgres() {
+		if config.Persistence == nil || !config.Persistence.isNative() {
 			return nil, errors.New("production refresh module requires PostgreSQL persistence")
 		}
-	} else if config.Persistence != nil && config.Persistence.isPostgres() {
+	} else if config.Persistence != nil && config.Persistence.isNative() {
 		return nil, errors.New("native PostgreSQL refresh persistence requires production refresh mode")
 	}
 	if config.RecoveryLifecycle != nil {
@@ -223,9 +221,8 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	}
 	m.handler.RunCreated = m.verifyRunCreated
 	// Native PostgreSQL admission records generated create audit intents
-	// through its transaction-aware persistence writer; it does not expose the
-	// database/sql recorder used by the legacy SQLite outbox.
-	if config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.isPostgres()) {
+	// through its transaction-aware persistence writer.
+	if config.AuditIntentRecorder != nil || (config.Persistence != nil && config.Persistence.isNative()) {
 		m.handler.BuildAuditIntent = buildRefreshAuditIntent
 	}
 	if config.Persistence == nil {

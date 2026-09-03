@@ -2,11 +2,8 @@ package module
 
 import (
 	"context"
-	"database/sql"
 
 	refreshrecovery "github.com/flidai/leapview/internal/refresh/recovery"
-	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 const (
@@ -67,22 +64,6 @@ type RecoveryFileEvidencePublisher = refreshrecovery.FileEvidencePublisher
 const (
 	EvidenceTransitionQualification = refreshrecovery.EvidenceTransitionQualification
 )
-
-// NewSQLiteRecoveryRepository constructs the local SQLite recovery ledger.
-// Production composition injects a capability-owned repository instead of
-// passing a database handle through this module boundary.
-func NewSQLiteRecoveryRepository(database *sql.DB) RecoveryRepository {
-	if database == nil {
-		return nil
-	}
-	return refreshsqlite.NewRepository(database)
-}
-
-// NewSQLiteRecoveryMetricsCollector constructs recovery metrics for the local
-// SQLite adapter. Native production composition owns its metrics source.
-func NewSQLiteRecoveryMetricsCollector(database *sql.DB, clock Clock) prometheus.Collector {
-	return refreshrecovery.NewMetricsCollector(NewSQLiteRecoveryRepository(database), clock)
-}
 
 func RedactFailure(err error) string {
 	return refreshrecovery.RedactFailure(err)

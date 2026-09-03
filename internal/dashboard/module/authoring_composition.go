@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	cryptorand "crypto/rand"
 	"fmt"
 	"io"
 	"time"
@@ -38,10 +37,8 @@ type AuthorizeProjectCapability func(context.Context, string, projectgraph.Resou
 // the project compiler, and runtime acquisition remains topology-neutral.
 type AuthoringConfig struct {
 	// Persistence is the opaque native dashboard authority bundle. It is
-	// mutually exclusive with SQLitePersistence; the bundle owns the concrete
-	// authoring repository and uses UUIDv7 identity generators.
+	// the concrete authoring repository and uses UUIDv7 identity generators.
 	Persistence                *NativePersistence
-	SQLitePersistence          *SQLiteAuthoringPersistence
 	AuthorizeResource          AuthorizeResource
 	AuthorizeProjectCapability AuthorizeProjectCapability
 	AcquireRuntime             func(context.Context) (runtimehost.Lease, error)
@@ -50,10 +47,7 @@ type AuthoringConfig struct {
 // BuildAuthoring constructs the complete dashboard authoring application and
 // its adapters behind the dashboard module surface.
 func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
-	if config.SQLitePersistence != nil && config.Persistence != nil {
-		return nil, fmt.Errorf("dashboard authoring cannot combine native PostgreSQL and SQLite repositories")
-	}
-	if config.SQLitePersistence == nil && config.Persistence == nil {
+	if config.Persistence == nil {
 		return nil, fmt.Errorf("dashboard authoring persistence is required")
 	}
 	if config.Persistence != nil && !config.Persistence.valid() {
@@ -66,19 +60,11 @@ func BuildAuthoring(config AuthoringConfig) (*AuthoringApplication, error) {
 		return nil, fmt.Errorf("dashboard authoring runtime provider is required")
 	}
 	var repository authoring.Repository
-	ids := newAuthoringIDs(cryptorand.Reader)
-	if config.Persistence != nil {
-		repository = config.Persistence.authoring
-		ids = authoringIDs{
-			dashboard: func() (authoring.DashboardID, error) { return authoringpostgres.NewDashboardID() },
-			draft:     func() (authoring.DraftID, error) { return authoringpostgres.NewDraftID() },
-			revision:  func() (authoring.RevisionID, error) { return authoringpostgres.NewRevisionID() },
-		}
-	} else {
-		if !config.SQLitePersistence.valid() {
-			return nil, fmt.Errorf("dashboard authoring SQLite persistence is not configured")
-		}
-		repository = config.SQLitePersistence.repository
+	repository = config.Persistence.authoring
+	ids := authoringIDs{
+		dashboard: func() (authoring.DashboardID, error) { return authoringpostgres.NewDashboardID() },
+		draft:     func() (authoring.DraftID, error) { return authoringpostgres.NewDraftID() },
+		revision:  func() (authoring.RevisionID, error) { return authoringpostgres.NewRevisionID() },
 	}
 	authorizer, err := authoringaccessadapter.New(authoringaccessadapter.Options{
 		AuthorizeResource:          authoringaccessadapter.AuthorizeResource(config.AuthorizeResource),

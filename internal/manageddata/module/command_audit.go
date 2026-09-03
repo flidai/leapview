@@ -76,7 +76,7 @@ func managedDataAuditOutcome(operationID string) string {
 	switch operationID {
 	case string(manageddatagen.GenOperationCreateManagedDataS3MultipartUpload), string(manageddatagen.GenOperationCompleteManagedDataS3MultipartUpload), string(manageddatagen.GenOperationAbortManagedDataS3MultipartUpload):
 		// The source transaction durably accepts the provider transition. The
-		// provider call and terminal SQLite transition are recoverable but not
+		// provider call and terminal transition are recoverable but not
 		// part of the same transaction, so these are not claimed as successes.
 		return "accepted"
 	default:

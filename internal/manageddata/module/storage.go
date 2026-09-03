@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -23,18 +22,15 @@ import (
 	"github.com/flidai/leapview/internal/manageddata/control"
 	manageddatahttp "github.com/flidai/leapview/internal/manageddata/http"
 	"github.com/flidai/leapview/internal/manageddata/maintenance"
-	maintenancesqlite "github.com/flidai/leapview/internal/manageddata/maintenance/sqlite"
 	manageddatapostgres "github.com/flidai/leapview/internal/manageddata/postgres"
 	manageddataresolver "github.com/flidai/leapview/internal/manageddata/resolver"
 	"github.com/flidai/leapview/internal/manageddata/runtimeview"
 	"github.com/flidai/leapview/internal/manageddata/s3multipart"
-	manageddatasqlite "github.com/flidai/leapview/internal/manageddata/sqlite"
 	"github.com/flidai/leapview/internal/manageddata/storage"
 	managedfilesystem "github.com/flidai/leapview/internal/manageddata/storage/filesystem"
 	manageds3 "github.com/flidai/leapview/internal/manageddata/storage/s3"
 	managedtus "github.com/flidai/leapview/internal/manageddata/storage/tus"
 	"github.com/flidai/leapview/internal/platform/filesystem"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
@@ -70,7 +66,7 @@ type Module struct {
 	maintenance         Maintenance
 	maintenanceWorker   *maintenanceWorker
 	jobs                JobStore
-	workflow            jobplatform.WorkflowRecorder
+	atomicTransitions   manageddata.UploadTransitionPort
 	eventMu             sync.Mutex
 	bindings            *binding.Binder
 	runtimeResolver     *manageddataresolver.Resolver
@@ -93,23 +89,11 @@ type Repository interface {
 	DeploymentMetadata
 }
 
-type persistenceBackend uint8
-
-const (
-	backendUnknown persistenceBackend = iota
-	backendPostgres
-	backendSQLiteLegacy
-)
-
 // Persistence is the capability-owned managed-data authority bundle. Native
-// PostgreSQL persistence is constructed only from the concrete repository;
-// SQLite is available through the explicitly named legacy constructor for
-// development and tests.
+// PostgreSQL persistence is constructed only from the concrete repository.
 type Persistence struct {
-	repository     Repository
-	native         *manageddatapostgres.Repository
-	backend        persistenceBackend
-	legacyDatabase *sql.DB
+	repository Repository
+	native     *manageddatapostgres.Repository
 }
 
 func NewPostgresPersistence(repository *manageddatapostgres.Repository) (Persistence, error) {
@@ -119,47 +103,24 @@ func NewPostgresPersistence(repository *manageddatapostgres.Repository) (Persist
 	if !repository.TransitionCapabilitiesConfigured() {
 		return Persistence{}, errors.New("PostgreSQL managed-data workflow and audit capabilities are required")
 	}
-	return Persistence{repository: repository, native: repository, backend: backendPostgres}, nil
+	return Persistence{repository: repository, native: repository}, nil
 }
 
-type SQLitePersistenceConfig struct {
-	Database            *sql.DB
-	Workflow            jobplatform.WorkflowRecorder
-	AuditIntentRecorder access.AuditIntentRecorder
-}
-
-func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
-	if config.Database == nil {
-		return Persistence{}, errors.New("SQLite managed-data database is required")
-	}
-	repository := manageddatasqlite.NewRepositoryWithWorkflowAndAudit(config.Database, config.Workflow, config.AuditIntentRecorder)
-	return Persistence{repository: repository, backend: backendSQLiteLegacy, legacyDatabase: config.Database}, nil
-}
-
-func (p Persistence) isPostgres() bool { return p.backend == backendPostgres && p.native != nil }
-func (p Persistence) isSQLite() bool {
-	return p.backend == backendSQLiteLegacy && p.legacyDatabase != nil
-}
+func (p Persistence) isNative() bool { return p.native != nil }
 
 func (p Persistence) validate() error {
 	if p.repository == nil {
 		return errors.New("managed-data repository is required")
 	}
-	switch p.backend {
-	case backendPostgres:
-		if p.native == nil {
-			return errors.New("managed-data PostgreSQL persistence identity is missing")
-		}
-		native, ok := p.repository.(*manageddatapostgres.Repository)
-		if !ok || native != p.native {
-			return errors.New("managed-data PostgreSQL persistence repository identity mismatch")
-		}
-	case backendSQLiteLegacy:
-		if p.native != nil || p.legacyDatabase == nil {
-			return errors.New("managed-data SQLite persistence cannot expose native PostgreSQL repository")
-		}
-	default:
-		return errors.New("managed-data persistence backend is not configured")
+	// Native PostgreSQL bundles prove identity through native. Test adapters
+	// may provide the narrow repository contract directly and are never
+	// admitted by production Build, which checks isNative first.
+	if p.native == nil {
+		return nil
+	}
+	native, ok := p.repository.(*manageddatapostgres.Repository)
+	if !ok || native != p.native {
+		return errors.New("managed-data PostgreSQL persistence repository identity mismatch")
 	}
 	return nil
 }
@@ -191,7 +152,7 @@ type PostgreSQLCleanupAuthority interface {
 
 type Config struct {
 	// Persistence is the capability-owned authority bundle consumed by active
-	// module builds. SQLite is selected only through NewSQLitePersistence.
+	// module builds.
 	Persistence         *Persistence
 	Production          bool
 	Disabled            bool
@@ -202,9 +163,7 @@ type Config struct {
 	CurrentPrincipal    func(*http.Request) (Principal, bool)
 	AuthorizeConnection ConnectionAuthorizer
 	Jobs                JobStore
-	Workflow            jobplatform.WorkflowRecorder
 	ServingStates       ServingStateReader
-	AuditIntentRecorder access.AuditIntentRecorder
 	CleanupAcker        PostgreSQLCleanupAuthority
 }
 
@@ -236,22 +195,16 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 	if err != nil {
 		return nil, err
 	}
-	// Validate the production backend before checking optional HTTP concerns so
-	// a miswired SQLite process fails with the capability error, even when an
-	// audit adapter has not yet been supplied by composition.
+	// Validate the production authority before checking optional HTTP concerns.
 	if cfg.Production && !cfg.Disabled {
-		if cfg.Persistence == nil || !cfg.Persistence.isPostgres() {
+		if cfg.Persistence == nil || !cfg.Persistence.isNative() {
 			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
 		}
 	}
 	var buildAuditIntent func(context.Context, manageddatahttp.CommandAuditInput) (*access.AuditIntent, error)
 	if !cfg.Disabled {
 		// Native PostgreSQL persistence carries its Access audit adapter on the
-		// repository's caller-owned transaction. The generic recorder is only
-		// the legacy SQLite composition port and must not gate native admission.
-		if (cfg.Persistence == nil || !cfg.Persistence.isPostgres()) && cfg.AuditIntentRecorder == nil {
-			return nil, errors.New("managed-data audit intent recorder is required")
-		}
+		// repository's caller-owned transaction.
 		buildAuditIntent, err = buildManagedDataAuditIntentBuilder()
 		if err != nil {
 			return nil, err
@@ -274,7 +227,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		return module, nil
 	}
 	if cfg.Production {
-		if cfg.Persistence == nil || !cfg.Persistence.isPostgres() {
+		if cfg.Persistence == nil || !cfg.Persistence.isNative() {
 			return nil, errors.New("production managed-data module requires native PostgreSQL persistence")
 		}
 		if cfg.CleanupAcker == nil || !cfg.CleanupAcker.Configured() {
@@ -282,7 +235,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		}
 	}
 	if cfg.Persistence == nil {
-		return nil, errors.New("managed-data persistence is required; choose native PostgreSQL or explicit SQLite persistence")
+		return nil, errors.New("managed-data PostgreSQL persistence is required")
 	}
 	if err := cfg.Persistence.validate(); err != nil {
 		return nil, err
@@ -299,16 +252,11 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 		return nil, err
 	}
 	var collector *maintenance.BlobCollector
-	if cfg.Persistence.isPostgres() {
+	if cfg.Persistence.native != nil {
 		collector, err = newManagedDataCollectorPostgres(cfg.Persistence.native.DB(), services, cfg.Product)
-	} else {
-		if !cfg.Persistence.isSQLite() {
-			return nil, errors.New("managed-data persistence backend is not configured")
+		if err != nil {
+			return nil, err
 		}
-		collector, err = newManagedDataCollector(cfg.Persistence.legacyDatabase, services, cfg.Product)
-	}
-	if err != nil {
-		return nil, err
 	}
 	runtimeCollector, err := newManagedDataRuntimeCollector(services, cfg.Product)
 	if err != nil {
@@ -349,7 +297,7 @@ func Build(ctx context.Context, cfg Config) (*Module, error) {
 			uploads: uploads, multipart: multipartService, uploadTTL: cfg.Product.UploadSessionTTL,
 			collector: collector, runtime: runtimeCollector,
 		},
-		jobs: cfg.Jobs, workflow: cfg.Workflow, bindings: bindings, runtimeResolver: runtimeResolver,
+		jobs: cfg.Jobs, atomicTransitions: transitions, bindings: bindings, runtimeResolver: runtimeResolver,
 		currentPrincipal: cfg.CurrentPrincipal, authorizeConnection: manageddatahttp.ConnectionAuthorizer(cfg.AuthorizeConnection),
 		metadata: metadataReader{repository: repository}, finalizeExecution: finalizeExecution,
 	}
@@ -561,16 +509,6 @@ func newManagedDataStorage(ctx context.Context, cfg ProductConfig) (managedDataS
 	}
 	result.inventory = inventory
 	return result, nil
-}
-
-func newManagedDataCollector(db *sql.DB, services managedDataStorage, cfg ProductConfig) (*maintenance.BlobCollector, error) {
-	reachability, err := maintenancesqlite.New(db)
-	if err != nil {
-		return nil, err
-	}
-	return maintenance.NewBlobCollector(services.inventory, reachability, maintenance.BlobGCConfig{
-		GraceAge: cfg.GCGracePeriod,
-	})
 }
 
 func newManagedDataCollectorPostgres(db manageddatapostgres.DBTX, services managedDataStorage, cfg ProductConfig) (*maintenance.BlobCollector, error) {
