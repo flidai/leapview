@@ -249,7 +249,6 @@ type assemblyConfig struct {
 	AccessPersistence       *accessmodule.Persistence
 	ServingStateRepo        servingStateRepository
 	ServingStatePersistence *servingstatemodule.Persistence
-	StorageRetention        *servingstatemodule.Retention
 	ManagedDataValidation   refreshmodule.CandidateValidationHook
 	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
 	ReleaseModule           *releasemodule.Module
@@ -426,7 +425,6 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 	data := dataAssemblyInputs{
 		PlatformHealth: options.PlatformHealth, ServingStateRepo: options.ServingStateRepo,
 		RefreshServingStateMutations: options.RefreshServingStateMutations,
-		StorageRetention:             options.StorageRetention,
 		AccessRepo:                   options.AccessRepo,
 		RefreshPersistence:           options.RefreshPersistence,
 	}

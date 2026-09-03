@@ -41,7 +41,7 @@ var PublicContractPrefixes = map[string][]string{
 	"release":       {"internal/release"},
 	"semanticvalue": {"internal/semanticvalue"},
 	"deployment":    {"internal/deployment"},
-	"servingstate":  {"internal/servingstate", "internal/servingstate/validate", "internal/servingstate/retention"},
+	"servingstate":  {"internal/servingstate", "internal/servingstate/validate"},
 	"refresh":       {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/presentation", "internal/refresh/run", "internal/refresh/schedule"},
 	"runtimehost":   {"internal/runtimehost"},
 	"workload":      {"internal/workload"},

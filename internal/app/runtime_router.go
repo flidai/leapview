@@ -85,7 +85,6 @@ type runtimeServices struct {
 	pageStreams                    *uitransport.PageStream
 	persistenceConfigured          bool
 	platformHealth                 platformHealth
-	storageRetention               *servingstatemodule.Retention
 	queryAuditProvider             adminmodule.QueryAuditReaderProvider
 	dashboardPublicationReconciler dashboardPublicationActivationReconciler
 	candidateMetrics               func(runtimehostmodule.Provider, projectgraph.ResourceID) QueryMetrics
@@ -276,7 +275,6 @@ type dataAssemblyInputs struct {
 	// authority for candidate/activation refresh flows. Native PostgreSQL
 	// composition leaves this nil and uses canonical delivery instead.
 	RefreshServingStateMutations refreshmodule.ServingStateRepository
-	StorageRetention             *servingstatemodule.Retention
 	AccessRepo                   access.Repository
 	APIIdempotency               idempotency.Store
 	CursorSigning                cursorsigning.Initializer
@@ -842,21 +840,6 @@ func buildApplicationSurfaces(
 	}
 	persistence.servingStateRepo = servingStateRepo
 	persistence.refreshServingStateMutations = data.RefreshServingStateMutations
-	retentionStates, _ := servingStateRepo.(servingstatemodule.RetentionRepository)
-	runtime.storageRetention = data.StorageRetention
-	if runtime.storageRetention == nil && !runtimeConfig.SealedServing {
-		runtime.storageRetention = servingstatemodule.NewRetention(servingstatemodule.RetentionConfig{
-			States: retentionStates, Snapshots: capabilities.AnalyticsModule.RetentionSnapshots(),
-			Admission: controller, Environment: runtimeConfig.DefaultEnvironment,
-			CatalogPath: runtimeConfig.DuckLakeCatalogPath, DataPath: runtimeConfig.DuckLakeDataPath,
-			ProtectedSnapshots: func() []int64 {
-				if provider, ok := workflow.Reloader.(interface{ LeasedSnapshots() []int64 }); ok {
-					return provider.LeasedSnapshots()
-				}
-				return nil
-			},
-		})
-	}
 	moduleWorkflow.managedDataValidation = workflow.ManagedDataValidation
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule

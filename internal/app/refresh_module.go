@@ -131,11 +131,6 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 		WorkloadStats: func() refreshmodule.WorkloadStats {
 			return workloadController(&runtime.workloads).Stats()
 		},
-		RunFinished: func(ctx context.Context, run refreshmodule.RunRecord) {
-			if run.Status == refreshmodule.RunStatusSucceeded && runtime.storageRetention != nil {
-				_ = runtime.storageRetention.Run(ctx, false)
-			}
-		},
 	}
 	if persistence.auditRecorder != nil {
 		config.AuditIntentRecorder = persistence.auditRecorder

@@ -16,7 +16,6 @@ import (
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/extension"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	storagemaintenance "github.com/flidai/leapview/internal/servingstate/retention"
 	"github.com/prometheus/client_golang/prometheus"
 )
 
@@ -41,7 +40,7 @@ type Config struct {
 	// QueryAuditStore is the explicit capability-owned query-audit authority.
 	// Test fixtures may inject an in-memory implementation; production wiring
 	// supplies the native PostgreSQL repository.
-	QueryAuditStore queryaudit.Store
+	QueryAuditStore       queryaudit.Store
 	TargetCredentials     TargetCredentialConfig
 	CredentialMode        CredentialMode
 	CredentialTargetID    string
@@ -448,13 +447,6 @@ func (m *Module) ProjectMaterializerForEnvironment(environment *analyticsducklak
 		return nil, fmt.Errorf("analytical runtime credential resolver is unavailable")
 	}
 	return &duckDBProjectMaterializer{environment: environment, credentials: m.credentials, module: m}, nil
-}
-
-func (m *Module) RetentionSnapshots() storagemaintenance.SnapshotMaintenance {
-	if m == nil {
-		return nil
-	}
-	return m.environment
 }
 
 func (m *Module) AdminResources() Resources {
