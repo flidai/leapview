@@ -55,6 +55,7 @@ historical records.
 - [Product histories and canonical asynchronous events](specifications/fai-594-product-histories-and-canonical-events.md)
 - [FAI-595 River job admission](specifications/fai-595-river-job-admission.md)
 - [Data-contract versioning conformance](specifications/data-contract-versioning-conformance.md)
+- [OpenLineage projection conformance](specifications/openlineage-conformance.md)
 - [Semantic access-policy conformance](specifications/semantic-access-policy-conformance.md)
 - [Project namespace conformance](specifications/project-namespace-conformance.md)
 

@@ -100,17 +100,13 @@ func TestModelRunEmitsParentFacet(t *testing.T) {
 		t.Fatalf("model event identity = %#v %#v", event.Job, event.Run)
 	}
 	parent := facet(t, event.Run.Facets, "parent")
-	parentRun, ok := parent["parent"].(map[string]any)
-	if !ok {
-		t.Fatalf("parent facet = %#v", parent)
-	}
-	parentRunID, ok := parentRun["run"].(map[string]any)
+	parentRunID, ok := parent["run"].(map[string]any)
 	if !ok || parentRunID["runId"] != openLineageRunID("pipeline-run-1") {
-		t.Fatalf("parent run = %#v", parentRun)
+		t.Fatalf("parent run = %#v", parent)
 	}
-	parentJob, ok := parentRun["job"].(map[string]any)
+	parentJob, ok := parent["job"].(map[string]any)
 	if !ok || parentJob["name"] != p.ID || parentJob["namespace"] != NamespaceFor(p.ProjectID, p.Environment) {
-		t.Fatalf("parent job = %#v", parentRun["job"])
+		t.Fatalf("parent job = %#v", parent["job"])
 	}
 	if len(event.Outputs) != 1 || event.Outputs[0].Name != "model:orders" {
 		t.Fatalf("model outputs = %#v", event.Outputs)
@@ -125,7 +121,7 @@ func TestModelRunConvenienceDerivesChildID(t *testing.T) {
 	if event.Run.RunID != openLineageRunID("pipeline-run-1/model/model:orders") {
 		t.Fatalf("derived child run id = %q", event.Run.RunID)
 	}
-	if got := facet(t, event.Run.Facets, "parent")["parent"].(map[string]any)["run"].(map[string]any)["runId"]; got != openLineageRunID("pipeline-run-1") {
+	if got := facet(t, event.Run.Facets, "parent")["run"].(map[string]any)["runId"]; got != openLineageRunID("pipeline-run-1") {
 		t.Fatalf("derived parent = %v", got)
 	}
 }

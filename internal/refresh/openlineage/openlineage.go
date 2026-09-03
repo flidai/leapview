@@ -27,8 +27,17 @@ const (
 	SchemaURL = "https://openlineage.io/spec/2-0-2/OpenLineage.json"
 	// Facet schema URLs are version-pinned and identify the corresponding
 	// LeapView facet type; the mutable refresh.json alias is never emitted.
-	PipelineFacetSchemaURL   = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewPipelineJobFacet.json#/$defs/LeapViewPipelineJobFacet"
-	InvocationFacetSchemaURL = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewInvocationRunFacet.json#/$defs/LeapViewInvocationRunFacet"
+	PipelineFacetSchemaURL     = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewPipelineJobFacet.json#/$defs/LeapViewPipelineJobFacet"
+	InvocationFacetSchemaURL   = "https://leapview.dev/openlineage/facets/1-0-0/LeapViewInvocationRunFacet.json#/$defs/LeapViewInvocationRunFacet"
+	SchemaFacetSchemaURL       = "https://openlineage.io/spec/facets/1-2-0/SchemaDatasetFacet.json"
+	VersionFacetSchemaURL      = "https://openlineage.io/spec/facets/1-0-1/DatasetVersionDatasetFacet.json"
+	QualityAssertionsSchemaURL = "https://openlineage.io/spec/facets/1-1-0/DataQualityAssertionsDatasetFacet.json"
+	QualityMetricsSchemaURL    = "https://openlineage.io/spec/facets/1-0-0/DataQualityMetricsDatasetFacet.json"
+	InputStatisticsSchemaURL   = "https://openlineage.io/spec/facets/1-0-0/InputStatisticsInputDatasetFacet.json"
+	OutputStatisticsSchemaURL  = "https://openlineage.io/spec/facets/1-0-2/OutputStatisticsOutputDatasetFacet.json"
+	ColumnLineageSchemaURL     = "https://openlineage.io/spec/facets/1-2-0/ColumnLineageDatasetFacet.json"
+	NominalTimeFacetSchemaURL  = "https://openlineage.io/spec/facets/1-0-1/NominalTimeRunFacet.json"
+	ParentRunFacetSchemaURL    = "https://openlineage.io/spec/facets/1-2-0/ParentRunFacet.json"
 
 	PipelineFacetKey   = "leapView_pipeline"
 	InvocationFacetKey = "leapView_invocation"
@@ -81,9 +90,11 @@ type Job struct {
 // materialized Model relation is represented as a dataset; a Model
 // definition itself is not emitted as one.
 type Dataset struct {
-	Namespace string `json:"namespace"`
-	Name      string `json:"name"`
-	Facets    Facets `json:"facets,omitempty"`
+	Namespace    string `json:"namespace"`
+	Name         string `json:"name"`
+	Facets       Facets `json:"facets,omitempty"`
+	InputFacets  Facets `json:"inputFacets,omitempty"`
+	OutputFacets Facets `json:"outputFacets,omitempty"`
 }
 
 // Pipeline is the immutable context needed to project one authored Pipeline
@@ -111,6 +122,11 @@ type Pipeline struct {
 	QualificationChecks     []string
 	MaterializationScope    []string
 	SourceInputs            []string
+	// ContractPublications are immutable FAI-622 evidence for datasets named
+	// by SourceInputs or MaterializationScope. They enrich the existing
+	// projection with standard schema and version facets; they never replace
+	// the dataset identity carried by those lists.
+	ContractPublications []ContractPublication
 }
 
 // FromPipelinePlan adapts the immutable delivery plan to the export context.
@@ -155,6 +171,12 @@ type PipelineRun struct {
 	ModelID             string
 	Inputs              []string
 	Outputs             []string
+	// GateEvidence, Statistics, and ColumnLineage are existing LeapView
+	// evidence authorities projected into standard facets. Maps are keyed by
+	// the same dataset names used by Inputs and Outputs.
+	GateEvidence  *GateEvidence
+	Statistics    map[string]DatasetStatistics
+	ColumnLineage map[string][]PhysicalLineage
 }
 
 // Exporter is the deliberately narrow observability boundary.  Implementors
@@ -265,16 +287,32 @@ func EventForPipelineRun(p Pipeline, r PipelineRun) (Event, error) {
 	if outputs == nil && r.ParentRunID == "" {
 		outputs = p.MaterializationScope
 	}
-	return Event{
+	projector, err := newDatasetProjector(p, r, job.Namespace, inputs, outputs)
+	if err != nil {
+		return Event{}, err
+	}
+	inputDatasets, err := projector.project(inputs, datasetInput)
+	if err != nil {
+		return Event{}, err
+	}
+	outputDatasets, err := projector.project(outputs, datasetOutput)
+	if err != nil {
+		return Event{}, err
+	}
+	event := Event{
 		EventType: eventType,
 		EventTime: eventTime,
 		Run:       Run{RunID: openLineageRunID(r.ID), Facets: runFacets},
 		Job:       job,
-		Inputs:    datasets(job.Namespace, inputs),
-		Outputs:   datasets(job.Namespace, outputs),
+		Inputs:    inputDatasets,
+		Outputs:   outputDatasets,
 		Producer:  Producer,
 		SchemaURL: SchemaURL,
-	}, nil
+	}
+	if err := ValidateEvent(event); err != nil {
+		return Event{}, err
+	}
+	return event, nil
 }
 
 // openLineageRunID maps LeapView's stable operational IDs into the UUID shape
@@ -320,6 +358,9 @@ func ModelRun(p Pipeline, r PipelineRun, modelID string) (Event, error) {
 	}
 	event.Job.Name = modelID
 	event.Job.Facets = Facets{PipelineFacetKey: mustFacet(leapViewFacet(p))}
+	if err := ValidateEvent(event); err != nil {
+		return Event{}, err
+	}
 	return event, nil
 }
 
@@ -356,26 +397,6 @@ func (r PipelineRun) validate(p Pipeline) error {
 	return nil
 }
 
-func datasets(namespace string, names []string) []Dataset {
-	if len(names) == 0 {
-		return nil
-	}
-	result := make([]Dataset, 0, len(names))
-	seen := make(map[string]struct{}, len(names))
-	for _, name := range names {
-		name = strings.TrimSpace(name)
-		if name == "" {
-			continue
-		}
-		if _, ok := seen[name]; ok {
-			continue
-		}
-		seen[name] = struct{}{}
-		result = append(result, Dataset{Namespace: namespace, Name: name})
-	}
-	return result
-}
-
 func leapViewFacet(p Pipeline) map[string]any {
 	facet := map[string]any{"_producer": Producer, "_schemaURL": PipelineFacetSchemaURL, "pipelineId": p.ID}
 	for key, value := range map[string]string{
@@ -397,7 +418,7 @@ func leapViewFacet(p Pipeline) map[string]any {
 
 func nominalTimeFacet(value time.Time) map[string]any {
 	return map[string]any{
-		"_producer": Producer, "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/NominalTimeRunFacet.json",
+		"_producer": Producer, "_schemaURL": NominalTimeFacetSchemaURL,
 		"nominalStartTime": value.UTC().Format(time.RFC3339Nano),
 	}
 }
@@ -408,11 +429,9 @@ func parentFacet(p Pipeline, runID string) map[string]any {
 		namespace = NamespaceFor(p.ProjectID, p.Environment)
 	}
 	return map[string]any{
-		"_producer": Producer, "_schemaURL": "https://openlineage.io/spec/facets/1-0-0/ParentRunFacet.json",
-		"parent": map[string]any{
-			"run": map[string]any{"runId": runID},
-			"job": map[string]any{"namespace": namespace, "name": p.ID},
-		},
+		"_producer": Producer, "_schemaURL": ParentRunFacetSchemaURL,
+		"run": map[string]any{"runId": runID},
+		"job": map[string]any{"namespace": namespace, "name": p.ID},
 	}
 }
 
