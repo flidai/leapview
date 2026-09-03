@@ -133,6 +133,28 @@ func TestPostgresCatalogMaintenanceFailsClosedForSharedRuntimeAndAmbiguousCatalo
 	}
 }
 
+func TestPostgresCatalogMaintenanceAcceptsDigitFirstOpaqueLeaseID(t *testing.T) {
+	stub := &maintenanceExecStub{}
+	contract := maintenanceContract()
+	contract.Lease.LeaseID = "0198f2c0-7c7a-7f00-0000-000000000081"
+	if _, err := NewPostgresCatalogMaintenance(stub, contract); err != nil {
+		t.Fatalf("UUIDv7 lease identity rejected: %v", err)
+	}
+	contract.Lease.LeaseID = " 0198f2c0-7c7a-7f00-0000-000000000081"
+	if _, err := NewPostgresCatalogMaintenance(stub, contract); !errors.Is(err, ErrPostgresCatalogMaintenanceLease) {
+		t.Fatalf("whitespace-padded lease identity error = %v, want lease validation error", err)
+	}
+
+	// The relaxed first-rune rule applies only to the opaque lease identity;
+	// owner identities remain subject to maintenanceID's strict contract.
+	contract.Lease.LeaseID = "0198f2c0-7c7a-7f00-0000-000000000081"
+	contract.Lease.OwnerID = "0198f2c0-7c7a-7f00-0000-000000000082"
+	contract.Fence.OwnerID = contract.Lease.OwnerID
+	if _, err := NewPostgresCatalogMaintenance(stub, contract); !errors.Is(err, ErrPostgresCatalogMaintenanceLease) {
+		t.Fatalf("digit-first owner identity error = %v, want lease validation error", err)
+	}
+}
+
 func TestPostgresCatalogMaintenanceRejectsRuntimeDBPool(t *testing.T) {
 	db, err := sql.Open("duckdb", ":memory:")
 	if err != nil {

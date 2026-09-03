@@ -418,7 +418,7 @@ func (c PostgresCatalogMaintenanceContract) validate() error {
 }
 
 func (c PostgresCatalogMaintenanceContract) validateLease(now time.Time) error {
-	if !maintenanceID(c.Lease.LeaseID) || !maintenanceID(c.Lease.OwnerID) || !maintenanceID(c.Fence.OwnerID) || c.Lease.OwnerID != c.Fence.OwnerID || c.Fence.FencingEpoch <= 0 || c.Lease.ExpiresAt.IsZero() || c.Fence.LeaseExpiresAt.IsZero() {
+	if !maintenanceLeaseID(c.Lease.LeaseID) || !maintenanceID(c.Lease.OwnerID) || !maintenanceID(c.Fence.OwnerID) || c.Lease.OwnerID != c.Fence.OwnerID || c.Fence.FencingEpoch <= 0 || c.Lease.ExpiresAt.IsZero() || c.Fence.LeaseExpiresAt.IsZero() {
 		return fmt.Errorf("%w: owner, epoch, and lease expiry are required", ErrPostgresCatalogMaintenanceLease)
 	}
 	leaseExpiry := c.Lease.ExpiresAt.UTC()
@@ -519,6 +519,23 @@ func maintenanceID(value string) bool {
 			}
 			continue
 		}
+		if !(r == '_' || r == '-' || r == '.' || r == ':' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
+			return false
+		}
+	}
+	return true
+}
+
+// maintenanceLeaseID validates the opaque lease identity supplied by the
+// control-plane fence. Unlike catalog, pool, role, and owner identifiers,
+// leases are UUIDv7 values in production and may therefore begin with a
+// digit. Keep the same bounded ASCII alphabet as maintenanceID while
+// deliberately not imposing its letter/underscore first-rune restriction.
+func maintenanceLeaseID(value string) bool {
+	if value == "" || len(value) > 255 || value != strings.TrimSpace(value) {
+		return false
+	}
+	for _, r := range value {
 		if !(r == '_' || r == '-' || r == '.' || r == ':' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9') {
 			return false
 		}
