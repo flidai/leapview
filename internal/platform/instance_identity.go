@@ -12,7 +12,8 @@ import (
 const instanceIDSetting = "instance.id"
 
 // InstanceID returns the durable, non-secret identity of this LeapView
-// installation. It survives process restarts and instance backup/restore.
+// installation. It survives process restarts and remains stable for the
+// lifetime of the installation.
 func (s *Store) InstanceID(ctx context.Context) (string, error) {
 	if s == nil || s.db == nil {
 		return "", fmt.Errorf("platform store is not open")

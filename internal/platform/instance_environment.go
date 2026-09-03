@@ -60,56 +60,6 @@ func (s *Store) InstanceEnvironment(ctx context.Context) (string, error) {
 	return strings.TrimSpace(value), nil
 }
 
-// ValidateDatabaseInstanceEnvironment verifies a database-only backup before
-// it can replace an instance control database. Legacy databases without a
-// binding may be adopted only when their active pointers are empty or match.
-func ValidateDatabaseInstanceEnvironment(ctx context.Context, path, expected string) error {
-	expected = strings.TrimSpace(expected)
-	if expected == "" {
-		return fmt.Errorf("expected instance environment is required")
-	}
-	if err := validateBackupDatabase(ctx, path); err != nil {
-		return err
-	}
-	db, err := sql.Open("sqlite", path+"?_pragma=query_only(1)")
-	if err != nil {
-		return err
-	}
-	defer db.Close()
-	var bound string
-	err = db.QueryRowContext(ctx, `SELECT value FROM platform_settings WHERE key = ?`, instanceEnvironmentSetting).Scan(&bound)
-	if err == nil {
-		bound = strings.TrimSpace(bound)
-		if bound != expected {
-			return environmentMismatch(bound, expected)
-		}
-		return nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("read backup instance environment: %w", err)
-	}
-	rows, err := db.QueryContext(ctx, `
-		SELECT environment FROM project_active_serving_states
-		UNION
-		SELECT environment FROM managed_data_environment_pointers
-	`)
-	if err != nil {
-		return fmt.Errorf("inspect backup active environments: %w", err)
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var active string
-		if err := rows.Scan(&active); err != nil {
-			return err
-		}
-		active = strings.TrimSpace(active)
-		if active != "" && active != expected {
-			return fmt.Errorf("cannot restore database into environment %q: backup active state belongs to %q; use a separate instance home", expected, active)
-		}
-	}
-	return rows.Err()
-}
-
 func (s *Store) activeEnvironments(ctx context.Context) ([]string, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT environment FROM project_active_serving_states

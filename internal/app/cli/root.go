@@ -18,11 +18,6 @@ type rootOptions struct {
 	pageID             string
 	schemaFormat       string
 	schemaOut          string
-	backupOut          string
-	restoreFrom        string
-	restoreBefore      string
-	confirmRestore     bool
-	databaseOnly       bool
 	auditDays          int
 	queryDays          int
 	archivedAgentDays  int
