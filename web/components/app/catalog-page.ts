@@ -24,6 +24,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-models' }) createDraftModelsJSON = ''
   @property({ attribute: 'create-draft-csrf-token' }) createDraftCSRFToken = ''
   @property({ attribute: 'create-draft-idempotency-key' }) createDraftIdempotencyKey = ''
+  @property({ attribute: 'mutation-csrf-token' }) mutationCSRFToken = ''
   @state() private catalogScope: 'all' | 'favorites' | 'mine' = 'all'
   @state() private catalogSort: CatalogSort = 'recommended'
   @state() private catalogModel = 'all'
@@ -32,9 +33,13 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @state() private favoriteDashboardIDs: string[] = []
   @state() private recentDashboardIDs: Record<string, string> = {}
   @state() private createDraftOpen = false
+  @state() private actionMenu: { dashboardID: string, top: number, left: number } | null = null
+  @state() private detailsDashboardID = ''
+  @state() private copyLinkMessage = ''
   private freshnessTimer: number | undefined
   private autoOpenChecked = false
   private createDraftTrigger: HTMLAnchorElement | null = null
+  private actionMenuTrigger: HTMLElement | null = null
   static styles = [pageHeaderStyles, css`
     :host {
       display: block;
@@ -173,6 +178,98 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .catalog-filter-actions { display: flex; justify-content: flex-end; border-top: var(--lv-border-muted); padding-top: var(--base-size-12); }
     .catalog-filter-actions button { border: 0; color: var(--lv-fg-link); background: transparent; padding: var(--base-size-4); cursor: pointer; font: var(--lv-type-body-compact); }
 
+    .catalog-action-dismiss {
+      position: fixed;
+      z-index: 30;
+      inset: 0;
+      border: 0;
+      background: transparent;
+      cursor: default;
+    }
+    .catalog-action-menu {
+      position: fixed;
+      z-index: 31;
+      top: var(--catalog-menu-top);
+      left: var(--catalog-menu-left);
+      display: grid;
+      width: 14rem;
+      box-sizing: border-box;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-panel, var(--lv-radius-default));
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-lg);
+      padding: var(--base-size-4);
+    }
+    .catalog-action-menu a,
+    .catalog-action-menu button {
+      display: flex;
+      width: 100%;
+      min-height: var(--control-medium-size);
+      align-items: center;
+      gap: var(--base-size-8);
+      box-sizing: border-box;
+      border: 0;
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-default);
+      background: transparent;
+      padding: 0 var(--base-size-8);
+      cursor: pointer;
+      font: var(--lv-type-body-compact);
+      text-align: left;
+      text-decoration: none;
+    }
+    .catalog-action-menu a:hover,
+    .catalog-action-menu button:hover { background: var(--lv-bg-control-hover); }
+    .catalog-action-menu a:focus-visible,
+    .catalog-action-menu button:focus-visible,
+    .catalog-details-close:focus-visible,
+    .catalog-details-action:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+    .catalog-action-menu svg { display: block; flex: 0 0 auto; color: var(--lv-fg-muted); }
+    .catalog-action-divider { height: 1px; margin: var(--base-size-4); background: var(--lv-line-muted); }
+    .catalog-action-danger { color: var(--lv-fg-danger, var(--lv-fg-default)) !important; }
+    .catalog-action-danger svg { color: inherit; }
+    .catalog-action-form { margin: 0; }
+    .catalog-copy-status { position: fixed; z-index: 40; right: var(--base-size-24); bottom: var(--base-size-24); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: var(--lv-bg-panel); box-shadow: var(--lv-shadow-floating-lg); padding: var(--base-size-8) var(--base-size-12); font: var(--lv-type-body-compact); }
+
+    .catalog-details-drawer {
+      position: fixed;
+      z-index: 25;
+      top: 0;
+      right: 0;
+      bottom: 0;
+      display: grid;
+      width: min(25rem, 100vw);
+      grid-template-rows: auto 1fr auto;
+      box-sizing: border-box;
+      border-left: var(--lv-border-default);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-lg);
+    }
+    .catalog-details-header { display: flex; min-width: 0; align-items: flex-start; justify-content: space-between; gap: var(--base-size-12); border-bottom: var(--lv-border-muted); padding: var(--base-size-20); }
+    .catalog-details-heading { display: flex; min-width: 0; align-items: center; gap: var(--base-size-12); }
+    .catalog-details-icon { display: inline-grid; width: var(--control-large-size); height: var(--control-large-size); flex: 0 0 auto; place-items: center; border: var(--lv-border-muted); border-radius: var(--lv-radius-default); color: var(--lv-fg-accent); background: var(--lv-bg-panel-muted); }
+    .catalog-details-icon.color-gray { border-color: var(--display-gray-borderColor-muted); color: var(--display-gray-fgColor); background: var(--display-gray-bgColor-muted); }
+    .catalog-details-icon.color-blue { border-color: var(--display-blue-borderColor-muted); color: var(--display-blue-fgColor); background: var(--display-blue-bgColor-muted); }
+    .catalog-details-icon.color-green { border-color: var(--display-green-borderColor-muted); color: var(--display-green-fgColor); background: var(--display-green-bgColor-muted); }
+    .catalog-details-icon.color-yellow { border-color: var(--display-yellow-borderColor-muted); color: var(--display-yellow-fgColor); background: var(--display-yellow-bgColor-muted); }
+    .catalog-details-icon.color-orange { border-color: var(--display-orange-borderColor-muted); color: var(--display-orange-fgColor); background: var(--display-orange-bgColor-muted); }
+    .catalog-details-icon.color-red { border-color: var(--display-red-borderColor-muted); color: var(--display-red-fgColor); background: var(--display-red-bgColor-muted); }
+    .catalog-details-icon.color-purple { border-color: var(--display-purple-borderColor-muted); color: var(--display-purple-fgColor); background: var(--display-purple-bgColor-muted); }
+    .catalog-details-icon.color-pink { border-color: var(--display-pink-borderColor-muted); color: var(--display-pink-fgColor); background: var(--display-pink-bgColor-muted); }
+    .catalog-details-icon.color-coral { border-color: var(--display-coral-borderColor-muted); color: var(--display-coral-fgColor); background: var(--display-coral-bgColor-muted); }
+    .catalog-details-heading h2 { margin: 0; overflow-wrap: anywhere; font: var(--lv-type-section-title); }
+    .catalog-details-close { display: inline-grid; width: var(--control-medium-size); height: var(--control-medium-size); flex: 0 0 auto; place-items: center; border: 0; border-radius: var(--lv-radius-default); color: var(--lv-fg-muted); background: transparent; cursor: pointer; }
+    .catalog-details-close:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
+    .catalog-details-body { min-height: 0; overflow-y: auto; padding: var(--base-size-20); }
+    .catalog-details-description { margin: 0 0 var(--base-size-20); color: var(--lv-fg-muted); font: var(--lv-type-body); }
+    .catalog-details-list { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.35fr); gap: var(--base-size-12) var(--base-size-16); margin: 0; font: var(--lv-type-body-compact); }
+    .catalog-details-list dt { color: var(--lv-fg-muted); }
+    .catalog-details-list dd { margin: 0; overflow-wrap: anywhere; color: var(--lv-fg-default); }
+    .catalog-details-footer { display: flex; gap: var(--base-size-8); border-top: var(--lv-border-muted); padding: var(--base-size-16) var(--base-size-20); }
+    .catalog-details-action { display: inline-flex; min-height: var(--control-medium-size); align-items: center; justify-content: center; gap: var(--base-size-6); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); padding: 0 var(--base-size-12); font: var(--lv-type-body-compact); text-decoration: none; }
+    .catalog-details-action:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
+
     @media (max-width: 720px) {
       .catalog-create-dialog { width: calc(100% - var(--base-size-16)); max-height: calc(100svh - var(--base-size-16)); }
       .catalog-create-dialog-header { padding-inline: var(--base-size-16); }
@@ -182,6 +279,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       .catalog-filter { flex: 1; }
       .catalog-filter summary { width: 100%; }
       select.catalog-discovery-control { flex: 1; min-width: 0; }
+      .catalog-details-drawer { width: 100vw; border-left: 0; }
     }
 
   `]
@@ -190,11 +288,13 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     super.connectedCallback()
 	this.reloadDiscoveryPreferences()
 	this.freshnessTimer = window.setInterval(() => this.requestUpdate(), 60_000)
+    window.addEventListener('keydown', this.handleGlobalKeydown)
   }
 
   override disconnectedCallback(): void {
 	if (this.freshnessTimer !== undefined) window.clearInterval(this.freshnessTimer)
 	this.freshnessTimer = undefined
+    window.removeEventListener('keydown', this.handleGlobalKeydown)
     super.disconnectedCallback()
   }
 
@@ -244,7 +344,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             id: dashboard.id,
             dashboardId: dashboard.dashboardId,
             title: dashboard.title,
-            description: dashboard.description || 'Dashboard',
             meta: semanticModelLabel(dashboard.semanticModel),
             href: dashboard.href,
             icon: 'dashboard',
@@ -262,6 +361,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
+            actions: [{ label: `More actions for ${dashboard.title}`, action: 'open-dashboard-menu', icon: 'more' as const }],
             columns: {
               owner: dashboard.owner || '—',
               status: dashboardStatusLabel(dashboard.status),
@@ -277,21 +377,100 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             },
           })})}
           .toolbarTrailing=${this.renderDiscoveryToolbar(sourceDashboards)}
-          .columns=${[
-            { id: 'name', label: 'Dashboard', width: '46%' },
-            { id: 'owner', label: 'Owner', width: '16%' },
-            { id: 'status', label: 'Status', width: '20%', render: 'status' as const },
-            { id: 'updated', label: 'Updated', width: '18%' },
-          ]}
+          .columns=${this.catalogColumns()}
           initial-query=${page.listQuery ?? ''}
           active-filter=${page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
           empty-text=${this.catalogEmptyText()}
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
+          @lv-entity-list-row-action=${this.handleDashboardRowAction}
         ></lv-entity-list>
+        ${this.renderDashboardActionMenu(sourceDashboards)}
+        ${this.renderDashboardDetails(sourceDashboards)}
+        ${this.copyLinkMessage ? html`<div class="catalog-copy-status" role="status">${this.copyLinkMessage}</div>` : ''}
         ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
       </section>
+    `
+  }
+
+  private catalogColumns() {
+    if (this.catalogScope === 'mine') {
+      return [
+        { id: 'name', label: 'Dashboard', width: '54%' },
+        { id: 'status', label: 'Status', width: '24%', render: 'status' as const },
+        { id: 'updated', label: 'Updated', width: '17%' },
+        { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+      ]
+    }
+    return [
+      { id: 'name', label: 'Dashboard', width: '43%' },
+      { id: 'owner', label: 'Owner', width: '15%' },
+      { id: 'status', label: 'Status', width: '19%', render: 'status' as const },
+      { id: 'updated', label: 'Updated', width: '18%' },
+      { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
+    ]
+  }
+
+  private renderDashboardActionMenu(dashboards: CatalogDashboard[]) {
+    if (!this.actionMenu) return ''
+    const dashboard = dashboards.find((candidate) => candidate.id === this.actionMenu?.dashboardID)
+    if (!dashboard) return ''
+    const editable = dashboard.catalogScope === 'mine'
+    const editOrCopyLabel = editable ? 'Edit dashboard' : dashboard.catalogScope === 'managed' ? 'Make an editable copy' : 'Make a copy'
+    const editOrCopyHref = editable ? dashboardEditorHref(dashboard) : dashboardForkHref(dashboard)
+    const menuStyle = `--catalog-menu-top:${this.actionMenu.top}px;--catalog-menu-left:${this.actionMenu.left}px`
+    return html`
+      <button class="catalog-action-dismiss" type="button" tabindex="-1" aria-label="Close dashboard actions" @click=${this.closeDashboardActionMenu}></button>
+      <div class="catalog-action-menu" role="menu" aria-label=${`Actions for ${dashboard.title}`} style=${menuStyle}>
+        <a role="menuitem" href=${editOrCopyHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${editOrCopyLabel}</span></a>
+        <button type="button" role="menuitem" data-action="details" @click=${() => this.openDashboardDetails(dashboard.id)}>${lucideIcon(lucideIconByCanonicalName('panel-right-open'), { size: 16, strokeWidth: 2 })}<span>View details</span></button>
+        <button type="button" role="menuitem" data-action="copy-link" @click=${() => this.copyDashboardLink(dashboard)}>${lucideIcon(lucideIconByCanonicalName('link'), { size: 16, strokeWidth: 2 })}<span>Copy link</span></button>
+        ${editable ? html`
+          <div class="catalog-action-divider" role="separator"></div>
+          <form class="catalog-action-form" method="post" action=${dashboardArchiveHref(dashboard)}>
+            <input type="hidden" name="gorilla.csrf.Token" value=${this.mutationCSRFToken || this.createDraftCSRFToken}>
+            <input type="hidden" name="idempotencyKey" value=${newRequestID()}>
+            <button class="catalog-action-danger" type="submit" role="menuitem">${lucideIcon(lucideIconByCanonicalName('archive'), { size: 16, strokeWidth: 2 })}<span>Archive</span></button>
+          </form>
+        ` : ''}
+      </div>
+    `
+  }
+
+  private renderDashboardDetails(dashboards: CatalogDashboard[]) {
+    if (!this.detailsDashboardID) return ''
+    const dashboard = dashboards.find((candidate) => candidate.id === this.detailsDashboardID)
+    if (!dashboard) return ''
+    const updated = dashboard.updatedAt || dashboard.lastRefreshedAt
+    const editable = dashboard.catalogScope === 'mine'
+    const actionLabel = editable ? 'Edit dashboard' : dashboard.catalogScope === 'managed' ? 'Make an editable copy' : 'Make a copy'
+    const actionHref = editable ? dashboardEditorHref(dashboard) : dashboardForkHref(dashboard)
+    return html`
+      <aside class="catalog-details-drawer" aria-labelledby="catalog-details-title">
+        <header class="catalog-details-header">
+          <div class="catalog-details-heading">
+            <span class=${`catalog-details-icon color-${dashboardAppearanceColor(dashboard.appearanceColor)}`} aria-hidden="true">${lucideIcon(lucideIconByCanonicalName(dashboard.appearanceIcon || 'layout-dashboard'), { size: 20, strokeWidth: 1.8 })}</span>
+            <h2 id="catalog-details-title">${dashboard.title}</h2>
+          </div>
+          <button class="catalog-details-close" type="button" aria-label="Close dashboard details" @click=${this.closeDashboardDetails}>${lucideIcon(lucideIconByCanonicalName('x'), { size: 18, strokeWidth: 2 })}</button>
+        </header>
+        <div class="catalog-details-body">
+          ${dashboard.description ? html`<p class="catalog-details-description">${dashboard.description}</p>` : ''}
+          <dl class="catalog-details-list">
+            <dt>Data model</dt><dd>${semanticModelLabel(dashboard.semanticModel)}</dd>
+            <dt>Owner</dt><dd>${dashboard.owner || '—'}</dd>
+            <dt>Status</dt><dd>${dashboardStatusLabel(dashboard.status)}</dd>
+            <dt>Updated</dt><dd title=${formatExactTime(updated)}>${formatRelativeTime(updated)}</dd>
+            <dt>Pages</dt><dd>${dashboard.pageCount}</dd>
+            <dt>Popularity</dt><dd>${dashboard.popularity ? popularityPercentile(dashboard.popularity) : 'Not enough data'}</dd>
+            <dt>Source</dt><dd>${dashboard.catalogScope === 'managed' ? 'Managed by Analytics' : 'Created in LeapView'}</dd>
+          </dl>
+        </div>
+        <footer class="catalog-details-footer">
+          <a class="catalog-details-action" href=${actionHref}>${lucideIcon(lucideIconByCanonicalName(editable ? 'pencil' : 'copy'), { size: 16, strokeWidth: 2 })}<span>${actionLabel}</span></a>
+        </footer>
+      </aside>
     `
   }
 
@@ -389,6 +568,68 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (!id) return
     this.recentDashboardIDs = { ...this.recentDashboardIDs, [id]: new Date().toISOString() }
     writeStorage(catalogRecentsStorageKey, this.recentDashboardIDs)
+  }
+
+  private handleDashboardRowAction = (event: CustomEvent<{ action?: string, item?: { id?: string }, anchor?: EventTarget | null }>): void => {
+    if (event.detail?.action !== 'open-dashboard-menu') return
+    const dashboardID = event.detail.item?.id?.trim()
+    const anchor = event.detail.anchor
+    if (!dashboardID || !(anchor instanceof HTMLElement)) return
+    const rect = anchor.getBoundingClientRect()
+    const menuWidth = 224
+    const gutter = 8
+    this.actionMenuTrigger = anchor
+    this.actionMenu = {
+      dashboardID,
+      top: Math.min(rect.bottom + 4, window.innerHeight - 192),
+      left: Math.max(gutter, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth - gutter)),
+    }
+    queueMicrotask(() => this.renderRoot.querySelector<HTMLElement>('.catalog-action-menu [role="menuitem"]')?.focus({ preventScroll: true }))
+  }
+
+  private closeDashboardActionMenu = (): void => {
+    this.actionMenu = null
+    const trigger = this.actionMenuTrigger
+    queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private openDashboardDetails(dashboardID: string): void {
+    this.actionMenu = null
+    this.detailsDashboardID = dashboardID
+    queueMicrotask(() => this.renderRoot.querySelector<HTMLElement>('.catalog-details-close')?.focus({ preventScroll: true }))
+  }
+
+  private closeDashboardDetails = (): void => {
+    this.detailsDashboardID = ''
+    const trigger = this.actionMenuTrigger
+    this.actionMenuTrigger = null
+    queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private copyDashboardLink = async (dashboard: CatalogDashboard): Promise<void> => {
+    const href = new URL(dashboardViewHref(dashboard), window.location.origin).toString()
+    try {
+      await navigator.clipboard.writeText(href)
+      this.copyLinkMessage = 'Dashboard link copied'
+    } catch {
+      this.copyLinkMessage = 'Could not copy dashboard link'
+    }
+    this.actionMenu = null
+    window.setTimeout(() => { this.copyLinkMessage = '' }, 2_000)
+    const trigger = this.actionMenuTrigger
+    this.actionMenuTrigger = null
+    queueMicrotask(() => trigger?.focus({ preventScroll: true }))
+  }
+
+  private handleGlobalKeydown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape') return
+    if (this.detailsDashboardID) {
+      event.preventDefault()
+      this.closeDashboardDetails()
+    } else if (this.actionMenu) {
+      event.preventDefault()
+      this.closeDashboardActionMenu()
+    }
   }
 
   private activeCatalogFilterCount(): number {
@@ -552,6 +793,30 @@ function semanticModelTitle(value: string | undefined): string {
 
 function semanticModelLabel(value: string | undefined): string {
   return `${semanticModelTitle(value)} model`
+}
+
+function dashboardViewHref(dashboard: CatalogDashboard): string {
+  return `/dashboards/${encodeURIComponent(dashboard.dashboardId)}`
+}
+
+function dashboardEditorHref(dashboard: CatalogDashboard): string {
+  return dashboard.href.includes('/edit') ? dashboard.href : `${dashboardViewHref(dashboard)}/edit`
+}
+
+function dashboardForkHref(dashboard: CatalogDashboard): string {
+  return `${dashboardViewHref(dashboard)}/fork`
+}
+
+function dashboardArchiveHref(dashboard: CatalogDashboard): string {
+  return `${dashboardViewHref(dashboard)}/archive`
+}
+
+function dashboardAppearanceColor(value: string): string {
+  return ['gray', 'blue', 'green', 'yellow', 'orange', 'red', 'purple', 'pink', 'coral'].includes(value) ? value : 'purple'
+}
+
+function newRequestID(): string {
+  return typeof crypto.randomUUID === 'function' ? crypto.randomUUID() : `archive-${Date.now()}`
 }
 
 function timestamp(value: string | undefined): number {

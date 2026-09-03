@@ -311,7 +311,7 @@ for (const viewport of [
           rowCount: rows.length,
           hrefs: rows.map((row) => row.querySelector('.entity-list-identity')?.getAttribute('href')),
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
-          descriptions: rows.map((row) => row.querySelector('.entity-list-description')?.textContent?.trim()),
+          descriptionCount: rows.filter((row) => row.querySelector('.entity-list-description')).length,
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
           owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
           statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
@@ -339,6 +339,7 @@ for (const viewport of [
           hasOpenLabel: rows.some((row) => row.textContent?.includes('Open')),
           sectionWidth: Math.round(sectionRect.width),
           centeredDelta: Math.round(Math.abs((sectionRect.left + sectionRect.width / 2) - window.innerWidth / 2)),
+          actionLabels: rows.map((row) => row.querySelector('.entity-list-row-action')?.getAttribute('aria-label')),
         }
       })
 
@@ -347,8 +348,8 @@ for (const viewport of [
         rowCount: 4,
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
-        descriptions: ['Fixture report', 'Fulfillment and delivery performance.', 'Stock exposure and replenishment.', 'Customer profile details.'],
-        headers: ['Dashboard', 'Owner', 'Status', 'Updated'],
+        descriptionCount: 0,
+        headers: ['Dashboard', 'Owner', 'Status', 'Updated', 'Actions'],
         owners: ['Analytics', 'Operations', 'Supply chain', '—'],
         statuses: ['Published', 'Published', 'Published', 'Published'],
         updated: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
@@ -371,6 +372,12 @@ for (const viewport of [
         hasOpenLabel: false,
         sectionWidth: Math.min(viewport.width, 1152),
         centeredDelta: 0,
+        actionLabels: [
+          'More actions for Executive Sales Dashboard',
+          'More actions for Operations Health',
+          'More actions for Inventory Risk',
+          'More actions for Customer Detail',
+        ],
       })
     } finally {
       await page.close()
@@ -406,6 +413,110 @@ test('dashboard tabs expose favorites and owned dashboards without hiding either
     expect(state.all).toEqual(['Operations Health', 'Inventory Risk', 'Executive Sales Dashboard', 'Customer Detail'])
     expect(state.favorites).toEqual(['Operations Health', 'Inventory Risk'])
     expect(state.mine).toEqual(['Executive Sales Dashboard'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard overflow actions open a permission-aware menu and details drawer', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
+          ...dashboard,
+          catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
+          href: index === 0 ? '/dashboards/executive-sales/edit?draft=draft-one' : dashboard.href,
+        })),
+      } })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const trigger = list.querySelector('.entity-list-row-action') as HTMLButtonElement
+      trigger.click()
+      await element.updateComplete
+      const menu = root.querySelector('[role="menu"]') as HTMLElement
+      const menuLabels = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item: Element) => item.textContent?.trim())
+      ;(menu.querySelector('[data-action="details"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const drawer = root.querySelector('.catalog-details-drawer') as HTMLElement
+      const details = Array.from(drawer.querySelectorAll('dt, dd')).map((item: Element) => item.textContent?.trim())
+      const title = drawer.querySelector('h2')?.textContent?.trim()
+      const description = drawer.querySelector('.catalog-details-description')?.textContent?.trim()
+      ;(drawer.querySelector('.catalog-details-close') as HTMLButtonElement).click()
+      await element.updateComplete
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      return {
+        menuLabels,
+        title,
+        description,
+        details,
+        drawerClosed: !root.querySelector('.catalog-details-drawer'),
+        focusRestored: root.activeElement === trigger,
+      }
+    })
+
+    expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Archive'])
+    expect(state.title).toBe('Executive Sales Dashboard')
+    expect(state.description).toBe('Fixture report')
+    expect(state.details).toEqual(expect.arrayContaining(['Data model', 'Olist model', 'Owner', 'Analytics', 'Status', 'Published', 'Pages', '1']))
+    expect(state.drawerClosed).toBe(true)
+    expect(state.focusRestored).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('managed dashboard menu offers an editable copy without edit or archive actions', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const menu = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      ;(list.querySelector('.entity-list-row-action') as HTMLButtonElement).click()
+      await element.updateComplete
+      return Array.from(root.querySelectorAll('[role="menuitem"]')).map((item: Element) => ({
+        label: item.textContent?.trim(),
+        href: item.getAttribute('href'),
+      }))
+    })
+
+    expect(menu).toEqual([
+      { label: 'Make an editable copy', href: '/dashboards/executive-sales/fork' },
+      { label: 'View details', href: null },
+      { label: 'Copy link', href: null },
+    ])
+  } finally {
+    await page.close()
+  }
+})
+
+test('My dashboards removes the redundant owner column', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const headers = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any) => ({ ...dashboard, catalogScope: 'mine', owner: 'You' })),
+      } })
+      await element.updateComplete
+      ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
+      await element.updateComplete
+      return Array.from(element.shadowRoot.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
+    })
+    expect(headers).toEqual(['Dashboard', 'Status', 'Updated', 'Actions'])
   } finally {
     await page.close()
   }

@@ -104,6 +104,7 @@ func catalogPageDocument(catalog catalog.Catalog, page uisignals.CatalogPageSign
 	}
 	content := []g.Node{
 		g.Attr("slot", "page"),
+		g.Attr("mutation-csrf-token", csrfToken),
 		g.Attr("data-on:lv-entity-list-query__debounce.200ms", "$entityListQuery = evt.detail.query; $entityListFilter = evt.detail.filter; "+uiactions.Get("/catalog/search", "entityListQuery", "entityListFilter")),
 	}
 	if options.CanCreateDraft {
