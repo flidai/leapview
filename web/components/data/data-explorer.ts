@@ -24,6 +24,9 @@ import {
   DataExplorerPanelController,
   DataExplorerQueryController,
   DataExplorerSelectionController,
+  exploreContextMatchesObject,
+  fieldColumnID,
+  objectDatasetID,
   toggleVisibleColumns,
 } from './data-explorer-controller'
 import { dataExplorerURL } from './data-explorer-url'
@@ -1866,19 +1869,6 @@ function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataEx
     if (!seen.has(field.id)) ordered.push(field.id)
   }
   return ordered
-}
-
-function objectDatasetID(object: DataExplorerObjectSignal): string {
-  return object.datasetId?.trim() || object.title.trim()
-}
-
-function fieldColumnID(field: DataExploreFieldSignal): string {
-  const parts = field.id.split('.')
-  return parts[parts.length - 1] || field.id
-}
-
-function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {
-  return command.semanticModelId === (object.semanticModelId ?? '')
 }
 
 function filterObjects(objects: DataExplorerObjectSignal[], query: string): DataExplorerObjectSignal[] {

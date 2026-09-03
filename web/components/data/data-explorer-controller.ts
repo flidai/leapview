@@ -1,6 +1,8 @@
 import type {
   DataExploreCommand,
+  DataExploreFieldSignal,
   DataExplorerCommand,
+  DataExplorerObjectSignal,
 } from '../../generated/signals'
 
 const dataExplorerAgentStorageKey = 'leapview-data-explorer-agent-state'
@@ -194,4 +196,17 @@ export function toggleVisibleColumns(columns: string[], key: string, checked: bo
     ? allKeys.filter((candidate) => candidate === key || visible.includes(candidate))
     : visible.filter((candidate) => candidate !== key)
   return next.length === allKeys.length ? [] : next
+}
+
+export function objectDatasetID(object: DataExplorerObjectSignal): string {
+  return object.datasetId?.trim() || object.title.trim()
+}
+
+export function fieldColumnID(field: DataExploreFieldSignal): string {
+  const parts = field.id.split('.')
+  return parts[parts.length - 1] || field.id
+}
+
+export function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {
+  return command.semanticModelId === (object.semanticModelId ?? '')
 }
