@@ -488,6 +488,47 @@ func TestNativeCoordinatorPostgresActivationReplayAndCancelCommittedConflict(t *
 	}
 }
 
+func TestNativeCoordinatorPostgresActivationPreCommitHookRollsBack(t *testing.T) {
+	f := newNativePGFixture(t)
+	created, err := f.coordinator.Create(t.Context(), nativeCreateRequest(f, "activation-hook-create"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	interrupted := errors.New("qualification activation interrupted")
+	hookCalls := 0
+	f.coordinator.beforeActivationCommit = func(_ context.Context, publication deploymentpostgres.DeliveryPublication) error {
+		hookCalls++
+		if publication.PublicationID != created.ID || publication.State != "pending" {
+			t.Fatalf("pre-commit publication = %#v", publication)
+		}
+		return interrupted
+	}
+	request := apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: created.ID}, Actor: "operator", IdempotencyKey: "activation-hook-1"}
+	if _, err := f.coordinator.Activate(t.Context(), request); !errors.Is(err, interrupted) {
+		t.Fatalf("interrupted activation = %v, want %v", err, interrupted)
+	}
+	if hookCalls != 1 {
+		t.Fatalf("pre-commit hook calls = %d, want 1", hookCalls)
+	}
+	pending, err := f.coordinator.Get(t.Context(), apiadapter.Scope{Project: "project_sales", DeploymentID: created.ID})
+	if err != nil || pending.Status != apiadapter.StatusPending {
+		t.Fatalf("publication after interruption = %#v, %v", pending, err)
+	}
+	target, err := f.repo.Target(t.Context(), f.targetID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if target.TargetRevision != 1 || target.ActiveGenerationID != "" || target.ActivePublicationID != "" {
+		t.Fatalf("target changed before activation commit = %#v", target)
+	}
+
+	f.coordinator.beforeActivationCommit = nil
+	active, err := f.coordinator.Activate(t.Context(), request)
+	if err != nil || active.Status != apiadapter.StatusActive {
+		t.Fatalf("activation retry = %#v, %v", active, err)
+	}
+}
+
 func TestNativeCoordinatorApprovedActivationRejectsTamperedPublicationActor(t *testing.T) {
 	f := newNativePGFixture(t)
 	created, err := f.coordinator.Create(t.Context(), nativeCreateRequest(f, "tampered-actor-create"))

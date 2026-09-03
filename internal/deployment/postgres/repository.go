@@ -512,6 +512,13 @@ type ActivationInput struct {
 }
 type ActivateInput = ActivationInput
 
+// ActivationPreCommitHook is an optional composition-owned interruption seam
+// invoked after every durable activation proof has been checked while the
+// publication and target remain locked, but before the target CAS is mutated.
+// Production leaves it nil; release qualification uses it to prove restart
+// recovery at the exact pre-commit boundary.
+type ActivationPreCommitHook func(context.Context, DeliveryPublication) error
+
 type ActivationResult struct {
 	Publication DeliveryPublication
 	Pointer     DeliveryTarget
@@ -4335,6 +4342,17 @@ func (r *Repository) Activate(ctx context.Context, in ActivationInput) (Activati
 	return result, nil
 }
 func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) (ActivationResult, error) {
+	return r.activateTx(ctx, tx, in, nil)
+}
+
+// ActivateTxWithPreCommitHook preserves ActivateTx's single-transaction
+// contract while allowing application composition to install an explicit
+// qualification interruption immediately before the activation CAS.
+func (r *Repository) ActivateTxWithPreCommitHook(ctx context.Context, tx Tx, in ActivationInput, beforeCommit ActivationPreCommitHook) (ActivationResult, error) {
+	return r.activateTx(ctx, tx, in, beforeCommit)
+}
+
+func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, beforeCommit ActivationPreCommitHook) (ActivationResult, error) {
 	if r == nil || r.audit == nil {
 		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
 	}
@@ -4516,6 +4534,11 @@ func (r *Repository) ActivateTx(ctx context.Context, tx Tx, in ActivationInput) 
 	_ = sealAttempt
 	_ = sealPlan
 	_ = snap
+	if beforeCommit != nil {
+		if err := beforeCommit(ctx, p); err != nil {
+			return ActivationResult{}, err
+		}
+	}
 	newRev := currentRev + 1
 	targetUpdated, err := depdb.New(tx).UpdateTargetRevision(ctx, depdb.UpdateTargetRevisionParams{TargetID: target, NewRevision: newRev, ExpectedRevision: currentRev})
 	if errors.Is(err, pgx.ErrNoRows) {

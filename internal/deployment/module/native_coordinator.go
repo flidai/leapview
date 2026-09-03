@@ -29,16 +29,17 @@ import (
 // PostgreSQL transaction.  The legacy service/coordinator is deliberately not
 // referenced here.
 type nativeCoordinator struct {
-	repository      *deploymentpostgres.Repository
-	targetID        string
-	instanceEnv     string
-	events          NativeDeliveryEventAppender
-	audit           NativeDeliveryAuditAppender
-	workflow        NativeDeliveryWorkflowRecorder
-	operations      NativeOperationAuthority
-	eventReader     nativeDeliveryEventReader
-	auditReader     nativeDeliveryAuditReader
-	operationReader nativeOperationLookupReader
+	repository             *deploymentpostgres.Repository
+	targetID               string
+	instanceEnv            string
+	events                 NativeDeliveryEventAppender
+	audit                  NativeDeliveryAuditAppender
+	workflow               NativeDeliveryWorkflowRecorder
+	operations             NativeOperationAuthority
+	eventReader            nativeDeliveryEventReader
+	auditReader            nativeDeliveryAuditReader
+	operationReader        nativeOperationLookupReader
+	beforeActivationCommit deploymentpostgres.ActivationPreCommitHook
 }
 
 type nativeDeliveryEventReader interface {
@@ -52,10 +53,11 @@ type nativeOperationLookupReader interface {
 }
 
 type nativeCoordinatorCapabilities struct {
-	events     NativeDeliveryEventAppender
-	audit      NativeDeliveryAuditAppender
-	workflow   NativeDeliveryWorkflowRecorder
-	operations NativeOperationAuthority
+	events                 NativeDeliveryEventAppender
+	audit                  NativeDeliveryAuditAppender
+	workflow               NativeDeliveryWorkflowRecorder
+	operations             NativeOperationAuthority
+	beforeActivationCommit deploymentpostgres.ActivationPreCommitHook
 }
 
 var _ NativeDeliveryPublicationPort = (*nativeCoordinator)(nil)
@@ -71,7 +73,7 @@ func newNativeCoordinator(repository *deploymentpostgres.Repository, targetID, i
 	if capabilities.events == nil || capabilities.audit == nil || capabilities.workflow == nil || capabilities.operations == nil {
 		return nil, errors.New("native deployment event, audit, workflow, and operation authorities are required")
 	}
-	coordinator := &nativeCoordinator{repository: repository, targetID: targetID, instanceEnv: instanceEnv, events: capabilities.events, audit: capabilities.audit, workflow: capabilities.workflow, operations: capabilities.operations}
+	coordinator := &nativeCoordinator{repository: repository, targetID: targetID, instanceEnv: instanceEnv, events: capabilities.events, audit: capabilities.audit, workflow: capabilities.workflow, operations: capabilities.operations, beforeActivationCommit: capabilities.beforeActivationCommit}
 	coordinator.eventReader, _ = capabilities.events.(nativeDeliveryEventReader)
 	coordinator.auditReader, _ = capabilities.audit.(nativeDeliveryAuditReader)
 	coordinator.operationReader, _ = capabilities.operations.(nativeOperationLookupReader)
@@ -620,7 +622,7 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 	if err != nil {
 		return apiadapter.Deployment{}, err
 	}
-	result, err := c.repository.ActivateTx(ctx, tx, deploymentpostgres.ActivationInput{PublicationID: publicationID, TargetID: publication.TargetID, GenerationID: publication.GenerationID, ExpectedTargetRevision: publication.ExpectedTargetRevision, RequestDigest: publication.RequestDigest, ActorID: request.Actor, CorrelationID: correlationID, LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch})
+	result, err := c.repository.ActivateTxWithPreCommitHook(ctx, tx, deploymentpostgres.ActivationInput{PublicationID: publicationID, TargetID: publication.TargetID, GenerationID: publication.GenerationID, ExpectedTargetRevision: publication.ExpectedTargetRevision, RequestDigest: publication.RequestDigest, ActorID: request.Actor, CorrelationID: correlationID, LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}, c.beforeActivationCommit)
 	if err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}

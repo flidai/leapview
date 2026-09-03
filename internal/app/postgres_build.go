@@ -34,6 +34,8 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
@@ -807,6 +809,11 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 			}
 			return deploymentmodule.ApprovalActor{PrincipalID: evidence.PrincipalID, CredentialClass: deploymentmodule.CredentialClass(evidence.Class), CredentialID: evidence.ID, CredentialExpiresAt: evidence.ExpiresAt}, true
 		},
+	}
+	if string(environment) == "evaluation" {
+		deploymentConfig.BeforeNativeActivationCommit = func(ctx context.Context, _ deploymentpostgres.DeliveryPublication) error {
+			return sealedcontrol.QualificationActivationBarrier(ctx, string(environment))
+		}
 	}
 	canonicalCompletionCoordinator := func(completionCtx context.Context, job refreshrun.JobRecord, result refreshrun.CanonicalRefreshResult, complete func() error) error {
 		if result.ServingStateID == "" || result.ServingStateID != result.NativeGenerationID {

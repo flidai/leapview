@@ -13,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -235,6 +236,10 @@ type Config struct {
 	CurrentApprovalActor func(*http.Request) (deployment.ApprovalActor, bool)
 	AuthorizeApproval    func(context.Context, deployment.ApprovalActor, string, string) error
 	AuthorizeActivation  func(context.Context, deployment.ApprovalActor, string, string) error
+	// BeforeNativeActivationCommit is an optional application-owned release
+	// qualification seam. The native PostgreSQL repository invokes it after
+	// validating every activation proof and immediately before its target CAS.
+	BeforeNativeActivationCommit deploymentpostgres.ActivationPreCommitHook
 	// BootstrapPolicies is the durable one-shot first-activation policy store.
 	// It is intentionally separate from approvals and active-generation
 	// snapshots; composition supplies the access-role/credential and
@@ -403,6 +408,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		var coordinatorErr error
 		coordinator, coordinatorErr = newNativeCoordinator(config.Persistence.Repository, config.InstanceID, config.InstanceEnvironment, nativeCoordinatorCapabilities{
 			events: config.NativeDeliveryEvents, audit: config.NativeDeliveryAudit, workflow: config.NativeDeliveryWorkflow, operations: config.NativeOperationAuthority,
+			beforeActivationCommit: config.BeforeNativeActivationCommit,
 		})
 		if coordinatorErr != nil {
 			return nil, coordinatorErr
