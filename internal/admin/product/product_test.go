@@ -9,23 +9,15 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"path/filepath"
+	"sync"
 	"testing"
-
-	"github.com/flidai/leapview/internal/platform"
+	"time"
 )
 
 func TestServicePersistsIdentityLogoAndAtomicAudit(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO principals (id, email, display_name) VALUES ('principal_admin', 'admin@example.test', 'Admin')`); err != nil {
-		t.Fatal(err)
-	}
+	store := newMemoryStorage()
 	blobs := &memoryBlobs{values: map[string][]byte{}}
-	service, err := NewLegacySQLite(store.SQLDB(), blobs)
+	service, err := NewWithStorage(store, blobs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -69,12 +61,8 @@ func TestServicePersistsIdentityLogoAndAtomicAudit(t *testing.T) {
 		t.Fatalf("opened logo metadata=%#v bytes=%d", logo, len(got))
 	}
 
-	var auditCount int
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE resource_kind = 'product' AND resource_id = 'instance' AND capability = 'RESOURCE_MANAGE' AND principal_id = 'principal_admin'`).Scan(&auditCount); err != nil {
-		t.Fatal(err)
-	}
-	if auditCount != 2 {
-		t.Fatalf("product audit events = %d, want 2", auditCount)
+	if got := store.auditCount(); got != 2 {
+		t.Fatalf("product audit events = %d, want 2", got)
 	}
 
 	reset, err := service.ResetIdentity(t.Context(), withLogo.Revision, Mutation{PrincipalID: "principal_admin", RequestID: "req_3"})
@@ -84,23 +72,15 @@ func TestServicePersistsIdentityLogoAndAtomicAudit(t *testing.T) {
 	if reset.DisplayName != DefaultDisplayName || reset.Logo != nil || reset.Revision != 4 {
 		t.Fatalf("reset identity = %#v", reset)
 	}
-	var resetAction string
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT action FROM audit_events WHERE request_id = 'req_3'`).Scan(&resetAction); err != nil {
-		t.Fatal(err)
-	}
-	if resetAction != "product.identity.reset" {
-		t.Fatalf("reset audit action = %q", resetAction)
+	if got := store.lastAction(); got != "product.identity.reset" {
+		t.Fatalf("reset audit action = %q", got)
 	}
 }
 
 func TestServiceRejectsStaleRevisionAndInvalidLogoWithoutAudit(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := newMemoryStorage()
 	blobs := &memoryBlobs{values: map[string][]byte{}}
-	service, err := NewLegacySQLite(store.SQLDB(), blobs)
+	service, err := NewWithStorage(store, blobs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -120,12 +100,8 @@ func TestServiceRejectsStaleRevisionAndInvalidLogoWithoutAudit(t *testing.T) {
 	if _, err := service.UploadLogo(t.Context(), 1, "image/jpeg", bytes.NewReader(testPNG(t, 2, 2)), Mutation{}); err == nil {
 		t.Fatal("mismatched logo Content-Type succeeded")
 	}
-	var auditCount int
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE resource_kind = 'product'`).Scan(&auditCount); err != nil {
-		t.Fatal(err)
-	}
-	if auditCount != 0 {
-		t.Fatalf("failed mutations wrote %d audit events", auditCount)
+	if got := store.auditCount(); got != 0 {
+		t.Fatalf("failed mutations wrote %d audit events", got)
 	}
 }
 
@@ -166,13 +142,9 @@ func TestInspectLogoRejectsMalformedAndOversizedWebP(t *testing.T) {
 }
 
 func TestServiceRejectsMalformedAndOversizedLogoWithoutPersistenceOrAudit(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	store := newMemoryStorage()
 	blobs := &memoryBlobs{values: map[string][]byte{}}
-	service, err := NewLegacySQLite(store.SQLDB(), blobs)
+	service, err := NewWithStorage(store, blobs)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,12 +190,8 @@ func TestServiceRejectsMalformedAndOversizedLogoWithoutPersistenceOrAudit(t *tes
 		})
 	}
 
-	var auditCount int
-	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT count(*) FROM audit_events WHERE resource_kind = 'product'`).Scan(&auditCount); err != nil {
-		t.Fatal(err)
-	}
-	if auditCount != 0 {
-		t.Fatalf("rejected logo mutations wrote %d audit events", auditCount)
+	if got := store.auditCount(); got != 0 {
+		t.Fatalf("rejected logo mutations wrote %d audit events", got)
 	}
 }
 
@@ -256,6 +224,102 @@ func testWebPVP8XHeader(width, height int) []byte {
 }
 
 type memoryBlobs struct{ values map[string][]byte }
+
+type memoryStorage struct {
+	mu       sync.Mutex
+	identity Identity
+	audit    []MutationRequest
+}
+
+func newMemoryStorage() *memoryStorage {
+	return &memoryStorage{identity: Identity{
+		DisplayName: DefaultDisplayName,
+		Revision:    1,
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+	}}
+}
+
+func (s *memoryStorage) Get(context.Context) (Identity, error) {
+	if s == nil {
+		return Identity{}, ErrInvalid
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneIdentity(s.identity), nil
+}
+
+func (s *memoryStorage) Ping(context.Context) error {
+	if s == nil {
+		return ErrInvalid
+	}
+	return nil
+}
+
+func (s *memoryStorage) Mutate(ctx context.Context, req MutationRequest) (Identity, error) {
+	if s == nil {
+		return Identity{}, ErrInvalid
+	}
+	if req.ExpectedRevision <= 0 {
+		return Identity{}, ErrPrecondition
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.identity.Revision != req.ExpectedRevision {
+		return Identity{}, ErrPrecondition
+	}
+	if req.CheckConcurrency != nil {
+		if err := req.CheckConcurrency(ctx, s.identity.Revision); err != nil {
+			return Identity{}, err
+		}
+	}
+	switch req.Kind {
+	case MutationDisplayName:
+		s.identity.DisplayName = req.DisplayName
+	case MutationLogo:
+		if req.Logo == nil {
+			return Identity{}, ErrInvalid
+		}
+		logo := *req.Logo
+		s.identity.Logo = &logo
+	case MutationDeleteLogo:
+		if s.identity.Logo == nil {
+			return Identity{}, ErrPrecondition
+		}
+		s.identity.Logo = nil
+	case MutationReset:
+		s.identity.DisplayName = DefaultDisplayName
+		s.identity.Logo = nil
+	default:
+		return Identity{}, ErrInvalid
+	}
+	s.identity.Revision++
+	s.identity.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	s.audit = append(s.audit, req)
+	return cloneIdentity(s.identity), nil
+}
+
+func (s *memoryStorage) auditCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.audit)
+}
+
+func (s *memoryStorage) lastAction() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.audit) == 0 {
+		return ""
+	}
+	return s.audit[len(s.audit)-1].Action
+}
+
+func cloneIdentity(identity Identity) Identity {
+	if identity.Logo != nil {
+		logo := *identity.Logo
+		identity.Logo = &logo
+	}
+	return identity
+}
 
 func (s *memoryBlobs) Put(_ context.Context, expected Blob, body io.Reader) (Blob, error) {
 	value, err := io.ReadAll(body)

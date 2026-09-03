@@ -4,22 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
-	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/flidai/leapview/internal/admin/product"
-	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 )
 
 func TestSignalProjectsIdentityAndRedactedStatus(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	service, err := product.NewLegacySQLite(store.SQLDB(), &testBlobs{})
+	service, err := testProductService()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -55,12 +49,7 @@ func TestPayloadExplicitlyClearsRemovedLogo(t *testing.T) {
 }
 
 func TestReadModelMarksControlPlaneUnavailable(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
-	service, err := product.NewLegacySQLite(store.SQLDB(), &testBlobs{})
+	service, err := testProductService()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,4 +74,26 @@ func (testBlobs) Put(context.Context, product.Blob, io.Reader) (product.Blob, er
 
 func (testBlobs) Open(context.Context, string) (io.ReadCloser, error) {
 	return nil, product.ErrNotFound
+}
+
+type testStorage struct {
+	identity product.Identity
+}
+
+func testProductService() (*product.Service, error) {
+	return product.NewWithStorage(testStorage{identity: product.Identity{
+		DisplayName: product.DefaultDisplayName,
+		Revision:    1,
+		UpdatedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+	}}, &testBlobs{})
+}
+
+func (s testStorage) Get(context.Context) (product.Identity, error) {
+	return s.identity, nil
+}
+
+func (s testStorage) Ping(context.Context) error { return nil }
+
+func (s testStorage) Mutate(context.Context, product.MutationRequest) (product.Identity, error) {
+	return s.identity, nil
 }

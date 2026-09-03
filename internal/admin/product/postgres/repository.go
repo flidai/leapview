@@ -69,9 +69,9 @@ func NewWithOptions(db DBTX, options Options) (*Repository, error) {
 }
 
 // PostgreSQLAuthority marks this repository as the native product identity
-// authority.  Native admin composition uses the marker together with
-// Configured so a generic product.Storage cannot silently select SQLite or
-// another non-PostgreSQL implementation.
+// authority. Native admin composition uses the marker together with
+// Configured so a generic product.Storage cannot silently select an
+// unsupported persistence implementation.
 func (*Repository) PostgreSQLAuthority() {}
 
 // Configured reports whether the repository has a native PostgreSQL handle.

@@ -7,7 +7,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -79,19 +78,6 @@ type Service struct {
 	storage  Storage
 	blobs    BlobStore
 	commands CommandExecutor
-}
-
-// NewLegacySQLite is the explicit compatibility constructor for the
-// historical embedded SQLite product store. Production composition should use
-// NewWithStorage with the native PostgreSQL repository.
-func NewLegacySQLite(db *sql.DB, blobs BlobStore) (*Service, error) {
-	if db == nil {
-		return nil, fmt.Errorf("product identity database is required")
-	}
-	if blobs == nil {
-		return nil, fmt.Errorf("product logo blob store is required")
-	}
-	return &Service{storage: newSQLiteStorage(db), blobs: blobs}, nil
 }
 
 func NewWithStorage(storage Storage, blobs BlobStore) (*Service, error) {
@@ -207,8 +193,8 @@ func (s *Service) mutate(ctx context.Context, expectedRevision int64, mutation M
 	}
 	// API command idempotency/replay is resolved by the command executor before
 	// this callback. The callback delegates to the configured storage boundary;
-	// a native PostgreSQL storage owns exactly one pgx transaction, so no
-	// legacy SQLite transaction can wrap a production mutation.
+	// the native PostgreSQL storage owns exactly one pgx transaction for a
+	// production mutation.
 	var identity Identity
 	err := s.commands.Execute(ctx, operationID, apigencommand.Execution{
 		Transactional: func(ctx context.Context, contract apigencommand.Contract) error {
@@ -261,19 +247,4 @@ func inspectLogo(contentType string, raw []byte) (Logo, error) {
 	}
 	digest := sha256.Sum256(raw)
 	return Logo{SHA256: hex.EncodeToString(digest[:]), MediaType: mediaType, SizeBytes: int64(len(raw)), Width: config.Width, Height: config.Height}, nil
-}
-
-type scanner interface{ Scan(...any) error }
-
-func scanIdentity(row scanner) (Identity, error) {
-	var identity Identity
-	var digest, mediaType sql.NullString
-	var size, width, height sql.NullInt64
-	if err := row.Scan(&identity.DisplayName, &digest, &mediaType, &size, &width, &height, &identity.Revision, &identity.UpdatedAt); err != nil {
-		return Identity{}, err
-	}
-	if digest.Valid {
-		identity.Logo = &Logo{SHA256: digest.String, MediaType: mediaType.String, SizeBytes: size.Int64, Width: int(width.Int64), Height: int(height.Int64)}
-	}
-	return identity, nil
 }

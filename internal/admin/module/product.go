@@ -1,7 +1,6 @@
 package module
 
 import (
-	"database/sql"
 	"errors"
 	"net/http"
 
@@ -46,14 +45,10 @@ type postgresProductStorage interface {
 	Configured() bool
 }
 
-func NewLegacySQLiteProductService(database *sql.DB, blobs ProductBlobStore) (*ProductService, error) {
-	return product.NewLegacySQLite(database, blobs)
-}
-
 // NewProductServiceWithStorage wires the module to a product-owned storage
-// abstraction. Production composition should pass the native PostgreSQL
-// repository here; SQLite remains available only through
-// NewLegacySQLiteProductService.
+// abstraction. Production composition requires the native PostgreSQL
+// repository so another persistence implementation cannot be selected by
+// accident.
 func NewProductServiceWithStorage(storage product.Storage, blobs ProductBlobStore) (*ProductService, error) {
 	authority, ok := storage.(postgresProductStorage)
 	if !ok {
