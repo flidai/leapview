@@ -122,7 +122,7 @@ func Refresh(ctx context.Context, executor Executor, sources ModelTablePlanner, 
 		return time.Time{}, fmt.Errorf("materialization executor is required")
 	}
 	if sources == nil {
-		return time.Time{}, fmt.Errorf("model table planner is required")
+		return time.Time{}, fmt.Errorf("model materialization planner is required")
 	}
 	if err := ModelTables(ctx, executor, sources, model); err != nil {
 		return time.Time{}, err
@@ -135,7 +135,7 @@ func RefreshModelTables(ctx context.Context, executor Executor, sources ModelTab
 		return time.Time{}, fmt.Errorf("materialization executor is required")
 	}
 	if sources == nil {
-		return time.Time{}, fmt.Errorf("model table planner is required")
+		return time.Time{}, fmt.Errorf("model materialization planner is required")
 	}
 	if err := ModelTablesNamed(ctx, executor, sources, model, tableNames); err != nil {
 		return time.Time{}, err
@@ -222,7 +222,7 @@ func ModelTables(ctx context.Context, executor Executor, sources ModelTablePlann
 		return fmt.Errorf("materialization executor is required")
 	}
 	if sources == nil {
-		return fmt.Errorf("model table planner is required")
+		return fmt.Errorf("model materialization planner is required")
 	}
 	order, err := ModelTableOrder(model)
 	if err != nil {
@@ -236,7 +236,7 @@ func ModelTablesNamed(ctx context.Context, executor Executor, sources ModelTable
 		return fmt.Errorf("materialization executor is required")
 	}
 	if sources == nil {
-		return fmt.Errorf("model table planner is required")
+		return fmt.Errorf("model materialization planner is required")
 	}
 	if model == nil {
 		return fmt.Errorf("semantic model is required")
@@ -270,7 +270,7 @@ func selectedModelTableOrder(model *semanticmodel.Model, tableNames []string) ([
 			return nil, err
 		}
 		if _, ok := model.Tables[name]; !ok {
-			return nil, fmt.Errorf("unknown model table %q", name)
+			return nil, fmt.Errorf("unknown Model %q", name)
 		}
 		selected[name] = struct{}{}
 	}
@@ -289,7 +289,7 @@ func selectedModelTableOrder(model *semanticmodel.Model, tableNames []string) ([
 			return nil
 		}
 		if visiting[name] {
-			return fmt.Errorf("model table dependency cycle includes %q", name)
+			return fmt.Errorf("Model dependency cycle includes %q", name)
 		}
 		visiting[name] = true
 		dependencies := append([]string(nil), model.Tables[name].ModelDependencies...)
@@ -318,7 +318,7 @@ func selectedModelTableOrder(model *semanticmodel.Model, tableNames []string) ([
 func ModelTableDependencyOrder(model *semanticmodel.Model, selectedTable string) ([]string, error) {
 	selectedTable = strings.TrimSpace(selectedTable)
 	if selectedTable == "" {
-		return nil, fmt.Errorf("model table is required")
+		return nil, fmt.Errorf("Model is required")
 	}
 	if model == nil {
 		return nil, fmt.Errorf("semantic model is required")
@@ -332,11 +332,11 @@ func ModelTableDependencyOrder(model *semanticmodel.Model, selectedTable string)
 			return nil
 		}
 		if temporary[name] {
-			return fmt.Errorf("model table dependency cycle includes %q", name)
+			return fmt.Errorf("Model dependency cycle includes %q", name)
 		}
 		table, ok := model.Tables[name]
 		if !ok {
-			return fmt.Errorf("unknown model table %q", name)
+			return fmt.Errorf("unknown Model %q", name)
 		}
 		temporary[name] = true
 		for _, dependency := range table.ModelDependencies {
@@ -362,7 +362,7 @@ func materializeModelTable(ctx context.Context, executor Executor, sources Model
 		return err
 	}
 	if plan.SQL == "" {
-		return fmt.Errorf("model table %q produced empty materialization SQL", name)
+		return fmt.Errorf("Model %q produced empty materialization SQL", name)
 	}
 	if err := executor.Exec(ctx, plan.SQL); err != nil {
 		return fmt.Errorf("materializing model.%s: %w", name, err)
@@ -383,11 +383,11 @@ func ModelTableOrder(model *semanticmodel.Model) ([]string, error) {
 			return nil
 		}
 		if temporary[name] {
-			return fmt.Errorf("model table dependency cycle includes %q", name)
+			return fmt.Errorf("Model dependency cycle includes %q", name)
 		}
 		table, ok := model.Tables[name]
 		if !ok {
-			return fmt.Errorf("unknown model table %q", name)
+			return fmt.Errorf("unknown Model %q", name)
 		}
 		temporary[name] = true
 		for _, dependency := range table.ModelDependencies {

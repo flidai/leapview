@@ -25,7 +25,7 @@ type Plan struct {
 	SemanticModelID  projectgraph.ResourceID
 	Tables           []string
 	DependencyTables []string
-	// MaterializationScope is the exact ordered model-table closure selected
+	// MaterializationScope is the exact ordered Model closure selected
 	// by the pipeline. It is intentionally distinct from downstream/dashboard
 	// scope and is preserved through delivery planning.
 	MaterializationScope []string
@@ -177,7 +177,7 @@ func modelTableOrder(model *semanticmodel.Model, modelTables map[string]semantic
 		return nil, err
 	}
 	// Semantic dataset names are aliases. Refresh execution is project-scoped
-	// and therefore orders the physical authored Model tables, deduplicating
+	// and therefore orders the physical authored Models, deduplicating
 	// aliases that point at the same Model.
 	roots := map[string]struct{}{}
 	for _, name := range compiled.DatasetNames() {
@@ -197,7 +197,7 @@ func modelTableOrder(model *semanticmodel.Model, modelTables map[string]semantic
 			return nil
 		}
 		if temporary[name] {
-			return fmt.Errorf("model table dependency cycle includes %q", name)
+			return fmt.Errorf("Model dependency cycle includes %q", name)
 		}
 		table, ok := modelTables[name]
 		if !ok {

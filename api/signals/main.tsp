@@ -1357,7 +1357,7 @@ model DataExploreCommand {
   `filters`: DataExploreFilterSignal[];
   `limit`: int64;
   `metrics`: string[];
-  `modelId`?: string;
+  `semanticModelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
   `sort`: DataExploreSortSignal[];
@@ -1382,11 +1382,10 @@ model DataExploreFieldSignal {
   `compatible`: boolean;
   `compatibilityReason`?: string;
   `description`?: string;
-  `dataset`?: string;
   `id`: string;
   `kind`: "dimension" | "metric";
   `label`: string;
-  `modelTable`: string;
+  `datasetId`: string;
   `rebaseDatasetId`?: string;
   `relationshipPath`?: string[];
   `selected`: boolean;
@@ -1394,7 +1393,7 @@ model DataExploreFieldSignal {
 }
 
 model DataExploreFilterSignal {
-  `dataset`?: string;
+  `datasetId`?: string;
   `field`: string;
   `operator`: string;
   `values`: string[];
@@ -1402,7 +1401,7 @@ model DataExploreFilterSignal {
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "signal", `x-leapview-surface`: "data" })
-model DataExploreModelSignal {
+model DataExploreSemanticModelSignal {
   `datasets`: DataExploreDatasetSignal[];
   `description`?: string;
   `id`: string;
@@ -1430,10 +1429,10 @@ model DataExploreSignal {
   `command`: DataExploreCommand;
   `datasets`: DataExploreDatasetSignal[];
   `fields`: DataExploreFieldSignal[];
-  `models`: DataExploreModelSignal[];
+  `semanticModels`: DataExploreSemanticModelSignal[];
   `result`: DataExploreResultSignal;
   `selectedDataset`?: DataExploreDatasetSignal;
-  `selectedModel`?: DataExploreModelSignal;
+  `selectedSemanticModel`?: DataExploreSemanticModelSignal;
 }
 
 model DataExploreSortSignal {
@@ -1458,10 +1457,10 @@ model DataExplorerObjectSignal {
   `grain`?: string;
   `key`: string;
   `layer`: string;
-  `modelId`?: string;
+  `semanticModelId`?: string;
   `rowCountLabel`?: string;
   `source`?: string;
-  `table`?: string;
+  `datasetId`?: string;
   `title`: string;
   `resourceId`: string;
 }

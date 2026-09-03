@@ -128,13 +128,13 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 }
 
 func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, start, count int64, includeTotal bool) (dataquery.Query, error) {
-	modelID := strings.TrimSpace(projectsignals.ValueOrZero(object.ModelID))
-	table := strings.TrimSpace(projectsignals.ValueOrZero(object.Table))
-	if object.Layer != "model_table" {
+	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(object.SemanticModelID))
+	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(object.DatasetID))
+	if object.Layer != "model" {
 		return dataquery.Query{}, fmt.Errorf("data preview is not supported for %s resources", object.Layer)
 	}
-	if modelID == "" || table == "" {
-		return dataquery.Query{}, fmt.Errorf("model table preview target is incomplete")
+	if semanticModelID == "" || datasetID == "" {
+		return dataquery.Query{}, fmt.Errorf("model preview target is incomplete")
 	}
 	columnNames := make([]string, 0, len(columns))
 	for _, column := range columns {
@@ -146,7 +146,7 @@ func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projects
 	if column := strings.TrimSpace(projectsignals.ValueOrZero(command.Sort.Column)); column != "" {
 		sortSpec = append(sortSpec, dataquery.Sort{Field: column, Direction: projectsignals.ValueOrZero(command.Sort.Direction)})
 	}
-	query := dataquery.ModelTableRows(modelID, table, columnNames, sortSpec, int(start), int(count), includeTotal)
+	query := dataquery.ModelRows(semanticModelID, datasetID, columnNames, sortSpec, int(start), int(count), includeTotal)
 	return query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationPreviewWindow,
 		ObjectType: object.Layer, ObjectID: object.ResourceID,
@@ -262,10 +262,10 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		resultSignal.Error = projectsignals.Pointer("governed exploration execution is unavailable")
 		return command, resultSignal
 	}
-	modelID := strings.TrimSpace(projectsignals.ValueOrZero(command.ModelID))
+	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
 	clearTarget := explorerCommandHasMultiRootMetric(command.Metrics, fieldByID)
-	if modelID == "" || datasetID == "" {
+	if semanticModelID == "" || datasetID == "" {
 		resultSignal.Error = projectsignals.Pointer("semantic exploration target is incomplete")
 		return command, resultSignal
 	}
@@ -284,7 +284,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		for _, value := range filter.Values {
 			values = append(values, value)
 		}
-		filters = append(filters, dataquery.Filter{Field: filter.Field, Dataset: projectsignals.ValueOrZero(filter.Dataset), Operator: filter.Operator, Values: values})
+		filters = append(filters, dataquery.Filter{Field: filter.Field, Dataset: projectsignals.ValueOrZero(filter.DatasetID), Operator: filter.Operator, Values: values})
 	}
 	sortSpec := make([]dataquery.Sort, 0, len(command.Sort))
 	for _, sortSignal := range command.Sort {
@@ -297,13 +297,13 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	if clearTarget {
 		queryTarget = ""
 	}
-	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(command.Limit)+1)
+	query := dataquery.SemanticAggregate(semanticModelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(command.Limit)+1)
 	if command.Time != nil {
 		query.Time = dataquery.Time{Field: command.Time.Field, Grain: command.Time.Grain, Alias: projectsignals.ValueOrZero(command.Time.Alias)}
 	}
 	query = query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationSemanticExplore,
-		ObjectType: "semantic_dataset", ObjectID: modelID + ":" + datasetID,
+		ObjectType: "semantic_dataset", ObjectID: semanticModelID + ":" + datasetID,
 	})
 	executed, err := executor.ExecuteDataQuery(ctx, query)
 	if err != nil {
@@ -334,7 +334,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 func explorerCommandHasMultiRootMetric(metrics []string, fields map[string]projectsignals.DataExploreFieldSignal) bool {
 	for _, id := range metrics {
 		field, ok := fields[id]
-		if ok && field.Kind == "metric" && strings.TrimSpace(field.ModelTable) == "" {
+		if ok && field.Kind == "metric" && strings.TrimSpace(field.DatasetID) == "" {
 			return true
 		}
 	}

@@ -1,6 +1,6 @@
 # Build your first dashboard
 
-The included Sales project is a complete example of the dashboard-as-code workflow. Make and validate a small change there before creating connections, model tables, and semantic models from scratch.
+The included Sales project is a complete example of the dashboard-as-code workflow. Make and validate a small change there before creating connections, Models, and semantic models from scratch.
 
 ## Before you begin
 
@@ -48,7 +48,7 @@ dashboards/dashboards/executive-sales.yaml
 dashboards/access/*.yaml
 ```
 
-Read them from the outside in. The project discovers shared Olist inputs, model tables, the `sales` semantic model, refresh pipelines, dashboards, and access rules from one graph. The dashboard refers to fields and metrics exposed by the `sales` semantic model.
+Read them from the outside in. The project discovers shared Olist inputs, Models, the `sales` semantic model, refresh pipelines, dashboards, and access rules from one graph. The dashboard refers to fields and metrics exposed by the `sales` semantic model.
 
 ## Add a semantic metric
 

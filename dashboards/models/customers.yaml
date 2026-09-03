@@ -4,7 +4,7 @@ metadata:
   id: model:customers
   name: customers
   displayName: Visual Customers
-  description: Customer model table with stable BI-facing customer fields.
+  description: Customer Model with stable BI-facing customer fields.
 spec:
   fields:
     customer_id:

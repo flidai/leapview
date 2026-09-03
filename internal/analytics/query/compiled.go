@@ -808,9 +808,9 @@ func (c *CompiledModel) DatasetNames() []string {
 }
 
 // ResolvePhysicalModelName validates a model transform dependency against the
-// compiled physical Model namespace. Semantic dataset aliases are not accepted
+// compiled model materialization namespace. Semantic dataset aliases are not accepted
 // here: aliases are only valid for selecting a dataset, while transform SQL
-// must retain global physical Model identity.
+// must retain global Model identity.
 func (c *CompiledModel) ResolvePhysicalModelName(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
@@ -826,7 +826,7 @@ func (c *CompiledModel) ResolvePhysicalModelName(name string) (string, error) {
 		if dataset.ModelName() != name {
 			continue
 		}
-		// Multiple aliases bound to one physical ModelName are intentionally
+		// Multiple aliases bound to one ModelName are intentionally
 		// equivalent and therefore remain one valid physical dependency.
 		found = true
 	}

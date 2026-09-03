@@ -59,7 +59,7 @@ func TestPrepareRepresentativePlansReportsDeterministicSchemaFailure(t *testing.
 		}},
 	}
 	_, err := PrepareRepresentativePlans(model, nil)
-	if err == nil || !strings.Contains(err.Error(), `model table "orders" field "id" datatype "Integer" is incompatible`) {
+	if err == nil || !strings.Contains(err.Error(), `semantic dataset "orders" field "id" datatype "Integer" is incompatible`) {
 		t.Fatalf("error = %v, want contextual discovered datatype failure", err)
 	}
 }

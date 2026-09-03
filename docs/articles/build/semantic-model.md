@@ -1,10 +1,10 @@
 # Build a semantic model
 
-Semantic models give dashboards and integrations a shared business vocabulary. Build one after model tables have stable fields and grain; otherwise semantic definitions will hide unresolved data-shaping problems.
+Semantic models give dashboards and integrations a shared business vocabulary. Build one after Models have stable fields and grain; otherwise semantic definitions will hide unresolved data-shaping problems.
 
 ## Before you begin
 
-Materialize each input model table and verify its declared grain, keys, types, and null behavior. Prepare trusted totals for at least one unfiltered question and one dimension-filtered question.
+Refresh each input Model and verify its model materialization, declared grain, keys, types, and null behavior. Prepare trusted totals for at least one unfiltered question and one dimension-filtered question.
 
 Build the model in this sequence:
 
@@ -79,7 +79,7 @@ Set empty-result behavior intentionally. `zero` is appropriate for additive coun
 
 ### Add metrics for derived values
 
-Metrics compose named semantic values. Declare ratios with `type: ratio`, `numerator`, and `denominator`; the governed evaluator applies safe division semantics centrally. If a formula needs row-level conditionals or complex source parsing, move that logic into a model table first.
+Metrics compose named semantic values. Declare ratios with `type: ratio`, `numerator`, and `denominator`; the governed evaluator applies safe division semantics centrally. If a formula needs row-level conditionals or complex source parsing, move that logic into a Model first.
 
 ### Validate relationships
 

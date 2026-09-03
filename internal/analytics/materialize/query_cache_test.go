@@ -2326,7 +2326,7 @@ func (registrar cacheSourceRegistrar) Prepare(context.Context, *semanticmodel.Mo
 }
 
 func (cacheSourceRegistrar) PlanModelTable(context.Context, *semanticmodel.Model, string, semanticmodel.Table) (ModelTablePlan, error) {
-	return ModelTablePlan{}, errors.New("unexpected model table")
+	return ModelTablePlan{}, errors.New("unexpected Model materialization")
 }
 
 type cachePreparedSources struct{ cacheSourceRegistrar }
@@ -2355,7 +2355,7 @@ func TestRuntimeSeparatesConnectionWaitFromDatabaseExecution(t *testing.T) {
 		db: timingRuntimeDatabase{},
 	})
 	result, err := runtime.ExecuteDataQuery(context.Background(), dataquery.Query{
-		ModelID: "sales", Kind: dataquery.KindModelTableRows, Target: "orders",
+		ModelID: "sales", Kind: dataquery.KindModelRows, Target: "orders",
 		Operation: dataquery.OperationDashboardRows,
 		Fields:    []dataquery.Field{{Field: "id"}},
 		Limit:     1,

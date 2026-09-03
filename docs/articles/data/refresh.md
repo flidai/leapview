@@ -33,7 +33,7 @@ At refresh start, LeapView resolves:
 - the target project, instance environment, and active deployment;
 - project-resource source permissions;
 - active managed-data revision pointers and external connection settings;
-- model-table dependency order and transformation SQL;
+- Model dependency order and transformation SQL;
 - the current DuckLake catalog and serving-state boundary.
 
 That resolved input should remain consistent for the run. A later project deployment or refresh generation must not silently rewrite the meaning of already running work.
@@ -44,13 +44,13 @@ The expected lifecycle is:
 
 1. Create a refresh run and record its trigger, target generation, immutable plan digest, and materialization scope.
 2. Resolve and validate source bindings.
-3. Execute model-table transformations into isolated replacement state.
+3. Execute Model transformations into isolated replacement state.
 4. Validate schemas and required analytical metadata.
 5. Commit the candidate as a DuckLake snapshot.
 6. Atomically move the project serving pointer for the instance environment to the new state.
 7. Mark the old state as draining and reconcile it later when no query lease protects it.
 
-Queries that began against the previous active snapshot continue using that snapshot for their request. New queries resolve the new pointer after activation. Users never intentionally see a half-refreshed combination of model tables.
+Queries that began against the previous active snapshot continue using that snapshot for their request. New queries resolve the new pointer after activation. Users never intentionally see a half-refreshed combination of Model materializations.
 
 ## Start and observe work
 

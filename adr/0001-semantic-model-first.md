@@ -26,8 +26,8 @@ The browser UI and dashboard YAML query governed semantic models directly. LeapV
 Use one authored path:
 
 - `sources` describe raw physical inputs.
-- `models` describe DuckDB-backed model tables with light preparation.
-- `semantic_models` define tables, fields, relationships, and measures.
+- `models` describe authored transformations with light preparation.
+- `semantic_models` define datasets, fields, relationships, and measures.
 - `dashboards` reference one semantic model and query its fields/measures.
 
 Generated physical serving shapes are internal optimizations. They are not authored dashboard contracts and should not appear as primary authored assets.
@@ -39,9 +39,9 @@ Generated physical serving shapes are internal optimizations. They are not autho
 | Connection | Global data-access configuration. Secrets are never shown. |
 | Source | Raw file/table/object read through a connection. No business semantics. |
 | Model | Light DuckDB preparation over one or more sources. |
-| Model table | Semantic table exposed by a semantic model. |
-| Field | Groupable/filterable semantic field on a model table. |
-| Relationship | Governed join path between model tables. |
+| Semantic dataset | Named dataset exposed by a semantic model and bound to a project Model. |
+| Field | Groupable/filterable semantic field on a semantic dataset. |
+| Relationship | Governed join path between semantic datasets. |
 | Measure | Governed typed atomic aggregate owned by one fact table. |
 | Metric | Governed arithmetic expression over measures and other metrics. |
 | Semantic model | The governed business model used by dashboards. |

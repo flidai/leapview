@@ -85,7 +85,7 @@ func PlanProjectAgainstGraph(projectPath string, active projectgraph.ProjectGrap
 // PlanProjectAgainstArtifact compares authored definitions with the exact
 // compiled artifact retained by the active serving generation. Graph nodes
 // intentionally carry only identity/metadata, so comparing the graph alone
-// cannot detect SQL, source, or model-table changes at an unchanged ID/path.
+// cannot detect SQL, source, or Model materialization changes at an unchanged ID/path.
 func PlanProjectAgainstArtifact(projectPath string, active projectartifact.Project) (ProjectPlan, error) {
 	project, err := LoadProject(projectPath)
 	if err != nil {

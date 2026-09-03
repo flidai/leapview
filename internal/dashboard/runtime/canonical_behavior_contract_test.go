@@ -69,7 +69,7 @@ func (r *canonicalDataRuntime) ExecuteDataQuery(_ context.Context, query dataque
 		return dataquery.Result{}, fmt.Errorf("target %s failed", r.failTarget)
 	}
 	result := dataquery.Result{Rows: append([]dataquery.Row(nil), r.rows...), RowsReturned: len(r.rows), PlanningMS: 1, DatabaseMS: 1, ExecutionMS: 1, Status: dataquery.StatusSuccess, ExecutionState: dataquery.ExecutionSucceeded}
-	if query.Kind == dataquery.KindModelTableRows || query.Kind == dataquery.KindSemanticRows {
+	if query.Kind == dataquery.KindModelRows || query.Kind == dataquery.KindSemanticRows {
 		result.TotalRows = len(r.rows)
 		result.TotalRowsKnown = true
 	}

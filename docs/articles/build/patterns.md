@@ -61,7 +61,7 @@ Keep operational runbooks in documentation and exact machine contracts in genera
 Use this review sequence:
 
 1. Configuration validation for syntax, discovery, and references.
-2. Model-table materialization checks for grain, keys, and types.
+2. Model materialization checks for grain, keys, and types.
 3. Semantic preview, explain, and query checks for business values.
 4. Component checks for shape, sorting, limits, and empty state.
 5. Browser checks for layout, accessibility, and interactions.

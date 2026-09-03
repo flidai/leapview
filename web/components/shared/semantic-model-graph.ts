@@ -26,21 +26,21 @@ import type {
   SemanticModelGraphSignal,
 } from '../../generated/signals'
 
-type ModelNodeData = SemanticModelGraphNodeSignal & Record<string, unknown> & {
+type DatasetNodeData = SemanticModelGraphNodeSignal & Record<string, unknown> & {
   selected: boolean
   dimmed: boolean
   onSelect: (id: string) => void
 }
 
-type ModelEdgeData = SemanticModelGraphEdgeSignal & Record<string, unknown> & {
+type DatasetEdgeData = SemanticModelGraphEdgeSignal & Record<string, unknown> & {
   selected: boolean
   sourceMarker: string
   targetMarker: string
 }
 
 type NodePosition = { x: number; y: number }
-type ModelNode = Node<ModelNodeData, 'modelTable'>
-type ModelEdge = Edge<ModelEdgeData, 'relationship'>
+type DatasetNode = Node<DatasetNodeData, 'dataset'>
+type DatasetEdge = Edge<DatasetEdgeData, 'relationship'>
 
 const NODE_WIDTH = 280
 const HEADER_HEIGHT = 40
@@ -135,7 +135,7 @@ function SemanticModelGraphFlow({
   onLayoutReset: () => void
 }) {
   const [selectedID, setSelectedID] = React.useState<string | undefined>(() => selectedNodeID(graph.nodes))
-  const [nodes, setNodes, onNodesChange] = useNodesState<ModelNode>([])
+  const [nodes, setNodes, onNodesChange] = useNodesState<DatasetNode>([])
 
   const selectedEdges = React.useMemo(() => relatedEdgeIDs(graph.edges, selectedID), [graph.edges, selectedID])
 
@@ -160,7 +160,7 @@ function SemanticModelGraphFlow({
 
   const edges = React.useMemo(() => graph.edges.map((edge) => toFlowEdge(edge, selectedEdges)), [graph.edges, selectedEdges])
 
-  const saveDraggedLayout = React.useCallback((_event: unknown, node: ModelNode) => {
+  const saveDraggedLayout = React.useCallback((_event: unknown, node: DatasetNode) => {
     const next = new Map(nodes.map((current) => [current.id, current.position] as [string, NodePosition]))
     next.set(node.id, node.position)
     onLayoutChange(next)
@@ -174,13 +174,13 @@ function SemanticModelGraphFlow({
   return React.createElement(
     'div',
     { className: 'semantic-model-graph-layout' },
-    React.createElement(ReactFlow<ModelNode, ModelEdge>, {
+    React.createElement(ReactFlow<DatasetNode, DatasetEdge>, {
       key: layoutKey,
       nodes,
       edges,
       onNodesChange,
       onNodeDragStop: saveDraggedLayout,
-      nodeTypes: { modelTable: ModelTableNode },
+      nodeTypes: { dataset: DatasetNodeComponent },
       edgeTypes: { relationship: RelationshipEdge },
       fitView: true,
       fitViewOptions: { padding: 0.12 },
@@ -230,11 +230,11 @@ function toFlowNode(
   selectedEdges: Set<string>,
   manualPositions: Map<string, NodePosition>,
   onSelect: (id: string) => void,
-): ModelNode {
-  const position = manualPositions.get(node.id) ?? modelNodePosition(node, graph)
+): DatasetNode {
+  const position = manualPositions.get(node.id) ?? datasetNodePosition(node, graph)
   return {
     id: node.id,
-    type: 'modelTable',
+    type: 'dataset',
     position,
     sourcePosition: Position.Right,
     targetPosition: Position.Left,
@@ -251,8 +251,8 @@ function nodeDimmed(id: string, edges: SemanticModelGraphEdgeSignal[], selectedI
   return Boolean(selectedID && id !== selectedID && !edges.some((edge) => selectedEdges.has(edge.id) && (edge.source === id || edge.target === id)))
 }
 
-function modelNodePosition(node: SemanticModelGraphNodeSignal, graph: SemanticModelGraphSignal): { x: number; y: number } {
-  const ranks = modelNodeRanks(graph)
+function datasetNodePosition(node: SemanticModelGraphNodeSignal, graph: SemanticModelGraphSignal): { x: number; y: number } {
+  const ranks = datasetNodeRanks(graph)
   const rank = ranks.get(node.id) ?? 0
   const rankNodes = graph.nodes
     .filter((candidate) => (ranks.get(candidate.id) ?? 0) === rank)
@@ -267,7 +267,7 @@ function modelNodePosition(node: SemanticModelGraphNodeSignal, graph: SemanticMo
   }
 }
 
-function modelNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
+function datasetNodeRanks(graph: SemanticModelGraphSignal): Map<string, number> {
   const ranks = new Map<string, number>()
   const nodeIDs = new Set(graph.nodes.map((node) => node.id))
   const incoming = new Map(graph.nodes.map((node) => [node.id, 0]))
@@ -309,7 +309,7 @@ function nodeHeight(node: SemanticModelGraphNodeSignal): number {
   return HEADER_HEIGHT + BADGE_HEIGHT + Math.max(1, node.fields.length) * FIELD_HEIGHT + 12
 }
 
-function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedEdges: Set<string>): ModelEdge {
+function toFlowEdge(edge: SemanticModelGraphEdgeSignal, selectedEdges: Set<string>): DatasetEdge {
   const selected = selectedEdges.size === 0 || selectedEdges.has(edge.id)
   const [sourceMarker, targetMarker] = relationshipEndpointMarkers(edge.cardinality)
   return {
@@ -336,7 +336,7 @@ function endpointAnchorField(fields: string): string {
   return fields.split(',')[0]?.trim() ?? fields.trim()
 }
 
-function RelationshipEdge(props: EdgeProps<ModelEdge>) {
+function RelationshipEdge(props: EdgeProps<DatasetEdge>) {
   const [path, labelX, labelY] = getBezierPath(props)
   const data = props.data
   const style = props.style ?? {}
@@ -416,7 +416,7 @@ function clearLayout(key: string): void {
   }
 }
 
-function ModelTableNode({ data }: { data: ModelNodeData }) {
+function DatasetNodeComponent({ data }: { data: DatasetNodeData }) {
   const className = [
     'semantic-model-node',
     data.selected ? 'semantic-model-node-selected' : '',
@@ -429,7 +429,7 @@ function ModelTableNode({ data }: { data: ModelNodeData }) {
       className,
       role: 'button',
       tabIndex: 0,
-      'aria-label': `Model table ${data.title}`,
+      'aria-label': `Dataset ${data.title}`,
       'aria-pressed': data.selected ? 'true' : 'false',
       onClick: select,
       onKeyDown: (event: React.KeyboardEvent) => {
@@ -440,7 +440,7 @@ function ModelTableNode({ data }: { data: ModelNodeData }) {
     },
     React.createElement('div', { className: 'semantic-model-node-header' },
 		React.createElement('div', { className: 'semantic-model-node-title', title: data.title },
-			iconElement(Table2, 'semantic-model-table-icon'),
+			iconElement(Table2, 'semantic-dataset-icon'),
 			React.createElement('span', null, data.title),
 		),
 	),
@@ -786,7 +786,7 @@ const semanticModelGraphStyles = `
     padding: 3px 6px;
   }
 
-  lv-semantic-model-graph .semantic-model-table-icon {
+  lv-semantic-model-graph .semantic-dataset-icon {
     flex: 0 0 auto;
     color: var(--lv-fg-muted);
   }

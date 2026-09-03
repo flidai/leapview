@@ -735,24 +735,24 @@ func normalizeImportedGraph(value *semanticmodel.Model) error {
 		for field, column := range table.Columns {
 			dimension, ok := table.Dimensions[field]
 			if !ok {
-				return fmt.Errorf("Ossie dataset %q Model field %q is missing from the existing Model semantic fields", name, field)
+				return fmt.Errorf("Ossie dataset %q field %q is missing from the existing semantic fields", name, field)
 			}
 			dimension.Name, dimension.Field, dimension.Table = field, name+"."+field, name
 			if column.Datatype != "" && dimension.Datatype != "" && column.Datatype != dimension.Datatype {
-				return fmt.Errorf("Ossie dataset %q Model field %q column datatype %q disagrees with semantic field datatype %q", name, field, column.Datatype, dimension.Datatype)
+				return fmt.Errorf("Ossie dataset %q field %q column datatype %q disagrees with semantic field datatype %q", name, field, column.Datatype, dimension.Datatype)
 			}
 			if column.Datatype != "" && dimension.Datatype == "" {
-				return fmt.Errorf("Ossie dataset %q Model field %q semantic field is missing logical datatype", name, field)
+				return fmt.Errorf("Ossie dataset %q field %q semantic field is missing logical datatype", name, field)
 			}
 			if dimension.Datatype != "" && dimension.Type != "" && nativeDimensionType(dimension.Datatype) != dimension.Type {
-				return fmt.Errorf("Ossie dataset %q Model field %q semantic type %q disagrees with logical datatype %q", name, field, dimension.Type, dimension.Datatype)
+				return fmt.Errorf("Ossie dataset %q field %q semantic type %q disagrees with logical datatype %q", name, field, dimension.Type, dimension.Datatype)
 			}
 			table.Dimensions[field] = dimension
 		}
 		for entityName, entity := range table.Entities {
 			for _, field := range entity.Fields {
 				if _, ok := table.Dimensions[field]; !ok {
-					return fmt.Errorf("Ossie dataset %q Model entity %q field %q is missing from the existing Model semantic fields", name, entityName, field)
+					return fmt.Errorf("Ossie dataset %q entity %q field %q is missing from the existing semantic fields", name, entityName, field)
 				}
 			}
 		}
@@ -1005,7 +1005,7 @@ func validateNativeForExport(value *semanticmodel.Model) error {
 				continue
 			}
 			if column.Datatype == "" {
-				return fmt.Errorf("native semantic model table %q column %q has no semantic field metadata", name, field)
+				return fmt.Errorf("native semantic dataset %q column %q has no semantic field metadata", name, field)
 			}
 			copied.Dimensions[field] = semanticmodel.MetricDimension{Name: field, Field: name + "." + field, Table: name, Type: nativeDimensionType(column.Datatype), Datatype: column.Datatype}
 		}
@@ -1209,7 +1209,7 @@ func exportDocument(value *semanticmodel.Model) (Document, error) {
 		}
 		table, ok := value.Tables[name]
 		if !ok {
-			return Document{}, fmt.Errorf("dataset %q has no bound project Model table", name)
+			return Document{}, fmt.Errorf("dataset %q has no bound project Model", name)
 		}
 		converted := Dataset{Name: name, Source: dataset.Model, Description: dataset.Description, AIContext: toAIContext(dataset.AIContext)}
 		if converted.Description == "" {

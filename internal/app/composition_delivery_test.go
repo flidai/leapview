@@ -115,7 +115,7 @@ func TestDeliveryMaterializationDeltaSelectsOnlyImpactedTables(t *testing.T) {
 		t.Fatal("known model/table changes widened to full refresh")
 	}
 	if got, want := changed["semantic:sales"], []string{"customers", "orders"}; len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
-		t.Fatalf("changed model tables = %#v, want %#v", got, want)
+		t.Fatalf("changed Models = %#v, want %#v", got, want)
 	}
 	if len(removed) != 1 || removed[0] != "legacy" {
 		t.Fatalf("removed tables = %#v, want [legacy]", removed)

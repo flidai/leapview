@@ -11,7 +11,7 @@ import (
 
 func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	explorer := uisignals.DataExplorerSignal{Explore: uisignals.DataExploreSignal{Command: uisignals.DataExploreCommand{
-		ModelID: uisignals.Pointer("commerce"), DatasetID: uisignals.Pointer("orders"),
+		SemanticModelID: uisignals.Pointer("commerce"), DatasetID: uisignals.Pointer("orders"),
 		Dimensions: []string{"orders.status"}, Metrics: []string{"order_count"},
 		Filters: []uisignals.DataExploreFilterSignal{}, Sort: []uisignals.DataExploreSortSignal{}, Limit: 100,
 	}}}
@@ -34,7 +34,7 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 
 func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
-		ModelID: uisignals.Pointer("semantic:sales"), DatasetID: uisignals.Pointer("orders"),
+		SemanticModelID: uisignals.Pointer("semantic:sales"), DatasetID: uisignals.Pointer("orders"),
 		Dimensions: []string{"orders.month"}, Metrics: []string{"revenue"},
 		Filters: []uisignals.DataExploreFilterSignal{{Field: "orders.state", Operator: "equals", Values: []string{"paid"}}},
 		Sort:    []uisignals.DataExploreSortSignal{{Field: "revenue", Direction: "desc"}},
@@ -51,6 +51,9 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	}
 	if !reflect.DeepEqual(values["dimension"], []string{"orders.month"}) || !reflect.DeepEqual(values["metric"], []string{"revenue"}) || values.Get("limit") != "250" {
 		t.Fatalf("exploration values = %#v", values)
+	}
+	if values.Get("semanticModel") != "semantic:sales" || values.Has("model") {
+		t.Fatalf("semantic model values = %#v", values)
 	}
 	if values.Has("requestSeq") || values.Has("resetVersion") {
 		t.Fatalf("runtime state leaked into updates URL: %#v", values)

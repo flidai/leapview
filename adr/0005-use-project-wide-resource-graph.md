@@ -14,7 +14,7 @@ Related: [Self-service dashboard builder and agent authoring](https://linear.app
 
 ## Context
 
-LeapView currently uses workspaces as mandatory containers for model tables,
+LeapView currently uses workspaces as mandatory containers for Models,
 semantic models, dashboards, pipelines, grants, and data policies. Workspaces
 appear in authored identity, references, routes, authorization, serving state,
 workload admission, and the browser shell.
@@ -104,7 +104,7 @@ it must not be approximated by restoring workspaces.
 The principal dependency path is:
 
 ```text
-Connection -> Source -> Model -> Semantic model -> Dashboard
+Connection -> Source -> Model -> Semantic Model -> Dashboard
                          ^              ^
                          └── Pipeline ──┘
 ```

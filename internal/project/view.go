@@ -197,7 +197,7 @@ func AssetByID(assets []DevelopAssetView, id string) (DevelopAssetView, bool) {
 
 func IsProjectLandingAsset(typ string) bool {
 	switch typ {
-	case string(AssetTypeSource), string(AssetTypeModelTable), string(AssetTypeSemanticModel), string(AssetTypeDashboard), string(AssetTypeRefreshPipeline):
+	case string(AssetTypeSource), string(AssetTypeModel), string(AssetTypeSemanticModel), string(AssetTypeDashboard), string(AssetTypeRefreshPipeline):
 		return true
 	default:
 		return false

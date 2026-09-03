@@ -261,7 +261,7 @@ func (r *Runtime) planOwnedArrowQuery(request dataquery.Query) (plannedArrowQuer
 				}
 			}
 		}
-	case dataquery.KindModelTableRows:
+	case dataquery.KindModelRows:
 		planned.plan, err = r.modelTableQueryPlan(ModelTableQuery{Table: request.Target, Columns: dataquery.FieldNames(request.Fields), Sort: dataQuerySorts(request.Sort), ColumnMasks: dataQueryColumnMasks(request.ColumnMasks), Limit: request.Limit, Offset: request.Offset})
 		if err == nil && request.IncludeTotal {
 			relation, relationErr := r.physicalModelTable(request.Target)

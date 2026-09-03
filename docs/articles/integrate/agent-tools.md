@@ -15,7 +15,7 @@ LeapView exposes one governed tool catalog through built-in chat and the deploym
 | Find version-matched LeapView documentation | `docs_search` |
 | Read a document returned by documentation search | `docs_read` |
 
-The discovery/query/documentation subset does not expose connections, raw sources, model tables, refresh runs, lineage, raw SQL, previews, explanations, filter-value enumeration, page-wide queries, or mutation operations. Dashboard authoring is a separate governed product surface; use the authoring tools or generated headless authoring API when creating a private draft, applying one of its four intents, previewing an exact revision, publishing, forking, or exporting YAML.
+The discovery/query/documentation subset does not expose connections, raw sources, Model data, refresh runs, lineage, raw SQL, previews, explanations, filter-value enumeration, page-wide queries, or mutation operations. Dashboard authoring is a separate governed product surface; use the authoring tools or generated headless authoring API when creating a private draft, applying one of its four intents, previewing an exact revision, publishing, forking, or exporting YAML.
 
 ## Dashboard authoring tools
 

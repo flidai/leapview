@@ -55,11 +55,11 @@ sections:
         type: explanation
         summary: Understand immutable revisions, staging, activation, upload boundaries, and storage ownership.
         source: articles/concepts/managed-data.md
-      - slug: concepts/model-tables
-        title: Model tables
+      - slug: concepts/models
+        title: Models
         type: explanation
-        summary: Materialize reusable analytical tables from source data.
-        source: articles/concepts/model-tables.md
+        summary: Define reusable transformations from governed source data.
+        source: articles/concepts/models.md
       - slug: concepts/semantic-models
         title: Semantic models
         type: explanation
@@ -142,11 +142,11 @@ sections:
         type: how-to
         summary: Add a connection and source definitions to a project.
         source: articles/build/connect-data.md
-      - slug: guides/build/model-tables
-        title: Define model tables
+      - slug: guides/build/models
+        title: Define models
         type: how-to
-        summary: Turn source data into stable analytical tables.
-        source: articles/build/model-tables.md
+        summary: Turn governed source data into stable analytical outputs.
+        source: articles/build/models.md
       - slug: guides/build/semantic-model
         title: Build a semantic model
         type: how-to
@@ -201,7 +201,7 @@ sections:
       - slug: guides/data/refresh
         title: Materialization and refresh
         type: how-to
-        summary: Refresh model tables without disrupting active queries.
+        summary: Refresh model materializations without disrupting active queries.
         source: articles/data/refresh.md
       - slug: guides/data/storage-recovery
         title: Storage and recovery

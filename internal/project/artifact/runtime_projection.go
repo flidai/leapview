@@ -89,7 +89,7 @@ func runtimeModelFromModel(value *semanticmodel.Model) (RuntimeModelProjection, 
 		result.Sources[name] = runtime
 	}
 	for name, table := range value.Tables {
-		if err := validateRuntimeExecution("semantic model table "+name, table.Execution); err != nil {
+		if err := validateRuntimeExecution("semantic dataset "+name, table.Execution); err != nil {
 			return RuntimeModelProjection{}, err
 		}
 		result.Tables[name] = table.Execution

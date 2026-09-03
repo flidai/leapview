@@ -2172,7 +2172,7 @@ test('documentation outlines match the compact DuckDB article navigation treatme
     viewport: { width: 1440, height: 900 },
   })
   try {
-    await page.goto(`${baseURL}/docs/guides/build/model-tables`)
+    await page.goto(`${baseURL}/docs/guides/build/models`)
     const toc = page.locator('lv-site-article-toc')
     expect(await toc.locator('a[data-level="2"]').count()).toBeGreaterThanOrEqual(2)
     expect(await toc.locator('a[data-level="3"]').count()).toBeGreaterThanOrEqual(2)

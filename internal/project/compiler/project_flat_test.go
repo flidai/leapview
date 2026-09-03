@@ -499,7 +499,7 @@ func TestSemanticModelScannerCapturesSourceAndModelDependencies(t *testing.T) {
 }
 
 func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T) {
-	modelTable := func(source string) semanticmodel.Table {
+	newModel := func(source string) semanticmodel.Table {
 		return semanticmodel.Table{
 			Execution:   semanticmodel.ExecutionDefinition{Source: source},
 			Entities:    map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"order_id"}}},
@@ -507,8 +507,8 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 			Dimensions:  map[string]semanticmodel.MetricDimension{"order_id": {Datatype: semanticmodel.DataTypeString}},
 		}
 	}
-	base := modelTable("orders")
-	derived := modelTable("")
+	base := newModel("orders")
+	derived := newModel("")
 	derived.Execution.SQL = "SELECT base.order_id FROM model.base_model AS base JOIN source.orders AS raw ON raw.order_id = base.order_id"
 	project := Project{
 		ID: "project:test", Name: "test",
@@ -527,11 +527,11 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 	if err != nil {
 		t.Fatalf("projectManifest() error = %v", err)
 	}
-	model := manifest.SemanticModels["semantic:sales"]
-	if model == nil {
+	semanticModel := manifest.SemanticModels["semantic:sales"]
+	if semanticModel == nil {
 		t.Fatal("compiled semantic model is missing")
 	}
-	if got, want := model.Tables["derived_alias"].ModelDependencies, []string{"base_model"}; !reflect.DeepEqual(got, want) {
+	if got, want := semanticModel.Tables["derived_alias"].ModelDependencies, []string{"base_model"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("derived alias dependencies = %#v, want %#v", got, want)
 	}
 	invalid := project
@@ -542,7 +542,7 @@ func TestSemanticModelAliasesPreservePhysicalTransformDependencies(t *testing.T)
 	derived = invalid.Models["derived_model"]
 	derived.Execution.SQL = strings.Replace(derived.Execution.SQL, "model.base_model", "model.base_alias", 1)
 	invalid.Models["derived_model"] = derived
-	if _, err := projectManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown model table "base_alias"`) {
+	if _, err := projectManifest(invalid); err == nil || !strings.Contains(err.Error(), `unknown Model "base_alias"`) {
 		t.Fatalf("dataset alias in transform dependency error = %v, want unknown physical model", err)
 	}
 }
