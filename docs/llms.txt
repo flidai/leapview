@@ -75,6 +75,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Production configuration](/docs/guides/operate/production-configuration): Configure secrets, storage, auth, and runtime boundaries.
 - [Self-hosting](/docs/guides/operate/self-hosting): Build and run a supported single-node deployment.
 - [Health and observability](/docs/guides/operate/observability): Monitor health, query activity, refreshes, and deployments.
+- [PostgreSQL operations and high availability](/docs/guides/operate/postgresql-operations): Operate named PostgreSQL pools, provider-managed HA, maintenance, and failover validation.
 - [Backup and restore](/docs/guides/operate/backup-restore): Coordinate external PostgreSQL PITR and DuckLake/object-store recovery; LeapView provides no backup archive.
 - [Upgrades and migrations](/docs/guides/operate/upgrades): Plan provider-managed image upgrades and persistent-state migrations with explicit rollback boundaries.
 - [Operate the plan → build → publish delivery contract](/docs/guides/operate/plan-build-publish): Bootstrap an admitted physical pool and operate immutable target-bound delivery.
