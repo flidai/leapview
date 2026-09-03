@@ -378,6 +378,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               lastOpened: lastOpenedAt || '',
             },
             columnTitles: {
+              status: dashboardStatusDescription(dashboard.status),
               updated: formatExactTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
               lastOpened: formatExactTime(lastOpenedAt),
             },
@@ -404,7 +405,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (this.catalogScope === 'mine') {
       return [
         { id: 'name', label: 'Dashboard', width: '41%' },
-        { id: 'status', label: 'Status', width: '22%', render: 'status' as const },
+        { id: 'status', label: 'Status', width: '22%', render: 'quiet-status' as const },
         { id: 'updated', label: 'Updated', width: '16%' },
         { id: 'lastOpened', label: 'Last opened', width: '16%' },
         { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
@@ -413,7 +414,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return [
       { id: 'name', label: 'Dashboard', width: '29%' },
       { id: 'owner', label: 'Owner', width: '17%', render: 'person' as const },
-      { id: 'status', label: 'Status', width: '21%', render: 'status' as const },
+      { id: 'status', label: 'Status', width: '21%', render: 'quiet-status' as const },
       { id: 'updated', label: 'Updated', width: '13%' },
       { id: 'lastOpened', label: 'Last opened', width: '15%' },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
@@ -477,7 +478,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           <dl class="catalog-details-list">
             <dt>Data model</dt><dd>${semanticModelLabel(dashboard.semanticModel)}</dd>
             <dt>Owner</dt><dd>${this.dashboardOwner(dashboard).name || '—'}</dd>
-            <dt>Status</dt><dd>${dashboardStatusLabel(dashboard.status)}</dd>
+            <dt>Status</dt><dd>${dashboardStatusLongLabel(dashboard.status)}</dd>
             <dt>Updated</dt><dd>${formatExactTime(updated) || '—'}</dd>
             <dt>Last opened</dt><dd>${formatExactTime(this.recentDashboardIDs[dashboard.id]) || '—'}</dd>
             <dt>Pages</dt><dd>${dashboard.pageCount}</dd>
@@ -888,9 +889,25 @@ function formatExactTime(value: string | undefined): string {
 
 function dashboardStatusLabel(value: CatalogPageSignal['dashboards'][number]['status']): string {
   switch (value) {
+    case 'private_draft': return 'Draft'
+    case 'unpublished_changes': return 'Changes pending'
+    default: return 'Published'
+  }
+}
+
+function dashboardStatusLongLabel(value: CatalogPageSignal['dashboards'][number]['status']): string {
+  switch (value) {
     case 'private_draft': return 'Private draft'
     case 'unpublished_changes': return 'Unpublished changes'
     default: return 'Published'
+  }
+}
+
+function dashboardStatusDescription(value: CatalogPageSignal['dashboards'][number]['status']): string {
+  switch (value) {
+    case 'private_draft': return 'Private draft — only visible to you until published'
+    case 'unpublished_changes': return 'Unpublished changes — the published version remains live'
+    default: return 'Published — visible to permitted viewers'
   }
 }
 
