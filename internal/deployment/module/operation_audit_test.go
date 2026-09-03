@@ -2,13 +2,10 @@ package module
 
 import (
 	"encoding/json"
-	"path/filepath"
 	"reflect"
 	"testing"
 
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/deployment/api/gen"
-	"github.com/flidai/leapview/internal/platform"
 )
 
 func TestBuildDeploymentAuditIntentUsesGeneratedLifecyclePayloads(t *testing.T) {
@@ -62,82 +59,6 @@ func TestBuildDeploymentAuditIntentUsesGeneratedLifecyclePayloads(t *testing.T) 
 				t.Fatalf("aggregate sequence = %d, want %d", intent.AggregateSequence, test.sequence)
 			}
 		})
-	}
-}
-
-func TestDeploymentLifecycleAuditSequencesAreAllocatedInOrder(t *testing.T) {
-	ctx := t.Context()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "audit.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	audit := accesssqlite.NewRepository(store.SQLDB())
-
-	for _, operation := range []string{
-		string(gen.GenOperationCreateDeployment),
-		string(gen.GenOperationActivateDeployment),
-		string(gen.GenOperationCancelDeployment),
-	} {
-		status := "queued"
-		if operation == string(gen.GenOperationCancelDeployment) {
-			status = "cancelled"
-		}
-		intent, err := buildDeploymentAuditIntent(deploymentAuditCommandInput{
-			OperationID: operation, ProjectID: "project-1", DeploymentID: "deployment-1", ReleaseID: "release-1",
-			IdempotencyKey: operation, PrincipalID: "principal-1", Status: status,
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
-		tx, err := store.SQLDB().BeginTx(ctx, nil)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := audit.RecordAuditIntent(ctx, tx, intent); err != nil {
-			_ = tx.Rollback()
-			t.Fatal(err)
-		}
-		if err := tx.Commit(); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	rows, err := store.SQLDB().QueryContext(ctx, `
-		SELECT operation, aggregate_sequence
-		FROM audit_outbox
-		WHERE aggregate_key = ?
-		ORDER BY aggregate_sequence`, "deployment:deployment-1")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer rows.Close()
-	want := []struct {
-		operation string
-		sequence  int64
-	}{
-		{string(gen.GenOperationCreateDeployment), 1},
-		{string(gen.GenOperationActivateDeployment), 2},
-		{string(gen.GenOperationCancelDeployment), 3},
-	}
-	for _, expected := range want {
-		if !rows.Next() {
-			t.Fatalf("missing audit row for %s", expected.operation)
-		}
-		var operation string
-		var sequence int64
-		if err := rows.Scan(&operation, &sequence); err != nil {
-			t.Fatal(err)
-		}
-		if operation != expected.operation || sequence != expected.sequence {
-			t.Fatalf("audit row = %s/%d, want %s/%d", operation, sequence, expected.operation, expected.sequence)
-		}
-	}
-	if rows.Next() {
-		t.Fatal("unexpected additional lifecycle audit row")
-	}
-	if err := rows.Err(); err != nil {
-		t.Fatal(err)
 	}
 }
 

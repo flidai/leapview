@@ -11,7 +11,7 @@ import (
 // immutableArtifactValidator adapts the native serving-state reader to the
 // release service's narrow validation contract. Both rows are read from the
 // same immutable authority and their identities/digests are checked together;
-// no legacy validation or artifact-store mutation is reachable here.
+// no compatibility validation or artifact-store mutation is reachable here.
 type immutableArtifactValidator struct {
 	reader ServingStateReader
 }

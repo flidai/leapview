@@ -56,8 +56,8 @@ type PostgresCatalogConfig struct {
 
 // PostgresCatalog adapts capability-neutral project and binding authorities
 // to release.CatalogRepository. It contains no database handle and imports no
-// SQLite, file, or sibling storage package; concrete PostgreSQL wrappers own
-// those details in the application-owned releasecatalog adapter package.
+// sibling storage package; concrete PostgreSQL wrappers own those details in
+// the application-owned releasecatalog adapter package.
 type PostgresCatalog struct {
 	projects           ProjectIdentityAuthority
 	bindings           ConnectionBindingAuthority

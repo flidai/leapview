@@ -1,8 +1,8 @@
 package module
 
-// Native delivery contracts intentionally stop at the module boundary.  They
-// carry PostgreSQL delivery identities as UUID values and do not expose the
-// legacy DeliveryLifecycle, file-catalog, or SQLite candidate models.  The
+// Native delivery contracts intentionally stop at the module boundary. They
+// carry PostgreSQL delivery identities as UUID values and do not expose
+// compatibility lifecycle, file-catalog, or candidate models. The
 // application composition root can therefore assemble compiler/physical
 // build work independently and inject one implementation here.
 
@@ -33,7 +33,7 @@ type NativeDeliveryMutationPort interface {
 // NativeDeliveryCommandCompleter is optional for ports used outside the
 // generated HTTP transport. Production ports should implement it so the
 // APIGen command guard can verify native event/audit evidence without forcing
-// the module to depend on a legacy delivery reader.
+// the module to depend on a compatibility delivery reader.
 type NativeDeliveryCommandCompleter interface {
 	CompleteNativePlanCommand(context.Context, NativeDeliveryPlan) error
 	CompleteNativeBuildCommand(context.Context, NativeDeliveryBuild) error

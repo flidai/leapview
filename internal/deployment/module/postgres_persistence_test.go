@@ -138,7 +138,7 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 			return NativeDeliveryBuild{}, nil
 		},
 	}
-	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: nativeMutations, API: APIConfig{Releases: &publishReleaseStub{}}})
+	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: nativeMutations})
 	if err != nil {
 		t.Fatal(err)
 	}

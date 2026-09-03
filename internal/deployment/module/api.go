@@ -75,7 +75,7 @@ type APIConfig struct {
 	Workflow  jobplatform.WorkflowRecorder
 	Committer jobs.WorkflowCommitter
 	// AuditedCommitter is the explicit durable-audit workflow port. Build fills
-	// it from Workflow when it owns the SQLite transaction, or validates an
+	// it from Workflow when it owns the transaction, or validates an
 	// injected implementation when durable auditing is configured.
 	AuditedCommitter AuditedWorkflowCommitter
 }

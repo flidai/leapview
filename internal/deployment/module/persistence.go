@@ -2,104 +2,25 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
-	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
-	jobplatform "github.com/flidai/leapview/internal/platform/jobs"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 )
 
-// SQLitePersistenceConfig contains the complete explicit local/evaluation
-// adapter construction inputs. Build never infers SQLite from a raw database
-// handle; callers must construct this bundle deliberately.
-type SQLitePersistenceConfig struct {
-	Database  *sql.DB
-	Releases  ReleasePort
-	Workflow  jobplatform.WorkflowRecorder
-	CancelJob jobplatform.WorkflowJobCanceller
-	Audit     access.AuditIntentRecorder
-}
-
-// NewSQLiteBootstrapPersistence constructs the durable bootstrap policy and
-// project claim ports owned by the deployment module. Callers receive
-// contracts only; the SQLite adapter never crosses the module boundary.
-func NewSQLiteBootstrapPersistence(database *sql.DB) (BootstrapPersistence, error) {
-	if database == nil {
-		return nil, errors.New("SQLite deployment database is required")
-	}
-	return deploymentsqlite.NewRepositoryWithHooks(database, deploymentsqlite.ActivationHooks{}), nil
-}
-
-// NewSQLitePersistence constructs the full local/evaluation deployment
-// authority bundle. The concrete SQLite repositories remain private to this
-// module; Build consumes the typed bundle rather than selecting an adapter
-// from Config.Database/LegacySQLite flags.
-func NewSQLitePersistence(config SQLitePersistenceConfig) (Persistence, error) {
-	if config.Database == nil {
-		return Persistence{}, errors.New("SQLite deployment database is required")
-	}
-	repository, activation, candidates, approvals := newPersistence(
-		config.Database, config.Releases, config.Workflow,
-		config.CancelJob, config.Audit,
-	)
-	return Persistence{
-		Candidates:       nil,
-		ProjectClaims:    nil,
-		DeliveryReader:   nil,
-		Activation:       nil,
-		legacyRepository: repository,
-		legacyActivation: activation,
-		legacyCandidates: candidates,
-		legacyApprovals:  approvals,
-		legacyDatabase:   config.Database,
-		legacyAudit:      config.Audit,
-		backend:          backendSQLite,
-	}, nil
-}
-
-func newPersistence(
-	database *sql.DB,
-	releases ReleasePort,
-	workflow jobplatform.WorkflowRecorder,
-	cancelJob jobplatform.WorkflowJobCanceller,
-	audit access.AuditIntentRecorder,
-) (
-	deployment.Repository,
-	deployment.ActivationUnitOfWork,
-	deployment.CandidateRepository,
-	deployment.ApprovalRepository,
-) {
-	sqliteHooks := deploymentsqlite.ActivationHooks{}
-	sqliteHooks.Audit = audit
-	if releases != nil {
-		sqliteHooks.LinkRelease = func(ctx context.Context, tx transaction.Transaction, input deployment.CreateInput) error {
-			return releases.LinkDeploymentTx(ctx, tx, input.ServingIdentity.ProjectID.String(), input.ID, input.ReleaseID, input.RollbackOf)
-		}
-	}
-	sqliteHooks.RecordWorkflow = workflow
-	sqliteHooks.CancelJob = cancelJob
-	owned := deploymentsqlite.NewRepositoryWithHooks(database, sqliteHooks)
-	return owned, owned, owned, owned
-}
-
 // Persistence is the deployment module's native authority bundle.  It is
 // deliberately constructed only by NewPostgresPersistence: the unexported
-// backend marker and repository identity prevent a database/sql repository (or
-// a test double) from being labelled as the production PostgreSQL authority.
+// authority marker and repository identity prevent a test double from being
+// labelled as the production PostgreSQL authority.
 //
 // The native delivery repository exposes the clean-slate candidate, project
-// claim, delivery-reader, and activation surfaces directly.  These surfaces
-// use PostgreSQL-owned value types and caller-owned pgx transactions; they are
-// not coerced into the legacy deployment HTTP contracts below.
+// claim, delivery-reader, and activation surfaces directly. These surfaces use
+// PostgreSQL-owned value types and caller-owned pgx transactions.
 type Persistence struct {
 	Repository     *deploymentpostgres.Repository
 	Candidates     NativeCandidateRepository
@@ -112,15 +33,7 @@ type Persistence struct {
 	Operations     NativeOperationAuthority
 	Approval       *deploymentpostgres.ApprovalAuthority
 
-	native  *deploymentpostgres.Repository
-	backend persistenceBackend
-
-	legacyRepository deployment.Repository
-	legacyActivation deployment.ActivationUnitOfWork
-	legacyCandidates deployment.CandidateRepository
-	legacyApprovals  deployment.ApprovalRepository
-	legacyDatabase   *sql.DB
-	legacyAudit      access.AuditIntentRecorder
+	native *deploymentpostgres.Repository
 }
 
 // NativePersistenceCapabilities is the complete cross-capability dependency
@@ -275,7 +188,7 @@ type NativeOperationSuccessor struct {
 }
 
 // NativeBuildOperationSuccessorAuthority is optional on the broad operation
-// interface so existing SQLite/evaluation doubles remain unchanged. Native
+// interface so callers that do not need recovery remain small. Native
 // PostgreSQL BuildPlan recovery requires this capability to execute a
 // successor leaf without mutating the public indeterminate operation row.
 type NativeBuildOperationSuccessorAuthority interface {
@@ -355,14 +268,6 @@ type NativeBuildOperationAuthority interface {
 	ConfirmExpiredAttemptTx(context.Context, NativeOperationTx, NativeOperationLease, int64) (NativeOperationRecord, error)
 }
 
-type persistenceBackend uint8
-
-const (
-	backendUnknown persistenceBackend = iota
-	backendSQLite
-	backendPostgres
-)
-
 // NativeProjectClaimRepository is the transactional project-claim surface
 // owned by the PostgreSQL delivery authority.
 type NativeProjectClaimRepository interface {
@@ -371,9 +276,9 @@ type NativeProjectClaimRepository interface {
 }
 
 // NativeCandidateRepository contains only the candidate operations currently
-// implemented by the clean-slate delivery authority.  It intentionally does
-// not implement deployment.CandidateRepository: the latter is the legacy
-// SQLite candidate service and has different identity and lifecycle semantics.
+// implemented by the clean-slate delivery authority. It intentionally does
+// not implement deployment.CandidateRepository, whose identity and lifecycle
+// semantics differ from the native authority.
 type NativeCandidateRepository interface {
 	CreateCandidate(context.Context, deploymentpostgres.CandidateInput) (deploymentpostgres.DeliveryCandidate, error)
 	CreateCandidateTx(context.Context, deploymentpostgres.Tx, deploymentpostgres.CandidateInput) (deploymentpostgres.DeliveryCandidate, error)
@@ -385,9 +290,8 @@ type NativeCandidateRepository interface {
 }
 
 // NativeDeliveryReader is the read-only clean-slate delivery surface.  The
-// legacy deployment.DeliveryReader also includes an operator snapshot that is
-// not yet persisted by the PostgreSQL authority, so no unsafe adapter is
-// provided.
+// deployment.DeliveryReader also includes projections not persisted by the
+// PostgreSQL authority, so no unsafe adapter is provided.
 type NativeDeliveryReader interface {
 	Plan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)
 	LoadPlan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)
@@ -404,8 +308,7 @@ type NativeDeliveryReader interface {
 	LoadPublication(context.Context, string) (deploymentpostgres.DeliveryPublication, error)
 	// OperatorSnapshot is the bounded native operator projection. The
 	// PostgreSQL delivery authority owns target identity and active pointers;
-	// richer SQLite-only retention/lease projections intentionally do not cross
-	// this port.
+	// richer retention/lease projections intentionally do not cross this port.
 	OperatorSnapshot(context.Context, string) (deploymentpostgres.DeliveryOperatorSnapshot, error)
 }
 
@@ -444,14 +347,12 @@ func NewPostgresPersistence(repository *deploymentpostgres.Repository) (Persiste
 		DeliveryReader: repository,
 		Activation:     repository,
 		native:         repository,
-		backend:        backendPostgres,
 	}, nil
 }
 
 // NewPostgresPersistenceWithCapabilities constructs the production authority
 // bundle and fails closed when any transactional consequence port is absent.
-// The legacy constructor remains available for read/build-only tests; Build
-// applies the same strict check whenever Production is enabled.
+// Build applies the same strict check whenever production is enabled.
 func NewPostgresPersistenceWithCapabilities(repository *deploymentpostgres.Repository, capabilities NativePersistenceCapabilities) (Persistence, error) {
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
@@ -465,20 +366,10 @@ func NewPostgresPersistenceWithCapabilities(repository *deploymentpostgres.Repos
 }
 
 func (p Persistence) isPostgres() bool {
-	return p.backend == backendPostgres && p.native != nil && p.Repository == p.native
-}
-
-func (p Persistence) isSQLite() bool {
-	return p.backend == backendSQLite && p.native == nil && p.legacyDatabase != nil && p.legacyRepository != nil
+	return p.native != nil && p.Repository == p.native
 }
 
 func (p Persistence) validate() error {
-	if p.isSQLite() {
-		if p.legacyActivation == nil || p.legacyCandidates == nil || p.legacyApprovals == nil {
-			return errors.New("SQLite deployment persistence surfaces are required")
-		}
-		return nil
-	}
 	if !p.isPostgres() {
 		return errors.New("deployment persistence backend is not configured as PostgreSQL")
 	}

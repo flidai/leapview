@@ -59,10 +59,10 @@ type nativePreviewRuntimeEvidence struct {
 }
 
 // EnsureNativeCandidateRuntime lazily prepares the native candidate runtime
-// for one authenticated owner. It is a no-op for the explicit legacy SQLite
-// path, whose candidate lifecycle prepares runtimes during synchronization.
-// Every native input is re-read from durable evidence, making repeated calls
-// after a restart safe and preventing callers from supplying runtime state.
+// for one authenticated owner. It is a no-op when native delivery evidence is
+// unavailable. Every native input is re-read from durable evidence, making
+// repeated calls after a restart safe and preventing callers from supplying
+// runtime state.
 func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, principalID string) (resultErr error) {
 	defer func() {
 		if resultErr == nil {
@@ -79,8 +79,8 @@ func (m *Module) EnsureNativeCandidateRuntime(ctx context.Context, candidateID, 
 		return deployment.ErrCandidateUnavailable
 	}
 	// NativeDeliveryReader is only installed for the clean-slate PostgreSQL
-	// path. Do not alter legacy candidate behavior or attempt to prepare a
-	// ready candidate through the SQLite service.
+	// path. Do not alter compatibility candidate behavior or attempt to prepare
+	// a mutable candidate through a separate service.
 	if m.nativeDeliveryReader == nil {
 		return nil
 	}

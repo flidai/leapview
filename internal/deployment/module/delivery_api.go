@@ -20,7 +20,6 @@ import (
 )
 
 // deliveryEventReader is intentionally narrower than deployment.DeliveryReader:
-// the canonical SQLite repository exposes immutable event evidence, while
 // alternate read ports do not need to carry the event ledger contract. The
 // generated command guard verifies this evidence after the mutation has
 // committed; no second audit event is emitted here.
@@ -220,8 +219,8 @@ func (m *Module) deliveryAuthReady(w http.ResponseWriter, r *http.Request) bool 
 }
 
 // deliveryPublicationMutationReady accepts either the clean-slate native
-// publication port or the legacy coordinator. Native callers are preferred by
-// the handlers below and never touch the legacy approval/read surfaces.
+// publication port or compatibility coordinator. Native callers are preferred
+// by the handlers below and never touch compatibility approval/read surfaces.
 func (m *Module) deliveryPublicationMutationReady(w http.ResponseWriter, r *http.Request) bool {
 	if !m.deliveryAuthReady(w, r) {
 		return false

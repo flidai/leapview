@@ -33,7 +33,7 @@ import (
 
 // nativeCandidateArtifactPhases keeps source evidence and serving artifact
 // storage behind neutral ports. It never opens a database or a local
-// filesystem: materialization is one immutable object write and hydration is
+// storage: materialization is one immutable object write and hydration is
 // one exact object read.
 type nativeCandidateArtifactPhases struct {
 	reader               project.CandidateSourceObjectReader
@@ -122,8 +122,8 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	legacy := &candidateArtifactService{pins: service.pins, extensionPreparation: service.extensionPreparation}
-	result, err := legacy.inspectCandidateProjectPlan(ctx, request, compiledProject, plan, base)
+	inspector := &candidateArtifactInspector{pins: service.pins, extensionPreparation: service.extensionPreparation}
+	result, err := inspector.inspectCandidateProjectPlan(ctx, request, compiledProject, plan, base)
 	if err != nil {
 		return release.CandidateArtifactSet{}, err
 	}
@@ -156,7 +156,7 @@ func (service *nativeCandidateArtifactPhases) InspectCandidateArtifacts(ctx cont
 }
 
 // nativeGenerationBase loads one exact serving generation from the immutable
-// native authorities.  Unlike the legacy filesystem path, every byte and
+// native authorities. Unlike compatibility paths, every byte and
 // identity is checked against the serving-state row, its provenance, and the
 // object-store metadata before the compiled project can affect planning.
 func (service *nativeCandidateArtifactPhases) nativeGenerationBase(ctx context.Context, identity *projectgraph.ServingIdentity) (candidateGenerationBase, error) {
@@ -641,7 +641,7 @@ func (service *nativeCandidateArtifactPhases) RecoverCandidateArtifacts(ctx cont
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactInvalid(err)
 	}
-	extensions, err := (&candidateArtifactService{extensionPreparation: service.extensionPreparation}).collectExtensionEvidence(ctx, extensionRequirements)
+	extensions, err := (&candidateArtifactInspector{extensionPreparation: service.extensionPreparation}).collectExtensionEvidence(ctx, extensionRequirements)
 	if err != nil {
 		return release.CandidateArtifactSet{}, candidateArtifactUnavailable(err)
 	}

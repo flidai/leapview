@@ -1,12 +1,9 @@
 package module
 
 import (
-	"context"
-	"errors"
 	"reflect"
 	"testing"
 
-	"github.com/flidai/leapview/internal/deployment"
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
@@ -104,17 +101,6 @@ func TestDeploymentLifecycleOperationContracts(t *testing.T) {
 		if contract.AuthzMode != "privilege" || privilege != wantPrivilege {
 			t.Errorf("query contract %q authorization = %s/%s, want privilege/%s", operationID, contract.AuthzMode, privilege, wantPrivilege)
 		}
-	}
-}
-
-func TestGeneratedCandidateCommandsRequireConfiguredAuditSink(t *testing.T) {
-	if err := requireCandidateAuditSink(nil); !errors.Is(err, deployment.ErrCandidateAuditUnavailable) {
-		t.Fatalf("requireCandidateAuditSink(nil) error = %v, want ErrCandidateAuditUnavailable", err)
-	}
-	if err := requireCandidateAuditSink(func(context.Context, deployment.CandidateEvent) error {
-		return nil
-	}); err != nil {
-		t.Fatalf("requireCandidateAuditSink(noop) error = %v", err)
 	}
 }
 

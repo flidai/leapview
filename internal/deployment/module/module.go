@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
@@ -111,7 +110,8 @@ func (admit CandidatePreparationAdmitterFunc) AcquireCandidatePreparation(
 
 // BootstrapPolicyStore is the module-owned contract for the durable,
 // one-shot first-activation policy. The persistence adapter remains private to
-// this module; composition may provide a store without depending on SQLite.
+// this module; composition may provide a store without depending on its
+// concrete repository.
 type BootstrapPolicyStore interface {
 	ArmBootstrapActivation(context.Context, deployment.BootstrapActivationPolicy) (deployment.BootstrapActivationPolicy, error)
 	BootstrapActivationPolicy(context.Context, string) (deployment.BootstrapActivationPolicy, error)
@@ -185,27 +185,18 @@ type SealedActivationMarker func(context.Context, deployment.ActivationInput) (d
 type ActivationPreCommitHook func(context.Context) error
 
 type Config struct {
-	// Persistence is the native clean-slate PostgreSQL delivery authority.
-	// Production callers construct it with NewPostgresPersistence; local and
-	// evaluation callers use NewSQLitePersistence. The module never infers an
-	// adapter from a raw database handle.
+	// Persistence is the native PostgreSQL delivery authority. Production
+	// callers construct it with NewPostgresPersistence; the module never infers
+	// an adapter from a raw database handle.
 	Persistence *Persistence
 	Production  bool
-	// AuditIntentRecorder is the Access-owned transaction-scoped outbox port.
-	// It is required whenever deployment SQLite persistence is configured.
-	AuditIntentRecorder       access.AuditIntentRecorder
+	// States is retained for publication authorization reads.
 	States                    ServingStatePort
-	Runtime                   deployment.Runtime
-	ManagedData               deployment.ManagedDataResolver
 	MaxJSONBodyBytes          int64
 	Logger                    *slog.Logger
 	InstanceID                string
 	CanonicalOrigin           string
 	InstanceEnvironment       string
-	CandidateLifetime         time.Duration
-	ApprovalLifetime          time.Duration
-	MaxCandidatesPerOwner     int
-	CandidateAudit            func(context.Context, deployment.CandidateEvent) error
 	CandidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
 	CandidateSourceBlobAudit  func(context.Context, CandidateSourceAuditEvent) error
 	CandidateConnections      deployment.CandidateConnectionLeaser
@@ -223,16 +214,6 @@ type Config struct {
 	// metadata namespace without coupling Deployment to an Analytics adapter.
 	// Native candidate preview preparation fails closed when it is absent.
 	NativeMetadataSchemaForPool func(string) string
-	// DeliveryCandidateBuilder is the canonical plan -> build -> seal adapter.
-	// When configured, candidate synchronization delegates to it after the
-	// immutable source snapshot is committed. Production composition sets
-	// RequireCanonicalDelivery so an omitted adapter fails closed.
-	DeliveryCandidateBuilder func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
-	CanonicalDeliveryAdapter *CanonicalDeliveryAdapter
-	// RequireCanonicalDelivery makes production composition fail closed when
-	// the plan-driven adapter is missing. Development compatibility can leave
-	// this false until its target-owned adapter is wired.
-	RequireCanonicalDelivery bool
 	// BindClaimedProject binds the process runtime to the durable instance
 	// claim after candidate start commits.
 	BindClaimedProject   func(context.Context, projectgraph.ResourceID, servingstate.Environment) error
@@ -255,10 +236,7 @@ type Config struct {
 	// pre-activation API authorization. It is deliberately independent from
 	// the activation-policy store so native PostgreSQL delivery does not need a
 	// legacy bootstrap-policy adapter merely to expose its canonical claim.
-	ProjectClaims ProjectClaimReader
-	// AfterActivated runs after runtime publication and durable activation.
-	// It is observational and cannot influence activation.
-	AfterActivated           func(context.Context, deployment.Deployment)
+	ProjectClaims            ProjectClaimReader
 	Protected                bool
 	Jobs                     JobConfig
 	API                      APIConfig
@@ -287,15 +265,15 @@ type Config struct {
 	// transitions. Production must provide it whenever native persistence is
 	// enabled; no candidate-wide approval fallback is permitted.
 	NativeDeliveryApproval NativeDeliveryApprovalPort
-	// DeliveryReader is the durable, read-only plan/build/seal/operator port for
-	// explicit local/evaluation persistence. Production uses NativeDeliveryReader.
+	// DeliveryReader is retained as a topology-neutral read contract for
+	// non-native callers; production uses NativeDeliveryReader.
 	DeliveryReader deployment.DeliveryReader
 	// NativeDeliveryReader is the clean-slate PostgreSQL read port. It is
 	// deliberately distinct from DeliveryReader so production handlers cannot
-	// silently fall back to SQLite-shaped projections.
+	// silently fall back to projections with weaker identity guarantees.
 	NativeDeliveryReader NativeDeliveryReader
 	// Native source-mutation capabilities are strict transaction-bound ports.
-	// Production PostgreSQL composition must provide all four; no SQLite or
+	// Production PostgreSQL composition must provide all four; no
 	// cross-connection fallback is permitted.
 	NativeDeliveryEvents     NativeDeliveryEventAppender
 	NativeDeliveryAudit      NativeDeliveryAuditAppender
@@ -305,20 +283,15 @@ type Config struct {
 
 func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Persistence == nil {
-		return nil, errors.New("deployment persistence is required; choose an explicit PostgreSQL or SQLite persistence bundle")
+		return nil, errors.New("deployment persistence is required")
 	}
 	if err := config.Persistence.validate(); err != nil {
 		return nil, err
 	}
-	if config.Production {
-		if !config.Persistence.isPostgres() {
-			return nil, errors.New("production deployment module requires native PostgreSQL persistence")
-		}
-	}
-	if config.Persistence.isPostgres() && !config.Production {
+	if !config.Production {
 		return nil, errors.New("native PostgreSQL persistence requires production deployment mode")
 	}
-	if config.Production && config.Persistence.isPostgres() {
+	if config.Persistence.isPostgres() {
 		// Native PostgreSQL delivery is the only production mutation authority.
 		// Requiring this port here prevents a partially composed module from
 		// falling through to the legacy DeliveryMutationPort at request time.
@@ -361,16 +334,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.NativeDeliveryReader == nil {
 			return nil, errors.New("production native deployment requires a delivery reader")
 		}
-		// Keep the native module from retaining optional legacy seams supplied
-		// by broad application composition. The explicit SQLite path below is
-		// the sole owner of these services and projections; native handlers must
-		// fail closed when their native ports are absent rather than falling back
-		// to them.
+		// Keep the native module from retaining optional compatibility seams
+		// supplied by broad application composition. Native handlers fail closed
+		// when their native ports are absent rather than falling back to them.
 		config.DeliveryMutations = nil
 		config.DeliveryReader = nil
 		config.API.Releases = nil
-		config.DeliveryCandidateBuilder = nil
-		config.CanonicalDeliveryAdapter = nil
 		config.SealedCoordinator = nil
 		config.SealedPublishRequest = nil
 		config.SealedRollbackRequest = nil
@@ -378,12 +347,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		config.SealedReconcile = nil
 		config.SealedRollbackFence = nil
 		config.RequireSealedCoordinator = false
-	}
-	if config.DeliveryCandidateBuilder == nil && config.CanonicalDeliveryAdapter != nil {
-		config.DeliveryCandidateBuilder = config.CanonicalDeliveryAdapter.CandidateDeliveryBuilder()
-	}
-	if config.RequireCanonicalDelivery && config.DeliveryCandidateBuilder == nil {
-		return nil, fmt.Errorf("canonical delivery lifecycle is required")
 	}
 	if config.RequireSealedCoordinator && (config.SealedCoordinator == nil || config.SealedPublishRequest == nil || config.SealedRollbackRequest == nil || config.SealedReconcile == nil || config.SealedRollbackFence == nil) {
 		return nil, fmt.Errorf("sealed publication coordinator and durable request resolvers are required")
@@ -401,136 +364,34 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		return deploymenthttp.Principal{ID: principal.ID}, ok
 	}
 	var coordinator deploymenthttp.Coordinator
-	var candidates *deployment.CandidateService
 	var projectClaims *deployment.ProjectClaimService
-	var approvals *deployment.ApprovalService
 	var candidateRuntimes *deployment.CandidateRuntimeService
-	var durableBootstrapPolicies BootstrapPolicyStore
-	if config.Persistence.isPostgres() {
-		// Native production HTTP requests are coordinated directly against the
-		// canonical PostgreSQL delivery authority. No legacy service or SQLite
-		// adapter is introduced on this path.
-		var coordinatorErr error
-		coordinator, coordinatorErr = newNativeCoordinator(config.Persistence.Repository, config.InstanceID, config.InstanceEnvironment, nativeCoordinatorCapabilities{
-			events: config.NativeDeliveryEvents, audit: config.NativeDeliveryAudit, workflow: config.NativeDeliveryWorkflow, operations: config.NativeOperationAuthority,
-			beforeActivationCommit: config.BeforeNativeActivationCommit,
-		})
-		if coordinatorErr != nil {
-			return nil, coordinatorErr
-		}
-		// The native coordinator owns pending publish/rollback creation as a
-		// separate authority from plan/build. Keep an explicit caller override
-		// possible, while ensuring production PostgreSQL composition cannot
-		// accidentally fall back to the legacy mutation port.
-		if config.NativeDeliveryPublication == nil {
-			if publicationPort, ok := coordinator.(NativeDeliveryPublicationPort); ok {
-				config.NativeDeliveryPublication = publicationPort
-			}
-		}
-		projectClaims, coordinatorErr = deployment.NewProjectClaimService(config.Persistence.ProjectClaims)
-		if coordinatorErr != nil {
-			return nil, coordinatorErr
-		}
-	} else {
-		database := config.Persistence.legacyDatabase
-		if !config.Persistence.isSQLite() || database == nil {
-			return nil, errors.New("deployment persistence backend is unavailable")
-		}
-		audit := config.AuditIntentRecorder
-		if audit == nil {
-			audit = config.Persistence.legacyAudit
-		}
-		if audit == nil {
-			return nil, errors.New("deployment audit intent recorder is required")
-		}
-		if config.States == nil || config.Runtime == nil || config.ManagedData == nil {
-			return nil, errors.New("deployment states, runtime, and managed data are required")
-		}
-		if config.BindClaimedProject == nil {
-			return nil, errors.New("candidate project claim binder is required")
-		}
-		if config.API.Workflow != nil {
-			ownedCommitter := workflowAuditCommitter{
-				database: database,
-				workflow: config.API.Workflow,
-				audit:    audit,
-			}
-			config.API.Committer = ownedCommitter
-			config.API.AuditedCommitter = ownedCommitter
-		} else if config.API.AuditedCommitter == nil {
-			if audited, ok := config.API.Committer.(AuditedWorkflowCommitter); ok {
-				config.API.AuditedCommitter = audited
-			} else {
-				return nil, errors.New("deployment audited workflow committer is required")
-			}
-		}
-		if config.API.Committer == nil {
-			config.API.Committer = config.API.AuditedCommitter
-		}
-		repository := config.Persistence.legacyRepository
-		activation := config.Persistence.legacyActivation
-		candidateRepository := config.Persistence.legacyCandidates
-		approvalRepository := config.Persistence.legacyApprovals
-		if config.DeliveryReader == nil {
-			if reader, ok := repository.(deployment.DeliveryReader); ok {
-				config.DeliveryReader = reader
-			}
-		}
-		if config.SealedActivationMarker == nil {
-			if marker, ok := repository.(interface {
-				ActivateSealedDeployment(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
-			}); ok {
-				config.SealedActivationMarker = marker.ActivateSealedDeployment
-			}
-		}
-		if policyStore, ok := repository.(BootstrapPolicyStore); ok {
-			durableBootstrapPolicies = policyStore
-		}
-		service, err := deployment.New(repository, activation, config.States, config.Runtime, config.ManagedData)
-		if err != nil {
-			return nil, err
-		}
-		service.SetAfterActivated(config.AfterActivated)
-		coordinator, err = apiadapter.New(service)
-		if err != nil {
-			return nil, err
-		}
-		if err := requireCandidateAuditSink(config.CandidateAudit); err != nil {
-			return nil, err
-		}
-		candidates, err = deployment.NewCandidateService(candidateRepository, deployment.CandidateServiceConfig{
-			TargetID: config.InstanceID, CanonicalOrigin: config.CanonicalOrigin,
-			Environment: config.InstanceEnvironment, Lifetime: config.CandidateLifetime,
-			MaxActivePerOwner: config.MaxCandidatesPerOwner, Audit: config.CandidateAudit,
-			Logger:           config.Logger,
-			RuntimeLifecycle: config.CandidateRuntimeLifecycle,
-			BindProject:      config.BindClaimedProject,
-		})
-		if err != nil {
-			return nil, err
-		}
-		if config.DeliveryMutations == nil && config.CanonicalDeliveryAdapter != nil && config.CandidateSources != nil {
-			config.DeliveryMutations = &CanonicalDeliveryMutations{
-				Lifecycle: config.CanonicalDeliveryAdapter.Lifecycle,
-				Sources:   config.CandidateSources, Artifacts: config.CandidateArtifacts,
-				Admission: config.CandidateAdmission,
-				Plan:      config.CanonicalDeliveryAdapter.Plan, PlanPreview: config.CanonicalDeliveryAdapter.PlanPreview, BuildRequest: config.CanonicalDeliveryAdapter.BuildRequest,
-				Adapter: config.CanonicalDeliveryAdapter, Publish: config.CanonicalDeliveryAdapter.Publish, Rollback: config.CanonicalDeliveryAdapter.Rollback,
-			}
-		}
-		approvals, err = deployment.NewApprovalService(
-			approvalRepository,
-			deployment.ApprovalServiceConfig{
-				Lifetime: config.ApprovalLifetime,
-			},
-		)
-		if err != nil {
-			return nil, err
+	// Native production HTTP requests are coordinated directly against the
+	// canonical PostgreSQL delivery authority. No legacy service or adapter is
+	// introduced on this path.
+	var coordinatorErr error
+	coordinator, coordinatorErr = newNativeCoordinator(config.Persistence.Repository, config.InstanceID, config.InstanceEnvironment, nativeCoordinatorCapabilities{
+		events: config.NativeDeliveryEvents, audit: config.NativeDeliveryAudit, workflow: config.NativeDeliveryWorkflow, operations: config.NativeOperationAuthority,
+		beforeActivationCommit: config.BeforeNativeActivationCommit,
+	})
+	if coordinatorErr != nil {
+		return nil, coordinatorErr
+	}
+	// The native coordinator owns pending publish/rollback creation as a
+	// separate authority from plan/build. Keep an explicit caller override
+	// possible, while ensuring production PostgreSQL composition cannot
+	// accidentally fall back to a non-native mutation port.
+	if config.NativeDeliveryPublication == nil {
+		if publicationPort, ok := coordinator.(NativeDeliveryPublicationPort); ok {
+			config.NativeDeliveryPublication = publicationPort
 		}
 	}
-	// Candidate runtime preparation is shared by explicit SQLite composition
-	// and native PostgreSQL composition. SQLite retains its admission gate;
-	// native preparation is replayed lazily from durable delivery evidence.
+	projectClaims, coordinatorErr = deployment.NewProjectClaimService(config.Persistence.ProjectClaims)
+	if coordinatorErr != nil {
+		return nil, coordinatorErr
+	}
+	// Candidate runtime preparation is replayed lazily from durable delivery
+	// evidence.
 	if config.CandidateConnections != nil || config.CandidateRuntime != nil {
 		if config.CandidateAdmission == nil {
 			return nil, errors.New("candidate runtime preparation workload admission is required")
@@ -554,23 +415,16 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		jobs.Coordinator = coordinator
 	}
 	m := &Module{
-		handler: deploymenthttp.NewHandler(options), candidates: candidates,
+		handler:           deploymenthttp.NewHandler(options),
 		projectClaims:     projectClaims,
-		approvals:         approvals,
 		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
 		candidateArtifacts: config.CandidateArtifacts, candidateArtifactRecovery: config.CandidateArtifactRecovery,
 		candidateAdmission:       config.CandidateAdmission,
 		nativeMetadataSchema:     config.NativeMetadataSchemaForPool,
-		deliveryCandidateBuilder: config.DeliveryCandidateBuilder,
 		candidateSourceAudit:     config.CandidateSourceAudit,
 		candidateSourceBlobAudit: config.CandidateSourceBlobAudit,
-		logger:                   config.Logger, auditIntentConfigured: config.Persistence.isSQLite() && func() bool {
-			if config.AuditIntentRecorder != nil {
-				return true
-			}
-			return config.Persistence.legacyAudit != nil
-		}(),
-		jobs: jobs, api: config.API, protected: config.Protected,
+		logger:                   config.Logger,
+		jobs:                     jobs, api: config.API, protected: config.Protected,
 		instanceID: config.InstanceID, canonicalOrigin: config.CanonicalOrigin, instanceEnvironment: servingstate.Environment(config.InstanceEnvironment),
 		bindClaimedProject: config.BindClaimedProject, executions: executions,
 		currentApprovalActor: config.CurrentApprovalActor,
@@ -584,15 +438,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		nativeDeliveryReader: config.NativeDeliveryReader,
 		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
 		nativeDeliveryApproval: config.NativeDeliveryApproval,
-		persistence: func() *Persistence {
-			if config.Persistence.isPostgres() {
-				return config.Persistence
-			}
-			return nil
-		}(),
-	}
-	if m.bootstrapPolicies == nil {
-		m.bootstrapPolicies = durableBootstrapPolicies
+		persistence:            config.Persistence,
 	}
 	if m.logger == nil {
 		m.logger = slog.Default()
@@ -609,8 +455,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 func (m *Module) HTTP() *deploymenthttp.Handler { return m.handler }
 
 // NativePersistence exposes the validated clean-slate authority bundle to
-// native delivery composition. It returns nil for the explicit legacy SQLite
-// module path.
+// native delivery composition.
 func (m *Module) NativePersistence() *Persistence {
 	if m == nil {
 		return nil

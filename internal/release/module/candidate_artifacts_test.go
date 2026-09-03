@@ -96,16 +96,6 @@ func TestCandidateArtifactSetCarriesOneGenerationIdentity(t *testing.T) {
 	require.Empty(t, set.Generation.AuthoredConnections)
 }
 
-func TestCandidateServingStateIDHonorsCallerOwnedGeneration(t *testing.T) {
-	const generationID = "018f0e4e-6f2a-7abc-8def-0123456789ab"
-	request := release.CandidateArtifactRequest{CandidateID: "candidate-1", GenerationID: generationID}
-
-	require.Equal(t, generationID, string(candidateServingStateID(request)))
-
-	request.GenerationID = ""
-	require.Equal(t, "state-"+shortCandidateDigest(request.CandidateID), string(candidateServingStateID(request)))
-}
-
 func TestCandidateArtifactErrorClassificationIsStable(t *testing.T) {
 	invalid := candidateArtifactInvalid(errors.New("invalid graph"))
 	require.ErrorIs(t, invalid, release.ErrCandidateArtifactInvalid)

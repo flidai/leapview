@@ -26,7 +26,7 @@ import (
 // nativeCoordinator is the HTTP compatibility boundary for the clean-slate
 // delivery authority.  It projects the existing public deployment wire shape
 // onto delivery_publication while keeping all writes on one caller-owned
-// PostgreSQL transaction.  The legacy service/coordinator is deliberately not
+// PostgreSQL transaction. Compatibility service/coordinator paths are not
 // referenced here.
 type nativeCoordinator struct {
 	repository             *deploymentpostgres.Repository
