@@ -643,7 +643,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.DuckLakeControlLedger, managedDataAdmission, graph.Release)
+	generationAdmission, err := appdeploymentpostgres.NewGenerationAdmission(graph.DeploymentRepository, graph.ServingState, graph.Lineage, graph.DuckLakeControlLedger, managedDataAdmission, graph.Release)
 	if err != nil {
 		return fail(err)
 	}

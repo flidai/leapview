@@ -11,6 +11,7 @@ import (
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -205,23 +206,26 @@ func TestNewGenerationAdmissionRejectsNilAuthorities(t *testing.T) {
 	db := deploymentPostgresDBStub{}
 	configuredDelivery := deploymentnative.New(db)
 	configuredServing := servingnative.New(db)
+	configuredLineage := lineagepostgres.New(db)
 	configuredProvenance := &testCandidateProvenanceAdmission{}
 	cases := []struct {
 		name        string
 		delivery    *deploymentnative.Repository
 		serving     *servingnative.Repository
+		lineage     *lineagepostgres.Repository
 		managedData NativeManagedDataBindingAdmission
 		provenance  NativeCandidateProvenanceAdmission
 	}{
-		{name: "nil delivery", serving: configuredServing, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
-		{name: "nil serving", delivery: configuredDelivery, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
-		{name: "nil managed data", delivery: configuredDelivery, serving: configuredServing, provenance: configuredProvenance},
-		{name: "typed nil managed data", delivery: configuredDelivery, serving: configuredServing, managedData: (*testManagedDataBindingAdmission)(nil), provenance: configuredProvenance},
-		{name: "nil provenance", delivery: configuredDelivery, serving: configuredServing, managedData: &testManagedDataBindingAdmission{}},
+		{name: "nil delivery", serving: configuredServing, lineage: configuredLineage, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
+		{name: "nil serving", delivery: configuredDelivery, lineage: configuredLineage, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
+		{name: "nil lineage", delivery: configuredDelivery, serving: configuredServing, managedData: &testManagedDataBindingAdmission{}, provenance: configuredProvenance},
+		{name: "nil managed data", delivery: configuredDelivery, serving: configuredServing, lineage: configuredLineage, provenance: configuredProvenance},
+		{name: "typed nil managed data", delivery: configuredDelivery, serving: configuredServing, lineage: configuredLineage, managedData: (*testManagedDataBindingAdmission)(nil), provenance: configuredProvenance},
+		{name: "nil provenance", delivery: configuredDelivery, serving: configuredServing, lineage: configuredLineage, managedData: &testManagedDataBindingAdmission{}},
 	}
 	for _, test := range cases {
 		t.Run(test.name, func(t *testing.T) {
-			if got, err := NewGenerationAdmission(test.delivery, test.serving, candidatePhysicalAdmissionStub{}, test.managedData, test.provenance); err == nil || got != nil {
+			if got, err := NewGenerationAdmission(test.delivery, test.serving, test.lineage, candidatePhysicalAdmissionStub{}, test.managedData, test.provenance); err == nil || got != nil {
 				t.Fatalf("NewGenerationAdmission() = (%v, %v), want nil capability and error", got, err)
 			}
 		})
@@ -262,6 +266,10 @@ func generationAdmissionDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	if err := releasepostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := lineagepostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -322,9 +330,10 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	p := generationAdmissionDB(t)
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
+	lineage := lineagepostgres.New(p)
 	managedData := &testManagedDataBindingAdmission{}
 	provenance := releasepostgres.New(p)
-	capability, err := NewGenerationAdmission(delivery, serving, candidatePhysicalAdmissionStub{}, managedData, provenance)
+	capability, err := NewGenerationAdmission(delivery, serving, lineage, candidatePhysicalAdmissionStub{}, managedData, provenance)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,6 +362,24 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	}
 	if managedData.calls < 1 || managedData.pins == nil || len(managedData.pins) != 0 {
 		t.Fatalf("managed-data binding admission calls=%d pins=%#v, want nonnil empty pins", managedData.calls, managedData.pins)
+	}
+	expectedLineage, err := lineagepostgres.FromGraph(input.Graph)
+	if err != nil {
+		t.Fatalf("project lineage graph: %v", err)
+	}
+	var lineageDigest, lineageProject string
+	if err := p.QueryRow(t.Context(), `SELECT graph_digest,project_id FROM lineage.bindings WHERE delivery_id=$1 AND generation_id=$2::text`, input.Generation.TargetID, input.Generation.GenerationID).Scan(&lineageDigest, &lineageProject); err != nil {
+		t.Fatalf("load committed lineage binding: %v", err)
+	}
+	if lineageDigest != expectedLineage.Digest || lineageProject != input.Bundle.ProjectID.String() {
+		t.Fatalf("committed lineage binding = digest %q project %q, want digest %q project %q", lineageDigest, lineageProject, expectedLineage.Digest, input.Bundle.ProjectID)
+	}
+	if _, err := lineage.LoadBound(t.Context(), input.Generation.TargetID, input.Generation.GenerationID); err != nil {
+		t.Fatalf("load committed lineage graph by canonical target/generation binding: %v", err)
+	}
+	var lineageGraphCountBefore int
+	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM lineage.graphs WHERE project_id=$1`, input.Bundle.ProjectID.String()).Scan(&lineageGraphCountBefore); err != nil {
+		t.Fatalf("count committed lineage graphs: %v", err)
 	}
 	var rootTarget, rootCandidate, rootGeneration, rootSeal, rootKind, rootState string
 	var rootExpiry time.Time
@@ -413,12 +440,12 @@ func TestGenerationAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T)
 	if attemptState != string(deploymentnative.AttemptRunning) {
 		t.Fatalf("rollback left attempt state %q", attemptState)
 	}
-	var bindings, seals, generations, bundles int
-	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid), (SELECT count(*) FROM serving_state.bundle WHERE generation_id=$3::uuid)`, rollbackInput.Commit.AttemptID, rollbackInput.Seal.SealID, rollbackInput.Generation.GenerationID).Scan(&bindings, &seals, &generations, &bundles); err != nil {
+	var bindings, seals, generations, bundles, lineageGraphs, lineageBindings int
+	if err := p.QueryRow(t.Context(), `SELECT (SELECT count(*) FROM delivery.delivery_build_artifact_binding WHERE attempt_id=$1::uuid), (SELECT count(*) FROM delivery.delivery_snapshot_seal WHERE seal_id=$2::uuid), (SELECT count(*) FROM delivery.delivery_generation WHERE generation_id=$3::uuid), (SELECT count(*) FROM serving_state.bundle WHERE generation_id=$3::uuid), (SELECT count(*) FROM lineage.graphs WHERE project_id=$4), (SELECT count(*) FROM lineage.bindings WHERE delivery_id=$5 AND generation_id=$3::text)`, rollbackInput.Commit.AttemptID, rollbackInput.Seal.SealID, rollbackInput.Generation.GenerationID, rollbackInput.Bundle.ProjectID.String(), rollbackInput.Generation.TargetID).Scan(&bindings, &seals, &generations, &bundles, &lineageGraphs, &lineageBindings); err != nil {
 		t.Fatal(err)
 	}
-	if bindings != 0 || seals != 0 || generations != 0 || bundles != 0 {
-		t.Fatalf("rollback retained partial admission: bindings=%d seals=%d generations=%d bundles=%d", bindings, seals, generations, bundles)
+	if bindings != 0 || seals != 0 || generations != 0 || bundles != 0 || lineageGraphs != lineageGraphCountBefore || lineageBindings != 0 {
+		t.Fatalf("rollback retained partial admission: bindings=%d seals=%d generations=%d bundles=%d lineage_graphs=%d lineage_bindings=%d", bindings, seals, generations, bundles, lineageGraphs, lineageBindings)
 	}
 	var retentionRoots int
 	if err := p.QueryRow(t.Context(), `SELECT count(*) FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, rollbackInput.Generation.CandidateID).Scan(&retentionRoots); err != nil {
@@ -436,7 +463,8 @@ func TestGenerationAdmissionRejectsCandidateExpiryDrift(t *testing.T) {
 	p := generationAdmissionDB(t)
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
-	admission, err := NewGenerationAdmission(delivery, serving, candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
+	lineage := lineagepostgres.New(p)
+	admission, err := NewGenerationAdmission(delivery, serving, lineage, candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -459,7 +487,8 @@ func TestGenerationAdmissionTxComposesAdjacentMutation(t *testing.T) {
 	p := generationAdmissionDB(t)
 	delivery := deploymentnative.New(p)
 	serving := servingnative.New(p)
-	admission, err := NewGenerationAdmission(delivery, serving, candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
+	lineage := lineagepostgres.New(p)
+	admission, err := NewGenerationAdmission(delivery, serving, lineage, candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}

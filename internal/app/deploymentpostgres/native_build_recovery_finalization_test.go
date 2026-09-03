@@ -17,6 +17,7 @@ import (
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	eventpostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -74,6 +75,10 @@ func recoveryFinalizeDB(t *testing.T) (*pgxpool.Pool, *deploymentnative.Reposito
 		t.Fatal(err)
 	}
 	if err := servingnative.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := lineagepostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -302,7 +307,7 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 
 func mustGenerationAdmission(t *testing.T, delivery *deploymentnative.Repository, db *pgxpool.Pool, ducklake *ducklakepostgres.Repository) GenerationAdmission {
 	t.Helper()
-	capability, err := NewGenerationAdmission(delivery, servingnative.New(db), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(db), lineagepostgres.New(db), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}

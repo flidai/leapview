@@ -31,6 +31,7 @@ import (
 	dashboardusagepostgres "github.com/flidai/leapview/internal/dashboard/usage/postgres"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	idempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
@@ -120,6 +121,19 @@ func TestValidateConfiguredAuthorityRequiresNativeMarkerAndConfiguration(t *test
 	}
 	if err := validateConfiguredAuthority("product authority", product); err != nil {
 		t.Fatalf("configured product repository rejected: %v", err)
+	}
+}
+
+func TestValidateLineageAuthorityRequiresConfiguredDatabase(t *testing.T) {
+	if err := validateLineageAuthority(nil); err == nil || !strings.Contains(err.Error(), "lineage authority is not configured") {
+		t.Fatalf("nil lineage authority error = %v, want configuration rejection", err)
+	}
+	var db *graphDBStub
+	if err := validateLineageAuthority(lineagepostgres.New(db)); err == nil || !strings.Contains(err.Error(), "lineage authority is not configured") {
+		t.Fatalf("typed-nil lineage authority error = %v, want configuration rejection", err)
+	}
+	if err := validateLineageAuthority(lineagepostgres.New(graphDBStub{})); err != nil {
+		t.Fatalf("configured lineage authority rejected: %v", err)
 	}
 }
 

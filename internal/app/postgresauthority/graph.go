@@ -499,6 +499,9 @@ func (g *PostgresAuthorityGraph) Validate() error {
 			return fmt.Errorf("PostgreSQL authority graph missing %s", item.name)
 		}
 	}
+	if err := validateLineageAuthority(g.Lineage); err != nil {
+		return err
+	}
 	if !g.Idempotency.Matches(g.Operation) {
 		return errors.New("PostgreSQL authority graph idempotency authority does not preserve operation identity")
 	}
@@ -613,6 +616,13 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		Streams: g.DashboardStreams, Broker: g.DashboardBroker,
 	}) {
 		return errors.New("PostgreSQL authority graph dashboard persistence identity mismatch")
+	}
+	return nil
+}
+
+func validateLineageAuthority(authority *lineagepostgres.Repository) error {
+	if authority == nil || !authority.Configured() {
+		return errors.New("PostgreSQL authority graph lineage authority is not configured")
 	}
 	return nil
 }

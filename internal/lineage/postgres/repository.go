@@ -16,6 +16,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"sort"
 	"strings"
 	"time"
@@ -195,6 +196,21 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 
 // New creates a repository whose read methods use db.
 func New(db DB) *Repository { return &Repository{db: db} }
+
+// Configured reports whether the repository has a native database handle.
+// Schema readiness remains the migration/lifecycle owner's responsibility.
+func (r *Repository) Configured() bool {
+	if r == nil || r.db == nil {
+		return false
+	}
+	v := reflect.ValueOf(r.db)
+	switch v.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		return !v.IsNil()
+	default:
+		return true
+	}
+}
 
 // FromGraph projects the validated compiler graph into the canonical
 // lineage representation. The compiler graph remains authoritative: no

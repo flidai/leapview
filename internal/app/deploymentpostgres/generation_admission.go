@@ -19,6 +19,7 @@ import (
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	"github.com/flidai/leapview/internal/manageddata"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -154,6 +155,7 @@ type BundleEvidence struct {
 type generationAdmitter struct {
 	delivery    *deploymentnative.Repository
 	serving     *servingnative.Repository
+	lineage     *lineagepostgres.Repository
 	physical    DuckLakeSnapshotRetentionAdmission
 	managedData NativeManagedDataBindingAdmission
 	provenance  NativeCandidateProvenanceAdmission
@@ -185,15 +187,18 @@ type NativeCandidateProvenanceAdmission interface {
 var _ GenerationAdmission = (*generationAdmitter)(nil)
 var _ NativeCandidateProvenanceAdmission = (*releasepostgres.Repository)(nil)
 
-// NewGenerationAdmission constructs the native capability from the five
+// NewGenerationAdmission constructs the native capability from the six
 // process-owned PostgreSQL authorities. Managed-data bindings and release
 // provenance are retained atomically with canonical delivery state; physical
 // DuckLake catalog/snapshot evidence is supplied as immutable seal values and
 // is not a second lifecycle ledger. It does not begin a transaction or
 // perform schema work.
-func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, physical DuckLakeSnapshotRetentionAdmission, managedData NativeManagedDataBindingAdmission, provenance NativeCandidateProvenanceAdmission) (GenerationAdmission, error) {
+func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, lineage *lineagepostgres.Repository, physical DuckLakeSnapshotRetentionAdmission, managedData NativeManagedDataBindingAdmission, provenance NativeCandidateProvenanceAdmission) (GenerationAdmission, error) {
 	if delivery == nil || serving == nil || !delivery.Configured() || !serving.Configured() {
 		return nil, errors.New("generation admission requires configured PostgreSQL delivery and serving-state authorities")
+	}
+	if lineage == nil || !lineage.Configured() {
+		return nil, errors.New("generation admission requires a configured PostgreSQL lineage authority")
 	}
 	if physical == nil || !physical.Configured() {
 		return nil, errors.New("generation admission requires a configured physical retention admission")
@@ -204,7 +209,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 	if !configuredCandidateProvenanceAdmission(provenance) {
 		return nil, errors.New("generation admission requires a configured release provenance authority")
 	}
-	return &generationAdmitter{delivery: delivery, serving: serving, physical: physical, managedData: managedData, provenance: provenance}, nil
+	return &generationAdmitter{delivery: delivery, serving: serving, lineage: lineage, physical: physical, managedData: managedData, provenance: provenance}, nil
 }
 
 // CompleteBuildAndAdmit completes the build, allocates a generation revision,
@@ -212,7 +217,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 // lower-level Tx method receives the exact same pgx transaction; this
 // convenience method owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
+	if a == nil || a.delivery == nil || a.serving == nil || a.lineage == nil || !a.lineage.Configured() || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -248,7 +253,7 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 // before taking operation, lease, or delivery-attempt locks. The generation
 // completion method repeats this guard re-entrantly on the same transaction.
 func (a *generationAdmitter) ValidatePhysicalAdmissionTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) error {
-	if a == nil || a.delivery == nil || a.serving == nil || a.physical == nil || !a.physical.Configured() {
+	if a == nil || a.delivery == nil || a.serving == nil || a.lineage == nil || !a.lineage.Configured() || a.physical == nil || !a.physical.Configured() {
 		return fmt.Errorf("%w: generation physical admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -270,7 +275,7 @@ func (a *generationAdmitter) ValidatePhysicalAdmissionTx(ctx context.Context, tx
 // revision, and admits the serving bundle in the caller-owned transaction.
 // It never commits or rolls back tx.
 func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
+	if a == nil || a.delivery == nil || a.serving == nil || a.lineage == nil || !a.lineage.Configured() || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -364,6 +369,18 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	}
 	if err := verifyGeneration(generation, normalized.Generation); err != nil {
 		return GenerationAdmissionResult{}, err
+	}
+	// Persist the compiler-owned lineage projection and its immutable
+	// serving binding only after the delivery generation exists. The binding
+	// uses the canonical delivery target ID, not the physical build operation
+	// marker carried by CommitEvidence. Both rows remain in this caller-owned
+	// transaction so a later admission failure rolls back all lineage state.
+	if _, err := a.lineage.PersistGraph(ctx, tx, normalized.Graph, lineagepostgres.Binding{
+		DeliveryID:   normalized.Generation.TargetID,
+		GenerationID: generation.GenerationID,
+		ProjectID:    normalized.Bundle.ProjectID.String(),
+	}); err != nil {
+		return GenerationAdmissionResult{}, fmt.Errorf("persist lineage graph: %w", err)
 	}
 	// Candidate preview is a qualified, non-active serving path. Keep its exact
 	// generation and snapshot reachable before any runtime reader lease can be

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
@@ -20,7 +21,7 @@ func TestDeliveryRetentionRootRetirementDrainsExactReaderLeases(t *testing.T) {
 	serving := servingnative.New(p)
 	input := validGenerationAdmissionInput(t)
 	seedGenerationAdmission(t, delivery, input)
-	capability, err := NewGenerationAdmission(delivery, serving, candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
+	capability, err := NewGenerationAdmission(delivery, serving, lineagepostgres.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,7 +87,7 @@ func TestDeliveryRetentionMaintenanceRetiresDueCandidatesAndExpiresReadyRoots(t 
 	delivery := deploymentnative.New(p)
 	input := validGenerationAdmissionInput(t)
 	seedGenerationAdmission(t, delivery, input)
-	capability, err := NewGenerationAdmission(delivery, servingnative.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(p), lineagepostgres.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,7 +125,7 @@ func TestActiveGenerationRetiringRootRequiresFreshLiveReplacementBeforeExpiry(t 
 	delivery := deploymentnative.New(p)
 	input := validGenerationAdmissionInput(t)
 	seedGenerationAdmission(t, delivery, input)
-	capability, err := NewGenerationAdmission(delivery, servingnative.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(p), lineagepostgres.New(p), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, releasepostgres.New(p))
 	if err != nil {
 		t.Fatal(err)
 	}

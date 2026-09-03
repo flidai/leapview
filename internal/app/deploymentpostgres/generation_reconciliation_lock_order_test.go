@@ -9,6 +9,7 @@ import (
 
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	servingnative "github.com/flidai/leapview/internal/servingstate/postgres"
 	"github.com/jackc/pgx/v5/pgconn"
 )
@@ -48,7 +49,7 @@ func TestGenerationAdmissionAndReconciliationUsePhysicalThenDeliveryLockOrder(t 
 	}); err != nil {
 		t.Fatal(err)
 	}
-	admission, err := NewGenerationAdmission(delivery, serving, physical, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
+	admission, err := NewGenerationAdmission(delivery, serving, lineagepostgres.New(p), physical, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
