@@ -362,7 +362,7 @@ for (const viewport of [
         framedIconBorderWidth: '1px',
         framedIconBackground: 'rgb(251, 239, 255)',
         originBadges: 0,
-        tabs: ['All dashboards', 'My dashboards', 'Shared with me'],
+        tabs: ['All dashboards', 'Favorites', 'My dashboards'],
         hasChevrons: false,
         fullWidth: true,
         maxRowHeight: 52,
@@ -378,7 +378,7 @@ for (const viewport of [
   })
 }
 
-test('dashboard tabs filter by ownership without hiding managed dashboards from All', async () => {
+test('dashboard tabs expose favorites and owned dashboards without hiding either from All', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.goto(baseURL)
@@ -390,20 +390,22 @@ test('dashboard tabs filter by ownership without hiding managed dashboards from 
         catalogScope: index === 0 ? 'mine' : index === 1 ? 'shared' : 'managed',
       }))
       mergePatch({ page: { ...element.page, dashboards } })
+      localStorage.setItem('leapview.dashboard-catalog.favorites.v1', JSON.stringify(['operations-health', 'inventory-risk']))
+      element.reloadDiscoveryPreferences()
       await element.updateComplete
       const rows = () => Array.from(element.shadowRoot.querySelectorAll('.entity-list-title')).map((row: Element) => row.textContent?.trim())
       const all = rows()
       ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(2)') as HTMLButtonElement).click()
       await element.updateComplete
-      const mine = rows()
+      const favorites = rows()
       ;(element.shadowRoot.querySelector('.catalog-tab:nth-child(3)') as HTMLButtonElement).click()
       await element.updateComplete
-      return { all, mine, shared: rows() }
+      return { all, favorites, mine: rows() }
     })
 
-    expect(state.all).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
+    expect(state.all).toEqual(['Operations Health', 'Inventory Risk', 'Executive Sales Dashboard', 'Customer Detail'])
+    expect(state.favorites).toEqual(['Operations Health', 'Inventory Risk'])
     expect(state.mine).toEqual(['Executive Sales Dashboard'])
-    expect(state.shared).toEqual(['Operations Health'])
   } finally {
     await page.close()
   }
@@ -444,6 +446,7 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
         sources: Array.from(list.querySelectorAll('.entity-list-meta')).map((source: Element) => source.textContent?.trim()),
         featured: Array.from(list.querySelectorAll('.entity-list-badge-featured')).map((badge: Element) => badge.textContent?.trim()),
         popularity: Array.from(list.querySelectorAll('.entity-list-badge-popularity')).map((badge: Element) => badge.textContent?.trim()),
+        hasRedundantFavoritesFilter: Array.from(root.querySelectorAll('.catalog-filter-check')).some((label: Element) => label.textContent?.includes('Favorites only')),
       }
     })
 
@@ -455,6 +458,7 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
       sources: ['Operations model'],
       featured: ['Featured'],
       popularity: ['Top 20%'],
+      hasRedundantFavoritesFilter: false,
     })
   } finally {
     await page.close()
