@@ -376,7 +376,7 @@ func (p *Protocol) serveDurableIdempotent(w http.ResponseWriter, r *http.Request
 			return
 		}
 		if record.Status == 0 {
-			record, execute, err = waitForAPIIdempotency(r, p.store, scope, digest, owner)
+			record, execute, err = waitForAPIIdempotency(r, p.store, scope, digest, owner, p.lease, IdempotencyLifetime)
 			if err != nil {
 				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 					apitransport.WriteProblem(w, r, http.StatusRequestTimeout, "IDEMPOTENCY_WAIT_CANCELLED", "The original request did not finish before this request was cancelled", nil)
@@ -482,7 +482,7 @@ func replayAuthorized(r *http.Request, authorize func(*http.Request) bool) bool 
 	return authorize == nil || authorize(r)
 }
 
-func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, digest, owner string) (idempotency.Record, bool, error) {
+func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, digest, owner string, lease, lifetime time.Duration) (idempotency.Record, bool, error) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
@@ -492,6 +492,23 @@ func waitForAPIIdempotency(r *http.Request, store idempotency.Store, scope, dige
 		}
 		if record.Digest != digest || record.Status != 0 || record.State != "pending" {
 			return record, false, nil
+		}
+		// A duplicate waiter normally observes the owner's pending lease and
+		// polls for its terminal response. Once the lease has actually expired,
+		// retry Claim to let a durable store atomically advance the fence. A
+		// losing race returns another pending lease and continues polling; an
+		// acquired lease is returned to the caller so the handler runs under the
+		// new generation. Stores that retain an explicit external attempt may
+		// instead return an indeterminate terminal record, which is replayed
+		// without executing a duplicate mutation.
+		if !record.LeaseExpires.IsZero() && !time.Now().Before(record.LeaseExpires) {
+			reclaimed, reclaimedExecute, claimErr := store.Claim(r.Context(), scope, digest, owner, lease, lifetime)
+			if claimErr != nil {
+				return idempotency.Record{}, false, claimErr
+			}
+			if reclaimed.Digest != digest || reclaimed.Status != 0 || reclaimed.State != "pending" || reclaimedExecute {
+				return reclaimed, reclaimedExecute, nil
+			}
 		}
 		select {
 		case <-r.Context().Done():

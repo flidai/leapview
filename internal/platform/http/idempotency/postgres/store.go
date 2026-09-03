@@ -76,11 +76,18 @@ func (s *Store) Claim(ctx context.Context, scope, digest, owner string, lease, l
 	if !ok || strings.TrimSpace(owner) != owner || owner == "" || len(owner) > 255 {
 		return idempotency.Record{}, false, operation.ErrInvalid
 	}
-	result, err := s.repo.AcquireWithAttempt(ctx, operation.AcquireInput{
+	// HTTP idempotency owns only the request execution lease. Unlike domain
+	// operations that bind an external attempt before doing work, a generic
+	// HTTP handler has no durable attempt identity to reconcile after a
+	// process crash. Keep the operation attempt unbound while the handler is
+	// in flight so an expired pending request can advance its fence and be
+	// retried by a waiter. Handlers that return an uncertain outcome still
+	// bind an attempt through MarkIndeterminate before quarantine.
+	result, err := s.repo.Acquire(ctx, operation.AcquireInput{
 		Scope: opScope, OperationType: "http_idempotency", IdempotencyKey: opKey,
 		RequestDigest: "sha256:" + strings.ToLower(digest), OwnerID: owner,
 		Lease: lease, Retention: lifetime,
-	}, operationAttemptIdentity(owner, opScope))
+	})
 	if errors.Is(err, operation.ErrBusy) {
 		record, recordErr := recordFromOperation(result.Operation)
 		return record, false, recordErr

@@ -29,7 +29,8 @@ type Record struct {
 // Store is the engine-neutral port consumed by the public HTTP protocol.
 // Claim returns execute=true only for the worker that owns a new lease. A
 // duplicate pending request returns execute=false and may be awaited through
-// Load; a terminal record is replayed exactly by the protocol.
+// Load; once its lease expires, a waiter may call Claim again to atomically
+// advance the fence. A terminal record is replayed exactly by the protocol.
 type Store interface {
 	Claim(context.Context, string, string, string, time.Duration, time.Duration) (Record, bool, error)
 	Load(context.Context, string) (Record, error)

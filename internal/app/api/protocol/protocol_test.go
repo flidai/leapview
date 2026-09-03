@@ -430,6 +430,68 @@ func TestAdversarialTransientRenewalFailureRecoversBeforeExpiry(t *testing.T) {
 	}
 }
 
+func TestExpiredPendingWaiterReclaimsAndFencesOldOwner(t *testing.T) {
+	store := newReclaimingIdempotencyStore()
+	p := testLeaseProtocol(store, 100*time.Millisecond, time.Second)
+	var calls atomic.Int32
+	firstEntered := make(chan struct{})
+	secondEntered := make(chan struct{})
+	releaseFirst := make(chan struct{})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		switch calls.Add(1) {
+		case 1:
+			close(firstEntered)
+			<-releaseFirst
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"owner":"old"}`))
+		case 2:
+			close(secondEntered)
+			w.WriteHeader(http.StatusCreated)
+			_, _ = w.Write([]byte(`{"owner":"new"}`))
+		default:
+			w.WriteHeader(http.StatusInternalServerError)
+		}
+	})
+
+	firstResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstResult <- invokeIdempotentProtocol(p, next, "reclaim-key") }()
+	select {
+	case <-firstEntered:
+	case <-time.After(time.Second):
+		t.Fatal("initial handler did not start")
+	}
+
+	secondResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { secondResult <- invokeIdempotentProtocol(p, next, "reclaim-key") }()
+	select {
+	case <-secondEntered:
+		t.Fatal("waiter reclaimed the pending lease before it expired")
+	case <-time.After(25 * time.Millisecond):
+	}
+	select {
+	case <-secondEntered:
+	case <-time.After(time.Second):
+		t.Fatal("expired waiter did not reclaim the pending lease")
+	}
+	close(releaseFirst)
+
+	reclaimedResponse := <-secondResult
+	if reclaimedResponse.Code != http.StatusCreated || reclaimedResponse.Body.String() != `{"owner":"new"}` {
+		t.Fatalf("reclaimed response = %d %s", reclaimedResponse.Code, reclaimedResponse.Body.String())
+	}
+	firstResponse := <-firstResult
+	if firstResponse.Code != http.StatusInternalServerError || !strings.Contains(firstResponse.Body.String(), "IDEMPOTENCY_UNAVAILABLE") {
+		t.Fatalf("stale owner response = %d %s", firstResponse.Code, firstResponse.Body.String())
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("handler calls = %d, want 2", calls.Load())
+	}
+	stored, _ := store.Load(context.Background(), "")
+	if stored.State != "completed" || stored.Owner == "" || stored.LeaseGeneration != 2 || string(stored.Body) != `{"owner":"new"}` {
+		t.Fatalf("durable winner = %#v", stored)
+	}
+}
+
 type fakeIdempotencyStore struct {
 	mu            sync.Mutex
 	record        apiidempotencysqlite.Record
@@ -438,6 +500,72 @@ type fakeIdempotencyStore struct {
 	claimCalls    atomic.Int32
 	completeCalls atomic.Int32
 	markCalls     atomic.Int32
+}
+
+// reclaimingIdempotencyStore models the PostgreSQL HTTP adapter's lease-only
+// behavior. It lets a waiter claim a fresh fence once the old pending lease
+// expires, while rejecting terminal writes from the stale owner.
+type reclaimingIdempotencyStore struct {
+	mu     sync.Mutex
+	record apiidempotencysqlite.Record
+}
+
+func newReclaimingIdempotencyStore() *reclaimingIdempotencyStore {
+	return &reclaimingIdempotencyStore{}
+}
+
+func (s *reclaimingIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (apiidempotencysqlite.Record, bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	now := time.Now().UTC()
+	if s.record.Digest == "" {
+		s.record = apiidempotencysqlite.Record{State: "pending", Digest: digest, Owner: owner, LeaseGeneration: 1, LeaseExpires: now.Add(lease)}
+		return cloneProtocolRecord(s.record), true, nil
+	}
+	if s.record.Digest != digest {
+		return cloneProtocolRecord(s.record), false, nil
+	}
+	if s.record.State != "pending" || s.record.Status != 0 {
+		return cloneProtocolRecord(s.record), false, nil
+	}
+	if s.record.LeaseExpires.After(now) {
+		return cloneProtocolRecord(s.record), false, nil
+	}
+	s.record.Owner = owner
+	s.record.LeaseGeneration++
+	s.record.LeaseExpires = now.Add(lease)
+	return cloneProtocolRecord(s.record), true, nil
+}
+
+func (s *reclaimingIdempotencyStore) Load(context.Context, string) (apiidempotencysqlite.Record, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return cloneProtocolRecord(s.record), nil
+}
+
+func (s *reclaimingIdempotencyStore) Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error) {
+	return time.Time{}, apiidempotencysqlite.ErrLeaseLost
+}
+
+func (s *reclaimingIdempotencyStore) Complete(_ context.Context, _ string, digest, owner string, generation int64, status int, header http.Header, body []byte) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.record.Digest != digest || s.record.Owner != owner || s.record.LeaseGeneration != generation || s.record.State != "pending" || !s.record.LeaseExpires.After(time.Now()) {
+		return apiidempotencysqlite.ErrLeaseLost
+	}
+	s.record.State, s.record.Status = "completed", status
+	s.record.Header, s.record.Body = header.Clone(), append([]byte(nil), body...)
+	return nil
+}
+
+func (s *reclaimingIdempotencyStore) MarkIndeterminate(context.Context, string, string, string, int64) error {
+	return apiidempotencysqlite.ErrLeaseLost
+}
+
+func cloneProtocolRecord(record apiidempotencysqlite.Record) apiidempotencysqlite.Record {
+	record.Header = record.Header.Clone()
+	record.Body = append([]byte(nil), record.Body...)
+	return record
 }
 
 func (s *fakeIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (apiidempotencysqlite.Record, bool, error) {

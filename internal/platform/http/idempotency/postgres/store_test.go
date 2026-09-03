@@ -73,20 +73,25 @@ func TestClaimReplayAndExactConflict(t *testing.T) {
 	}
 }
 
-func TestAttemptBindingPreventsExpiredTakeover(t *testing.T) {
+func TestExpiredTakeoverFencesOldHTTPOwner(t *testing.T) {
 	s, _ := testStore(t)
-	first, execute, err := s.Claim(t.Context(), "expiring", strings.Repeat("a", 64), "owner-1", 20*time.Millisecond, time.Hour)
+	first, execute, err := s.Claim(t.Context(), "expiring", strings.Repeat("a", 64), "owner-1", 250*time.Millisecond, time.Hour)
 	if err != nil || !execute {
 		t.Fatalf("first claim=%#v execute=%t err=%v", first, execute, err)
 	}
-	time.Sleep(100 * time.Millisecond)
+	beforeExpiry, execute, err := s.Claim(t.Context(), "expiring", strings.Repeat("a", 64), "owner-2", time.Second, time.Hour)
+	if err != nil || execute || beforeExpiry.State != "pending" || beforeExpiry.LeaseGeneration != first.LeaseGeneration {
+		t.Fatalf("before-expiry claim=%#v execute=%t err=%v", beforeExpiry, execute, err)
+	}
+	time.Sleep(350 * time.Millisecond)
 	next, execute, err := s.Claim(t.Context(), "expiring", strings.Repeat("a", 64), "owner-2", time.Second, time.Hour)
-	if err != nil || execute || next.State != "indeterminate" {
-		// An expired operation with a bound attempt is fenced as indeterminate;
-		// a successor must not execute a duplicate external mutation.
+	if err != nil || !execute || next.State != "pending" || next.LeaseGeneration != first.LeaseGeneration+1 {
 		t.Fatalf("takeover=%#v execute=%t err=%v", next, execute, err)
 	}
 	if err := s.Complete(t.Context(), "expiring", strings.Repeat("a", 64), "owner-1", first.LeaseGeneration, http.StatusOK, nil, []byte(`{"old":true}`)); !errors.Is(err, idempotency.ErrLeaseLost) {
 		t.Fatalf("stale completion=%v, want lease lost", err)
+	}
+	if err := s.Complete(t.Context(), "expiring", strings.Repeat("a", 64), "owner-2", next.LeaseGeneration, http.StatusOK, nil, []byte(`{"new":true}`)); err != nil {
+		t.Fatalf("new owner completion=%v", err)
 	}
 }
