@@ -86,7 +86,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person'
+  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar'
 }
 
 export type EntityListFilter = {
@@ -654,6 +654,10 @@ const entityListStyles = `
     white-space: nowrap;
   }
 
+  .entity-list-cell.is-person-avatar {
+    overflow: visible;
+  }
+
   .entity-list-person {
     display: inline-flex;
     min-width: 0;
@@ -670,6 +674,52 @@ const entityListStyles = `
   .entity-list-person-name {
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .entity-list-person-avatar {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    border-radius: var(--lv-radius-full);
+  }
+
+  .entity-list-person-avatar:focus-visible {
+    outline: var(--focus-outline);
+    outline-offset: var(--focus-outline-offset);
+  }
+
+  .entity-list-person-avatar lv-user-avatar {
+    --lv-user-avatar-size: var(--base-size-20);
+  }
+
+  .entity-list-person-tooltip {
+    position: absolute;
+    z-index: var(--z-index-dropdown);
+    top: calc(100% + var(--base-size-8));
+    left: 50%;
+    display: inline-flex;
+    width: max-content;
+    max-width: 16rem;
+    align-items: center;
+    gap: var(--base-size-8);
+    visibility: hidden;
+    transform: translateX(-50%);
+    opacity: 0;
+    border: var(--lv-border-default);
+    border-radius: var(--lv-radius-default);
+    background: var(--lv-bg-overlay);
+    box-shadow: var(--lv-shadow-floating-lg);
+    color: var(--lv-fg-default);
+    padding: var(--base-size-8) var(--base-size-12);
+    font: var(--lv-type-body-compact);
+    pointer-events: none;
+    transition: opacity var(--motion-transition-stateChange);
+  }
+
+  .entity-list-person-avatar:hover .entity-list-person-tooltip,
+  .entity-list-person-avatar:focus .entity-list-person-tooltip {
+    visibility: visible;
+    opacity: 1;
   }
 
   .entity-list-status {
@@ -1091,7 +1141,7 @@ class EntityList extends LitElement {
       ? badges.map((badge) => badge.label).join(', ')
       : item.columnTitles?.[column.id] ?? String(value ?? '')
     return html`
-      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''}`} title=${title}>
+      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' ? 'is-person-avatar' : ''}`} title=${column.render === 'person-avatar' ? '' : title}>
         ${column.render === 'badges'
           ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
@@ -1112,6 +1162,8 @@ class EntityList extends LitElement {
               ? this.renderStatus(value, column.render === 'quiet-status')
               : column.render === 'person'
                 ? this.renderPerson(item, column.id, value)
+                : column.render === 'person-avatar'
+                  ? this.renderPersonAvatar(item, column.id, value)
               : (value == null || value === '' ? '—' : value)}
       </td>
     `
@@ -1125,6 +1177,22 @@ class EntityList extends LitElement {
       <span class="entity-list-person">
         <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
         <span class="entity-list-person-name">${name}</span>
+      </span>
+    `
+  }
+
+  private renderPersonAvatar(item: EntityListItem, columnID: string, value: string | number | undefined) {
+    const person = item.people?.[columnID]
+    const name = person?.name.trim() || String(value ?? '').trim()
+    if (!name || name === '—') return '—'
+    const tooltipID = `entity-person-${item.id}-${columnID}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    return html`
+      <span class="entity-list-person-avatar" role="group" aria-label=${name} aria-describedby=${tooltipID} tabindex="0">
+        <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+        <span class="entity-list-person-tooltip" id=${tooltipID} role="tooltip">
+          <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+          <span>${name}</span>
+        </span>
       </span>
     `
   }

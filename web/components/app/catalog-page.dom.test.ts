@@ -314,7 +314,7 @@ for (const viewport of [
           descriptionCount: rows.filter((row) => row.querySelector('.entity-list-description')).length,
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
           dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
-          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label') ?? '—'),
           ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
           statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
           updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
@@ -574,6 +574,7 @@ test('owned dashboards use the signed-in display name and avatar instead of You'
       const avatar = cell.querySelector('lv-user-avatar') as any
       return {
         text: cell.textContent?.trim(),
+        label: cell.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label'),
         avatarName: avatar?.name,
         avatarURL: avatar?.imageUrl,
         title: cell.getAttribute('title'),
@@ -582,9 +583,50 @@ test('owned dashboards use the signed-in display name and avatar instead of You'
 
     expect(owner).toEqual({
       text: 'Jacob Nielsen',
+      label: 'Jacob Nielsen',
       avatarName: 'Jacob Nielsen',
       avatarURL: '/profile/avatars/jacob/avatar-digest',
-      title: 'Jacob Nielsen',
+      title: '',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard owners render as compact accessible avatars with hover labels', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+    })
+    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-person-avatar').first().hover()
+    const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const ownerCell = list.querySelector('tbody tr.entity-list-table-row')?.querySelectorAll('.entity-list-cell')[1] as HTMLElement
+      const owner = ownerCell.querySelector('.entity-list-person-avatar') as HTMLElement
+      const tooltip = owner?.querySelector('.entity-list-person-tooltip') as HTMLElement
+      return {
+        cellTitle: ownerCell.title,
+        label: owner?.getAttribute('aria-label'),
+        hasAvatar: Boolean(owner?.querySelector('lv-user-avatar')),
+        hasVisibleName: Boolean(ownerCell.querySelector('.entity-list-person-name')),
+        hovered: owner?.matches(':hover'),
+        tooltipText: tooltip?.textContent?.trim(),
+        tooltipVisibleOnHover: getComputedStyle(tooltip).visibility,
+      }
+    })
+
+    expect(state).toEqual({
+      cellTitle: '',
+      label: 'Analytics',
+      hasAvatar: true,
+      hasVisibleName: false,
+      hovered: true,
+      tooltipText: 'Analytics',
+      tooltipVisibleOnHover: 'visible',
     })
   } finally {
     await page.close()
