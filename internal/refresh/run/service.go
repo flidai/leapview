@@ -118,11 +118,22 @@ type CanonicalPublicationUnitOfWork interface {
 	CompleteCanonicalRefresh(context.Context, JobRecord, CanonicalRefreshResult) error
 }
 
-// CanonicalResultReconciler applies the committed canonical result to runtime
-// and serving projections. The durable publication is already authoritative
-// when this hook runs, so implementations must reconcile the exact result
-// generation and remain safe to replay.
+// CanonicalResultReconciler applies the committed canonical result to
+// post-commit projections such as dashboard state. Runtime cutover belongs to
+// CanonicalCompletionCoordinator, which runs durable completion as its
+// activation callback before publishing the prepared runtime.
 type CanonicalResultReconciler func(context.Context, JobRecord, CanonicalRefreshResult) error
+
+// CanonicalCompletionCoordinator controls the boundary around durable
+// canonical completion. The coordinator must invoke complete exactly once
+// before it returns successfully; callers may use it to prepare process-local state first,
+// commit the durable target through complete, and publish the prepared state
+// only after complete succeeds.
+//
+// Keeping this seam in the refresh service avoids making the workflow aware of
+// a particular runtime-host implementation while allowing production
+// composition to make durable completion the activation callback.
+type CanonicalCompletionCoordinator func(context.Context, JobRecord, CanonicalRefreshResult, func() error) error
 
 // CanonicalRefreshResult is the exact committed delivery identity produced by
 // a refresh restatement. The old job identity remains the workflow/lease
@@ -151,20 +162,21 @@ type Service struct {
 	// ResolveTargetRevision reads the authoritative deployment target fence at
 	// queue time. Native PostgreSQL refreshes must carry this exact revision
 	// into the durable run; a zero or inferred revision is never publishable.
-	ResolveTargetRevision     func(context.Context, projectgraph.ServingIdentity) (int64, error)
-	ResolveSourceDigest       func(context.Context, projectgraph.ServingIdentity) (string, error)
-	CanonicalExecutor         func(context.Context, JobRecord) (CanonicalRefreshResult, error)
-	CanonicalResultReconciler CanonicalResultReconciler
-	Runs                      WorkflowRepository
-	Artifacts                 ArtifactLoader
-	Materializer              Materializer
-	Runtime                   RuntimeHost
-	Retention                 RetentionRunner
-	Publisher                 Publisher
-	DataVersions              DataVersionRepository
-	Publication               PublicationUnitOfWork
-	CandidateValidationHooks  []CandidateValidationHook
-	Now                       func() time.Time
+	ResolveTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
+	ResolveSourceDigest            func(context.Context, projectgraph.ServingIdentity) (string, error)
+	CanonicalExecutor              func(context.Context, JobRecord) (CanonicalRefreshResult, error)
+	CanonicalCompletionCoordinator CanonicalCompletionCoordinator
+	CanonicalResultReconciler      CanonicalResultReconciler
+	Runs                           WorkflowRepository
+	Artifacts                      ArtifactLoader
+	Materializer                   Materializer
+	Runtime                        RuntimeHost
+	Retention                      RetentionRunner
+	Publisher                      Publisher
+	DataVersions                   DataVersionRepository
+	Publication                    PublicationUnitOfWork
+	CandidateValidationHooks       []CandidateValidationHook
+	Now                            func() time.Time
 }
 
 type ServingState struct {
@@ -547,7 +559,28 @@ func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
 		if !ok {
 			return fmt.Errorf("canonical refresh publication unit of work is required")
 		}
-		if err := publication.CompleteCanonicalRefresh(ctx, job, result); err != nil {
+		completionCalled := false
+		var completionErr error
+		complete := func() error {
+			if completionCalled {
+				completionErr = errors.Join(completionErr, errors.New("canonical refresh completion callback invoked more than once"))
+				return completionErr
+			}
+			completionCalled = true
+			completionErr = publication.CompleteCanonicalRefresh(ctx, job, result)
+			return completionErr
+		}
+		if s.CanonicalCompletionCoordinator != nil {
+			if err := s.CanonicalCompletionCoordinator(ctx, job, result, complete); err != nil {
+				return fmt.Errorf("coordinate canonical refresh completion: %w", err)
+			}
+			if !completionCalled {
+				return errors.New("coordinate canonical refresh completion: completion callback was not invoked")
+			}
+			if completionErr != nil {
+				return fmt.Errorf("coordinate canonical refresh completion: %w", completionErr)
+			}
+		} else if err := complete(); err != nil {
 			return err
 		}
 		if s.CanonicalResultReconciler != nil {

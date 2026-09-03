@@ -32,6 +32,7 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	service.ResolveSourceDigest = workflow.refreshSourceDigest
 	service.ResolveTargetRevision = workflow.refreshTargetRevision
 	service.CanonicalExecutor = workflow.canonicalRefreshExecutor
+	service.CanonicalCompletionCoordinator = workflow.canonicalCompletionCoordinator
 	service.CanonicalResultReconciler = workflow.canonicalResultReconciler
 	service.ResolveActive = func(ctx context.Context, identity projectgraph.ServingIdentity) (refreshrun.ServingState, error) {
 		if runtime.runtimeHostModule == nil {

@@ -168,12 +168,18 @@ func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T
 		"RefreshTargetRevision: resolveRefreshTargetRevision",
 		"RefreshSourceDigest: resolveRefreshSourceDigest",
 		"CanonicalRefreshExecutor: nativeRefreshExecutor.Execute",
+		"CanonicalCompletionCoordinator: canonicalCompletionCoordinator",
 		"CanonicalResultReconciler: canonicalResultReconciler",
-		"runtimeHost.ReconcileSealed(reconcileCtx, servingstate.ID(target.ActiveGenerationID))",
+		"nativeDeliveryReader.LoadGeneration(completionCtx, result.NativeGenerationID)",
+		"runtimeHost.PrepareSealedActivation(completionCtx, result.ServingStateID, generation.CandidateID)",
+		"runtimeHost.ActivatePreparedContext(completionCtx, prepared, complete)",
 	} {
 		if !strings.Contains(source, required) {
 			t.Fatalf("PostgreSQL composition is missing %q", required)
 		}
+	}
+	if strings.Contains(source, "runtimeHost.ReconcileSealed(reconcileCtx, servingstate.ID(target.ActiveGenerationID))") {
+		t.Fatal("PostgreSQL refresh reconciliation still performs a post-commit runtime cutover")
 	}
 }
 

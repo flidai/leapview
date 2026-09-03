@@ -184,6 +184,23 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	preActivationInput := runtimehost.RuntimeInput{
+		State:                     servingstate.State{ID: servingstate.ID(generationID), ProjectID: projectgraph.ResourceID(projectID), Environment: servingstate.Environment(environment), DuckLakeSnapshotID: 42},
+		Artifact:                  servingstate.Artifact{ID: "artifact-preview", Digest: artifactDigest},
+		SealedActivationCandidate: &runtimehost.CandidateRuntimeContext{CandidateID: candidateID},
+	}
+	if root, err := resolverBeforeActivation(t, targetID, delivery, pools, preActivationInput); err != nil {
+		t.Fatal(err)
+	} else if root.GenerationID != generationID || root.CandidateID != candidateID {
+		t.Fatalf("pre-activation root identity=%s/%s, want %s/%s", root.GenerationID, root.CandidateID, generationID, candidateID)
+	}
+	if _, err := resolverBeforeActivation(t, targetID, delivery, pools, func() runtimehost.RuntimeInput {
+		bad := preActivationInput
+		bad.SealedActivationCandidate = nil
+		return bad
+	}()); !errors.Is(err, ErrSealedRootUnavailable) {
+		t.Fatalf("active-only resolver before target activation error=%v, want unavailable", err)
+	}
 	publication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{
 		PublicationID: "88888888-8888-4888-8888-888888888888", TargetID: targetID, GenerationID: generationID,
 		CandidateID: candidateID, SnapshotSealID: sealID, ExpectedTargetRevision: 1, ActorID: "resolver-test", RequestDigest: requestDigest,
@@ -256,6 +273,11 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 			t.Fatalf("root identity=%s/%s", root.GenerationID, root.DeliveryID)
 		}
 	})
+}
+
+func resolverBeforeActivation(t *testing.T, targetID string, delivery *deploymentpostgres.Repository, pools *physicalpoolpostgres.Repository, input runtimehost.RuntimeInput) (SealedServingRoot, error) {
+	t.Helper()
+	return NewPostgresSealedRootResolver(targetID, delivery, pools)(t.Context(), input)
 }
 
 func testPostgresResolverDigest(value byte) string {

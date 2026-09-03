@@ -221,6 +221,80 @@ func TestServiceExecuteClaimedJobCompletesCanonicalTree(t *testing.T) {
 	}
 }
 
+func TestServiceExecuteClaimedJobCoordinatesCanonicalCompletion(t *testing.T) {
+	repo := newFakeRepo()
+	order := make([]string, 0, 3)
+	canonicalCalls := 0
+	service := Service{
+		Runs: repo,
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
+		},
+		Publication: fakePublication{repo: repo, canonicalCalls: &canonicalCalls},
+		CanonicalCompletionCoordinator: func(_ context.Context, _ JobRecord, _ CanonicalRefreshResult, complete func() error) error {
+			order = append(order, "before")
+			if err := complete(); err != nil {
+				return err
+			}
+			order = append(order, "after")
+			return nil
+		},
+		CanonicalResultReconciler: func(_ context.Context, _ JobRecord, _ CanonicalRefreshResult) error {
+			if repo.runStatuses["run_root"] != RunStatusSucceeded {
+				t.Fatal("canonical result reconciled before durable completion")
+			}
+			order = append(order, "reconciler")
+			return nil
+		},
+	}
+	err := service.ExecuteClaimedJob(t.Context(), JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	})
+	if err != nil {
+		t.Fatalf("execute coordinated canonical job: %v", err)
+	}
+	if got, want := strings.Join(order, ","), "before,after,reconciler"; got != want {
+		t.Fatalf("canonical completion order = %q, want %q", got, want)
+	}
+	if canonicalCalls != 1 {
+		t.Fatalf("canonical completion calls = %d, want 1", canonicalCalls)
+	}
+}
+
+func TestServiceExecuteClaimedJobRejectsSkippedCanonicalCompletion(t *testing.T) {
+	repo := newFakeRepo()
+	reconciled := false
+	service := Service{
+		Runs: repo,
+		CanonicalExecutor: func(context.Context, JobRecord) (CanonicalRefreshResult, error) {
+			return CanonicalRefreshResult{PlanID: "plan-refresh", ServingStateID: "generation-refresh"}, nil
+		},
+		Publication: fakePublication{repo: repo},
+		CanonicalCompletionCoordinator: func(context.Context, JobRecord, CanonicalRefreshResult, func() error) error {
+			return nil
+		},
+		CanonicalResultReconciler: func(context.Context, JobRecord, CanonicalRefreshResult) error {
+			reconciled = true
+			return nil
+		},
+	}
+	err := service.ExecuteClaimedJob(t.Context(), JobRecord{
+		ID: "job_1", Identity: serviceIdentity, PrincipalID: "principal:test", EstimatedMemoryBytes: 64 << 20,
+		RunID: "run_root", SemanticModelID: "sales", PipelineID: "sales-refresh", PipelinePlan: testPipelinePlan(serviceIdentity, "sales-refresh", "sales"),
+		TargetType: TargetRefreshPipeline, TargetID: "sales-refresh", TriggerType: TriggerManual, TriggerID: "manual",
+		Kind: JobKindRefreshPipeline, LeaseOwner: "worker", LeaseRevision: 1,
+	})
+	if err == nil || !strings.Contains(err.Error(), "completion callback was not invoked") {
+		t.Fatalf("execute skipped canonical completion error = %v", err)
+	}
+	if reconciled {
+		t.Fatal("canonical result reconciled without durable completion")
+	}
+}
+
 func TestServiceExecuteClaimedJobReturnsCanonicalReconciliationFailure(t *testing.T) {
 	repo := newFakeRepo()
 	wantErr := errors.New("runtime cutover unavailable")
@@ -993,7 +1067,10 @@ type fakeCandidateValidationHook struct {
 	err        error
 }
 
-type fakePublication struct{ repo *fakeRepo }
+type fakePublication struct {
+	repo           *fakeRepo
+	canonicalCalls *int
+}
 
 func (p fakePublication) Publish(ctx context.Context, identity projectgraph.ServingIdentity, servingStateID servingstate.ID, version refreshschedule.DataVersion) error {
 	if _, err := p.repo.Activate(ctx, identity.ProjectID, servingstate.Environment(identity.Environment), servingStateID, ""); err != nil {
@@ -1005,6 +1082,9 @@ func (p fakePublication) Publish(ctx context.Context, identity projectgraph.Serv
 }
 
 func (p fakePublication) CompleteCanonicalRefresh(_ context.Context, _ JobRecord, _ CanonicalRefreshResult) error {
+	if p.canonicalCalls != nil {
+		*p.canonicalCalls++
+	}
 	p.repo.runStatuses["run_root"] = RunStatusSucceeded
 	p.repo.runStatuses["run_child"] = RunStatusSucceeded
 	return nil

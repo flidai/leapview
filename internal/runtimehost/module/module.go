@@ -118,6 +118,12 @@ func (m *Module) ReconcileSealed(ctx context.Context, id servingstate.ID) error 
 func (m *Module) PrepareServingState(ctx context.Context, id string) (*runtimehost.Prepared, error) {
 	return m.registry.PrepareServingState(ctx, id)
 }
+func (m *Module) PrepareSealedActivation(ctx context.Context, id, candidateID string) (*runtimehost.Prepared, error) {
+	if m == nil || m.registry == nil {
+		return nil, errors.New("runtime host is unavailable")
+	}
+	return m.registry.PrepareSealedActivation(ctx, id, candidateID)
+}
 func (m *Module) PrepareServingStateCandidate(ctx context.Context, input runtimehost.ServingStateCandidate) (*runtimehost.Prepared, error) {
 	return m.registry.PrepareServingStateCandidate(ctx, input)
 }

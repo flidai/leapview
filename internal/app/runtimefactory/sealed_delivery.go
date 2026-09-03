@@ -27,11 +27,16 @@ func NewSQLiteSealedRootResolver(db *sql.DB, targetID string, delivery *deployme
 		if delivery == nil || db == nil || targetID == "" {
 			return SealedServingRoot{}, fmt.Errorf("%w: durable delivery repository is unavailable", ErrSealedRootUnavailable)
 		}
-		// Candidate preparation is isolated from the active pointer. Resolve the
-		// exact ready candidate requested by runtimehost and bind its owner-scoped
-		// artifact/seal; the caller's live authorization runs before lease acquire.
-		if input.Candidate != nil && input.Candidate.CandidateID != "" {
-			candidate, err := delivery.DeliveryCandidateByID(ctx, input.Candidate.CandidateID)
+		candidateInput := input.Candidate
+		if candidateInput == nil {
+			candidateInput = input.SealedActivationCandidate
+		}
+		// Candidate and pre-activation preparation are isolated from the active
+		// pointer. Resolve the exact ready candidate requested by runtimehost and
+		// bind its owner-scoped artifact/seal; the caller's live authorization runs
+		// before lease acquire.
+		if candidateInput != nil && candidateInput.CandidateID != "" {
+			candidate, err := delivery.DeliveryCandidateByID(ctx, candidateInput.CandidateID)
 			if err != nil {
 				return SealedServingRoot{}, err
 			}
@@ -121,9 +126,13 @@ func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres
 		if strings.TrimSpace(string(input.State.ID)) == "" || strings.TrimSpace(input.Artifact.ID) == "" || input.Artifact.ID != strings.TrimSpace(input.Artifact.ID) {
 			return SealedServingRoot{}, fmt.Errorf("%w: serving-state and artifact identity are required", ErrSealedRootUnavailable)
 		}
-		if input.Candidate != nil {
-			candidateID := strings.TrimSpace(input.Candidate.CandidateID)
-			if candidateID == "" || candidateID != input.Candidate.CandidateID {
+		candidateInput := input.Candidate
+		if candidateInput == nil {
+			candidateInput = input.SealedActivationCandidate
+		}
+		if candidateInput != nil {
+			candidateID := strings.TrimSpace(candidateInput.CandidateID)
+			if candidateID == "" || candidateID != candidateInput.CandidateID {
 				return SealedServingRoot{}, fmt.Errorf("%w: candidate identity is required", ErrSealedRootUnavailable)
 			}
 			target, err := delivery.Target(ctx, targetID)
@@ -284,7 +293,11 @@ func validatePostgresCandidateTuple(targetID string, plan deploymentpostgres.Del
 	if err := platformdigest.ValidateSHA256Identity(candidate.QualificationDigest); err != nil {
 		return fmt.Errorf("%w: qualification digest is invalid: %v", ErrSealedRootUnavailable, err)
 	}
-	if input.Candidate != nil && input.Candidate.RuntimeVersion != "" && input.Candidate.RuntimeVersion != seal.RuntimeVersion {
+	candidateInput := input.Candidate
+	if candidateInput == nil {
+		candidateInput = input.SealedActivationCandidate
+	}
+	if candidateInput != nil && candidateInput.RuntimeVersion != "" && candidateInput.RuntimeVersion != seal.RuntimeVersion {
 		return fmt.Errorf("%w: candidate runtime version differs from snapshot seal", ErrSealedRootMismatch)
 	}
 	if plan.PlanID == "" || plan.TargetID != targetID || plan.PlanDigest != seal.PlanDigest || plan.CompiledGraphDigest != seal.CompiledGraphDigest || plan.CompiledConfigDigest != seal.CompiledConfigDigest || plan.SecurityDomainFingerprint != seal.SecurityDomainFingerprint || plan.ArtifactDigest != seal.ServingArtifactDigest {

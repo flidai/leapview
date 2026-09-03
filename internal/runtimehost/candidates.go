@@ -190,7 +190,7 @@ func (r *Registry) prepareCandidate(ctx context.Context, input CandidatePreparat
 	// Ownership transfers to the prepared candidate; manager preparation closes
 	// it on every subsequent failure path.
 	ownedLifetime = nil
-	prepared, err := r.manager.prepareResolvedWithCandidate(ctx, state, artifact, managedData, candidate)
+	prepared, err := r.manager.prepareResolvedWithCandidate(ctx, state, artifact, managedData, candidate, nil)
 	if err != nil {
 		return nil, err
 	}
