@@ -32,8 +32,13 @@ const (
 	DefaultPostgresCatalogMaintenanceRole = "leapview_ducklake_maintenance"
 	DefaultPostgresCatalogRuntimeRole     = "leapview_ducklake_runtime"
 	DefaultPostgresCatalogMigratorRole    = "leapview_ducklake_migrator"
-	postgresMaintenanceSecret             = "leapview_pg_maintenance"
-	duckLakeMaintenanceSecret             = "leapview_lake_maintenance"
+	// DefaultPostgresCatalogMaintenanceSecret and
+	// DefaultDuckLakeCatalogMaintenanceSecret identify the temporary secrets
+	// used by a dedicated catalog-maintenance session. Callers that pass a
+	// maintenance catalog contract should set both explicitly so the session
+	// and physical-maintenance contract validate the same attach identity.
+	DefaultPostgresCatalogMaintenanceSecret = "leapview_pg_maintenance"
+	DefaultDuckLakeCatalogMaintenanceSecret = "leapview_lake_maintenance"
 )
 
 var (
@@ -130,10 +135,10 @@ func (c PostgresCatalogMaintenanceSessionConfig) validate(requirePolicy bool) er
 	}
 	catalog := c.Catalog
 	if catalog.DuckLakeSecret == "" {
-		catalog.DuckLakeSecret = duckLakeMaintenanceSecret
+		catalog.DuckLakeSecret = DefaultDuckLakeCatalogMaintenanceSecret
 	}
 	if catalog.PostgresSecret == "" {
-		catalog.PostgresSecret = postgresMaintenanceSecret
+		catalog.PostgresSecret = DefaultPostgresCatalogMaintenanceSecret
 	}
 	if catalog.Mode != PostgresCatalogWriter {
 		return fmt.Errorf("%w: catalog must use writer attach mode", ErrPostgresCatalogMaintenanceSession)
@@ -240,10 +245,10 @@ func OpenPostgresCatalogMaintenanceSession(ctx context.Context, c PostgresCatalo
 	}
 	catalog := c.Catalog
 	if catalog.DuckLakeSecret == "" {
-		catalog.DuckLakeSecret = duckLakeMaintenanceSecret
+		catalog.DuckLakeSecret = DefaultDuckLakeCatalogMaintenanceSecret
 	}
 	if catalog.PostgresSecret == "" {
-		catalog.PostgresSecret = postgresMaintenanceSecret
+		catalog.PostgresSecret = DefaultPostgresCatalogMaintenanceSecret
 	}
 	canonicalDataPath, err := CanonicalDataPath(c.DataPath)
 	if err != nil {
@@ -465,7 +470,7 @@ func catalogSecretName(c PostgresCatalogMaintenanceSessionConfig) string {
 	if strings.TrimSpace(c.Catalog.PostgresSecret) != "" {
 		return strings.TrimSpace(c.Catalog.PostgresSecret)
 	}
-	return postgresMaintenanceSecret
+	return DefaultPostgresCatalogMaintenanceSecret
 }
 
 func isMaintenanceSQLIdentifier(value string) bool {

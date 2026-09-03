@@ -2,11 +2,13 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/google/uuid"
 )
@@ -117,5 +119,48 @@ func TestDuckLakeRetentionWorkerStopCancelsBlockingPass(t *testing.T) {
 	defer cancel()
 	if err := worker.Stop(stopCtx); err != nil {
 		t.Fatalf("Stop() error = %v", err)
+	}
+}
+
+type retentionCatalogMaintenanceConnection struct{}
+
+func (*retentionCatalogMaintenanceConnection) ExecContext(context.Context, string, ...any) (sql.Result, error) {
+	return nil, nil
+}
+
+func TestPostgresDuckLakeRetentionCatalogConfigUsesMaintenanceDefaults(t *testing.T) {
+	physicalPoolID := "pool-retention"
+	metadataSchema := ducklake.MetadataSchemaForPool(physicalPoolID)
+	catalog := postgresDuckLakeRetentionCatalogConfig(physicalPoolID, metadataSchema)
+
+	if catalog.DuckLakeSecret != ducklake.DefaultDuckLakeCatalogMaintenanceSecret {
+		t.Fatalf("DuckLake maintenance secret = %q, want %q", catalog.DuckLakeSecret, ducklake.DefaultDuckLakeCatalogMaintenanceSecret)
+	}
+	if catalog.PostgresSecret != ducklake.DefaultPostgresCatalogMaintenanceSecret {
+		t.Fatalf("PostgreSQL maintenance secret = %q, want %q", catalog.PostgresSecret, ducklake.DefaultPostgresCatalogMaintenanceSecret)
+	}
+	if err := catalog.Validate(); err != nil {
+		t.Fatalf("maintenance catalog config is invalid: %v", err)
+	}
+
+	expires := time.Now().Add(time.Hour)
+	contract := ducklake.PostgresCatalogMaintenanceContract{
+		Catalog:         catalog,
+		CatalogAlias:    "lake",
+		CatalogID:       "catalog-retention",
+		PhysicalPoolID:  physicalPoolID,
+		MetadataSchema:  metadataSchema,
+		DataPath:        "s3://bucket/objects",
+		MaintenanceRole: "leapview_ducklake_maintenance",
+		RuntimeRole:     "leapview_ducklake_runtime",
+		Lease:           ducklake.PostgresCatalogMaintenanceLease{LeaseID: "lease-retention", OwnerID: "worker-retention", ExpiresAt: expires},
+		Fence:           ducklake.PostgresCatalogMaintenanceFence{OwnerID: "worker-retention", FencingEpoch: 1, LeaseExpiresAt: expires},
+	}
+	maintenance, err := ducklake.NewPostgresCatalogMaintenance(&retentionCatalogMaintenanceConnection{}, contract)
+	if err != nil {
+		t.Fatalf("maintenance contract rejected composed catalog: %v", err)
+	}
+	if got := maintenance.Contract().Catalog; got != catalog {
+		t.Fatalf("maintenance contract catalog = %#v, want %#v", got, catalog)
 	}
 }

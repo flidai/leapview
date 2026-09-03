@@ -227,12 +227,9 @@ func postgresDuckLakeRetentionWorker(
 			return nil, errors.New("DuckLake retention catalog identity changed")
 		}
 		maintenanceConfig := cfg.PostgresDuckLakeMaintenanceConfig()
+		maintenanceCatalog := postgresDuckLakeRetentionCatalogConfig(input.Request.PhysicalPoolID, catalog.MetadataSchema)
 		sessionConfig := ducklake.PostgresCatalogMaintenanceSessionConfig{
-			Catalog: ducklake.PostgresCatalogConfig{
-				PhysicalPoolID: input.Request.PhysicalPoolID,
-				MetadataSchema: catalog.MetadataSchema,
-				Mode:           ducklake.PostgresCatalogWriter,
-			},
+			Catalog:            maintenanceCatalog,
 			PostgresURL:        maintenanceConfig.URL,
 			MaintenanceRole:    maintenanceConfig.RuntimeRole,
 			RuntimeRole:        cfg.PostgresDuckLakeRuntimeRole,
@@ -247,7 +244,7 @@ func postgresDuckLakeRetentionWorker(
 			ExtensionAdmission: extensionAdmission,
 		}
 		contract := ducklake.PostgresCatalogMaintenanceContract{
-			Catalog:           sessionConfig.Catalog,
+			Catalog:           maintenanceCatalog,
 			CatalogAlias:      "lake",
 			CatalogID:         input.Request.CatalogID,
 			PhysicalPoolID:    input.Request.PhysicalPoolID,
@@ -309,4 +306,18 @@ func postgresDuckLakeRetentionWorker(
 		},
 		Logger: slog.Default(),
 	}), nil
+}
+
+// postgresDuckLakeRetentionCatalogConfig is the single attach identity shared
+// by the maintenance-session bootstrap and physical-maintenance contract.
+// Keeping the dedicated secret names explicit here prevents session-local
+// defaults from diverging from the fail-closed contract validation boundary.
+func postgresDuckLakeRetentionCatalogConfig(physicalPoolID, metadataSchema string) ducklake.PostgresCatalogConfig {
+	return ducklake.PostgresCatalogConfig{
+		PhysicalPoolID: physicalPoolID,
+		DuckLakeSecret: ducklake.DefaultDuckLakeCatalogMaintenanceSecret,
+		PostgresSecret: ducklake.DefaultPostgresCatalogMaintenanceSecret,
+		MetadataSchema: metadataSchema,
+		Mode:           ducklake.PostgresCatalogWriter,
+	}
 }
