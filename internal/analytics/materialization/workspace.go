@@ -53,7 +53,7 @@ type ObservationExecutor interface {
 }
 
 // ObservationWriter is invoked by a materializer inside its DuckLake commit
-// transaction, immediately after model tables are materialized and while the
+// transaction, immediately after Model relations are materialized and while the
 // prepared source session remains live. Returning an error aborts that
 // transaction. The external transaction handle never crosses this capability
 // boundary. The writer may durably record control-plane evidence even if the

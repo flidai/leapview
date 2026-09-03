@@ -74,14 +74,6 @@ type RowQuery struct {
 	Offset     int
 }
 
-type ModelTableQuery struct {
-	Table   string
-	Columns []string
-	Sort    []QuerySort
-	Limit   int
-	Offset  int
-}
-
 type RawValueQuery struct {
 	Dataset      string
 	Dimensions   []QueryField

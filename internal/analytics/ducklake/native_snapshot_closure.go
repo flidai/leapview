@@ -270,7 +270,7 @@ func newNativeSnapshotClosureEvidence(catalogID string, snapshotID int64, object
 // its JSON and digests are internally self-consistent: relation sets must be
 // sorted, unique, namespace-bound, and object paths must remain under the
 // admitted root. A native materialization request always contains at least one
-// model table, so an empty relation manifest is not qualifying evidence.
+// Model, so an empty relation manifest is not qualifying evidence.
 func VerifyNativeSnapshotClosureEvidence(evidence NativeSnapshotClosureEvidence) error {
 	if len(evidence.Relations) == 0 {
 		return fmt.Errorf("DuckLake native relation manifest is empty")

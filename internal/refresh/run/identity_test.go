@@ -129,7 +129,7 @@ func TestJobRecordRequiresCanonicalLeaseFence(t *testing.T) {
 func TestRunInputKeepsModelTargetDistinctFromPipeline(t *testing.T) {
 	input := RunInput{
 		Identity:        projectgraph.ServingIdentity{ProjectID: "project_sales", Environment: "prod", GenerationID: "generation_a"},
-		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, TargetType: TargetModelTable,
+		SemanticModelID: "semantic_sales", PipelineID: "pipeline_sales", PrincipalID: "user:test", EstimatedMemoryBytes: 67108864, TargetType: TargetModel,
 		TargetID: "model_sales_customers", TriggerType: TriggerDependency, JobKind: JobKindChildRun,
 	}
 	if err := input.Validate(); err != nil {

@@ -1,4 +1,4 @@
--- Clean-slate release control authority (ADR-0018).
+-- Clean-slate release control authority (ADR-0020).
 --
 -- Release owns the API-facing immutable release identity, artifact evidence,
 -- candidate provenance, and deployment linkage. Canonical delivery selection

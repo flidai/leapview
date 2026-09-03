@@ -23,7 +23,7 @@ var (
 	ErrRunStale                      = errors.New("refresh run is stale")
 )
 
-var validTargetTypes = map[string]struct{}{TargetModelTable: {}, TargetRefreshPipeline: {}}
+var validTargetTypes = map[string]struct{}{TargetModel: {}, TargetRefreshPipeline: {}}
 var validTriggerTypes = map[string]struct{}{TriggerDependency: {}, TriggerManual: {}, TriggerSchedule: {}}
 var validJobKinds = map[string]struct{}{JobKindRefreshPipeline: {}, JobKindChildRun: {}}
 
@@ -40,7 +40,7 @@ const (
 	// intentionally not a runnable RunStatus: no job or run tree is created.
 	AdmissionDeniedExternalActive = "admission_denied_external_active"
 
-	TargetModelTable      = "model_table"
+	TargetModel           = "model"
 	TargetRefreshPipeline = "refresh_pipeline"
 
 	TriggerDependency = "dependency"
@@ -57,7 +57,7 @@ type RunRecord struct {
 	// SemanticModelID is the governed semantic model being materialized.
 	SemanticModelID projectgraph.ResourceID `json:"semanticModelId"`
 	// PipelineID identifies the authored refresh pipeline; it is equal to
-	// TargetID only for refresh_pipeline targets, never for model_table targets.
+	// TargetID only for refresh_pipeline targets, never for model targets.
 	PipelineID           projectgraph.ResourceID   `json:"pipelineId,omitempty"`
 	PipelinePlan         *projectpipelineplan.Plan `json:"pipelinePlan,omitempty"`
 	InvocationSource     string                    `json:"invocationSource,omitempty"`

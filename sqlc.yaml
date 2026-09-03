@@ -162,6 +162,7 @@ sql:
     schema:
       - "internal/access/postgres/schema.sql"
       - "internal/access/postgres/migrations/002_typed_attribute_registry.sql"
+      - "internal/access/postgres/migrations/003_semantic_attribute_control.sql"
     gen:
       go:
         package: "db"
@@ -483,7 +484,7 @@ sql:
     queries: "internal/analytics/cache/postgres/queries"
     schema:
       - "internal/analytics/cache/postgres/schema.sql"
-      - "internal/analytics/cache/postgres/migrations/003_l3_object_gc.sql"
+      - "internal/analytics/cache/postgres/migrations/004_l3_object_gc.sql"
     gen:
       go:
         package: "db"

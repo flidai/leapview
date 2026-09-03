@@ -117,13 +117,10 @@ func (r *Repository) servingStateGraph(ctx context.Context, projectID projectgra
 			return servingstate.AssetGraph{}, false, fmt.Errorf("active asset %q id: %w", asset.LogicalAssetID, err)
 		}
 		parent := projectgraph.ResourceID(asset.ParentLogicalAssetID)
-		// The serving graph stores canonical graph kinds. The browser projection
-		// keeps its existing presentation buckets for model and pipeline assets,
-		// while retaining the opaque canonical IDs unchanged.
+		// The serving graph stores canonical graph kinds; retain them in the
+		// browser projection while keeping opaque canonical IDs unchanged.
 		typ := asset.AssetType
 		switch typ {
-		case "model":
-			typ = "model_table"
 		case "pipeline":
 			typ = "refresh_pipeline"
 		}

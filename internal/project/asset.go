@@ -218,8 +218,8 @@ func PayloadSchemaForAssetType(typ AssetType) string {
 		return "connection.v1"
 	case AssetTypeSource:
 		return "source.v1"
-	case AssetTypeModelTable:
-		return "model_table.v1"
+	case AssetTypeModel:
+		return "model.v1"
 	case AssetTypeSemanticModel:
 		return "semantic_model.v1"
 	case AssetTypeField:

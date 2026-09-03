@@ -82,6 +82,11 @@ var plan = platformmigrations.Plan{
 			SQL:         accesspostgres.AttributeRegistryMigrationSQL(),
 		},
 		{
+			Revision:    accesspostgres.SemanticAttributeControlMigrationRevision,
+			MigrationID: accesspostgres.SemanticAttributeControlMigrationID,
+			SQL:         accesspostgres.SemanticAttributeControlMigrationSQL(),
+		},
+		{
 			Revision:    cachepostgres.L3GCMigrationRevision,
 			MigrationID: cachepostgres.L3GCMigrationID,
 			SQL:         cachepostgres.L3GCMigrationSQL(),
@@ -158,6 +163,9 @@ BEGIN
 		GRANT USAGE ON SCHEMA platform TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON platform.setting TO leapview_control_runtime;
 		GRANT SELECT, INSERT ON platform.instance_identity, platform.instance_environment, platform.instance_project_claim TO leapview_control_runtime;
+		GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION access.valid_capabilities(jsonb) TO leapview_control_runtime;
+		REVOKE DELETE ON access.session, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_session, access.authoring_credential, access.semantic_attribute_control_state, access.semantic_attribute_assignment, access.semantic_attribute_claim_mapping FROM leapview_control_runtime;
 		GRANT SELECT, UPDATE ON admin.product_identity TO leapview_control_runtime;
 		GRANT SELECT, INSERT, UPDATE ON dashboard.view_session, dashboard.view_day, dashboard.appearance_override TO leapview_control_runtime;
 		GRANT SELECT ON dashboard.authoring_dashboards, dashboard.authoring_revisions, dashboard.authoring_drafts, dashboard.authoring_compiled_revisions, dashboard.authoring_published, dashboard.authoring_commands, dashboard.authoring_create_operations, dashboard.authoring_revalidation_attempts, dashboard.publications, dashboard.publication_events, dashboard.publication_streams TO leapview_control_runtime;
@@ -224,7 +232,7 @@ BEGIN
         GRANT EXECUTE ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid, bigint) TO leapview_control_runtime;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON serving_state.bundle, serving_state.asset, serving_state.asset_edge FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA physical_pool FROM leapview_control_runtime;
-        -- Reassert the revision-3 L3 split on every migration replay. Runtime
+        -- Reassert the revision-4 L3 split on every migration replay. Runtime
         -- may publish under exact object fences but cannot enumerate or drive
         -- pool-wide garbage collection.
         REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_runtime;

@@ -343,7 +343,7 @@ func validateRun(in RunInput) error {
 			return err
 		}
 	}
-	if in.TargetType != "refresh_pipeline" && in.TargetType != "model_table" {
+	if in.TargetType != "refresh_pipeline" && in.TargetType != "model" {
 		return errors.New("unsupported target type")
 	}
 	if in.TriggerType != "manual" && in.TriggerType != "schedule" && in.TriggerType != "dependency" {

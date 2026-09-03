@@ -69,7 +69,7 @@ func TestPrepareNativeMaterializationRequestBindsExactManagedRevisionOnDetachedM
 		t.Fatalf("bound managed root = %q", got)
 	}
 	if _, ok := request.ModelTables["orders"]; !ok || len(request.ModelTables) != 1 {
-		t.Fatalf("physical model tables = %#v, want authored name orders", request.ModelTables)
+		t.Fatalf("physical Models = %#v, want authored name orders", request.ModelTables)
 	}
 	if len(request.Tables) != 1 || request.Tables[0] != "orders" {
 		t.Fatalf("physical materialization tables = %#v, want [orders]", request.Tables)

@@ -486,7 +486,7 @@ func (p *postgresRunPersistence) CreateRunTree(ctx context.Context, tree refresh
 		child := rootInput
 		child.RunID = deterministicChildRunID(root.RunID, targetID.String())
 		child.ParentRunID = root.RunID
-		child.TargetType = refreshrun.TargetModelTable
+		child.TargetType = refreshrun.TargetModel
 		child.TargetID = targetID
 		child.TriggerType = refreshrun.TriggerDependency
 		child.JobKind = refreshrun.JobKindChildRun

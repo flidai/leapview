@@ -4,7 +4,7 @@ Status: accepted mutable companion specification (adapter selected; no productio
 
 Last updated: 2026-09-01
 
-Governing decision: [ADR-0018](../0018-adopt-a-postgresql-centered-target-data-architecture.md)
+Governing decision: [ADR-0020](../0020-adopt-a-postgresql-centered-target-data-architecture.md)
 
 Related: [FAI-592 canonical Watermill envelope](watermill-canonical-envelope.md)
 and [FAI-591 PostgreSQL qualification](watermill-postgresql-proof.md)

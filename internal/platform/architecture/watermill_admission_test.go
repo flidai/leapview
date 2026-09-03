@@ -14,7 +14,7 @@ import (
 func TestWatermillConsumerAdmissionContract(t *testing.T) {
 	root := repoRoot(t)
 	documents := map[string][]string{
-		"adr/0018-adopt-a-postgresql-centered-target-data-architecture.md": {
+		"adr/0020-adopt-a-postgresql-centered-target-data-architecture.md": {
 			"canonical PostgreSQL event log/delivery authority",
 			"no real production consumer is admitted",
 			"projections (including lineage, cache, audit, and product histories)",

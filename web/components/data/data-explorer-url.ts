@@ -7,7 +7,7 @@ export function dataExplorerURL(command: DataExplorerCommand): string {
   if (mode === 'explore') {
     params.set('v', '1')
     params.set('mode', 'explore')
-    if (command.explore?.modelId) params.set('model', command.explore.modelId)
+    if (command.explore?.semanticModelId) params.set('semanticModel', command.explore.semanticModelId)
     if (command.explore?.datasetId) params.set('dataset', command.explore.datasetId)
     for (const field of command.explore?.dimensions ?? []) params.append('dimension', field)
     for (const metric of command.explore?.metrics ?? []) params.append('metric', metric)

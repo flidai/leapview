@@ -1,4 +1,4 @@
--- PostgreSQL connection-binding capability schema (ADR-0018).
+-- PostgreSQL connection-binding capability schema (ADR-0020).
 --
 -- This schema stores target-scoped, non-secret connection state. Credential
 -- values are resolved by the credential authority at runtime and are never

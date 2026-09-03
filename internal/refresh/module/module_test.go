@@ -254,7 +254,7 @@ INSERT INTO refresh_job_runs (
   id, job_id, project_id, principal_id, environment, target_type, target_id, target_revision,
   trigger_type, invocation_source, parent_run_id, status, created_sequence
 ) VALUES (
-  'run_model', 'job_model', 'project_sales', 'user:test', 'dev', 'model_table', 'model:sales_customers', 3,
+  'run_model', 'job_model', 'project_sales', 'user:test', 'dev', 'model', 'model:sales_customers', 3,
   'dependency', 'dependency', 'run_1', 'succeeded', 2
 );`); err != nil {
 		t.Fatalf("seed model refresh state: %v", err)

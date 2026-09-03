@@ -76,9 +76,9 @@ spec:
         description: Raw order identifier.
 ```
 
-The source identifies a typed path or relation location, format options, and declared schema. Use a name that reflects the governed dataset rather than a temporary filename. Model tables and project-resource permissions depend on that stable name.
+The source identifies a typed path or relation location, format options, and declared schema. Use a name that reflects the governed dataset rather than a temporary filename. Models and project-resource permissions depend on that stable name.
 
-Field declarations document expected input shape and improve validation and discovery. They do not replace defensive transformations: model-table SQL should still cast or reject malformed physical values where necessary.
+Field declarations document expected input shape and improve validation and discovery. They do not replace defensive transformations: Model SQL should still cast or reject malformed physical values where necessary.
 
 ## Project dependency and access
 
@@ -91,7 +91,7 @@ spec:
     sql: SELECT * FROM source."olist.orders"
 ```
 
-Validation should fail when a model table references an undiscovered source. This keeps repository layout from becoming an accidental authorization mechanism.
+Validation should fail when a Model references an undiscovered source. This keeps repository layout from becoming an accidental authorization mechanism.
 
 ## Managed and external data
 
@@ -108,7 +108,7 @@ Changing a connection endpoint or source path can affect every dependent project
 1. Search the dependency graph for consumers.
 2. Validate the whole project.
 3. Plan against the target instance.
-4. Refresh affected model tables in a non-production environment.
+4. Refresh affected Models in a non-production environment.
 5. Compare row counts, null behavior, types, and key uniqueness.
 
 Continue with [Connect a data source](/docs/guides/build/connect-data) for an authoring procedure and [Managed data ingestion](/docs/data-ingestion) for immutable managed files.

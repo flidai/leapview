@@ -238,7 +238,7 @@ type Plan struct {
 	Columns []string
 	// Deterministic is planner-produced positive evidence that this plan was
 	// lowered through the closed PlanIR expression algebra. Plans assembled
-	// outside the planner (for example opaque model-table SQL) leave it false
+	// outside the planner (for example opaque Model SQL) leave it false
 	// so result-cache admission can fail closed.
 	Deterministic        bool
 	Mode                 string

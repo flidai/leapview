@@ -1,7 +1,7 @@
 # Local PostgreSQL provisioning
 
 This directory provisions the development/test PostgreSQL baseline described
-by ADR-0018. It is intentionally separate from the production Compose bundle:
+by ADR-0020. It is intentionally separate from the production Compose bundle:
 production supplies externally managed control runtime and migrator URLs (and
 optionally a readonly URL) through its secret manager and does not run this
 service.

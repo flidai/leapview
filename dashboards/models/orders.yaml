@@ -4,7 +4,7 @@ metadata:
   id: model:orders
   name: orders
   displayName: Visual Orders
-  description: Order-grain model table with deliberately grain-aligned category, revenue, review, and delivery fields.
+  description: Order-grain Model with deliberately grain-aligned category, revenue, review, and delivery fields.
 spec:
   fields:
     order_id:

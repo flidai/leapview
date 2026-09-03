@@ -250,7 +250,7 @@ func TestPostgresRefreshStandaloneRootRequiresCanonicalJob(t *testing.T) {
 	child := input
 	child.RunID = "standalone-tree-child"
 	child.ParentRunID = input.RunID
-	child.TargetType = "model_table"
+	child.TargetType = "model"
 	child.TargetID = "model"
 	child.TriggerType = "dependency"
 	child.InvocationSource = "dependency"
@@ -308,7 +308,7 @@ func TestPostgresRefreshRootJobPairingAndParentScopeGuards(t *testing.T) {
 	child.RunID = "orphan-child"
 	child.ParentRunID = "missing-parent"
 	child.JobID = ""
-	child.TargetType = "model_table"
+	child.TargetType = "model"
 	child.TargetID = "child"
 	child.TriggerType = "dependency"
 	child.InvocationSource = "dependency"
@@ -414,7 +414,7 @@ func TestPostgresRefreshChildTransitionFunctionSerializesConcurrentCallers(t *te
 	rootID, childID, jobID := "function-root", "function-child", "function-job"
 	seedRefreshJob(t, admin, jobID, rootID, "function-project", "prod", "function-principal")
 	root := RunInput{RunID: rootID, ProjectID: "function-project", Environment: "prod", GenerationID: "function-generation", PipelineID: "function-pipeline", SemanticModelID: "function-semantic", TargetType: "refresh_pipeline", TargetID: "function-pipeline", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "function-principal", JobID: jobID}
-	child := RunInput{RunID: childID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, SemanticModelID: root.SemanticModelID, TargetType: "model_table", TargetID: "function-model", TriggerType: "dependency", InvocationSource: "dependency", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: root.PrincipalID, ParentRunID: rootID}
+	child := RunInput{RunID: childID, ProjectID: root.ProjectID, Environment: root.Environment, GenerationID: root.GenerationID, PipelineID: root.PipelineID, SemanticModelID: root.SemanticModelID, TargetType: "model", TargetID: "function-model", TriggerType: "dependency", InvocationSource: "dependency", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: root.PrincipalID, ParentRunID: rootID}
 	if _, _, err := r.CreateRunTreeWithSupersedeHook(ctx, root, []RunInput{child}, "", "", 0, nil, nil); err != nil {
 		t.Fatal(err)
 	}
@@ -883,7 +883,7 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 		t.Fatal("unpublished data-version INSERT unexpectedly succeeded")
 	}
 	seedRefreshJob(t, admin, "job-recovery-guard", "recovery-guard", "p", "prod", "principal")
-	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model_table", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
+	if _, err := r.CreateRun(ctx, RunInput{RunID: "recovery-guard", ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: "recovery-guard", TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-recovery-guard"}); err != nil {
 		t.Fatal(err)
 	}
 	if attempt, err := r.ClaimAttempt(ctx, "recovery-guard", "recovery-owner", 1, time.Minute); err != nil {
@@ -900,7 +900,7 @@ func TestPostgresRefreshDirectLifecycleGuardsAndMaintenanceBudget(t *testing.T) 
 
 	for _, id := range []string{"maintenance-a", "maintenance-b"} {
 		seedRefreshJob(t, admin, "job-"+id, id, "p", "prod", "principal")
-		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model_table", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
+		if _, err := r.CreateRun(ctx, RunInput{RunID: id, ProjectID: "p", Environment: "prod", GenerationID: "g", PipelineID: "pipe", SemanticModelID: "m", TargetType: "model", TargetID: id, TriggerType: "manual", InvocationSource: "manual", PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal", JobID: "job-" + id}); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := r.ClaimAttempt(ctx, id, "worker-"+id, 1, 100*time.Millisecond); err != nil {

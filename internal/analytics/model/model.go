@@ -67,56 +67,56 @@ func (m *Model) validate(authored bool) error {
 		m.Sources[name] = resolved
 	}
 	if len(m.Tables) == 0 {
-		return fmt.Errorf("semantic model %q has no model tables", m.Name)
+		return fmt.Errorf("semantic model %q has no datasets", m.Name)
 	}
 	for name, table := range m.Tables {
 		if err := validateSemanticIdentifier(name); err != nil {
-			return fmt.Errorf("model table %q has invalid name: %w", name, err)
+			return fmt.Errorf("Model %q has invalid name: %w", name, err)
 		}
 		if table.Execution.Source == "" && table.Execution.SQL == "" {
-			return fmt.Errorf("model table %q requires direct source or definition.sql", name)
+			return fmt.Errorf("Model %q requires direct source or definition.sql", name)
 		}
 		if table.Execution.Source != "" {
 			if _, ok := m.Sources[table.Execution.Source]; !ok {
-				return fmt.Errorf("model table %q references unknown source %q", name, table.Execution.Source)
+				return fmt.Errorf("Model %q references unknown source %q", name, table.Execution.Source)
 			}
 		}
-		dependencies, err := m.modelTableSourceDependencies(name, table)
+		dependencies, err := m.modelSourceDependencies(name, table)
 		if err != nil {
 			return err
 		}
 		table.SourceDependencies = dependencies
-		modelDependencies, err := m.modelTableModelDependencies(name, table)
+		modelDependencies, err := m.modelDependencies(name, table)
 		if err != nil {
 			return err
 		}
 		table.ModelDependencies = modelDependencies
 		if table.GrainEntity == "" {
-			return fmt.Errorf("model table %q requires grain.entity", name)
+			return fmt.Errorf("Model %q requires grain.entity", name)
 		}
 		grain, ok := table.Entities[table.GrainEntity]
 		if !ok {
-			return fmt.Errorf("model table %q grain.entity %q is not declared", name, table.GrainEntity)
+			return fmt.Errorf("Model %q grain.entity %q is not declared", name, table.GrainEntity)
 		}
 		if grain.Type != "primary" && grain.Type != "unique" {
-			return fmt.Errorf("model table %q grain.entity %q must be primary or unique", name, table.GrainEntity)
+			return fmt.Errorf("Model %q grain.entity %q must be primary or unique", name, table.GrainEntity)
 		}
 		if len(grain.Fields) == 0 {
-			return fmt.Errorf("model table %q grain.entity %q requires fields", name, table.GrainEntity)
+			return fmt.Errorf("Model %q grain.entity %q requires fields", name, table.GrainEntity)
 		}
 		if table.Dimensions == nil {
 			table.Dimensions = map[string]MetricDimension{}
 		}
 		for entityName, entity := range table.Entities {
 			if err := validateSemanticIdentifier(entityName); err != nil {
-				return fmt.Errorf("model table %q entity %q is invalid: %w", name, entityName, err)
+				return fmt.Errorf("Model %q entity %q is invalid: %w", name, entityName, err)
 			}
 			if len(entity.Fields) == 0 {
-				return fmt.Errorf("model table %q entity %q requires fields", name, entityName)
+				return fmt.Errorf("Model %q entity %q requires fields", name, entityName)
 			}
 			for _, field := range entity.Fields {
 				if err := validateSemanticIdentifier(field); err != nil {
-					return fmt.Errorf("model table %q entity %q field %q is invalid: %w", name, entityName, field, err)
+					return fmt.Errorf("Model %q entity %q field %q is invalid: %w", name, entityName, field, err)
 				}
 				if _, ok := table.Dimensions[field]; !ok {
 					table.Dimensions[field] = MetricDimension{}
@@ -125,9 +125,9 @@ func (m *Model) validate(authored bool) error {
 		}
 		for field, dimension := range table.Dimensions {
 			if err := validateSemanticIdentifier(field); err != nil {
-				return fmt.Errorf("model table %q field %q is invalid: %w", name, field, err)
+				return fmt.Errorf("Model %q field %q is invalid: %w", name, field, err)
 			}
-			if err := validateOptionalLogicalDataType("model table "+name+" field "+field, dimension.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("Model "+name+" field "+field, dimension.Datatype); err != nil {
 				return err
 			}
 			dimension.Field = name + "." + field
@@ -175,17 +175,17 @@ func (m *Model) validate(authored bool) error {
 	return nil
 }
 
-func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]string, error) {
+func (m *Model) modelSourceDependencies(tableName string, table Table) ([]string, error) {
 	sql := strings.TrimSpace(table.Execution.SQL)
 	hasSQL := sql != ""
 	if hasSQL {
 		if table.Execution.Source != "" {
-			return nil, fmt.Errorf("model table %q definition cannot contain both direct source and sql", tableName)
+			return nil, fmt.Errorf("Model %q definition cannot contain both direct source and sql", tableName)
 		}
 		// SQL lineage is populated by the compiler-owned DuckDB AST analyzer.
 		return append([]string(nil), table.SourceDependencies...), nil
 	} else if table.Execution.Source == "" {
-		return nil, fmt.Errorf("model table %q requires direct source or definition.sql", tableName)
+		return nil, fmt.Errorf("Model %q requires direct source or definition.sql", tableName)
 	}
 	seen := map[string]struct{}{}
 	add := func(source string) error {
@@ -194,7 +194,7 @@ func (m *Model) modelTableSourceDependencies(tableName string, table Table) ([]s
 			return nil
 		}
 		if _, ok := m.Sources[source]; !ok {
-			return fmt.Errorf("model table %q references unknown source %q", tableName, source)
+			return fmt.Errorf("Model %q references unknown source %q", tableName, source)
 		}
 		seen[source] = struct{}{}
 		return nil
@@ -215,14 +215,14 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 		columns := make(map[string]ModelColumn, len(table.Columns))
 		for name, column := range table.Columns {
 			if err := validateSemanticIdentifier(name); err != nil {
-				return nil, fmt.Errorf("model table %q column %q is invalid: %w", tableName, name, err)
+				return nil, fmt.Errorf("Model %q column %q is invalid: %w", tableName, name, err)
 			}
 			if column.Datatype == "" {
 				if dimension, ok := table.Dimensions[name]; ok {
 					column.Datatype = dimension.Datatype
 				}
 			}
-			if err := validateOptionalLogicalDataType("model table "+tableName+" column "+name, column.Datatype); err != nil {
+			if err := validateOptionalLogicalDataType("Model "+tableName+" column "+name, column.Datatype); err != nil {
 				return nil, err
 			}
 			if column.SourceField == "" {
@@ -230,7 +230,7 @@ func (m *Model) resolveModelColumns(tableName string, table Table) (map[string]M
 			}
 			if table.Execution.Source != "" && table.Execution.SQL == "" {
 				if err := validateSemanticIdentifier(column.SourceField); err != nil {
-					return nil, fmt.Errorf("model table %q column %q source_field %q is invalid: %w", tableName, name, column.SourceField, err)
+					return nil, fmt.Errorf("Model %q column %q source_field %q is invalid: %w", tableName, name, column.SourceField, err)
 				}
 			}
 			column.Name = name
@@ -283,7 +283,7 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 			return nil
 		}
 		if _, ok := columns[field]; !ok {
-			return fmt.Errorf("model table %q column contract missing %s %q", tableName, reason, field)
+			return fmt.Errorf("Model %q column contract missing %s %q", tableName, reason, field)
 		}
 		return nil
 	}
@@ -302,7 +302,7 @@ func validateRequiredModelColumns(tableName string, table Table, columns map[str
 	return nil
 }
 
-func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]string, error) {
+func (m *Model) modelDependencies(tableName string, table Table) ([]string, error) {
 	sql := strings.TrimSpace(table.Execution.SQL)
 	if sql == "" {
 		return nil, nil
@@ -311,18 +311,18 @@ func (m *Model) modelTableModelDependencies(tableName string, table Table) ([]st
 }
 
 // resolveModelDependency resolves the physical relation name emitted by a
-// model transform. ExecutionDefinition SQL is authored in the global physical Model
+// model transform. ExecutionDefinition SQL is authored in the global Model
 // namespace; semantic dataset aliases are intentionally not an alternate
 // dependency syntax. After semantic lowering, validate only against bound
-// physical ModelNames (deduplicating aliases that share one Model).
+// ModelNames (deduplicating aliases that share one Model).
 func (m *Model) resolveModelDependency(name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("unknown model table %q", name)
+		return "", fmt.Errorf("unknown Model %q", name)
 	}
 	if len(m.Datasets) == 0 {
 		if _, ok := m.Tables[name]; !ok {
-			return "", fmt.Errorf("unknown model table %q", name)
+			return "", fmt.Errorf("unknown Model %q", name)
 		}
 		return name, nil
 	}
@@ -345,7 +345,7 @@ func (m *Model) resolveModelDependency(name string) (string, error) {
 	if physicalFound {
 		return name, nil
 	}
-	return "", fmt.Errorf("unknown model table %q", name)
+	return "", fmt.Errorf("unknown Model %q", name)
 }
 
 func sortedStringSet(values map[string]struct{}) []string {
@@ -481,15 +481,20 @@ func (m *Model) validateExecutionDatasetsAndTables() error {
 	sort.Strings(tableNames)
 	for _, tableName := range tableNames {
 		if err := validateSemanticIdentifier(tableName); err != nil {
-			return fmt.Errorf("model table %q has invalid name: %w", tableName, err)
+			return fmt.Errorf("semantic dataset %q has invalid name: %w", tableName, err)
 		}
+		table := m.Tables[tableName]
 		if _, ok := m.Datasets[tableName]; !ok {
-			return fmt.Errorf("model table %q is not bound to a semantic dataset", tableName)
+			modelName := strings.TrimSpace(table.ModelName)
+			if modelName == "" {
+				modelName = tableName
+			}
+			return fmt.Errorf("Model %q is not bound to a semantic dataset", modelName)
 		}
-		if err := validateExecutionTable(tableName, m.Tables[tableName]); err != nil {
+		if err := validateExecutionTable(tableName, table); err != nil {
 			return err
 		}
-		if err := validateModelChecks(m, tableName, m.Tables[tableName]); err != nil {
+		if err := validateModelChecks(m, tableName, table); err != nil {
 			return err
 		}
 	}
@@ -500,7 +505,7 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 	for index, check := range table.Checks {
 		severity := strings.ToLower(strings.TrimSpace(check.Severity))
 		if severity != "" && severity != "warning" && severity != "error" {
-			return fmt.Errorf("model table %q check %d severity must be warning or error", tableName, index)
+			return fmt.Errorf("semantic dataset %q check %d severity must be warning or error", tableName, index)
 		}
 		fieldExists := func(field string) bool {
 			_, ok := table.Dimensions[field]
@@ -509,44 +514,44 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 		switch check.Type {
 		case "non_null", "accepted_values":
 			if !fieldExists(check.Field) {
-				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
+				return fmt.Errorf("semantic dataset %q check %d references unknown field %q", tableName, index, check.Field)
 			}
 			if check.Type == "accepted_values" {
 				if table.Dimensions[check.Field].Datatype != DataTypeString {
-					return fmt.Errorf("model table %q check %d accepted_values requires a String field", tableName, index)
+					return fmt.Errorf("semantic dataset %q check %d accepted_values requires a String field", tableName, index)
 				}
 				if len(check.Values) == 0 {
-					return fmt.Errorf("model table %q check %d accepted_values requires values", tableName, index)
+					return fmt.Errorf("semantic dataset %q check %d accepted_values requires values", tableName, index)
 				}
 				seen := map[string]struct{}{}
 				for _, value := range check.Values {
 					if _, duplicate := seen[value]; duplicate {
-						return fmt.Errorf("model table %q check %d accepted_values duplicates %q", tableName, index, value)
+						return fmt.Errorf("semantic dataset %q check %d accepted_values duplicates %q", tableName, index, value)
 					}
 					seen[value] = struct{}{}
 				}
 			}
 		case "unique":
 			if len(check.Fields) == 0 {
-				return fmt.Errorf("model table %q check %d unique requires fields", tableName, index)
+				return fmt.Errorf("semantic dataset %q check %d unique requires fields", tableName, index)
 			}
 			seen := map[string]struct{}{}
 			for _, field := range check.Fields {
 				if !fieldExists(field) {
-					return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, field)
+					return fmt.Errorf("semantic dataset %q check %d references unknown field %q", tableName, index, field)
 				}
 				if _, duplicate := seen[field]; duplicate {
-					return fmt.Errorf("model table %q check %d unique duplicates %q", tableName, index, field)
+					return fmt.Errorf("semantic dataset %q check %d unique duplicates %q", tableName, index, field)
 				}
 				seen[field] = struct{}{}
 			}
 		case "relationship":
 			if !fieldExists(check.Field) {
-				return fmt.Errorf("model table %q check %d references unknown field %q", tableName, index, check.Field)
+				return fmt.Errorf("semantic dataset %q check %d references unknown field %q", tableName, index, check.Field)
 			}
 			parts := strings.Split(strings.TrimSpace(check.To), ".")
 			if len(parts) < 2 || parts[len(parts)-1] == "" {
-				return fmt.Errorf("model table %q check %d relationship target %q is invalid", tableName, index, check.To)
+				return fmt.Errorf("semantic dataset %q check %d relationship target %q is invalid", tableName, index, check.To)
 			}
 			targetName := strings.Join(parts[:len(parts)-1], ".")
 			var target Table
@@ -558,21 +563,21 @@ func validateModelChecks(model *Model, tableName string, table Table) error {
 				}
 			}
 			if !found {
-				return fmt.Errorf("model table %q check %d references unknown model %q", tableName, index, targetName)
+				return fmt.Errorf("semantic dataset %q check %d references unknown Model %q", tableName, index, targetName)
 			}
 			targetField := parts[len(parts)-1]
 			if _, ok := target.Dimensions[targetField]; !ok {
-				return fmt.Errorf("model table %q check %d references unknown target field %q", tableName, index, check.To)
+				return fmt.Errorf("semantic dataset %q check %d references unknown target field %q", tableName, index, check.To)
 			}
 			if !relationshipTypesCompatible(table.Dimensions[check.Field], target.Dimensions[targetField]) {
-				return fmt.Errorf("model table %q check %d relationship field %q type %q is incompatible with target %q type %q", tableName, index, check.Field, relationshipFieldType(table.Dimensions[check.Field]), check.To, relationshipFieldType(target.Dimensions[targetField]))
+				return fmt.Errorf("semantic dataset %q check %d relationship field %q type %q is incompatible with target %q type %q", tableName, index, check.Field, relationshipFieldType(table.Dimensions[check.Field]), check.To, relationshipFieldType(target.Dimensions[targetField]))
 			}
 		case "row_count":
 			if check.Minimum == nil && check.Maximum == nil || check.Minimum != nil && *check.Minimum < 0 || check.Maximum != nil && *check.Maximum < 0 || check.Minimum != nil && check.Maximum != nil && *check.Minimum > *check.Maximum {
-				return fmt.Errorf("model table %q check %d row_count bounds are invalid", tableName, index)
+				return fmt.Errorf("semantic dataset %q check %d row_count bounds are invalid", tableName, index)
 			}
 		default:
-			return fmt.Errorf("model table %q check %d has unsupported type %q", tableName, index, check.Type)
+			return fmt.Errorf("semantic dataset %q check %d has unsupported type %q", tableName, index, check.Type)
 		}
 	}
 	return nil
@@ -612,20 +617,20 @@ func validateExecutionTimeSemantics(m *Model) error {
 
 func validateExecutionTable(tableName string, table Table) error {
 	if len(table.Entities) == 0 {
-		return fmt.Errorf("model table %q requires at least one entity", tableName)
+		return fmt.Errorf("semantic dataset %q requires at least one entity", tableName)
 	}
 	if strings.TrimSpace(table.GrainEntity) == "" {
-		return fmt.Errorf("model table %q requires grain.entity", tableName)
+		return fmt.Errorf("semantic dataset %q requires grain.entity", tableName)
 	}
 	grain, ok := table.Entities[table.GrainEntity]
 	if !ok {
-		return fmt.Errorf("model table %q grain.entity %q is not declared", tableName, table.GrainEntity)
+		return fmt.Errorf("semantic dataset %q grain.entity %q is not declared", tableName, table.GrainEntity)
 	}
 	if grain.Type != "primary" && grain.Type != "unique" {
-		return fmt.Errorf("model table %q grain.entity %q must be primary or unique", tableName, table.GrainEntity)
+		return fmt.Errorf("semantic dataset %q grain.entity %q must be primary or unique", tableName, table.GrainEntity)
 	}
 	if len(grain.Fields) == 0 {
-		return fmt.Errorf("model table %q grain.entity %q requires fields", tableName, table.GrainEntity)
+		return fmt.Errorf("semantic dataset %q grain.entity %q requires fields", tableName, table.GrainEntity)
 	}
 	entityNames := make([]string, 0, len(table.Entities))
 	for name := range table.Entities {
@@ -635,27 +640,27 @@ func validateExecutionTable(tableName string, table Table) error {
 	for _, entityName := range entityNames {
 		entity := table.Entities[entityName]
 		if err := validateSemanticIdentifier(entityName); err != nil {
-			return fmt.Errorf("model table %q entity %q is invalid: %w", tableName, entityName, err)
+			return fmt.Errorf("semantic dataset %q entity %q is invalid: %w", tableName, entityName, err)
 		}
 		switch entity.Type {
 		case "primary", "unique", "foreign", "natural":
 		default:
-			return fmt.Errorf("model table %q entity %q has unsupported type %q", tableName, entityName, entity.Type)
+			return fmt.Errorf("semantic dataset %q entity %q has unsupported type %q", tableName, entityName, entity.Type)
 		}
 		if len(entity.Fields) == 0 {
-			return fmt.Errorf("model table %q entity %q requires fields", tableName, entityName)
+			return fmt.Errorf("semantic dataset %q entity %q requires fields", tableName, entityName)
 		}
 		seenFields := map[string]struct{}{}
 		for _, field := range entity.Fields {
 			if err := validateSemanticIdentifier(field); err != nil {
-				return fmt.Errorf("model table %q entity %q field %q is invalid: %w", tableName, entityName, field, err)
+				return fmt.Errorf("semantic dataset %q entity %q field %q is invalid: %w", tableName, entityName, field, err)
 			}
 			if _, exists := seenFields[field]; exists {
-				return fmt.Errorf("model table %q entity %q contains duplicate field %q", tableName, entityName, field)
+				return fmt.Errorf("semantic dataset %q entity %q contains duplicate field %q", tableName, entityName, field)
 			}
 			seenFields[field] = struct{}{}
 			if _, ok := table.Dimensions[field]; !ok {
-				return fmt.Errorf("model table %q entity %q field %q is not declared", tableName, entityName, field)
+				return fmt.Errorf("semantic dataset %q entity %q field %q is not declared", tableName, entityName, field)
 			}
 		}
 	}
@@ -666,9 +671,9 @@ func validateExecutionTable(tableName string, table Table) error {
 	sort.Strings(dimensionNames)
 	for _, field := range dimensionNames {
 		if err := validateSemanticIdentifier(field); err != nil {
-			return fmt.Errorf("model table %q field %q is invalid: %w", tableName, field, err)
+			return fmt.Errorf("semantic dataset %q field %q is invalid: %w", tableName, field, err)
 		}
-		if err := validateOptionalLogicalDataType("model table "+tableName+" field "+field, table.Dimensions[field].Datatype); err != nil {
+		if err := validateOptionalLogicalDataType("semantic dataset "+tableName+" field "+field, table.Dimensions[field].Datatype); err != nil {
 			return err
 		}
 	}
@@ -680,13 +685,13 @@ func validateExecutionTable(tableName string, table Table) error {
 	for _, field := range columnNames {
 		column := table.Columns[field]
 		if err := validateSemanticIdentifier(field); err != nil {
-			return fmt.Errorf("model table %q column %q is invalid: %w", tableName, field, err)
+			return fmt.Errorf("semantic dataset %q column %q is invalid: %w", tableName, field, err)
 		}
-		if err := validateOptionalLogicalDataType("model table "+tableName+" column "+field, column.Datatype); err != nil {
+		if err := validateOptionalLogicalDataType("semantic dataset "+tableName+" column "+field, column.Datatype); err != nil {
 			return err
 		}
 		if _, ok := table.Dimensions[field]; !ok {
-			return fmt.Errorf("model table %q column %q is not declared as a field", tableName, field)
+			return fmt.Errorf("semantic dataset %q column %q is not declared as a field", tableName, field)
 		}
 	}
 	// A lowered table may omit Columns when it was built directly in memory;
@@ -696,7 +701,7 @@ func validateExecutionTable(tableName string, table Table) error {
 	if len(table.Columns) > 0 {
 		for _, field := range dimensionNames {
 			if _, ok := table.Columns[field]; !ok {
-				return fmt.Errorf("model table %q column contract missing field %q", tableName, field)
+				return fmt.Errorf("semantic dataset %q column contract missing field %q", tableName, field)
 			}
 		}
 	}

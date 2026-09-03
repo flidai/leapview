@@ -396,7 +396,7 @@ func (r *Runtime) VerifySemantic(ctx context.Context) error {
 	verificationModel := r.model
 	if r.snapshotOnly {
 		// Serving verification is source-free for reopened snapshots. The
-		// execution snapshot preserves discovered model-table schemas while
+		// execution snapshot preserves discovered materialized-table schemas while
 		// stripping source/connection state that may no longer be available.
 		verificationModel = r.model.ExecutionSnapshot()
 	}
@@ -810,10 +810,10 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 	if request.Surface != dataquery.SurfaceDashboard {
 		return false
 	}
-	// Model-table rows are lowered through an opaque SQL plan without PlanIR
+	// Model rows are lowered through an opaque SQL plan without PlanIR
 	// equivalence evidence. Keep them out of the result cache until that
 	// planner-owned identity exists.
-	if request.Kind == dataquery.KindModelTableRows {
+	if request.Kind == dataquery.KindModelRows {
 		return false
 	}
 	switch request.Operation {
@@ -834,7 +834,7 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 
 // planCacheDeterministic is the query-specific cache admission guard. A
 // planner-produced deterministic PlanIR is necessary but not sufficient when
-// one of its participating model tables is backed by authored SQL: the
+// one of its participating Models is backed by authored SQL: the
 // resulting relation revision is not currently represented in the shared
 // query-result identity. Resolve every participating dataset through the
 // validated semantic model and fail closed when that mapping is incomplete.
@@ -951,7 +951,7 @@ func (r *Runtime) modelTableQueryPlan(request ModelTableQuery) (semanticquery.Pl
 		columnSet := modelTableColumnSet(table)
 		for _, sortSpec := range request.Sort {
 			if !columnSet[sortSpec.Field] {
-				return semanticquery.Plan{}, fmt.Errorf("model table %q does not expose sort column %q", request.Table, sortSpec.Field)
+				return semanticquery.Plan{}, fmt.Errorf("semantic dataset %q does not expose sort column %q", request.Table, sortSpec.Field)
 			}
 			direction := strings.ToUpper(strings.TrimSpace(sortSpec.Direction))
 			if direction != "ASC" && direction != "DESC" {
@@ -1003,7 +1003,7 @@ func (r *Runtime) modelTable(tableName string) (semanticmodel.Table, error) {
 	tableName = strings.TrimSpace(tableName)
 	table, ok := r.model.Tables[tableName]
 	if !ok {
-		return semanticmodel.Table{}, fmt.Errorf("model table %q is not available in semantic model %q", tableName, r.model.Name)
+		return semanticmodel.Table{}, fmt.Errorf("semantic dataset %q is not available in semantic model %q", tableName, r.model.Name)
 	}
 	return table, nil
 }
@@ -1018,7 +1018,7 @@ func modelTableQueryColumns(table semanticmodel.Table, requested []string) ([]st
 				continue
 			}
 			if !columnSet[column] {
-				return nil, fmt.Errorf("model table does not expose column %q", column)
+				return nil, fmt.Errorf("semantic dataset does not expose column %q", column)
 			}
 			columns = append(columns, column)
 		}
@@ -1050,7 +1050,7 @@ func modelTableQueryColumns(table semanticmodel.Table, requested []string) ([]st
 	}
 	sort.Strings(columns)
 	if len(columns) == 0 {
-		return nil, fmt.Errorf("model table has no columns")
+		return nil, fmt.Errorf("semantic dataset has no columns")
 	}
 	return columns, nil
 }

@@ -270,7 +270,7 @@ func (fakeMetrics) ExecuteDataQuery(ctx context.Context, request dataquery.Query
 	case dataquery.KindSemanticRows:
 		rows, err := fakeMetrics{}.PreviewSemantic(ctx, request.ModelID, reportdef.RowQuery{Dataset: request.Target, Limit: request.Limit, Offset: request.Offset})
 		return fakeDataQueryResult(rows, request.IncludeTotal), err
-	case dataquery.KindModelTableRows:
+	case dataquery.KindModelRows:
 		return dataquery.Result{Columns: dataquery.ColumnsFromNames([]string{"order_id", "status"}), Rows: []dataquery.Row{{"order_id": "o1", "status": "delivered"}, {"order_id": "o2", "status": "shipped"}}, TotalRows: 2, TotalRowsKnown: request.IncludeTotal, SQL: string(request.Kind) + ": " + request.Target}, nil
 	default:
 		return dataquery.Result{}, fmt.Errorf("unsupported data query kind %q", request.Kind)

@@ -4,7 +4,7 @@ Status: accepted
 
 Profile: `leapview.semantic-access/v1`
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
 
 Owners: LeapView maintainers
 
@@ -21,6 +21,18 @@ The terms **must**, **must not**, **should**, and **may** are normative. A
 requirement is implemented only when its evidence is linked in the evidence
 ledger. The profile identifier participates in generated schema, compiled
 policy, cache, audit, and conformance evidence.
+
+FAI-637 is the control-plane implementation slice, not completion of this
+specification. It currently adds the PostgreSQL definition registry (revision
+2), durable principal/group assignments and trusted-claim mappings (revision
+3), shared typed canonicalization at those boundaries, a source-bound trusted
+claim verifier package, effective direct/group resolution behind the opaque
+`trustedclaims.Envelope` boundary, and platform-admin control APIs. It does not
+yet implement the SemanticModel
+policy compiler, planner security barrier, catalog or query consumer
+integration, source-provider adapters, semantic generation references, or
+cache/event invalidation. Those requirements remain normative targets and
+their evidence remains pending or partial below.
 
 ## Change control
 
@@ -134,8 +146,10 @@ spec:
   Portable SemanticModel YAML references attribute names but contains neither
   registry definitions nor values.
 - **ATT-02:** Attribute values originate only from authenticated control-plane
-  assignments, trusted SAML/OIDC claim mappings, or cryptographically verified
-  embed/service-token claims admitted by the control plane.
+  assignments, or claim values admitted through a source-bound verifier and
+  durable mapping. The profile names SAML, OIDC, embed, and service-token
+  sources, but a source adapter must perform cryptographic verification before
+  a claim can be admitted.
 - **ATT-03:** Browser parameters, dashboard filters, query arguments, headers,
   unsigned tokens, and analytics YAML cannot create or override trusted
   principal attributes.
@@ -167,6 +181,75 @@ spec:
 - **ATT-12:** The control plane rejects an assignment containing more than 1,024
   canonical values. Runtime repeats the bound defensively and denies evaluation
   if persisted or token-supplied state violates it.
+
+The registry's `owner_kind`/`owner_id` is stewardship metadata only. It does
+not grant the owner data access, create an assignment, or confer the durable
+platform-admin role. Assignment subject (`principal` or `group`) and trusted
+claim source identity are separate authorization inputs.
+
+## Control-plane lifecycle state machines
+
+The following state machines describe the durable PostgreSQL control rows. A
+tombstone is retained history; it is not a disabled definition and cannot be
+silently restored in place.
+
+```text
+Definition:
+  absent --register(v1)--> active
+  active --metadata/disable (version +1)--> active/disabled
+  disabled --metadata/restore (version +1)--> disabled/active
+  active or disabled --delete or identity/type/shape/profile rewrite--> reject
+
+Assignment:
+  absent --set(expected=0, v1)--> active
+  active --set(expected=current, values changed, version +1)--> active
+  active --remove(expected=current, version +1)--> tombstoned
+  tombstoned --set--> new active incarnation (new ID, version 1)
+
+Trusted claim mapping:
+  absent --set(expected=0, v1)--> active
+  active --same identity replay--> active (no version/control advance)
+  active --remove(expected=current, version +1)--> tombstoned
+  tombstoned --set--> new mapping incarnation (old row retained)
+  active or tombstoned --in-place identity rewrite/restore--> reject
+```
+
+Definition metadata/lifecycle changes lock and advance the registry singleton
+`(profile, registry_revision, registry_digest)`. Assignment and mapping
+mutations lock the independent control singleton
+`(profile, control_revision, control_digest)`, whose digest covers ordered
+active and tombstoned control projections. Each effective mutation advances
+the corresponding revision exactly once with a new digest; idempotent replays
+do not advance it. `If-Match`/expected-version checks occur at both the
+transport and repository boundary, and stale versions are conflicts. Database
+triggers reject identity/type rewrites, enforce one-step version advancement,
+and make tombstone/updated timestamps database-owned.
+
+The current effective resolver combines direct principal and active-group
+assignments with claims admitted through the opaque `trustedclaims.Envelope`
+boundary for matching trusted mappings. It canonicalizes values through the
+shared semantic-value boundary. Equal values from multiple sources may be
+combined; conflicting values for one definition return a source-conflict
+error. The resolver is not yet wired to a real provider adapter or semantic
+consumer.
+
+## Platform-admin control flow
+
+The generated API metadata requires an authenticated principal; semantic
+attribute handlers add the stronger platform-admin guard. Authentication
+resolves the canonical principal, `RequestPlatformAdmin` rechecks the durable
+instance-wide platform role, and request credentials can only attenuate it.
+No project snapshot grant creates a platform role. A session with no API
+credential inherits the role; an authoring credential is denied; an API token
+with nil capabilities inherits, an explicit empty list denies, and a non-empty
+list must include `PROJECT_ADMIN`. A credential whose principal differs from
+the authenticated principal is denied. The explicit development bypass is
+non-production only. Repository or role-check failure fails closed.
+
+This guard protects registry, assignment, mapping, impact-preview, and
+semantic-attribute audit operations. It is an administration boundary, not
+evidence that ordinary dashboards, APIs, embeds, or other semantic consumers
+already evaluate the profile.
 
 ## Attribute value canonicalization
 
@@ -386,6 +469,30 @@ spec:
 - **LIF-08:** Control-plane attribute changes and authored policy deployments
   remain distinguishable audit events with a common correlation boundary.
 
+FAI-637 currently persists and validates the two durable identity pairs above,
+but it does not publish invalidation events or provide a semantic result-cache
+consumer. The immediate invalidation identity for the future consumer boundary
+is therefore:
+
+```text
+(instance, semantic generation, principal,
+ registry profile/revision/digest,
+ control profile/revision/digest,
+ effective attribute-set digest,
+ normalized semantic-policy identity)
+```
+
+The effective attribute-set digest is an ordered, profile-qualified projection
+of definition ID/version/type/shape, canonical value digest, and source. It
+must not contain raw attribute or claim values. Runtime trusted input also
+binds source credential/token fingerprint and validity interval. A committed
+definition mutation invalidates by registry identity; an assignment or mapping
+mutation invalidates by control identity and, where known, affected
+definition/subject. A stored/computed digest mismatch is an immediate,
+conservative invalidation signal and never a reason to continue with stale
+authorization state. Cache/event propagation and consumer use of this identity
+remain unqualified, so LIF is not complete.
+
 ## Deliberate exclusions
 
 - **OUT-01:** The access-policy sub-contract has no authored SQL, Liquid, Go
@@ -437,15 +544,16 @@ spec:
 |---|---|---|
 | CHG-01–CHG-04 | Profile-version, historical-policy, and normative-change checks | Pending |
 | STR-01–STR-12 | Generated TypeSpec, JSON Schema, DTO, extracted-YAML, and authoring-registry fixtures | Pending |
-| ATT-01–ATT-12 | Control-plane attribute registry, mutation, disablement, claim-mapping, and trust-boundary tests | Pending |
-| VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented |
-| VAL-11 | The shared handwritten canonicalizer and analytics semantic-filter consumer are implemented. Generated canonicalization and the control-plane ingestion, claims, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection paths remain unqualified. | Partial |
+| ATT-01–ATT-04, ATT-08, ATT-11–ATT-12 | PostgreSQL registry/control migrations and repositories, typed API envelopes, canonical-value tests, trustedclaims structural tests, and platform-admin route/attenuation tests | Partial: durable definition/assignment/mapping boundaries are implemented; principal-context integration, source adapters, and semantic-consumer admission are not. |
+| ATT-05–ATT-07, ATT-09–ATT-10 | Control snapshot identity and disable/tombstone behavior exist; generation-reference, provider-admission, runtime expiry wiring, dependent-object invalidation, and rollback retention checks remain unqualified | Partial |
+| VAL-01–VAL-10 | [`internal/semanticvalue`](../../internal/semanticvalue/value.go), its [unit](../../internal/semanticvalue/value_test.go) and [cross-path](../../internal/semanticvalue/crosspath_test.go) tests, the independent [`profile-v1.json`](../../internal/semanticvalue/testdata/profile-v1.json) fixture, and semantic-filter integration | Implemented at the shared semantic-value boundary; typed control ingress also consumes it |
+| VAL-11 | The shared `internal/semanticvalue` canonicalizer is used by registry, assignment, mapping, effective-value, and semantic-filter paths. Generated canonicalization plus complete control-plane claim-ingestion, candidate-validation, runtime-evaluation, policy-digest, cache, and audit-projection equivalence remain unqualified. | Partial |
 | GRT-01–GRT-10 | Access-grant compiler and evaluator fixtures | Pending |
 | FLT-01–FLT-10 | Semantic planner, parameterization, cardinality, and fail-closed tests | Pending |
 | PLN-01–PLN-09 | Security-barrier IR validation and join, aggregate, rollup, and rewrite golden plans | Pending |
 | ENF-01–ENF-11 | Catalog, dashboard, Explore, agent, export, API, and embed integration tests | Pending |
 | CMP-01–CMP-06 | Policy-diff, compatibility, security-impact, version, and approval fixtures | Pending |
-| LIF-01–LIF-08 | Cache partitioning, invalidation, planning, and durable-audit tests | Pending |
+| LIF-01–LIF-08 | Registry/control revision+digest identities and transactional control audit are implemented; cache partitioning, immediate event invalidation, semantic planning, generation references, and complete audit projection are not | Partial |
 | OUT-01–OUT-05 | Negative schema, architecture, and documentation checks | Pending |
 
 ## Maintained verification

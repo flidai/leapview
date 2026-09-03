@@ -553,7 +553,7 @@ func validateNativePhysicalBuildInputWithPolicy(input NativePhysicalBuildInput, 
 		return NativePhysicalBuildInput{}, nil, "", err
 	}
 	if len(request.Models) == 0 || len(request.ModelTables) == 0 || len(request.Tables) == 0 {
-		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: materialization requires non-empty models, model tables, and tables", deploymentnative.ErrInvalid)
+		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: materialization requires non-empty Models, materialized relations, and tables", deploymentnative.ErrInvalid)
 	}
 	for name, model := range request.Models {
 		if err := validateTextField(name, "materialization model id", 255); err != nil || model == nil {
@@ -564,7 +564,7 @@ func validateNativePhysicalBuildInputWithPolicy(input NativePhysicalBuildInput, 
 		}
 	}
 	for name := range request.ModelTables {
-		if err := validateTextField(name, "materialization model-table id", 255); err != nil {
+		if err := validateTextField(name, "materialization Model id", 255); err != nil {
 			return NativePhysicalBuildInput{}, nil, "", err
 		}
 	}

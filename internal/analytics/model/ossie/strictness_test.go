@@ -119,7 +119,7 @@ func TestExportRejectsLegacyRelationshipsWithoutStructuredRelationships(t *testi
 	}
 }
 
-func TestImportDoesNotMutateProjectModelTables(t *testing.T) {
+func TestImportDoesNotMutateProjectModels(t *testing.T) {
 	models := strictnessProjectModels()
 	before := models["orders"].Dimensions["order_id"]
 	if _, err := Import(strictnessDocument(""), models); err != nil {

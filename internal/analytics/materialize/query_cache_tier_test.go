@@ -150,8 +150,8 @@ func TestTierExpectedColumnsMatchPlannerProjectionOrder(t *testing.T) {
 			want:    []string{"value"},
 		},
 		{
-			name:    "model table uses physical names",
-			request: dataquery.Query{Kind: dataquery.KindModelTableRows, Fields: []dataquery.Field{{Field: "order_id", Alias: "ignored_alias"}}},
+			name:    "Model uses physical relation names",
+			request: dataquery.Query{Kind: dataquery.KindModelRows, Fields: []dataquery.Field{{Field: "order_id", Alias: "ignored_alias"}}},
 			want:    []string{"order_id"},
 		},
 	}

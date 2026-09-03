@@ -515,7 +515,7 @@ func validateTierArrowSchema(request dataquery.Query, lease *arrowresult.Lease) 
 
 func tierExpectedColumns(request dataquery.Query) []string {
 	switch request.Kind {
-	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindModelTableRows:
+	case dataquery.KindSemanticAggregate, dataquery.KindSemanticRows, dataquery.KindModelRows:
 	default:
 		return nil
 	}
@@ -534,7 +534,7 @@ func tierExpectedColumns(request dataquery.Query) []string {
 	expected := make([]string, 0, len(fields))
 	for _, field := range fields {
 		name := ""
-		if request.Kind != dataquery.KindModelTableRows {
+		if request.Kind != dataquery.KindModelRows {
 			name = strings.TrimSpace(field.Alias)
 		}
 		if name == "" {

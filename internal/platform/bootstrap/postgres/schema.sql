@@ -1,4 +1,4 @@
--- Clean-slate platform bootstrap authority (ADR-0018).
+-- Clean-slate platform bootstrap authority (ADR-0020).
 --
 -- This capability owns only instance bootstrap state: settings required by
 -- startup, one immutable instance identity/environment binding, and the

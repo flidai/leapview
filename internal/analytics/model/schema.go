@@ -77,7 +77,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 			columns[column.Name] = column
 		}
 		if len(columns) == 0 {
-			return fmt.Errorf("model table %q has no discovered schema", tableName)
+			return fmt.Errorf("semantic dataset %q has no discovered schema", tableName)
 		}
 		entityNames := make([]string, 0, len(table.Entities))
 		for entityName := range table.Entities {
@@ -88,7 +88,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 			entity := table.Entities[entityName]
 			for _, field := range entity.Fields {
 				if _, ok := columns[field]; !ok {
-					return fmt.Errorf("model table %q entity %q field %q is not in discovered schema", tableName, entityName, field)
+					return fmt.Errorf("semantic dataset %q entity %q field %q is not in discovered schema", tableName, entityName, field)
 				}
 			}
 		}
@@ -101,7 +101,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 			dimension := table.Dimensions[field]
 			column, ok := columns[field]
 			if !ok {
-				return fmt.Errorf("model table %q field %q is not in discovered schema", tableName, field)
+				return fmt.Errorf("semantic dataset %q field %q is not in discovered schema", tableName, field)
 			}
 			if err := validateDiscoveredDatatype(tableName, field, dimension.Datatype, column.PhysicalType); err != nil {
 				return err
@@ -116,7 +116,7 @@ func (m *Model) ValidateDiscoveredSchemas() error {
 			columnSpec := table.Columns[field]
 			column, ok := columns[field]
 			if !ok {
-				return fmt.Errorf("model table %q column %q is not in discovered schema", tableName, field)
+				return fmt.Errorf("semantic dataset %q column %q is not in discovered schema", tableName, field)
 			}
 			if err := validateDiscoveredDatatype(tableName, field, columnSpec.Datatype, column.PhysicalType); err != nil {
 				return err
@@ -158,7 +158,7 @@ func (m *Model) ResolveDiscoveredModelFields() error {
 		observed := make(map[string]ColumnSchema, len(table.Schema.Columns))
 		for _, column := range table.Schema.Columns {
 			if strings.TrimSpace(column.Name) == "" {
-				return fmt.Errorf("model table %q discovered an unnamed column", tableName)
+				return fmt.Errorf("semantic dataset %q discovered an unnamed column", tableName)
 			}
 			observed[column.Name] = column
 		}
@@ -173,12 +173,12 @@ func (m *Model) ResolveDiscoveredModelFields() error {
 		}
 		for field := range table.Dimensions {
 			if _, ok := observed[field]; !ok {
-				return fmt.Errorf("model table %q documented field %q is not in discovered schema", tableName, field)
+				return fmt.Errorf("semantic dataset %q documented field %q is not in discovered schema", tableName, field)
 			}
 		}
 		for field := range table.Columns {
 			if _, ok := observed[field]; !ok {
-				return fmt.Errorf("model table %q column %q is not in discovered schema", tableName, field)
+				return fmt.Errorf("semantic dataset %q column %q is not in discovered schema", tableName, field)
 			}
 		}
 		for _, column := range table.Schema.Columns {
@@ -227,13 +227,13 @@ func validateDiscoveredDatatype(tableName, field string, authored LogicalDataTyp
 	}
 	discovered := LogicalDataTypeFromPhysicalType(physicalType)
 	if authored == DataTypeOpaque {
-		return fmt.Errorf("model table %q field %q uses Opaque datatype but discovered physical type %q requires an explicit mapping", tableName, field, physicalType)
+		return fmt.Errorf("semantic dataset %q field %q uses Opaque datatype but discovered physical type %q requires an explicit mapping", tableName, field, physicalType)
 	}
 	if discovered == DataTypeOpaque {
-		return fmt.Errorf("model table %q field %q datatype %q cannot be validated against unknown discovered physical type %q", tableName, field, authored, physicalType)
+		return fmt.Errorf("semantic dataset %q field %q datatype %q cannot be validated against unknown discovered physical type %q", tableName, field, authored, physicalType)
 	}
 	if authored != discovered {
-		return fmt.Errorf("model table %q field %q datatype %q is incompatible with discovered physical type %q (mapped to %q)", tableName, field, authored, physicalType, discovered)
+		return fmt.Errorf("semantic dataset %q field %q datatype %q is incompatible with discovered physical type %q (mapped to %q)", tableName, field, authored, physicalType, discovered)
 	}
 	return nil
 }

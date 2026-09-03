@@ -52,7 +52,7 @@ func (p *Planner) resolveBindingPath(dataset string, binding semanticmodel.Dimen
 	return p.compiled.ResolveBindingPath(dataset, binding.Field, binding.Path)
 }
 
-// TableRelation resolves a validated backing physical Model table name to the
+// TableRelation resolves a validated backing model materialization name to the
 // physical SQL relation used by a serving plan. Planner callers provide
 // semantic dataset aliases; the planner translates aliases before invoking
 // this callback.

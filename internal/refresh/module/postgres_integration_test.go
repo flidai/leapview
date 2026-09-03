@@ -936,7 +936,7 @@ func TestPostgresPoisonPayloadTerminalizesRunAndJobAndUnblocksLaterJob(t *testin
 	if _, err := refreshRepo.CreateRun(t.Context(), poisonInput); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-run", PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetModelTable, TargetID: "model_poison", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest, PrincipalID: "principal-poison"}); err != nil {
+	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-run", PipelineID: plan.PipelineID, SemanticModelID: plan.SemanticModelID, TargetType: refreshrun.TargetModel, TargetID: "model_poison", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: plan.Digest, ArtifactDigest: plan.ArtifactDigest, PrincipalID: "principal-poison"}); err != nil {
 		t.Fatal(err)
 	}
 	first, err := queue.ListExecutableJobs(t.Context(), refreshrun.ReadScope{ProjectID: identity.ProjectID, Environment: identity.Environment}, 8)
@@ -1006,7 +1006,7 @@ func TestPostgresPoisonReplayRejectsPartialOrTamperedRunTree(t *testing.T) {
 	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-drift-run", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: refreshrun.TargetRefreshPipeline, TargetID: "pipeline", TriggerType: refreshrun.TriggerManual, InvocationSource: refreshrun.TriggerManual, PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal-poison-drift", JobID: "poison-drift-job"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-drift-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-drift-run", PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: refreshrun.TargetModelTable, TargetID: "model", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal-poison-drift"}); err != nil {
+	if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{RunID: "poison-drift-child", ProjectID: identity.ProjectID.String(), Environment: identity.Environment, GenerationID: identity.GenerationID, ParentRunID: "poison-drift-run", PipelineID: "pipeline", SemanticModelID: "semantic", TargetType: refreshrun.TargetModel, TargetID: "model", TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: digest, ArtifactDigest: digest, PrincipalID: "principal-poison-drift"}); err != nil {
 		t.Fatal(err)
 	}
 	// A partially terminalized tree must not replay as an already quarantined
@@ -1361,7 +1361,7 @@ func TestPostgresRunTreeAdmissionRollsBackEveryAuthorityOnChildConflict(t *testi
 		}
 		if _, err := refreshRepo.CreateRun(t.Context(), refreshpostgres.RunInput{
 			RunID: conflictID, ProjectID: rootInput.Identity.ProjectID.String(), Environment: rootInput.Identity.Environment, GenerationID: rootInput.Identity.GenerationID,
-			ParentRunID: existingParentID, PipelineID: rootInput.PipelineID.String(), SemanticModelID: rootInput.SemanticModelID.String(), TargetType: refreshrun.TargetModelTable, TargetID: dependency.String(),
+			ParentRunID: existingParentID, PipelineID: rootInput.PipelineID.String(), SemanticModelID: rootInput.SemanticModelID.String(), TargetType: refreshrun.TargetModel, TargetID: dependency.String(),
 			TriggerType: refreshrun.TriggerDependency, InvocationSource: refreshrun.TriggerDependency, PlanDigest: rootInput.PipelinePlan.Digest, ArtifactDigest: rootInput.PipelinePlan.ArtifactDigest, PrincipalID: "principal:existing",
 		}); err != nil {
 			t.Fatal(err)
@@ -1523,7 +1523,7 @@ func TestPostgresRunPersistenceRejectsStandaloneAdmission(t *testing.T) {
 	child := root
 	child.RunID = "standalone-child"
 	child.ParentRunID = "standalone-parent"
-	child.TargetType = refreshrun.TargetModelTable
+	child.TargetType = refreshrun.TargetModel
 	child.TargetID = "model_orders"
 	child.TriggerType = refreshrun.TriggerDependency
 	child.InvocationSource = refreshrun.TriggerDependency

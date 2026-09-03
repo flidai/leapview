@@ -48,7 +48,7 @@ for (const viewport of [
   { name: 'desktop', width: 1180, height: 760 },
   { name: 'mobile', width: 390, height: 720 },
 ]) {
-  test(`semantic model graph renders table joins on ${viewport.name}`, async () => {
+  test(`semantic model graph renders dataset relationships on ${viewport.name}`, async () => {
     const page = await browser.newPage({ viewport })
     try {
       await page.goto(baseURL)
@@ -259,8 +259,8 @@ function testDocument(): string {
             --lv-fg-link: #0969da;
             --lv-line-muted: #d8dee4;
             --lv-line-accent: #0969da;
-            --lv-asset-model-table-bg: #ddf4ff;
-            --lv-asset-model-table-border: #b6e3ff;
+            --lv-asset-model-bg: #ddf4ff;
+            --lv-asset-model-border: #b6e3ff;
 
 
 

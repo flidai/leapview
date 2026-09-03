@@ -14,7 +14,7 @@ type Kind string
 const (
 	KindSemanticAggregate         Kind = "semantic_aggregate"
 	KindSemanticRows              Kind = "semantic_rows"
-	KindModelTableRows            Kind = "model_table_rows"
+	KindModelRows                 Kind = "model_rows"
 	KindSemanticHistogram         Kind = "semantic_histogram"
 	KindSemanticDistribution      Kind = "semantic_distribution"
 	KindSemanticSpatialTile       Kind = "semantic_spatial_tile"
@@ -344,8 +344,8 @@ func SemanticRows(modelID, target string, fields, metrics []Field, filters []Fil
 	return Query{ModelID: modelID, Kind: KindSemanticRows, Target: target, Fields: fields, Metrics: metrics, Filters: filters, Sort: sort, Offset: offset, Limit: limit, IncludeTotal: includeTotal}
 }
 
-func ModelTableRows(modelID, table string, columns []string, sort []Sort, offset, limit int, includeTotal bool) Query {
-	return Query{ModelID: modelID, Kind: KindModelTableRows, Target: table, Fields: fieldsFromNames(columns), Sort: sort, Offset: offset, Limit: limit, IncludeTotal: includeTotal}
+func ModelRows(modelID, model string, columns []string, sort []Sort, offset, limit int, includeTotal bool) Query {
+	return Query{ModelID: modelID, Kind: KindModelRows, Target: model, Fields: fieldsFromNames(columns), Sort: sort, Offset: offset, Limit: limit, IncludeTotal: includeTotal}
 }
 
 func SemanticHistogram(modelID, target string, dimensions []Field, metric Field, filters []Filter, binCount int) Query {
@@ -380,7 +380,7 @@ func (q Query) Validate() error {
 		if len(q.Fields) == 0 && len(q.Metrics) == 0 && q.Time.Field == "" && !(q.Kind == KindSemanticRows && q.IncludeTotal) {
 			return fmt.Errorf("%s query requires at least one selected field", q.Kind)
 		}
-	case KindModelTableRows:
+	case KindModelRows:
 		if strings.TrimSpace(q.Target) == "" {
 			return fmt.Errorf("%s query requires target", q.Kind)
 		}

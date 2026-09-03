@@ -78,7 +78,7 @@ spec:
       amount: {datatype: Decimal, description: Source order amount.}
 ```
 
-The source name is logical identity; `path` is a physical detail that can evolve. Declare the source fields expected by downstream transformations. Model-table SQL should still cast defensively when physical CSV values can be malformed.
+The source name is logical identity; `path` is a physical detail that can evolve. Declare the source fields expected by downstream transformations. Model SQL should still cast defensively when physical CSV values can be malformed.
 
 ## Govern discovery and access
 
@@ -132,7 +132,7 @@ Then stage it to a target with `leapview data sync`. Staging returns an immutabl
 
 ## Verify the source boundary
 
-Check that filenames match source paths exactly, source fields reflect the actual header, credentials resolve in the target instance, and compiler-derived governed lineage covers every source each model SQL expression reads. Continue with [Define model tables](/docs/guides/build/model-tables).
+Check that filenames match source paths exactly, source fields reflect the actual header, credentials resolve in the target instance, and compiler-derived governed lineage covers every source each Model SQL expression reads. Continue with [Define models](/docs/guides/build/models).
 
 For managed data, retain the revision digest returned by staging and confirm that the target can resolve it before deployment. Re-run the plan against the same input directory; an unchanged directory should produce the same reviewed revision.
 
@@ -142,4 +142,4 @@ If validation cannot discover the connection or source, resolve include patterns
 
 ## Next steps
 
-Continue with [Define model tables](/docs/guides/build/model-tables). See [Connection configuration](/docs/config/connection), [Source configuration](/docs/config/source), and [Managed data ingestion](/docs/data-ingestion) for exact contracts and revision behavior.
+Continue with [Define models](/docs/guides/build/models). See [Connection configuration](/docs/config/connection), [Source configuration](/docs/config/source), and [Managed data ingestion](/docs/data-ingestion) for exact contracts and revision behavior.

@@ -380,7 +380,7 @@ func TestServiceQueuePipelineRefreshCreatesFullSemanticModelRun(t *testing.T) {
 		t.Fatalf("root run = %#v", result.Run)
 	}
 	if len(repo.createdRuns) != 3 {
-		t.Fatalf("created runs = %#v, want pipeline root plus both model-table tasks", repo.createdRuns)
+		t.Fatalf("created runs = %#v, want pipeline root plus both Model tasks", repo.createdRuns)
 	}
 	if repo.createdRuns[0].SemanticModelID != "sales" || repo.createdRuns[0].TriggerType != TriggerManual {
 		t.Fatalf("root input = %#v", repo.createdRuns[0])
@@ -415,7 +415,7 @@ func TestServiceQueuePipelineRefreshTerminalReplayBypassesPreflight(t *testing.T
 		ID:          "run_original_child",
 		Identity:    replayedIdentity,
 		PipelineID:  "sales-refresh",
-		TargetType:  TargetModelTable,
+		TargetType:  TargetModel,
 		TargetID:    "customers",
 		TriggerType: TriggerDependency,
 		Status:      RunStatusSucceeded,
@@ -969,7 +969,7 @@ func (r *fakeRepo) CreateRunTree(ctx context.Context, tree RunTreeInput) (RunRec
 	}
 	children := make([]RunRecord, 0, len(tree.DependencyTargets))
 	for _, targetID := range tree.DependencyTargets {
-		child, childErr := r.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: tree.Root.SemanticModelID, PipelineID: tree.Root.PipelineID, PipelinePlan: tree.Root.PipelinePlan, InvocationSource: tree.Root.InvocationSource, MatchingScheduleIDs: append([]string(nil), tree.Root.MatchingScheduleIDs...), TriggerID: tree.Root.TriggerID, NominalTime: tree.Root.NominalTime, PrincipalID: tree.Root.PrincipalID, GroupIDs: append([]string(nil), tree.Root.GroupIDs...), EstimatedMemoryBytes: tree.Root.EstimatedMemoryBytes, TargetType: TargetModelTable, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
+		child, childErr := r.CreateRun(ctx, RunInput{Identity: root.Identity, SemanticModelID: tree.Root.SemanticModelID, PipelineID: tree.Root.PipelineID, PipelinePlan: tree.Root.PipelinePlan, InvocationSource: tree.Root.InvocationSource, MatchingScheduleIDs: append([]string(nil), tree.Root.MatchingScheduleIDs...), TriggerID: tree.Root.TriggerID, NominalTime: tree.Root.NominalTime, PrincipalID: tree.Root.PrincipalID, GroupIDs: append([]string(nil), tree.Root.GroupIDs...), EstimatedMemoryBytes: tree.Root.EstimatedMemoryBytes, TargetType: TargetModel, TargetID: targetID, TargetRevision: root.TargetRevision, TriggerType: TriggerDependency, ParentRunID: root.ID, JobKind: JobKindChildRun})
 		if childErr != nil {
 			return RunRecord{}, nil, childErr
 		}
@@ -987,7 +987,7 @@ func (r *fakeRepo) LookupIdempotentRun(_ context.Context, _ projectgraph.Serving
 }
 
 func (r *fakeRepo) ListChildRuns(context.Context, ReadScope, string) ([]RunRecord, error) {
-	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModelTable, TargetID: "customers"}}, nil
+	return []RunRecord{{ID: "run_child", Identity: serviceIdentity, TargetType: TargetModel, TargetID: "customers"}}, nil
 }
 
 func (r *fakeRepo) MarkRunRunning(_ context.Context, _ projectgraph.ServingIdentity, runID string) (RunRecord, error) {

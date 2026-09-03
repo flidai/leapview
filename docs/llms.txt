@@ -28,7 +28,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [Projects and environments](/docs/concepts/projects-environments): Understand ownership, isolation, and deployment scope.
 - [Connections and sources](/docs/concepts/connections-sources): Separate physical data access from reusable logical source definitions.
 - [Managed data and revisions](/docs/concepts/managed-data): Understand immutable revisions, staging, activation, upload boundaries, and storage ownership.
-- [Model tables](/docs/concepts/model-tables): Materialize reusable analytical tables from source data.
+- [Models](/docs/concepts/models): Define reusable transformations from governed source data.
 - [Semantic models](/docs/concepts/semantic-models): Define datasets, dimensions, metrics, and relationships once.
 - [Apache Ossie interchange](/docs/concepts/ossie-interchange): Import and export semantic models through the pinned Ossie boundary.
 - [Dashboards, pages, and visuals](/docs/concepts/dashboards): Understand the presentation resources rendered from the project graph.
@@ -49,7 +49,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Build dashboards](/docs/guides/build): Follow the dashboard-as-code authoring workflow.
 - [Connect a data source](/docs/guides/build/connect-data): Add a connection and source definitions to a project.
-- [Define model tables](/docs/guides/build/model-tables): Turn source data into stable analytical tables.
+- [Define models](/docs/guides/build/models): Turn governed source data into stable analytical outputs.
 - [Build a semantic model](/docs/guides/build/semantic-model): Expose reusable fields, metrics, and relationships.
 - [Create a dashboard](/docs/guides/build/dashboard): Define a project dashboard and its first report page.
 - [Pages and layout](/docs/guides/build/pages-layout): Compose responsive report pages from code.
@@ -62,7 +62,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Managed data ingestion](/docs/data-ingestion): Plan, stage, and activate immutable project-global data revisions.
 - [Data revisions and activation](/docs/guides/data/revisions): Understand revision identity and atomic activation.
-- [Materialization and refresh](/docs/guides/data/refresh): Refresh model tables without disrupting active queries.
+- [Materialization and refresh](/docs/guides/data/refresh): Refresh model materializations without disrupting active queries.
 - [Storage and recovery](/docs/guides/data/storage-recovery): Operate local or object-backed analytical storage safely.
 - [Data troubleshooting](/docs/guides/data/troubleshooting): Diagnose planning, upload, revision, and refresh failures.
 
@@ -241,7 +241,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 
 - [Architecture overview](/docs/architecture): See how the monolith, contracts, storage, and browser components fit together.
 - [Runtime architecture](/docs/architecture/runtime): Follow routing, query execution, and streamed UI updates.
-- [Semantic attribute registry](/docs/architecture/semantic-attribute-registry): Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
+- [Semantic attribute registry and control plane](/docs/architecture/semantic-attribute-registry): Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
 - [Evidence-gated Arrow optimization](/docs/architecture/arrow-optimization-evidence): Measure dashboard Arrow boundaries before approving a production migration.
 - [Dashboard native Arrow response contract](/docs/architecture/dashboard-native-arrow-contract): Define the native-v1 schema, protocol, governance, pagination, and compatibility oracle for future dashboard Arrow experiments.
 - [Cross-role journey qualification](/docs/architecture/journey-qualification): Map FAI-492 consumer, creator, and operator states to executable assembled-app checks and evidence rules.

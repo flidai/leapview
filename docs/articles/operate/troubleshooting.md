@@ -109,7 +109,7 @@ A failed candidate should leave active projects and revisions unchanged. Confirm
 
 ## Refreshes queue or fail
 
-Inspect the latest generation, executor read/write limits, queue lengths, timeouts, source reachability, temporary capacity, and first failing model table. Older runs may be intentionally superseded.
+Inspect the latest generation, executor read/write limits, queue lengths, timeouts, source reachability, temporary capacity, and first failing Model materialization. Older runs may be intentionally superseded.
 
 Do not increase concurrency until CPU, memory, disk, and catalog write capacity show headroom. More simultaneous work can make a saturated single node less available.
 

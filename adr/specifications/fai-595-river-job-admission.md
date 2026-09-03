@@ -4,7 +4,7 @@ Status: accepted mutable companion specification
 
 Date: 2026-09-01
 
-Governing decision: [ADR-0018](../0018-adopt-a-postgresql-centered-target-data-architecture.md)
+Governing decision: [ADR-0020](../0020-adopt-a-postgresql-centered-target-data-architecture.md)
 
 Related: [FAI-592 canonical Watermill envelope](watermill-canonical-envelope.md),
 [FAI-593 Watermill Router/subscriber runtime](watermill-router-runtime.md),

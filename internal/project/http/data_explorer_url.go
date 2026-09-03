@@ -70,8 +70,8 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 	if version := strings.TrimSpace(values.Get("v")); version != "" && version != dataExploreURLVersion {
 		return command, fmt.Errorf("unsupported version %q", version)
 	}
-	if value := strings.TrimSpace(values.Get("model")); value != "" {
-		command.ModelID = projectsignals.Optional(value)
+	if value := strings.TrimSpace(values.Get("semanticModel")); value != "" {
+		command.SemanticModelID = projectsignals.Optional(value)
 	}
 	if value := strings.TrimSpace(values.Get("dataset")); value != "" {
 		command.DatasetID = projectsignals.Optional(value)
@@ -86,9 +86,9 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		}
 		filter.Field = strings.TrimSpace(filter.Field)
 		filter.Operator = strings.TrimSpace(filter.Operator)
-		if filter.Dataset != nil {
-			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
-			filter.Dataset = &dataset
+		if filter.DatasetID != nil {
+			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID))
+			filter.DatasetID = &dataset
 		}
 		command.Filters = append(command.Filters, filter)
 	}
@@ -150,29 +150,29 @@ func decodeDataExploreURLValue(value string, target any) error {
 // its incremental normalization, but a URL restore must never turn a stale
 // operand into a smaller query by dropping it.
 func validateRestoredDataExploreState(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, compiledModels map[string]*semanticquery.CompiledModel) error {
-	modelID := strings.TrimSpace(projectsignals.ValueOrZero(command.ModelID))
-	selectedModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.ModelID))
+	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.SemanticModelID))
+	selectedSemanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.SemanticModelID))
 
-	if modelID != "" {
-		if !explorerModelByID(projection.Models, modelID) {
-			return fmt.Errorf("model %q is no longer available; choose an active semantic model", modelID)
+	if semanticModelID != "" {
+		if !explorerSemanticModelByID(projection.SemanticModels, semanticModelID) {
+			return fmt.Errorf("semantic model %q is no longer available; choose an active semantic model", semanticModelID)
 		}
-		if selectedModelID != modelID {
-			return fmt.Errorf("model %q could not be restored; choose an active semantic model", modelID)
+		if selectedSemanticModelID != semanticModelID {
+			return fmt.Errorf("semantic model %q could not be restored; choose an active semantic model", semanticModelID)
 		}
 	}
-	if selectedModelID == "" {
+	if selectedSemanticModelID == "" {
 		return fmt.Errorf("no active semantic model is available; choose an active semantic model")
 	}
-	compiled := compiledModels[selectedModelID]
+	compiled := compiledModels[selectedSemanticModelID]
 	if compiled == nil || len(compiled.DatasetNames()) == 0 {
-		return fmt.Errorf("model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedModelID)
+		return fmt.Errorf("semantic model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedSemanticModelID)
 	}
 
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
 	if datasetID != "" {
 		if !explorerDatasetByID(projection.Datasets, datasetID) || !compiledDataset(compiled, datasetID) {
-			return fmt.Errorf("dataset %q is no longer available in model %q; choose an active dataset", datasetID, selectedModelID)
+			return fmt.Errorf("dataset %q is no longer available in semantic model %q; choose an active dataset", datasetID, selectedSemanticModelID)
 		}
 	}
 
@@ -208,12 +208,12 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		if err := validateRestoredExploreFilter(index, filter); err != nil {
 			return err
 		}
-		if filter.Dataset == nil || strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset)) == "" {
-			if filter.Dataset != nil {
+		if filter.DatasetID == nil || strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID)) == "" {
+			if filter.DatasetID != nil {
 				return fmt.Errorf("filter %d dataset is empty; remove the stale filter or choose an active dataset", index+1)
 			}
 		} else {
-			filterDataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
+			filterDataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID))
 			if !explorerDatasetByID(projection.Datasets, filterDataset) || !compiledDataset(compiled, filterDataset) {
 				return fmt.Errorf("filter %d dataset %q is no longer available; remove the stale filter or choose an active dataset", index+1, filterDataset)
 			}
@@ -323,7 +323,7 @@ func restoredCompiledSemanticTimeGrain(compiled *semanticquery.CompiledModel, fi
 	return declared, supported
 }
 
-func explorerModelByID(models []projectsignals.DataExploreModelSignal, id string) bool {
+func explorerSemanticModelByID(models []projectsignals.DataExploreSemanticModelSignal, id string) bool {
 	for _, model := range models {
 		if model.ID == id {
 			return true

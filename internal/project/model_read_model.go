@@ -7,13 +7,13 @@ import (
 	projectmanifest "github.com/flidai/leapview/internal/project/manifest"
 )
 
-// ModelTableAssetReadModel is the typed detail projection for a model table.
+// ModelAssetReadModel is the typed detail projection for a logical Model.
 // The serving graph deliberately carries only portable resource metadata;
 // runtime execution and the detached authored definition are paired by the
 // active project read model before this transport map is emitted. Keeping the
 // conversion here prevents the UI from treating target-bound execution as
 // authored source.
-type ModelTableAssetReadModel struct {
+type ModelAssetReadModel struct {
 	Definition         semanticmodel.ExecutionDefinition         `json:"Definition,omitempty"`
 	Configuration      string                                    `json:"Configuration,omitempty"`
 	Columns            map[string]semanticmodel.ModelColumn      `json:"Columns,omitempty"`
@@ -26,29 +26,29 @@ type ModelTableAssetReadModel struct {
 	ModelDependencies  []string                                  `json:"ModelDependencies,omitempty"`
 }
 
-// ModelTableAssetPayload converts the validated compiled table into the
+// ModelAssetPayload converts the validated compiled model into the
 // dynamic transport map consumed by the existing project UI signals. The
-// conversion is deliberately at this boundary: the table remains strongly
+// conversion is deliberately at this boundary: the model remains strongly
 // typed until it is encoded for the browser-facing read model.
-func ModelTableAssetPayload(table semanticmodel.Table) map[string]any {
-	return ModelTableAssetPayloadWithAuthoredDefinition(table, nil)
+func ModelAssetPayload(model semanticmodel.Table) map[string]any {
+	return ModelAssetPayloadWithAuthoredDefinition(model, nil)
 }
 
-// ModelTableAssetPayloadWithAuthoredDefinition builds the browser detail
-// projection from the runtime table metadata while using the detached
+// ModelAssetPayloadWithAuthoredDefinition builds the browser detail
+// projection from the runtime model metadata while using the detached
 // authored definition, when available, for the source/SQL shown to users.
 // Runtime execution is never changed: only the transport read model's
 // Definition field is selected from the non-secret authored union.
-func ModelTableAssetPayloadWithAuthoredDefinition(table semanticmodel.Table, authored *projectmanifest.AuthoredModelDefinition) map[string]any {
-	return ModelTableAssetPayloadWithAuthoredSource(table, authored, "")
+func ModelAssetPayloadWithAuthoredDefinition(model semanticmodel.Table, authored *projectmanifest.AuthoredModelDefinition) map[string]any {
+	return ModelAssetPayloadWithAuthoredSource(model, authored, "")
 }
 
-// ModelTableAssetPayloadWithAuthoredSource adds the exact validated model
+// ModelAssetPayloadWithAuthoredSource adds the exact validated model
 // document retained by the compiler. Model resources contain no resolved
 // connection credentials; preserving their source lets every model detail,
 // including direct-source models, show its configuration as authored.
-func ModelTableAssetPayloadWithAuthoredSource(table semanticmodel.Table, authored *projectmanifest.AuthoredModelDefinition, configuration string) map[string]any {
-	definition := table.Execution
+func ModelAssetPayloadWithAuthoredSource(model semanticmodel.Table, authored *projectmanifest.AuthoredModelDefinition, configuration string) map[string]any {
+	definition := model.Execution
 	if authored != nil {
 		switch authored.Type {
 		case "direct":
@@ -61,17 +61,17 @@ func ModelTableAssetPayloadWithAuthoredSource(table semanticmodel.Table, authore
 			}
 		}
 	}
-	projection := ModelTableAssetReadModel{
+	projection := ModelAssetReadModel{
 		Definition:         definition,
 		Configuration:      configuration,
-		Columns:            cloneModelColumns(table.Columns),
-		Entities:           cloneModelEntities(table.Entities),
-		GrainEntity:        table.GrainEntity,
-		Dimensions:         cloneMetricDimensions(table.Dimensions),
-		Description:        table.Description,
-		Schema:             table.Schema,
-		SourceDependencies: append([]string(nil), table.SourceDependencies...),
-		ModelDependencies:  append([]string(nil), table.ModelDependencies...),
+		Columns:            cloneModelColumns(model.Columns),
+		Entities:           cloneModelEntities(model.Entities),
+		GrainEntity:        model.GrainEntity,
+		Dimensions:         cloneMetricDimensions(model.Dimensions),
+		Description:        model.Description,
+		Schema:             model.Schema,
+		SourceDependencies: append([]string(nil), model.SourceDependencies...),
+		ModelDependencies:  append([]string(nil), model.ModelDependencies...),
 	}
 	encoded, err := json.Marshal(projection)
 	if err != nil {

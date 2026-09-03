@@ -454,7 +454,7 @@ func TestSQLRunRepositoryFailsClaimedRunTreeAtomically(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'system:refresh', '[]', 67108864, 'child_run', 'queued');
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model', 'table_orders', 1, 'dependency', 'run_1', 'running', 2);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkRunTreeFailedClaimed(t.Context(), job, "pipeline failed"); err != nil {
@@ -481,7 +481,7 @@ func TestSQLRunRepositoryRejectsIneligibleChildTree(t *testing.T) {
 	if _, err := store.SQLDB().ExecContext(t.Context(), `
 INSERT INTO refresh_jobs (id, project_id, generation_id, semantic_model_id, pipeline_id, principal_id, group_ids_json, estimated_memory_bytes, kind, status) VALUES ('child_job', 'project_sales', 'generation_a', 'semantic_sales', 'pipeline_daily', 'system:refresh', '[]', 67108864, 'child_run', 'queued');
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model', 'table_orders', 1, 'dependency', 'run_1', 'succeeded', 2);`); err != nil {
 		t.Fatal(err)
 	}
 	if err := repo.MarkRunTreeFailedClaimed(t.Context(), job, "pipeline failed"); !errors.Is(err, refreshrun.ErrLeaseLost) {

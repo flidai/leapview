@@ -26,7 +26,7 @@ The project manifest discovers one immutable graph:
 Project
 ├── Connections
 ├── Sources
-├── Model tables
+├── Models
 ├── Semantic models
 ├── Pipelines
 └── Dashboards
@@ -35,13 +35,14 @@ Project
 The dependency direction is:
 
 ```text
-Connection → Source → Model table → Semantic model → Dashboard
+Connection → Source → Model → Semantic Model → Dashboard
                               └── Pipeline (refresh orchestration)
 ```
 
-Connections and sources provide governed inputs. Model tables provide reusable
-transformations. Semantic models define dimensions, relationships, metrics, and
-policy-aware query contracts. Pipelines schedule refresh work.
+Connections and sources provide governed inputs. Models provide reusable
+transformations and materialize their outputs when refreshed. Semantic models
+define datasets, dimensions, relationships, metrics, and policy-aware query
+contracts. Pipelines schedule refresh work.
 Dashboards compose governed semantic queries into pages, filters, visuals, and
 layout. Shared resources are defined once and referenced by stable IDs.
 

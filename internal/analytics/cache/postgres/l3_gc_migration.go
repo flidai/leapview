@@ -5,11 +5,11 @@ import _ "embed"
 const (
 	// L3GCMigrationRevision is the forward-only cache migration that adds
 	// durable object fencing and pool-scoped orphan collection.
-	L3GCMigrationRevision int64 = 3
-	L3GCMigrationID             = "003_l3_object_gc"
+	L3GCMigrationRevision int64 = 4
+	L3GCMigrationID             = "004_l3_object_gc"
 )
 
-//go:embed migrations/003_l3_object_gc.sql
+//go:embed migrations/004_l3_object_gc.sql
 var l3GCMigrationSQL string
 
 // L3GCMigrationSQL returns the immutable cache-owned forward migration.

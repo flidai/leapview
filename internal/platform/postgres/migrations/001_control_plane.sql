@@ -1,4 +1,4 @@
--- LeapView PostgreSQL clean-slate foundation (ADR-0018).
+-- LeapView PostgreSQL clean-slate foundation (ADR-0020).
 --
 -- Capability packages own their tables, functions, triggers, and grants. The
 -- migration runner applies this foundation and then the ordered capability

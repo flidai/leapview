@@ -2766,7 +2766,7 @@ func TestCoreProceduralGuidesUseTheOperationalTemplate(t *testing.T) {
 		"docs/articles/start/installation.md",
 		"docs/articles/start/first-dashboard.md",
 		"docs/articles/build/connect-data.md",
-		"docs/articles/build/model-tables.md",
+		"docs/articles/build/models.md",
 		"docs/articles/build/semantic-model.md",
 		"docs/articles/build/dashboard.md",
 		"docs/guides/cli/validate-deploy.md",

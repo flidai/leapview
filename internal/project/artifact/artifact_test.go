@@ -126,7 +126,7 @@ func TestProjectIsDeterministicAndProjectWide(t *testing.T) {
 		t.Fatal("refresh projection dropped project Model catalog")
 	}
 	if refreshTable.ModelName != "orders_model" || !reflect.DeepEqual(refreshTable.SourceDependencies, []string{"orders"}) {
-		t.Fatalf("refresh Model table = %#v, want authored name with runtime source dependencies", refreshTable)
+		t.Fatalf("refresh Model = %#v, want authored name with runtime source dependencies", refreshTable)
 	}
 	var wire map[string]any
 	if err := json.Unmarshal(first.Canonical(), &wire); err != nil {

@@ -4,7 +4,7 @@ Status: envelope and canonical producer boundary admitted; consumer enrollment c
 
 Date: 2026-08-31
 
-Related: [ADR-0018](../0018-adopt-a-postgresql-centered-target-data-architecture.md)
+Related: [ADR-0020](../0020-adopt-a-postgresql-centered-target-data-architecture.md)
 
 ## Decision
 

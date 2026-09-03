@@ -24,12 +24,12 @@ A LeapView project has three main layers:
 ```mermaid
 flowchart LR
   accTitle: LeapView resource layers
-  accDescr: Connections and sources feed model tables and semantic models, which feed dashboards and report pages.
-  inputs["Connections and sources"] --> semantics["Model tables and semantic models"] --> presentation["Dashboards and report pages"]
+  accDescr: Connections feed Sources, Sources feed Models, Models feed Semantic Models, and Semantic Models feed Dashboards.
+  connection["Connection"] --> source["Source"] --> model["Model"] --> semantic["Semantic Model"] --> dashboard["Dashboard"]
 ```
 
 1. Connections and sources identify physical inputs and give them stable project-level names.
-2. Model tables and semantic models turn those inputs into reusable analytical concepts.
+2. Models and semantic models turn those inputs into reusable analytical concepts.
 3. Dashboards compose semantic queries into filters, KPIs, charts, tables, and report pages.
 
 Access and publication resources apply alongside those layers. The global agent and MCP execute the same governed tools against authorized project resources. Separate dev, staging, and production instances can run the same validated project source without requiring a second copy of the YAML tree.
@@ -42,6 +42,6 @@ This division keeps credentials, unrestricted SQL, authorization, and query trut
 
 ## What lives in the repository
 
-A typical project contains one manifest and flat include lists for connections, sources, model tables, semantic models, refresh pipelines, dashboards, access, and publications. Generated JSON Schemas describe the exact shape of every resource.
+A typical project contains one manifest and flat include lists for connections, sources, Models, semantic models, refresh pipelines, dashboards, access, and publications. Generated JSON Schemas describe the exact shape of every resource.
 
 Start with [Get started with LeapView](/docs/getting-started) to run the included project. Then read [Projects and environments](/docs/concepts/projects-environments) before creating a project of your own.

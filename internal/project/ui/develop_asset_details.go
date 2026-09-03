@@ -41,8 +41,8 @@ func assetDetailModelForAssetWithRefresh(project projectview.DevelopView, asset 
 	switch asset.Type {
 	case "semantic_model":
 		semanticModelDetailModel(&model, project, asset, assets, refresh)
-	case "model_table":
-		modelTableDetailModel(&model, project, asset, assets)
+	case "model":
+		modelDetailModel(&model, project, asset, assets)
 	case "dashboard":
 		dashboardDetailModel(&model, asset, assets)
 	case "refresh_pipeline":
@@ -110,7 +110,7 @@ func commonAssetOverviewFacts(asset projectview.DevelopAssetView, assets []proje
 
 func shouldShowParentFact(typ string) bool {
 	switch typ {
-	case "catalog", "connection", "dashboard", "model_table", "semantic_model":
+	case "catalog", "connection", "dashboard", "model", "semantic_model":
 		return false
 	default:
 		return true
@@ -236,7 +236,7 @@ func semanticDatasetsTable(projectID string, parent projectview.DevelopAssetView
 	for _, name := range sortedMapKeys(datasets) {
 		dataset := asMap(datasets[name])
 		details := asMap(datasetDetails[name])
-		child := semanticAssetByName(parent.Key, "model_table", name, assets)
+		child := semanticAssetByName(parent.Key, "model", metaString(dataset, "Model"), assets)
 		rows = append(rows, map[string]any{
 			"name":           name,
 			"nameHref":       childHref(projectID, child),
@@ -298,7 +298,7 @@ func semanticModelGraphSignal(meta map[string]any) *uisignals.SemanticModelGraph
 		if containsString(metricDatasets, name) {
 			badges = append(badges, "dataset")
 		}
-		if semanticModelTableIsDimension(name, relationships) {
+		if semanticDatasetIsDimension(name, relationships) {
 			badges = append(badges, "dimension")
 		}
 		if metricCounts[name] > 0 {
@@ -449,7 +449,7 @@ func semanticConformedDimensionCounts(dimensions map[string]any) map[string]int 
 	return counts
 }
 
-func semanticModelTableIsDimension(table string, edges []uisignals.SemanticModelGraphEdgeSignal) bool {
+func semanticDatasetIsDimension(table string, edges []uisignals.SemanticModelGraphEdgeSignal) bool {
 	for _, edge := range edges {
 		if edge.Target == table {
 			return true
@@ -469,7 +469,7 @@ func containsString(values []string, target string) bool {
 
 func semanticModelGraphFields(table map[string]any, joins map[string][]string) []uisignals.SemanticModelGraphFieldSignal {
 	fields := metaMap(table, "Dimensions")
-	columns := modelTableSchemaColumns(fields, metaMap(table, "Schema"))
+	columns := modelSchemaColumns(fields, metaMap(table, "Schema"))
 	entityNames, grainFields := semanticModelGraphFieldIdentity(table)
 	seen := map[string]struct{}{}
 	out := make([]uisignals.SemanticModelGraphFieldSignal, 0, len(columns)+len(joins))
@@ -562,8 +562,8 @@ func sortedMapKeysString(values map[string][]string) []string {
 	return keys
 }
 
-func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView) {
-	fields := modelTableFields(asset.Payload)
+func modelDetailModel(model *assetDetailModel, project projectview.DevelopView, asset projectview.DevelopAssetView, assets []projectview.DevelopAssetView) {
+	fields := modelFields(asset.Payload)
 	schema := metaMap(asset.Payload, "Schema", "schema")
 	physicalColumns := metaSlice(schema, "Columns", "columns")
 	totalFields := len(fields)
@@ -571,9 +571,9 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 		totalFields = len(physicalColumns)
 	}
 	mode := "Unspecified"
-	if modelTableSQL(asset.Payload) != "" {
+	if modelSQL(asset.Payload) != "" {
 		mode = "SQL transform"
-	} else if modelTableSourceNames(asset.Payload) != nil {
+	} else if modelSourceNames(asset.Payload) != nil {
 		mode = "Direct source"
 	}
 	entities := metaMap(asset.Payload, "Entities", "entities")
@@ -592,12 +592,12 @@ func modelTableDetailModel(model *assetDetailModel, project projectview.DevelopV
 	}
 	model.Overview = append(model.Overview, modelLastRefreshedFact(asset))
 	model.Sections = append(model.Sections,
-		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelTableEntitiesTable", Table: modelTableEntitiesGrid(asset.Payload)},
-		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", totalFields), Signal: "assetDetailsModelTableFieldsTable", Table: modelTableFieldsGrid(asset, asset.Payload)},
+		assetDetailSection{Title: fmt.Sprintf("Entities (%d)", len(entities)), Signal: "assetDetailsModelEntitiesTable", Table: modelEntitiesGrid(asset.Payload)},
+		assetDetailSection{Title: fmt.Sprintf("Fields (%d)", totalFields), Signal: "assetDetailsModelFieldsTable", Table: modelFieldsGrid(asset, asset.Payload)},
 	)
 }
 
-func modelTableFields(meta map[string]any) map[string]any {
+func modelFields(meta map[string]any) map[string]any {
 	return metaMap(meta, "Dimensions", "dimensions", "Fields", "fields")
 }
 
@@ -605,7 +605,7 @@ func sourceDetailModel(model *assetDetailModel, asset projectview.DevelopAssetVi
 	fields := metaMap(asset.Payload, "Fields", "fields")
 	schema := metaMap(asset.Payload, "Schema", "schema")
 	observation := metaMap(asset.Payload, "SchemaObservation", "schemaObservation")
-	columns := modelTableSchemaColumns(fields, schema)
+	columns := modelSchemaColumns(fields, schema)
 	model.Overview = append(model.Overview, sourceFacts(asset)...)
 	mode := firstNonEmpty(metaString(asset.Payload, "SchemaMode", "schemaMode"), metaString(observation, "Mode", "mode"), "inferred")
 	status := firstNonEmpty(metaString(observation, "Status", "status"), "not observed")
@@ -624,7 +624,7 @@ func sourceDetailModel(model *assetDetailModel, asset projectview.DevelopAssetVi
 	)
 }
 
-func modelTableSourceNames(meta map[string]any) []string {
+func modelSourceNames(meta map[string]any) []string {
 	definition := metaMap(meta, "Definition", "definition")
 	if source := metaString(definition, "Source", "source"); source != "" {
 		return []string{source}
@@ -642,17 +642,17 @@ func modelTableSourceNames(meta map[string]any) []string {
 	return nil
 }
 
-func modelTableSQL(meta map[string]any) string {
+func modelSQL(meta map[string]any) string {
 	if sql := metaString(metaMap(meta, "Definition", "definition"), "SQL", "sql"); sql != "" {
 		return sql
 	}
 	return metaString(metaMap(metaMap(meta, "AuthoredModel", "authoredModel"), "Query", "query"), "Code", "code")
 }
 
-func modelTableFieldsGrid(asset projectview.DevelopAssetView, table map[string]any) recordTable {
-	fields := modelTableFields(table)
+func modelFieldsGrid(asset projectview.DevelopAssetView, table map[string]any) recordTable {
+	fields := modelFields(table)
 	schema := metaMap(table, "Schema", "schema")
-	schemaColumns := modelTableSchemaColumns(fields, schema)
+	schemaColumns := modelSchemaColumns(fields, schema)
 	entityNames, grainFields := semanticModelGraphFieldIdentity(table)
 	physical := metaMap(table, "Physical", "physical")
 	snapshot := formatCatalogCount(metaInt64(physical, "SnapshotID", "snapshotId"))
@@ -717,13 +717,13 @@ func modelTableFieldsGrid(asset projectview.DevelopAssetView, table map[string]a
 			{ID: "status", Header: "Status", Kind: uisignals.Pointer("badge"), Width: uisignals.Pointer("130px")},
 		},
 		Rows:      rows,
-		Empty:     "No schema is available for this model table.",
+		Empty:     "No schema is available for this model.",
 		MinWidth:  uisignals.Pointer("760px"),
 		RowAction: uisignals.Pointer("open-model-field"),
 	}
 }
 
-func modelTableEntitiesGrid(table map[string]any) recordTable {
+func modelEntitiesGrid(table map[string]any) recordTable {
 	entities := semanticModelGraphEntities(table)
 	rows := make([]map[string]any, 0, len(entities))
 	for _, entity := range entities {
@@ -748,7 +748,7 @@ func modelTableEntitiesGrid(table map[string]any) recordTable {
 }
 
 func sourceFieldsGrid(fields, schema map[string]any) recordTable {
-	schemaColumns := modelTableSchemaColumns(fields, schema)
+	schemaColumns := modelSchemaColumns(fields, schema)
 	rows := make([]map[string]any, 0, len(schemaColumns))
 	for _, column := range schemaColumns {
 		name := metaString(column, "Name", "name")
@@ -780,7 +780,7 @@ func sourceFieldsGrid(fields, schema map[string]any) recordTable {
 	}
 }
 
-func modelTableSchemaColumns(fields map[string]any, schema map[string]any) []map[string]any {
+func modelSchemaColumns(fields map[string]any, schema map[string]any) []map[string]any {
 	if schema != nil {
 		if raw := metaSlice(schema, "Columns", "columns"); len(raw) > 0 {
 			columns := make([]map[string]any, 0, len(raw))
@@ -1046,7 +1046,7 @@ func connectionSourcesGrid(projectID string, sources []projectview.DevelopAssetV
 			"sourceHref": assetnav.CanonicalAssetSectionHref(source, "details"),
 			"format":     emptyDash(metaString(source.Payload, "Format", "format")),
 			"path":       emptyDash(metaString(source.Payload, "Path", "path")),
-			"fields":     len(modelTableSchemaColumns(fields, schema)),
+			"fields":     len(modelSchemaColumns(fields, schema)),
 		})
 	}
 	return recordTable{
@@ -1521,8 +1521,8 @@ func assetTypeLabel(typ string) string {
 	switch typ {
 	case "semantic_model":
 		return "Semantic model"
-	case "model_table":
-		return "Model table"
+	case "model":
+		return "Model"
 	case "page_item":
 		return "Page item"
 	case "refresh_pipeline":
@@ -1544,8 +1544,8 @@ func labelFromKey(key string) string {
 		return "Filters field"
 	case "uses_filter":
 		return "Uses filter"
-	case "uses_model_table":
-		return "Uses model table"
+	case "uses_model":
+		return "Uses model"
 	case "uses_metric":
 		return "Uses metric"
 	case "uses_semantic_model":

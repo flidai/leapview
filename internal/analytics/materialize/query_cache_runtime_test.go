@@ -545,7 +545,7 @@ func TestRuntimeModelTableRowsBypassesLookupStoreAndCoalescing(t *testing.T) {
 	request := dataquery.Query{
 		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
 		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
-		Kind: dataquery.KindModelTableRows, Target: "orders",
+		Kind: dataquery.KindModelRows, Target: "orders",
 		Fields: []dataquery.Field{{Field: "id", Alias: "id"}}, Limit: 1,
 	}
 	observations := []dataquery.CacheObservation{}

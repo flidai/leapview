@@ -26,7 +26,7 @@ For each required result, the server combines:
 - the visual, KPI, filter-option, or table query contract;
 - result limits, sort order, and table window state.
 
-Semantic names are resolved to known model-table fields, relationships, aggregations, and expressions. Data policies are applied at the server boundary. DuckDB executes the resulting bounded work against active analytical state.
+Semantic names are resolved to known semantic dataset fields, relationships, aggregations, and expressions. Data policies are applied at the server boundary. DuckDB executes the resulting bounded work against active analytical state.
 
 ## Signal delivery
 

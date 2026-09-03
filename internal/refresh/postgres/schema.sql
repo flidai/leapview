@@ -146,7 +146,7 @@ CREATE TABLE IF NOT EXISTS refresh.run (
     CHECK (parent_run_id IS NULL OR (parent_run_id = btrim(parent_run_id) AND length(parent_run_id) BETWEEN 1 AND 256 AND parent_run_id <> run_id)),
     CHECK (pipeline_id = btrim(pipeline_id) AND length(pipeline_id) BETWEEN 1 AND 255),
     CHECK (semantic_model_id = btrim(semantic_model_id) AND length(semantic_model_id) BETWEEN 1 AND 255),
-    CHECK (target_type IN ('refresh_pipeline','model_table')),
+    CHECK (target_type IN ('refresh_pipeline','model')),
     CHECK (target_id = btrim(target_id) AND length(target_id) BETWEEN 1 AND 255),
     CHECK (target_revision >= 0),
     CHECK (trigger_type IN ('manual','schedule','dependency')),

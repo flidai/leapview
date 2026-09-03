@@ -138,6 +138,19 @@ func TestSemanticModelDetailProjectionRendersDatasetsMetricsRelationshipsAndGrap
 	}
 }
 
+func TestSemanticDatasetLinkUsesBoundModelWhenDatasetIsAliased(t *testing.T) {
+	parent := projectview.DevelopAssetView{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales"}
+	model := projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"}
+	table := semanticDatasetsTable("project:test", parent, []projectview.DevelopAssetView{parent, model}, map[string]any{
+		"Datasets": map[string]any{
+			"order_facts": map[string]any{"Model": "orders"},
+		},
+	}, AssetRefreshState{})
+	if len(table.Rows) != 1 || table.Rows[0]["name"] != "order_facts" || table.Rows[0]["nameHref"] != "/models/model:orders/details" {
+		t.Fatalf("dataset rows = %#v, want aliased dataset linked to its bound Model", table.Rows)
+	}
+}
+
 func TestSemanticModelGraphProjectsCompiledEntityAndCompositeEndpoints(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
@@ -221,7 +234,7 @@ func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
 		asset projectview.DevelopAssetView
 		href  string
 	}{
-		{asset: projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders"}, href: "/models/model:orders/data"},
+		{asset: projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders"}, href: "/models/model:orders/data"},
 		{asset: projectview.DevelopAssetView{ID: "semantic-model:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales"}, href: "/semantic-models/semantic-model:sales/data"},
 	} {
 		page := projectAssetPageSignal(project, test.asset, []projectview.DevelopAssetView{test.asset}, nil, "data", assetLineageModel{})
@@ -245,7 +258,7 @@ func TestModelAndSemanticDataTabsStayOnAssetRoutes(t *testing.T) {
 	}
 }
 
-func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
+func TestModelDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	const configuration = "apiVersion: leapview.dev/v1\nkind: Model\nmetadata: {id: model:zip_geolocations, name: zip_geolocations}\n"
 	table := semanticmodel.Table{
 		Execution:          semanticmodel.ExecutionDefinition{SQL: "SELECT zip_prefix FROM source.\"olist.geolocation\""},
@@ -259,8 +272,8 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 		}},
 	}
 	asset := projectview.DevelopAssetView{
-		ID: "model:zip_geolocations", Type: string(projectview.AssetTypeModelTable), Key: "zip_geolocations", Title: "ZIP locations",
-		Payload: projectview.ModelTableAssetPayloadWithAuthoredSource(table, nil, configuration),
+		ID: "model:zip_geolocations", Type: string(projectview.AssetTypeModel), Key: "zip_geolocations", Title: "ZIP locations",
+		Payload: projectview.ModelAssetPayloadWithAuthoredSource(table, nil, configuration),
 	}
 	asset.Payload["Physical"] = map[string]any{
 		"RowCount": int64(99_441), "ColumnCount": int64(5), "FileCount": int64(2),
@@ -354,9 +367,9 @@ func TestModelTableDetailProjectionRendersCompiledDefinition(t *testing.T) {
 	}
 }
 
-func TestModelTableRefreshesTabUsesServingSnapshotFacts(t *testing.T) {
+func TestModelRefreshesTabUsesServingSnapshotFacts(t *testing.T) {
 	asset := projectview.DevelopAssetView{
-		ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders",
+		ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders",
 		Payload: map[string]any{"Physical": map[string]any{
 			"RowCount": int64(99_441), "FileCount": int64(1), "SizeBytes": int64(7_969_177),
 			"SnapshotID": int64(2), "SnapshotAt": "2026-08-24T14:32:00Z",
@@ -387,7 +400,7 @@ func TestModelTableRefreshesTabUsesServingSnapshotFacts(t *testing.T) {
 func TestAuthoredAssetsExposeDefinitionTabWithStableSectionHref(t *testing.T) {
 	for _, asset := range []projectview.DevelopAssetView{
 		{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Payload: map[string]any{"Configuration": "kind: Source\n"}},
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Payload: map[string]any{"Configuration": "kind: Model\n"}},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Payload: map[string]any{"Configuration": "kind: Model\n"}},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Payload: map[string]any{"Configuration": "kind: SemanticModel\n"}},
 		{ID: "dashboard:sales", Type: string(projectview.AssetTypeDashboard), Key: "sales", Payload: map[string]any{"Configuration": "kind: Dashboard\n"}},
 		{ID: "pipeline:sales", Type: string(projectview.AssetTypeRefreshPipeline), Key: "sales", Payload: map[string]any{"Configuration": "kind: Pipeline\n"}},
@@ -639,7 +652,7 @@ func TestAssetVersionsTableKeepsTheListCompactAndBuildsDrawerComparison(t *testi
 }
 
 func TestModelRefreshesSectionIncludesTargetRunHistory(t *testing.T) {
-	asset := projectview.DevelopAssetView{ID: "model:sales_customers", Type: string(projectview.AssetTypeModelTable), Key: "sales_customers", Title: "Customers"}
+	asset := projectview.DevelopAssetView{ID: "model:sales_customers", Type: string(projectview.AssetTypeModel), Key: "sales_customers", Title: "Customers"}
 	refresh := AssetRefreshState{Runs: []AssetRefreshRun{{
 		ID: "run:model", Status: "succeeded", TriggerType: "dependency", StartedAt: "2026-08-24T13:00:00Z", FinishedAt: "2026-08-24T13:00:02Z",
 	}}}
@@ -787,8 +800,8 @@ func TestSourceAndModelSchemaUseLogicalFallbacksAndExplicitUnknowns(t *testing.T
 	}}
 	for name, table := range map[string]recordTable{
 		"source": sourceFieldsGrid(fields, schema),
-		"model": modelTableFieldsGrid(
-			projectview.DevelopAssetView{ID: "model:table", Type: string(projectview.AssetTypeModelTable)},
+		"model": modelFieldsGrid(
+			projectview.DevelopAssetView{ID: "model:table", Type: string(projectview.AssetTypeModel)},
 			map[string]any{"Dimensions": fields, "Schema": schema},
 		),
 	} {
@@ -885,9 +898,9 @@ func TestProjectAssetSectionsAreResourceAware(t *testing.T) {
 		{string(projectview.AssetTypeSource), "details", true},
 		{string(projectview.AssetTypeSource), "definition", true},
 		{string(projectview.AssetTypeSource), "data", false},
-		{string(projectview.AssetTypeModelTable), "data", true},
-		{string(projectview.AssetTypeModelTable), "refresh", false},
-		{string(projectview.AssetTypeModelTable), "refreshes", true},
+		{string(projectview.AssetTypeModel), "data", true},
+		{string(projectview.AssetTypeModel), "refresh", false},
+		{string(projectview.AssetTypeModel), "refreshes", true},
 		{string(projectview.AssetTypeSemanticModel), "refreshes", true},
 		{string(projectview.AssetTypeRefreshPipeline), "refreshes", true},
 		{string(projectview.AssetTypeDashboard), "refreshes", false},
@@ -912,19 +925,19 @@ func detailFactValue(facts []definitionFact, label string) string {
 }
 
 func TestDevelopAssetLinksStayInResourceArea(t *testing.T) {
-	asset := projectview.DevelopAssetView{ID: "model_table:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders"}
+	asset := projectview.DevelopAssetView{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders"}
 	page := projectAssetSummarySignal("sales", asset, map[string]projectview.DevelopAssetView{}, nil)
 	if !strings.HasPrefix(page.DetailHref, "/models/") {
 		t.Fatalf("detail link = %q, want /models resource area", page.DetailHref)
 	}
-	if page.DetailHref == "/projects/sales/assets/model_table:orders/details" {
+	if page.DetailHref == "/projects/sales/assets/model:orders/details" {
 		t.Fatal("legacy project-prefixed asset link escaped into resource signal")
 	}
 }
 
 func TestModelDetailUsesNamedEntitiesAndExactGrain(t *testing.T) {
 	asset := projectview.DevelopAssetView{
-		ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders",
+		ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders",
 		Payload: map[string]any{
 			"Entities": map[string]any{
 				"order_line": map[string]any{"Type": "primary", "Fields": []any{"order_id", "line_number"}},
@@ -973,7 +986,7 @@ func TestAssetDetailNavigationFollowsResourceArea(t *testing.T) {
 		label     string
 	}{
 		{assetType: string(projectview.AssetTypeSource), area: "sources", label: "Sources"},
-		{assetType: string(projectview.AssetTypeModelTable), area: "models", label: "Models"},
+		{assetType: string(projectview.AssetTypeModel), area: "models", label: "Models"},
 		{assetType: string(projectview.AssetTypeSemanticModel), area: "semantic-models", label: "Semantic models"},
 		{assetType: string(projectview.AssetTypeRefreshPipeline), area: "pipelines", label: "Pipelines"},
 	}
@@ -1005,7 +1018,7 @@ func TestProjectAreaSignalsUseCanonicalBaseAndAssetLinks(t *testing.T) {
 		assetHref string
 	}{
 		{name: "sources", area: "sources", typ: string(projectview.AssetTypeSource), base: "/sources", assetID: "source:orders", assetHref: "/sources/source:orders/details"},
-		{name: "models", area: "models", typ: string(projectview.AssetTypeModelTable), base: "/models", assetID: "model:orders", assetHref: "/models/model:orders/details"},
+		{name: "models", area: "models", typ: string(projectview.AssetTypeModel), base: "/models", assetID: "model:orders", assetHref: "/models/model:orders/details"},
 		{name: "semantic models", area: "semantic-models", typ: string(projectview.AssetTypeSemanticModel), base: "/semantic-models", assetID: "semantic:orders", assetHref: "/semantic-models/semantic:orders/details"},
 	}
 

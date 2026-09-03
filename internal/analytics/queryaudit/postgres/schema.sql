@@ -1,4 +1,4 @@
--- Query-audit capability schema (ADR-0018).
+-- Query-audit capability schema (ADR-0020).
 --
 -- The control-plane baseline owns the audit schema in production.  This file
 -- is also complete for an isolated conformance database and intentionally has

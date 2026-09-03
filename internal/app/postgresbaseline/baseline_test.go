@@ -238,3 +238,21 @@ func TestProductRolePolicyDoesNotBroadenDashboardProjectionMutation(t *testing.T
 		}
 	}
 }
+
+func TestProductBaselineMigrationOrderIsUnique(t *testing.T) {
+	previous := BaselineRevision
+	seenIDs := map[string]struct{}{BaselineMigrationID: {}}
+	for _, migration := range Migrations() {
+		if migration.Revision <= previous {
+			t.Fatalf("migration %q revision %d is not strictly after %d", migration.MigrationID, migration.Revision, previous)
+		}
+		if _, exists := seenIDs[migration.MigrationID]; exists {
+			t.Fatalf("migration ID %q is duplicated", migration.MigrationID)
+		}
+		seenIDs[migration.MigrationID] = struct{}{}
+		previous = migration.Revision
+	}
+	if previous != LatestRevision {
+		t.Fatalf("latest migration revision = %d, want %d", previous, LatestRevision)
+	}
+}

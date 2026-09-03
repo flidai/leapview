@@ -1,4 +1,4 @@
-# ADR-0018: Adopt a PostgreSQL-centered target data architecture
+# ADR-0020: Adopt a PostgreSQL-centered target data architecture
 
 Status: accepted
 

@@ -16,7 +16,7 @@ func renderAssetIcon(t *testing.T, typ string) string {
 
 func TestAssetIconsUseDistinctSemanticModelSVGIdentity(t *testing.T) {
 	data := renderAssetIcon(t, "source")
-	model := renderAssetIcon(t, "model_table")
+	model := renderAssetIcon(t, "model")
 	semanticModel := renderAssetIcon(t, "semantic_model")
 
 	if data == model || data == semanticModel || model == semanticModel {
