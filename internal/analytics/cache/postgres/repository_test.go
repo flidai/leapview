@@ -32,6 +32,38 @@ func cacheTestEvidence(reason string) json.RawMessage {
 	return evidence
 }
 
+func cacheTestPublish(t *testing.T, repo *Repository, ctx context.Context, in PublishInput) (Manifest, error) {
+	t.Helper()
+	fence, err := repo.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{
+		StorageSecurityDomain: in.StorageSecurityDomain, ObjectKey: in.ObjectKey,
+		OwnerID: in.Lease.OwnerID, Lease: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("acquire test object fence: %v", err)
+	}
+	in.ObjectFence = fence
+	manifest, publishErr := repo.Publish(ctx, in)
+	if releaseErr := repo.ReleaseL3ObjectFence(context.WithoutCancel(ctx), fence); releaseErr != nil {
+		t.Fatalf("release test object fence: %v", releaseErr)
+	}
+	return manifest, publishErr
+}
+
+func cacheTestPrepareL3ObjectGC(t *testing.T, maintenance *Maintenance, ctx context.Context, storageDomain, objectKey string) (bool, error) {
+	t.Helper()
+	fence, err := maintenance.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{
+		StorageSecurityDomain: storageDomain, ObjectKey: objectKey, OwnerID: "gc-test", Lease: time.Minute,
+	})
+	if err != nil {
+		t.Fatalf("acquire test GC object fence: %v", err)
+	}
+	eligible, prepareErr := maintenance.PrepareL3ObjectGC(ctx, fence)
+	if releaseErr := maintenance.ReleaseL3ObjectFence(context.WithoutCancel(ctx), fence); releaseErr != nil {
+		t.Fatalf("release test GC object fence: %v", releaseErr)
+	}
+	return eligible, prepareErr
+}
+
 func TestLifecycleEvidenceValidation(t *testing.T) {
 	for name, raw := range map[string]json.RawMessage{
 		"missing":   nil,
@@ -151,7 +183,7 @@ func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T)
 	if _, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-b", Lease: time.Second}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("second fill error = %v, want ErrBusy", err)
 	}
-	manifest, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/" + cacheTestDigest('e'), ByteSize: 42, Metadata: []byte(`{"rows":1}`), Lease: first})
+	manifest, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/" + cacheTestDigest('e'), ByteSize: 42, Metadata: []byte(`{"rows":1}`), Lease: first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,11 +254,11 @@ func TestTargetIsolationAndOriginSealProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestA, err := repo.Publish(ctx, PublishInput{Key: keyA, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: leaseA})
+	manifestA, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: keyA, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: leaseA})
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifestB, err := repo.Publish(ctx, PublishInput{Key: keyB, OriginSnapshotSealID: cacheTestOriginSeal2, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: leaseB})
+	manifestB, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: keyB, OriginSnapshotSealID: cacheTestOriginSeal2, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: leaseB})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,7 +280,7 @@ func TestTargetIsolationAndOriginSealProvenance(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reused, err := repo.Publish(ctx, PublishInput{Key: keyB, OriginSnapshotSealID: cacheTestOriginSeal3, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: reuseLease})
+	reused, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: keyB, OriginSnapshotSealID: cacheTestOriginSeal3, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: reuseLease})
 	if err != nil || reused.ManifestID != manifestB.ManifestID || reused.OriginSnapshotSealID != cacheTestOriginSeal2 {
 		t.Fatalf("equivalent result did not reuse manifest provenance: %#v, err=%v", reused, err)
 	}
@@ -260,10 +292,6 @@ func TestTargetIsolationAndOriginSealProvenance(t *testing.T) {
 	if err != nil || len(listB) != 1 || listB[0].Key.TargetID != "target-b" {
 		t.Fatalf("target B dependency list = %#v, err=%v", listB, err)
 	}
-	reachableA, err := repo.ObjectReachable(ctx, nsA, cacheTestDigest('d'), "cache/shared-object")
-	if err != nil || !reachableA {
-		t.Fatalf("target A reachability = %v, err=%v", reachableA, err)
-	}
 	if _, err := repo.InvalidateNamespace(ctx, NamespaceInvalidationInput{Namespace: nsA, Kind: DependencyCustom, DependencyID: "orders", DependencyDigest: keyA.DependencyDigest, IdempotencyKey: "target-a-invalidate", Reason: "target refresh"}, cacheTestEvidence("target-refresh")); err != nil {
 		t.Fatal(err)
 	}
@@ -273,9 +301,14 @@ func TestTargetIsolationAndOriginSealProvenance(t *testing.T) {
 	if _, found, err := repo.Lookup(ctx, keyB); err != nil || !found {
 		t.Fatalf("target B was affected by target A invalidation: found=%v err=%v", found, err)
 	}
-	reachableB, err := repo.ObjectReachable(ctx, nsB, cacheTestDigest('d'), "cache/shared-object")
-	if err != nil || !reachableB {
-		t.Fatalf("target B reachability after target A invalidation = %v, err=%v", reachableB, err)
+	maintenance := NewMaintenance(p)
+	eligible, err := cacheTestPrepareL3ObjectGC(t, maintenance, ctx, cacheTestDigest('d'), "cache/shared-object")
+	if err != nil || eligible {
+		t.Fatalf("pool-wide GC ignored foreign target manifest: eligible=%v, err=%v", eligible, err)
+	}
+	foreignEligible, err := cacheTestPrepareL3ObjectGC(t, maintenance, ctx, cacheTestDigest('f'), "cache/shared-object")
+	if err != nil || !foreignEligible {
+		t.Fatalf("pool-wide GC crossed security domain: eligible=%v, err=%v", foreignEligible, err)
 	}
 }
 
@@ -293,7 +326,7 @@ func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/history-1", ByteSize: 1, Lease: firstLease})
+	first, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/history-1", ByteSize: 1, Lease: firstLease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,7 +337,7 @@ func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('f'), ObjectKey: "cache/history-2", ByteSize: 2, Lease: secondLease})
+	second, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('f'), ObjectKey: "cache/history-2", ByteSize: 2, Lease: secondLease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,6 +350,61 @@ func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
 	}
 	if admitted != 1 || retiring != 1 {
 		t.Fatalf("manifest history admitted=%d retiring=%d, want 1/1", admitted, retiring)
+	}
+}
+
+func TestPrepareL3ObjectGCTombstonesExpiredManifestAfterRootsDrain(t *testing.T) {
+	p := cacheTestDB(t)
+	repo := New(p)
+	maintenance := NewMaintenance(p)
+	ctx := t.Context()
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "gc-lifecycle", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	expiresAt := time.Now().UTC().Add(time.Second)
+	objectKey := "cache/l3/sd/" + cacheTestDigest('d') + "/" + cacheTestDigest('a') + "/" + cacheTestDigest('e')
+	manifest, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: objectKey, ByteSize: 1, Lease: lease, ExpiresAt: &expiresAt})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rootID := uuid.New()
+	if err := repo.AddRetentionRoot(ctx, rootID, manifest.ManifestID, "active reader"); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(time.Until(expiresAt) + 50*time.Millisecond)
+	eligible, err := cacheTestPrepareL3ObjectGC(t, maintenance, ctx, cacheTestDigest('d'), objectKey)
+	if err != nil || eligible {
+		t.Fatalf("rooted expired manifest eligibility = %v, err=%v", eligible, err)
+	}
+	var state string
+	if err := p.QueryRow(ctx, `SELECT state FROM cache.cache_manifest WHERE manifest_id=$1`, manifest.ManifestID).Scan(&state); err != nil {
+		t.Fatal(err)
+	}
+	if state != StateRetiring {
+		t.Fatalf("expired rooted manifest state = %q, want retiring", state)
+	}
+	if err := repo.RetireRetentionRoot(ctx, rootID, cacheTestEvidence("reader-drain")); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ExpireRetentionRoot(ctx, rootID, cacheTestEvidence("reader-drain")); err != nil {
+		t.Fatal(err)
+	}
+	eligible, err = cacheTestPrepareL3ObjectGC(t, maintenance, ctx, cacheTestDigest('d'), objectKey)
+	if err != nil || !eligible {
+		t.Fatalf("drained manifest eligibility = %v, err=%v", eligible, err)
+	}
+	var reason string
+	if err := p.QueryRow(ctx, `SELECT state,expire_evidence->>'reason' FROM cache.cache_manifest WHERE manifest_id=$1`, manifest.ManifestID).Scan(&state, &reason); err != nil {
+		t.Fatal(err)
+	}
+	if state != StateExpired || reason != "l3-orphan-gc" {
+		t.Fatalf("terminal manifest state/reason = %q/%q", state, reason)
 	}
 }
 
@@ -334,7 +422,7 @@ func TestAdmitManifestRejectsChangedObjectBeforeBindingLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/admit", ByteSize: 1, Lease: firstLease}); err != nil {
+	if _, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/admit", ByteSize: 1, Lease: firstLease}); err != nil {
 		t.Fatal(err)
 	}
 	secondLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "admit-b", Lease: time.Minute})
@@ -345,7 +433,12 @@ func TestAdmitManifestRejectsChangedObjectBeforeBindingLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Exec(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,$23::uuid,$24)`, manifestID, secondLease.LeaseID, secondLease.CacheKey, secondLease.OwnerID, secondLease.FencingEpoch, secondLease.Namespace.Key(), secondLease.NamespaceEpoch, key.PartitionKind, key.TargetID, key.ProjectID, key.Environment, candidateArg(key.CandidateID), key.PartitionFormatVersion, key.DependencyDigest, key.PolicyFingerprint, key.CanonicalQueryDigest, key.KeyFormatVersion, cacheTestDigest('d'), cacheTestDigest('f'), "cache/admit-other", 1, `{}`, cacheTestOriginSeal, nil)
+	objectFence, err := repo.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{StorageSecurityDomain: cacheTestDigest('d'), ObjectKey: "cache/admit-other", OwnerID: secondLease.OwnerID, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.ReleaseL3ObjectFence(context.WithoutCancel(ctx), objectFence) //nolint:errcheck // test cleanup
+	_, err = p.Exec(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::uuid,$22,$23,$24,$25::jsonb,$26::uuid,$27)`, manifestID, secondLease.LeaseID, secondLease.CacheKey, secondLease.OwnerID, secondLease.FencingEpoch, secondLease.Namespace.Key(), secondLease.NamespaceEpoch, key.PartitionKind, key.TargetID, key.ProjectID, key.Environment, candidateArg(key.CandidateID), key.PartitionFormatVersion, key.DependencyDigest, key.PolicyFingerprint, key.CanonicalQueryDigest, key.KeyFormatVersion, cacheTestDigest('d'), cacheTestDigest('f'), "cache/admit-other", objectFence.LeaseID, objectFence.OwnerID, objectFence.FencingEpoch, 1, `{}`, cacheTestOriginSeal, nil)
 	if err == nil || !strings.Contains(err.Error(), "cache manifest conflict") {
 		t.Fatalf("changed direct admission error = %v, want manifest conflict", err)
 	}
@@ -372,7 +465,7 @@ func TestExpireManifestCapabilityHonorsRetentionRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/expire-guard", ByteSize: 1, Lease: lease})
+	manifest, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/expire-guard", ByteSize: 1, Lease: lease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -437,6 +530,11 @@ func TestPublishAdmissionRechecksNamespaceAfterConcurrentInvalidation(t *testing
 	if err != nil {
 		t.Fatal(err)
 	}
+	objectFence, err := repo.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{StorageSecurityDomain: cacheTestDigest('d'), ObjectKey: "cache/race-publish", OwnerID: lease.OwnerID, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer repo.ReleaseL3ObjectFence(context.WithoutCancel(ctx), objectFence) //nolint:errcheck // test cleanup
 	lockTx, err := p.Begin(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -452,7 +550,7 @@ func TestPublishAdmissionRechecksNamespaceAfterConcurrentInvalidation(t *testing
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, publishErr := repo.PublishTx(ctx, pubTx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race-publish", ByteSize: 1, Lease: lease})
+		_, publishErr := repo.PublishTx(ctx, pubTx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race-publish", ByteSize: 1, Lease: lease, ObjectFence: objectFence})
 		result <- publishErr
 	}()
 	pid := pubTx.Conn().PgConn().PID()
@@ -494,6 +592,76 @@ func TestPublishAdmissionRechecksNamespaceAfterConcurrentInvalidation(t *testing
 	}
 }
 
+func TestPublishAdmissionRechecksObjectFenceAfterConcurrentTakeover(t *testing.T) {
+	p := cacheTestDB(t)
+	repo := New(p)
+	ctx := t.Context()
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "race-object", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectKey := "cache/l3/sd/" + cacheTestDigest('d') + "/" + cacheTestDigest('a') + "/" + cacheTestDigest('e')
+	objectFence, err := repo.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{StorageSecurityDomain: cacheTestDigest('d'), ObjectKey: objectKey, OwnerID: lease.OwnerID, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	lockTx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lockTx.Rollback(ctx) //nolint:errcheck // test cleanup
+	var epoch int64
+	if err := lockTx.QueryRow(ctx, `SELECT fencing_epoch FROM cache.cache_l3_object_fence WHERE storage_security_domain=$1 AND object_key=$2 FOR UPDATE`, cacheTestDigest('d'), objectKey).Scan(&epoch); err != nil {
+		t.Fatal(err)
+	}
+	pubTx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pubTx.Rollback(ctx) //nolint:errcheck // test cleanup
+	result := make(chan error, 1)
+	go func() {
+		_, publishErr := repo.PublishTx(ctx, pubTx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: objectKey, ByteSize: 1, Lease: lease, ObjectFence: objectFence})
+		result <- publishErr
+	}()
+	pid := pubTx.Conn().PgConn().PID()
+	deadline := time.Now().Add(2 * time.Second)
+	blocked := false
+	for time.Now().Before(deadline) {
+		var blockers int
+		if err := p.QueryRow(ctx, `SELECT cardinality(pg_blocking_pids($1))`, pid).Scan(&blockers); err == nil && blockers > 0 {
+			blocked = true
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	if !blocked {
+		t.Fatal("publish admission did not block on exact object-fence row")
+	}
+	successor := uuid.New()
+	if _, err := lockTx.Exec(ctx, `UPDATE cache.cache_l3_object_fence SET lease_id=$1,owner_id='gc-successor',fencing_epoch=fencing_epoch+1,expires_at=clock_timestamp()+interval '1 minute',acquired_at=clock_timestamp() WHERE storage_security_domain=$2 AND object_key=$3`, successor, cacheTestDigest('d'), objectKey); err != nil {
+		t.Fatal(err)
+	}
+	if err := lockTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if err := <-result; !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("publish after object-fence takeover = %v, want stale fence", err)
+	}
+	var manifests int
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM cache.cache_manifest`).Scan(&manifests); err != nil {
+		t.Fatal(err)
+	}
+	if manifests != 0 {
+		t.Fatalf("stale object-fence publish admitted %d manifests", manifests)
+	}
+}
+
 func TestRepositoryRejectsCrossNamespacePublish(t *testing.T) {
 	p := cacheTestDB(t)
 	repo := New(p)
@@ -507,7 +675,7 @@ func TestRepositoryRejectsCrossNamespacePublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/wrong-scope", ByteSize: 1, Lease: lease})
+	_, err = cacheTestPublish(t, repo, t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/wrong-scope", ByteSize: 1, Lease: lease})
 	if !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("cross-namespace publish error = %v, want stale fence", err)
 	}
@@ -607,7 +775,7 @@ func TestRepositoryRejectsUnrelatedFenceOnPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.Publish(ctx, PublishInput{Key: other, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 1, Lease: lease})
+	_, err = cacheTestPublish(t, repo, ctx, PublishInput{Key: other, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 1, Lease: lease})
 	if !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("unrelated fence publish error=%v, want ErrStaleFence", err)
 	}
@@ -630,11 +798,11 @@ func TestRepositoryPublishReplayIsIdempotentAndChangedContentsConflict(t *testin
 		t.Fatal(err)
 	}
 	in := PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1}`), Lease: lease}
-	first, err := repo.Publish(ctx, in)
+	first, err := cacheTestPublish(t, repo, ctx, in)
 	if err != nil {
 		t.Fatal(err)
 	}
-	replay, err := repo.Publish(ctx, in)
+	replay, err := cacheTestPublish(t, repo, ctx, in)
 	if err != nil {
 		t.Fatalf("lost-ACK replay: %v", err)
 	}
@@ -643,10 +811,10 @@ func TestRepositoryPublishReplayIsIdempotentAndChangedContentsConflict(t *testin
 	}
 	changed := in
 	changed.ObjectKey = "cache/other-object"
-	if _, err := repo.Publish(ctx, changed); !errors.Is(err, ErrConflict) {
+	if _, err := cacheTestPublish(t, repo, ctx, changed); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed replay error = %v, want conflict", err)
 	}
-	if _, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1,"rows":2}`), Lease: lease}); !errors.Is(err, ErrInvalid) {
+	if _, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1,"rows":2}`), Lease: lease}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("duplicate metadata error = %v, want invalid", err)
 	}
 }
@@ -664,7 +832,7 @@ func TestRepositoryRetentionLifecycleAndManifestImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Lease: lease})
+	manifest, err := cacheTestPublish(t, repo, ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Lease: lease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -791,7 +959,7 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest, err := repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race", ByteSize: 1, Lease: lease})
+		manifest, err := cacheTestPublish(t, repo, t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race", ByteSize: 1, Lease: lease})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -958,7 +1126,7 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/revision", ByteSize: 1, Lease: fence}); err != nil {
+	if _, err := cacheTestPublish(t, repo, t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/revision", ByteSize: 1, Lease: fence}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestB, ExpectedRevision: 1, Evidence: cacheTestEvidence("source-refresh")})
@@ -998,12 +1166,132 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	if _, err := repo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: ns, Kind: DependencyCustom, DependencyID: "stale-fence", IdempotencyKey: "stale-fence-epoch", Reason: "stale fence"}, cacheTestEvidence("stale-fence")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Publish(t.Context(), PublishInput{Key: staleKey, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/stale", ByteSize: 1, Lease: stale}); !errors.Is(err, ErrStaleFence) {
+	if _, err := cacheTestPublish(t, repo, t.Context(), PublishInput{Key: staleKey, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/stale", ByteSize: 1, Lease: stale}); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale namespace publish = %v, want stale fence", err)
 	}
 	hint, err := ParseNotificationHint(`{"event_id":1,"namespace":"` + ns.Key() + `"}`)
 	if err != nil || hint.EventID != 1 || hint.NamespaceKey != ns.Key() {
 		t.Fatalf("notification hint = %#v, %v", hint, err)
+	}
+}
+
+func TestL3ObjectAndScanFencesAreDurableAndFenced(t *testing.T) {
+	db := cacheTestDB(t)
+	repo := New(db)
+	maintenance := NewMaintenance(db)
+	domain := cacheTestDigest('d')
+	objectKey := "cache/l3/sd/" + domain + "/" + cacheTestDigest('a') + "/" + cacheTestDigest('b')
+
+	first, err := repo.AcquireL3ObjectFence(t.Context(), AcquireL3ObjectFenceInput{StorageSecurityDomain: domain, ObjectKey: objectKey, OwnerID: "runtime-a", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenance.AcquireL3ObjectFence(t.Context(), AcquireL3ObjectFenceInput{StorageSecurityDomain: domain, ObjectKey: objectKey, OwnerID: "gc-a", Lease: time.Minute}); !errors.Is(err, ErrBusy) {
+		t.Fatalf("maintenance acquired live runtime fence: %v", err)
+	}
+	if err := repo.ReleaseL3ObjectFence(t.Context(), first); err != nil {
+		t.Fatal(err)
+	}
+	second, err := maintenance.AcquireL3ObjectFence(t.Context(), AcquireL3ObjectFenceInput{StorageSecurityDomain: domain, ObjectKey: objectKey, OwnerID: "gc-a", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.FencingEpoch <= first.FencingEpoch {
+		t.Fatalf("object fencing epoch did not advance: first=%d second=%d", first.FencingEpoch, second.FencingEpoch)
+	}
+	if err := repo.RenewL3ObjectFence(t.Context(), first, time.Minute); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("stale object fence renewed: %v", err)
+	}
+	if err := maintenance.ReleaseL3ObjectFence(t.Context(), second); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenance.PrepareL3ObjectGC(t.Context(), second); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("GC preparation with released object fence error = %v, want stale fence", err)
+	}
+
+	lease, err := maintenance.AcquireL3GCLease(t.Context(), domain, "node-a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if lease.CursorObjectKey != "" || lease.Cycle != 1 {
+		t.Fatalf("initial GC lease = %+v", lease)
+	}
+	if _, err := maintenance.AcquireL3GCLease(t.Context(), domain, "node-b", time.Minute); !errors.Is(err, ErrBusy) {
+		t.Fatalf("second GC owner acquired live lease: %v", err)
+	}
+	if err := maintenance.AdvanceL3GCCursor(t.Context(), lease, objectKey, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := maintenance.AdvanceL3GCCursor(t.Context(), lease, objectKey, false); err != nil {
+		t.Fatalf("idempotent GC cursor replay failed: %v", err)
+	}
+	if err := maintenance.AdvanceL3GCCursor(t.Context(), lease, objectKey[:len(objectKey)-1], false); !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("regressing GC cursor error = %v, want stale fence", err)
+	}
+	if err := maintenance.AdvanceL3GCCursor(t.Context(), lease, "", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := maintenance.ReleaseL3GCLease(t.Context(), lease); err != nil {
+		t.Fatal(err)
+	}
+	next, err := maintenance.AcquireL3GCLease(t.Context(), domain, "node-b", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.CursorObjectKey != "" || next.Cycle != 2 || next.FencingEpoch <= lease.FencingEpoch {
+		t.Fatalf("resumed GC lease = %+v", next)
+	}
+}
+
+func TestPruneReclaimsExpiredL3ObjectFences(t *testing.T) {
+	db := cacheTestDB(t)
+	maintenance := NewMaintenance(db)
+	domain := cacheTestDigest('d')
+	objectKey := "cache/l3/prune/" + cacheTestDigest('a')
+	fence, err := maintenance.AcquireL3ObjectFence(t.Context(), AcquireL3ObjectFenceInput{
+		StorageSecurityDomain: domain,
+		ObjectKey:             objectKey,
+		OwnerID:               "prune-owner",
+		Lease:                 time.Minute,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := maintenance.ReleaseL3ObjectFence(t.Context(), fence); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := maintenance.Prune(t.Context(), PruneOptions{Before: time.Now().Add(time.Minute), Limit: 1})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.ExpiredLeases != 1 {
+		t.Fatalf("pruned expired L3 object fences = %d, want 1", stats.ExpiredLeases)
+	}
+}
+
+func TestManifestAdmissionRequiresCurrentExactObjectFence(t *testing.T) {
+	db := cacheTestDB(t)
+	repo := New(db)
+	key := cacheTestKey()
+	cacheKey, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	lease, err := repo.AcquireFill(t.Context(), AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "publisher", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectKey := "cache/l3/sd/" + cacheTestDigest('d') + "/" + cacheTestDigest('a') + "/" + cacheTestDigest('b')
+	fence, err := repo.AcquireL3ObjectFence(t.Context(), AcquireL3ObjectFenceInput{StorageSecurityDomain: cacheTestDigest('d'), ObjectKey: objectKey, OwnerID: lease.OwnerID, Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.ReleaseL3ObjectFence(t.Context(), fence); err != nil {
+		t.Fatal(err)
+	}
+	_, err = repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: objectKey, ByteSize: 1, Lease: lease, ObjectFence: fence})
+	if !errors.Is(err, ErrStaleFence) {
+		t.Fatalf("publish with released object fence error = %v, want stale fence", err)
 	}
 }
 
@@ -1029,12 +1317,37 @@ func TestCacheRoleConformance(t *testing.T) {
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	var runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, runtimeRetire, readonlyInsert, maintenancePrune bool
-	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_function_privilege($1,'cache.invalidate_namespace(uuid,text,text,text,text,bigint,text,text,jsonb)','EXECUTE'),has_function_privilege($1,'cache.retire_manifest(uuid,jsonb)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT'),has_function_privilege($3,'cache.prune_coordination(timestamptz,integer)','EXECUTE')`, runtimeRole.Name, readonlyRole.Name, maintenanceRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &runtimeInvalidate, &runtimeRetire, &readonlyInsert, &maintenancePrune); err != nil {
+	// Simulate a developer database prepared with the pre-object-fence
+	// overload. Reapplying the clean-slate schema must remove both the function
+	// and its role-specific grant rather than leaving a callable bypass.
+	const staleAdmissionSignature = `cache.admit_manifest(uuid,uuid,text,text,bigint,text,bigint,text,text,text,text,text,bigint,text,text,text,bigint,text,text,text,bigint,jsonb,uuid,timestamptz)`
+	if _, err := admin.Exec(t.Context(), `CREATE FUNCTION `+staleAdmissionSignature+` RETURNS uuid LANGUAGE sql AS 'SELECT NULL::uuid'; GRANT EXECUTE ON FUNCTION `+staleAdmissionSignature+` TO leapview_control_runtime`); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeSchema || runtimeDelete || runtimePrune || !runtimeInvalidate || !runtimeRetire || readonlyInsert || !maintenancePrune {
-		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v runtime_invalidate=%v runtime_retire=%v maintenance_prune=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, runtimeRetire, maintenancePrune, readonlyInsert)
+	tx, err = admin.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	var staleAdmissionExists bool
+	if err := admin.QueryRow(t.Context(), `SELECT to_regprocedure($1) IS NOT NULL`, staleAdmissionSignature).Scan(&staleAdmissionExists); err != nil {
+		t.Fatal(err)
+	}
+	if staleAdmissionExists {
+		t.Fatal("pre-object-fence manifest admission overload survived schema reapplication")
+	}
+	var runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, runtimeRetire, runtimeObjectFence, runtimeGCLease, readonlyInsert, maintenancePrune, maintenanceObjectFence, maintenanceGCLease, maintenanceReachability, maintenanceStateDML bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_schema_privilege($1,'cache','USAGE'),has_table_privilege($1,'cache.cache_invalidation','DELETE'),has_function_privilege($1,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_function_privilege($1,'cache.invalidate_namespace(uuid,text,text,text,text,bigint,text,text,jsonb)','EXECUTE'),has_function_privilege($1,'cache.retire_manifest(uuid,jsonb)','EXECUTE'),has_function_privilege($1,'cache.acquire_l3_object_fence(uuid,text,text,text,interval)','EXECUTE'),has_function_privilege($1,'cache.acquire_l3_gc_lease(uuid,text,text,interval)','EXECUTE'),has_table_privilege($2,'cache.cache_namespace_epoch','INSERT'),has_function_privilege($3,'cache.prune_coordination(timestamptz,integer)','EXECUTE'),has_function_privilege($3,'cache.acquire_l3_object_fence(uuid,text,text,text,interval)','EXECUTE'),has_function_privilege($3,'cache.acquire_l3_gc_lease(uuid,text,text,interval)','EXECUTE'),has_function_privilege($3,'cache.prepare_l3_object_gc(uuid,text,text,text,bigint)','EXECUTE'),has_table_privilege($3,'cache.cache_l3_gc_state','UPDATE')`, runtimeRole.Name, readonlyRole.Name, maintenanceRole.Name).Scan(&runtimeSchema, &runtimeDelete, &runtimePrune, &runtimeInvalidate, &runtimeRetire, &runtimeObjectFence, &runtimeGCLease, &readonlyInsert, &maintenancePrune, &maintenanceObjectFence, &maintenanceGCLease, &maintenanceReachability, &maintenanceStateDML); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeSchema || runtimeDelete || runtimePrune || !runtimeInvalidate || !runtimeRetire || !runtimeObjectFence || runtimeGCLease || readonlyInsert || !maintenancePrune || !maintenanceObjectFence || !maintenanceGCLease || !maintenanceReachability || maintenanceStateDML {
+		t.Fatalf("cache role grants schema=%v runtime_delete=%v runtime_prune=%v runtime_invalidate=%v runtime_retire=%v runtime_object_fence=%v runtime_gc=%v maintenance_prune=%v maintenance_object_fence=%v maintenance_gc=%v maintenance_reachability=%v maintenance_state_dml=%v readonly_insert=%v", runtimeSchema, runtimeDelete, runtimePrune, runtimeInvalidate, runtimeRetire, runtimeObjectFence, runtimeGCLease, maintenancePrune, maintenanceObjectFence, maintenanceGCLease, maintenanceReachability, maintenanceStateDML, readonlyInsert)
 	}
 	runtime, err := pgxpool.New(t.Context(), database.URL(runtimeRole))
 	if err != nil {
@@ -1049,6 +1362,9 @@ func TestCacheRoleConformance(t *testing.T) {
 	}
 	if _, err := runtime.Exec(t.Context(), `SELECT * FROM cache.prune_coordination(clock_timestamp(),1)`); err == nil {
 		t.Fatal("runtime prune capability unexpectedly granted")
+	}
+	if _, err := runtime.Exec(t.Context(), `SELECT cache.prepare_l3_object_gc($1,$2,'cache/object','runtime',1)`, uuid.New(), cacheTestDigest('d')); err == nil {
+		t.Fatal("runtime L3 object-GC preparation capability unexpectedly granted")
 	}
 	if _, err := runtime.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,target_id,project_id,environment,epoch) VALUES ('forged','production','target_sales','project_sales','prod',1)`); err == nil {
 		t.Fatal("runtime direct namespace fabrication succeeded")

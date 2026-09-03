@@ -902,6 +902,25 @@ protocol. Retirement removes or tombstones reachability before asynchronous
 physical deletion. This follows ADR-0009's existing immutable publication and
 orphan-reconciliation model.
 
+L3 orphan collection is scoped to one admitted storage-security domain, never
+to one target or serving namespace. A producer acquires an exact
+`(storage-security-domain, object-key)` fence before the create-only write and
+holds it through PostgreSQL manifest admission; that admission locks and
+validates the same fencing epoch in its transaction. The collector acquires
+the same exact fence before checking pool-wide reachability and deleting an
+unreachable object. Physical deletion is conditional on the exact provider
+version or ETag observed by the collector, so a changed object fails closed
+instead of being removed by a stale request. The collector unions admitted
+manifests and live or retiring retention roots across every namespace in the
+domain, and its metadata-preparation transaction locks and validates the same
+exact-object fencing epoch before tombstoning terminal manifests. It uses the
+pool's admitted orphan grace, and persists a fenced per-domain scan cursor so
+another node can resume without broad rescans or skipped pages. Runtime composition receives
+only the object-store `Put/Open` capability. `List/Delete`, global
+reachability, and GC lease/cursor mutation are composed only for bounded
+maintenance work using the separately authenticated PostgreSQL maintenance
+role.
+
 Shared fill ownership uses a persisted, expiring fence acquired with a unique
 insert or locked transition. `NOTIFY` may wake waiters after manifest commit;
 waiters always re-read the manifest. Shared cache manifests are ordinary logged

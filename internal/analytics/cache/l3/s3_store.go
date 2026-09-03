@@ -175,7 +175,7 @@ func (s *S3ObjectStore) Open(ctx context.Context, key string) (Object, error) {
 		return Object{}, err
 	}
 	getInput := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full)}
-	if head.VersionId != nil && *head.VersionId != "" {
+	if head.VersionId != nil && *head.VersionId != "" && !strings.EqualFold(*head.VersionId, "null") {
 		getInput.VersionId = head.VersionId
 	} else if head.ETag != nil && *head.ETag != "" {
 		getInput.IfMatch = head.ETag
@@ -220,15 +220,33 @@ func (s *S3ObjectStore) infoFromHead(key string, head *awss3.HeadObjectOutput) (
 	if head.LastModified != nil {
 		createdAt = head.LastModified.UTC()
 	}
-	return ObjectInfo{Key: key, SecurityDomain: domain, Digest: digest, Size: size, MetadataDigest: metadataDigest, CreatedAt: createdAt}, nil
+	versionID, etag := "", ""
+	if head.VersionId != nil {
+		versionID = *head.VersionId
+	}
+	if head.ETag != nil {
+		etag = *head.ETag
+	}
+	return ObjectInfo{Key: key, SecurityDomain: domain, Digest: digest, Size: size, MetadataDigest: metadataDigest, VersionID: versionID, ETag: etag, CreatedAt: createdAt}, nil
 }
 
-func (s *S3ObjectStore) Delete(ctx context.Context, key string) error {
-	full, err := s.fullKey(key)
+func (s *S3ObjectStore) DeleteExact(ctx context.Context, object ObjectInfo) error {
+	full, err := s.fullKey(object.Key)
 	if err != nil {
 		return err
 	}
-	_, err = s.client.DeleteObject(ctx, &awss3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full)})
+	input := &awss3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full)}
+	// S3 uses the literal "null" version ID for an unversioned object and for
+	// the mutable null version in a versioning-suspended bucket. It is not an
+	// immutable incarnation identifier, so deletion must use the observed ETag.
+	if object.VersionID != "" && !strings.EqualFold(object.VersionID, "null") {
+		input.VersionId = aws.String(object.VersionID)
+	} else if object.ETag != "" {
+		input.IfMatch = aws.String(object.ETag)
+	} else {
+		return fmt.Errorf("%w: S3 delete requires an exact version or ETag", ErrObjectCorrupt)
+	}
+	_, err = s.client.DeleteObject(ctx, input)
 	return err
 }
 
@@ -306,6 +324,9 @@ func (s *S3ObjectStore) List(ctx context.Context, prefix, after string, limit in
 	out, err := s.client.ListObjectsV2(ctx, input)
 	if err != nil {
 		return nil, "", err
+	}
+	if out == nil {
+		return nil, "", fmt.Errorf("%w: S3 LIST response is empty", ErrObjectCorrupt)
 	}
 	objects := make([]ObjectInfo, 0, len(out.Contents))
 	for _, entry := range out.Contents {

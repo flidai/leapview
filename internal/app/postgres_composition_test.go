@@ -154,6 +154,28 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 	}
 }
 
+func TestPostgresBuildComposesPoolScopedL3Maintenance(t *testing.T) {
+	contents, err := os.ReadFile("postgres_build.go")
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(contents)
+	for _, required := range []string{
+		"if cfg.QueryCacheL3Enabled",
+		"analyticsl3.NewCollector(",
+		"cachepostgres.NewMaintenance(bootstrap.MaintenancePool())",
+		"SecurityDomain: contract.PhysicalPoolID",
+		"GracePeriod: time.Duration(orphanGraceSeconds) * time.Second",
+		"newL3GCWorker(",
+		"workloadmodule.MaintenanceRequest(\"cache.l3.gc\")",
+		"AdditionalWorkers: additionalWorkers",
+	} {
+		if !strings.Contains(source, required) {
+			t.Fatalf("PostgreSQL composition is missing L3 maintenance seam %q", required)
+		}
+	}
+}
+
 func TestPostgresBuildComposesNativeRefreshExecutionAndFinalization(t *testing.T) {
 	contents, err := os.ReadFile("postgres_build.go")
 	if err != nil {

@@ -49,21 +49,50 @@ WHERE partition_kind = sqlc.arg(partition_kind)
 ORDER BY created_at, manifest_id
 LIMIT sqlc.arg(limit_count);
 
--- name: ObjectReachable :one
-SELECT EXISTS (
-    SELECT 1 FROM cache.cache_manifest AS m
-    WHERE m.partition_kind = sqlc.arg(partition_kind)
-      AND m.target_id = sqlc.arg(target_id)
-      AND m.project_id = sqlc.arg(project_id)
-      AND m.environment = sqlc.arg(environment)
-      AND m.candidate_id IS NOT DISTINCT FROM sqlc.narg(candidate_id)::text
-      AND m.storage_security_domain = sqlc.arg(storage_security_domain)
-      AND m.object_key = sqlc.arg(object_key)
-      AND (m.state IN ('admitted','retiring') OR EXISTS (
-          SELECT 1 FROM cache.cache_retention_root AS rr
-          WHERE rr.manifest_id = m.manifest_id AND rr.state IN ('live','retiring')
-      ))
-) AS reachable;
+-- name: AcquireL3ObjectFence :one
+SELECT f.lease_id::uuid AS lease_id, f.storage_security_domain::text AS storage_security_domain,
+       f.object_key::text AS object_key, f.owner_id::text AS owner_id,
+       f.fencing_epoch::bigint AS fencing_epoch, f.expires_at::timestamptz AS expires_at,
+       f.acquired_at::timestamptz AS acquired_at
+FROM cache.acquire_l3_object_fence(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+     sqlc.arg(object_key), sqlc.arg(owner_id), sqlc.arg(lease_microseconds)::bigint * interval '1 microsecond')
+     AS f(lease_id, storage_security_domain, object_key, owner_id, fencing_epoch, expires_at, acquired_at);
+
+-- name: RenewL3ObjectFence :one
+SELECT cache.renew_l3_object_fence(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+       sqlc.arg(object_key), sqlc.arg(owner_id), sqlc.arg(fencing_epoch),
+       sqlc.arg(lease_microseconds)::bigint * interval '1 microsecond') AS renewed;
+
+-- name: ReleaseL3ObjectFence :one
+SELECT cache.release_l3_object_fence(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+       sqlc.arg(object_key), sqlc.arg(owner_id), sqlc.arg(fencing_epoch)) AS released;
+
+-- name: AcquireL3GCLease :one
+SELECT f.lease_id::uuid AS lease_id, f.storage_security_domain::text AS storage_security_domain,
+       f.owner_id::text AS owner_id, f.fencing_epoch::bigint AS fencing_epoch,
+       f.cursor_object_key::text AS cursor_object_key, f.cycle::bigint AS cycle,
+       f.expires_at::timestamptz AS expires_at, f.acquired_at::timestamptz AS acquired_at
+FROM cache.acquire_l3_gc_lease(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+     sqlc.arg(owner_id), sqlc.arg(lease_microseconds)::bigint * interval '1 microsecond')
+     AS f(lease_id, storage_security_domain, owner_id, fencing_epoch, cursor_object_key, cycle, expires_at, acquired_at);
+
+-- name: RenewL3GCLease :one
+SELECT cache.renew_l3_gc_lease(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+       sqlc.arg(owner_id), sqlc.arg(fencing_epoch),
+       sqlc.arg(lease_microseconds)::bigint * interval '1 microsecond') AS renewed;
+
+-- name: ReleaseL3GCLease :one
+SELECT cache.release_l3_gc_lease(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+       sqlc.arg(owner_id), sqlc.arg(fencing_epoch)) AS released;
+
+-- name: AdvanceL3GCCursor :one
+SELECT cache.advance_l3_gc_cursor(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+       sqlc.arg(owner_id), sqlc.arg(fencing_epoch), sqlc.arg(next_object_key),
+       sqlc.arg(complete)) AS advanced;
+
+-- name: PrepareL3ObjectGC :one
+SELECT cache.prepare_l3_object_gc(sqlc.arg(lease_id)::uuid, sqlc.arg(storage_security_domain),
+       sqlc.arg(object_key), sqlc.arg(owner_id), sqlc.arg(fencing_epoch)) AS eligible;
 
 -- name: InvalidateNamespace :one
 SELECT f.invalidation_id::uuid AS invalidation_id, f.event_id::bigint AS event_id,
@@ -136,7 +165,7 @@ WHERE cache_key = sqlc.arg(cache_key)
 FOR UPDATE;
 
 -- name: AdmitManifest :one
-SELECT cache.admit_manifest(sqlc.arg(manifest_id)::uuid, sqlc.arg(lease_id)::uuid, sqlc.arg(cache_key), sqlc.arg(owner_id), sqlc.arg(fencing_epoch), sqlc.arg(namespace_key), sqlc.arg(namespace_epoch), sqlc.arg(partition_kind), sqlc.arg(target_id), sqlc.arg(project_id), sqlc.arg(environment), sqlc.narg(candidate_id)::text, sqlc.arg(partition_format_version), sqlc.arg(dependency_digest), sqlc.arg(policy_fingerprint), sqlc.arg(canonical_query_digest), sqlc.arg(key_format_version), sqlc.arg(storage_security_domain), sqlc.arg(object_digest), sqlc.arg(object_key), sqlc.arg(byte_size), sqlc.arg(metadata)::jsonb, sqlc.arg(origin_snapshot_seal_id)::uuid, sqlc.narg(expires_at)::timestamptz) AS manifest_id;
+SELECT cache.admit_manifest(sqlc.arg(manifest_id)::uuid, sqlc.arg(lease_id)::uuid, sqlc.arg(cache_key), sqlc.arg(owner_id), sqlc.arg(fencing_epoch), sqlc.arg(namespace_key), sqlc.arg(namespace_epoch), sqlc.arg(partition_kind), sqlc.arg(target_id), sqlc.arg(project_id), sqlc.arg(environment), sqlc.narg(candidate_id)::text, sqlc.arg(partition_format_version), sqlc.arg(dependency_digest), sqlc.arg(policy_fingerprint), sqlc.arg(canonical_query_digest), sqlc.arg(key_format_version), sqlc.arg(storage_security_domain), sqlc.arg(object_digest), sqlc.arg(object_key), sqlc.arg(object_lease_id)::uuid, sqlc.arg(object_owner_id), sqlc.arg(object_fencing_epoch), sqlc.arg(byte_size), sqlc.arg(metadata)::jsonb, sqlc.arg(origin_snapshot_seal_id)::uuid, sqlc.narg(expires_at)::timestamptz) AS manifest_id;
 
 -- name: GetManifestByID :one
 SELECT manifest_id, partition_kind, target_id, project_id, environment, candidate_id,

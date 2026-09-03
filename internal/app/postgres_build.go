@@ -466,8 +466,9 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	// runtime implementation remains behind the app/runtimefactory seam.
 	resultTierFactory := appruntimefactory.ResultTierFactory(func(resultCtx context.Context, tierInput appruntimefactory.ResultTierFactoryInput) (resulttier.Tier, error) {
 		// L3 is opt-in and only meaningful for an admitted S3 physical pool.
-		// Local pools intentionally receive a disabled capability so enabling the
-		// process flag cannot break serving or mix storage domains.
+		// Local pools intentionally receive a disabled capability. When L3 is
+		// requested, startup separately resolves the admitted pool contract so an
+		// S3 tier can never run without its pool-wide maintenance collector.
 		contract := tierInput.PoolContract
 		root := tierInput.Root
 		if !cfg.QueryCacheL3Enabled || contract == nil || !strings.EqualFold(strings.TrimSpace(contract.Tuple.StorageImplementation), "s3") {
@@ -835,6 +836,43 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(fmt.Errorf("build DuckLake retention worker: %w", err))
 	}
+	additionalWorkers := []platformlifecycle.Component{{Start: duckLakeRetention.Start, Stop: duckLakeRetention.Stop}}
+	if cfg.QueryCacheL3Enabled {
+		contract, resolveErr := contractAuthority.Resolve(ctx, appdeploymentpostgres.NativeBuildContractRequest{
+			PhysicalPoolID: physicalPoolID, CompatibilityDigest: compatibilityDigest,
+		})
+		if resolveErr != nil {
+			return fail(fmt.Errorf("resolve L3 cache maintenance contract: %w", resolveErr))
+		}
+		if contract.PoolContract != nil && strings.EqualFold(strings.TrimSpace(contract.PoolContract.Tuple.StorageImplementation), "s3") {
+			orphanGraceSeconds := contract.PoolContract.Pool.Identity.RetentionPolicy.OrphanGracePeriodSeconds
+			if orphanGraceSeconds <= 0 || orphanGraceSeconds > int64((time.Duration(1<<63-1)/time.Second)) {
+				return fail(errors.New("admitted L3 cache orphan grace is invalid"))
+			}
+			store, storeErr := appruntimefactory.NewL3ObjectStore(ctx, contract.PoolContract, postgresPoolS3Config(cfg, extensionSupply))
+			if storeErr != nil {
+				return fail(fmt.Errorf("build L3 cache maintenance object store: %w", storeErr))
+			}
+			maintenance := cachepostgres.NewMaintenance(bootstrap.MaintenancePool())
+			collector, collectorErr := analyticsl3.NewCollector(analyticsl3.CollectorConfig{
+				Authority: maintenance, Store: store, SecurityDomain: contract.PhysicalPoolID,
+				GracePeriod: time.Duration(orphanGraceSeconds) * time.Second,
+			})
+			if collectorErr != nil {
+				return fail(fmt.Errorf("build L3 cache garbage collector: %w", collectorErr))
+			}
+			l3GC := newL3GCWorker(l3GCWorkerConfig{
+				SecurityDomain: contract.PhysicalPoolID,
+				OwnerID:        instanceID,
+				Authority:      maintenance,
+				Collector:      collector,
+				Acquire: func(acquireCtx context.Context) (workloadmodule.Lease, error) {
+					return workloadBundle.Controller.Acquire(acquireCtx, workloadmodule.MaintenanceRequest("cache.l3.gc"))
+				},
+			})
+			additionalWorkers = append(additionalWorkers, platformlifecycle.Component{Start: l3GC.Start, Stop: l3GC.Stop})
+		}
+	}
 
 	// The PostgreSQL module receives only the clean-slate native mutation port.
 	// Legacy delivery projection and candidate-builder paths remain absent.
@@ -908,7 +946,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
 	rateLimits.Enabled = cfg.RateLimitingEnabled()
 	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
-	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}}, ReclaimExpiredIdempotency: map[string]struct{}{deploymentmodule.RetainProjectCandidateSourceOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: []platformlifecycle.Component{{Start: duckLakeRetention.Start, Stop: duckLakeRetention.Stop}}}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentSettings: graph.Settings, AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: true, RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, CanonicalResultReconciler: canonicalResultReconciler, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
+	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}}, ReclaimExpiredIdempotency: map[string]struct{}{deploymentmodule.RetainProjectCandidateSourceOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: additionalWorkers}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentSettings: graph.Settings, AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: true, RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, CanonicalResultReconciler: canonicalResultReconciler, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		lease, err := runtimeHost.Acquire(ctx)
 		if err != nil {
 			return "", err

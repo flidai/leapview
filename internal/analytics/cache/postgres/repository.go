@@ -60,8 +60,8 @@ type Maintenance struct{ db MaintenanceDBTX }
 var (
 	ErrInvalid    = errors.New("invalid cache input")
 	ErrNotFound   = errors.New("cache manifest not found")
-	ErrBusy       = errors.New("cache fill is owned by another worker")
-	ErrStaleFence = errors.New("cache fill fence is stale")
+	ErrBusy       = errors.New("cache coordination is owned by another worker")
+	ErrStaleFence = errors.New("cache coordination fence is stale")
 	ErrConflict   = errors.New("cache manifest conflict")
 	ErrEpoch      = errors.New("cache namespace epoch conflict")
 )
@@ -219,6 +219,39 @@ type FillLease struct {
 	AcquiredAt     time.Time
 }
 
+// AcquireL3ObjectFenceInput identifies one immutable object mutation. Runtime
+// publishers and pool maintenance use the same fence so object-first PUT and
+// reachability-checked deletion cannot overlap.
+type AcquireL3ObjectFenceInput struct {
+	StorageSecurityDomain string
+	ObjectKey             string
+	OwnerID               string
+	Lease                 time.Duration
+}
+
+type L3ObjectFence struct {
+	LeaseID               uuid.UUID
+	StorageSecurityDomain string
+	ObjectKey             string
+	OwnerID               string
+	FencingEpoch          int64
+	ExpiresAt             time.Time
+	AcquiredAt            time.Time
+}
+
+// L3GCLease is the durable per-pool scan authority. CursorObjectKey is the
+// relative object-store cursor committed only after a complete page succeeds.
+type L3GCLease struct {
+	LeaseID               uuid.UUID
+	StorageSecurityDomain string
+	OwnerID               string
+	FencingEpoch          int64
+	CursorObjectKey       string
+	Cycle                 int64
+	ExpiresAt             time.Time
+	AcquiredAt            time.Time
+}
+
 type PublishInput struct {
 	Key                   ManifestKey
 	OriginSnapshotSealID  string
@@ -229,6 +262,7 @@ type PublishInput struct {
 	Metadata              json.RawMessage
 	ExpiresAt             *time.Time
 	Lease                 FillLease
+	ObjectFence           L3ObjectFence
 }
 
 // Namespace identifies the exact stable production or candidate cache scope.
@@ -463,7 +497,15 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 	}
 	// sqlc-exception: schema-ddl. Capability-owned schema DDL is embedded and
 	// applied by migration runners rather than generated query code.
-	_, err := tx.Exec(ctx, schemaSQL)
+	if _, err := tx.Exec(ctx, schemaSQL); err != nil {
+		return err
+	}
+	// Isolated cache conformance databases apply the immutable baseline and
+	// this capability's forward migration together. Production composition
+	// applies the same SQL through postgresbaseline.Plan.
+	// sqlc-exception: schema-ddl. Capability-owned forward DDL is embedded and
+	// applied by the same migration boundary as the baseline.
+	_, err := tx.Exec(ctx, l3GCMigrationSQL)
 	return err
 }
 
@@ -609,6 +651,10 @@ func validatePublish(in PublishInput) error {
 	if in.Lease.LeaseID == uuid.Nil || !literal(in.Lease.CacheKey, 255) || !literal(in.Lease.OwnerID, 255) || in.Lease.FencingEpoch <= 0 {
 		return fmt.Errorf("%w: invalid fill fence", ErrInvalid)
 	}
+	if validL3ObjectFence(in.ObjectFence) != nil || in.ObjectFence.StorageSecurityDomain != in.StorageSecurityDomain ||
+		in.ObjectFence.ObjectKey != in.ObjectKey || in.ObjectFence.OwnerID != in.Lease.OwnerID {
+		return fmt.Errorf("%w: invalid object fence", ErrInvalid)
+	}
 	if !sameNamespaceKey(in.Key, in.Lease.Namespace) {
 		return fmt.Errorf("%w: fill namespace does not match manifest partition", ErrStaleFence)
 	}
@@ -714,28 +760,6 @@ func (r *Repository) ListByDependency(ctx context.Context, partitionKind Partiti
 		result = append(result, m)
 	}
 	return result, nil
-}
-
-// ObjectReachable reports whether an object is still protected by the durable
-// cache authority. Admitted and retiring manifests remain reachable; an
-// expired manifest is also reachable while any live or retiring retention
-// root points at it. The check is deliberately scoped by namespace and
-// storage-security domain so an object from another isolation boundary can
-// never become a reason to retain or delete this namespace's object.
-func (r *Repository) ObjectReachable(ctx context.Context, n Namespace, securityDomain, objectKey string) (bool, error) {
-	if r == nil || r.db == nil {
-		return false, ErrInvalid
-	}
-	if err := validateNamespace(n); err != nil {
-		return false, err
-	}
-	if platformdigest.ValidateSHA256Identity(securityDomain) != nil || !literal(objectKey, 2048) {
-		return false, ErrInvalid
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	return cachedb.New(r.db).ObjectReachable(ctx, cachedb.ObjectReachableParams{PartitionKind: string(n.PartitionKind), TargetID: n.TargetID, ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID), StorageSecurityDomain: securityDomain, ObjectKey: objectKey})
 }
 
 // InvalidateNamespace records a durable, idempotent invalidation and advances
@@ -1284,9 +1308,9 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	if err != nil {
 		return Manifest{}, err
 	}
-	admittedValue, err := cachedb.New(tx).AdmitManifest(ctx, cachedb.AdmitManifestParams{ManifestID: dbUUID(id), LeaseID: dbUUID(in.Lease.LeaseID), CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, NamespaceKey: in.Lease.Namespace.Key(), NamespaceEpoch: in.Lease.NamespaceEpoch, PartitionKind: string(in.Key.PartitionKind), TargetID: in.Key.TargetID, ProjectID: in.Key.ProjectID, Environment: in.Key.Environment, CandidateID: nullableString(in.Key.CandidateID), PartitionFormatVersion: in.Key.PartitionFormatVersion, DependencyDigest: in.Key.DependencyDigest, PolicyFingerprint: in.Key.PolicyFingerprint, CanonicalQueryDigest: in.Key.CanonicalQueryDigest, KeyFormatVersion: in.Key.KeyFormatVersion, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ByteSize: in.ByteSize, Metadata: metadata, OriginSnapshotSealID: dbUUID(originSealID), ExpiresAt: dbTime(expiresAt)})
+	admittedValue, err := cachedb.New(tx).AdmitManifest(ctx, cachedb.AdmitManifestParams{ManifestID: dbUUID(id), LeaseID: dbUUID(in.Lease.LeaseID), CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, NamespaceKey: in.Lease.Namespace.Key(), NamespaceEpoch: in.Lease.NamespaceEpoch, PartitionKind: string(in.Key.PartitionKind), TargetID: in.Key.TargetID, ProjectID: in.Key.ProjectID, Environment: in.Key.Environment, CandidateID: nullableString(in.Key.CandidateID), PartitionFormatVersion: in.Key.PartitionFormatVersion, DependencyDigest: in.Key.DependencyDigest, PolicyFingerprint: in.Key.PolicyFingerprint, CanonicalQueryDigest: in.Key.CanonicalQueryDigest, KeyFormatVersion: in.Key.KeyFormatVersion, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ObjectLeaseID: dbUUID(in.ObjectFence.LeaseID), ObjectOwnerID: in.ObjectFence.OwnerID, ObjectFencingEpoch: in.ObjectFence.FencingEpoch, ByteSize: in.ByteSize, Metadata: metadata, OriginSnapshotSealID: dbUUID(originSealID), ExpiresAt: dbTime(expiresAt)})
 	if err != nil {
-		if strings.Contains(err.Error(), "stale fill fence") {
+		if strings.Contains(err.Error(), "stale fill fence") || strings.Contains(err.Error(), "stale object fence") {
 			return Manifest{}, ErrStaleFence
 		}
 		if strings.Contains(err.Error(), "manifest conflict") {

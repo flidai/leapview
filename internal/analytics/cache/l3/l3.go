@@ -25,17 +25,12 @@ import (
 const (
 	// DefaultMaxObjectBytes bounds buffering for the pre-admission digest pass
 	// and for exact reads from an untrusted object store.
-	DefaultMaxObjectBytes     int64 = 128 << 20
-	MaxObjectBytesLimit       int64 = 1 << 30
-	DefaultGracePeriod              = time.Hour
-	DefaultGCLeaseDuration          = time.Minute
-	DefaultGCBatchSize              = 128
-	MaxGCBatchSize                  = 1000
-	MinGCLeaseDuration              = time.Second
-	DefaultGCOperationTimeout       = 5 * time.Minute
-	MaxGCOperationTimeout           = 24 * time.Hour
-	maxMetadataBytes                = 16 << 10
-	maxPrefixBytes                  = 512
+	DefaultMaxObjectBytes   int64 = 128 << 20
+	MaxObjectBytesLimit     int64 = 1 << 30
+	DefaultObjectFenceLease       = 5 * time.Minute
+	MinObjectFenceLease           = time.Second
+	maxMetadataBytes              = 16 << 10
+	maxPrefixBytes                = 512
 )
 
 var (
@@ -68,6 +63,8 @@ type ObjectInfo struct {
 	Size           int64
 	Metadata       json.RawMessage
 	MetadataDigest string
+	VersionID      string
+	ETag           string
 	CreatedAt      time.Time
 }
 
@@ -77,24 +74,45 @@ type Object struct {
 	Info ObjectInfo
 }
 
-// ObjectStore is deliberately narrower than managed-data catalogs. A store
-// must make PutImmutable create-only: it may return ErrObjectExists when the
-// key already exists and ErrObjectAmbiguous when the acknowledgement is lost.
-// In either case the cache reconciles by opening the exact key before any
-// manifest is admitted.
-type ObjectStore interface {
+// PublicationStore is the non-destructive object capability supplied to a
+// serving cache. PutImmutable must be create-only: it may return
+// ErrObjectExists when the key already exists and ErrObjectAmbiguous when the
+// acknowledgement is lost. In either case the cache reconciles by opening the
+// exact key before any manifest is admitted.
+type PublicationStore interface {
 	PutImmutable(context.Context, string, io.Reader, ObjectMetadata) (ObjectInfo, error)
 	Open(context.Context, string) (Object, error)
-	Delete(context.Context, string) error
-	// List returns at most limit objects after the opaque cursor. A GC pass
-	// intentionally consumes one page and leaves the cursor to the next pass.
+}
+
+// MaintenanceStore is the destructive object capability supplied only to the
+// pool collector. It is deliberately absent from Cache.
+type MaintenanceStore interface {
+	DeleteExact(context.Context, ObjectInfo) error
+	// List returns at most limit objects in strictly increasing key order after
+	// the key cursor. A non-empty next cursor must equal the final object key.
+	// A GC pass intentionally consumes one page and leaves that cursor to the
+	// next pass.
 	List(context.Context, string, string, int) ([]ObjectInfo, string, error)
+}
+
+// ObjectStore is the complete adapter implemented by provider clients. App
+// composition immediately narrows it to PublicationStore or MaintenanceStore.
+type ObjectStore interface {
+	PublicationStore
+	MaintenanceStore
+}
+
+type ObjectFenceAuthority interface {
+	AcquireL3ObjectFence(context.Context, cachepostgres.AcquireL3ObjectFenceInput) (cachepostgres.L3ObjectFence, error)
+	RenewL3ObjectFence(context.Context, cachepostgres.L3ObjectFence, time.Duration) error
+	ReleaseL3ObjectFence(context.Context, cachepostgres.L3ObjectFence) error
 }
 
 // Authority is the accepted PostgreSQL authority surface needed by L3. The
 // concrete cache/postgres Repository implements this interface. Keeping this
 // interface small also makes deterministic adversarial-store tests possible.
 type Authority interface {
+	ObjectFenceAuthority
 	AcquireFill(context.Context, cachepostgres.AcquireFillInput) (cachepostgres.FillLease, error)
 	Publish(context.Context, cachepostgres.PublishInput) (cachepostgres.Manifest, error)
 	Lookup(context.Context, cachepostgres.LookupInput) (cachepostgres.Manifest, bool, error)
@@ -106,13 +124,6 @@ type Authority interface {
 type FillLeaseAuthority interface {
 	RenewFill(context.Context, cachepostgres.FillLease, time.Duration) error
 	ReleaseFill(context.Context, cachepostgres.FillLease) error
-}
-
-// ReachabilityAuthority is required for safe object deletion. If an
-// authority does not implement it, GC retains every object rather than
-// guessing about manifests or retention roots.
-type ReachabilityAuthority interface {
-	ObjectReachable(context.Context, cachepostgres.Namespace, string, string) (bool, error)
 }
 
 // ManifestRetirementAuthority records exact lifecycle evidence for one
@@ -127,7 +138,7 @@ type ManifestRetirementAuthority interface {
 // arbitrary object key.
 type Config struct {
 	Authority      Authority
-	Store          ObjectStore
+	Store          PublicationStore
 	Namespace      cachepostgres.Namespace
 	SecurityDomain string
 	// OriginSnapshotSealID is immutable provenance for every manifest admitted
@@ -137,26 +148,20 @@ type Config struct {
 	Prefix               string
 	Enabled              bool
 	MaxObjectBytes       int64
-	GracePeriod          time.Duration
-	GCLeaseDuration      time.Duration
-	GCBatchSize          int
-	GCOperationTimeout   time.Duration
+	ObjectFenceLease     time.Duration
 	Now                  func() time.Time
 }
 
 // Cache is a domain-scoped L3 coordinator.
 type Cache struct {
 	authority            Authority
-	store                ObjectStore
+	store                PublicationStore
 	namespace            cachepostgres.Namespace
 	securityDomain       string
 	originSnapshotSealID string
 	objectPrefix         string
 	maxObjectBytes       int64
-	gracePeriod          time.Duration
-	gcLeaseDuration      time.Duration
-	gcBatchSize          int
-	gcOperationTimeout   time.Duration
+	objectFenceLease     time.Duration
 	now                  func() time.Time
 	enabled              bool
 }
@@ -191,30 +196,12 @@ func New(cfg Config) (*Cache, error) {
 	if maxBytes > MaxObjectBytesLimit {
 		return nil, fmt.Errorf("%w: max object bytes exceeds absolute limit", ErrInvalid)
 	}
-	grace := cfg.GracePeriod
-	if grace <= 0 {
-		grace = DefaultGracePeriod
+	objectFenceLease := cfg.ObjectFenceLease
+	if objectFenceLease <= 0 {
+		objectFenceLease = DefaultObjectFenceLease
 	}
-	gcLease := cfg.GCLeaseDuration
-	if gcLease <= 0 {
-		gcLease = DefaultGCLeaseDuration
-	}
-	if gcLease < MinGCLeaseDuration || gcLease > 24*time.Hour {
-		return nil, fmt.Errorf("%w: GC lease duration is out of bounds", ErrInvalid)
-	}
-	gcBatch := cfg.GCBatchSize
-	if gcBatch <= 0 {
-		gcBatch = DefaultGCBatchSize
-	}
-	if gcBatch > MaxGCBatchSize {
-		return nil, fmt.Errorf("%w: GC batch exceeds limit", ErrInvalid)
-	}
-	gcTimeout := cfg.GCOperationTimeout
-	if gcTimeout <= 0 {
-		gcTimeout = DefaultGCOperationTimeout
-	}
-	if gcTimeout < MinGCLeaseDuration || gcTimeout > MaxGCOperationTimeout {
-		return nil, fmt.Errorf("%w: GC operation timeout is out of bounds", ErrInvalid)
+	if objectFenceLease < MinObjectFenceLease || objectFenceLease > 24*time.Hour {
+		return nil, fmt.Errorf("%w: object-fence lease duration is out of bounds", ErrInvalid)
 	}
 	now := cfg.Now
 	if now == nil {
@@ -228,10 +215,7 @@ func New(cfg Config) (*Cache, error) {
 		originSnapshotSealID: cfg.OriginSnapshotSealID,
 		objectPrefix:         prefix + "sd/" + cfg.SecurityDomain + "/",
 		maxObjectBytes:       maxBytes,
-		gracePeriod:          grace,
-		gcLeaseDuration:      gcLease,
-		gcBatchSize:          gcBatch,
-		gcOperationTimeout:   gcTimeout,
+		objectFenceLease:     objectFenceLease,
 		now:                  now,
 		enabled:              true,
 	}, nil
@@ -304,6 +288,9 @@ func (c *Cache) ObjectKey(key cachepostgres.ManifestKey, objectDigest string) (s
 	if c == nil || !c.enabled {
 		return "", ErrDisabled
 	}
+	if !sameNamespace(key, c.namespace) {
+		return "", fmt.Errorf("%w: manifest namespace", ErrSecurityDomain)
+	}
 	keyDigest, err := key.CacheKeyDigest()
 	if err != nil {
 		return "", err
@@ -318,6 +305,9 @@ func (c *Cache) ObjectKey(key cachepostgres.ManifestKey, objectDigest string) (s
 func (c *Cache) AcquireFill(ctx context.Context, key cachepostgres.ManifestKey, ownerID string, lease time.Duration) (cachepostgres.FillLease, error) {
 	if c == nil || !c.enabled {
 		return cachepostgres.FillLease{}, ErrDisabled
+	}
+	if !sameNamespace(key, c.namespace) {
+		return cachepostgres.FillLease{}, fmt.Errorf("%w: manifest namespace", ErrSecurityDomain)
 	}
 	keyDigest, err := key.CacheKeyDigest()
 	if err != nil {
@@ -408,23 +398,48 @@ func (c *Cache) Publish(ctx context.Context, in PublishInput) (cachepostgres.Man
 	if err != nil {
 		return cachepostgres.Manifest{}, err
 	}
+	objectFence, err := c.authority.AcquireL3ObjectFence(ctx, cachepostgres.AcquireL3ObjectFenceInput{
+		StorageSecurityDomain: c.securityDomain,
+		ObjectKey:             objectKey,
+		OwnerID:               in.Lease.OwnerID,
+		Lease:                 c.objectFenceLease,
+	})
+	if err != nil {
+		return cachepostgres.Manifest{}, err
+	}
+	guard := newObjectFenceGuard(ctx, c.authority, objectFence, c.objectFenceLease, 0)
+	// The exact external-object fence is independent from the logical fill
+	// fence. It remains held through read-back verification and manifest
+	// admission. The heartbeat keeps slow provider operations safe, while
+	// PostgreSQL atomically locks and validates this fence during admission.
+	// A failed release after a committed manifest is harmless: the fence
+	// expires and reachability now retains the object.
+	defer func() {
+		_ = guard.stopAndRelease(ctx)
+	}()
 	metadataDigest := digestBytes(metadata)
 	expected := ObjectInfo{Key: objectKey, SecurityDomain: c.securityDomain, Digest: digest, Size: int64(len(body)), Metadata: metadata, MetadataDigest: metadataDigest}
-	putInfo, putErr := c.store.PutImmutable(ctx, objectKey, bytes.NewReader(body), ObjectMetadata{SecurityDomain: c.securityDomain, Metadata: metadata, MetadataDigest: metadataDigest})
+	putInfo, putErr := c.store.PutImmutable(guard.ctx, objectKey, bytes.NewReader(body), ObjectMetadata{SecurityDomain: c.securityDomain, Metadata: metadata, MetadataDigest: metadataDigest})
 	if putErr != nil && !errors.Is(putErr, ErrObjectExists) && !errors.Is(putErr, ErrObjectAmbiguous) {
 		return cachepostgres.Manifest{}, putErr
 	}
 	// Always reopen after PUT. This verifies both a normal acknowledgement and
 	// an existing/ambiguous key, and prevents a dishonest provider response from
 	// reaching manifest admission.
-	if _, err := c.verifyObject(ctx, objectKey, expected); err != nil {
+	if _, err := c.verifyObject(guard.ctx, objectKey, expected); err != nil {
 		if putErr != nil {
 			return cachepostgres.Manifest{}, fmt.Errorf("%w: %v (put: %v)", ErrObjectCorrupt, err, putErr)
 		}
 		return cachepostgres.Manifest{}, err
 	}
+	if err := guard.renew(); err != nil {
+		return cachepostgres.Manifest{}, err
+	}
+	if err := guard.failure(); err != nil {
+		return cachepostgres.Manifest{}, err
+	}
 	_ = putInfo // verification intentionally trusts the exact reopened object
-	return c.authority.Publish(ctx, cachepostgres.PublishInput{Key: in.Key, OriginSnapshotSealID: c.originSnapshotSealID, StorageSecurityDomain: c.securityDomain, ObjectDigest: digest, ObjectKey: objectKey, ByteSize: int64(len(body)), Metadata: metadata, ExpiresAt: in.ExpiresAt, Lease: in.Lease})
+	return c.authority.Publish(guard.ctx, cachepostgres.PublishInput{Key: in.Key, OriginSnapshotSealID: c.originSnapshotSealID, StorageSecurityDomain: c.securityDomain, ObjectDigest: digest, ObjectKey: objectKey, ByteSize: int64(len(body)), Metadata: metadata, ExpiresAt: in.ExpiresAt, Lease: in.Lease, ObjectFence: objectFence})
 }
 
 // ReadResult distinguishes a hit from a safe miss. Missing or corrupt objects
@@ -589,182 +604,6 @@ func (c *Cache) verifyObject(ctx context.Context, key string, expected ObjectInf
 		return nil, fmt.Errorf("%w: object bytes digest or size mismatch", ErrObjectCorrupt)
 	}
 	return body, nil
-}
-
-// GC deletes only aged objects in this domain that the PostgreSQL authority
-// confirms are unreferenced by admitted/retiring manifests and retention
-// roots. Unknown creation times are retained because deleting them would
-// violate the bounded safety window.
-type GCResult struct {
-	Scanned    int
-	Deleted    int
-	Skipped    int
-	NextCursor string
-}
-
-type gcLeaseGuard struct {
-	fills    FillLeaseAuthority
-	lease    cachepostgres.FillLease
-	ctx      context.Context
-	cancel   context.CancelFunc
-	stop     chan struct{}
-	renewErr chan error
-}
-
-func newGCLeaseGuard(parent context.Context, fills FillLeaseAuthority, lease cachepostgres.FillLease, duration, timeout time.Duration) *gcLeaseGuard {
-	ctx, cancel := context.WithTimeout(parent, timeout)
-	g := &gcLeaseGuard{fills: fills, lease: lease, ctx: ctx, cancel: cancel, stop: make(chan struct{}), renewErr: make(chan error, 1)}
-	interval := duration / 3
-	if interval < 100*time.Millisecond {
-		interval = 100 * time.Millisecond
-	}
-	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-ticker.C:
-				if err := fills.RenewFill(ctx, lease, duration); err != nil {
-					select {
-					case g.renewErr <- err:
-					default:
-					}
-					cancel()
-					return
-				}
-			case <-g.stop:
-				return
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
-	return g
-}
-
-func (g *gcLeaseGuard) failure() error {
-	select {
-	case err := <-g.renewErr:
-		return err
-	case <-g.ctx.Done():
-		return g.ctx.Err()
-	default:
-		return nil
-	}
-}
-
-func (g *gcLeaseGuard) stopAndRelease(ctx context.Context) error {
-	select {
-	case <-g.stop:
-	default:
-		close(g.stop)
-	}
-	g.cancel()
-	return g.fills.ReleaseFill(ctx, g.lease)
-}
-
-// GC scans one bounded object-store page. Callers with large stores can pass
-// GCResult.NextCursor to GCPage on the next scheduled pass.
-func (c *Cache) GC(ctx context.Context) (GCResult, error) {
-	return c.GCPage(ctx, "")
-}
-
-func (c *Cache) GCPage(ctx context.Context, after string) (GCResult, error) {
-	if c == nil || !c.enabled {
-		return GCResult{}, nil
-	}
-	if ctx == nil {
-		ctx = context.Background()
-	}
-	reachability, hasReachability := c.authority.(ReachabilityAuthority)
-	fills, hasFills := c.authority.(FillLeaseAuthority)
-	if !hasReachability || !hasFills {
-		return GCResult{}, fmt.Errorf("%w: GC requires reachability and fill lease authority", ErrInvalid)
-	}
-	objects, nextCursor, err := c.store.List(ctx, c.objectPrefix, after, c.gcBatchSize)
-	if err != nil {
-		return GCResult{}, err
-	}
-	// A provider returning more than the requested page is unsafe: accepting a
-	// cursor in that case could skip objects on the next pass. Fail closed.
-	if len(objects) > c.gcBatchSize {
-		return GCResult{}, fmt.Errorf("%w: object-store list exceeded page bound", ErrInvalid)
-	}
-	result := GCResult{Scanned: len(objects), NextCursor: nextCursor}
-	for _, object := range objects {
-		if object.Key == "" || !strings.HasPrefix(object.Key, c.objectPrefix) || object.SecurityDomain != c.securityDomain || object.CreatedAt.IsZero() || c.now().Sub(object.CreatedAt) < c.gracePeriod {
-			result.Skipped++
-			continue
-		}
-		parts := strings.Split(strings.TrimPrefix(object.Key, c.objectPrefix), "/")
-		if len(parts) != 2 || platformdigest.ValidateSHA256Identity(parts[0]) != nil || platformdigest.ValidateSHA256Identity(parts[1]) != nil {
-			result.Skipped++
-			continue
-		}
-		ownerID := "l3-gc-" + strings.TrimPrefix(digestBytes([]byte(object.Key)), "sha256:")
-		lease, acquireErr := c.authority.AcquireFill(ctx, cachepostgres.AcquireFillInput{CacheKey: parts[0], OwnerID: ownerID, Lease: c.gcLeaseDuration, Namespace: c.namespace})
-		if acquireErr != nil {
-			if errors.Is(acquireErr, cachepostgres.ErrBusy) {
-				result.Skipped++
-				continue
-			}
-			return result, acquireErr
-		}
-		guard := newGCLeaseGuard(ctx, fills, lease, c.gcLeaseDuration, c.gcOperationTimeout)
-		stopLease := func() error { return guard.stopAndRelease(ctx) }
-		if err := guard.failure(); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		// Hold the same cache-key fence through the reachability check and
-		// delete acknowledgement. A producer cannot acquire this key between
-		// those operations and race a manifest admission with deletion.
-		reachable, reachErr := reachability.ObjectReachable(guard.ctx, c.namespace, c.securityDomain, object.Key)
-		if reachErr != nil {
-			_ = stopLease()
-			return result, reachErr
-		}
-		if err := guard.failure(); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		if reachable {
-			if releaseErr := stopLease(); releaseErr != nil {
-				return result, releaseErr
-			}
-			result.Skipped++
-			continue
-		}
-		// A synchronous renewal immediately before deletion closes the window
-		// between the heartbeat and the destructive operation.
-		if err := fills.RenewFill(guard.ctx, lease, c.gcLeaseDuration); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		if err := guard.failure(); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		if err := c.store.Delete(guard.ctx, object.Key); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		// Do not accept a delete acknowledgement if renewal was lost while the
-		// provider was processing it; the caller can retry reconciliation.
-		if err := fills.RenewFill(guard.ctx, lease, c.gcLeaseDuration); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		if err := guard.failure(); err != nil {
-			_ = stopLease()
-			return result, err
-		}
-		if err := stopLease(); err != nil {
-			return result, err
-		}
-		result.Deleted++
-	}
-	return result, nil
 }
 
 func sameNamespace(key cachepostgres.ManifestKey, n cachepostgres.Namespace) bool {

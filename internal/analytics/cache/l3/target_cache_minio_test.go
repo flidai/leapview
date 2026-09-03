@@ -48,7 +48,7 @@ func TestTargetL3CacheMinIOPostgresComposition(t *testing.T) {
 	db := targetL3PostgresDB(t)
 	repo := cachepostgres.New(db)
 	ns := cachepostgres.Namespace{PartitionKind: cachepostgres.PartitionProduction, TargetID: "target", ProjectID: "project", Environment: "prod"}
-	cache, err := runtimefactory.NewTargetL3Cache(ctx, contract, repo, gcadapter.S3Config{Region: "us-east-1", AccessKeyID: targetL3User, SecretAccessKey: targetL3Secret, Endpoint: endpoint, PathStyle: true}, runtimefactory.TargetL3CacheConfig{Namespace: ns, OriginSnapshotSealID: targetL3OriginSnapshotSealID, Enabled: true, Prefix: "cache"})
+	cache, err := runtimefactory.NewTargetL3Cache(ctx, contract, repo, gcadapter.S3Config{Region: "us-east-1", AccessKeyID: targetL3User, SecretAccessKey: targetL3Secret, Endpoint: endpoint, PathStyle: true}, runtimefactory.TargetL3CacheConfig{Namespace: ns, OriginSnapshotSealID: targetL3OriginSnapshotSealID, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

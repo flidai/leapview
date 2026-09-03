@@ -3,7 +3,6 @@ package runtimefactory
 import (
 	"context"
 	"fmt"
-	"time"
 
 	analyticsl3 "github.com/flidai/leapview/internal/analytics/cache/l3"
 	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
@@ -19,13 +18,7 @@ type TargetL3CacheConfig struct {
 	Namespace            cachepostgres.Namespace
 	OriginSnapshotSealID string
 	Enabled              bool
-	Prefix               string
 	MaxObjectBytes       int64
-	GracePeriod          time.Duration
-	GCLeaseDuration      time.Duration
-	GCBatchSize          int
-	GCOperationTimeout   time.Duration
-	Now                  func() time.Time
 }
 
 // NewTargetL3Cache composes the PostgreSQL cache authority and the admitted
@@ -57,13 +50,7 @@ func NewTargetL3Cache(ctx context.Context, contract *ducklake.PoolContract, auth
 		Namespace:            config.Namespace,
 		OriginSnapshotSealID: config.OriginSnapshotSealID,
 		SecurityDomain:       domain,
-		Prefix:               config.Prefix,
 		Enabled:              true,
 		MaxObjectBytes:       config.MaxObjectBytes,
-		GracePeriod:          config.GracePeriod,
-		GCLeaseDuration:      config.GCLeaseDuration,
-		GCBatchSize:          config.GCBatchSize,
-		GCOperationTimeout:   config.GCOperationTimeout,
-		Now:                  config.Now,
 	})
 }

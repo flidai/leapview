@@ -40,7 +40,7 @@ import (
 const (
 	BaselineRevision    = platformmigrations.BaselineRevision
 	BaselineMigrationID = platformmigrations.BaselineMigrationID
-	LatestRevision      = accesspostgres.AttributeRegistryMigrationRevision
+	LatestRevision      = cachepostgres.L3GCMigrationRevision
 )
 
 // Ordered capability dependencies: Access owns the audit shape consumed by
@@ -78,6 +78,11 @@ var plan = platformmigrations.Plan{
 			Revision:    accesspostgres.AttributeRegistryMigrationRevision,
 			MigrationID: accesspostgres.AttributeRegistryMigrationID,
 			SQL:         accesspostgres.AttributeRegistryMigrationSQL(),
+		},
+		{
+			Revision:    cachepostgres.L3GCMigrationRevision,
+			MigrationID: cachepostgres.L3GCMigrationID,
+			SQL:         cachepostgres.L3GCMigrationSQL(),
 		},
 	},
 	RolePolicySQL: rolePolicySQL,

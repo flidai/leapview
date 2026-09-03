@@ -71,7 +71,7 @@ func TestS3ObjectStoreMinIOConformance(t *testing.T) {
 	if err != nil || len(second) != 1 || next2 != "" {
 		t.Fatalf("second page objects=%+v next=%q err=%v", second, next2, err)
 	}
-	if err := store.Delete(ctx, key1); err != nil {
+	if err := store.DeleteExact(ctx, obj.Info); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := store.Open(ctx, key1); err == nil {

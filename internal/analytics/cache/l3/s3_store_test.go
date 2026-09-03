@@ -28,7 +28,9 @@ type fakeS3Object struct {
 }
 
 type fakeS3Client struct {
-	objects map[string]fakeS3Object
+	objects    map[string]fakeS3Object
+	lastDelete *awss3.DeleteObjectInput
+	nilList    bool
 }
 
 func (f *fakeS3Client) PutObject(_ context.Context, in *awss3.PutObjectInput, _ ...func(*awss3.Options)) (*awss3.PutObjectOutput, error) {
@@ -64,11 +66,19 @@ func (f *fakeS3Client) GetObject(_ context.Context, in *awss3.GetObjectInput, _ 
 }
 
 func (f *fakeS3Client) DeleteObject(_ context.Context, in *awss3.DeleteObjectInput, _ ...func(*awss3.Options)) (*awss3.DeleteObjectOutput, error) {
+	f.lastDelete = in
+	object, ok := f.objects[*in.Key]
+	if in.IfMatch != nil && (!ok || *in.IfMatch != object.etag) {
+		return nil, errors.New("precondition failed")
+	}
 	delete(f.objects, *in.Key)
 	return &awss3.DeleteObjectOutput{}, nil
 }
 
 func (f *fakeS3Client) ListObjectsV2(_ context.Context, in *awss3.ListObjectsV2Input, _ ...func(*awss3.Options)) (*awss3.ListObjectsV2Output, error) {
+	if f.nilList {
+		return nil, nil
+	}
 	after := ""
 	if in.StartAfter != nil {
 		after = *in.StartAfter
@@ -90,6 +100,33 @@ func (f *fakeS3Client) ListObjectsV2(_ context.Context, in *awss3.ListObjectsV2I
 		contents = append(contents, awss3types.Object{Key: aws.String(key)})
 	}
 	return &awss3.ListObjectsV2Output{Contents: contents, IsTruncated: aws.Bool(truncated)}, nil
+}
+
+func TestS3ObjectStoreRejectsEmptyListResponse(t *testing.T) {
+	client := &fakeS3Client{objects: make(map[string]fakeS3Object), nilList: true}
+	store, err := NewS3ObjectStore(client, "bucket", "pool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := store.List(t.Context(), "cache/l3/sd/"+testDigest('d'), "", 1); !errors.Is(err, ErrObjectCorrupt) {
+		t.Fatalf("empty LIST response error = %v, want object corrupt", err)
+	}
+}
+
+func TestS3ObjectStoreNullVersionUsesETagDeletePrecondition(t *testing.T) {
+	client := &fakeS3Client{objects: map[string]fakeS3Object{
+		"pool/cache/object": {etag: "current-etag"},
+	}}
+	store, err := NewS3ObjectStore(client, "bucket", "pool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DeleteExact(t.Context(), ObjectInfo{Key: "cache/object", VersionID: "null", ETag: "observed-etag"}); err == nil {
+		t.Fatal("mutable null-version object was deleted without matching its observed ETag")
+	}
+	if client.lastDelete == nil || client.lastDelete.VersionId != nil || client.lastDelete.IfMatch == nil || *client.lastDelete.IfMatch != "observed-etag" {
+		t.Fatalf("null-version delete condition = %#v, want ETag-only", client.lastDelete)
+	}
 }
 
 func TestS3ObjectStoreCreateOnlyExactReadAndPage(t *testing.T) {
@@ -127,8 +164,11 @@ func TestS3ObjectStoreCreateOnlyExactReadAndPage(t *testing.T) {
 	if err != nil || len(objects) != 1 || next != "" {
 		t.Fatalf("list objects=%+v next=%q err=%v", objects, next, err)
 	}
-	if err := store.Delete(t.Context(), key); err != nil {
+	if err := store.DeleteExact(t.Context(), object.Info); err != nil {
 		t.Fatal(err)
+	}
+	if client.lastDelete == nil || client.lastDelete.IfMatch == nil || *client.lastDelete.IfMatch != "etag" {
+		t.Fatalf("delete precondition = %#v, want exact ETag", client.lastDelete)
 	}
 }
 

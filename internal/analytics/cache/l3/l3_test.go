@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -80,7 +81,7 @@ func (s *memoryStore) Open(_ context.Context, key string) (Object, error) {
 	return Object{Body: io.NopCloser(bytes.NewReader(body)), Info: info}, nil
 }
 
-func (s *memoryStore) Delete(ctx context.Context, key string) error {
+func (s *memoryStore) DeleteExact(ctx context.Context, object ObjectInfo) error {
 	if s.deleteStarted != nil {
 		select {
 		case <-s.deleteStarted:
@@ -92,7 +93,7 @@ func (s *memoryStore) Delete(ctx context.Context, key string) error {
 		<-ctx.Done()
 		return ctx.Err()
 	}
-	delete(s.objects, key)
+	delete(s.objects, object.Key)
 	s.deleteCount++
 	return nil
 }
@@ -100,16 +101,23 @@ func (s *memoryStore) Delete(ctx context.Context, key string) error {
 func (s *memoryStore) List(_ context.Context, prefix, after string, limit int) ([]ObjectInfo, string, error) {
 	s.listCalls++
 	s.listLimit = limit
-	out := make([]ObjectInfo, 0, len(s.objects))
-	for key, object := range s.objects {
+	keys := make([]string, 0, len(s.objects))
+	for key := range s.objects {
 		if strings.HasPrefix(key, prefix) && key > after {
-			out = append(out, object.info)
-			if len(out) == limit && !s.listOver {
-				break
-			}
+			keys = append(keys, key)
 		}
 	}
-	return out, "", nil
+	sort.Strings(keys)
+	next := ""
+	if !s.listOver && len(keys) > limit {
+		keys = keys[:limit]
+		next = keys[len(keys)-1]
+	}
+	out := make([]ObjectInfo, 0, len(keys))
+	for _, key := range keys {
+		out = append(out, s.objects[key].info)
+	}
+	return out, next, nil
 }
 
 type fakeAuthority struct {
@@ -121,6 +129,7 @@ type fakeAuthority struct {
 	retireCalls          int
 	reachable            map[string]bool
 	activeFills          map[string]bool
+	activeObjectFences   map[string]bool
 	reachStarted         chan struct{}
 	allowReach           chan struct{}
 	renewErr             error
@@ -128,6 +137,9 @@ type fakeAuthority struct {
 	renewFailAfter       int
 	renewWaitForDelete   <-chan struct{}
 	renewFailAfterDelete bool
+	renewBlock           bool
+	renewStarted         chan struct{}
+	renewSignaled        bool
 }
 
 func (a *fakeAuthority) AcquireFill(_ context.Context, in cachepostgres.AcquireFillInput) (cachepostgres.FillLease, error) {
@@ -200,7 +212,64 @@ func (a *fakeAuthority) RetireManifest(_ context.Context, manifestID uuid.UUID, 
 	a.manifest.State = cachepostgres.StateRetiring
 	return nil
 }
-func (a *fakeAuthority) ObjectReachable(_ context.Context, _ cachepostgres.Namespace, _, key string) (bool, error) {
+func (a *fakeAuthority) AcquireL3ObjectFence(_ context.Context, in cachepostgres.AcquireL3ObjectFenceInput) (cachepostgres.L3ObjectFence, error) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.activeObjectFences == nil {
+		a.activeObjectFences = make(map[string]bool)
+	}
+	key := in.StorageSecurityDomain + "|" + in.ObjectKey
+	if a.activeObjectFences[key] {
+		return cachepostgres.L3ObjectFence{}, cachepostgres.ErrBusy
+	}
+	a.activeObjectFences[key] = true
+	return cachepostgres.L3ObjectFence{LeaseID: uuid.New(), StorageSecurityDomain: in.StorageSecurityDomain, ObjectKey: in.ObjectKey, OwnerID: in.OwnerID, FencingEpoch: 1, ExpiresAt: time.Now().Add(in.Lease), AcquiredAt: time.Now()}, nil
+}
+func (a *fakeAuthority) RenewL3ObjectFence(ctx context.Context, _ cachepostgres.L3ObjectFence, _ time.Duration) error {
+	a.mu.Lock()
+	a.renewCalls++
+	call := a.renewCalls
+	err := a.renewErr
+	failAfter := a.renewFailAfter
+	waitForDelete := a.renewWaitForDelete
+	failAfterDelete := a.renewFailAfterDelete
+	block := a.renewBlock
+	started := a.renewStarted
+	signal := block && started != nil && !a.renewSignaled
+	if signal {
+		a.renewSignaled = true
+	}
+	a.mu.Unlock()
+	if signal {
+		close(started)
+	}
+	if block {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	if err != nil && failAfterDelete {
+		select {
+		case <-waitForDelete:
+			return err
+		default:
+			return nil
+		}
+	}
+	if err != nil && failAfter > 0 && call > failAfter && waitForDelete != nil {
+		<-waitForDelete
+	}
+	if err != nil && (failAfter == 0 || call > failAfter) {
+		return err
+	}
+	return nil
+}
+func (a *fakeAuthority) ReleaseL3ObjectFence(_ context.Context, fence cachepostgres.L3ObjectFence) error {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	delete(a.activeObjectFences, fence.StorageSecurityDomain+"|"+fence.ObjectKey)
+	return nil
+}
+func (a *fakeAuthority) PrepareL3ObjectGC(_ context.Context, fence cachepostgres.L3ObjectFence) (bool, error) {
 	if a.reachStarted != nil {
 		select {
 		case <-a.reachStarted:
@@ -211,7 +280,7 @@ func (a *fakeAuthority) ObjectReachable(_ context.Context, _ cachepostgres.Names
 	}
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.reachable[key], nil
+	return !a.reachable[fence.ObjectKey], nil
 }
 
 func newTestCache(t *testing.T) (*Cache, *fakeAuthority, *memoryStore, cachepostgres.ManifestKey, cachepostgres.FillLease) {
@@ -219,7 +288,7 @@ func newTestCache(t *testing.T) (*Cache, *fakeAuthority, *memoryStore, cachepost
 	authority := &fakeAuthority{reachable: make(map[string]bool)}
 	store := newMemoryStore()
 	ns := testNamespace()
-	c, err := New(Config{Authority: authority, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Prefix: "objects", Enabled: true, Now: func() time.Time { return time.Unix(1000, 0).UTC() }, GracePeriod: time.Hour})
+	c, err := New(Config{Authority: authority, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Prefix: "objects", Enabled: true, Now: func() time.Time { return time.Unix(1000, 0).UTC() }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -230,6 +299,18 @@ func newTestCache(t *testing.T) (*Cache, *fakeAuthority, *memoryStore, cachepost
 	}
 	lease := cachepostgres.FillLease{LeaseID: uuid.New(), CacheKey: digest, Namespace: ns, NamespaceEpoch: 1, OwnerID: "owner", FencingEpoch: 1, ExpiresAt: time.Unix(2000, 0)}
 	return c, authority, store, key, lease
+}
+
+func newTestCollector(t *testing.T, authority *fakeAuthority, store *memoryStore) *Collector {
+	t.Helper()
+	collector, err := NewCollector(CollectorConfig{
+		Authority: authority, Store: store, SecurityDomain: testDigest('d'), Prefix: "objects",
+		GracePeriod: time.Hour, Now: func() time.Time { return time.Unix(1000, 0).UTC() },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return collector
 }
 
 func TestPublishObjectFirstAndLostAcknowledgementConverges(t *testing.T) {
@@ -352,6 +433,7 @@ func TestReadSnapshotRejectsMismatchedLookupKey(t *testing.T) {
 
 func TestGCRequiresGraceAndAuthorityReachability(t *testing.T) {
 	c, authority, store, key, lease := newTestCache(t)
+	collector := newTestCollector(t, authority, store)
 	manifest, err := c.Publish(t.Context(), PublishInput{Key: key, Lease: lease, Body: strings.NewReader("result")})
 	if err != nil {
 		t.Fatal(err)
@@ -365,7 +447,7 @@ func TestGCRequiresGraceAndAuthorityReachability(t *testing.T) {
 	orphanKey := c.objectPrefix + testDigest('e') + "/" + testDigest('f')
 	store.objects[orphanKey] = memoryObject{info: ObjectInfo{Key: orphanKey, SecurityDomain: testDigest('d'), Digest: testDigest('f'), Size: 1, Metadata: []byte(`{}`), CreatedAt: time.Unix(-10000, 0)}, body: []byte("x")}
 	authority.reachable[objectKey] = true
-	result, err := c.GC(t.Context())
+	result, err := collector.GC(t.Context())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,6 +461,7 @@ func TestGCRequiresGraceAndAuthorityReachability(t *testing.T) {
 
 func TestGCFencePreventsConcurrentProducerDeleteRace(t *testing.T) {
 	c, authority, store, key, _ := newTestCache(t)
+	collector := newTestCollector(t, authority, store)
 	digest := testDigest('e')
 	objectKey, err := c.ObjectKey(key, digest)
 	if err != nil {
@@ -392,13 +475,13 @@ func TestGCFencePreventsConcurrentProducerDeleteRace(t *testing.T) {
 	gcDone := make(chan GCResult, 1)
 	gcErr := make(chan error, 1)
 	go func() {
-		result, gcError := c.GC(t.Context())
+		result, gcError := collector.GC(t.Context())
 		gcDone <- result
 		gcErr <- gcError
 	}()
 	<-authority.reachStarted
-	if _, err := c.AcquireFill(t.Context(), key, "producer", time.Minute); !errors.Is(err, cachepostgres.ErrBusy) {
-		t.Fatalf("producer acquired while GC fence held: %v", err)
+	if _, err := authority.AcquireL3ObjectFence(t.Context(), cachepostgres.AcquireL3ObjectFenceInput{StorageSecurityDomain: testDigest('d'), ObjectKey: objectKey, OwnerID: "producer", Lease: time.Minute}); !errors.Is(err, cachepostgres.ErrBusy) {
+		t.Fatalf("producer acquired object fence while GC fence held: %v", err)
 	}
 	close(authority.allowReach)
 	if err := <-gcErr; err != nil {
@@ -407,14 +490,17 @@ func TestGCFencePreventsConcurrentProducerDeleteRace(t *testing.T) {
 	if result := <-gcDone; result.Deleted != 1 {
 		t.Fatalf("GC result = %+v", result)
 	}
-	if _, err := c.AcquireFill(t.Context(), key, "producer", time.Minute); err != nil {
-		t.Fatalf("producer could not acquire after GC release: %v", err)
+	if fence, err := authority.AcquireL3ObjectFence(t.Context(), cachepostgres.AcquireL3ObjectFenceInput{StorageSecurityDomain: testDigest('d'), ObjectKey: objectKey, OwnerID: "producer", Lease: time.Minute}); err != nil {
+		t.Fatalf("producer could not acquire object fence after GC release: %v", err)
+	} else if err := authority.ReleaseL3ObjectFence(t.Context(), fence); err != nil {
+		t.Fatal(err)
 	}
 }
 
 func TestGCFailsClosedWhenLeaseRenewalIsLost(t *testing.T) {
 	c, authority, store, key, _ := newTestCache(t)
-	c.gcLeaseDuration = MinGCLeaseDuration
+	collector := newTestCollector(t, authority, store)
+	collector.fenceLease = MinGCLeaseDuration
 	authority.renewErr = errors.New("renewal lost")
 	digest := testDigest('e')
 	objectKey, err := c.ObjectKey(key, digest)
@@ -422,7 +508,7 @@ func TestGCFailsClosedWhenLeaseRenewalIsLost(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.objects[objectKey] = memoryObject{info: ObjectInfo{Key: objectKey, SecurityDomain: testDigest('d'), Digest: digest, Size: 1, Metadata: []byte(`{}`), CreatedAt: time.Unix(-10000, 0)}, body: []byte("x")}
-	result, err := c.GC(t.Context())
+	result, err := collector.GC(t.Context())
 	if err == nil || store.deleteCount != 0 {
 		t.Fatalf("lease-loss GC result=%+v err=%v deletes=%d", result, err, store.deleteCount)
 	}
@@ -430,8 +516,9 @@ func TestGCFailsClosedWhenLeaseRenewalIsLost(t *testing.T) {
 
 func TestGCHeartbeatCancelsBlockedDeleteOnRenewalLoss(t *testing.T) {
 	c, authority, store, key, _ := newTestCache(t)
-	c.gcLeaseDuration = MinGCLeaseDuration
-	c.gcOperationTimeout = 5 * time.Second
+	collector := newTestCollector(t, authority, store)
+	collector.fenceLease = MinGCLeaseDuration
+	collector.operationTimeout = 5 * time.Second
 	store.deleteStarted = make(chan struct{})
 	store.blockDelete = true
 	authority.renewErr = errors.New("heartbeat renewal lost")
@@ -448,7 +535,7 @@ func TestGCHeartbeatCancelsBlockedDeleteOnRenewalLoss(t *testing.T) {
 		err    error
 	}, 1)
 	go func() {
-		result, gcErr := c.GC(t.Context())
+		result, gcErr := collector.GC(t.Context())
 		resultCh <- struct {
 			result GCResult
 			err    error
@@ -469,10 +556,42 @@ func TestGCHeartbeatCancelsBlockedDeleteOnRenewalLoss(t *testing.T) {
 		t.Fatal("GC did not cancel blocked delete after heartbeat loss")
 	}
 	authority.mu.Lock()
-	active := len(authority.activeFills)
+	active := len(authority.activeObjectFences)
 	authority.mu.Unlock()
 	if active != 0 {
-		t.Fatalf("GC lease remained active after cancellation: %d", active)
+		t.Fatalf("GC object fence remained active after cancellation: %d", active)
+	}
+}
+
+func TestGCFailsClosedBeforeFenceExpiryWhenRenewalBlocks(t *testing.T) {
+	c, authority, store, key, _ := newTestCache(t)
+	collector := newTestCollector(t, authority, store)
+	collector.fenceLease = MinGCLeaseDuration
+	authority.renewBlock = true
+	authority.renewStarted = make(chan struct{})
+	digest := testDigest('e')
+	objectKey, err := c.ObjectKey(key, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store.objects[objectKey] = memoryObject{info: ObjectInfo{Key: objectKey, SecurityDomain: testDigest('d'), Digest: digest, Size: 1, Metadata: []byte(`{}`), CreatedAt: time.Unix(-10000, 0)}, body: []byte("x")}
+	done := make(chan error, 1)
+	go func() {
+		_, gcErr := collector.GC(t.Context())
+		done <- gcErr
+	}()
+	select {
+	case <-authority.renewStarted:
+	case <-time.After(time.Second):
+		t.Fatal("GC did not attempt bounded object-fence renewal")
+	}
+	select {
+	case err := <-done:
+		if err == nil || store.deleteCount != 0 {
+			t.Fatalf("blocked renewal error=%v deletes=%d", err, store.deleteCount)
+		}
+	case <-time.After(900 * time.Millisecond):
+		t.Fatal("blocked fence renewal was not canceled before lease expiry")
 	}
 }
 
@@ -508,6 +627,11 @@ func TestConfigBoundsObjectSizeAndPortablePrefix(t *testing.T) {
 	if _, err := New(base); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("oversized max bytes error = %v", err)
 	}
+	base.MaxObjectBytes = 0
+	base.ObjectFenceLease = MinObjectFenceLease - time.Nanosecond
+	if _, err := New(base); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("short object-fence lease error = %v", err)
+	}
 }
 
 func TestConfigRequiresCanonicalOriginSnapshotSealID(t *testing.T) {
@@ -520,33 +644,11 @@ func TestConfigRequiresCanonicalOriginSnapshotSealID(t *testing.T) {
 	}
 }
 
-type noGCAuthority struct{ base *fakeAuthority }
-
-func (a noGCAuthority) AcquireFill(ctx context.Context, in cachepostgres.AcquireFillInput) (cachepostgres.FillLease, error) {
-	return a.base.AcquireFill(ctx, in)
-}
-func (a noGCAuthority) Publish(ctx context.Context, in cachepostgres.PublishInput) (cachepostgres.Manifest, error) {
-	return a.base.Publish(ctx, in)
-}
-func (a noGCAuthority) Lookup(ctx context.Context, in cachepostgres.LookupInput) (cachepostgres.Manifest, bool, error) {
-	return a.base.Lookup(ctx, in)
-}
-
-func TestGCRefusesDeletionWithoutReachabilityAndLeaseCapabilities(t *testing.T) {
-	base := &fakeAuthority{reachable: make(map[string]bool)}
-	store := newMemoryStore()
-	c, err := New(Config{Authority: noGCAuthority{base: base}, Store: store, Namespace: testNamespace(), SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Enabled: true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := c.GC(t.Context()); !errors.Is(err, ErrInvalid) || store.deleteCount != 0 {
-		t.Fatalf("unsafe GC result err=%v deletes=%d", err, store.deleteCount)
-	}
-}
-
 func TestGCRejectsProviderOverReturn(t *testing.T) {
 	c, _, store, key, _ := newTestCache(t)
-	c.gcBatchSize = 1
+	authority := &fakeAuthority{reachable: make(map[string]bool)}
+	collector := newTestCollector(t, authority, store)
+	collector.batchSize = 1
 	store.listOver = true
 	digest := testDigest('e')
 	objectKey, err := c.ObjectKey(key, digest)
@@ -556,7 +658,7 @@ func TestGCRejectsProviderOverReturn(t *testing.T) {
 	store.objects[objectKey] = memoryObject{info: ObjectInfo{Key: objectKey, SecurityDomain: testDigest('d'), Digest: digest, Size: 1, Metadata: []byte(`{}`), CreatedAt: time.Unix(-10000, 0)}, body: []byte("x")}
 	secondKey := c.objectPrefix + testDigest('0') + "/" + testDigest('1')
 	store.objects[secondKey] = memoryObject{info: ObjectInfo{Key: secondKey, SecurityDomain: testDigest('d'), Digest: testDigest('1'), Size: 1, Metadata: []byte(`{}`), CreatedAt: time.Unix(-10000, 0)}, body: []byte("y")}
-	result, err := c.GC(t.Context())
+	result, err := collector.GC(t.Context())
 	if err == nil || result.Deleted != 0 || store.deleteCount != 0 {
 		t.Fatalf("over-return GC result=%+v err=%v deletes=%d", result, err, store.deleteCount)
 	}

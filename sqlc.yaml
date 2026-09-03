@@ -481,7 +481,9 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/analytics/cache/postgres/queries"
-    schema: "internal/analytics/cache/postgres/schema.sql"
+    schema:
+      - "internal/analytics/cache/postgres/schema.sql"
+      - "internal/analytics/cache/postgres/migrations/003_l3_object_gc.sql"
     gen:
       go:
         package: "db"

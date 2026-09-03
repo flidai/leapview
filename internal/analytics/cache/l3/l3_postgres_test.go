@@ -133,7 +133,11 @@ func TestPostgresL3ConcurrentFillAndMissingObjectReconcile(t *testing.T) {
 		t.Fatal(err)
 	}
 	store.objects[orphanKey] = memoryObject{info: ObjectInfo{Key: orphanKey, SecurityDomain: testDigest('d'), Digest: orphanDigest, Size: 1, Metadata: []byte(`{}`), CreatedAt: time.Unix(1, 0)}, body: []byte("x")}
-	gc, err := c.GC(t.Context())
+	collector, err := NewCollector(CollectorConfig{Authority: cachepostgres.NewMaintenance(db), Store: store, SecurityDomain: testDigest('d'), Prefix: "objects", GracePeriod: time.Second, Now: func() time.Time { return time.Unix(1000, 0).UTC() }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	gc, err := collector.GC(t.Context())
 	if err != nil || gc.Deleted != 1 {
 		t.Fatalf("orphan gc result=%+v err=%v", gc, err)
 	}
