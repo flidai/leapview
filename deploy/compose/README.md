@@ -41,8 +41,10 @@ Pulling and running the public image does not require this package or the
 controller; see the installation guide for the localhost evaluation path. For
 production, `leapviewctl` provides the supported initialization and health
 lifecycle. Production backup/PITR and DuckLake/object-store recovery use
-provider-native tooling and a separate runbook/ADR. Run `./leapviewctl help`
-for the current lifecycle commands.
+provider-native tooling; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore). Run `./leapviewctl help` for the
+current lifecycle commands.
 
 The same archive also carries the provider-neutral Ubuntu bootstrap and host
 operations assets. VPS adapters use the matching payload embedded in the

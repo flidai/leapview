@@ -32,11 +32,14 @@ Parquet files are a supported restore artifact.
 
 Stop writes, restore PostgreSQL and the matching DuckLake/object-store recovery
 points with the native provider tools, then start LeapView with the matching
-configuration and image. Before admitting traffic, verify the instance
-identity, active project/deployment pointers, authorization state, managed-data
-revisions, representative semantic queries, and dashboards. Preserve the
-failed state and recovery evidence until the incident is closed.
+configuration and image. Set `LEAPVIEW_RECOVERY_SET_ID` to the exact published
+frontier whose immutable passed validation evidence describes the restored
+points; LeapView never selects the latest set. Before admitting traffic, verify
+the instance identity, active project/deployment pointers, authorization state,
+managed-data revisions, representative semantic queries, and dashboards.
+Preserve the failed state and recovery evidence until the incident is closed.
 
 For an empty or development SQLite fixture, use the fixture's own test harness;
 that path is not production recovery. Coordinate any future operator workflow
-through the native PostgreSQL/DuckLake runbook rather than inventing CLI flags.
+through the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
+and this guide rather than inventing CLI flags.

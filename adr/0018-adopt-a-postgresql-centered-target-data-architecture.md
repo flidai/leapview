@@ -997,6 +997,21 @@ point-in-time recovery exercises following PostgreSQL's
 Application startup validates server version, required extensions, schema
 revision, role privileges, and read/write intent before advertising readiness.
 
+Production operators may set the optional `LEAPVIEW_RECOVERY_SET_ID` to a
+canonical recovery-set UUID when bringing a restored target back before
+traffic. With the selector unset, startup performs the ordinary PostgreSQL
+delivery checks. When it is set, readiness reads that exact recovery set (never
+the latest set), requires `published` status bound to one exact passed,
+immutable validation attempt and result, and compares its target pointer,
+generation, publication/revision, complete native snapshot-seal and catalog
+identity, admitted compatibility tuple, and serving-artifact identities with
+the active PostgreSQL projections. Any missing, unpublished, unvalidated, or
+mismatched evidence fails closed with a stable readiness diagnostic. The check
+is read-only: `/readyz` does not create validation attempts or write validation
+results. Provider object existence, relation-closure, and recovery-point
+probing remain part of the external [PostgreSQL operations](/docs/guides/operate/postgresql-operations)
+and [Backup and restore](/docs/guides/operate/backup-restore) procedures.
+
 Connection budgets are assigned per capability and workload rather than per
 handler. Interactive control requests, background workers, event consumers,
 cache coordination, and DuckLake catalog clients use separately observable

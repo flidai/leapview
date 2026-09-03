@@ -16,6 +16,19 @@ Use liveness for process restart decisions and readiness for traffic admission. 
 
 The unauthenticated readiness response contains only stable check names and fixed states. Reviewed delivery-startup diagnostics may expose documented non-secret codes; platform, analytics, runtime, lease, and arbitrary custom-check errors collapse to `failed`, and active project identifiers are not returned. Use restricted application logs, metrics, and authorized operator interfaces for internal error details rather than widening the readiness payload.
 
+After a provider restore, production may set `LEAPVIEW_RECOVERY_SET_ID` to one
+canonical recovery-set UUID for exact pre-traffic validation. When unset,
+readiness performs the ordinary PostgreSQL startup checks. When set, startup
+reads only that ID, requires the set to be published with one exact passed
+immutable validation attempt/result, and fail-closes unless its target
+pointer/revision, generation, publication, native snapshot seal and catalog
+identity, admitted compatibility tuple, and serving-artifact identity match the
+active projections. `/readyz` performs no recovery writes: it does not create
+validation attempts or record validation results. The check does not replace
+provider object/closure probing; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for that recovery evidence.
+
 ## Metrics
 
 LeapView exposes Prometheus metrics behind `LEAPVIEW_METRICS_BEARER_TOKEN`. Production validation requires a strong token. Restrict the endpoint by network policy as well, inject the token into the scraper securely, and avoid logging it.
@@ -242,8 +255,10 @@ diagnosis. It does not schedule or execute production backup, restore, image
 upgrade, host rollback, or recovery-qualification drills. PostgreSQL backup and
 point-in-time recovery, DuckLake catalog protection, and object-store
 versioning, replication, and restore are external provider operations. Keep
-their evidence and encryption-key procedures in a separate native runbook and
-ADR; do not infer recovery from application metrics or object listings.
+their evidence and encryption-key procedures with the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore); do not infer recovery from
+application metrics or object listings.
 
 For an incident, preserve readiness responses, authenticated metrics,
 credential-scrubbed logs, deployment identifiers, and the provider's recovery

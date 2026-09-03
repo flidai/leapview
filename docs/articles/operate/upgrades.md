@@ -107,8 +107,9 @@ Use the provider's native PostgreSQL/PITR and DuckLake/object-store recovery
 procedures to restore a mutually consistent point into an isolated environment.
 Run the target version with production-like configuration and apply any
 documented project migration. LeapView does not create or restore the recovery
-artifacts; the complete procedure belongs in the separate native runbook and
-ADR.
+artifacts; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete procedure.
 
 The rehearsal should cover startup migration, authentication, active
 deployments, semantic queries, dashboard interactions, refresh execution, and

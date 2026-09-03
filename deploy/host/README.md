@@ -47,8 +47,10 @@ leapviewctl start
 Application-level backup and restore commands are not part of the generic host
 deployment. PostgreSQL backups and PITR, along with DuckLake or object-storage
 snapshots, versioning, replication, and recovery, are provider-native concerns
-and must be configured and exercised through the relevant provider and its
-recovery runbook before reopening traffic.
+and must be configured and exercised through the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations), [Backup and restore
+guide](/docs/guides/operate/backup-restore), and relevant provider before
+reopening traffic.
 
 DNS, provider firewalls, server creation, provider snapshots, and destruction
 remain provider responsibilities. Provider adapters must not implement Docker

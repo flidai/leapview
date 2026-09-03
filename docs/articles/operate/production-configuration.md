@@ -61,7 +61,7 @@ Rotating a static password does not itself revoke database sessions already acce
 
 Configure a durable `LEAPVIEW_HOME` and the paths required for the control-plane database, global DuckLake catalog, analytical data, artifacts, and managed-data runtime. The service identity must own these private paths; they should not be served by the reverse proxy.
 
-Choose `local` or `s3` for managed data. The S3 backend requires bucket and region, a private local staging/cache directory, and either ambient credentials or a complete key pair. Enable bucket versioning and provider-native replication or backup for authoritative S3 objects; LeapView does not create an instance archive for them. Coordinate those external recovery points with PostgreSQL and DuckLake according to the separate native runbook and ADR.
+Choose `local` or `s3` for managed data. The S3 backend requires bucket and region, a private local staging/cache directory, and either ambient credentials or a complete key pair. Enable bucket versioning and provider-native replication or backup for authoritative S3 objects; LeapView does not create an instance archive for them. Coordinate those external recovery points with PostgreSQL and DuckLake using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 
 Set upload size, file-count, free-space, session TTL, and garbage-collection limits according to actual capacity. The revision size limit must be at least the single-file limit.
 
@@ -86,11 +86,11 @@ Before exposing traffic:
 
 1. `leapview config validate --production` succeeds.
 2. TLS, allowed hosts, secure cookies, and callback URLs match the public address.
-3. Persistent paths and external stores are writable, and provider-native recovery is configured according to the separate runbook.
+3. Persistent paths and external stores are writable, and provider-native recovery is configured using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 4. Authentication works without development bypass.
 5. Metrics require the intended token and are not publicly browsable.
 6. Readiness fails when required persistent dependencies are unavailable.
-7. The provider-native PostgreSQL/PITR and DuckLake/object-store recovery runbook has been exercised in an isolated environment.
+7. The provider-native PostgreSQL/PITR and DuckLake/object-store recovery procedures in the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore) have been exercised in an isolated environment.
 8. Query and refresh limits fit host capacity.
 9. MCP OAuth discovery uses the intended deployment origin and `/mcp` rejects general API tokens.
 

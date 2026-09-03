@@ -48,11 +48,17 @@ The release gate maps each surface to a maintained producer and a failure
 mode. A row is **unsupported**, not passed, when its lane or external system
 was not run.
 
+Paths under `internal/deployment/sqlite` in the matrix are explicitly
+local/evaluation fixture coverage. Production delivery, event, revision,
+retention, and recovery evidence is exercised against the native PostgreSQL
+repositories and target database; SQLite fixtures never establish production
+conformance.
+
 | Surface | Required evidence | Local gate | Remote/MinIO gate | Fail-closed condition |
 | --- | --- | --- | --- | --- |
-| **SP — shared physical pool** | Versioned compatibility tuple, all nine named checks, per-check observation digests, canonical evidence digest, explicit create/admit record, stable namespace owner marker and per-run deletion lease | `internal/analytics/ducklake/shared_pool_safety_test.go`, `conformance_artifact_test.go`, `physicalpool/sqlite` restart/atomic tests, `deployment/gcstore` marker/lease tests | `task test:go:minio-conformance`; the release workflow requires the pinned runtime/extension tuple and uploads the validated evidence JSON, checksum, exact image/runtime versions, and test log | Missing/unknown check, tuple mismatch, unavailable extension, stale digest, missing evidence artifact, unadmitted pool, truncated marker, lease conflict, or cross-instance namespace without one owner |
+| **SP — shared physical pool** | Versioned compatibility tuple, all nine named checks, per-check observation digests, canonical evidence digest, explicit create/admit record, stable namespace owner marker and per-run deletion lease | Native physical-pool tests plus explicitly local/evaluation `physicalpool/sqlite` restart/atomic fixtures and `deployment/gcstore` marker/lease tests | `task test:go:minio-conformance`; the release workflow requires the pinned runtime/extension tuple and uploads the validated evidence JSON, checksum, exact image/runtime versions, and test log | Missing/unknown check, tuple mismatch, unavailable extension, stale digest, missing evidence artifact, unadmitted pool, truncated marker, lease conflict, or cross-instance namespace without one owner |
 | **SE — sealed serving** | Candidate/seal/generation share catalog, artifact, pool, compatibility, and serving-state identities; read-only attach and lease evidence | `internal/app/runtimefactory/sealed_test.go`; `internal/platform/architecture/delivery_conformance_test.go:TestLEA414ProductionUsesSealedCanonicalPath`; serving identity migration tests | Remote object read and credential bootstrap in the MinIO qualification lane | Preparing/unverified/legacy-identity row, mutable artifact, failed lease/auth, or mixed legacy serving path |
-| **AO — append-only operations** | Plan/build/qualification/approval/publish/activate/retire/rollback/lease/GC events with actor, object, request/result digests, outcome and UTC time | `internal/deployment/sqlite/events_repository_test.go` and repository CAS/crash tests | Run against the target's durable database during release qualification | Event update/delete, conflicting replay, missing event after a committed transition, secret-bearing details, or indeterminate publication without reconciliation |
+| **AO — append-only operations** | Plan/build/qualification/approval/publish/activate/retire/rollback/lease/GC events with actor, object, request/result digests, outcome and UTC time | Native PostgreSQL event/repository tests and local/evaluation SQLite adapter tests | Run against the target's durable PostgreSQL database during release qualification | Event update/delete, conflicting replay, missing event after a committed transition, secret-bearing details, or indeterminate publication without reconciliation |
 
 The CI architecture gate scans authored production source and migrations for
 native cleanup/checkpoint calls outside guarded DuckLake adapters, SQLite file
@@ -80,7 +86,7 @@ change; a lane that was not run is recorded as unsupported.
 | LC-06 | Idempotent identities compare canonical inputs and reject drift. | `internal/deployment/sqlite/events_repository_test.go:TestDeliveryEventLedgerIsAppendOnlyAndCrashIdempotent`; `internal/deployment/sqlite/catalogseal_repository_test.go:TestCatalogSealRepositoryRejectsIdentityDrift` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | LC-07 | Evidence/event details reject secret-like values and non-canonical text. | `internal/deployment/delivery_events_test.go:TestDeliveryEventDetailsRejectSecretsAndUnknownFields` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | TP-01 | One target revision row is authoritative for each target/project/environment. | `internal/deployment/sqlite/target_revision_repository_test.go:TestBumpTargetRevisionPersistsComponentEvidenceAtomically` | [upgrades](../../docs/articles/operate/upgrades.md) |
-| TP-02 | Invalidating mutations bump revision in the same SQLite transaction. | `internal/deployment/sqlite/target_revision_repository_test.go:TestBumpTargetRevisionPersistsComponentEvidenceAtomically` | [upgrades](../../docs/articles/operate/upgrades.md) |
+| TP-02 | Invalidating mutations bump revision in the same native PostgreSQL transaction (local/evaluation SQLite fixtures cover adapter parity). | `internal/deployment/postgres/revision_allocation_test.go:TestPostgresTargetRevisionAllocationReplayRollbackAndConcurrency`; local/evaluation adapter tests remain supplemental. | [upgrades](../../docs/articles/operate/upgrades.md) |
 | TP-03 | Sessions and non-invalidating leases do not bump target revision. | `internal/deployment/sqlite/publication_recovery_test.go:TestNonInvalidatingQueryLeaseLifecycleDoesNotBumpTargetRevision` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | TP-04 | Publication compares base generation and revision atomically. | `internal/deployment/sqlite/plan_delivery_repository_test.go:TestDeliveryRepositoryPlanBuildSealCandidatePublication` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | TP-05 | Concurrent stale writers fail closed without rebasing. | `internal/deployment/sqlite/plan_delivery_repository_test.go:TestDeliveryRepositoryBuildTransitionCASAllowsOneConcurrentWinner`; `internal/deployment/sqlite/fencing_repository_test.go:TestQueryLeaseAndCandidateRetirementRaceHasOneWinner` | [upgrades](../../docs/articles/operate/upgrades.md) |
@@ -121,7 +127,7 @@ change; a lane that was not run is recorded as unsupported.
 | PI-09 | All declared result-affecting semantics alter execution identity. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryExecutionDigestChangesForEveryResultAffectingInput`; `internal/app/runtimefactory/delivery_plan_test.go:TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings` | [validate/deploy](../../docs/guides/cli/validate-deploy.md) |
 | PI-10 | Provenance/approval/owner/secret rotation can reuse equivalent execution. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryGovernanceAndCredentialRotationPreserveExecutionReuseIdentity`; `internal/app/runtimefactory/delivery_plan_test.go:TestCandidatePlanReuseDecisionUsesExactActiveIdentity` | [validate/deploy](../../docs/guides/cli/validate-deploy.md) |
 | PI-11 | Undeclared nondeterminism disables reuse. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryReusePolicyDisablesUndeclaredNondeterminism`; production decision integration is exercised by `internal/app/runtimefactory/delivery_plan_test.go:TestCandidateRunnerRebuildsWhenReuseDecisionMismatches` and `internal/app/runtimefactory/delivery_plan_test.go:TestCandidateRunnerMissingReuseDecisionRebuilds` | [validate/deploy](../../docs/guides/cli/validate-deploy.md) |
-| PI-12 | No SQLite file-membership manifest; DuckLake catalog is physical authority. | `internal/platform/architecture/delivery_conformance_test.go:TestPlanDeliveryPhysicalAuthorityGuards` | [upgrades](../../docs/articles/operate/upgrades.md) |
+| PI-12 | No SQLite file-membership manifest; the PostgreSQL-backed DuckLake catalog is the physical authority. Any SQLite adapter is limited to local/evaluation fixtures. | `internal/platform/architecture/delivery_conformance_test.go:TestPlanDeliveryPhysicalAuthorityGuards` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | PI-13 | Catalog/pool objects and credentials stay target-authorized. | `internal/analytics/ducklake/shared_pool_safety_test.go:TestCredentialBootstrapRunsForEveryPooledConnector`; `internal/app/gcadapter/credentials_test.go:TestNewPoolStoreS3RequiresTargetKeys`; `internal/app/runtimefactory/delivery_credentials_test.go:TestNewCatalogObjectStoreS3RequiresTargetKeysBeforeAWSConfig`; `internal/app/runtimefactory/delivery_credentials_test.go:TestBuildRequestFactoryS3RequiresCredentialBootstrapBeforeBuild`; `internal/app/runtimefactory/delivery_credentials_test.go:TestReadOnlyCatalogVerifierS3RequiresCredentialBootstrapBeforeRemoteOpen` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | PI-14 | Runtime upgrades require the complete shared-pool conformance lane. | `task test:go:minio-conformance`; `.github/workflows/release.yml:minio-conformance` fails on an unavailable extension or tuple drift and retains the complete evidence artifact, checksum, exact DuckDB/DuckLake versions, pinned MinIO digest, and logs. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | PR-01 | Build attempt binds plan/input/base/pool/writer lease before work. | `internal/deployment/plan_delivery_contracts_test.go:TestDeliveryBuildSealAndCandidateTransitionsAreChecked`; `internal/deployment/sqlite/fencing_repository_test.go:TestCreateWriterLeaseAndAttemptAllocatesEpochAndBindsIdentity` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
@@ -144,7 +150,7 @@ change; a lane that was not run is recorded as unsupported.
 | PU-06 | Reconciliation never activates or cleans unknown candidate. | `internal/deployment/sqlite/publication_recovery_test.go:TestPublicationReconcileUnknownOutcomeNeverActivatesOrCleansCandidate` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | PU-07 | Publication mutates no DuckLake physical object. | `internal/platform/architecture/delivery_conformance_test.go:TestPlanDeliveryPhysicalAuthorityGuards` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | RG-01 | Rooted catalogs and reachable objects survive TTL/quota cleanup. | `internal/deployment/gc/collector_test.go:TestCollectorMarksCrossCatalogDataAndDeleteFiles` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
-| RG-02 | SQLite root set plus DuckLake closure are authoritative. | `internal/deployment/sqlite/fencing_repository_test.go:TestRootRegistryNoResurrectionAndStableSnapshot`; `internal/app/gcadapter/inspector_test.go:TestVerifyReferencedObjectRequiresImmutableExistingDigest` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
+| RG-02 | Native PostgreSQL root state plus the DuckLake closure are authoritative; SQLite root fixtures are local/evaluation-only. | `internal/servingstate/postgres/repository_test.go:TestRetentionInventoryScopesRootsLeasesAndSnapshotEvidence`; `internal/deployment/postgres/repository_test.go:TestRetentionRootLifecycleTxReplayGraceAndExpiry`; `internal/app/gcadapter/inspector_test.go:TestVerifyReferencedObjectRequiresImmutableExistingDigest` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | RG-03 | Root, query lease and retirement share one durable fence. | `internal/deployment/sqlite/fencing_repository_test.go:TestQueryLeaseAndCandidateRetirementRaceHasOneWinner` | [upgrades](../../docs/articles/operate/upgrades.md) |
 | RG-04 | All sealing/candidate/generation/publication/rollback/lease roots are enumerated. | `internal/deployment/sqlite/fencing_repository_test.go:TestEnumerateRootsVerifiedSealStandaloneUntilCandidate` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | RG-05 | Shared-pool catalogs use one global collector. | `internal/analytics/ducklake/shared_pool_safety_test.go:TestCrossCatalogUnionAndOrphanClassificationIncludesDataAndDeleteFiles` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
@@ -163,7 +169,7 @@ change; a lane that was not run is recorded as unsupported.
 | DP-05 | Promotion replans portable bytes for destination target. | `internal/app/runtimefactory/dp_conformance_test.go:TestPromotionReplansPortableArtifactForEachDestinationTarget` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | DP-06 | Development qualification remains provenance and cannot replace destination qualification. | `internal/deployment/dp_conformance_test.go:TestDestinationBuildRunsQualificationAfterDevelopmentEvidence` | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | DP-07 | Convenience commands emit durable identities and cannot bypass gates. | `internal/app/cli/project_deploy_test.go:TestDeployComposesCanonicalPlanBuildAndPublication`; `internal/project/cli/publish_command_test.go:TestPublishCommandUsesExactCheckpointWithoutReadingProjectSource`; `internal/project/cli/publish_command_test.go:TestCandidateCheckpointStoreRoundTripsExactNonSecretIdentity`; bootstrap safety remains covered by `internal/app/cli/command_surface_test.go:TestDeliveryPoolBootstrapDocumentsWriteEffectAndExplicitConfirmation`. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
-| AO-01 | All listed transitions append immutable actor/object/digest/result events, including approvals, leases, GC and restatements. | `internal/deployment/sqlite/events_repository_test.go:TestDeliveryEventLedgerIsAppendOnlyAndCrashIdempotent`; `internal/deployment/sqlite/events_repository_test.go:TestDeliveryLifecycleProducersAppendRestatementLeaseRetirementAndGCEvents`; `internal/deployment/sqlite/gc_adapter_test.go:TestQuarantineRootCommitsOperatorAuditWithProjection`; `internal/deployment/sqlite/gc_adapter_test.go:TestBuildRootQuarantineResolvesSealPlanAuditScope`; `internal/deployment/sqlite/approval_repository_test.go:TestApprovalRepositoryAppendsRequestedGrantedAndRejectedEvents`. | [upgrades](../../docs/articles/operate/upgrades.md) |
+| AO-01 | All listed transitions append immutable actor/object/digest/result events, including approvals, leases, GC and restatements. | Native PostgreSQL event/repository suites (`internal/platform/events/postgres/repository_test.go`, `internal/deployment/postgres/repository_test.go`) plus local/evaluation SQLite adapter tests for parity. | [upgrades](../../docs/articles/operate/upgrades.md) |
 | AO-02 | Runtime lineage is lossless where supported; LeapView ledger remains authority. | Reviewed operational check (2026-08-17): no OpenLineage adapter or outbound lineage integration is present in this checkout; the append-only LeapView delivery event ledger remains the authoritative runtime lineage surface. | [upgrades](../../docs/articles/operate/upgrades.md) |
 | AO-03 | UX exposes impact, qualification, eligibility and decisions. | `internal/app/cli/delivery_cli_test.go:TestDeliveryPlanResultPreservesReviewEvidence`; `internal/project/cli/command_test.go:TestDeliveryPlanTextOutputIncludesReviewEvidence`; `internal/deployment/module/delivery_api_test.go:TestDeliveryPlanPreviewExposesImmutableReviewEvidence`; browser/agent have no separate delivery mutation surface. | [plan/build/publish](../../docs/articles/operate/plan-build-publish.md) |
 | AO-04 | Inspection exposes immutable source/execution/provenance/governance/target/candidate/seal/publication evidence. | `internal/deployment/module/delivery_api_test.go:TestDeliveryPlanPreviewExposesImmutableReviewEvidence`; `internal/deployment/module/delivery_api_test.go:TestDeliveryCandidateStatusRedactsObjectAuthorityAndInputs`; `internal/app/cli/publish_test.go:TestProjectPublishOperationsEmitVersionedAcceptedJSON`. | [upgrades](../../docs/articles/operate/upgrades.md) |
@@ -179,7 +185,9 @@ change; a lane that was not run is recorded as unsupported.
 - **TP-01:** Each target/project/environment scope has one authoritative
   monotonic target revision.
 - **TP-02:** Active generation and every plan-invalidating target mutation
-  update the revision in the same SQLite transaction.
+  update the revision in the same native PostgreSQL transaction. Local and
+  evaluation SQLite fixtures may exercise adapter parity but are not
+  production evidence.
 - **TP-03:** Sessions, query leases, audit appends, secret rotations with
   unchanged declared execution semantics, and other non-invalidating changes do
   not increment the revision.
@@ -305,7 +313,8 @@ change; a lane that was not run is recorded as unsupported.
   target policy.
 - **PI-12:** Candidate schemas, globally versioned relation names, and an
   authoritative SQLite physical-output ownership graph are absent; the sealed
-  DuckLake catalog is the physical manifest.
+  DuckLake catalog is the physical manifest. Any SQLite implementation here is
+  limited to local/evaluation fixtures.
 - **PI-13:** Catalog artifacts, physical pool objects, and storage credentials
   remain inaccessible outside target-controlled authorization.
 - **PI-14:** Every DuckDB runtime or DuckLake extension upgrade reruns
@@ -316,9 +325,10 @@ change; a lane that was not run is recorded as unsupported.
 
 ## Build, seal, and reconciliation
 
-- **PR-01:** A durable SQLite build attempt binds canonical plan and execution
-  inputs, exact base catalog, physical pool, and writer lease before physical
-  work begins.
+- **PR-01:** A durable native PostgreSQL build attempt binds canonical plan and
+  execution inputs, exact base catalog, physical pool, and writer lease before
+  physical work begins. SQLite coverage is limited to local/evaluation
+  fixtures.
 - **PR-02:** Build-local DuckLake transactions and intermediate snapshots are
   private and disposable. A pre-seal crash produces no candidate and may retry
   computation from the exact base without transaction-receipt reconciliation.
@@ -332,16 +342,18 @@ change; a lane that was not run is recorded as unsupported.
 - **PR-05:** The metadata database is detached and safely closed without using a
   DuckLake catalog-level checkpoint or another path that can invoke physical
   cleanup.
-- **PR-06:** Before artifact upload, SQLite durably records the catalog digest,
-  size, physical pool, content-addressed create-only key, canonical inputs, and
-  verification evidence under a unique sealing identity.
+- **PR-06:** Before artifact upload, PostgreSQL durably records the catalog
+  digest, size, physical pool, content-addressed create-only key, canonical
+  inputs, and verification evidence under a unique sealing identity. Local and
+  evaluation SQLite fixtures may cover the same adapter contract.
 - **PR-07:** Artifact creation is conditional and immutable. A lost upload
   acknowledgement is reconciled by reading the exact recorded key and verifying
   bytes, digest, size, and required metadata.
 - **PR-08:** An existing object with mismatching bytes or evidence is corruption
   and is never overwritten or accepted for the seal.
-- **PR-09:** SQLite marks a candidate ready only after remote read-only catalog
-  attachment verifies the exact artifact and physical closure.
+- **PR-09:** Native PostgreSQL marks a candidate ready only after remote
+  read-only catalog attachment verifies the exact artifact and physical
+  closure. Local/evaluation SQLite fixtures are supplemental only.
 - **PR-10:** Reusing a sealing identity with different canonical inputs, digest,
   pool, or key is a conflict; retrying the same sealed identity converges on the
   same candidate.
@@ -360,7 +372,7 @@ change; a lane that was not run is recorded as unsupported.
 - **PU-03:** Active generation and target revision compare-and-swap atomically;
   stale publication affects neither active state nor newer evidence.
 - **PU-04:** Successful publication establishes the generation's exact catalog
-  root in the same SQLite transaction as the active pointer.
+  root in the same native PostgreSQL transaction as the active pointer.
 - **PU-05:** A timeout or crash around activation leaves a durable indeterminate
   publication that resolves to the committed result or a proven non-commit
   before retry.
@@ -374,8 +386,10 @@ change; a lane that was not run is recorded as unsupported.
 - **RG-01:** Candidate TTL, quota, retirement, pull-request cleanup, orphan
   cleanup, and retention exceptions preserve every rooted catalog artifact and
   every object reachable from it.
-- **RG-02:** SQLite is authoritative for the catalog root set; each verified
-  DuckLake catalog is authoritative for its current data/delete-file membership.
+- **RG-02:** Native PostgreSQL is authoritative for the catalog root set; each
+  verified DuckLake catalog is authoritative for its current data/delete-file
+  membership. SQLite root-set implementations are local/evaluation fixtures,
+  never production authority.
 - **RG-03:** Root creation, query-lease acquisition, and catalog retirement
   serialize through one durable fence: a winning root or lease prevents
   retirement, while winning retirement rejects new roots and leases.
@@ -396,7 +410,7 @@ change; a lane that was not run is recorded as unsupported.
 - **RG-08:** Immediately before deletion, GC revalidates its pool epoch, root
   revision, query leases, writer fence, and candidate/publication state; a
   relevant change aborts or restarts deletion.
-- **RG-09:** Every delete cycle has an exact bounded SQLite intent and reconciles
+- **RG-09:** Every delete cycle has an exact bounded PostgreSQL intent and reconciles
   ambiguous storage responses by verifying the intended keys and postcondition.
 - **RG-10:** `ducklake_cleanup_old_files`,
   `ducklake_delete_orphaned_files`, explicit or externally scheduled cleanup,

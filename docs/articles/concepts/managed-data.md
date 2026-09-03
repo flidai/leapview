@@ -34,7 +34,8 @@ backup mechanism for managed objects. A local SQLite/file archive is not a
 PostgreSQL target recovery point. A recoverable deployment needs both sides of
 the ownership boundary: metadata without referenced objects is incomplete, and
 objects without corresponding revision and deployment records are not a
-serving-state restore. The complete procedure belongs in a separate native
-recovery runbook and ADR.
+serving-state restore. Follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete procedure.
 
 Follow [Data revisions and activation](/docs/guides/data/revisions) to stage and deploy a revision, [Materialization and refresh](/docs/guides/data/refresh) to rebuild analytical tables, or [Storage and recovery](/docs/guides/data/storage-recovery) to design the backup boundary.

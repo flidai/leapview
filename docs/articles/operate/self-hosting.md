@@ -1,6 +1,6 @@
 # Self-hosting
 
-LeapView v1 supports a single-instance topology. The public container image is the application distribution. The generic Docker Compose package is the recommended production operations layer, while the Hetzner Terraform module adds cloud provisioning and firewalling to the same application and initialization contracts. Provider-native backup and recovery remain external operations that require a separate runbook and ADR.
+LeapView v1 supports a single-instance topology. The public container image is the application distribution. The generic Docker Compose package is the recommended production operations layer, while the Hetzner Terraform module adds cloud provisioning and firewalling to the same application and initialization contracts. Provider-native backup and recovery remain external operations; use the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 
 ## Before you begin
 
@@ -48,7 +48,7 @@ The controller is optional if an existing container platform already provides eq
 
 LeapView's provider adapters share one Ubuntu 24.04 LTS host bootstrap. It installs Docker Compose and the host prerequisites, pulls the immutable application image, extracts the image's matching deployment payload, and delegates all installation behavior to `leapviewctl host install`. The typed Go installer validates configuration before mutation, stages immutable digest-named host generations, activates one generation atomically, initializes the instance once, and starts it.
 
-This boundary keeps server creation, IPs, firewalls, DNS, and optional provider snapshots in thin provider adapters. Compose configuration, proxy defaults, and initialization remain provider-neutral. Provider-native backup, retention, image rollout, and host rollback are outside LeapView and must follow the provider's separate recovery and change-management runbooks. After bootstrap, operators use the same `leapviewctl` status, logs, and start commands on every supported VPS provider.
+This boundary keeps server creation, IPs, firewalls, DNS, and optional provider snapshots in thin provider adapters. Compose configuration, proxy defaults, and initialization remain provider-neutral. Provider-native backup, retention, image rollout, and host rollback are outside LeapView; follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore), plus the provider's change-management procedure. After bootstrap, operators use the same `leapviewctl` status, logs, and start commands on every supported VPS provider.
 
 Provider independence does not expand the guest operating-system matrix: the automated host contract supports Ubuntu 24.04 LTS with systemd on `linux/amd64` and `linux/arm64`. Other Docker hosts can continue to use the generic Compose package directly.
 
@@ -72,10 +72,11 @@ The controller does not upgrade or roll back a Compose or host installation.
 Use the container platform and provider change-management workflow to roll out
 an immutable image, and use the retained-generation `leapview rollback` command
 only for an application delivery rollback. PostgreSQL/PITR and
-DuckLake/object-store recovery are external provider operations that require a
-separate native runbook and ADR. Keep encrypted provider-native recovery copies
-and rehearse that runbook in an isolated instance with the same environment
-identity.
+DuckLake/object-store recovery are external provider operations. Keep encrypted
+provider-native recovery copies and rehearse the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) procedures in an isolated instance
+with the same environment identity.
 
 ## Hetzner provider recipe
 
@@ -91,7 +92,7 @@ Before exposing an instance:
 2. Consume the one-time credentials and change the temporary password.
 3. Deploy a representative project and verify a semantic query and dashboard filter.
 4. Refresh an external object source and confirm the previous snapshot survives a failed refresh.
-5. Verify provider-native PostgreSQL/PITR and DuckLake/object-store recovery evidence in the separate recovery runbook.
+5. Verify provider-native PostgreSQL/PITR and DuckLake/object-store recovery evidence using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 6. Exercise a retained-generation `leapview rollback` in a non-production target before relying on it during an incident.
 
 ## Verify
@@ -100,7 +101,7 @@ After validation, sign in through the public URL, deploy a representative projec
 
 ## Troubleshooting
 
-Use `./leapviewctl status` and `./leapviewctl logs` for health failures. Environment mismatch errors mean the state volume belongs to another target instance; do not rewrite its identity. For data loss or catalog drift, preserve evidence and follow the provider-native PostgreSQL/DuckLake recovery runbook rather than attempting a local file restore.
+Use `./leapviewctl status` and `./leapviewctl logs` for health failures. Environment mismatch errors mean the state volume belongs to another target instance; do not rewrite its identity. For data loss or catalog drift, preserve evidence and follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore) rather than attempting a local file restore.
 
 ## Next steps
 

@@ -29,9 +29,11 @@ procedures required to restore them.
 The removed offline administrative backup, restore, and storage-cleanup
 commands are not production recovery or cleanup procedures. LeapView currently
 has no product-owned local file archive that substitutes for PostgreSQL
-backup/PITR. A complete operational procedure for PostgreSQL, DuckLake, and
-object storage requires a separate native runbook and ADR; do not invent CLI
-flags or manually rewrite catalog and pointer metadata.
+backup/PITR. Follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete operational
+procedure; do not invent CLI flags or manually rewrite catalog and pointer
+metadata.
 
 ## Verify a recovery
 

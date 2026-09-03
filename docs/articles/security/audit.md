@@ -44,9 +44,10 @@ Treat terminal failures, capacity exhaustion, or an unavailable sink as an
 outage boundary. Stop writers, preserve readiness, metrics, logs, and the
 PostgreSQL-native recovery evidence, then correct the source or sink through its
 owner workflow. Do not edit audit rows, increase retries by hand, or replay a
-delivery without a reviewed, durable procedure. A PostgreSQL backup/PITR and
-DuckLake/object-store recovery runbook remains a separate native operator
-responsibility.
+delivery without a reviewed, durable procedure. PostgreSQL backup/PITR and
+DuckLake/object-store recovery remain native operator responsibilities; follow
+the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
+and [Backup and restore guide](/docs/guides/operate/backup-restore).
 
 ## Correlate sources
 

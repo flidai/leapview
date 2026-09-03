@@ -165,8 +165,9 @@ upgrade, host rollback, or recovery-qualification drills. If PostgreSQL,
 DuckLake, or object-store state is unavailable or inconsistent, stop writes and
 preserve readiness, metrics, deployment identifiers, and credential-scrubbed
 logs. Use the provider's native backup/PITR, catalog snapshot, versioning,
-replication, or restore procedure; the complete workflow belongs in a separate
-native runbook and ADR. Do not edit control-plane rows, catalog metadata, or
+replication, or restore procedure; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete workflow. Do not edit control-plane rows, catalog metadata, or
 Parquet/object-store objects by hand.
 
 After provider recovery, verify instance identity, active deployment pointers,

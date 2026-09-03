@@ -46,8 +46,9 @@ The manually dispatched `Ephemeral Hetzner deployment` workflow exercises this
 topology from an immutable application image. It creates an isolated server,
 qualifies public health, consumes the one-time first-login credentials, verifies
 recovery-boundary readiness, and destroys the server even when an earlier step
-fails. PostgreSQL/PITR and DuckLake/object-store recovery are provider-native
-and require the separate recovery runbook.
+fails. PostgreSQL/PITR and DuckLake/object-store recovery are provider-native;
+follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
+and [Backup and restore guide](/docs/guides/operate/backup-restore).
 
 The job is protected by the `leapview-ephemeral-qualification` GitHub
 environment and authenticates to Infisical through GitHub OIDC. The dedicated
@@ -120,11 +121,14 @@ Use Hetzner's provider backup features for the host where appropriate, but do
 not treat a local volume archive as a PostgreSQL target recovery point. Use
 PostgreSQL-native backup/PITR and the DuckLake/object-store provider's native
 snapshot, versioning, replication, or backup mechanism. Coordinate recovery
-points before reopening traffic; a complete procedure requires the separate
-native runbook and ADR.
+points before reopening traffic; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore) for the complete procedure.
 
 For independent encrypted provider backups, configure Restic or the relevant
-native service according to the recovery runbook. Keep repository credentials
+native service according to the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore). Keep repository credentials
 root-only and retain enough history for the declared RPO/RTO.
 
 ## Destroy

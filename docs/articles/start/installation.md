@@ -137,8 +137,10 @@ production targets retain protected approval and activation. To connect real
 data, start with [Connect a data source](/docs/guides/build/connect-data). For
 a durable or externally reachable instance, use the versioned Compose release
 below; it adds immutable image pinning and HTTPS. Set up PostgreSQL/PITR and
-DuckLake/object-store protection separately with the native provider runbook;
-LeapView does not provide a Compose backup or upgrade controller.
+DuckLake/object-store protection with the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore); LeapView does not provide a
+Compose backup or upgrade controller.
 
 For an isolated one-shot private preview of the evaluator project, you may use
 the optional `dev` loop against the same loopback target:
@@ -158,7 +160,9 @@ The released Compose package is the recommended operations layer around the
 same public image. It is not a separate LeapView distribution. It supplies
 hardened container settings, generated production secrets, and optional Caddy
 HTTPS. Production PostgreSQL/DuckLake backup and restore remain provider-native
-operations that require a separate runbook and ADR; Compose does not provide
+operations covered by the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore); Compose does not provide
 image-and-state upgrade or rollback.
 
 1. Select, download, verify, and extract the current platform archive:
@@ -295,7 +299,9 @@ Use the container platform's immutable image rollout and change-management
 workflow for upgrades or host rollback. The target-level `leapview rollback`
 command remains available for a retained serving generation, but it does not
 restore PostgreSQL, DuckLake, object-store, or Compose state. Those recovery
-operations are external and require the separate native runbook and ADR.
+operations are external; use the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore).
 
 ## Contributor installation
 
@@ -352,7 +358,7 @@ identity.
 
 ## Verify
 
-Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Verify the instance identity and readiness through the authenticated capabilities endpoint; follow the provider-native recovery runbook separately for PostgreSQL/DuckLake protection.
+Open the configured HTTPS URL, sign in with the temporary administrator credentials, and change the password when prompted. Verify the instance identity and readiness through the authenticated capabilities endpoint; follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore) for PostgreSQL/DuckLake protection.
 
 ## Troubleshooting
 

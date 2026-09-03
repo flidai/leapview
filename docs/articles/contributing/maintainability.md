@@ -21,7 +21,7 @@ Every refactor must preserve capability ownership, the declared acyclic dependen
 | `internal/app/composition.go` | Capability-specific typed builders | Construction and cleanup order; production dependencies fail closed; `go test ./internal/app/...` |
 | `internal/app/runtime_router.go` | Feature route bundles | Route stability, authorization, audit, explicit development bypass; `go test ./internal/app/...` |
 | `internal/access/http/handler.go` | Current principal, tokens, sessions, principals, service principals, groups, audit | Generated API, authorization, redaction, audit and status codes; `go test ./internal/access/...` |
-| `internal/deployment/sqlite/plan_delivery_repository.go` | Plan/build, seal/candidate, publication/generation, leases/retention, GC | SQLite transactions, compare-and-set and idempotency; `go test ./internal/deployment/...` |
+| `internal/deployment/postgres/repository.go` | Native PostgreSQL plan/build, seal/candidate, publication/generation, leases, and immutable delivery evidence | PostgreSQL transactions, compare-and-set and idempotency; `go test ./internal/deployment/...` |
 | `internal/project/ui/develop.go` | Project list, connections, asset detail, lineage, refresh and versions | Typed signal shapes, CSRF commands and rendering; `go test ./internal/project/...` |
 | `internal/dashboard/semanticapi/handler.go` | Semantic resource and query operation families | Governed-query authorization and generated responses; `go test ./internal/dashboard/...` |
 | `internal/runtimehost/manager.go` | Lease heartbeat/release queue and cleanup workers | Manager remains the generation authority; exactly-once close and drain; runtime-host race tests |

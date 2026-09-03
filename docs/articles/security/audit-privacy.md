@@ -71,8 +71,9 @@ managed-data objects. LeapView does not provide a local SQLite/file archive
 that substitutes for a PostgreSQL target recovery point. Development and
 evaluation fixtures may use their own SQLite harness; external source systems
 and S3-backed objects remain under native backup, versioning, and retention
-controls. A complete production procedure belongs in a separate native
-runbook and ADR.
+controls. Follow the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
+and [Backup and restore guide](/docs/guides/operate/backup-restore) for the
+complete production procedure.
 
 Operators are responsible for the destination and the policy around it:
 
