@@ -6,6 +6,7 @@ import { axis, escapeHTML, field, fieldLabel, formatDisplayField, formatField, i
 import { conditionalCategoryColor, conditionalItemColor, seriesColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
+import { decimalFraction, decimalSignedInteger, parseDecimal } from '../../decimal'
 
 type CartesianSpec = Extract<VisualizationEnvelope['spec'], { kind: 'cartesian' }>
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
@@ -274,40 +275,45 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     if (axisID === 'x') return horizontal ? 'yAxis' : 'xAxis'
     return horizontal ? 'xAxis' : 'yAxis'
   }
-  const markLineData = [
+  const markLines = [
     ...(spec.referenceLines ?? []).flatMap((line) => {
       const value = resolveReferenceValue(envelope, line.value)
       if (value === undefined) return []
       return [{
-        id: `reference-line:${line.id}`, name: line.label ?? '', [coordinate(line.axis)]: value,
-        lineStyle: { color: toneColor(line.tone, context) },
+        axis: line.axis,
+        data: { id: `reference-line:${line.id}`, name: line.label ?? '', [coordinate(line.axis)]: value, lineStyle: { color: toneColor(line.tone, context) } },
       }]
     }),
     ...(spec.eventAnnotations ?? []).flatMap((annotation) => {
       const value = resolveReferenceValue(envelope, annotation.value)
       if (value === undefined) return []
       return [{
-        id: `event-annotation:${annotation.id}`, name: annotation.label, [coordinate(annotation.axis)]: value,
-        lineStyle: { color: toneColor(annotation.tone, context) },
+        axis: annotation.axis,
+        data: { id: `event-annotation:${annotation.id}`, name: annotation.label, [coordinate(annotation.axis)]: value, lineStyle: { color: toneColor(annotation.tone, context) } },
       }]
     }),
   ]
-  const markAreaData = (spec.referenceBands ?? []).flatMap((band) => {
+  const markAreas = (spec.referenceBands ?? []).flatMap((band) => {
     const from = resolveReferenceValue(envelope, band.from)
     const to = resolveReferenceValue(envelope, band.to)
     if (from === undefined || to === undefined) return []
     const key = coordinate(band.axis)
-    return [[
+    return [{ axis: band.axis, data: [
       { id: `reference-band:${band.id}`, name: band.label ?? '', [key]: from, itemStyle: { color: toneColor(band.tone, context), opacity: 0.12 } },
       { [key]: to },
-    ]]
+    ] }]
   })
-  if (markLineData.length === 0 && markAreaData.length === 0) return option
+  if (markLines.length === 0 && markAreas.length === 0) return option
   const series = Array.isArray(option.series) ? option.series : []
-  const owner = series.find((candidate: EChartsTranslation) => !candidate.silent && !String(candidate.id ?? '').startsWith('series:interaction-hit:'))
-  if (!owner) return option
-  if (markLineData.length > 0) owner.markLine = { symbol: ['none', 'none'], data: markLineData }
-  if (markAreaData.length > 0) owner.markArea = { silent: true, data: markAreaData }
+  const candidates = series.filter((candidate: EChartsTranslation) => !candidate.silent && !String(candidate.id ?? '').startsWith('series:interaction-hit:'))
+  for (const secondary of [false, true]) {
+    const owner = candidates.find((candidate: EChartsTranslation) => secondary ? candidate.yAxisIndex === 1 : candidate.yAxisIndex !== 1)
+    if (!owner) continue
+    const lines = markLines.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
+    const areas = markAreas.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
+    if (lines.length > 0) owner.markLine = { symbol: ['none', 'none'], data: lines }
+    if (areas.length > 0) owner.markArea = { silent: true, data: areas }
+  }
   return option
 }
 
@@ -335,7 +341,15 @@ function resolveReferenceValue(envelope: VisualizationEnvelope, value: Reference
   const dataset = inlineDataset(envelope, value.field.dataset)
   const index = dataset?.columns.indexOf(value.field.field) ?? -1
   if (!dataset || index < 0) return undefined
-  const values = dataset.rows.map((row) => row[index]).filter((candidate): candidate is string | number => typeof candidate === 'string' || typeof candidate === 'number')
+  const dataType = field(envelope, value.field)?.dataType
+  const numeric = dataType === 'integer' || dataType === 'decimal' || dataType === 'float'
+  const values = dataset.rows.flatMap((row): (string | number)[] => {
+    const candidate = row[index]
+    if (typeof candidate === 'number') return Number.isFinite(candidate) ? [candidate] : []
+    if (typeof candidate !== 'string') return []
+    if (!numeric) return [candidate]
+    return parseDecimal(candidate) ? [candidate] : []
+  })
   if (values.length === 0) return undefined
   switch (value.reducer) {
     case 'first': return values[0]
@@ -343,10 +357,16 @@ function resolveReferenceValue(envelope: VisualizationEnvelope, value: Reference
     case 'minimum': return orderedReferenceValue(values, 'minimum')
     case 'maximum': return orderedReferenceValue(values, 'maximum')
     case 'mean': {
+      if (values.every((candidate) => typeof candidate === 'string')) return meanDecimalReference(values as string[])
       const numbers = values.filter((candidate): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate))
       return numbers.length === values.length ? numbers.reduce((sum, candidate) => sum + candidate, 0) / numbers.length : undefined
     }
     case 'median': {
+      if (values.every((candidate) => typeof candidate === 'string')) {
+        const sorted = [...values as string[]].sort(compareDecimalReference)
+        const middle = Math.floor(sorted.length / 2)
+        return sorted.length % 2 ? sorted[middle] : meanDecimalReference([sorted[middle - 1]!, sorted[middle]!])
+      }
       const numbers = values.filter((candidate): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate)).sort((left, right) => left - right)
       if (numbers.length !== values.length) return undefined
       const middle = Math.floor(numbers.length / 2)
@@ -360,9 +380,25 @@ function orderedReferenceValue(values: (string | number)[], reducer: 'minimum' |
     return reducer === 'minimum' ? Math.min(...values as number[]) : Math.max(...values as number[])
   }
   if (values.every((value) => typeof value === 'string')) {
-    return [...values as string[]].sort((left, right) => left.localeCompare(right, 'en'))[reducer === 'minimum' ? 0 : values.length - 1]
+    const sorted = [...values as string[]].sort(values.every((value) => parseDecimal(value)) ? compareDecimalReference : (left, right) => left.localeCompare(right, 'en'))
+    return sorted[reducer === 'minimum' ? 0 : values.length - 1]
   }
   return undefined
+}
+
+function compareDecimalReference(left: string, right: string): number {
+  const a = decimalSignedInteger(left), b = decimalSignedInteger(right)
+  const scale = Math.max(a.scale, b.scale)
+  const av = a.signedDigits * 10n ** BigInt(scale - a.scale)
+  const bv = b.signedDigits * 10n ** BigInt(scale - b.scale)
+  return av < bv ? -1 : av > bv ? 1 : 0
+}
+
+function meanDecimalReference(values: string[]): string {
+  const decimals = values.map(decimalSignedInteger)
+  const scale = Math.max(...decimals.map((value) => value.scale))
+  const sum = decimals.reduce((total, value) => total + value.signedDigits * 10n ** BigInt(scale - value.scale), 0n)
+  return decimalFraction(sum, 10n ** BigInt(scale), BigInt(values.length), 1n, 18)
 }
 
 function interactionHitSeries(envelope: VisualizationEnvelope, spec: CartesianSpec, series: EChartsTranslation[]): EChartsTranslation[] {

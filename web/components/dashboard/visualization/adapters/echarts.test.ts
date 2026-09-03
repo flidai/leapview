@@ -231,6 +231,11 @@ test('ECharts translates semantic axes and decision context from the current fra
   const refreshed = echartsOption(envelope, context) as any
   expect(refreshed.series[0].markLine.data[1].yAxis).toBe(60)
   expect(refreshed.series[0].markArea.data[0].map((item: any) => item.yAxis)).toEqual([40, 80])
+
+  envelope.dataState.datasets[0].rows = [['A', '9007199254740993.125'], ['B', '9007199254740995.375']]
+  const decimalStrings = echartsOption(envelope, context) as any
+  expect(decimalStrings.series[0].markLine.data[1].yAxis).toBe('9007199254740994.25')
+  expect(decimalStrings.series[0].markArea.data[0].map((item: any) => item.yAxis)).toEqual(['9007199254740993.125', '9007199254740995.375'])
 })
 
 test('ECharts applies governed row formatting with theme colors and redundant cues', () => {
@@ -377,6 +382,11 @@ test('ECharts translation preserves combo series marks and axes', () => {
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Combo', description: 'Combo' }, interactions: [],
       x: { dataset: 'primary', field: 'month' }, y: [{ dataset: 'primary', field: 'value' }], series: { dataset: 'primary', field: 'series' },
+      referenceLines: [
+        { id: 'primary-target', axis: 'primary_y', value: { kind: 'number', value: 10 }, tone: 'neutral' },
+        { id: 'secondary-target', axis: 'secondary_y', value: { kind: 'number', value: 2 }, tone: 'warning' },
+      ],
+      referenceBands: [{ id: 'secondary-range', axis: 'secondary_y', from: { kind: 'number', value: 1 }, to: { kind: 'number', value: 3 }, tone: 'neutral' }],
       presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false, comboSeries: [
         { seriesValue: 'Revenue', mark: 'line', axis: 'primary' },
         { seriesValue: 'Orders', mark: 'column', axis: 'secondary' },
@@ -394,6 +404,9 @@ test('ECharts translation preserves combo series marks and axes', () => {
     ['Revenue', 'line', 0], ['Orders', 'bar', 1],
   ])
   expect(option.yAxis).toHaveLength(2)
+  expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
+  expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
+  expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
   const reordered = structuredClone(base) as any
   reordered.dataState.datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered) as any

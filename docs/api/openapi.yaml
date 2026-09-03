@@ -65182,9 +65182,67 @@ components:
             - axis: primary
               field: example
               mark: line
+        axes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardAxisConfiguration'
+          example:
+            - displayUnits: auto
+              id: x
+              maximum: 1
+              minimum: 1
+              scale: automatic
+              tickDensity: automatic
+              title: example
+              unit: example
+              zero: automatic
+        referenceLines:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardReferenceLine'
+          example:
+            - axis: x
+              id: example
+              label: example
+              tone: neutral
+        referenceBands:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardReferenceBand'
+          example:
+            - axis: x
+              id: example
+              label: example
+              tone: neutral
+        eventAnnotations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardEventAnnotation'
+          example:
+            - axis: x
+              description: example
+              id: example
+              label: example
+              tone: neutral
       example:
+        axes:
+          - displayUnits: auto
+            id: x
+            maximum: 1
+            minimum: 1
+            scale: automatic
+            tickDensity: automatic
+            title: example
+            unit: example
+            zero: automatic
         dataZoom: true
         displayUnits: auto
+        eventAnnotations:
+          - axis: x
+            description: example
+            id: example
+            label: example
+            tone: neutral
         labelPosition: automatic
         labels:
           density: hidden
@@ -65195,6 +65253,16 @@ components:
           tooltipFallback: true
         legend: none
         orientation: horizontal
+        referenceBands:
+          - axis: x
+            id: example
+            label: example
+            tone: neutral
+        referenceLines:
+          - axis: x
+            id: example
+            label: example
+            tone: neutral
         series:
           - axis: primary
             field: example
@@ -69720,6 +69788,49 @@ components:
           title: example
           type: line
         visualId: example
+    DashboardAxisConfiguration:
+      type: object
+      required:
+        - id
+        - scale
+        - zero
+        - tickDensity
+      properties:
+        id:
+          $ref: '#/components/schemas/VisualizationCartesianAxis'
+        title:
+          type: string
+          example: example
+        scale:
+          $ref: '#/components/schemas/VisualizationAxisScale'
+        zero:
+          $ref: '#/components/schemas/VisualizationAxisZeroPolicy'
+        minimum:
+          type: number
+          format: double
+          example: 1
+        maximum:
+          type: number
+          format: double
+          example: 1
+        unit:
+          type: string
+          example: example
+        displayUnits:
+          $ref: '#/components/schemas/VisualizationDisplayUnits'
+        tickDensity:
+          $ref: '#/components/schemas/VisualizationAxisTickDensity'
+      description: A renderer-neutral axis policy for Cartesian and point visuals.
+      example:
+        displayUnits: auto
+        id: x
+        maximum: 1
+        minimum: 1
+        scale: automatic
+        tickDensity: automatic
+        title: example
+        unit: example
+        zero: automatic
     DashboardCalculation:
       type: object
       required:
@@ -70523,6 +70634,41 @@ components:
               subtitle: example
               title: example
               type: line
+    DashboardEventAnnotation:
+      type: object
+      required:
+        - id
+        - axis
+        - value
+        - label
+        - tone
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        axis:
+          $ref: '#/components/schemas/VisualizationCartesianAxis'
+        value:
+          $ref: '#/components/schemas/DashboardReferenceValue'
+        label:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+        tone:
+          $ref: '#/components/schemas/VisualizationTone'
+      description: A governed event marker, restricted to the visual's horizontal
+        axis.
+      example:
+        axis: x
+        description: example
+        id: example
+        label: example
+        tone: neutral
     DashboardFieldConditionalRule:
       type: object
       allOf:
@@ -72773,6 +72919,39 @@ components:
           minLength: 1
           pattern: ^[A-Za-z_][A-Za-z0-9_]*$
         - $ref: '#/components/schemas/DashboardRecordFieldReference'
+    DashboardReferenceBand:
+      type: object
+      required:
+        - id
+        - axis
+        - from
+        - to
+        - tone
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        axis:
+          $ref: '#/components/schemas/VisualizationCartesianAxis'
+        from:
+          $ref: '#/components/schemas/DashboardReferenceValue'
+        to:
+          $ref: '#/components/schemas/DashboardReferenceValue'
+        label:
+          type: string
+          example: example
+        tone:
+          $ref: '#/components/schemas/VisualizationTone'
+      description: A governed interval between two horizontal or numeric reference
+        values.
+      example:
+        axis: x
+        id: example
+        label: example
+        tone: neutral
     DashboardReferenceGeographicLayer:
       type: object
       allOf:
@@ -72813,6 +72992,57 @@ components:
           color: example
           opacity: 1
           width: 1
+    DashboardReferenceLine:
+      type: object
+      required:
+        - id
+        - axis
+        - value
+        - tone
+      properties:
+        id:
+          type: string
+          minLength: 1
+          maxLength: 128
+          pattern: ^[A-Za-z_][A-Za-z0-9_-]*$
+          example: example
+        axis:
+          $ref: '#/components/schemas/VisualizationCartesianAxis'
+        value:
+          $ref: '#/components/schemas/DashboardReferenceValue'
+        label:
+          type: string
+          example: example
+        tone:
+          $ref: '#/components/schemas/VisualizationTone'
+      description: A governed horizontal or numeric reference marker.
+      example:
+        axis: x
+        id: example
+        label: example
+        tone: neutral
+    DashboardReferenceValue:
+      oneOf:
+        - $ref: '#/components/schemas/NumberDashboardReferenceValue'
+        - $ref: '#/components/schemas/TextDashboardReferenceValue'
+        - $ref: '#/components/schemas/FieldDashboardReferenceValue'
+      discriminator:
+        propertyName: kind
+        mapping:
+          field: '#/components/schemas/FieldDashboardReferenceValue'
+          number: '#/components/schemas/NumberDashboardReferenceValue'
+          text: '#/components/schemas/TextDashboardReferenceValue'
+    DashboardReferenceValueBase:
+      type: object
+      required:
+        - kind
+      properties:
+        kind:
+          type: string
+          example: example
+      description: A scalar value used by a governed reference line, band, or annotation.
+      example:
+        kind: example
     DashboardRelativeAnchor:
       type: string
       enum:
@@ -76294,6 +76524,31 @@ components:
             subjectType: example
         resourceId: example
         resourceKind: project
+    FieldDashboardReferenceValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardReferenceValueBase'
+      required:
+        - kind
+        - field
+        - reducer
+      properties:
+        kind:
+          type: string
+          enum:
+            - field
+          example: example
+        field:
+          type: string
+          minLength: 1
+          pattern: ^[A-Za-z_][A-Za-z0-9_]*$
+          example: example
+        reducer:
+          $ref: '#/components/schemas/VisualizationReferenceReducer'
+      example:
+        field: example
+        kind: example
+        reducer: first
     FieldVisualizationConditionalRule:
       type: object
       allOf:
@@ -78626,6 +78881,26 @@ components:
       example:
         operator: isNull
         type: example
+    NumberDashboardReferenceValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardReferenceValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - number
+          example: example
+        value:
+          type: number
+          format: double
+          example: 1
+      example:
+        kind: example
+        value: 1
     NumberVisualizationFormat:
       type: object
       allOf:
@@ -78961,9 +79236,61 @@ components:
             $ref: '#/components/schemas/VisualizationPointBrushGesture'
           example:
             - rectangle
+        axes:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardAxisConfiguration'
+          example:
+            - displayUnits: auto
+              id: x
+              maximum: 1
+              minimum: 1
+              scale: automatic
+              tickDensity: automatic
+              title: example
+              unit: example
+              zero: automatic
+        referenceLines:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardReferenceLine'
+          example:
+            - axis: x
+              id: example
+              label: example
+              tone: neutral
+        referenceBands:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardReferenceBand'
+          example:
+            - axis: x
+              id: example
+              label: example
+              tone: neutral
+        eventAnnotations:
+          type: array
+          items:
+            $ref: '#/components/schemas/DashboardEventAnnotation'
+          example:
+            - axis: x
+              description: example
+              id: example
+              label: example
+              tone: neutral
       description: Strict point/scatter presentation and its governed result-frame
         channels.
       example:
+        axes:
+          - displayUnits: auto
+            id: x
+            maximum: 1
+            minimum: 1
+            scale: automatic
+            tickDensity: automatic
+            title: example
+            unit: example
+            zero: automatic
         brush:
           - rectangle
         color: example
@@ -78972,6 +79299,12 @@ components:
           maximum: 1
           minimum: 1
           scheme: example
+        eventAnnotations:
+          - axis: x
+            description: example
+            id: example
+            label: example
+            tone: neutral
         identity:
           - example
         label: example
@@ -78988,6 +79321,16 @@ components:
           largeThreshold: 1
           opacity: 1
           strategy: show_all
+        referenceBands:
+          - axis: x
+            id: example
+            label: example
+            tone: neutral
+        referenceLines:
+          - axis: x
+            id: example
+            label: example
+            tone: neutral
         series: example
         size: example
         sizeScale:
@@ -85034,6 +85377,25 @@ components:
           example: example
       example:
         type: example
+    TextDashboardReferenceValue:
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/DashboardReferenceValueBase'
+      required:
+        - kind
+        - value
+      properties:
+        kind:
+          type: string
+          enum:
+            - text
+          example: example
+        value:
+          type: string
+          example: example
+      example:
+        kind: example
+        value: example
     TextVisualizationReferenceValue:
       type: object
       allOf:

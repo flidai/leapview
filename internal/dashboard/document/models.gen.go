@@ -25,19 +25,23 @@ type BooleanDashboardFilterValue struct {
 
 type CartesianDashboardPresentation struct {
 	DashboardPresentationBase
-	Type          string                                     `json:"type" yaml:"type"`
-	Legend        *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Labels        *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Stacking      *DashboardStackingMode                     `json:"stacking,omitempty" yaml:"stacking,omitempty"`
-	Orientation   *DashboardOrientation                      `json:"orientation,omitempty" yaml:"orientation,omitempty"`
-	ShowSymbols   *bool                                      `json:"showSymbols,omitempty" yaml:"showSymbols,omitempty"`
-	Smooth        *bool                                      `json:"smooth,omitempty" yaml:"smooth,omitempty"`
-	Step          *bool                                      `json:"step,omitempty" yaml:"step,omitempty"`
-	DataZoom      *bool                                      `json:"dataZoom,omitempty" yaml:"dataZoom,omitempty"`
-	SymbolSize    *float64                                   `json:"symbolSize,omitempty" yaml:"symbolSize,omitempty"`
-	LabelPosition *DashboardLabelPosition                    `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
-	DisplayUnits  *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
-	Series        *[]DashboardComboSeries                    `json:"series,omitempty" yaml:"series,omitempty"`
+	Type             string                                     `json:"type" yaml:"type"`
+	Legend           *DashboardLegendPosition                   `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Labels           *DashboardLabelPolicy                      `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Stacking         *DashboardStackingMode                     `json:"stacking,omitempty" yaml:"stacking,omitempty"`
+	Orientation      *DashboardOrientation                      `json:"orientation,omitempty" yaml:"orientation,omitempty"`
+	ShowSymbols      *bool                                      `json:"showSymbols,omitempty" yaml:"showSymbols,omitempty"`
+	Smooth           *bool                                      `json:"smooth,omitempty" yaml:"smooth,omitempty"`
+	Step             *bool                                      `json:"step,omitempty" yaml:"step,omitempty"`
+	DataZoom         *bool                                      `json:"dataZoom,omitempty" yaml:"dataZoom,omitempty"`
+	SymbolSize       *float64                                   `json:"symbolSize,omitempty" yaml:"symbolSize,omitempty"`
+	LabelPosition    *DashboardLabelPosition                    `json:"labelPosition,omitempty" yaml:"labelPosition,omitempty"`
+	DisplayUnits     *visualizationir.VisualizationDisplayUnits `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	Series           *[]DashboardComboSeries                    `json:"series,omitempty" yaml:"series,omitempty"`
+	Axes             *[]DashboardAxisConfiguration              `json:"axes,omitempty" yaml:"axes,omitempty"`
+	ReferenceLines   *[]DashboardReferenceLine                  `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
+	ReferenceBands   *[]DashboardReferenceBand                  `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`
+	EventAnnotations *[]DashboardEventAnnotation                `json:"eventAnnotations,omitempty" yaml:"eventAnnotations,omitempty"`
 }
 
 type ComparisonDashboardFilterExpression struct {
@@ -88,6 +92,18 @@ const (
 	DashboardAppearanceColorPink    DashboardAppearanceColor = "pink"
 	DashboardAppearanceColorRose    DashboardAppearanceColor = "rose"
 )
+
+type DashboardAxisConfiguration struct {
+	ID           visualizationir.VisualizationCartesianAxis   `json:"id" yaml:"id"`
+	Title        *string                                      `json:"title,omitempty" yaml:"title,omitempty"`
+	Scale        visualizationir.VisualizationAxisScale       `json:"scale" yaml:"scale"`
+	Zero         visualizationir.VisualizationAxisZeroPolicy  `json:"zero" yaml:"zero"`
+	Minimum      *float64                                     `json:"minimum,omitempty" yaml:"minimum,omitempty"`
+	Maximum      *float64                                     `json:"maximum,omitempty" yaml:"maximum,omitempty"`
+	Unit         *string                                      `json:"unit,omitempty" yaml:"unit,omitempty"`
+	DisplayUnits *visualizationir.VisualizationDisplayUnits   `json:"displayUnits,omitempty" yaml:"displayUnits,omitempty"`
+	TickDensity  visualizationir.VisualizationAxisTickDensity `json:"tickDensity" yaml:"tickDensity"`
+}
 
 type DashboardCalculation struct {
 	ID          string                                           `json:"id" yaml:"id"`
@@ -489,6 +505,15 @@ type DashboardDocument struct {
 	Kind       DashboardResourceKind `json:"kind" yaml:"kind"`
 	Metadata   DashboardMetadata     `json:"metadata" yaml:"metadata"`
 	Spec       DashboardSpec         `json:"spec" yaml:"spec"`
+}
+
+type DashboardEventAnnotation struct {
+	ID          string                                     `json:"id" yaml:"id"`
+	Axis        visualizationir.VisualizationCartesianAxis `json:"axis" yaml:"axis"`
+	Value       DashboardReferenceValue                    `json:"value" yaml:"value"`
+	Label       string                                     `json:"label" yaml:"label"`
+	Description *string                                    `json:"description,omitempty" yaml:"description,omitempty"`
+	Tone        visualizationir.VisualizationTone          `json:"tone" yaml:"tone"`
 }
 
 type DashboardFieldConditionalRule struct {
@@ -3386,6 +3411,15 @@ func (value *DashboardRecordFieldSelection) UnmarshalJSON(data []byte) error {
 	}
 }
 
+type DashboardReferenceBand struct {
+	ID    string                                     `json:"id" yaml:"id"`
+	Axis  visualizationir.VisualizationCartesianAxis `json:"axis" yaml:"axis"`
+	From  DashboardReferenceValue                    `json:"from" yaml:"from"`
+	To    DashboardReferenceValue                    `json:"to" yaml:"to"`
+	Label *string                                    `json:"label,omitempty" yaml:"label,omitempty"`
+	Tone  visualizationir.VisualizationTone          `json:"tone" yaml:"tone"`
+}
+
 type DashboardReferenceGeographicLayer struct {
 	DashboardGeographicLayerBase
 	Kind          string                  `json:"kind" yaml:"kind"`
@@ -3393,6 +3427,212 @@ type DashboardReferenceGeographicLayer struct {
 	Color         *DashboardMapColorScale `json:"color,omitempty" yaml:"color,omitempty"`
 	Stroke        *DashboardMapStroke     `json:"stroke,omitempty" yaml:"stroke,omitempty"`
 	Opacity       *float64                `json:"opacity,omitempty" yaml:"opacity,omitempty"`
+}
+
+type DashboardReferenceLine struct {
+	ID    string                                     `json:"id" yaml:"id"`
+	Axis  visualizationir.VisualizationCartesianAxis `json:"axis" yaml:"axis"`
+	Value DashboardReferenceValue                    `json:"value" yaml:"value"`
+	Label *string                                    `json:"label,omitempty" yaml:"label,omitempty"`
+	Tone  visualizationir.VisualizationTone          `json:"tone" yaml:"tone"`
+}
+
+type DashboardReferenceValueVariant interface {
+	isDashboardReferenceValueVariant()
+}
+
+type DashboardReferenceValue struct {
+	Value DashboardReferenceValueVariant
+}
+
+func (*FieldDashboardReferenceValue) isDashboardReferenceValueVariant()  {}
+func (*NumberDashboardReferenceValue) isDashboardReferenceValueVariant() {}
+func (*TextDashboardReferenceValue) isDashboardReferenceValueVariant()   {}
+
+func (value DashboardReferenceValue) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *FieldDashboardReferenceValue:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return json.Marshal(variant)
+	case *NumberDashboardReferenceValue:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return json.Marshal(variant)
+	case *TextDashboardReferenceValue:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("DashboardReferenceValue variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DashboardReferenceValue variant %T", variant)
+	}
+}
+
+func (value *DashboardReferenceValue) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal DashboardReferenceValue into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode DashboardReferenceValue object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"kind"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode DashboardReferenceValue discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("DashboardReferenceValue discriminator kind is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "field":
+		if _, ok := fields["field"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property field is missing", tag.Value)
+		}
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["reducer"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property reducer is missing", tag.Value)
+		}
+		var variant FieldDashboardReferenceValue
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "number":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["value"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property value is missing", tag.Value)
+		}
+		var variant NumberDashboardReferenceValue
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "text":
+		if _, ok := fields["kind"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property kind is missing", tag.Value)
+		}
+		if _, ok := fields["value"]; !ok {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: required property value is missing", tag.Value)
+		}
+		var variant TextDashboardReferenceValue
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode DashboardReferenceValue variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown DashboardReferenceValue discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type DashboardReferenceValueVisitor interface {
+	VisitFieldDashboardReferenceValue(*FieldDashboardReferenceValue) error
+	VisitNumberDashboardReferenceValue(*NumberDashboardReferenceValue) error
+	VisitTextDashboardReferenceValue(*TextDashboardReferenceValue) error
+}
+
+func (value *DashboardReferenceValue) Visit(visitor DashboardReferenceValueVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil DashboardReferenceValue")
+	}
+	if visitor == nil {
+		return fmt.Errorf("DashboardReferenceValue visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *FieldDashboardReferenceValue:
+		if variant == nil {
+			return fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return visitor.VisitFieldDashboardReferenceValue(variant)
+	case *NumberDashboardReferenceValue:
+		if variant == nil {
+			return fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return visitor.VisitNumberDashboardReferenceValue(variant)
+	case *TextDashboardReferenceValue:
+		if variant == nil {
+			return fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return visitor.VisitTextDashboardReferenceValue(variant)
+	case nil:
+		return fmt.Errorf("DashboardReferenceValue variant is required")
+	default:
+		return fmt.Errorf("unsupported DashboardReferenceValue variant %T", variant)
+	}
+}
+
+func (value *DashboardReferenceValue) Kind() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil DashboardReferenceValue")
+	}
+	switch variant := value.Value.(type) {
+	case *FieldDashboardReferenceValue:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return "field", nil
+	case *NumberDashboardReferenceValue:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return "number", nil
+	case *TextDashboardReferenceValue:
+		if variant == nil {
+			return "", fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return "text", nil
+	case nil:
+		return "", fmt.Errorf("DashboardReferenceValue variant is required")
+	default:
+		return "", fmt.Errorf("unsupported DashboardReferenceValue variant %T", variant)
+	}
+}
+
+func (value *DashboardReferenceValue) Base() (*DashboardReferenceValueBase, error) {
+	if value == nil {
+		return nil, fmt.Errorf("cannot inspect nil DashboardReferenceValue")
+	}
+	switch variant := value.Value.(type) {
+	case *FieldDashboardReferenceValue:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return &variant.DashboardReferenceValueBase, nil
+	case *NumberDashboardReferenceValue:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return &variant.DashboardReferenceValueBase, nil
+	case *TextDashboardReferenceValue:
+		if variant == nil {
+			return nil, fmt.Errorf("DashboardReferenceValue variant is nil")
+		}
+		return &variant.DashboardReferenceValueBase, nil
+	case nil:
+		return nil, fmt.Errorf("DashboardReferenceValue variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported DashboardReferenceValue variant %T", variant)
+	}
+}
+
+type DashboardReferenceValueBase struct {
+	Kind string `json:"kind" yaml:"kind"`
 }
 
 type DashboardRelativeAnchor string
@@ -3595,6 +3835,13 @@ type DistributionDashboardQuery struct {
 	Limit         *int32                             `json:"limit,omitempty" yaml:"limit,omitempty"`
 }
 
+type FieldDashboardReferenceValue struct {
+	DashboardReferenceValueBase
+	Kind    string                                        `json:"kind" yaml:"kind"`
+	Field   string                                        `json:"field" yaml:"field"`
+	Reducer visualizationir.VisualizationReferenceReducer `json:"reducer" yaml:"reducer"`
+}
+
 type FilterDashboardPageComponent struct {
 	DashboardPageComponentBase
 	Type   string `json:"type" yaml:"type"`
@@ -3682,6 +3929,12 @@ type NullCheckDashboardFilterExpression struct {
 	Operator DashboardFilterOperator `json:"operator" yaml:"operator"`
 }
 
+type NumberDashboardReferenceValue struct {
+	DashboardReferenceValueBase
+	Kind  string  `json:"kind" yaml:"kind"`
+	Value float64 `json:"value" yaml:"value"`
+}
+
 type NumericRangeDashboardFilterControl struct {
 	DashboardFilterControlBase
 	Type string `json:"type" yaml:"type"`
@@ -3714,21 +3967,25 @@ type PointDashboardOverplot struct {
 
 type PointDashboardPresentation struct {
 	DashboardPresentationBase
-	Type       string                                            `json:"type" yaml:"type"`
-	Legend     *DashboardLegendPosition                          `json:"legend,omitempty" yaml:"legend,omitempty"`
-	Labels     *DashboardLabelPolicy                             `json:"labels,omitempty" yaml:"labels,omitempty"`
-	Identity   []string                                          `json:"identity" yaml:"identity"`
-	X          string                                            `json:"x" yaml:"x"`
-	Y          string                                            `json:"y" yaml:"y"`
-	Size       *string                                           `json:"size,omitempty" yaml:"size,omitempty"`
-	Color      *string                                           `json:"color,omitempty" yaml:"color,omitempty"`
-	Series     *string                                           `json:"series,omitempty" yaml:"series,omitempty"`
-	Label      *string                                           `json:"label,omitempty" yaml:"label,omitempty"`
-	Tooltip    *[]string                                         `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
-	ColorScale *PointDashboardColorScale                         `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
-	SizeScale  *PointDashboardSizeScale                          `json:"sizeScale,omitempty" yaml:"sizeScale,omitempty"`
-	Overplot   *PointDashboardOverplot                           `json:"overplot,omitempty" yaml:"overplot,omitempty"`
-	Brush      *[]visualizationir.VisualizationPointBrushGesture `json:"brush,omitempty" yaml:"brush,omitempty"`
+	Type             string                                            `json:"type" yaml:"type"`
+	Legend           *DashboardLegendPosition                          `json:"legend,omitempty" yaml:"legend,omitempty"`
+	Labels           *DashboardLabelPolicy                             `json:"labels,omitempty" yaml:"labels,omitempty"`
+	Identity         []string                                          `json:"identity" yaml:"identity"`
+	X                string                                            `json:"x" yaml:"x"`
+	Y                string                                            `json:"y" yaml:"y"`
+	Size             *string                                           `json:"size,omitempty" yaml:"size,omitempty"`
+	Color            *string                                           `json:"color,omitempty" yaml:"color,omitempty"`
+	Series           *string                                           `json:"series,omitempty" yaml:"series,omitempty"`
+	Label            *string                                           `json:"label,omitempty" yaml:"label,omitempty"`
+	Tooltip          *[]string                                         `json:"tooltip,omitempty" yaml:"tooltip,omitempty"`
+	ColorScale       *PointDashboardColorScale                         `json:"colorScale,omitempty" yaml:"colorScale,omitempty"`
+	SizeScale        *PointDashboardSizeScale                          `json:"sizeScale,omitempty" yaml:"sizeScale,omitempty"`
+	Overplot         *PointDashboardOverplot                           `json:"overplot,omitempty" yaml:"overplot,omitempty"`
+	Brush            *[]visualizationir.VisualizationPointBrushGesture `json:"brush,omitempty" yaml:"brush,omitempty"`
+	Axes             *[]DashboardAxisConfiguration                     `json:"axes,omitempty" yaml:"axes,omitempty"`
+	ReferenceLines   *[]DashboardReferenceLine                         `json:"referenceLines,omitempty" yaml:"referenceLines,omitempty"`
+	ReferenceBands   *[]DashboardReferenceBand                         `json:"referenceBands,omitempty" yaml:"referenceBands,omitempty"`
+	EventAnnotations *[]DashboardEventAnnotation                       `json:"eventAnnotations,omitempty" yaml:"eventAnnotations,omitempty"`
 }
 
 type PointDashboardSizeScale struct {
@@ -3857,6 +4114,12 @@ type TableDashboardPresentation struct {
 type TextDashboardFilterControl struct {
 	DashboardFilterControlBase
 	Type string `json:"type" yaml:"type"`
+}
+
+type TextDashboardReferenceValue struct {
+	DashboardReferenceValueBase
+	Kind  string `json:"kind" yaml:"kind"`
+	Value string `json:"value" yaml:"value"`
 }
 
 type TimestampDashboardFilterValue struct {

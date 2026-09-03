@@ -612,6 +612,70 @@ model DashboardConditionalFormat {
   rule: DashboardConditionalRule;
 }
 
+/** A renderer-neutral axis policy for Cartesian and point visuals. */
+model DashboardAxisConfiguration {
+  id: LeapViewVisualization.VisualizationCartesianAxis;
+  title?: string;
+  scale: LeapViewVisualization.VisualizationAxisScale;
+  zero: LeapViewVisualization.VisualizationAxisZeroPolicy;
+  minimum?: float64;
+  maximum?: float64;
+  unit?: string;
+  displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
+  tickDensity: LeapViewVisualization.VisualizationAxisTickDensity;
+}
+
+/** A scalar value used by a governed reference line, band, or annotation. */
+@discriminator("kind")
+model DashboardReferenceValue {
+  kind: string;
+}
+
+model NumberDashboardReferenceValue extends DashboardReferenceValue {
+  kind: "number";
+  value: float64;
+}
+
+model TextDashboardReferenceValue extends DashboardReferenceValue {
+  kind: "text";
+  value: string;
+}
+
+model FieldDashboardReferenceValue extends DashboardReferenceValue {
+  kind: "field";
+  field: DashboardResultField;
+  reducer: LeapViewVisualization.VisualizationReferenceReducer;
+}
+
+/** A governed horizontal or numeric reference marker. */
+model DashboardReferenceLine {
+  id: DashboardObjectIdentifier;
+  axis: LeapViewVisualization.VisualizationCartesianAxis;
+  value: DashboardReferenceValue;
+  label?: string;
+  tone: LeapViewVisualization.VisualizationTone;
+}
+
+/** A governed interval between two horizontal or numeric reference values. */
+model DashboardReferenceBand {
+  id: DashboardObjectIdentifier;
+  axis: LeapViewVisualization.VisualizationCartesianAxis;
+  from: DashboardReferenceValue;
+  to: DashboardReferenceValue;
+  label?: string;
+  tone: LeapViewVisualization.VisualizationTone;
+}
+
+/** A governed event marker, restricted to the visual's horizontal axis. */
+model DashboardEventAnnotation {
+  id: DashboardObjectIdentifier;
+  axis: LeapViewVisualization.VisualizationCartesianAxis;
+  value: DashboardReferenceValue;
+  label: string;
+  description?: string;
+  tone: LeapViewVisualization.VisualizationTone;
+}
+
 /** Renderer-neutral presentation policies; renderer options are intentionally absent. */
 @discriminator("type")
 model DashboardPresentation {
@@ -635,6 +699,10 @@ model CartesianDashboardPresentation extends DashboardPresentation {
   displayUnits?: LeapViewVisualization.VisualizationDisplayUnits;
   /** Explicit per-measure marks and axis assignments for combo visuals. */
   series?: DashboardComboSeries[];
+  axes?: DashboardAxisConfiguration[];
+  referenceLines?: DashboardReferenceLine[];
+  referenceBands?: DashboardReferenceBand[];
+  eventAnnotations?: DashboardEventAnnotation[];
 }
 
 /** A governed result-frame binding used by a point/scatter visual. */
@@ -678,6 +746,10 @@ model PointDashboardPresentation extends DashboardPresentation {
   sizeScale?: PointDashboardSizeScale;
   overplot?: PointDashboardOverplot;
   brush?: LeapViewVisualization.VisualizationPointBrushGesture[];
+  axes?: DashboardAxisConfiguration[];
+  referenceLines?: DashboardReferenceLine[];
+  referenceBands?: DashboardReferenceBand[];
+  eventAnnotations?: DashboardEventAnnotation[];
 }
 
 model ProportionalDashboardPresentation extends DashboardPresentation {

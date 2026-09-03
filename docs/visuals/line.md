@@ -162,6 +162,43 @@ visuals:
         fallback: Current target is unavailable.
     presentation:
       type: cartesian
+      axes:
+      - id: primary_y
+        title: Revenue
+        scale: linear
+        zero: exclude
+        displayUnits: millions
+        tickDensity: dense
+      referenceLines:
+      - id: target
+        axis: primary_y
+        value:
+          kind: number
+          value: 1000000
+        label: Target
+        tone: success
+      referenceBands:
+      - id: observed_range
+        axis: primary_y
+        from:
+          kind: field
+          field: revenue
+          reducer: minimum
+        to:
+          kind: field
+          field: revenue
+          reducer: maximum
+        label: Observed range
+        tone: neutral
+      eventAnnotations:
+      - id: fiscal_year
+        axis: x
+        value:
+          kind: text
+          value: "2025-01-01"
+        label: Fiscal year
+        description: Start of fiscal year
+        tone: ink
     query:
       type: aggregate
       dimensions:
