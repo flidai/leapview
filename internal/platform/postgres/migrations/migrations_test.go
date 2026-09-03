@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 6 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() {
+	if len(recorder.sqls) != 8 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -158,6 +158,39 @@ func TestIdentityLedgerMigrationHasCompositeIdentity(t *testing.T) {
 	}
 }
 
+func TestActivationTransitionJournalMigrationIsImmutableAndFenced(t *testing.T) {
+	sql := ActivationTransitionJournalSQL()
+	for _, marker := range []string{
+		"project.identity_activation_transition",
+		"PRIMARY KEY (instance_id, transition_id)",
+		"candidate_id",
+		"bundle_id",
+		"expected_bundle_id",
+		"authored_resources_json",
+		"graph_digest",
+		"identity_pending",
+		"identity_active",
+		"delivery_active",
+		"identity_activation_transition_guard",
+		"activation transition parameters and evidence are immutable",
+		"completed activation transition is immutable",
+		"activation transition phase must move forward",
+		"identity_activation_transition_no_delete",
+		"identity_activation_transition_cutover_owner_idx",
+		"identity_activation_transition_publish_bundle_idx",
+		"BEFORE TRUNCATE",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("activation transition journal migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{"gen_random_uuid", "uuid_generate", "resource_uid"} {
+		if strings.Contains(strings.ToLower(sql), forbidden) {
+			t.Errorf("activation transition journal introduces forbidden surrogate identity %q", forbidden)
+		}
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -168,6 +201,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		ContractPublicationRevision: {
 			revision: ContractPublicationRevision, migrationID: ContractPublicationMigrationID, checksum: ContractPublicationChecksum(),
+		},
+		ActivationTransitionJournalRevision: {
+			revision: ActivationTransitionJournalRevision, migrationID: ActivationTransitionJournalMigrationID, checksum: ActivationTransitionJournalChecksum(),
 		},
 	}
 }

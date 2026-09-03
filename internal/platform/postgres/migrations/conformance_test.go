@@ -92,16 +92,23 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != ContractPublicationRevision {
 		t.Fatalf("contract publication schema revision = %d, want %d", revision, ContractPublicationRevision)
 	}
-	var canUpdateAudit, canUpdateRevision, canUpdatePublication bool
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, ActivationTransitionJournalMigrationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != ActivationTransitionJournalRevision {
+		t.Fatalf("activation transition schema revision = %d, want %d", revision, ActivationTransitionJournalRevision)
+	}
+	var canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'UPDATE'),
-		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'UPDATE')`).
-		Scan(&canUpdateAudit, &canUpdateRevision, &canUpdatePublication); err != nil {
+		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'project.identity_activation_transition', 'DELETE')`).
+		Scan(&canUpdateAudit, &canUpdateRevision, &canUpdatePublication, &canDeleteTransition); err != nil {
 		t.Fatal(err)
 	}
-	if canUpdateAudit || canUpdateRevision || canUpdatePublication {
-		t.Fatalf("runtime mutation grants leaked: audit update=%t revision update=%t contract publication update=%t", canUpdateAudit, canUpdateRevision, canUpdatePublication)
+	if canUpdateAudit || canUpdateRevision || canUpdatePublication || canDeleteTransition {
+		t.Fatalf("runtime mutation grants leaked: audit update=%t revision update=%t contract publication update=%t transition delete=%t", canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition)
 	}
 	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, BaselineRevision); err == nil {
 		t.Fatal("schema revision append-only trigger did not reject an update")

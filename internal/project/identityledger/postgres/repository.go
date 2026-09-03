@@ -387,6 +387,27 @@ func activeBundle(ctx context.Context, tx pgx.Tx, instanceID string, lock bool) 
 	return bundleID, nil
 }
 
+// ActiveBundle returns the currently active authored-resource bundle for an
+// instance. An empty result means no bundle has been activated yet.
+func (r *Repository) ActiveBundle(ctx context.Context, instanceID string) (string, error) {
+	if err := validateInstanceToken(instanceID, "instance id"); err != nil {
+		return "", err
+	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return "", fmt.Errorf("begin active identity bundle read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	bundleID, err := activeBundle(ctx, tx, instanceID, false)
+	if err != nil {
+		return "", err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return "", fmt.Errorf("commit active identity bundle read: %w", err)
+	}
+	return bundleID, nil
+}
+
 func loadIdentities(ctx context.Context, tx pgx.Tx, instanceID string, lock bool) (map[projectgraph.ResourceID]identityledger.Identity, error) {
 	query := `SELECT authored_id,resource_kind,lifecycle_state,COALESCE(active_bundle_id,''),tombstone_reason,
 		created_at,updated_at,tombstoned_at,restored_at
@@ -448,6 +469,37 @@ func bundleResources(ctx context.Context, tx pgx.Tx, instanceID, bundleID string
 		}
 	}
 	return resources, nil
+}
+
+// BundleResources returns the exact immutable authored-resource membership of
+// a historical bundle for rollback evidence and durable replay.
+func (r *Repository) BundleResources(ctx context.Context, instanceID, bundleID string) ([]identityledger.Resource, error) {
+	if err := validateInstanceToken(instanceID, "instance id"); err != nil {
+		return nil, err
+	}
+	if err := validateInstanceToken(bundleID, "bundle id"); err != nil {
+		return nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return nil, fmt.Errorf("begin historical identity bundle read: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	resources, err := bundleResources(ctx, tx, instanceID, bundleID)
+	if err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, fmt.Errorf("commit historical identity bundle read: %w", err)
+	}
+	return resources, nil
+}
+
+func validateInstanceToken(value, label string) error {
+	if value == "" || value != strings.TrimSpace(value) || len(value) > 255 {
+		return fmt.Errorf("%w: %s", identityledger.ErrInvalidInput, label)
+	}
+	return nil
 }
 
 func switchActiveBundle(ctx context.Context, tx pgx.Tx, instanceID, prior, next string) error {

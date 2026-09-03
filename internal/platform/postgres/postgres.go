@@ -128,6 +128,30 @@ func (p *Pool) AcquireFunc(ctx context.Context, fn func(*pgxpool.Conn) error) er
 	return fn(conn)
 }
 
+// Begin starts a transaction on the bounded pool. The acquisition itself is
+// subject to the pool's configured deadline; transaction statements continue
+// to use the contexts supplied by the capability that owns the transaction.
+func (p *Pool) Begin(ctx context.Context) (pgx.Tx, error) {
+	return p.BeginTx(ctx, pgx.TxOptions{})
+}
+
+// BeginTx starts a transaction without exposing the native pool. Capability
+// repositories retain transaction ownership and must commit or roll it back.
+func (p *Pool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
+	if p == nil || p.pool == nil {
+		return nil, errors.New("postgres pool is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if p.acquireTimeout <= 0 {
+		return p.pool.BeginTx(ctx, options)
+	}
+	acquireCtx, cancel := context.WithTimeout(ctx, p.acquireTimeout)
+	defer cancel()
+	return p.pool.BeginTx(acquireCtx, options)
+}
+
 // Exec executes one statement using a bounded acquired connection. Transaction
 // callers should use Acquire or AcquireFunc so the transaction remains on one
 // connection while preserving the acquisition deadline.

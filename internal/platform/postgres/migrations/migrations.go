@@ -33,6 +33,9 @@ var identityLedgerSQL string
 //go:embed 003_contract_publication_evidence.sql
 var contractPublicationSQL string
 
+//go:embed 004_identity_activation_transition_journal.sql
+var activationTransitionJournalSQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -45,6 +48,12 @@ const IdentityLedgerMigrationID = "002_project_identity_ledger"
 const ContractPublicationRevision int64 = 3
 
 const ContractPublicationMigrationID = "003_contract_publication_evidence"
+
+// ActivationTransitionJournalRevision adds the PostgreSQL-owned FAI-617
+// activation transition journal.
+const ActivationTransitionJournalRevision int64 = 4
+
+const ActivationTransitionJournalMigrationID = "004_identity_activation_transition_journal"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -70,6 +79,13 @@ func ContractPublicationSQL() string { return contractPublicationSQL }
 
 func ContractPublicationChecksum() string {
 	sum := sha256.Sum256([]byte(contractPublicationSQL))
+	return hex.EncodeToString(sum[:])
+}
+
+func ActivationTransitionJournalSQL() string { return activationTransitionJournalSQL }
+
+func ActivationTransitionJournalChecksum() string {
+	sum := sha256.Sum256([]byte(activationTransitionJournalSQL))
 	return hex.EncodeToString(sum[:])
 }
 
@@ -101,6 +117,7 @@ func Apply(ctx context.Context, tx Tx) error {
 		{BaselineRevision, BaselineMigrationID, baselineSQL, BaselineChecksum()},
 		{IdentityLedgerRevision, IdentityLedgerMigrationID, identityLedgerSQL, IdentityLedgerChecksum()},
 		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
+		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, activationTransitionJournalSQL, ActivationTransitionJournalChecksum()},
 	}
 	for _, migration := range migrations {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {
