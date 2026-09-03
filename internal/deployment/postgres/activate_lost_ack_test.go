@@ -23,8 +23,10 @@ var errActivateCommitLostAck = errors.New("injected activation commit acknowledg
 // append duplicate event/audit rows.
 func TestPostgresActivateReplaysAfterCommitLostAcknowledgement(t *testing.T) {
 	p := deliveryTestDB(t)
-	r := NewWithActivationAudit(p, testActivationAudit{audit: accesspostgres.New()})
+	lineage := &testActivationLineage{}
+	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	input, ids := prepareLostAckActivation(t, r)
+	lineage.expected = ActivationLineageInput{TargetID: ids.target, ProjectID: "project_lost_ack", GenerationID: ids.generation}
 
 	// Setup uses the real pool so its commits are ordinary. Swap only the
 	// activation database handle after setup; the wrapper preserves every

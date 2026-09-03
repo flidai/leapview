@@ -513,11 +513,27 @@ type ActivationAuditPort interface {
 	GetActivationAudit(context.Context, Tx, ActivationAuditInput) (AuditEvent, error)
 }
 
-// Options wires deployment's transactional side effects. The audit port is
-// required by activation; other delivery operations remain usable without
-// one for isolated persistence tests.
+// ActivationLineageInput is the canonical delivery identity used to verify
+// the immutable compiler lineage projection before activation. TargetID is
+// the delivery target (never a build-operation or commit-marker ID).
+type ActivationLineageInput struct {
+	TargetID, ProjectID, GenerationID string
+}
+
+// ActivationLineageVerifier is the narrow composition seam for activation's
+// immutable lineage evidence. Implementations must read through the supplied
+// caller-owned transaction and return an error when the exact target/project/
+// generation binding is absent or does not verify.
+type ActivationLineageVerifier interface {
+	VerifyActivationLineage(context.Context, Tx, ActivationLineageInput) error
+}
+
+// Options wires deployment's transactional side effects. The audit and
+// lineage ports are required by activation; other delivery operations remain
+// usable without them for isolated persistence tests.
 type Options struct {
 	ActivationAudit ActivationAuditPort
+	Lineage         ActivationLineageVerifier
 	// Events is the exact canonical repository used to append and read
 	// activation event evidence. The repository constructs its concrete
 	// Watermill boundary over this authority.
@@ -554,6 +570,7 @@ type ActivationResult struct {
 type Repository struct {
 	db               DBTX
 	audit            ActivationAuditPort
+	lineage          ActivationLineageVerifier
 	events           *eventspostgres.Repository
 	activationEvents *eventswatermill.Adapter
 }
@@ -582,15 +599,10 @@ func New(db DBTX) *Repository { return newRepository(db, Options{}) }
 func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
 // NewWithOptions constructs a delivery repository with its composition-owned
-// activation audit adapter. A nil adapter is allowed for read/build-only
-// repository use, but Activate/ActivateTx fail closed when it is absent.
+// activation authorities. Missing authorities are allowed for read/build-only
+// repository use, but Activate/ActivateTx fail closed when either is absent.
 func NewWithOptions(db DBTX, options Options) *Repository {
 	return newRepository(db, options)
-}
-
-// NewWithActivationAudit is a concise constructor for composition packages.
-func NewWithActivationAudit(db DBTX, audit ActivationAuditPort) *Repository {
-	return newRepository(db, Options{ActivationAudit: audit})
 }
 
 func newRepository(db DBTX, options Options) *Repository {
@@ -602,7 +614,7 @@ func newRepository(db DBTX, options Options) *Repository {
 		events = eventspostgres.New()
 	}
 	activationEvents, _ := eventswatermill.New(events)
-	return &Repository{db: db, audit: options.ActivationAudit, events: events, activationEvents: activationEvents}
+	return &Repository{db: db, audit: options.ActivationAudit, lineage: options.Lineage, events: events, activationEvents: activationEvents}
 }
 
 // DB exposes the configured native PostgreSQL handle to composition-owned
@@ -3569,6 +3581,9 @@ func (r *Repository) Activate(ctx context.Context, in ActivationInput) (Activati
 	if r == nil || r.audit == nil {
 		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
 	}
+	if r.lineage == nil {
+		return ActivationResult{}, fmt.Errorf("%w: activation lineage verifier is required", ErrInvalid)
+	}
 	tx, err := r.begin(ctx)
 	if err != nil {
 		return ActivationResult{}, err
@@ -3619,6 +3634,9 @@ func (r *Repository) ActivateTxWithPreCommitHook(ctx context.Context, tx Tx, in 
 func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, beforeCommit ActivationPreCommitHook) (ActivationResult, error) {
 	if r == nil || r.audit == nil {
 		return ActivationResult{}, fmt.Errorf("%w: activation audit port is required", ErrInvalid)
+	}
+	if r.lineage == nil {
+		return ActivationResult{}, fmt.Errorf("%w: activation lineage verifier is required", ErrInvalid)
 	}
 	if !r.EventCapable() {
 		return ActivationResult{}, fmt.Errorf("%w: activation event boundary is required", ErrInvalid)
@@ -3693,6 +3711,9 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		if err != nil {
 			return ActivationResult{}, err
 		}
+		if err := r.verifyActivationLineage(ctx, tx, pointer.TargetID, pointer.ProjectID, p.GenerationID); err != nil {
+			return ActivationResult{}, err
+		}
 		event, audit, err := r.loadActivationEvidence(ctx, tx, p, actor, in.CorrelationID, pid)
 		if err != nil {
 			return ActivationResult{}, err
@@ -3732,6 +3753,13 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		return ActivationResult{}, ErrNotFound
 	}
 	if err != nil {
+		return ActivationResult{}, err
+	}
+	targetRecord, err := loadTarget(ctx, tx, target)
+	if err != nil {
+		return ActivationResult{}, err
+	}
+	if err := r.verifyActivationLineage(ctx, tx, targetRecord.TargetID, targetRecord.ProjectID, p.GenerationID); err != nil {
 		return ActivationResult{}, err
 	}
 	currentRev, currentGeneration := tr.TargetRevision, tr.ActiveGenerationID
@@ -3886,6 +3914,26 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		return ActivationResult{}, err
 	}
 	return ActivationResult{Publication: p, Pointer: pointer, Event: event, Audit: audit}, nil
+}
+
+func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetID, projectID, generationID string) error {
+	if r == nil || r.lineage == nil {
+		return fmt.Errorf("%w: activation lineage verifier is required", ErrInvalid)
+	}
+	if targetID == "" || projectID == "" || generationID == "" {
+		return fmt.Errorf("%w: activation lineage identity is incomplete", ErrConflict)
+	}
+	if err := r.lineage.VerifyActivationLineage(contextOrBackground(ctx), tx, ActivationLineageInput{TargetID: targetID, ProjectID: projectID, GenerationID: generationID}); err != nil {
+		// Integrity or identity failures mean this generation is not eligible
+		// for activation. Operational failures (for example cancellation or a
+		// database outage) must remain retryable rather than being flattened
+		// into a durable qualification conflict.
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) || errors.Is(err, ErrInvalid) || errors.Is(err, ErrNotQualified) {
+			return fmt.Errorf("%w: activation lineage verification: %w", ErrNotQualified, err)
+		}
+		return fmt.Errorf("activation lineage verification: %w", err)
+	}
+	return nil
 }
 
 // DeliveryResultError is a tiny helper used to keep stale-fence branches

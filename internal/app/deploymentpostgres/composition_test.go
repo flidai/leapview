@@ -8,6 +8,7 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentpostgresql "github.com/flidai/leapview/internal/deployment/postgres"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	jobspostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
@@ -27,9 +28,14 @@ func (deploymentPostgresDBStub) QueryRow(context.Context, string, ...any) pgx.Ro
 func (deploymentPostgresDBStub) Begin(context.Context) (pgx.Tx, error)            { return nil, nil }
 
 func deploymentPostgresAuthorities() Authorities {
+	lineage, err := NewActivationLineageVerifier(lineagepostgres.New(deploymentPostgresDBStub{}))
+	if err != nil {
+		panic(err)
+	}
 	return Authorities{
 		Access: accesspostgres.New(), Events: eventspostgres.New(),
 		Jobs: jobspostgres.NewRepository(nil), Operations: operationpostgres.New(nil),
+		Lineage:           lineage,
 		ApprovalAuthorize: deploymentpostgresql.ApprovalAuthorizerFunc(func(context.Context, deploymentpostgresql.ApprovalAuthorizationInput) error { return nil }),
 	}
 }
@@ -62,6 +68,7 @@ func TestNewPersistenceRejectsMissingAuthority(t *testing.T) {
 		{name: "event", edit: func(a *Authorities) { a.Events = nil }},
 		{name: "jobs", edit: func(a *Authorities) { a.Jobs = nil }},
 		{name: "operation", edit: func(a *Authorities) { a.Operations = nil }},
+		{name: "lineage", edit: func(a *Authorities) { a.Lineage = nil }},
 		{name: "approval", edit: func(a *Authorities) { a.ApprovalAuthorize = nil }},
 	}
 	for _, tc := range cases {

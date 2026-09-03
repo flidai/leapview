@@ -28,6 +28,9 @@ type Authorities struct {
 	Events     *eventspostgres.Repository
 	Jobs       *jobspostgres.Repository
 	Operations *operationpostgres.Repository
+	// Lineage is the immutable project-graph binding verifier used by
+	// activation. It must read through the caller-owned deployment transaction.
+	Lineage deploymentpostgresql.ActivationLineageVerifier
 	// ApprovalAuthorize is the access-owned, fail-closed authorization seam
 	// for publication approval requests and decisions. It is deliberately
 	// separate from the audit repository so a missing RBAC projection cannot
@@ -55,10 +58,13 @@ func NewPersistence(control deploymentpostgresql.DBTX, authorities Authorities) 
 	if authorities.Operations == nil {
 		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL operation authority is required")
 	}
+	if authorities.Lineage == nil {
+		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL lineage verifier is required")
+	}
 
 	activationAudit := deploymentaudit.NewWithRepository(authorities.Access)
 	repository := deploymentpostgresql.NewWithOptions(control, deploymentpostgresql.Options{
-		ActivationAudit: activationAudit, Events: authorities.Events,
+		ActivationAudit: activationAudit, Events: authorities.Events, Lineage: authorities.Lineage,
 	})
 	if authorities.ApprovalAuthorize == nil {
 		return deploymentmodule.Persistence{}, errors.New("deployment PostgreSQL approval authorizer is required")

@@ -234,6 +234,11 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	physicalPool := physicalpoolpostgres.New(runtime)
 	duckLakeControlLedger := ducklakepostgres.New(runtime)
 	servingState := servingstatepostgres.New(runtime)
+	lineageRepository := lineagepostgres.New(runtime)
+	lineageVerifier, err := deploymentcomposition.NewActivationLineageVerifier(lineageRepository)
+	if err != nil {
+		return nil, fmt.Errorf("construct PostgreSQL activation lineage verifier: %w", err)
+	}
 	refresh := refreshpostgres.New(runtime)
 	refreshJobs := refreshmodule.NewPostgresJobsAdapter(jobs, refresh)
 	refreshCancelAudit, err := refreshcomposition.NewPostgresCancelAuditWriterAdapter(audit)
@@ -248,7 +253,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		return nil, fmt.Errorf("construct PostgreSQL approval authorizer: %w", err)
 	}
 	deploymentPersistence, err := deploymentcomposition.NewPersistence(runtime, deploymentcomposition.Authorities{
-		Access: audit, Events: events, Jobs: jobs, Operations: operations, ApprovalAuthorize: approvalAuthorizer,
+		Access: audit, Events: events, Jobs: jobs, Operations: operations, Lineage: lineageVerifier, ApprovalAuthorize: approvalAuthorizer,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("construct PostgreSQL deployment authority: %w", err)
@@ -386,7 +391,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
 		Idempotency:   idempotencypostgres.NewStoreFromRepository(operations),
 		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorSigningMaintenance,
-		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Cache: cachepostgres.New(runtime), CacheMaintenance: cacheMaintenance, Lineage: lineagepostgres.New(runtime),
+		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Cache: cachepostgres.New(runtime), CacheMaintenance: cacheMaintenance, Lineage: lineageRepository,
 		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,

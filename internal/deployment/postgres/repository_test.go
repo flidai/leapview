@@ -54,6 +54,30 @@ type testActivationAudit struct {
 	audit *accesspostgres.AuditRepository
 }
 
+// testActivationLineage is a strict injected verifier for activation tests.
+// It records the canonical target/project/generation tuple and can emulate a
+// missing or mismatched immutable lineage projection without touching the
+// deployment rows directly.
+type testActivationLineage struct {
+	expected ActivationLineageInput
+	err      error
+	calls    int
+}
+
+func (v *testActivationLineage) VerifyActivationLineage(_ context.Context, tx Tx, input ActivationLineageInput) error {
+	if v == nil || tx == nil {
+		return ErrInvalid
+	}
+	v.calls++
+	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" {
+		return fmt.Errorf("%w: incomplete activation lineage identity", ErrConflict)
+	}
+	if v.expected != (ActivationLineageInput{}) && input != v.expected {
+		return fmt.Errorf("%w: activation lineage identity differs", ErrConflict)
+	}
+	return v.err
+}
+
 func (a testActivationAudit) AppendActivationAudit(ctx context.Context, tx Tx, input ActivationAuditInput) (AuditEvent, error) {
 	intent, err := testAuditIntent(input)
 	if err != nil {
@@ -154,7 +178,6 @@ func deliveryTestDB(t *testing.T) *pgxpool.Pool {
 
 func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	p := deliveryTestDB(t)
-	r := NewWithActivationAudit(p, testActivationAudit{audit: accesspostgres.New()})
 	ctx := context.Background()
 	ids := map[string]string{
 		"plan": "0198f2c0-7c7a-7f00-8a11-000000000001", "candidate": "0198f2c0-7c7a-7f00-8a11-000000000002",
@@ -162,6 +185,8 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 		"generation": "0198f2c0-7c7a-7f00-8a11-000000000005", "publication": "0198f2c0-7c7a-7f00-8a11-000000000006",
 		"lease": "0198f2c0-7c7a-7f00-8a11-000000000007",
 	}
+	lineage := &testActivationLineage{expected: ActivationLineageInput{TargetID: "target_sales_prod", ProjectID: "project_sales", GenerationID: ids["generation"]}}
+	r := NewWithOptions(p, Options{ActivationAudit: testActivationAudit{audit: accesspostgres.New()}, Lineage: lineage})
 	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_sales_prod", ProjectID: "project_sales", Environment: "prod"}); err != nil {
 		t.Fatal(err)
 	}
@@ -237,6 +262,32 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	input := ActivationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], ExpectedTargetRevision: 1, RequestDigest: testDigest('4'), ActorID: "operator", LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}
+	beforeLineageFailure, err := r.Target(ctx, "target_sales_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, test := range []struct {
+		name string
+		err  error
+	}{
+		{name: "missing binding", err: ErrNotFound},
+		{name: "mismatched binding", err: ErrConflict},
+	} {
+		t.Run("lineage "+test.name, func(t *testing.T) {
+			lineage.err = test.err
+			if _, err := r.Activate(ctx, input); err == nil {
+				t.Fatal("activation unexpectedly succeeded without exact lineage binding")
+			}
+			after, readErr := r.Target(ctx, "target_sales_prod")
+			if readErr != nil {
+				t.Fatal(readErr)
+			}
+			if after.TargetRevision != beforeLineageFailure.TargetRevision || after.ActiveGenerationID != beforeLineageFailure.ActiveGenerationID || after.ActivePublicationID != beforeLineageFailure.ActivePublicationID {
+				t.Fatalf("target mutated after lineage failure: before=%#v after=%#v", beforeLineageFailure, after)
+			}
+		})
+	}
+	lineage.err = nil
 	first, err := r.Activate(ctx, input)
 	if err != nil {
 		t.Fatal(err)
@@ -244,6 +295,31 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if first.Replay || first.Pointer.ActiveGenerationID != ids["generation"] || first.Publication.ResultTargetRevision != 2 {
 		t.Fatalf("unexpected activation result: %#v", first)
 	}
+	// Committed replays must still prove the immutable target/project/generation
+	// lineage before returning durable evidence. A failed proof cannot alter the
+	// already-committed target pointer.
+	committedReplayBefore, err := r.Target(ctx, "target_sales_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	lineage.err = ErrConflict
+	if _, err := r.Activate(ctx, input); !errors.Is(err, ErrNotQualified) || !errors.Is(err, ErrConflict) {
+		t.Fatalf("committed replay lineage failure = %v, want typed lineage error", err)
+	}
+	committedReplayAfter, err := r.Target(ctx, "target_sales_prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if committedReplayAfter.TargetRevision != committedReplayBefore.TargetRevision || committedReplayAfter.ActiveGenerationID != committedReplayBefore.ActiveGenerationID || committedReplayAfter.ActivePublicationID != committedReplayBefore.ActivePublicationID {
+		t.Fatalf("target mutated after committed replay lineage failure: before=%#v after=%#v", committedReplayBefore, committedReplayAfter)
+	}
+	lineage.err = nil
+	operationalLineageError := errors.New("lineage database unavailable")
+	lineage.err = operationalLineageError
+	if _, err := r.Activate(ctx, input); !errors.Is(err, operationalLineageError) || errors.Is(err, ErrNotQualified) {
+		t.Fatalf("committed replay operational lineage error = %v, want retryable cause without qualification classification", err)
+	}
+	lineage.err = nil
 	activeRootID := generationRootID(ids["publication"])
 	if candidateRoot, err := loadRetentionRoot(ctx, p, ids["candidate"]); err != nil || candidateRoot.State != "retiring" || candidateRoot.RetiredAt.IsZero() {
 		t.Fatalf("candidate root was not retired by activation: %#v, %v", candidateRoot, err)

@@ -133,6 +133,27 @@ type nativePGActivationAudit struct {
 	repo *accesspostgres.AuditRepository
 }
 
+// nativePGActivationLineage is a strict test-only verifier for the native
+// coordinator's activation transaction. It keeps the fixture independent of
+// application composition while enforcing the canonical target/project/
+// generation tuple at the repository boundary.
+type nativePGActivationLineage struct {
+	expected deploymentpostgres.ActivationLineageInput
+}
+
+func (v *nativePGActivationLineage) VerifyActivationLineage(_ context.Context, tx deploymentpostgres.Tx, input deploymentpostgres.ActivationLineageInput) error {
+	if v == nil || tx == nil {
+		return errors.New("activation lineage verifier requires a transaction")
+	}
+	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" {
+		return errors.New("activation lineage identity is incomplete")
+	}
+	if input != v.expected {
+		return errors.New("activation lineage identity mismatch")
+	}
+	return nil
+}
+
 func (p nativePGActivationAudit) AppendActivationAudit(ctx context.Context, tx deploymentpostgres.Tx, in deploymentpostgres.ActivationAuditInput) (deploymentpostgres.AuditEvent, error) {
 	stored, err := p.repo.RecordAuditEvent(ctx, tx, access.AuditIntent{EventID: in.EventID, DomainEventID: in.DomainEventID, ScopeID: in.ScopeID, ActorID: in.ActorID, Source: "deployment", Operation: "activate", Action: in.Action, ResourceKind: in.ResourceKind, ResourceID: in.ResourceID, Outcome: "success", RequestDigest: in.RequestDigest, CorrelationID: in.CorrelationID, AggregateKey: in.AggregateKey, AggregateSequence: in.AggregateSequence, MetadataJSON: string(in.Metadata)})
 	if err != nil {
@@ -187,13 +208,14 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 		t.Fatal(err)
 	}
 	accessAudit := accesspostgres.New()
-	repo := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: nativePGActivationAudit{repo: accessAudit}})
 	targetID := "target_native_" + strings.ReplaceAll(uuid.New().String()[:8], "-", "")
 	ids := make([]string, 7)
 	for i := range ids {
 		ids[i] = uuid.New().String()
 	}
 	planID, candidateID, attemptID, sealID, generationID := ids[0], ids[1], ids[2], ids[3], ids[4]
+	lineage := &nativePGActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: targetID, ProjectID: "project_sales", GenerationID: generationID}}
+	repo := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: nativePGActivationAudit{repo: accessAudit}, Lineage: lineage})
 	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 	ctx := t.Context()
 	if _, err := repo.CreateTarget(ctx, deploymentpostgres.TargetInput{TargetID: targetID, ProjectID: "project_sales", Environment: "prod"}); err != nil {

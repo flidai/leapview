@@ -34,6 +34,27 @@ import (
 
 type integrationAuditWriter struct{ fail bool }
 
+// integrationActivationLineage is a strict test-only verifier for the
+// deployment activation boundary. The production adapter is intentionally
+// not imported here so these refresh module integration fixtures exercise the
+// repository contract in isolation.
+type integrationActivationLineage struct {
+	expected deploymentpostgres.ActivationLineageInput
+}
+
+func (v *integrationActivationLineage) VerifyActivationLineage(_ context.Context, tx deploymentpostgres.Tx, input deploymentpostgres.ActivationLineageInput) error {
+	if v == nil || tx == nil {
+		return errors.New("activation lineage verifier requires a transaction")
+	}
+	if input.TargetID == "" || input.ProjectID == "" || input.GenerationID == "" {
+		return errors.New("activation lineage identity is incomplete")
+	}
+	if input != v.expected {
+		return errors.New("activation lineage identity mismatch")
+	}
+	return nil
+}
+
 func (w integrationAuditWriter) RecordRefreshCancelAuditTx(context.Context, refreshpostgres.Tx, access.AuditIntent) error {
 	if w.fail {
 		return errors.New("audit writer failure")
@@ -349,7 +370,8 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if deliveryPlan.ArtifactDigest == plan.ArtifactDigest {
 		t.Fatal("fixture must keep serving and source artifact digests distinct")
 	}
-	delivery := deploymentpostgres.NewWithActivationAudit(db, deploymentaudit.NewWithRepository(accesspostgres.New()))
+	lineage := &integrationActivationLineage{expected: deploymentpostgres.ActivationLineageInput{TargetID: "target_concrete_prod", ProjectID: "project_concrete", GenerationID: generationID}}
+	delivery := deploymentpostgres.NewWithOptions(db, deploymentpostgres.Options{ActivationAudit: deploymentaudit.NewWithRepository(accesspostgres.New()), Lineage: lineage})
 	basePublicationID := "0198f2c0-7c7a-7f00-8a11-000000000106"
 	basePublication, err := delivery.CreatePublication(t.Context(), deploymentpostgres.PublicationInput{PublicationID: basePublicationID, TargetID: "target_concrete_prod", GenerationID: generationID, CandidateID: "0198f2c0-7c7a-7f00-8a11-000000000102", SnapshotSealID: "0198f2c0-7c7a-7f00-8a11-000000000104", ExpectedTargetRevision: 1, ActorID: "operator-concrete", RequestDigest: digest('8')})
 	if err != nil {
@@ -374,6 +396,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lineage.expected.GenerationID = resultGenerationID
 	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: resultPublication.PublicationID, TargetID: resultPublication.TargetID, GenerationID: resultGenerationID, ExpectedTargetRevision: 2, RequestDigest: resultPublication.RequestDigest, ActorID: resultPublication.ActorID, LeaseID: resultLease.LeaseID, OwnerID: resultLease.OwnerID, FencingEpoch: resultLease.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000000114"}); err != nil {
 		t.Fatal(err)
 	}
@@ -465,6 +488,7 @@ func TestPostgresConcreteVerifierAndAuditUseExactEvidence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	lineage.expected.GenerationID = uncommittedGenerationID
 	if _, err := delivery.Activate(t.Context(), deploymentpostgres.ActivationInput{PublicationID: "0198f2c0-7c7a-7f00-8a11-000000000116", TargetID: "target_concrete_prod", GenerationID: uncommittedGenerationID, ExpectedTargetRevision: 3, RequestDigest: digest('0'), ActorID: "operator-concrete-3", LeaseID: lease3.LeaseID, OwnerID: lease3.OwnerID, FencingEpoch: lease3.FencingEpoch, CorrelationID: "0198f2c0-7c7a-7f00-8a11-000000000118"}); err != nil {
 		t.Fatal(err)
 	}
