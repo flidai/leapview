@@ -20,18 +20,9 @@ type LegacyPersistence interface {
 	ByID(context.Context, servingstate.ID) (servingstate.State, error)
 	MarkFailed(context.Context, servingstate.ID, error) error
 	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
-	ReferencedDuckLakeSnapshots(context.Context, string) ([]int64, error)
-	ActiveDuckLakeSnapshots(context.Context, string) ([]int64, error)
-	LeasedDuckLakeSnapshots(context.Context, string) ([]int64, error)
-	ForeignEnvironmentDuckLakeSnapshots(context.Context, string) ([]int64, error)
 	CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error)
 	ReleaseQuerySnapshotLease(context.Context, string) error
 	ExtendQuerySnapshotLease(context.Context, string, time.Time) error
-	ReleaseExpiredQuerySnapshotLeases(context.Context, string) error
-	ExpireInactiveServingStates(context.Context, string) error
-	ScheduleExpiredServingStateDeletion(context.Context, string) error
-	MarkDeleteScheduledServingStatesDeleted(context.Context, string) error
-	ReconcileRetention(context.Context, string, time.Time) error
 	SaveValidated(context.Context, servingstate.ID, servingstate.Validation, servingstate.Artifact) (servingstate.State, error)
 	Activate(context.Context, projectgraph.ResourceID, servingstate.Environment, servingstate.ID, servingstate.ID) (servingstate.State, error)
 	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
@@ -52,11 +43,6 @@ type NativePersistence interface {
 	CreateQuerySnapshotLease(context.Context, servingstate.SnapshotLeaseInput) (string, error)
 	ReleaseQuerySnapshotLease(context.Context, string) error
 	ExtendQuerySnapshotLease(context.Context, string, time.Time) error
-	ReleaseExpiredQuerySnapshotLeases(context.Context, string) error
-	ReferencedDuckLakeSnapshots(context.Context, string) ([]int64, error)
-	ActiveDuckLakeSnapshots(context.Context, string) ([]int64, error)
-	LeasedDuckLakeSnapshots(context.Context, string) ([]int64, error)
-	ForeignEnvironmentDuckLakeSnapshots(context.Context, string) ([]int64, error)
 	ActiveServingStateGraph(context.Context, projectgraph.ResourceID, string) (servingstate.AssetGraph, bool, error)
 	ServingStateGraph(context.Context, projectgraph.ResourceID, string, servingstate.ID) (servingstate.AssetGraph, bool, error)
 	AssetVersions(context.Context, projectgraph.ResourceID, string, projectgraph.ResourceID) ([]servingstate.AssetVersion, error)
@@ -197,46 +183,6 @@ func (m *Module) RecordDuckLakeSnapshot(c context.Context, id servingstate.ID, s
 	}
 	return r.RecordDuckLakeSnapshot(c, id, s)
 }
-func (m *Module) ReferencedDuckLakeSnapshots(c context.Context, e string) ([]int64, error) {
-	if m.native != nil {
-		return m.native.ReferencedDuckLakeSnapshots(c, e)
-	}
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return nil, x
-	}
-	return r.ReferencedDuckLakeSnapshots(c, e)
-}
-func (m *Module) ActiveDuckLakeSnapshots(c context.Context, e string) ([]int64, error) {
-	if m.native != nil {
-		return m.native.ActiveDuckLakeSnapshots(c, e)
-	}
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return nil, x
-	}
-	return r.ActiveDuckLakeSnapshots(c, e)
-}
-func (m *Module) LeasedDuckLakeSnapshots(c context.Context, e string) ([]int64, error) {
-	if m.native != nil {
-		return m.native.LeasedDuckLakeSnapshots(c, e)
-	}
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return nil, x
-	}
-	return r.LeasedDuckLakeSnapshots(c, e)
-}
-func (m *Module) ForeignEnvironmentDuckLakeSnapshots(c context.Context, e string) ([]int64, error) {
-	if m.native != nil {
-		return m.native.ForeignEnvironmentDuckLakeSnapshots(c, e)
-	}
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return nil, x
-	}
-	return r.ForeignEnvironmentDuckLakeSnapshots(c, e)
-}
 func (m *Module) CreateQuerySnapshotLease(c context.Context, i servingstate.SnapshotLeaseInput) (string, error) {
 	if m.native != nil {
 		return m.native.CreateQuerySnapshotLease(c, i)
@@ -266,44 +212,6 @@ func (m *Module) ExtendQuerySnapshotLease(c context.Context, id string, t time.T
 		return e
 	}
 	return r.ExtendQuerySnapshotLease(c, id, t)
-}
-func (m *Module) ReleaseExpiredQuerySnapshotLeases(c context.Context, e string) error {
-	if m.native != nil {
-		return m.native.ReleaseExpiredQuerySnapshotLeases(c, e)
-	}
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return x
-	}
-	return r.ReleaseExpiredQuerySnapshotLeases(c, e)
-}
-func (m *Module) ExpireInactiveServingStates(c context.Context, e string) error {
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return x
-	}
-	return r.ExpireInactiveServingStates(c, e)
-}
-func (m *Module) ScheduleExpiredServingStateDeletion(c context.Context, e string) error {
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return x
-	}
-	return r.ScheduleExpiredServingStateDeletion(c, e)
-}
-func (m *Module) MarkDeleteScheduledServingStatesDeleted(c context.Context, e string) error {
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return x
-	}
-	return r.MarkDeleteScheduledServingStatesDeleted(c, e)
-}
-func (m *Module) ReconcileRetention(c context.Context, e string, t time.Time) error {
-	r, x := m.legacyOrErr()
-	if x != nil {
-		return x
-	}
-	return r.ReconcileRetention(c, e, t)
 }
 func (m *Module) SaveValidated(c context.Context, id servingstate.ID, v servingstate.Validation, a servingstate.Artifact) (servingstate.State, error) {
 	r, e := m.legacyOrErr()
