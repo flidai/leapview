@@ -13,7 +13,7 @@ interface CreateDraftModel {
   title: string
 }
 
-type CatalogDashboard = CatalogPageSignal['dashboards'][number] & { featured?: boolean }
+type CatalogDashboard = CatalogPageSignal['dashboards'][number]
 type CatalogSort = 'recommended' | 'recent' | 'popular' | 'updated' | 'name'
 
 const catalogFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
@@ -629,7 +629,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private copyDashboardLink = async (dashboard: CatalogDashboard): Promise<void> => {
-    const href = new URL(dashboardViewHref(dashboard), window.location.origin).toString()
+    const href = new URL(dashboard.href, window.location.origin).toString()
     try {
       await navigator.clipboard.writeText(href)
       this.copyLinkMessage = 'Dashboard link copied'
