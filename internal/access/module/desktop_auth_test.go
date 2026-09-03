@@ -13,7 +13,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/desktopauth"
+	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/go-chi/chi/v5"
 )
@@ -309,22 +311,20 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 		t.Fatalf("open platform store: %v", err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	persistence, err := NewSQLitePersistence(t.Context(), SQLitePersistenceConfig{Database: store.SQLDB()})
-	if err != nil {
-		t.Fatalf("construct access persistence: %v", err)
-	}
-	module, err := Build(t.Context(), Config{
-		Persistence: &persistence,
-		InstanceID:  desktopTestInstanceID,
-		PublicURL:   "https://analytics.company.com",
-		Auth: AuthConfig{
-			DevBypass:    true,
-			CSRFKey:      "0123456789abcdef0123456789abcdef",
-			CookieSecure: true,
-		},
+	repository := accesssqlite.NewRepository(store.SQLDB())
+	auth := NewAuth(repository, AuthConfig{
+		DevBypass: true, CSRFKey: "0123456789abcdef0123456789abcdef", CookieSecure: true,
+	})
+	module, err := newSurface(surfaceConfig{
+		Repository: func() (access.Repository, error) { return repository, nil },
+		Auth:       auth,
 	})
 	if err != nil {
 		t.Fatalf("build access module: %v", err)
+	}
+	module.desktopAuth, err = desktopauth.New(repository, desktopauth.Config{InstanceID: desktopTestInstanceID})
+	if err != nil {
+		t.Fatalf("build desktop auth service: %v", err)
 	}
 	if err := module.SeedLocalDeveloperPlatformAdmin(t.Context()); err != nil {
 		t.Fatalf("seed development principal: %v", err)

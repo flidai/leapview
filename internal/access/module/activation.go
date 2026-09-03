@@ -5,18 +5,8 @@ import (
 	"errors"
 
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
-
-// ActivateDashboardPublicationPrincipal is the narrow local SQLite activation
-// port retained for the development/evaluation composition. Native production
-// composition uses ActivateDashboardPublicationThroughPersistence instead,
-// which dispatches through the configured authority bundle.
-func ActivateDashboardPublicationPrincipal(ctx context.Context, tx transaction.Transaction, projectID projectgraph.ResourceID, name string) error {
-	return accesssqlite.ActivateDashboardPublicationPrincipalTx(ctx, tx, projectID, name)
-}
 
 // InstallSnapshotThroughPersistence dispatches immutable authorization
 // installation through the configured capability port. It fails closed when

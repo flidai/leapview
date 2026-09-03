@@ -1,7 +1,6 @@
 package module
 
 import (
-	"context"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -47,12 +46,9 @@ func testAccessRepository(store *platform.Store) access.Repository {
 }
 
 func assembleSCIMTestHarness(_ fakeMetrics, config assemblyConfig) *scimTestHarness {
-	persistence, err := NewSQLitePersistence(context.Background(), SQLitePersistenceConfig{Database: config.store.SQLDB()})
-	if err != nil {
-		panic(err)
-	}
-	module, err := Build(context.Background(), Config{
-		Persistence: &persistence,
+	repository := testAccessRepository(config.store)
+	module, err := newSurface(surfaceConfig{
+		Repository: func() (access.Repository, error) { return repository, nil },
 	})
 	if err != nil {
 		panic(err)

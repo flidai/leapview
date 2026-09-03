@@ -11,7 +11,6 @@ import (
 
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
-	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -47,6 +46,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	if config.Production && !config.Persistence.isPostgres() {
 		return nil, errors.New("production jobs build requires PostgreSQL persistence")
+	}
+	if config.Production && config.Persistence.nativeRepository == nil {
+		return nil, errors.New("production jobs build requires the canonical PostgreSQL repository")
 	}
 	if err := config.Persistence.validate(); err != nil {
 		return nil, err
@@ -216,19 +218,6 @@ func (m *Module) validateWorkflowJob(intent jobs.WorkflowIntent) error {
 	return nil
 }
 
-// RecordWorkflow preserves the database/sql workflow contract solely for the
-// explicit SQLite legacy adapter. Production callers must use RecordWorkflowTx
-// with their caller-owned native pgx transaction.
-func (m *Module) RecordWorkflow(ctx context.Context, tx transaction.Transaction, intent jobs.WorkflowIntent) error {
-	if m == nil || m.persistence.backend != backendSQLiteLegacy || m.persistence.SQLWorkflow == nil {
-		return errors.New("database/sql workflow is available only for the explicit SQLite legacy adapter")
-	}
-	if err := m.validateWorkflowJob(intent); err != nil {
-		return err
-	}
-	return m.persistence.SQLWorkflow.RecordWorkflow(ctx, tx, intent)
-}
-
 // RecordWorkflowTx records a workflow atomically in a caller-owned native
 // PostgreSQL transaction. The module never begins, commits, or rolls back tx.
 func (m *Module) RecordWorkflowTx(ctx context.Context, tx jobpostgres.Tx, intent jobs.WorkflowIntent) error {
@@ -241,12 +230,6 @@ func (m *Module) RecordWorkflowTx(ctx context.Context, tx jobpostgres.Tx, intent
 	return m.persistence.NativeWorkflow.RecordWorkflow(ctx, tx, intent)
 }
 
-func (m *Module) CancelWorkflowJob(ctx context.Context, tx transaction.Transaction, id string) error {
-	if m == nil || m.persistence.backend != backendSQLiteLegacy || m.persistence.SQLWorkflow == nil {
-		return errors.New("database/sql workflow is available only for the explicit SQLite legacy adapter")
-	}
-	return m.persistence.SQLWorkflow.CancelWorkflowJob(ctx, tx, id)
-}
 func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent) error {
 	if m == nil || m.repository == nil {
 		return jobs.ErrStoreRequired
@@ -254,25 +237,10 @@ func (m *Module) CommitWorkflow(ctx context.Context, intent jobs.WorkflowIntent)
 	if err := m.validateWorkflowJob(intent); err != nil {
 		return err
 	}
-	if m.persistence.backend == backendPostgres {
-		if m.persistence.NativeCommitter == nil {
-			return errors.New("native PostgreSQL workflow committer is unavailable")
-		}
-		return m.persistence.NativeCommitter.CommitWorkflow(ctx, intent)
+	if m.persistence.backend != backendPostgres || m.persistence.NativeCommitter == nil {
+		return errors.New("native PostgreSQL workflow committer is unavailable")
 	}
-	database := m.persistence.legacyDatabase
-	if database == nil {
-		return jobs.ErrStoreRequired
-	}
-	tx, err := database.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if err := m.persistence.SQLWorkflow.RecordWorkflow(ctx, tx, intent); err != nil {
-		return err
-	}
-	return tx.Commit()
+	return m.persistence.NativeCommitter.CommitWorkflow(ctx, intent)
 }
 func (m *Module) ListEvents(ctx context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
 	return m.repository.ListEvents(ctx, kind, id, after, limit)

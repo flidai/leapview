@@ -1690,9 +1690,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				},
 			},
 		}
-		if persistence.auditRecorder != nil {
-			agentConfig.AuditIntentRecorder = persistence.auditRecorder
-		}
 		routes.agentModule, err = agentmodule.Build(ctx, agentConfig)
 		if err != nil {
 			return fmt.Errorf("build agent module: %w", err)

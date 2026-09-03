@@ -2,7 +2,6 @@ package module
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
@@ -13,7 +12,6 @@ import (
 	"github.com/flidai/leapview/internal/access/avatar"
 	"github.com/flidai/leapview/internal/access/desktopauth"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -34,18 +32,6 @@ type Config struct {
 	Presentation                 webpage.Presentation
 	Assets                       staticasset.Resolver
 	AvatarBlobs                  avatar.BlobStore
-}
-
-// NewSQLiteAuditStore constructs the local development/evaluation SQLite
-// audit store. It is intentionally named for its backend so PostgreSQL
-// composition cannot accidentally select a database/sql audit authority.
-// PostgreSQL callers inject a transaction-bound audit recorder from their
-// authority.
-func NewSQLiteAuditStore(database *sql.DB) access.AuditStore {
-	if database == nil {
-		return nil
-	}
-	return accesssqlite.NewRepository(database)
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
@@ -146,11 +132,6 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		module.oauthResource = oauth
 	} else if issuer := strings.TrimSpace(config.MCPIssuerURL); issuer != "" {
 		module.oauthResource, err = mcpoauth.NewExternal(repository, mcpoauth.ExternalConfig{IssuerURL: issuer, ResourceURL: publicURL + "/mcp"})
-	} else if database := config.Persistence.legacyDatabase; database != nil {
-		module.oauth, err = mcpoauth.New(database, repository, mcpoauth.Config{
-			IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
-		})
-		module.oauthResource = module.oauth
 	} else {
 		return nil, errors.New("MCP OAuth requires injected PostgreSQL-backed service or external resource")
 	}

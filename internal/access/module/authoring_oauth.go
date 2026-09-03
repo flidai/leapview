@@ -189,10 +189,8 @@ func (m *Module) authoringOAuthScope(ctx context.Context, targetID, requestedPro
 	resolveProject := m.authoringProjectID
 	durableResolver := resolveProject != nil
 	if resolveProject == nil {
-		// SQLite/evaluation callers historically supplied only the active
-		// serving resolver. Production composition injects the durable
-		// authoring resolver above, so errors from CurrentProjectID are never
-		// interpreted as a fresh target there.
+		// Minimal/read-only composed surfaces may provide only the active resolver
+		// when no separate authoring binding is persisted.
 		resolveProject = m.CurrentProjectID
 	}
 	if resolveProject == nil {

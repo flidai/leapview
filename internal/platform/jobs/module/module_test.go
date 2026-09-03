@@ -2,15 +2,16 @@ package module
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
 	"errors"
-	"path/filepath"
+	"fmt"
+	"sort"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/platform"
 	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	jobpostgres "github.com/flidai/leapview/internal/platform/jobs/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
@@ -26,9 +27,8 @@ func TestBuildRejectsUnmarkedOrLegacyAuthorityForProduction(t *testing.T) {
 	if _, err := Build(t.Context(), Config{Admission: admitter}); err == nil || !strings.Contains(err.Error(), "persistence") {
 		t.Fatalf("missing authority build error = %v, want persistence rejection", err)
 	}
-	persistence := sqlitePersistence(t, &sql.DB{})
-	if _, err := Build(t.Context(), Config{Persistence: persistence, Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
-		t.Fatalf("legacy production build error = %v, want PostgreSQL rejection", err)
+	if _, err := Build(t.Context(), Config{Persistence: &Persistence{}, Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "PostgreSQL") {
+		t.Fatalf("unmarked production build error = %v, want PostgreSQL rejection", err)
 	}
 	if _, err := Build(t.Context(), Config{Production: true, Admission: admitter}); err == nil || !strings.Contains(err.Error(), "persistence") {
 		t.Fatalf("missing production authority error = %v, want persistence rejection", err)
@@ -42,18 +42,13 @@ func TestNewPostgresPersistenceRejectsUnconfiguredRepository(t *testing.T) {
 }
 
 func TestModuleFailurePayloadOmitsHandlerErrorText(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
 	module, err := Build(t.Context(), Config{
-		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission), PollInterval: time.Millisecond,
+		Persistence: testPersistence(t), Admission: testAdmission(admission), PollInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -215,21 +210,237 @@ func testAdmission(controller workload.Admitter) jobs.Admitter {
 	})
 }
 
-func sqlitePersistence(t *testing.T, database *sql.DB) *Persistence {
+func testPersistence(t *testing.T) *Persistence {
 	t.Helper()
-	persistence, err := NewSQLitePersistence(SQLitePersistenceConfig{Database: database})
-	if err != nil {
-		t.Fatal(err)
+	queue := &inMemoryRepository{jobs: make(map[string]jobs.Job), events: make(map[string][]jobs.Event)}
+	return &Persistence{
+		Repository: queue, backend: backendPostgres,
+		NativeWorkflow: testWorkflowRecorder{}, NativeCommitter: queue,
 	}
-	return &persistence
+}
+
+// These test-only adapters exercise queue lifecycle behavior without selecting
+// a storage topology. The production module accepts only the native authority
+// constructor; package-local tests may inject this structural double.
+type testWorkflowRecorder struct{}
+
+func (testWorkflowRecorder) RecordWorkflow(context.Context, jobpostgres.Tx, jobs.WorkflowIntent) error {
+	return nil
+}
+
+type inMemoryRepository struct {
+	mu     sync.Mutex
+	jobs   map[string]jobs.Job
+	events map[string][]jobs.Event
+	nextID int64
+}
+
+func cloneJob(job jobs.Job) jobs.Job {
+	job.GroupIDs = append([]string(nil), job.GroupIDs...)
+	job.Payload = append([]byte(nil), job.Payload...)
+	return job
+}
+
+func (r *inMemoryRepository) Enqueue(_ context.Context, input jobs.EnqueueInput) (jobs.Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if existing, ok := r.jobs[input.ID]; ok {
+		return cloneJob(existing), nil
+	}
+	groups, err := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
+	if err != nil {
+		return jobs.Job{}, err
+	}
+	if input.ID == "" || input.Kind == "" || input.ResourceKind == "" || input.ResourceID == "" || input.EstimatedMemoryBytes <= 0 || !json.Valid(input.Payload) {
+		return jobs.Job{}, fmt.Errorf("invalid async job")
+	}
+	job := jobs.Job{ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass, PrincipalID: input.PrincipalID, GroupIDs: groups,
+		PartitionKey: input.PartitionKey, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, EstimatedMemoryBytes: input.EstimatedMemoryBytes,
+		Payload: append([]byte(nil), input.Payload...), Status: jobs.StatusQueued, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	r.jobs[input.ID] = job
+	return cloneJob(job), nil
+}
+
+func (r *inMemoryRepository) Get(_ context.Context, id string) (jobs.Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return jobs.Job{}, jobs.ErrNotFound
+	}
+	return cloneJob(job), nil
+}
+
+func (r *inMemoryRepository) Candidates(_ context.Context, class string, limit int) ([]jobs.Job, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	now := time.Now()
+	result := make([]jobs.Job, 0, len(r.jobs))
+	for _, job := range r.jobs {
+		if job.WorkloadClass != class || (job.Status != jobs.StatusQueued && !(job.Status == jobs.StatusRunning && leaseExpired(job.LeaseExpiresAt, now))) {
+			continue
+		}
+		result = append(result, cloneJob(job))
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].CreatedAt < result[j].CreatedAt })
+	if len(result) > limit {
+		result = result[:limit]
+	}
+	return result, nil
+}
+
+func leaseExpired(value string, now time.Time) bool {
+	if value == "" {
+		return true
+	}
+	expires, err := time.Parse(time.RFC3339Nano, value)
+	return err != nil || !expires.After(now)
+}
+
+func (r *inMemoryRepository) ClaimByID(_ context.Context, id, class, owner string, lease time.Duration) (jobs.Job, bool, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok || job.WorkloadClass != class || (job.Status != jobs.StatusQueued && !(job.Status == jobs.StatusRunning && leaseExpired(job.LeaseExpiresAt, time.Now()))) {
+		return jobs.Job{}, false, nil
+	}
+	job.Status, job.Attempts = jobs.StatusRunning, job.Attempts+1
+	job.LeaseOwner, job.LeaseGeneration = owner, job.LeaseGeneration+1
+	job.LeaseExpiresAt = time.Now().Add(lease).UTC().Format(time.RFC3339Nano)
+	if job.StartedAt == "" {
+		job.StartedAt = time.Now().UTC().Format(time.RFC3339Nano)
+	}
+	r.jobs[id] = job
+	return cloneJob(job), true, nil
+}
+
+func (r *inMemoryRepository) fenced(id string, fence jobs.Fence) (jobs.Job, error) {
+	job, ok := r.jobs[id]
+	if !ok {
+		return jobs.Job{}, jobs.ErrNotFound
+	}
+	if job.Status != jobs.StatusRunning || job.LeaseOwner != fence.Owner || job.LeaseGeneration != fence.Generation {
+		return jobs.Job{}, jobs.ErrConflict
+	}
+	return job, nil
+}
+
+func (r *inMemoryRepository) Renew(_ context.Context, id string, fence jobs.Fence, lease time.Duration) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, err := r.fenced(id, fence)
+	if err != nil {
+		return err
+	}
+	job.LeaseExpiresAt = time.Now().Add(lease).UTC().Format(time.RFC3339Nano)
+	r.jobs[id] = job
+	return nil
+}
+
+func (r *inMemoryRepository) Complete(_ context.Context, id string, fence jobs.Fence) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, err := r.fenced(id, fence)
+	if err != nil {
+		return err
+	}
+	job.Status, job.FinishedAt, job.LeaseOwner, job.LeaseExpiresAt = jobs.StatusSucceeded, time.Now().UTC().Format(time.RFC3339Nano), "", ""
+	r.jobs[id] = job
+	return nil
+}
+
+func (r *inMemoryRepository) Fail(_ context.Context, id string, fence jobs.Fence, problem []byte) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, err := r.fenced(id, fence)
+	if err != nil {
+		return err
+	}
+	job.Status, job.ErrorJSON, job.FinishedAt, job.LeaseOwner, job.LeaseExpiresAt = jobs.StatusFailed, string(problem), time.Now().UTC().Format(time.RFC3339Nano), "", ""
+	r.jobs[id] = job
+	return nil
+}
+
+func (r *inMemoryRepository) Cancel(_ context.Context, id string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, ok := r.jobs[id]
+	if !ok {
+		return jobs.ErrNotFound
+	}
+	if job.Status != jobs.StatusQueued {
+		return jobs.ErrConflict
+	}
+	job.Status, job.FinishedAt = jobs.StatusCancelled, time.Now().UTC().Format(time.RFC3339Nano)
+	r.jobs[id] = job
+	return nil
+}
+
+func (r *inMemoryRepository) CancelClaimed(_ context.Context, id string, fence jobs.Fence) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job, err := r.fenced(id, fence)
+	if err != nil {
+		return err
+	}
+	job.Status, job.FinishedAt, job.LeaseOwner, job.LeaseExpiresAt = jobs.StatusCancelled, time.Now().UTC().Format(time.RFC3339Nano), "", ""
+	r.jobs[id] = job
+	return nil
+}
+
+func (r *inMemoryRepository) AppendEvent(_ context.Context, kind, id, event string, data []byte) (jobs.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nextID++
+	record := jobs.Event{ID: r.nextID, ResourceKind: kind, ResourceID: id, EventType: event, Data: append([]byte(nil), data...), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	r.events[kind+"\x00"+id] = append(r.events[kind+"\x00"+id], record)
+	return record, nil
+}
+
+func (r *inMemoryRepository) ListEvents(_ context.Context, kind, id string, after int64, limit int) ([]jobs.Event, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	values := r.events[kind+"\x00"+id]
+	result := make([]jobs.Event, 0, len(values))
+	for _, event := range values {
+		if event.ID > after {
+			result = append(result, event)
+		}
+		if len(result) == limit {
+			break
+		}
+	}
+	return result, nil
+}
+
+func (r *inMemoryRepository) CommitWorkflow(_ context.Context, intent jobs.WorkflowIntent) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.nextID++
+	event := intent.Event
+	record := jobs.Event{ID: r.nextID, ResourceKind: event.ResourceKind, ResourceID: event.ResourceID, EventType: event.EventType, Data: append([]byte(nil), event.Data...), CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	r.events[event.ResourceKind+"\x00"+event.ResourceID] = append(r.events[event.ResourceKind+"\x00"+event.ResourceID], record)
+	if intent.Job.ID != "" {
+		input := intent.Job
+		groups, err := jobs.CanonicalActor(input.PrincipalID, input.GroupIDs)
+		if err != nil {
+			return err
+		}
+		r.jobs[input.ID] = jobs.Job{ID: input.ID, Kind: input.Kind, WorkloadClass: input.WorkloadClass, PrincipalID: input.PrincipalID, GroupIDs: groups, PartitionKey: input.PartitionKey, ResourceKind: input.ResourceKind, ResourceID: input.ResourceID, EstimatedMemoryBytes: input.EstimatedMemoryBytes, Payload: append([]byte(nil), input.Payload...), Status: jobs.StatusQueued, CreatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	}
+	return nil
+}
+
+func (r *inMemoryRepository) Expire(id string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	job := r.jobs[id]
+	job.LeaseExpiresAt = time.Now().Add(-time.Second).UTC().Format(time.RFC3339Nano)
+	r.jobs[id] = job
 }
 
 func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
@@ -237,7 +448,7 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	defer admission.Close()
 
 	first, err := Build(t.Context(), Config{
-		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission),
+		Persistence: persistence, Admission: testAdmission(admission),
 		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -280,15 +491,10 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 	if interrupted.Status != jobs.StatusRunning || interrupted.FinishedAt != "" {
 		t.Fatalf("interrupted job = %#v, want recoverable running claim", interrupted)
 	}
-	if _, err := store.SQLDB().ExecContext(t.Context(),
-		`UPDATE api_async_jobs SET lease_expires_at = datetime('now', '-1 second') WHERE id = ?`,
-		interrupted.ID,
-	); err != nil {
-		t.Fatal(err)
-	}
+	persistence.Repository.(*inMemoryRepository).Expire(interrupted.ID)
 
 	second, err := Build(t.Context(), Config{
-		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission),
+		Persistence: persistence, Admission: testAdmission(admission),
 		LeaseTimeout: time.Minute, PollInterval: time.Millisecond,
 	})
 	if err != nil {
@@ -333,17 +539,13 @@ func TestModuleRestartRecoversInterruptedClaim(t *testing.T) {
 }
 
 func TestModuleRejectsDuplicateKindsBeforeStarting(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: persistence, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -354,17 +556,13 @@ func TestModuleRejectsDuplicateKindsBeforeStarting(t *testing.T) {
 }
 
 func TestModuleLifecycleIsIdempotent(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: persistence, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -386,18 +584,14 @@ func TestModuleLifecycleIsIdempotent(t *testing.T) {
 }
 
 func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
 	module, err := Build(t.Context(), Config{
-		Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission), PollInterval: time.Millisecond,
+		Persistence: persistence, Admission: testAdmission(admission), PollInterval: time.Millisecond,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -469,37 +663,22 @@ func TestModuleCanRestartAfterTimedOutStopEventuallyFinishes(t *testing.T) {
 }
 
 func TestModuleRecordsTerminalEventWithoutRegisteredFollowupKind(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: persistence, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := module.RegisterHandlers(nil); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := store.SQLDB().BeginTx(t.Context(), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer tx.Rollback()
-	err = module.RecordWorkflow(t.Context(), tx, jobs.WorkflowIntent{Event: jobs.EventInput{
+	err = module.CommitWorkflow(t.Context(), jobs.WorkflowIntent{Event: jobs.EventInput{
 		Key: "release.ready", ResourceKind: "release", ResourceID: "release-1",
 		EventType: "release.ready", Data: []byte(`{"status":"ready"}`),
 	}})
 	if err != nil {
-		t.Fatalf("RecordWorkflow() terminal event error = %v", err)
-	}
-	if err := tx.Commit(); err != nil {
-		t.Fatal(err)
+		t.Fatalf("CommitWorkflow() terminal event error = %v", err)
 	}
 	events, err := module.ListEvents(t.Context(), "release", "release-1", 0, 10)
 	if err != nil || len(events) != 1 || events[0].EventType != "release.ready" {
@@ -508,17 +687,13 @@ func TestModuleRecordsTerminalEventWithoutRegisteredFollowupKind(t *testing.T) {
 }
 
 func TestModuleCommitsWorkflowAtomically(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: persistence, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -542,17 +717,13 @@ func TestModuleCommitsWorkflowAtomically(t *testing.T) {
 }
 
 func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: persistence, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -573,17 +744,13 @@ func TestModuleCommitWorkflowRejectsUnknownKindWithoutPersistingEvent(t *testing
 }
 
 func TestModuleRejectsUnknownEnqueuedKind(t *testing.T) {
-	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "jobs.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer store.Close()
+	persistence := testPersistence(t)
 	admission, err := workload.New(workload.DefaultConfig())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer admission.Close()
-	module, err := Build(t.Context(), Config{Persistence: sqlitePersistence(t, store.SQLDB()), Admission: testAdmission(admission)})
+	module, err := Build(t.Context(), Config{Persistence: persistence, Admission: testAdmission(admission)})
 	if err != nil {
 		t.Fatal(err)
 	}
