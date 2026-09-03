@@ -1344,7 +1344,7 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 			return fmt.Errorf("%s enum[%d] is required", context, idx)
 		}
 	}
-	if schemaRef.Minimum != nil && (math.IsNaN(*schemaRef.Minimum) || math.IsInf(*schemaRef.Minimum, 0)) || schemaRef.Maximum != nil && (math.IsNaN(*schemaRef.Maximum) || math.IsInf(*schemaRef.Maximum, 0)) {
+	if schemaRef.Const != nil && (math.IsNaN(*schemaRef.Const) || math.IsInf(*schemaRef.Const, 0)) || schemaRef.Minimum != nil && (math.IsNaN(*schemaRef.Minimum) || math.IsInf(*schemaRef.Minimum, 0)) || schemaRef.Maximum != nil && (math.IsNaN(*schemaRef.Maximum) || math.IsInf(*schemaRef.Maximum, 0)) {
 		return fmt.Errorf("%s numeric bounds must be finite", context)
 	}
 	if schemaRef.Minimum != nil && schemaRef.Maximum != nil && *schemaRef.Minimum > *schemaRef.Maximum {
@@ -1355,6 +1355,12 @@ func validateSchemaRefExists(doc Document, schemaRef SchemaRef, context string) 
 	}
 	if schemaRef.MinLength != nil && schemaRef.MaxLength != nil && *schemaRef.MinLength > *schemaRef.MaxLength {
 		return fmt.Errorf("%s min_length must not exceed max_length", context)
+	}
+	if schemaRef.MinItems != nil && *schemaRef.MinItems < 0 || schemaRef.MaxItems != nil && *schemaRef.MaxItems < 0 {
+		return fmt.Errorf("%s item bounds must be non-negative", context)
+	}
+	if schemaRef.MinItems != nil && schemaRef.MaxItems != nil && *schemaRef.MinItems > *schemaRef.MaxItems {
+		return fmt.Errorf("%s min_items must not exceed max_items", context)
 	}
 	if schemaRef.MinProperties != nil && *schemaRef.MinProperties < 0 {
 		return fmt.Errorf("%s min_properties must be non-negative", context)

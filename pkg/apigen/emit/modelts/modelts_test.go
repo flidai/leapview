@@ -45,6 +45,26 @@ func TestEmit_GeneratesContractInterfaces(t *testing.T) {
 	require.Contains(t, content, "export type DataContractEnvelope = DashboardEnvelope")
 }
 
+func TestEmit_RendersNumericLiteralReferences(t *testing.T) {
+	constant := 1.0
+	doc := ir.Document{
+		Schemas: map[string]ir.Schema{
+			"ExplorationSpec": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"schemaVersion": {Schema: ir.SchemaRef{Type: "integer", Const: &constant}},
+				},
+				Required: []string{"schemaVersion"},
+			},
+		},
+		Contracts: []ir.Contract{{Name: "ExplorationSpec", Schema: ir.SchemaRef{Ref: "ExplorationSpec"}}},
+	}
+
+	b, err := Emit(doc, Options{})
+	require.NoError(t, err)
+	require.Contains(t, string(b), "schemaVersion: 1")
+}
+
 func TestEmit_GeneratesDiscriminatedUnion(t *testing.T) {
 	doc := ir.Document{
 		Info: ir.Info{Namespace: "LeapViewSignals"},

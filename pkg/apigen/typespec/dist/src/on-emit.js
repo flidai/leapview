@@ -1,4 +1,4 @@
-import { getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxLength, getMaxValue, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getPattern, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
+import { getAllTags, getDoc, getDiscriminatedUnion, getDiscriminatedUnionFromInheritance, getDiscriminator, getMaxItems, getMaxLength, getMaxValue, getMinItems, getMinLength, getMinValue, getOverloadedOperation, getOverloads, getPattern, getService, getSummary, isArrayModelType, isRecordModelType, } from "@typespec/compiler";
 import { getServers, isOverloadSameEndpoint, isSharedRoute, resolveAuthentication, } from "@typespec/http";
 import { getExtensions, getOperationId, getTagsMetadata, resolveInfo } from "@typespec/openapi";
 import { getAuthz, getAsyncExecution, getAuthoredCommand, getAuditPayload, getAuditSchema, getCLI, getCommand, getCommandDefaults, getContracts, getMetadata, getMinProperties, getNamedFailures, getPropertyNames, getResponseShape, getSensitivity, getTool, getTransportErrors, getUI, getUnauditedReason, isTarget, isManual, isQuery, } from "./decorators.js";
@@ -72,7 +72,7 @@ class IRBuilder {
             return { type: "boolean" };
         }
         if (type.kind === "Number") {
-            return { type: "integer" };
+            return { type: type.value % 1 === 0 ? "integer" : "number", const: type.value };
         }
         if (type.kind === "Intrinsic" && type.name === "unknown") {
             return {};
@@ -1620,6 +1620,8 @@ function withSchemaConstraints(program, target, schema) {
     const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
     const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
     const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+    const minItems = firstSchemaConstraint(candidates, (candidate) => getMinItems(program, candidate));
+    const maxItems = firstSchemaConstraint(candidates, (candidate) => getMaxItems(program, candidate));
     const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
     return prune({
         ...schema,
@@ -1627,6 +1629,8 @@ function withSchemaConstraints(program, target, schema) {
         maximum,
         min_length: minLength,
         max_length: maxLength,
+        min_items: minItems,
+        max_items: maxItems,
         pattern,
     });
 }

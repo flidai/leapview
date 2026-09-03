@@ -606,6 +606,48 @@ func TestDataExplorerRestoredV2URLAcceptsTimeOnlySortAlias(t *testing.T) {
 	}
 }
 
+func TestDataExplorerRestoredV2URLAcceptsDateTimeTzTimeSelection(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.event_at", Grain: exploration.ExplorationTimeGrainDay},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if !ok {
+		t.Fatalf("DateTimeTz time URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 || explorer.Explore.Command.Spec.Time == nil || explorer.Explore.Command.Spec.Time.Field != "orders.event_at" {
+		t.Fatalf("restored DateTimeTz time/execution = %#v/%d, want event_at and one query", explorer.Explore.Command.Spec.Time, executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredV2URLAcceptsDateTimeTzDimensionGrain(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	grain := exploration.ExplorationTimeGrainDay
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.event_at", Grain: &grain}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if !ok {
+		t.Fatalf("DateTimeTz dimension URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 || len(explorer.Explore.Command.Spec.Dimensions) != 1 || explorer.Explore.Command.Spec.Dimensions[0].Field != "orders.event_at" {
+		t.Fatalf("restored DateTimeTz dimension/execution = %#v/%d, want event_at and one query", explorer.Explore.Command.Spec.Dimensions, executor.calls)
+	}
+}
+
 func TestDataExplorerRestoredURLFailsClosedWhenBindingsAreUnavailable(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	definition := h.ProjectDefinitionReader.(browserProjectDefinitionStub)

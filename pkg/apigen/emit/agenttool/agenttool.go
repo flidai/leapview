@@ -234,18 +234,22 @@ func projectionKind(doc ir.Document, ref ir.SchemaRef) (string, ir.SchemaRef) {
 }
 
 func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
+	result := runtime.ValueSchema{
+		Type: ref.Type, Format: ref.Format, Const: ref.Const, Enum: append([]string(nil), ref.Enum...),
+		Minimum: ref.Minimum, Maximum: ref.Maximum, MinLength: ref.MinLength, MaxLength: ref.MaxLength,
+		MinItems: ref.MinItems, MaxItems: ref.MaxItems,
+		AdditionalProperties: ref.AdditionalProperties != nil,
+	}
 	if schema, ok := concreteSchema(doc, ref); ok {
-		result := runtime.ValueSchema{Type: schema.Type, Enum: append([]string(nil), schema.Enum...)}
+		result.Type = schema.Type
+		if len(result.Enum) == 0 {
+			result.Enum = append([]string(nil), schema.Enum...)
+		}
 		if schema.Items != nil {
 			item := valueSchema(doc, *schema.Items)
 			result.Items = &item
 		}
 		return result
-	}
-	result := runtime.ValueSchema{
-		Type: ref.Type, Format: ref.Format, Enum: append([]string(nil), ref.Enum...),
-		Minimum: ref.Minimum, Maximum: ref.Maximum, MinLength: ref.MinLength, MaxLength: ref.MaxLength,
-		AdditionalProperties: ref.AdditionalProperties != nil,
 	}
 	if ref.Items != nil {
 		item := valueSchema(doc, *ref.Items)
@@ -255,6 +259,7 @@ func valueSchema(doc ir.Document, ref ir.SchemaRef) runtime.ValueSchema {
 }
 
 func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[string]any {
+	out := map[string]any{}
 	if ref.Ref != "" {
 		name, _ := ir.NormalizedSchemaRefName(ref)
 		if seen[name] {
@@ -262,13 +267,13 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 		}
 		seen[name] = true
 		schema, _ := ir.ResolveSchema(doc, ref)
-		out := schemaJSON(doc, schema, seen)
+		out = schemaJSON(doc, schema, seen)
 		delete(seen, name)
-		return out
-	}
-	out := map[string]any{}
-	if ref.Type != "" {
+	} else if ref.Type != "" {
 		out["type"] = ref.Type
+	}
+	if ref.Const != nil {
+		out["const"] = *ref.Const
 	}
 	if len(ref.Enum) > 0 {
 		out["enum"] = ref.Enum
@@ -284,6 +289,12 @@ func schemaRefJSON(doc ir.Document, ref ir.SchemaRef, seen map[string]bool) map[
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties
@@ -397,6 +408,9 @@ func valueSchemaJSON(schema runtime.ValueSchema) map[string]any {
 	if schema.Type != "" {
 		out["type"] = schema.Type
 	}
+	if schema.Const != nil {
+		out["const"] = *schema.Const
+	}
 	if len(schema.Enum) > 0 {
 		out["enum"] = schema.Enum
 	}
@@ -411,6 +425,12 @@ func valueSchemaJSON(schema runtime.ValueSchema) map[string]any {
 	}
 	if schema.MaxLength != nil {
 		out["maxLength"] = *schema.MaxLength
+	}
+	if schema.MinItems != nil {
+		out["minItems"] = *schema.MinItems
+	}
+	if schema.MaxItems != nil {
+		out["maxItems"] = *schema.MaxItems
 	}
 	if schema.Items != nil {
 		out["items"] = valueSchemaJSON(*schema.Items)

@@ -448,6 +448,15 @@ func legacyExplorationFilterKind(fieldType string) (string, error) {
 	}
 }
 
+func isRestoredTemporalFieldType(fieldType string) bool {
+	switch fieldType {
+	case "date", "datetime", "datetimetz", "timestamp":
+		return true
+	default:
+		return false
+	}
+}
+
 func legacyExplorationFilterValue(kind, value string) (exploration.ExplorationFilterValue, error) {
 	switch kind {
 	case "integer":
@@ -540,7 +549,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 			return fmt.Errorf("dimension field %q does not support grain %q in the active semantic model; choose a supported grain", dimension.Field, grain)
 		}
 		fieldType := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(field.Type)))
-		if fieldType != "date" && fieldType != "timestamp" && fieldType != "datetime" {
+		if !isRestoredTemporalFieldType(fieldType) {
 			return fmt.Errorf("dimension field %q is not a date or timestamp dimension; choose a temporal field", dimension.Field)
 		}
 	}
@@ -635,7 +644,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 			return fmt.Errorf("time field %q does not support grain %q in the active semantic model; choose a supported grain", state.Time.Field, state.Time.Grain)
 		}
 		fieldType := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(field.Type)))
-		if fieldType != "date" && fieldType != "timestamp" {
+		if !isRestoredTemporalFieldType(fieldType) {
 			return fmt.Errorf("time field %q is not a date or timestamp dimension; choose a temporal field", state.Time.Field)
 		}
 	}

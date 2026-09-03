@@ -154,7 +154,7 @@ func schemaPropertyObject(property ir.SchemaProperty) map[string]any {
 }
 
 func schemaRefObject(ref ir.SchemaRef) map[string]any {
-	if ref.Ref != "" && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.MinProperties == nil && ref.Pattern == "" && ref.PropertyNames == nil {
+	if ref.Ref != "" && ref.Const == nil && ref.Minimum == nil && ref.Maximum == nil && ref.MinLength == nil && ref.MaxLength == nil && ref.MinItems == nil && ref.MaxItems == nil && ref.MinProperties == nil && ref.Pattern == "" && ref.PropertyNames == nil {
 		if name, ok := ir.NormalizedSchemaRefName(ref); ok {
 			return map[string]any{"$ref": "#/$defs/" + name}
 		}
@@ -171,6 +171,9 @@ func schemaRefObject(ref ir.SchemaRef) map[string]any {
 	if ref.Format != "" {
 		out["format"] = ref.Format
 	}
+	if ref.Const != nil {
+		out["const"] = *ref.Const
+	}
 	if len(ref.Enum) > 0 {
 		out["enum"] = append([]string(nil), ref.Enum...)
 	}
@@ -185,6 +188,12 @@ func schemaRefObject(ref ir.SchemaRef) map[string]any {
 	}
 	if ref.MaxLength != nil {
 		out["maxLength"] = *ref.MaxLength
+	}
+	if ref.MinItems != nil {
+		out["minItems"] = *ref.MinItems
+	}
+	if ref.MaxItems != nil {
+		out["maxItems"] = *ref.MaxItems
 	}
 	if ref.MinProperties != nil {
 		out["minProperties"] = *ref.MinProperties

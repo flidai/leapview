@@ -336,11 +336,14 @@ type SchemaRef struct {
 	Ref                  string                `json:"ref,omitempty"`
 	Type                 string                `json:"type,omitempty"`
 	Format               string                `json:"format,omitempty"`
+	Const                *float64              `json:"const,omitempty"`
 	Enum                 []string              `json:"enum,omitempty"`
 	Minimum              *float64              `json:"minimum,omitempty"`
 	Maximum              *float64              `json:"maximum,omitempty"`
 	MinLength            *int                  `json:"min_length,omitempty"`
 	MaxLength            *int                  `json:"max_length,omitempty"`
+	MinItems             *int                  `json:"min_items,omitempty"`
+	MaxItems             *int                  `json:"max_items,omitempty"`
 	MinProperties        *int                  `json:"min_properties,omitempty"`
 	Pattern              string                `json:"pattern,omitempty"`
 	Items                *SchemaRef            `json:"items,omitempty"`

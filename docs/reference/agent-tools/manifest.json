@@ -2596,6 +2596,7 @@
               ],
               "type": "object"
             },
+            "maxItems": 50,
             "type": "array"
           },
           "filters": {
@@ -2655,6 +2656,7 @@
               },
               "type": "object"
             },
+            "maxItems": 100,
             "type": "array"
           },
           "limit": {
@@ -2680,6 +2682,7 @@
               ],
               "type": "object"
             },
+            "maxItems": 50,
             "type": "array"
           },
           "model": {
@@ -2716,6 +2719,7 @@
               ],
               "type": "object"
             },
+            "maxItems": 50,
             "type": "array"
           },
           "time": {
@@ -5053,6 +5057,7 @@
               ],
               "type": "object"
             },
+            "maxItems": 100,
             "type": "array"
           },
           "semanticModelId": {

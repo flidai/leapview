@@ -4,8 +4,10 @@ import {
   getDiscriminatedUnion,
   getDiscriminatedUnionFromInheritance,
   getDiscriminator,
+  getMaxItems,
   getMaxLength,
   getMaxValue,
+  getMinItems,
   getMinLength,
   getMinValue,
   getOverloadedOperation,
@@ -289,11 +291,14 @@ interface SchemaRef {
   ref?: string;
   type?: string;
   format?: string;
+  const?: number;
   enum?: string[];
   minimum?: number;
   maximum?: number;
   min_length?: number;
   max_length?: number;
+  min_items?: number;
+  max_items?: number;
   min_properties?: number;
   pattern?: string;
   items?: SchemaRef;
@@ -363,7 +368,7 @@ class IRBuilder {
       return { type: "boolean" };
     }
     if (type.kind === "Number") {
-      return { type: "integer" };
+      return { type: type.value % 1 === 0 ? "integer" : "number", const: type.value };
     }
     if (type.kind === "Intrinsic" && type.name === "unknown") {
       return {};
@@ -2187,6 +2192,8 @@ function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef
   const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
   const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
   const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
+  const minItems = firstSchemaConstraint(candidates, (candidate) => getMinItems(program, candidate));
+  const maxItems = firstSchemaConstraint(candidates, (candidate) => getMaxItems(program, candidate));
   const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
   return prune({
     ...schema,
@@ -2194,6 +2201,8 @@ function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef
     maximum,
     min_length: minLength,
     max_length: maxLength,
+    min_items: minItems,
+    max_items: maxItems,
     pattern,
   }) as SchemaRef;
 }

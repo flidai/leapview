@@ -113,6 +113,34 @@ func TestEmitYAML_PreservesPatternAndPropertyNames(t *testing.T) {
 	require.Contains(t, string(b), "pattern: ^[A-Z]+$")
 }
 
+func TestEmitYAML_PreservesNumericConstantsAndArrayBounds(t *testing.T) {
+	constant := 1.0
+	maximum := 100
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		Info:          ir.Info{Title: "Constrained", Version: "1"},
+		Schemas:       map[string]ir.Schema{},
+		Endpoints: []ir.Endpoint{{
+			Method: "get", Path: "/versions", OperationID: "versions",
+			Responses: []ir.Response{{StatusCode: 200, Description: "ok", Contents: []ir.BodyContent{{
+				ContentType: "application/json", BodyKind: "json",
+				Schema: &ir.SchemaRef{Type: "array", MaxItems: &maximum, Items: &ir.SchemaRef{Type: "integer", Const: &constant}},
+			}}}},
+		}},
+	}
+	b, err := EmitYAML(doc, Options{})
+	require.NoError(t, err)
+
+	loader := openapi3.NewLoader()
+	parsed, err := loader.LoadFromData(b)
+	require.NoError(t, err)
+	schema := parsed.Paths.Value("/versions").Get.Responses.Value("200").Value.Content.Get("application/json").Schema.Value
+	require.NotNil(t, schema.MaxItems)
+	require.Equal(t, uint64(100), *schema.MaxItems)
+	require.Equal(t, []any{float64(1)}, schema.Items.Value.Enum)
+	require.Equal(t, []any{float64(1)}, parsed.Paths.Value("/versions").Get.Responses.Value("200").Value.Content.Get("application/json").Example)
+}
+
 func TestEmitYAMLIncludesTypedToolMetadata(t *testing.T) {
 	doc := ir.Document{
 		SchemaVersion: ir.CurrentSchemaVersion,
