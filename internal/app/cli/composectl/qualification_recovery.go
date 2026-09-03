@@ -748,25 +748,18 @@ func (c *Controller) prepareQualificationRecoveryData(
 	); err != nil {
 		return err
 	}
-	for name, title := range map[string]string{
-		"project-a": qualificationRecoveryReleaseProjectName,
-		"project-b": qualificationRecoveryDeploymentProjectName,
+	for name, variant := range map[string]struct {
+		title string
+		alias string
+	}{
+		"project-a": {title: qualificationRecoveryReleaseProjectName, alias: "qualification_release_orders"},
+		"project-b": {title: qualificationRecoveryDeploymentProjectName, alias: "qualification_deployment_orders"},
 	} {
 		target := filepath.Join(workDir, name)
 		if err := copyQualificationTree(sourceProject, target); err != nil {
 			return err
 		}
-		projectPath := filepath.Join(target, "leapview.yaml")
-		contents, err := os.ReadFile(projectPath)
-		if err != nil {
-			return err
-		}
-		contents = bytes.ReplaceAll(
-			contents,
-			[]byte("name: leapview-evaluation"),
-			[]byte("name: "+title),
-		)
-		if err := os.WriteFile(projectPath, contents, 0o600); err != nil {
+		if err := rewriteQualificationRecoveryProject(target, variant.title, variant.alias); err != nil {
 			return err
 		}
 	}
@@ -795,6 +788,38 @@ func (c *Controller) prepareQualificationRecoveryData(
 		}
 	}
 	return nil
+}
+
+func rewriteQualificationRecoveryProject(root, title, modelAlias string) error {
+	projectPath := filepath.Join(root, "leapview.yaml")
+	projectContents, err := os.ReadFile(projectPath)
+	if err != nil {
+		return err
+	}
+	projectName := []byte("name: leapview-evaluation")
+	if bytes.Count(projectContents, projectName) != 1 {
+		return fmt.Errorf("qualification recovery project name marker is not unique")
+	}
+	projectContents = bytes.Replace(projectContents, projectName, []byte("name: "+title), 1)
+	if err := os.WriteFile(projectPath, projectContents, 0o600); err != nil {
+		return err
+	}
+
+	// The recovery journey must exercise a real native build on both sides of
+	// each interruption. A metadata-only rename is eligible for whole-candidate
+	// reuse and can complete before the interruption boundary. Give each copy a
+	// semantically equivalent but distinct model execution identity instead.
+	modelPath := filepath.Join(root, "models", "orders.yaml")
+	modelContents, err := os.ReadFile(modelPath)
+	if err != nil {
+		return err
+	}
+	from := []byte(`      FROM source."sample.orders"`)
+	if bytes.Count(modelContents, from) != 1 {
+		return fmt.Errorf("qualification recovery model source marker is not unique")
+	}
+	modelContents = bytes.Replace(modelContents, from, []byte(`      FROM source."sample.orders" AS `+modelAlias), 1)
+	return os.WriteFile(modelPath, modelContents, 0o600)
 }
 
 func makeQualificationContainerReadable(root string) error {

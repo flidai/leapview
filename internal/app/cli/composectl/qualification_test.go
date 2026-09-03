@@ -61,6 +61,32 @@ func TestQualificationAuthoringUsesUnprivilegedClientProjectCopy(t *testing.T) {
 	require.Equal(t, "/qualification/evaluation/project/leapview.yaml", options.Project)
 }
 
+func TestRewriteQualificationRecoveryProjectForcesDistinctNativeBuilds(t *testing.T) {
+	writeProject := func(root string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(filepath.Join(root, "models"), 0o700))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "leapview.yaml"), []byte("metadata:\n  name: leapview-evaluation\n"), 0o600))
+		require.NoError(t, os.WriteFile(filepath.Join(root, "models", "orders.yaml"), []byte("    sql: |\n      SELECT *\n      FROM source.\"sample.orders\"\n"), 0o600))
+	}
+	first := filepath.Join(t.TempDir(), "project-a")
+	second := filepath.Join(t.TempDir(), "project-b")
+	writeProject(first)
+	writeProject(second)
+	require.NoError(t, rewriteQualificationRecoveryProject(first, "recovery-release-project", "qualification_release_orders"))
+	require.NoError(t, rewriteQualificationRecoveryProject(second, "recovery-deployment-project", "qualification_deployment_orders"))
+
+	firstProject, err := os.ReadFile(filepath.Join(first, "leapview.yaml"))
+	require.NoError(t, err)
+	firstModel, err := os.ReadFile(filepath.Join(first, "models", "orders.yaml"))
+	require.NoError(t, err)
+	secondModel, err := os.ReadFile(filepath.Join(second, "models", "orders.yaml"))
+	require.NoError(t, err)
+	require.Contains(t, string(firstProject), "name: recovery-release-project")
+	require.Contains(t, string(firstModel), `FROM source."sample.orders" AS qualification_release_orders`)
+	require.Contains(t, string(secondModel), `FROM source."sample.orders" AS qualification_deployment_orders`)
+	require.NotEqual(t, string(firstModel), string(secondModel))
+}
+
 func TestQualificationLoginKeepsDiagnosticsOutOfJSONEventStream(t *testing.T) {
 	bin := t.TempDir()
 	leapview := filepath.Join(bin, "leapview")
