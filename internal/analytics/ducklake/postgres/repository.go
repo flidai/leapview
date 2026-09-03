@@ -580,6 +580,31 @@ func lockAttemptAdmissionScope(ctx context.Context, db DBTX, physicalPoolID, cat
 	}
 }
 
+// ValidateBuildAdmissionTx is the narrow physical admission guard used by
+// canonical delivery admission. It acquires the migration/maintenance fence
+// scope first, then the marker-quarantine pool scope, and finally checks the
+// immutable quarantine ledger. It intentionally performs no attempt or
+// generation lifecycle writes.
+func (r *Repository) ValidateBuildAdmissionTx(ctx context.Context, tx Tx, physicalPoolID, catalogID string) error {
+	if r == nil || tx == nil || !r.Configured() {
+		return ErrInvalid
+	}
+	if err := lockAttemptAdmissionScope(ctx, tx, physicalPoolID, catalogID); err != nil {
+		return err
+	}
+	if err := lockMarkerQuarantineScope(ctx, tx, physicalPoolID); err != nil {
+		return err
+	}
+	quarantined, err := markerQuarantineExistsForPool(ctx, tx, physicalPoolID)
+	if err != nil {
+		return err
+	}
+	if quarantined {
+		return ErrMarkerQuarantined
+	}
+	return nil
+}
+
 // BeginAttemptTx persists an exact running-attempt identity through a
 // caller-owned transaction. It never begins, commits, or rolls back tx; app
 // composition uses it to share one control-plane transaction with delivery
@@ -772,6 +797,51 @@ func (r *Repository) LoadCatalog(ctx context.Context, poolID string) (CatalogIde
 		return CatalogIdentity{}, ErrInvalid
 	}
 	return LoadCatalog(ctx, r.db, poolID)
+}
+
+// AdmitSnapshotRetentionFromSealTx derives and locks the physical retention
+// gate from one canonical delivery snapshot seal.  The caller owns tx; this
+// method never begins, commits, or rolls it back.  A missing seal, missing
+// catalog identity, or non-live existing row fails closed.
+func (r *Repository) AdmitSnapshotRetentionFromSealTx(ctx context.Context, tx Tx, sealID string) error {
+	if r == nil || tx == nil || !r.Configured() || !validUUID(sealID) {
+		return ErrInvalid
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	seal, err := querygen(tx).GetSnapshotRetentionSealIdentity(ctx, pgUUID(sealID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if err := r.ValidateBuildAdmissionTx(ctx, tx, seal.PhysicalPoolID, seal.CatalogID); err != nil {
+		return err
+	}
+	row, err := querygen(tx).AdmitSnapshotRetentionFromSeal(ctx, pgUUID(sealID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	state, err := querygen(tx).LockSnapshotRetentionState(ctx, dbgen.LockSnapshotRetentionStateParams{
+		PhysicalPoolID: row.PhysicalPoolID,
+		CatalogID:      row.CatalogID,
+		SnapshotID:     row.SnapshotID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if state != string(RetentionLive) {
+		return ErrNotLive
+	}
+	return nil
 }
 
 // ensureSnapshotLive creates the retention gate for a newly committed

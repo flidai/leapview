@@ -28,6 +28,33 @@ FROM ducklake.catalog_identity WHERE physical_pool_id=$1;
 INSERT INTO ducklake.snapshot_retention (physical_pool_id,catalog_id,snapshot_id,state)
 VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),'live') ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
 
+-- name: AdmitSnapshotRetentionFromSeal :one
+-- The delivery seal is the only authority allowed to select the physical
+-- retention identity.  In particular, callers cannot manufacture a live
+-- row by supplying a pool/catalog/snapshot tuple of their choice.
+WITH seal AS (
+    SELECT physical_pool_id,catalog_id,ducklake_snapshot_id
+    FROM delivery.delivery_snapshot_seal
+    WHERE seal_id=sqlc.arg(seal_id)::uuid
+), inserted AS (
+    INSERT INTO ducklake.snapshot_retention (physical_pool_id,catalog_id,snapshot_id,state)
+    SELECT physical_pool_id,catalog_id,ducklake_snapshot_id,'live'
+    FROM seal
+    ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING
+    RETURNING physical_pool_id,catalog_id,snapshot_id
+)
+SELECT physical_pool_id,catalog_id,snapshot_id
+FROM inserted
+UNION ALL
+SELECT physical_pool_id,catalog_id,ducklake_snapshot_id
+FROM seal
+WHERE NOT EXISTS (SELECT 1 FROM inserted);
+
+-- name: GetSnapshotRetentionSealIdentity :one
+SELECT physical_pool_id,catalog_id,ducklake_snapshot_id
+FROM delivery.delivery_snapshot_seal
+WHERE seal_id=sqlc.arg(seal_id)::uuid;
+
 -- name: LockSnapshotRetentionState :one
 SELECT state FROM ducklake.snapshot_retention
 WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) FOR UPDATE;
@@ -57,6 +84,17 @@ INSERT INTO ducklake.source_observation_capture
 -- name: GetSourceObservationCapture :one
 SELECT attempt_id::text,commit_marker,observation_envelope,content_digest,captured_at,created_at
 FROM ducklake.source_observation_capture WHERE attempt_id=sqlc.arg(attempt_id);
+
+-- name: LockDeliveryAttemptForObservation :one
+SELECT attempt_id::text,request_digest,plan_digest,physical_pool_id,catalog_id,fencing_epoch,state
+FROM delivery.delivery_build_attempt
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid
+FOR UPDATE;
+
+-- name: GetDeliveryAttemptForObservation :one
+SELECT attempt_id::text,request_digest,plan_digest,physical_pool_id,catalog_id,fencing_epoch,state
+FROM delivery.delivery_build_attempt
+WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
 
 -- name: InsertGenerationBinding :exec
 INSERT INTO ducklake.generation_binding

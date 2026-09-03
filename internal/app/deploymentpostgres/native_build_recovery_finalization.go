@@ -1,8 +1,8 @@
 package deploymentpostgres
 
 // This file owns the final, recovery-only native build hand-off.  Recovery
-// has already resolved the external marker and normalized both attempt
-// ledgers; this boundary only composes those exact values into one delivery
+// has already resolved the external marker and normalized the operation and
+// delivery records; this boundary only composes those exact values into one delivery
 // transaction.  It intentionally does not call BuildPlan or open any
 // physical/catalog authority.
 
@@ -15,7 +15,6 @@ import (
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -26,8 +25,8 @@ import (
 // nativeBuildRecoveryFinalizationInput is the complete value-only hand-off
 // from marker recovery and seal assembly to the durable completion boundary.
 // Admission is expected to contain the exact released target lease and the
-// indeterminate delivery/DuckLake attempt ledgers returned by recovery
-// preparation.  Its artifact value is the expected immutable binding; the
+// indeterminate delivery attempt record returned by recovery preparation. Its
+// artifact value is the expected immutable binding; the
 // binding itself may be absent until this transaction's first step.
 type nativeBuildRecoveryFinalizationInput struct {
 	Request       deploymentmodule.NativeDeliveryBuildRequest
@@ -75,7 +74,7 @@ type nativeBuildRecoveryEvidence struct {
 // callers are intentionally kept inside this package: BuildPlan remains the
 // only public fresh-build entry point.
 func (c *NativeBuildCoordinator) completeRecoveredNativeBuild(ctx context.Context, input nativeBuildRecoveryFinalizationInput) (deploymentmodule.NativeDeliveryBuild, error) {
-	if c == nil || c.repository == nil || !c.repository.Configured() || !c.repository.TransactionCapable() {
+	if c == nil || c.repository == nil || !c.repository.Configured() || !c.repository.TransactionCapable() || nativeBuildAuthorityNil(c.generationAdmission) {
 		return deploymentmodule.NativeDeliveryBuild{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	ctx = contextOrBackground(ctx)
@@ -93,6 +92,9 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuild(ctx context.Contex
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	if err := c.generationAdmission.ValidatePhysicalAdmissionTx(ctx, tx, normalized.Assembled); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 
 	result, err := c.finalizeRecoveredNativeBuildTx(ctx, tx, normalized)
 	if err != nil {
@@ -182,17 +184,14 @@ func normalizeNativeBuildRecoveryFinalizationInput(input nativeBuildRecoveryFina
 }
 
 func validateNativeBuildRecoveryAdmission(admission CandidateBuildAttemptAdmissionResult, assembled GenerationAdmissionInput, artifacts release.CandidateArtifactSet, operation deploymentmodule.NativeOperationRecord) error {
-	attempt, lease, duckAttempt := admission.Attempt, admission.Lease, admission.DuckLakeAttempt
+	attempt, lease := admission.Attempt, admission.Lease
 	if attempt.AttemptID != assembled.Commit.AttemptID || attempt.PlanID != assembled.Generation.PlanID || attempt.OwnerID != assembled.Commit.OwnerID || attempt.FencingEpoch != assembled.Commit.FencingEpoch || attempt.State != deploymentnative.AttemptIndeterminate || lease.LeaseID != assembled.Fence.LeaseID || lease.TargetID != assembled.Fence.TargetID || lease.OwnerID != assembled.Fence.OwnerID || lease.FencingEpoch != assembled.Fence.FencingEpoch || lease.State != "released" || lease.ExpiresAt.IsZero() || lease.ReleasedAt.IsZero() || !lease.ExpiresAt.Equal(operation.LeaseExpiresAt) {
 		return fmt.Errorf("%w: recovered admission lease or attempt identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
-	if duckAttempt.AttemptID != attempt.AttemptID || duckAttempt.OwnerID != attempt.OwnerID || duckAttempt.FencingEpoch != attempt.FencingEpoch || duckAttempt.State != ducklakepostgres.AttemptIndeterminate || !duckAttempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
-		return fmt.Errorf("%w: recovered DuckLake attempt identity differs", deploymentdomain.ErrDeliveryConflict)
-	}
 	if !sameTerminationEvidence(operation.AttemptEvidence, attempt.TerminationEvidence) {
-		return fmt.Errorf("%w: recovery operation and attempt ledgers disagree", deploymentdomain.ErrDeliveryConflict)
+		return fmt.Errorf("%w: recovery operation and delivery attempt records disagree", deploymentdomain.ErrDeliveryConflict)
 	}
-	if err := validateRecoveredAttemptTermination(attempt, duckAttempt); err != nil {
+	if err := validateRecoveredAttemptTermination(attempt); err != nil {
 		return err
 	}
 	want := artifacts.Generation
@@ -237,10 +236,13 @@ func (c *NativeBuildCoordinator) finalizeRecoveredNativeBuildTx(ctx context.Cont
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	// Heartbeats lock operation -> target lease -> delivery attempt -> DuckLake,
-	// while fresh completion starts at the target lease. Recovery takes both
-	// read locks in that canonical order before its first mutation, preventing
-	// stale writers from forming operation/lease/attempt lock cycles.
+	if err := c.generationAdmission.ValidatePhysicalAdmissionTx(ctx, tx, input.Assembled); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
+	// Heartbeats lock operation -> target lease -> delivery attempt, while fresh
+	// completion starts at the target lease. Recovery takes those read locks in
+	// the canonical order before its first mutation, preventing stale writers
+	// from forming operation/lease/attempt lock cycles.
 	lockedOperation, err := lockNativeBuildOperationTx(ctx, tx, c.operations, input.Reservation.Operation, deploymentmodule.NativeOperationStateIndeterminate, deploymentmodule.NativeOperationStateCompleted)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -268,13 +270,13 @@ func (c *NativeBuildCoordinator) finalizeRecoveredNativeBuildTx(ctx context.Cont
 	}
 	termination, err := c.attemptTermination.ReconcileAttemptTx(ctx, tx, AttemptReconciliationInput{
 		AttemptID: input.Admission.Attempt.AttemptID, OwnerID: input.Admission.Attempt.OwnerID, FencingEpoch: input.Admission.Attempt.FencingEpoch,
-		PhysicalPoolID: marker.PhysicalPoolID, CatalogID: input.Physical.CatalogID, SnapshotID: input.Physical.SnapshotID,
+		PhysicalPoolID: marker.PhysicalPoolID, SnapshotID: input.Physical.SnapshotID,
 		CommitMarker: canonicalMarker, State: deploymentnative.AttemptCommitted, SessionIdentity: input.Admission.Attempt.SessionIdentity,
 	})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	if termination.DeliveryAttempt.State != deploymentnative.AttemptCommitted || termination.DuckLakeAttempt.State != ducklakepostgres.AttemptCommitted || termination.DeliveryAttempt.SnapshotID != input.Physical.SnapshotID || !sameCommitMarker(termination.DeliveryAttempt.CommitMarker, canonicalMarker) || !sameCommitMarker([]byte(termination.DuckLakeAttempt.CommitMarker), canonicalMarker) {
+	if termination.DeliveryAttempt.State != deploymentnative.AttemptCommitted || termination.DeliveryAttempt.SnapshotID != input.Physical.SnapshotID || !sameCommitMarker(termination.DeliveryAttempt.CommitMarker, canonicalMarker) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: recovered attempt reconciliation identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
 	if err := c.repository.ReleaseLeaseAfterAttemptTerminationTx(ctx, tx, deploymentnative.LeaseFence{LeaseID: input.Admission.Lease.LeaseID, TargetID: input.Admission.Lease.TargetID, OwnerID: input.Admission.Lease.OwnerID, FencingEpoch: input.Admission.Lease.FencingEpoch}); err != nil {

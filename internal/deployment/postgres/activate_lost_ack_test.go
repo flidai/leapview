@@ -125,7 +125,7 @@ func prepareLostAckActivation(t *testing.T, r *Repository) (ActivationInput, los
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: candidateID, TargetID: ids.target, PlanID: planID, CandidateRevision: 1, ArtifactDigest: artifactDigest}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-lost-ack", PhysicalPoolID: "pool-lost-ack", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/lost-ack", SessionIdentity: "session-lost-ack", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-lost-ack", PhysicalPoolID: "pool-lost-ack", CatalogID: "catalog-lost-ack", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/lost-ack", SessionIdentity: "session-lost-ack", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-lost-ack", ServingArtifactDigest: artifactDigest, ServingStateID: "generation-test", OwnerID: "builder-lost-ack", FencingEpoch: 1}); err != nil {

@@ -262,7 +262,7 @@ func TestNativeBuildProjectionUsesAttemptAndPersistedArtifactIdentity(t *testing
 	}
 	created := time.Date(2026, 8, 30, 12, 0, 0, 0, time.UTC)
 	finished := created.Add(2 * time.Minute)
-	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: ids["attempt"], PlanID: "0198f2c0-7c7a-7f00-8a11-000000001101", CandidateID: ids["candidate"], PhysicalPoolID: "pool-native", FencingEpoch: 11, CreatedAt: created, UpdatedAt: finished, FinishedAt: finished}
+	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: ids["attempt"], PlanID: "0198f2c0-7c7a-7f00-8a11-000000001101", CandidateID: ids["candidate"], PhysicalPoolID: "pool-native", CatalogID: "catalog-native", FencingEpoch: 11, CreatedAt: created, UpdatedAt: finished, FinishedAt: finished}
 	lease := deploymentnative.DeliveryLease{LeaseID: ids["lease"]}
 	outcome := nativeBuildOutcome{OperationID: operationID, OperationOwnerID: "0198f2c0-7c7a-7f00-8a11-000000001103", AttemptID: ids["attempt"], PlanID: attempt.PlanID, CandidateID: ids["candidate"], LeaseID: ids["lease"], GenerationID: ids["generation"], SealID: ids["seal"], EventID: ids["event"], AuditID: ids["audit"], ServingArtifactID: "artifact-planned-identity", ServingArtifactDigest: "sha256:" + "a" + "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", ActorID: "principal", IdempotencyKey: "key", RequestDigest: "sha256:" + "b" + "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", PlanDigest: "sha256:" + "c" + "ccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", SourceDigest: "sha256:" + "d" + "ddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd", ExecutionDigest: "sha256:" + "e" + "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee", QualificationDigest: "sha256:" + "f" + "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"}
 	projected, err := nativeBuildProjection(outcome, "0198f2c0-7c7a-7f00-8a11-000000001102", attempt, lease, 13)
@@ -299,7 +299,7 @@ func TestNativeBuildDeterministicFailureSettlesEveryLedgerAndRejectsCandidate(t 
 	if !errors.Is(got, buildErr) {
 		t.Fatalf("settlement error = %v, want original build error", got)
 	}
-	nativeBuildAssertSettlement(t, f, admission, deploymentmodule.NativeOperationStateFailed, deploymentnative.AttemptAborted, ducklakepostgres.AttemptAborted, "rejected")
+	nativeBuildAssertSettlement(t, f, admission, deploymentmodule.NativeOperationStateFailed, deploymentnative.AttemptAborted, "rejected")
 	attempt, err := f.Delivery.BuildAttempt(t.Context(), f.AttemptID)
 	if err != nil {
 		t.Fatal(err)
@@ -317,7 +317,7 @@ func TestNativeBuildIndeterminateFailureSettlesEveryLedgerWithoutRejectingCandid
 	if !errors.Is(got, buildErr) {
 		t.Fatalf("settlement error = %v, want original build error", got)
 	}
-	nativeBuildAssertSettlement(t, f, admission, deploymentmodule.NativeOperationStateIndeterminate, deploymentnative.AttemptIndeterminate, ducklakepostgres.AttemptIndeterminate, "building")
+	nativeBuildAssertSettlement(t, f, admission, deploymentmodule.NativeOperationStateIndeterminate, deploymentnative.AttemptIndeterminate, "building")
 }
 
 func TestNativeBuildPreflightFailureTerminalizesReservationWithoutRawError(t *testing.T) {
@@ -380,14 +380,13 @@ func TestNativeBuildExpiredLeasesSettleEveryLedger(t *testing.T) {
 		classification NativePhysicalFailureClassification
 		operationState deploymentmodule.NativeOperationState
 		deliveryState  deploymentnative.BuildAttemptState
-		duckState      ducklakepostgres.AttemptState
 		candidateState string
 		takeover       bool
 	}{
-		{name: "deterministic", classification: NativePhysicalFailureDeterministic, operationState: deploymentmodule.NativeOperationStateFailed, deliveryState: deploymentnative.AttemptAborted, duckState: ducklakepostgres.AttemptAborted, candidateState: "rejected"},
-		{name: "indeterminate", classification: NativePhysicalFailureIndeterminate, operationState: deploymentmodule.NativeOperationStateIndeterminate, deliveryState: deploymentnative.AttemptIndeterminate, duckState: ducklakepostgres.AttemptIndeterminate, candidateState: "building"},
-		{name: "takeover-deterministic", classification: NativePhysicalFailureDeterministic, operationState: deploymentmodule.NativeOperationStateFailed, deliveryState: deploymentnative.AttemptAborted, duckState: ducklakepostgres.AttemptAborted, candidateState: "rejected", takeover: true},
-		{name: "takeover-indeterminate", classification: NativePhysicalFailureIndeterminate, operationState: deploymentmodule.NativeOperationStateIndeterminate, deliveryState: deploymentnative.AttemptIndeterminate, duckState: ducklakepostgres.AttemptIndeterminate, candidateState: "building", takeover: true},
+		{name: "deterministic", classification: NativePhysicalFailureDeterministic, operationState: deploymentmodule.NativeOperationStateFailed, deliveryState: deploymentnative.AttemptAborted, candidateState: "rejected"},
+		{name: "indeterminate", classification: NativePhysicalFailureIndeterminate, operationState: deploymentmodule.NativeOperationStateIndeterminate, deliveryState: deploymentnative.AttemptIndeterminate, candidateState: "building"},
+		{name: "takeover-deterministic", classification: NativePhysicalFailureDeterministic, operationState: deploymentmodule.NativeOperationStateFailed, deliveryState: deploymentnative.AttemptAborted, candidateState: "rejected", takeover: true},
+		{name: "takeover-indeterminate", classification: NativePhysicalFailureIndeterminate, operationState: deploymentmodule.NativeOperationStateIndeterminate, deliveryState: deploymentnative.AttemptIndeterminate, candidateState: "building", takeover: true},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -416,14 +415,14 @@ func TestNativeBuildExpiredLeasesSettleEveryLedger(t *testing.T) {
 			if !errors.Is(got, buildErr) {
 				t.Fatalf("settlement error = %v, want original build error", got)
 			}
-			nativeBuildAssertSettlement(t, f, admission, tt.operationState, tt.deliveryState, tt.duckState, tt.candidateState)
+			nativeBuildAssertSettlement(t, f, admission, tt.operationState, tt.deliveryState, tt.candidateState)
 		})
 	}
 }
 
 func nativeBuildSettlementFixture(t *testing.T, f nativeHeartbeatFixture) (*NativeBuildCoordinator, CandidateBuildAttemptAdmissionResult) {
 	t.Helper()
-	termination, err := NewAttemptTermination(f.Delivery, f.DuckLake)
+	termination, err := NewAttemptTermination(f.Delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -435,14 +434,10 @@ func nativeBuildSettlementFixture(t *testing.T, f nativeHeartbeatFixture) (*Nati
 	if err != nil {
 		t.Fatal(err)
 	}
-	duckAttempt, err := f.DuckLake.LoadAttempt(t.Context(), f.AttemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return &NativeBuildCoordinator{repository: f.Delivery, attemptTermination: termination, operations: f.Operation}, CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, DuckLakeAttempt: duckAttempt}
+	return &NativeBuildCoordinator{repository: f.Delivery, attemptTermination: termination, operations: f.Operation}, CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt}
 }
 
-func nativeBuildAssertSettlement(t *testing.T, f nativeHeartbeatFixture, admission CandidateBuildAttemptAdmissionResult, operationState deploymentmodule.NativeOperationState, deliveryState deploymentnative.BuildAttemptState, duckState ducklakepostgres.AttemptState, candidateState string) {
+func nativeBuildAssertSettlement(t *testing.T, f nativeHeartbeatFixture, admission CandidateBuildAttemptAdmissionResult, operationState deploymentmodule.NativeOperationState, deliveryState deploymentnative.BuildAttemptState, candidateState string) {
 	t.Helper()
 	operation, found, err := f.Operation.Lookup(t.Context(), deploymentmodule.NativeOperationAcquireInput{Scope: f.Request.TargetID, OperationType: nativeBuildOperationType, IdempotencyKey: f.Request.IdempotencyKey, RequestDigest: f.Digest, OwnerID: f.Lease.OwnerID})
 	if err != nil || !found || operation.State != operationState {
@@ -452,12 +447,8 @@ func nativeBuildAssertSettlement(t *testing.T, f nativeHeartbeatFixture, admissi
 	if err != nil || attempt.State != deliveryState || len(attempt.TerminationEvidence) == 0 {
 		t.Fatalf("delivery attempt settlement = %+v err=%v, want %s", attempt, err, deliveryState)
 	}
-	duckAttempt, err := f.DuckLake.LoadAttempt(t.Context(), f.AttemptID)
-	if err != nil || duckAttempt.State != duckState || len(duckAttempt.TerminationEvidence) == 0 {
-		t.Fatalf("DuckLake attempt settlement = %+v err=%v, want %s", duckAttempt, err, duckState)
-	}
-	if operationState == deploymentmodule.NativeOperationStateIndeterminate && (!sameTerminationEvidence(operation.AttemptEvidence, attempt.TerminationEvidence) || !sameTerminationEvidence(operation.AttemptEvidence, duckAttempt.TerminationEvidence)) {
-		t.Fatal("indeterminate operation and attempt ledgers retained different recovery evidence")
+	if operationState == deploymentmodule.NativeOperationStateIndeterminate && !sameTerminationEvidence(operation.AttemptEvidence, attempt.TerminationEvidence) {
+		t.Fatal("indeterminate operation and delivery attempt ledgers retained different recovery evidence")
 	}
 	candidate, err := f.Delivery.Candidate(t.Context(), admission.Attempt.CandidateID)
 	if err != nil || candidate.Status != candidateState {

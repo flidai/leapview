@@ -26,7 +26,7 @@ func TestPostgres18RetentionStateConstraintUpgrade(t *testing.T) {
 		if txErr != nil {
 			t.Fatal(txErr)
 		}
-		if txErr = ApplySchema(t.Context(), tx); txErr != nil {
+		if txErr = applyDuckLakeTestSchemas(t.Context(), tx); txErr != nil {
 			_ = tx.Rollback(t.Context())
 			t.Fatal(txErr)
 		}
@@ -92,7 +92,7 @@ func TestPostgres18SnapshotOrphanCleanupNotBeforeUpgrade(t *testing.T) {
 		if txErr != nil {
 			t.Fatal(txErr)
 		}
-		if txErr = ApplySchema(t.Context(), tx); txErr != nil {
+		if txErr = applyDuckLakeTestSchemas(t.Context(), tx); txErr != nil {
 			_ = tx.Rollback(t.Context())
 			t.Fatal(txErr)
 		}
@@ -167,7 +167,7 @@ func TestPostgres18UpgradeAuthorityLifecycleAndRuntimeGate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -320,7 +320,7 @@ func TestPostgres18RuntimeGateSnapshotQualificationEpochBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -390,7 +390,7 @@ func TestPostgres18MigrationFenceConcurrencyAndGlobalExclusion(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -590,7 +590,7 @@ func TestPostgres18UpgradeAuthorityAdversarialSQLAndTupleCycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}

@@ -1,6 +1,7 @@
 package deploymentpostgres
 
 import (
+	"context"
 	"errors"
 	"reflect"
 	"strings"
@@ -12,6 +13,18 @@ import (
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// Existing delivery-focused tests use this no-op physical guard; integration
+// coverage exercises the real seal/fence capability.
+type candidatePhysicalAdmissionStub struct{}
+
+func (candidatePhysicalAdmissionStub) Configured() bool { return true }
+func (candidatePhysicalAdmissionStub) ValidateBuildAdmissionTx(context.Context, ducklakepostgres.Tx, string, string) error {
+	return nil
+}
+func (candidatePhysicalAdmissionStub) AdmitSnapshotRetentionFromSealTx(context.Context, ducklakepostgres.Tx, string) error {
+	return nil
+}
 
 func candidateAdmissionDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
@@ -29,10 +42,6 @@ func candidateAdmissionDB(t *testing.T) *pgxpool.Pool {
 		t.Fatal(err)
 	}
 	if err := deploymentnative.ApplySchema(t.Context(), tx); err != nil {
-		_ = tx.Rollback(t.Context())
-		t.Fatal(err)
-	}
-	if err := ducklakepostgres.ApplySchema(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -76,7 +85,7 @@ func candidateAdmissionFixtureInput(t *testing.T) candidateAdmissionFixture {
 	}
 }
 
-func seedCandidateAdmissionFixture(t *testing.T, delivery *deploymentnative.Repository, ducklake *ducklakepostgres.Repository, fixture candidateAdmissionFixture) {
+func seedCandidateAdmissionFixture(t *testing.T, delivery *deploymentnative.Repository, fixture candidateAdmissionFixture) {
 	t.Helper()
 	ctx := t.Context()
 	if _, err := delivery.CreateTarget(ctx, fixture.Target); err != nil {
@@ -88,51 +97,34 @@ func seedCandidateAdmissionFixture(t *testing.T, delivery *deploymentnative.Repo
 	if _, err := delivery.CreateCandidate(ctx, fixture.Candidate); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := ducklake.RegisterCatalog(ctx, ducklakepostgres.CatalogIdentity{
-		PhysicalPoolID:  fixture.Input.Attempt.PhysicalPoolID,
-		CatalogDatabase: "ducklake",
-		CatalogID:       fixture.Input.CatalogID,
-		CatalogUUID:     "0198f2c0-7c7a-7f00-8a11-000000000399",
-		MetadataSchema:  "main",
-	}); err != nil {
-		t.Fatal(err)
-	}
 }
 
 func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t *testing.T) {
 	p := candidateAdmissionDB(t)
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
-	if _, err := NewCandidateBuildAttemptAdmission(nil, ducklake); err == nil {
+	if _, err := NewCandidateBuildAttemptAdmission(nil, nil); err == nil {
 		t.Fatal("candidate admission accepted an unconfigured delivery authority")
 	}
-	var unconfigured *ducklakepostgres.Repository
-	if _, err := NewCandidateBuildAttemptAdmission(delivery, unconfigured); err == nil {
-		t.Fatal("candidate admission accepted an unconfigured DuckLake authority")
-	}
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	fixture := candidateAdmissionFixtureInput(t)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, fixture)
+	seedCandidateAdmissionFixture(t, delivery, fixture)
 	first, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input)
 	if err != nil {
 		t.Fatalf("admit candidate build attempt: %v", err)
 	}
-	if first.Lease.State != "active" || first.Attempt.State != deploymentnative.AttemptRunning || first.Artifact.AttemptID != first.Attempt.AttemptID || first.DuckLakeAttempt.State != ducklakepostgres.AttemptRunning {
+	if first.Lease.State != "active" || first.Attempt.State != deploymentnative.AttemptRunning || first.Artifact.AttemptID != first.Attempt.AttemptID {
 		t.Fatalf("admission result = %#v", first)
-	}
-	if first.DuckLakeAttempt.CatalogID != fixture.Input.CatalogID || first.DuckLakeAttempt.PhysicalPoolID != first.Attempt.PhysicalPoolID || first.DuckLakeAttempt.SessionIdentity != first.Attempt.SessionIdentity {
-		t.Fatalf("DuckLake attempt did not inherit delivery identity: %#v", first.DuckLakeAttempt)
 	}
 
 	replayed, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input)
 	if err != nil {
 		t.Fatalf("exact replay: %v", err)
 	}
-	if replayed.Lease != first.Lease || !reflect.DeepEqual(replayed.Attempt, first.Attempt) || replayed.Artifact != first.Artifact || !reflect.DeepEqual(replayed.DuckLakeAttempt, first.DuckLakeAttempt) {
+	if replayed.Lease != first.Lease || !reflect.DeepEqual(replayed.Attempt, first.Attempt) || replayed.Artifact != first.Artifact {
 		t.Fatalf("exact replay drifted: first=%#v replay=%#v", first, replayed)
 	}
 	drift := fixture.Input
@@ -149,7 +141,6 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	rollback.Input.Lease.TargetID = "target-candidate-admission-rollback"
 	rollback.Input.Attempt.SessionIdentity = "duckdb-session-candidate-admission-rollback"
 	rollback.Input.Attempt.PhysicalPoolID = "pool-candidate-admission-rollback"
-	rollback.Input.CatalogID = "catalog-candidate-admission-rollback"
 	rollback.Target.TargetID = rollback.Input.Lease.TargetID
 	rollback.Target.ProjectID = "project-candidate-admission-rollback"
 	rollback.Plan.PlanID = rollback.Input.Attempt.PlanID
@@ -159,15 +150,15 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	rollback.Candidate.TargetID = rollback.Target.TargetID
 	rollback.Plan = nativePlanFixture(t, rollback.Plan, rollback.Target.ProjectID)
 	rollback.Input.Attempt.PlanDigest = rollback.Plan.PlanDigest
-	seedCandidateAdmissionFixture(t, delivery, ducklake, rollback)
-	if _, err := p.Exec(t.Context(), `CREATE OR REPLACE FUNCTION ducklake.reject_candidate_attempt() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected candidate attempt conflict'; END; $$; CREATE TRIGGER reject_candidate_attempt BEFORE INSERT ON ducklake.attempt_evidence FOR EACH ROW EXECUTE FUNCTION ducklake.reject_candidate_attempt()`); err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		_, _ = p.Exec(t.Context(), `DROP TRIGGER IF EXISTS reject_candidate_attempt ON ducklake.attempt_evidence; DROP FUNCTION IF EXISTS ducklake.reject_candidate_attempt()`)
-	}()
+	seedCandidateAdmissionFixture(t, delivery, rollback)
+	// Reuse an existing candidate with a different plan identity. Candidate
+	// admission acquires the lease before validating that relationship, so this
+	// proves the transaction rolls the lease back when the delivery check fails.
+	rollback.Input.Attempt.CandidateID = fixture.Input.Attempt.CandidateID
+	rollback.Input.Lease.OwnerID = "different-owner"
+	rollback.Input.Attempt.OwnerID = "different-owner"
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), rollback.Input); err == nil {
-		t.Fatal("injected DuckLake conflict unexpectedly succeeded")
+		t.Fatal("conflicting candidate admission unexpectedly succeeded")
 	}
 	if _, err := delivery.Lease(t.Context(), rollback.Input.Lease.LeaseID); !errors.Is(err, deploymentnative.ErrNotFound) {
 		t.Fatalf("rollback retained delivery lease, err=%v", err)
@@ -178,21 +169,17 @@ func TestCandidateBuildAttemptAdmissionPostgresAtomicSuccessReplayAndRollback(t 
 	if _, err := delivery.BuildArtifactBinding(t.Context(), rollback.Input.Attempt.AttemptID); !errors.Is(err, deploymentnative.ErrNotFound) {
 		t.Fatalf("rollback retained artifact binding, err=%v", err)
 	}
-	if _, err := ducklake.LoadAttempt(t.Context(), rollback.Input.Attempt.AttemptID); !errors.Is(err, ducklakepostgres.ErrNotFound) {
-		t.Fatalf("rollback retained DuckLake attempt, err=%v", err)
-	}
 }
 
 func TestCandidateBuildAttemptAdmissionTxComposesAdjacentMutation(t *testing.T) {
 	p := candidateAdmissionDB(t)
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture := candidateAdmissionFixtureInput(t)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, fixture)
+	seedCandidateAdmissionFixture(t, delivery, fixture)
 
 	tx, err := delivery.Begin(t.Context())
 	if err != nil {
@@ -252,13 +239,10 @@ func TestNormalizeCandidateBuildAttemptAdmissionRejectsCallerFencingEpoch(t *tes
 	}
 }
 
-func TestNormalizeCandidateBuildAttemptAdmissionRejectsOversizedArtifactAndCatalogIDs(t *testing.T) {
+func TestNormalizeCandidateBuildAttemptAdmissionRejectsOversizedArtifactIDs(t *testing.T) {
 	for name, mutate := range map[string]func(*CandidateBuildAttemptAdmissionInput){
 		"artifact id": func(in *CandidateBuildAttemptAdmissionInput) {
 			in.Artifact.ServingArtifactID = strings.Repeat("a", 256)
-		},
-		"catalog id": func(in *CandidateBuildAttemptAdmissionInput) {
-			in.CatalogID = strings.Repeat("c", 256)
 		},
 	} {
 		t.Run(name, func(t *testing.T) {

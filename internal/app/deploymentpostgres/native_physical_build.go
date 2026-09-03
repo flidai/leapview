@@ -519,7 +519,7 @@ func validateNativePhysicalBuildInputWithPolicy(input NativePhysicalBuildInput, 
 	if err := validateAttemptWithPolicy(input.Attempt, now, expectedState, allowExpired); err != nil {
 		return NativePhysicalBuildInput{}, nil, "", err
 	}
-	if marker.AttemptID != input.Attempt.AttemptID || marker.PlanDigest != input.Attempt.PlanDigest || marker.RequestDigest != input.Attempt.RequestDigest || marker.PhysicalPoolID != input.Attempt.PhysicalPoolID || marker.LeaseEpoch != input.Attempt.FencingEpoch {
+	if marker.AttemptID != input.Attempt.AttemptID || marker.PlanDigest != input.Attempt.PlanDigest || marker.RequestDigest != input.Attempt.RequestDigest || marker.PhysicalPoolID != input.Attempt.PhysicalPoolID || input.Attempt.CatalogID != input.CatalogID || marker.LeaseEpoch != input.Attempt.FencingEpoch {
 		return NativePhysicalBuildInput{}, nil, "", fmt.Errorf("%w: marker and build attempt identity differs", deploymentnative.ErrConflict)
 	}
 	request := input.Request
@@ -593,7 +593,7 @@ func validateAttempt(attempt deploymentnative.DeliveryBuildAttempt) error {
 }
 
 func validateAttemptWithPolicy(attempt deploymentnative.DeliveryBuildAttempt, now time.Time, expectedState deploymentnative.BuildAttemptState, allowExpired bool) error {
-	for label, value := range map[string]string{"attempt id": attempt.AttemptID, "plan id": attempt.PlanID, "owner id": attempt.OwnerID, "physical pool id": attempt.PhysicalPoolID} {
+	for label, value := range map[string]string{"attempt id": attempt.AttemptID, "plan id": attempt.PlanID, "owner id": attempt.OwnerID, "physical pool id": attempt.PhysicalPoolID, "catalog id": attempt.CatalogID} {
 		if err := validateTextField(value, label, 512); err != nil {
 			return err
 		}

@@ -113,9 +113,9 @@ func validNativeSealAssemblerInput(t *testing.T) NativeSealEvidenceAssemblerInpu
 	closure = nativeAssemblerClosure(t, "catalog-assembler", poolRoot, namespace, relations)
 	build := NativePhysicalBuildEvidence{AttemptID: attemptID, CatalogID: "catalog-assembler", ObjectRoot: poolRoot, SnapshotID: 42, Marker: marker, CanonicalMarkerJSON: json.RawMessage(markerJSON), Seal: ducklake.PostgresSnapshotSealEvidence{CatalogType: "postgres", MetadataSchema: ducklake.MetadataSchemaForPool(poolID), DataPath: poolRoot, ExtensionVersion: "1", CatalogVersion: "1.0", SnapshotID: 42, CommitMarker: markerJSON}, Closure: closure}
 	artifact := release.CandidateGenerationArtifact{Identity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: "prod", GenerationID: generation}, ServingArtifactID: "artifact-" + strings.TrimPrefix(artifactDigest, "sha256:"), ArtifactDigest: artifactDigest, BundleManifestJSON: `{"version":1}`, NativeArtifact: release.NativeArtifactObjectEvidence{Locator: "serving-artifacts/" + strings.TrimPrefix(artifactDigest, "sha256:") + ".tar.gz", StorageSecurityDomain: "runtime", ContentType: projectbundle.BundleContentType, MetadataDigest: assemblerDigest('9'), SizeBytes: 1}, AccessPolicyJSON: `{}`, DashboardPublicationsJSON: `{}`, DashboardAppearancesJSON: `{}`, DataMode: release.GenerationDataRefreshSources, DataRevision: "sources:assembler"}
-	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: "builder-assembler", PhysicalPoolID: poolID, FencingEpoch: 3, RequestDigest: requestDigest, PlanDigest: plan.Digest, Namespace: namespace, State: deploymentnative.AttemptRunning, LeaseExpiresAt: now.Add(time.Hour)}
+	attempt := deploymentnative.DeliveryBuildAttempt{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: "builder-assembler", PhysicalPoolID: poolID, CatalogID: "catalog-assembler", FencingEpoch: 3, RequestDigest: requestDigest, PlanDigest: plan.Digest, Namespace: namespace, State: deploymentnative.AttemptRunning, LeaseExpiresAt: now.Add(time.Hour)}
 	lease := deploymentnative.DeliveryLease{LeaseID: leaseID, TargetID: "target-assembler", OwnerID: attempt.OwnerID, FencingEpoch: 3, State: "active", ExpiresAt: now.Add(time.Hour), AcquiredAt: now}
-	attemptAdmission := CandidateBuildAttemptAdmissionResult{Attempt: attempt, Lease: lease, Artifact: deploymentnative.BuildArtifactBinding{AttemptID: attemptID, ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest, ServingStateID: generation, BoundAt: now}, DuckLakeAttempt: ducklakepostgres.AttemptEvidence{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: plan.Digest, PhysicalPoolID: poolID, CatalogID: build.CatalogID, OwnerID: attempt.OwnerID, FencingEpoch: 3, State: ducklakepostgres.AttemptRunning, SessionIdentity: "session-assembler", LeaseExpiresAt: now.Add(time.Hour)}}
+	attemptAdmission := CandidateBuildAttemptAdmissionResult{Attempt: attempt, Lease: lease, Artifact: deploymentnative.BuildArtifactBinding{AttemptID: attemptID, ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ArtifactDigest, ServingStateID: generation, BoundAt: now}}
 	compatDigest, err := tuple.Digest()
 	if err != nil {
 		t.Fatal(err)
@@ -230,20 +230,15 @@ func recoveredNativeSealAssemblerInput(t *testing.T) NativeRecoveredSealEvidence
 	t.Helper()
 	input := validNativeSealAssemblerInput(t)
 	input.AttemptAdmission.Attempt.State = deploymentnative.AttemptIndeterminate
-	input.AttemptAdmission.DuckLakeAttempt.State = ducklakepostgres.AttemptIndeterminate
 	input.AttemptAdmission.Lease.State = "released"
 	input.AttemptAdmission.Lease.ReleasedAt = input.AttemptAdmission.Lease.ExpiresAt.Add(time.Minute)
 	now := input.AttemptAdmission.Lease.AcquiredAt
-	input.AttemptAdmission.Attempt.SessionIdentity = input.AttemptAdmission.DuckLakeAttempt.SessionIdentity
+	input.AttemptAdmission.Attempt.SessionIdentity = "session-assembler"
 	input.AttemptAdmission.Attempt.CreatedAt = now
 	input.AttemptAdmission.Attempt.UpdatedAt = now
 	input.AttemptAdmission.Attempt.FinishedAt = now.Add(time.Second)
-	input.AttemptAdmission.DuckLakeAttempt.CreatedAt = now
-	input.AttemptAdmission.DuckLakeAttempt.UpdatedAt = now
-	input.AttemptAdmission.DuckLakeAttempt.TerminalAt = now.Add(time.Second)
 	evidence := json.RawMessage(`{"reason":"recovered"}`)
 	input.AttemptAdmission.Attempt.TerminationEvidence = append(json.RawMessage(nil), evidence...)
-	input.AttemptAdmission.DuckLakeAttempt.TerminationEvidence = append(json.RawMessage(nil), evidence...)
 	return NativeRecoveredSealEvidenceAssemblerInput(input)
 }
 
@@ -283,12 +278,6 @@ func TestAssembleRecoveredNativeGenerationAdmissionInputRejectsFreshStates(t *te
 		{"terminal delivery attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
 			in.AttemptAdmission.Attempt.State = deploymentnative.AttemptCommitted
 		}},
-		{"running DuckLake attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
-			in.AttemptAdmission.DuckLakeAttempt.State = ducklakepostgres.AttemptRunning
-		}},
-		{"terminal DuckLake attempt", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
-			in.AttemptAdmission.DuckLakeAttempt.State = ducklakepostgres.AttemptCommitted
-		}},
 		{"missing release timestamp", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
 			in.AttemptAdmission.Lease.ReleasedAt = time.Time{}
 		}},
@@ -298,8 +287,8 @@ func TestAssembleRecoveredNativeGenerationAdmissionInputRejectsFreshStates(t *te
 		{"attempt expiry drift", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
 			in.AttemptAdmission.Attempt.LeaseExpiresAt = in.AttemptAdmission.Attempt.LeaseExpiresAt.Add(time.Second)
 		}},
-		{"termination evidence drift", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
-			in.AttemptAdmission.DuckLakeAttempt.TerminationEvidence = json.RawMessage(`{"reason":"different"}`)
+		{"invalid termination evidence", func(in *NativeRecoveredSealEvidenceAssemblerInput) {
+			in.AttemptAdmission.Attempt.TerminationEvidence = json.RawMessage(`{}`)
 		}},
 	}
 	for _, test := range tests {

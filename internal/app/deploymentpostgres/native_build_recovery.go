@@ -51,7 +51,7 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 	}
 	prepared, err := PrepareNativeBuildRecovery(ctx, c.repository, c.operations, c.attemptTermination, NativeBuildRecoveryPreparationInput{
 		Request: request, RequestDigest: requestDigest, Operation: reservation.Operation,
-		PhysicalPoolID: c.physicalPoolID, CatalogID: contract.Catalog.CatalogID,
+		PhysicalPoolID: c.physicalPoolID,
 	})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -80,7 +80,7 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 
 	attemptAdmission := CandidateBuildAttemptAdmissionResult{
 		Lease: prepared.Lease, Attempt: prepared.DeliveryAttempt,
-		Artifact: artifactBinding, DuckLakeAttempt: prepared.DuckLakeAttempt,
+		Artifact: artifactBinding,
 	}
 	physicalInput, err := deriveNativeBuildRecoveryPhysicalInput(request, plan, prepared, contract, artifacts, marker, c.markerResolverFactory, c.markerQuarantine, c.observationReader, c.snapshotFactory)
 	if err != nil {
@@ -103,18 +103,18 @@ func (c *NativeBuildCoordinator) recoverIndeterminateNativeBuild(
 			if marshalErr != nil {
 				return deploymentmodule.NativeDeliveryBuild{}, marshalErr
 			}
-			var duckLake CandidateBuildAttemptSuccessorDuckLakeAdmission
-			if candidate, ok := c.attemptAdmission.(CandidateBuildAttemptSuccessorDuckLakeAdmission); ok {
-				duckLake = candidate
-			}
 			successorAuthority, authorityOK := c.operations.(deploymentmodule.NativeBuildOperationSuccessorAuthority)
 			if !authorityOK {
 				return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build successor operation authority is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
 			}
+			physicalAdmission, admissionOK := c.attemptAdmission.(CandidateBuildAttemptPhysicalAdmission)
+			if !admissionOK {
+				return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build successor physical admission guard is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
+			}
 			successor, admissionErr := AdmitNativeBuildSuccessor(ctx, c.repository, successorAuthority, NativeBuildSuccessorAdmissionInput{
 				Operation: prepared.Operation, DeliveryAttempt: prepared.DeliveryAttempt, DeliveryLease: prepared.Lease,
 				Artifact:  CandidateBuildArtifactInput{ServingArtifactID: artifactBinding.ServingArtifactID, ServingArtifactDigest: artifactBinding.ServingArtifactDigest, ServingStateID: artifactBinding.ServingStateID},
-				CatalogID: contract.Catalog.CatalogID, Resolution: resolution, DuckLake: duckLake,
+				CatalogID: contract.Catalog.CatalogID, Physical: physicalAdmission, Resolution: resolution,
 			})
 			if admissionErr != nil {
 				return deploymentmodule.NativeDeliveryBuild{}, admissionErr

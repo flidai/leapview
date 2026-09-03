@@ -41,7 +41,7 @@ func TestPostgres18MarkerQuarantineIsImmutableAndGatesAttempts(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -55,6 +55,10 @@ func TestPostgres18MarkerQuarantineIsImmutableAndGatesAttempts(t *testing.T) {
 	}
 	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000702"
 	requestDigest, planDigest := digest('b'), digest('c')
+	planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), p, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "quarantine-owner", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "quarantine-owner", FencingEpoch: 1, SessionIdentity: "quarantine-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +106,7 @@ func TestPostgres18MarkerQuarantineSerializesAdmissionAtPoolScope(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -116,6 +120,10 @@ func TestPostgres18MarkerQuarantineSerializesAdmissionAtPoolScope(t *testing.T) 
 	}
 	const attemptID = "0198f2c0-7c7a-7f00-0000-000000000712"
 	requestDigest, planDigest := digest('b'), digest('c')
+	planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), p, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "lock-owner", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "lock-owner", FencingEpoch: 1, SessionIdentity: "lock-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
@@ -192,6 +200,10 @@ func TestPostgres18MaintenanceFenceRejectsRunningAttempt(t *testing.T) {
 		SessionIdentity: "build-session",
 		LeaseExpiresAt:  time.Now().UTC().Add(time.Minute),
 	}
+	planID, candidateID, targetID := canonicalAttemptIDs(in.AttemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), r.db, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: in.AttemptID, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: in.OwnerID, FencingEpoch: in.FencingEpoch}); err != nil {
+		t.Fatal(err)
+	}
 	first, err := r.BeginAttempt(t.Context(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +274,7 @@ func TestPostgres18RuntimeRoleCanUseMarkerQuarantineLockAndInsert(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -289,6 +301,10 @@ func TestPostgres18RuntimeRoleCanUseMarkerQuarantineLockAndInsert(t *testing.T) 
 	runtimeRepo := New(runtimeDB)
 	const attemptID = "0198f2c0-7c7a-0000-0000-000000000722"
 	requestDigest, planDigest := digest('b'), digest('c')
+	planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), admin, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-owner", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runtimeRepo.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-owner", FencingEpoch: 1, SessionIdentity: "runtime-session", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
@@ -314,7 +330,7 @@ func TestPostgres18CatalogAttemptGenerationAndSnapshotLeaseLifecycle(t *testing.
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -594,7 +610,7 @@ func TestReconcileAttemptRequiresClosedTerminationEvidenceAndProtectsIndetermina
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -654,7 +670,7 @@ func TestPostgres18CleanupClaimFencesStaleWorkers(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -801,12 +817,31 @@ func TestPostgres18DuckLakeControlRoleGrants(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `GRANT USAGE ON SCHEMA delivery TO leapview_control_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `GRANT SELECT, UPDATE ON delivery.delivery_build_attempt TO leapview_control_runtime`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `GRANT USAGE ON SCHEMA delivery TO leapview_control_readonly`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(t.Context(), `GRANT SELECT ON delivery.delivery_build_attempt TO leapview_control_readonly`); err != nil {
+		t.Fatal(err)
+	}
+	var deliverySelect bool
+	if err := admin.QueryRow(t.Context(), `SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_build_attempt', 'SELECT')`).Scan(&deliverySelect); err != nil {
+		t.Fatal(err)
+	}
+	if !deliverySelect {
+		t.Fatal("runtime delivery attempt SELECT grant was not applied")
 	}
 	var publicSchema, publicTable, publicFunction, runtimeDelete, runtimeFunction, runtimeAdmissionFunction, runtimeOrphanInsert, runtimeOrphanUpdate, maintenanceAdmissionFunction, maintenanceOrphanInsert, readonlyAdmissionFunction, readonlyInsert, readonlyOrphanUpdate bool
 	if err := admin.QueryRow(t.Context(), `
@@ -851,6 +886,10 @@ SELECT has_schema_privilege('public', 'ducklake', 'USAGE'),
 	}
 	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000099"
 	requestDigest, planDigest := digest('b'), digest('c')
+	planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), admin, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-worker", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := runtime.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "runtime-worker", FencingEpoch: 1, SessionIdentity: "role-test", LeaseExpiresAt: time.Now().UTC().Add(time.Minute)}); err != nil {
 		t.Fatalf("runtime begin attempt: %v", err)
 	}

@@ -13,7 +13,6 @@ import (
 	"sync"
 	"time"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -38,13 +37,13 @@ type NativeBuildHeartbeatInput struct {
 	Duration            time.Duration
 }
 
-// NativeBuildHeartbeatResult returns only value evidence from all four lease
-// ledgers after a successful atomic renewal.
+// NativeBuildHeartbeatResult returns only value evidence from the operation,
+// target, and delivery-attempt lease authorities after a successful atomic
+// renewal.
 type NativeBuildHeartbeatResult struct {
 	OperationLease  deploymentmodule.NativeOperationLease
 	TargetLease     deploymentnative.DeliveryLease
 	DeliveryAttempt deploymentnative.DeliveryBuildAttempt
-	DuckLakeAttempt ducklakepostgres.AttemptEvidence
 }
 
 // nativeBuildHeartbeatGuard owns the renewal goroutine for one admitted
@@ -120,38 +119,27 @@ func (g *nativeBuildHeartbeatGuard) Stop() (NativeBuildHeartbeatInput, error) {
 	return g.input, g.lost
 }
 
-// NativeBuildHeartbeatDuckLakeAuthority is the narrow DuckLake control-ledger
-// capability needed by the heartbeat. Production uses *postgres.Repository;
-// tests may inject a value-only implementation.
-type NativeBuildHeartbeatDuckLakeAuthority interface {
-	Configured() bool
-	RenewAttemptLeaseTx(context.Context, ducklakepostgres.Tx, string, string, int64, time.Time) (ducklakepostgres.AttemptEvidence, error)
-}
-
-// NativeBuildHeartbeat renews all four leases in one caller-owned transaction.
+// NativeBuildHeartbeat renews all canonical operation, target, and delivery
+// attempt leases in one caller-owned transaction.
 // The transaction methods never begin, commit, or roll back; the convenience
 // Renew method owns that lifecycle for callers that do not need composition.
 type NativeBuildHeartbeat struct {
 	delivery  *deploymentnative.Repository
-	ducklake  NativeBuildHeartbeatDuckLakeAuthority
 	operation deploymentmodule.NativeBuildOperationAuthority
 }
 
-func NewNativeBuildHeartbeat(delivery *deploymentnative.Repository, ducklake NativeBuildHeartbeatDuckLakeAuthority, operation deploymentmodule.NativeBuildOperationAuthority) (*NativeBuildHeartbeat, error) {
+func NewNativeBuildHeartbeat(delivery *deploymentnative.Repository, operation deploymentmodule.NativeBuildOperationAuthority) (*NativeBuildHeartbeat, error) {
 	if delivery == nil || !delivery.Configured() || !delivery.TransactionCapable() {
 		return nil, errors.New("native build heartbeat requires a configured, transaction-capable delivery authority")
-	}
-	if nativeBuildAuthorityNil(ducklake) || !ducklake.Configured() {
-		return nil, errors.New("native build heartbeat requires a configured DuckLake authority")
 	}
 	if nativeBuildAuthorityNil(operation) {
 		return nil, errors.New("native build heartbeat requires a configured operation authority")
 	}
-	return &NativeBuildHeartbeat{delivery: delivery, ducklake: ducklake, operation: operation}, nil
+	return &NativeBuildHeartbeat{delivery: delivery, operation: operation}, nil
 }
 
 func (h *NativeBuildHeartbeat) Renew(ctx context.Context, input NativeBuildHeartbeatInput) (NativeBuildHeartbeatResult, error) {
-	if h == nil || h.delivery == nil || h.ducklake == nil || h.operation == nil {
+	if h == nil || h.delivery == nil || h.operation == nil {
 		return NativeBuildHeartbeatResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	ctx = contextOrBackground(ctx)
@@ -176,12 +164,12 @@ func (h *NativeBuildHeartbeat) Renew(ctx context.Context, input NativeBuildHeart
 	return result, nil
 }
 
-// RenewTx renews operation, target, delivery-attempt, and DuckLake-attempt
+// RenewTx renews operation, target, and delivery-attempt
 // leases on exactly tx. The operation authority computes the shared absolute
-// expiry; all other ledgers must accept that same value or the transaction is
-// rolled back by the caller.
+// expiry; the target lease and delivery attempt must accept that same value or
+// the transaction is rolled back by the caller.
 func (h *NativeBuildHeartbeat) RenewTx(ctx context.Context, tx deploymentnative.Tx, input NativeBuildHeartbeatInput) (NativeBuildHeartbeatResult, error) {
-	if h == nil || h.delivery == nil || h.ducklake == nil || h.operation == nil || tx == nil {
+	if h == nil || h.delivery == nil || h.operation == nil || tx == nil {
 		return NativeBuildHeartbeatResult{}, deploymentmodule.ErrDeliveryInputUnavailable
 	}
 	ctx = contextOrBackground(ctx)
@@ -221,14 +209,7 @@ func (h *NativeBuildHeartbeat) RenewTx(ctx context.Context, tx deploymentnative.
 	if deliveryAttempt.AttemptID != input.AttemptID || deliveryAttempt.OwnerID != input.AttemptOwnerID || deliveryAttempt.FencingEpoch != input.AttemptFencingEpoch || deliveryAttempt.State != deploymentnative.AttemptRunning || !deliveryAttempt.LeaseExpiresAt.Equal(expiresAt) {
 		return NativeBuildHeartbeatResult{}, fmt.Errorf("%w: renewed delivery attempt identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
-	duckAttempt, err := h.ducklake.RenewAttemptLeaseTx(ctx, tx, input.AttemptID, input.AttemptOwnerID, input.AttemptFencingEpoch, expiresAt)
-	if err != nil {
-		return NativeBuildHeartbeatResult{}, err
-	}
-	if duckAttempt.AttemptID != input.AttemptID || duckAttempt.OwnerID != input.AttemptOwnerID || duckAttempt.FencingEpoch != input.AttemptFencingEpoch || duckAttempt.State != ducklakepostgres.AttemptRunning || !duckAttempt.LeaseExpiresAt.Equal(expiresAt) {
-		return NativeBuildHeartbeatResult{}, fmt.Errorf("%w: renewed DuckLake attempt identity differs", deploymentdomain.ErrDeliveryConflict)
-	}
-	return NativeBuildHeartbeatResult{OperationLease: renewedOperation, TargetLease: lease, DeliveryAttempt: deliveryAttempt, DuckLakeAttempt: duckAttempt}, nil
+	return NativeBuildHeartbeatResult{OperationLease: renewedOperation, TargetLease: lease, DeliveryAttempt: deliveryAttempt}, nil
 }
 
 func validateNativeBuildHeartbeatInput(input NativeBuildHeartbeatInput) error {

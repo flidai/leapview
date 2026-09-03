@@ -112,6 +112,10 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
     candidate_id uuid REFERENCES delivery.delivery_candidate(candidate_id),
     owner_id text NOT NULL,
     physical_pool_id text NOT NULL CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
+    -- Physical catalog identity is retained on canonical delivery attempts so
+    -- DuckLake maintenance can fence exactly the running writer without a
+    -- second attempt lifecycle ledger.
+    catalog_id text NOT NULL CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
     fencing_epoch bigint NOT NULL CHECK (fencing_epoch > 0),
     request_digest text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
     plan_digest text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
@@ -133,6 +137,7 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_build_attempt (
         OR (state = 'committed' AND snapshot_id IS NOT NULL AND commit_marker IS NOT NULL AND termination_evidence IS NULL)
         OR (state IN ('aborted','indeterminate','fenced') AND snapshot_id IS NULL AND commit_marker IS NULL AND termination_evidence IS NOT NULL)),
     UNIQUE (attempt_id, candidate_id),
+    UNIQUE (attempt_id, physical_pool_id, catalog_id),
     FOREIGN KEY (candidate_id, plan_id) REFERENCES delivery.delivery_candidate(candidate_id, plan_id)
 );
 
@@ -456,7 +461,7 @@ RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     IF TG_OP = 'DELETE' OR NEW.attempt_id <> OLD.attempt_id OR NEW.plan_id <> OLD.plan_id
        OR NEW.candidate_id IS DISTINCT FROM OLD.candidate_id
-       OR NEW.owner_id <> OLD.owner_id OR NEW.physical_pool_id <> OLD.physical_pool_id OR NEW.fencing_epoch <> OLD.fencing_epoch
+       OR NEW.owner_id <> OLD.owner_id OR NEW.physical_pool_id <> OLD.physical_pool_id OR NEW.catalog_id <> OLD.catalog_id OR NEW.fencing_epoch <> OLD.fencing_epoch
        OR NEW.request_digest <> OLD.request_digest OR NEW.plan_digest <> OLD.plan_digest
        OR NEW.namespace <> OLD.namespace OR NEW.session_identity <> OLD.session_identity
        OR NEW.created_at <> OLD.created_at THEN

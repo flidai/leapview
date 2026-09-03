@@ -15,8 +15,8 @@ import (
 )
 
 // recoverNativeBuildSuccessor resolves the current operation-chain tip. It
-// never treats a successor as a fresh root: the exact leaf delivery/DuckLake
-// rows are loaded, normalized, and marker-resolved before either finalizing
+// never treats a successor as a fresh root: the exact leaf delivery rows are
+// loaded, normalized, and marker-resolved before either finalizing
 // that leaf or appending its deterministic child.
 func (c *NativeBuildCoordinator) recoverNativeBuildSuccessor(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest, requestDigest string, reservation NativeBuildOperationReservationResult, plan nativeBuildPlan, contract NativeBuildContract, successorAuthority deploymentmodule.NativeBuildOperationSuccessorAuthority) (deploymentmodule.NativeDeliveryBuild, error) {
 	leafAuthority, ok := successorAuthority.(deploymentmodule.NativeBuildOperationSuccessorLockAuthority)
@@ -91,28 +91,20 @@ func (c *NativeBuildCoordinator) recoverNativeBuildSuccessor(ctx context.Context
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	duckReader, ok := c.attemptAdmission.(CandidateBuildAttemptSuccessorDuckLakeReader)
-	if !ok {
-		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor DuckLake reader is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
-	}
-	duckAttempt, err := duckReader.LoadSuccessorDuckLakeAttempt(ctx, leaf.AttemptID)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryBuild{}, err
-	}
 	if reservation.Operation.AttemptID != rootDeliveryAttemptID || reservation.Operation.AttemptIdentity != "native-build/"+reservation.Operation.OperationID || rootDeliveryAttempt.AttemptID != rootDeliveryAttemptID || rootDeliveryAttempt.PlanID != plan.ID || rootDeliveryAttempt.CandidateID != candidateID || rootDeliveryAttempt.OwnerID != request.PrincipalID || rootDeliveryAttempt.PhysicalPoolID != c.physicalPoolID || rootDeliveryAttempt.RequestDigest != requestDigest || rootDeliveryAttempt.PlanDigest != plan.Digest || rootDeliveryAttempt.State != deploymentnative.AttemptIndeterminate || rootDeliveryAttempt.FencingEpoch <= 0 || rootDeliveryLease.LeaseID != rootDeliveryLeaseID || rootDeliveryLease.TargetID != request.TargetID || rootDeliveryLease.OwnerID != rootDeliveryAttempt.OwnerID || rootDeliveryLease.FencingEpoch != rootDeliveryAttempt.FencingEpoch || rootDeliveryLease.State != "released" || !rootDeliveryAttempt.LeaseExpiresAt.Equal(rootDeliveryLease.ExpiresAt) {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor root delivery identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
 	if err := validateNativeBuildSuccessorFenceChain(reservation.Operation.FencingGeneration, rootDeliveryAttempt.FencingEpoch, predecessorDepth, leaf.Lease.FencingGeneration, attempt.FencingEpoch); err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	if attempt.AttemptID != leaf.AttemptID || attempt.PlanID != plan.ID || attempt.CandidateID != candidateID || attempt.OwnerID != request.PrincipalID || attempt.PhysicalPoolID != c.physicalPoolID || attempt.RequestDigest != requestDigest || attempt.PlanDigest != plan.Digest || attempt.Namespace == "" || attempt.SessionIdentity == "" || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) || lease.OwnerID != attempt.OwnerID || lease.FencingEpoch != attempt.FencingEpoch || lease.TargetID != request.TargetID || candidate.CandidateID != candidateID || binding.AttemptID != leaf.AttemptID || duckAttempt.AttemptID != leaf.AttemptID || duckAttempt.OwnerID != attempt.OwnerID || duckAttempt.FencingEpoch != attempt.FencingEpoch {
-		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor leaf delivery/DuckLake identity differs", deploymentdomain.ErrDeliveryConflict)
+	if attempt.AttemptID != leaf.AttemptID || attempt.PlanID != plan.ID || attempt.CandidateID != candidateID || attempt.OwnerID != request.PrincipalID || attempt.PhysicalPoolID != c.physicalPoolID || attempt.RequestDigest != requestDigest || attempt.PlanDigest != plan.Digest || attempt.Namespace == "" || attempt.SessionIdentity == "" || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) || lease.OwnerID != attempt.OwnerID || lease.FencingEpoch != attempt.FencingEpoch || lease.TargetID != request.TargetID || candidate.CandidateID != candidateID || binding.AttemptID != leaf.AttemptID {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor leaf delivery identity differs", deploymentdomain.ErrDeliveryConflict)
 	}
 	persistedPlan, err := c.repository.Plan(ctx, plan.ID)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	prepared := NativeBuildRecoveryPreparationResult{Operation: reservation.Operation, Plan: persistedPlan, Candidate: candidate, Artifact: binding, DeliveryAttempt: attempt, DuckLakeAttempt: duckAttempt, Lease: lease, CandidateID: candidateID, GenerationID: generationID, AttemptID: attempt.AttemptID, LeaseID: lease.LeaseID}
+	prepared := NativeBuildRecoveryPreparationResult{Operation: reservation.Operation, Plan: persistedPlan, Candidate: candidate, Artifact: binding, DeliveryAttempt: attempt, Lease: lease, CandidateID: candidateID, GenerationID: generationID, AttemptID: attempt.AttemptID, LeaseID: lease.LeaseID}
 	prepared.Operation.AttemptID = leaf.AttemptID
 	prepared.Operation.AttemptIdentity = leaf.AttemptIdentity
 	prepared.Operation.FencingGeneration = leaf.Lease.FencingGeneration
@@ -143,11 +135,6 @@ func (c *NativeBuildCoordinator) recoverNativeBuildSuccessor(ctx context.Context
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor leaf changed during recovery normalization", deploymentmodule.ErrNativeOperationConflict)
 	}
 	prepared.Operation.AttemptEvidence = append(json.RawMessage(nil), latestLeaf.AttemptEvidence...)
-	duckAttempt, err = duckReader.LoadSuccessorDuckLakeAttempt(ctx, leaf.AttemptID)
-	if err != nil {
-		return deploymentmodule.NativeDeliveryBuild{}, err
-	}
-	prepared.DuckLakeAttempt = duckAttempt
 	if prepared.Operation.FencingGeneration < 1 {
 		prepared.Operation.FencingGeneration = leaf.Lease.FencingGeneration
 	}
@@ -229,7 +216,6 @@ func normalizeSuccessorLeafForRecovery(ctx context.Context, c *NativeBuildCoordi
 		if termErr != nil {
 			return termErr
 		}
-		prepared.DuckLakeAttempt = termination.DuckLakeAttempt
 		prepared.DeliveryAttempt = termination.DeliveryAttempt
 	}
 	if prepared.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate {
@@ -249,13 +235,13 @@ func normalizeSuccessorLeafForRecovery(ctx context.Context, c *NativeBuildCoordi
 
 func (c *NativeBuildCoordinator) appendNativeBuildSuccessor(ctx context.Context, request deploymentmodule.NativeDeliveryBuildRequest, requestDigest string, reservation NativeBuildOperationReservationResult, plan nativeBuildPlan, contract NativeBuildContract, artifacts release.CandidateArtifactSet, prepared NativeBuildRecoveryPreparationResult, binding deploymentnative.BuildArtifactBinding, resolution []byte) (deploymentmodule.NativeDeliveryBuild, error) {
 	successorAuthority := c.operations.(deploymentmodule.NativeBuildOperationSuccessorAuthority)
-	duckLake, ok := c.attemptAdmission.(CandidateBuildAttemptSuccessorDuckLakeAdmission)
-	if !ok {
-		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor DuckLake authority is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
-	}
 	op := prepared.Operation
 	op.State = deploymentmodule.NativeOperationStateIndeterminate
-	successor, err := AdmitNativeBuildSuccessor(ctx, c.repository, successorAuthority, NativeBuildSuccessorAdmissionInput{Operation: op, DeliveryAttempt: prepared.DeliveryAttempt, DeliveryLease: prepared.Lease, Artifact: CandidateBuildArtifactInput{ServingArtifactID: binding.ServingArtifactID, ServingArtifactDigest: binding.ServingArtifactDigest, ServingStateID: binding.ServingStateID}, CatalogID: contract.Catalog.CatalogID, Resolution: resolution, DuckLake: duckLake})
+	physicalAdmission, admissionOK := c.attemptAdmission.(CandidateBuildAttemptPhysicalAdmission)
+	if !admissionOK {
+		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: native build successor physical admission guard is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
+	}
+	successor, err := AdmitNativeBuildSuccessor(ctx, c.repository, successorAuthority, NativeBuildSuccessorAdmissionInput{Operation: op, DeliveryAttempt: prepared.DeliveryAttempt, DeliveryLease: prepared.Lease, Artifact: CandidateBuildArtifactInput{ServingArtifactID: binding.ServingArtifactID, ServingArtifactDigest: binding.ServingArtifactDigest, ServingStateID: binding.ServingStateID}, CatalogID: contract.Catalog.CatalogID, Physical: physicalAdmission, Resolution: resolution})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
@@ -287,7 +273,7 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuildSuccessor(ctx conte
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	attemptAdmission := CandidateBuildAttemptAdmissionResult{Lease: prepared.Lease, Attempt: prepared.DeliveryAttempt, Artifact: binding, DuckLakeAttempt: prepared.DuckLakeAttempt}
+	attemptAdmission := CandidateBuildAttemptAdmissionResult{Lease: prepared.Lease, Attempt: prepared.DeliveryAttempt, Artifact: binding}
 	assembled, err := AssembleRecoveredNativeGenerationAdmissionInput(NativeRecoveredSealEvidenceAssemblerInput{Build: physical, AttemptAdmission: attemptAdmission, PoolContract: contract.PoolContract, CatalogIdentity: contract.Catalog, Compatibility: contract.Compatibility, Plan: plan.DeliveryPlan, Artifacts: artifacts, Bindings: bindingEvidence, SourceRevision: sourceRevision, RuntimeVersion: c.runtimeVersion, Qualification: qualification, SealID: sealID, GenerationID: prepared.GenerationID, TenantDomain: contract.TenantDomain, EncryptionDomain: contract.EncryptionDomain, ObjectNamespace: contract.ObjectNamespace})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -302,6 +288,9 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuildSuccessor(ctx conte
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	if err := c.generationAdmission.ValidatePhysicalAdmissionTx(ctx, tx, assembled); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	if _, err := lockNativeBuildOperationTx(ctx, tx, c.operations, reservation.Operation, deploymentmodule.NativeOperationStateIndeterminate); err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
@@ -325,11 +314,11 @@ func (c *NativeBuildCoordinator) completeRecoveredNativeBuildSuccessor(ctx conte
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	termination, err := c.attemptTermination.ReconcileAttemptTx(ctx, tx, AttemptReconciliationInput{AttemptID: prepared.AttemptID, OwnerID: prepared.DeliveryAttempt.OwnerID, FencingEpoch: prepared.DeliveryAttempt.FencingEpoch, PhysicalPoolID: physical.Marker.PhysicalPoolID, CatalogID: physical.CatalogID, SnapshotID: physical.SnapshotID, CommitMarker: json.RawMessage([]byte(canonicalMarker)), State: deploymentnative.AttemptCommitted, SessionIdentity: prepared.DeliveryAttempt.SessionIdentity})
+	termination, err := c.attemptTermination.ReconcileAttemptTx(ctx, tx, AttemptReconciliationInput{AttemptID: prepared.AttemptID, OwnerID: prepared.DeliveryAttempt.OwnerID, FencingEpoch: prepared.DeliveryAttempt.FencingEpoch, PhysicalPoolID: physical.Marker.PhysicalPoolID, SnapshotID: physical.SnapshotID, CommitMarker: json.RawMessage([]byte(canonicalMarker)), State: deploymentnative.AttemptCommitted, SessionIdentity: prepared.DeliveryAttempt.SessionIdentity})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
-	if termination.DeliveryAttempt.State != deploymentnative.AttemptCommitted || termination.DuckLakeAttempt.State != "committed" {
+	if termination.DeliveryAttempt.State != deploymentnative.AttemptCommitted {
 		return deploymentmodule.NativeDeliveryBuild{}, fmt.Errorf("%w: successor recovered attempt reconciliation differs", deploymentdomain.ErrDeliveryConflict)
 	}
 	if err := c.repository.ReleaseLeaseAfterAttemptTerminationTx(ctx, tx, deploymentnative.LeaseFence{LeaseID: lockedLease.LeaseID, TargetID: lockedLease.TargetID, OwnerID: lockedLease.OwnerID, FencingEpoch: lockedLease.FencingEpoch}); err != nil {

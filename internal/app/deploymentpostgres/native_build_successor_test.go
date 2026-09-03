@@ -30,18 +30,14 @@ func TestAdmitNativeBuildSuccessorReplaysExactIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	resolution, err := json.Marshal(deploymentnative.BuildAttemptMarkerResolutionEvidence{
-		SchemaVersion: 1, PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: f.Input.CatalogID,
+		SchemaVersion: 1, PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: f.CatalogID,
 		AttemptID: attempt.AttemptID, RequestDigest: attempt.RequestDigest, PlanDigest: attempt.PlanDigest,
 		MarkerAbsent: true, ResolvedAt: time.Now().UTC().Truncate(time.Microsecond),
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	duckLake, err := NewCandidateBuildAttemptAdmission(f.Delivery, f.DuckLake)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := NativeBuildSuccessorAdmissionInput{Operation: f.Record, DeliveryAttempt: attempt, DeliveryLease: lease, Artifact: CandidateBuildArtifactInput{ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ServingArtifactDigest, ServingStateID: artifact.ServingStateID}, CatalogID: f.Input.CatalogID, Resolution: resolution, DuckLake: duckLake.(CandidateBuildAttemptSuccessorDuckLakeAdmission)}
+	input := NativeBuildSuccessorAdmissionInput{Operation: f.Record, DeliveryAttempt: attempt, DeliveryLease: lease, Artifact: CandidateBuildArtifactInput{ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ServingArtifactDigest, ServingStateID: artifact.ServingStateID}, CatalogID: f.CatalogID, Physical: candidatePhysicalAdmissionStub{}, Resolution: resolution}
 	first, err := AdmitNativeBuildSuccessor(t.Context(), f.Delivery, f.Operation.(deploymentmodule.NativeBuildOperationSuccessorAuthority), input)
 	if err != nil {
 		t.Fatal(err)
@@ -76,11 +72,7 @@ func TestAdmitNativeBuildSuccessorRejectsNonAbsentResolutionWithoutMutation(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	duckLake, err := NewCandidateBuildAttemptAdmission(f.Delivery, f.DuckLake)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := NativeBuildSuccessorAdmissionInput{Operation: f.Record, DeliveryAttempt: attempt, DeliveryLease: lease, Artifact: CandidateBuildArtifactInput{ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ServingArtifactDigest, ServingStateID: artifact.ServingStateID}, CatalogID: f.Input.CatalogID, Resolution: []byte(`{"schema_version":1,"marker_absent":false}`), DuckLake: duckLake.(CandidateBuildAttemptSuccessorDuckLakeAdmission)}
+	input := NativeBuildSuccessorAdmissionInput{Operation: f.Record, DeliveryAttempt: attempt, DeliveryLease: lease, Artifact: CandidateBuildArtifactInput{ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ServingArtifactDigest, ServingStateID: artifact.ServingStateID}, CatalogID: f.CatalogID, Physical: candidatePhysicalAdmissionStub{}, Resolution: []byte(`{"schema_version":1,"marker_absent":false}`)}
 	_, err = AdmitNativeBuildSuccessor(t.Context(), f.Delivery, f.Operation.(deploymentmodule.NativeBuildOperationSuccessorAuthority), input)
 	if !errors.Is(err, deploymentnative.ErrInvalid) && !errors.Is(err, deploymentnative.ErrConflict) {
 		t.Fatalf("invalid marker resolution error = %v, want invalid/conflict", err)
@@ -108,12 +100,8 @@ func TestAdmitNativeBuildSuccessorAppendsSecondGenerationAndReplays(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	duckLake, err := NewCandidateBuildAttemptAdmission(f.Delivery, f.DuckLake)
-	if err != nil {
-		t.Fatal(err)
-	}
 	resolution, err := json.Marshal(deploymentnative.BuildAttemptMarkerResolutionEvidence{
-		SchemaVersion: 1, PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: f.Input.CatalogID,
+		SchemaVersion: 1, PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: f.CatalogID,
 		AttemptID: attempt.AttemptID, RequestDigest: attempt.RequestDigest, PlanDigest: attempt.PlanDigest,
 		MarkerAbsent: true, ResolvedAt: time.Now().UTC().Truncate(time.Microsecond),
 	})
@@ -123,8 +111,7 @@ func TestAdmitNativeBuildSuccessorAppendsSecondGenerationAndReplays(t *testing.T
 	rootInput := NativeBuildSuccessorAdmissionInput{
 		Operation: f.Record, DeliveryAttempt: attempt, DeliveryLease: lease,
 		Artifact:  CandidateBuildArtifactInput{ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ServingArtifactDigest, ServingStateID: artifact.ServingStateID},
-		CatalogID: f.Input.CatalogID, Resolution: resolution,
-		DuckLake: duckLake.(CandidateBuildAttemptSuccessorDuckLakeAdmission),
+		CatalogID: f.CatalogID, Physical: candidatePhysicalAdmissionStub{}, Resolution: resolution,
 	}
 	first, err := AdmitNativeBuildSuccessor(t.Context(), f.Delivery, f.Operation.(deploymentmodule.NativeBuildOperationSuccessorAuthority), rootInput)
 	if err != nil {
@@ -141,7 +128,7 @@ func TestAdmitNativeBuildSuccessorAppendsSecondGenerationAndReplays(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	termination, err := NewAttemptTermination(f.Delivery, f.DuckLake)
+	termination, err := NewAttemptTermination(f.Delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -218,7 +205,7 @@ func TestAdmitNativeBuildSuccessorAppendsSecondGenerationAndReplays(t *testing.T
 		t.Fatal(err)
 	}
 	secondResolution, err := json.Marshal(deploymentnative.BuildAttemptMarkerResolutionEvidence{
-		SchemaVersion: 1, PhysicalPoolID: predecessorAttempt.PhysicalPoolID, CatalogID: f.Input.CatalogID,
+		SchemaVersion: 1, PhysicalPoolID: predecessorAttempt.PhysicalPoolID, CatalogID: f.CatalogID,
 		AttemptID: predecessorAttempt.AttemptID, RequestDigest: predecessorAttempt.RequestDigest, PlanDigest: predecessorAttempt.PlanDigest,
 		MarkerAbsent: true, ResolvedAt: time.Now().UTC().Truncate(time.Microsecond),
 	})
@@ -235,8 +222,7 @@ func TestAdmitNativeBuildSuccessorAppendsSecondGenerationAndReplays(t *testing.T
 	secondInput := NativeBuildSuccessorAdmissionInput{
 		Operation: predecessorRecord, DeliveryAttempt: predecessorAttempt, DeliveryLease: predecessorLease,
 		Artifact:  CandidateBuildArtifactInput{ServingArtifactID: artifact.ServingArtifactID, ServingArtifactDigest: artifact.ServingArtifactDigest, ServingStateID: artifact.ServingStateID},
-		CatalogID: f.Input.CatalogID, Resolution: secondResolution,
-		DuckLake: duckLake.(CandidateBuildAttemptSuccessorDuckLakeAdmission),
+		CatalogID: f.CatalogID, Physical: candidatePhysicalAdmissionStub{}, Resolution: secondResolution,
 	}
 	second, err := AdmitNativeBuildSuccessor(t.Context(), f.Delivery, f.Operation.(deploymentmodule.NativeBuildOperationSuccessorAuthority), secondInput)
 	if err != nil {

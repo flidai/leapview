@@ -66,11 +66,6 @@ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- The composite index lets the quarantine row prove that its attempt and
--- catalog identity refer to the same immutable attempt evidence row.
-CREATE UNIQUE INDEX IF NOT EXISTS ducklake_attempt_evidence_identity_unique
-    ON ducklake.attempt_evidence (attempt_id, physical_pool_id, catalog_id);
-
 CREATE TABLE IF NOT EXISTS ducklake.marker_quarantine (
     physical_pool_id       text NOT NULL,
     catalog_id             text NOT NULL,
@@ -83,10 +78,10 @@ CREATE TABLE IF NOT EXISTS ducklake.marker_quarantine (
     observed_snapshot_ids  bigint[] NOT NULL DEFAULT '{}'::bigint[],
     created_at             timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (physical_pool_id, catalog_id, attempt_id),
+    FOREIGN KEY (attempt_id, physical_pool_id, catalog_id)
+        REFERENCES delivery.delivery_build_attempt(attempt_id, physical_pool_id, catalog_id),
     FOREIGN KEY (physical_pool_id, catalog_id)
         REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
-    FOREIGN KEY (attempt_id, physical_pool_id, catalog_id)
-        REFERENCES ducklake.attempt_evidence(attempt_id, physical_pool_id, catalog_id),
     CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
     CHECK (catalog_id = btrim(catalog_id) AND octet_length(catalog_id) BETWEEN 1 AND 255),
     CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
@@ -96,17 +91,19 @@ CREATE TABLE IF NOT EXISTS ducklake.marker_quarantine (
 CREATE INDEX IF NOT EXISTS ducklake_marker_quarantine_pool_idx
     ON ducklake.marker_quarantine (physical_pool_id, created_at);
 
+
 -- Source observations are captured by the exact native DuckLake writer while
 -- its prepared source session is still live.  The attempt key makes the
 -- capture replay-safe; marker and envelope bytes are canonical identities,
 -- not mutable diagnostic payloads.
 CREATE TABLE IF NOT EXISTS ducklake.source_observation_capture (
-    attempt_id            uuid PRIMARY KEY REFERENCES ducklake.attempt_evidence(attempt_id) ON DELETE RESTRICT,
+    attempt_id            uuid PRIMARY KEY,
     commit_marker         jsonb NOT NULL,
     observation_envelope  jsonb NOT NULL,
     content_digest        text NOT NULL,
     captured_at           timestamptz NOT NULL,
     created_at            timestamptz NOT NULL DEFAULT clock_timestamp(),
+    FOREIGN KEY (attempt_id) REFERENCES delivery.delivery_build_attempt(attempt_id) ON DELETE RESTRICT,
     CHECK (jsonb_typeof(commit_marker) = 'object' AND octet_length(commit_marker::text) <= 4096),
     CHECK (jsonb_typeof(observation_envelope) = 'object' AND octet_length(observation_envelope::text) <= 8388608),
     CHECK (content_digest ~ '^sha256:[0-9a-f]{64}$')
@@ -132,6 +129,7 @@ DROP TRIGGER IF EXISTS source_observation_capture_immutable ON ducklake.source_o
 CREATE TRIGGER source_observation_capture_immutable
 BEFORE UPDATE OR DELETE ON ducklake.source_observation_capture
 FOR EACH ROW EXECUTE FUNCTION ducklake.guard_source_observation_capture_immutable();
+
 
 -- A generation binding is immutable evidence.  Serving selects this exact
 -- pool/catalog/snapshot tuple; it never selects a catalog by path or recency.
@@ -1572,7 +1570,7 @@ BEGIN
     -- once this maintenance row is locked, no admitted running writer can
     -- appear after this check. A running attempt must drain before a
     -- maintenance fence can be acquired.
-    IF EXISTS (SELECT 1 FROM ducklake.attempt_evidence a
+    IF EXISTS (SELECT 1 FROM delivery.delivery_build_attempt a
                WHERE a.physical_pool_id=p_physical_pool_id
                  AND a.catalog_id=p_catalog_id
                  AND a.state='running') THEN

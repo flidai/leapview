@@ -177,7 +177,7 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.CreateCandidate(ctx, CandidateInput{CandidateID: ids["candidate"], TargetID: "target_sales_prod", PlanID: ids["plan"], CandidateRevision: 1, ArtifactDigest: testDigest('e')}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-a", PhysicalPoolID: "pool-sales", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/attempt/fence", SessionIdentity: "session-a", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-a", PhysicalPoolID: "pool-sales", CatalogID: "catalog-sales", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/attempt/fence", SessionIdentity: "session-a", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: ids["attempt"], ServingArtifactID: "artifact-sales", ServingArtifactDigest: testDigest('e'), ServingStateID: "generation-test", OwnerID: "builder-a", FencingEpoch: 1}); err != nil {
@@ -399,7 +399,7 @@ func TestPostgresDeliveryCallerOwnedMutationTransactions(t *testing.T) {
 	}
 	beginAttempt := func(id, owner, namespace string) {
 		t.Helper()
-		if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: id, PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: owner, PhysicalPoolID: "pool-tx", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: namespace, SessionIdentity: "session-" + owner, LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: id, PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: owner, PhysicalPoolID: "pool-tx", CatalogID: "catalog-tx", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: namespace, SessionIdentity: "session-" + owner, LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -625,6 +625,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 		LeaseInput{LeaseID: leaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: expiresAt},
 		BuildAttemptInput{
 			AttemptID: attemptID, PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic",
+			CatalogID:     "catalog-atomic",
 			RequestDigest: testDigest('f'), PlanDigest: plan.PlanDigest, Namespace: "candidate/atomic", SessionIdentity: "session-atomic",
 		},
 	)
@@ -632,7 +633,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("acquire lease and begin attempt: %v", err)
 	}
-	if lease.FencingEpoch <= 0 || attempt.FencingEpoch != lease.FencingEpoch || attempt.State != AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+	if lease.FencingEpoch <= 0 || attempt.FencingEpoch != lease.FencingEpoch || attempt.State != AttemptRunning || attempt.CatalogID != "catalog-atomic" || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
 		t.Fatalf("lease/attempt identity = %#v / %#v", lease, attempt)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -649,6 +650,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 		LeaseInput{LeaseID: leaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: lease.ExpiresAt},
 		BuildAttemptInput{
 			AttemptID: attemptID, PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic",
+			CatalogID:     "catalog-atomic",
 			RequestDigest: testDigest('f'), PlanDigest: plan.PlanDigest, Namespace: "candidate/atomic", SessionIdentity: "session-atomic",
 		},
 	)
@@ -656,7 +658,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("replay lease and attempt: %v", err)
 	}
-	if replayedLease.FencingEpoch != lease.FencingEpoch || replayedAttempt.AttemptID != attempt.AttemptID {
+	if replayedLease.FencingEpoch != lease.FencingEpoch || replayedAttempt.AttemptID != attempt.AttemptID || replayedAttempt.CatalogID != attempt.CatalogID {
 		t.Fatalf("replayed lease/attempt drifted: %#v / %#v", replayedLease, replayedAttempt)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -673,7 +675,7 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 	_, _, err = r.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx,
 		LeaseInput{LeaseID: failedLeaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: time.Now().UTC().Add(time.Hour)},
 		BuildAttemptInput{
-			AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000107", PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic",
+			AttemptID: "0198f2c0-7c7a-7f00-8a11-000000000107", PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic", CatalogID: "catalog-atomic",
 			RequestDigest: "invalid", PlanDigest: plan.PlanDigest, Namespace: "candidate/atomic", SessionIdentity: "session-atomic",
 		},
 	)
@@ -686,6 +688,29 @@ func TestPostgresCallerOwnedLeaseAndBuildAttemptAdmission(t *testing.T) {
 	}
 	if _, err := r.Lease(ctx, failedLeaseID); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("rolled-back lease lookup = %v", err)
+	}
+
+	// Catalog identity is mandatory on every admitted attempt. The lease is
+	// rolled back with the rejected attempt, so a missing catalog cannot leave
+	// a partially admitted writer behind.
+	missingCatalogLeaseID := "0198f2c0-7c7a-7f00-0000-000000000108"
+	tx, err = r.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _, err = r.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx,
+		LeaseInput{LeaseID: missingCatalogLeaseID, TargetID: target.TargetID, OwnerID: "builder-atomic", ExpiresAt: time.Now().UTC().Add(time.Hour)},
+		BuildAttemptInput{AttemptID: "0198f2c0-7c7a-7f00-0000-000000000109", PlanID: plan.PlanID, OwnerID: "builder-atomic", PhysicalPoolID: "pool-atomic", RequestDigest: testDigest('f'), PlanDigest: plan.PlanDigest, Namespace: "candidate/missing-catalog", SessionIdentity: "session-missing-catalog"},
+	)
+	if !errors.Is(err, ErrInvalid) {
+		_ = tx.Rollback(ctx)
+		t.Fatalf("missing catalog identity = %v, want ErrInvalid", err)
+	}
+	if err := tx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Lease(ctx, missingCatalogLeaseID); !errors.Is(err, ErrNotFound) {
+		t.Fatalf("rolled-back missing-catalog lease lookup = %v", err)
 	}
 }
 
@@ -854,7 +879,7 @@ func TestPostgresBuildAttemptCommitAbortRace(t *testing.T) {
 	if _, err := r.CreateCandidate(t.Context(), CandidateInput{CandidateID: candidate, TargetID: target, PlanID: plan, CandidateRevision: 1, ArtifactDigest: testDigest('e')}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(t.Context(), BuildAttemptInput{AttemptID: attempt, PlanID: plan, CandidateID: candidate, OwnerID: "builder", PhysicalPoolID: "pool-race", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/race", SessionIdentity: "session-race", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(t.Context(), BuildAttemptInput{AttemptID: attempt, PlanID: plan, CandidateID: candidate, OwnerID: "builder", PhysicalPoolID: "pool-race", CatalogID: "catalog-race", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/race", SessionIdentity: "session-race", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	marker := json.RawMessage(testCommitMarker(attempt, "pool-race", testDigest('f'), planDigest))
@@ -899,7 +924,7 @@ func TestPostgresCommitBuildAttemptRejectsIncompleteDuckLakeMarker(t *testing.T)
 	if _, err := r.CreatePlan(ctx, planInput); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attempt, PlanID: plan, OwnerID: "builder", PhysicalPoolID: "pool-marker", FencingEpoch: 1, RequestDigest: request, PlanDigest: planDigest, Namespace: "candidate/marker", SessionIdentity: "session-marker", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attempt, PlanID: plan, OwnerID: "builder", PhysicalPoolID: "pool-marker", CatalogID: "catalog-marker", FencingEpoch: 1, RequestDigest: request, PlanDigest: planDigest, Namespace: "candidate/marker", SessionIdentity: "session-marker", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	valid := testCommitMarker(attempt, "pool-marker", request, planDigest)
@@ -987,7 +1012,7 @@ func TestPostgresAuthorityDatabaseGuards(t *testing.T) {
 	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,plan_id,candidate_revision,artifact_digest) VALUES($1::uuid,'guard_target',$2::uuid,1,$3)`, candidate, plan, testDigest('a')); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity) VALUES('0198f2c0-7c7a-7f00-8a11-000000000033',$1::uuid,$2::uuid,'builder','guard-pool',1,$3,$3,'committed','guard',clock_timestamp()+interval '1 hour','session')`, plan, candidate, testDigest('a')); err == nil {
+	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,catalog_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity) VALUES('0198f2c0-7c7a-7f00-8a11-000000000033',$1::uuid,$2::uuid,'builder','guard-pool','guard-catalog',1,$3,$3,'committed','guard',clock_timestamp()+interval '1 hour','session')`, plan, candidate, testDigest('a')); err == nil {
 		t.Fatal("terminal build attempt without evidence was accepted")
 	}
 }

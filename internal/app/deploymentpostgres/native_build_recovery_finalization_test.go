@@ -164,24 +164,16 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	base.AttemptAdmission.Lease.LeaseID, base.AttemptAdmission.Lease.State = leaseID, "released"
 	base.AttemptAdmission.Lease.FencingEpoch = 1
 	base.AttemptAdmission.Lease.ReleasedAt = base.AttemptAdmission.Lease.ExpiresAt.Add(time.Minute)
-	base.AttemptAdmission.DuckLakeAttempt.AttemptID, base.AttemptAdmission.DuckLakeAttempt.State = attemptID, ducklakepostgres.AttemptIndeterminate
-	base.AttemptAdmission.DuckLakeAttempt.FencingEpoch = 1
-	base.AttemptAdmission.DuckLakeAttempt.RequestDigest = requestDigest
-	base.AttemptAdmission.DuckLakeAttempt.PlanDigest = base.Plan.Digest
 	ledgerTime := base.AttemptAdmission.Lease.AcquiredAt
 	base.AttemptAdmission.Attempt.CreatedAt = ledgerTime
 	base.AttemptAdmission.Attempt.UpdatedAt = ledgerTime
 	base.AttemptAdmission.Attempt.FinishedAt = ledgerTime.Add(time.Second)
-	base.AttemptAdmission.DuckLakeAttempt.CreatedAt = ledgerTime
-	base.AttemptAdmission.DuckLakeAttempt.UpdatedAt = ledgerTime
-	base.AttemptAdmission.DuckLakeAttempt.TerminalAt = ledgerTime.Add(time.Second)
 	namespace, err := deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{CandidateID: candidateID, AttemptID: attemptID, FencingEpoch: 1})
 	if err != nil {
 		t.Fatal(err)
 	}
 	base.AttemptAdmission.Attempt.Namespace, base.Build.Closure.RelationNamespace = namespace, namespace
 	base.AttemptAdmission.Attempt.SessionIdentity = "session-recovery-finalization"
-	base.AttemptAdmission.DuckLakeAttempt.SessionIdentity = "session-recovery-finalization"
 	for i := range base.Build.Closure.Relations {
 		base.Build.Closure.Relations[i].Schema = namespace
 	}
@@ -197,7 +189,6 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	base.Qualification.Gates = canonicalGates
 	evidence, _ := json.Marshal(map[string]any{"attempt_id": attemptID, "owner_id": request.PrincipalID, "fencing_epoch": 1, "phase": "recovery"})
 	base.AttemptAdmission.Attempt.TerminationEvidence = evidence
-	base.AttemptAdmission.DuckLakeAttempt.TerminationEvidence = evidence
 	base.Qualification.Digest = ""
 	_, qDigest, err := base.Qualification.Canonical()
 	if err != nil {
@@ -232,7 +223,7 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 		_ = firstTx.Rollback(t.Context())
 		t.Fatal(err)
 	}
-	admissionAuth, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admissionAuth, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -250,7 +241,7 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	attemptAdmission, err := admissionAuth.AdmitCandidateBuildAttemptTx(t.Context(), firstTx, CandidateBuildAttemptAdmissionInput{Lease: deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: request.TargetID, OwnerID: request.PrincipalID, ExpiresAt: operationLease.LeaseExpiresAt}, Attempt: deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: base.Plan.ID, CandidateID: candidateID, OwnerID: request.PrincipalID, PhysicalPoolID: base.AttemptAdmission.Attempt.PhysicalPoolID, RequestDigest: requestDigest, PlanDigest: base.Plan.Digest, SessionIdentity: "session-recovery-finalization"}, Artifact: CandidateBuildArtifactInput{ServingArtifactID: base.Artifacts.Generation.ServingArtifactID, ServingArtifactDigest: base.Artifacts.Generation.ArtifactDigest, ServingStateID: generationID}, CatalogID: base.Build.CatalogID})
+	attemptAdmission, err := admissionAuth.AdmitCandidateBuildAttemptTx(t.Context(), firstTx, CandidateBuildAttemptAdmissionInput{Lease: deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: request.TargetID, OwnerID: request.PrincipalID, ExpiresAt: operationLease.LeaseExpiresAt}, Attempt: deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: base.Plan.ID, CandidateID: candidateID, OwnerID: request.PrincipalID, PhysicalPoolID: base.AttemptAdmission.Attempt.PhysicalPoolID, CatalogID: base.Build.CatalogID, RequestDigest: requestDigest, PlanDigest: base.Plan.Digest, SessionIdentity: "session-recovery-finalization"}, Artifact: CandidateBuildArtifactInput{ServingArtifactID: base.Artifacts.Generation.ServingArtifactID, ServingArtifactDigest: base.Artifacts.Generation.ArtifactDigest, ServingStateID: generationID}, CatalogID: base.Build.CatalogID})
 	if err != nil {
 		_ = firstTx.Rollback(t.Context())
 		t.Fatal(err)
@@ -258,7 +249,7 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	if err := firstTx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	term, err := NewAttemptTermination(delivery, ducklake)
+	term, err := NewAttemptTermination(delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -304,18 +295,14 @@ func recoveryFinalizeFixtureForTest(t *testing.T) recoveryFinalizeFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	duckAttempt, err := ducklake.LoadAttempt(t.Context(), attemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	input := nativeBuildRecoveryFinalizationInput{Request: request, RequestDigest: requestDigest, Reservation: NativeBuildOperationReservationResult{Disposition: deploymentmodule.NativeOperationIndeterminate, Operation: operation}, Plan: base.Plan, Assembled: assembled, Artifacts: base.Artifacts, Admission: CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, Artifact: attemptAdmission.Artifact, DuckLakeAttempt: duckAttempt}, Physical: base.Build, SealID: sealID, GenerationID: generationID}
+	input := nativeBuildRecoveryFinalizationInput{Request: request, RequestDigest: requestDigest, Reservation: NativeBuildOperationReservationResult{Disposition: deploymentmodule.NativeOperationIndeterminate, Operation: operation}, Plan: base.Plan, Assembled: assembled, Artifacts: base.Artifacts, Admission: CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, Artifact: attemptAdmission.Artifact}, Physical: base.Build, SealID: sealID, GenerationID: generationID}
 	coord := &NativeBuildCoordinator{repository: delivery, operations: operationAuth, attemptTermination: term, generationAdmission: mustGenerationAdmission(t, delivery, db, ducklake), events: deploymentevents.NewWithRepository(eventpostgres.New()), audit: deploymentaudit.NewWithRepository(accesspostgres.New())}
 	return recoveryFinalizeFixture{DB: db, Delivery: delivery, DuckLake: ducklake, Coordinator: coord, Input: input}
 }
 
 func mustGenerationAdmission(t *testing.T, delivery *deploymentnative.Repository, db *pgxpool.Pool, ducklake *ducklakepostgres.Repository) GenerationAdmission {
 	t.Helper()
-	capability, err := NewGenerationAdmission(delivery, servingnative.New(db), ducklake, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
+	capability, err := NewGenerationAdmission(delivery, servingnative.New(db), candidatePhysicalAdmissionStub{}, &testManagedDataBindingAdmission{}, &testCandidateProvenanceAdmission{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -366,13 +353,6 @@ func TestCompleteRecoveredNativeBuildPostgresLateOperationConflictRollsBack(t *t
 	}
 	if attempt.State != deploymentnative.AttemptIndeterminate {
 		t.Fatalf("attempt state after rollback = %q", attempt.State)
-	}
-	duckAttempt, err := f.DuckLake.LoadAttempt(t.Context(), f.Input.Admission.Attempt.AttemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if duckAttempt.State != ducklakepostgres.AttemptIndeterminate {
-		t.Fatalf("DuckLake attempt state after rollback = %q", duckAttempt.State)
 	}
 	if _, err := f.Delivery.BuildArtifactBinding(t.Context(), f.Input.Admission.Attempt.AttemptID); !errors.Is(err, deploymentnative.ErrNotFound) {
 		t.Fatalf("binding after rollback = %v", err)

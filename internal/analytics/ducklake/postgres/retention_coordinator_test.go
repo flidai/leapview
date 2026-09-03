@@ -71,7 +71,7 @@ func retentionTestRepository(t *testing.T, suffix string) (*Repository, *pgxpool
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}

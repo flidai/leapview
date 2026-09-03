@@ -469,9 +469,10 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 		return deploymentmodule.NativeDeliveryBuild{}, err
 	}
 	attemptAdmission, err := c.attemptAdmission.AdmitCandidateBuildAttemptTx(ctx, firstTx, CandidateBuildAttemptAdmissionInput{
-		Lease:    deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: normalized.TargetID, OwnerID: normalized.PrincipalID, ExpiresAt: reservation.Lease.LeaseExpiresAt},
-		Attempt:  deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: normalized.PrincipalID, PhysicalPoolID: c.physicalPoolID, RequestDigest: requestDigest, PlanDigest: plan.Digest, SessionIdentity: session},
-		Artifact: CandidateBuildArtifactInput{ServingArtifactID: effective.Generation.ServingArtifactID, ServingArtifactDigest: effective.Generation.ArtifactDigest, ServingStateID: generationID}, CatalogID: contract.Catalog.CatalogID,
+		Lease:     deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: normalized.TargetID, OwnerID: normalized.PrincipalID, ExpiresAt: reservation.Lease.LeaseExpiresAt},
+		Attempt:   deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: plan.ID, CandidateID: candidateID, OwnerID: normalized.PrincipalID, PhysicalPoolID: c.physicalPoolID, RequestDigest: requestDigest, PlanDigest: plan.Digest, SessionIdentity: session},
+		Artifact:  CandidateBuildArtifactInput{ServingArtifactID: effective.Generation.ServingArtifactID, ServingArtifactDigest: effective.Generation.ArtifactDigest, ServingStateID: generationID},
+		CatalogID: contract.Catalog.CatalogID,
 	})
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -479,8 +480,8 @@ func (c *NativeBuildCoordinator) BuildPlan(ctx context.Context, request deployme
 	// Once commit is attempted, its result can be ambiguous to this process:
 	// PostgreSQL may have durably bound the external attempt before a network
 	// error is returned. Disable preflight failure settlement before crossing
-	// that boundary so we never mark an operation failed while attempt ledgers
-	// are running. Lease expiry/recovery will fence an uncertain commit.
+	// that boundary so we never mark an operation failed while the delivery
+	// attempt is running. Lease expiry/recovery will fence an uncertain commit.
 	preflightLease = deploymentmodule.NativeOperationLease{}
 	if err := firstTx.Commit(ctx); err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -658,10 +659,10 @@ func nativeBuildPreflightFailureIsDeterministic(err error) bool {
 		errors.Is(err, deploymentmodule.ErrDeliveryInputUnavailable)
 }
 
-// settleNativeBuildFailure closes both control-plane attempt ledgers after an
-// error once the first attempt transaction has committed. The injected
-// AttemptTermination authority is mandatory: it updates delivery and DuckLake
-// atomically on this same PostgreSQL transaction. The operation transition and
+// settleNativeBuildFailure closes the delivery attempt and corresponding
+// operation state after an error once the first attempt transaction has
+// committed. The injected AttemptTermination authority updates the delivery
+// ledger on this same PostgreSQL transaction. The operation transition and
 // target lease release share that transaction as well.
 func (c *NativeBuildCoordinator) settleNativeBuildFailure(ctx context.Context, operationLease deploymentmodule.NativeOperationLease, admission CandidateBuildAttemptAdmissionResult, buildErr error, classification NativePhysicalFailureClassification, phase NativePhysicalBuildPhase, physical *NativePhysicalBuildEvidence) error {
 	if c == nil || c.repository == nil || c.attemptTermination == nil {
@@ -722,8 +723,8 @@ func (c *NativeBuildCoordinator) settleNativeBuildFailure(ctx context.Context, o
 	terminationEvidence := json.RawMessage(evidenceJSON)
 	if classification == NativePhysicalFailureIndeterminate && lockedOperation.State == deploymentmodule.NativeOperationStateIndeterminate {
 		// Expiry takeover owns the operation's uncertainty evidence. Preserve it
-		// across both attempt ledgers so a later marker-based recovery has one
-		// exact canonical evidence identity rather than an unrecoverable split.
+		// into the delivery attempt so a later marker-based recovery has one exact
+		// canonical evidence identity rather than an unrecoverable split.
 		terminationEvidence = append(json.RawMessage(nil), lockedOperation.AttemptEvidence...)
 	}
 	terminationInput := AttemptTerminationInput{AttemptID: admission.Attempt.AttemptID, OwnerID: admission.Attempt.OwnerID, FencingEpoch: admission.Attempt.FencingEpoch, Evidence: terminationEvidence}
@@ -960,6 +961,9 @@ func (c *NativeBuildCoordinator) completeNativeBuild(ctx context.Context, reques
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	if err := c.generationAdmission.ValidatePhysicalAdmissionTx(ctx, tx, assembled); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	lockedOperation, err := lockNativeBuildOperationTx(ctx, tx, c.operations, reservation.Operation, deploymentmodule.NativeOperationStatePending)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err

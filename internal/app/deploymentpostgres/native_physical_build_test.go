@@ -127,6 +127,7 @@ func validNativePhysicalBuildInput(t *testing.T) NativePhysicalBuildInput {
 	return NativePhysicalBuildInput{
 		Attempt: deploymentnative.DeliveryBuildAttempt{
 			AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-native", PhysicalPoolID: "pool-native",
+			CatalogID:    "catalog-native",
 			FencingEpoch: 3, RequestDigest: requestDigest, PlanDigest: planDigest,
 			Namespace: namespace, State: deploymentnative.AttemptRunning, LeaseExpiresAt: time.Now().UTC().Add(time.Hour),
 		},

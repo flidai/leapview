@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -42,7 +43,7 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -171,12 +172,19 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 		t.Fatal(err)
 	}
 	attemptID := "0198f2c0-7c7a-7f00-0000-000000000906"
+	planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), admin, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: digest('b'), PlanDigest: digest('c'), PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "running-attempt", FencingEpoch: successorFence.FencingEpoch}); err != nil {
+		t.Fatal(err)
+	}
 	attempt, err := adminRepo.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: digest('b'), PlanDigest: digest('c'), PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "running-attempt", FencingEpoch: successorFence.FencingEpoch, SessionIdentity: "scanner-race", LeaseExpiresAt: time.Now().Add(time.Minute)})
 	if err != nil {
 		t.Fatalf("begin running attempt: %v", err)
 	}
 	if _, err := adminRepo.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "scanner-race-maintenance", LeaseExpiresAt: time.Now().Add(time.Minute)}); !errors.Is(err, ErrRetentionMaintenanceBusy) {
 		t.Fatalf("running attempt fence err=%v", err)
+	}
+	if _, err := deploymentpostgres.New(admin).AbortBuildAttempt(t.Context(), deploymentpostgres.TerminateAttemptInput{AttemptID: attempt.AttemptID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch, Evidence: json.RawMessage(`{"aborted":"test"}`)}); err != nil {
+		t.Fatalf("abort canonical running attempt: %v", err)
 	}
 	if _, err := adminRepo.AbortAttempt(t.Context(), TerminateAttemptInput{AttemptID: attempt.AttemptID, OwnerID: attempt.OwnerID, FencingEpoch: attempt.FencingEpoch, Evidence: json.RawMessage(`{"aborted":"test"}`), TerminatedAt: time.Now()}); err != nil {
 		t.Fatalf("abort running attempt: %v", err)

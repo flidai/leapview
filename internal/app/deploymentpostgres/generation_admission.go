@@ -36,6 +36,7 @@ import (
 // PostgreSQL transaction; the Tx method composes into one supplied by the
 // caller.
 type GenerationAdmission interface {
+	ValidatePhysicalAdmissionTx(context.Context, deploymentnative.Tx, GenerationAdmissionInput) error
 	CompleteBuildAndAdmit(context.Context, GenerationAdmissionInput) (GenerationAdmissionResult, error)
 	CompleteBuildAndAdmitTx(context.Context, deploymentnative.Tx, GenerationAdmissionInput) (GenerationAdmissionResult, error)
 }
@@ -153,19 +154,18 @@ type BundleEvidence struct {
 type generationAdmitter struct {
 	delivery    *deploymentnative.Repository
 	serving     *servingnative.Repository
-	ducklake    DuckLakeAuthority
+	physical    DuckLakeSnapshotRetentionAdmission
 	managedData NativeManagedDataBindingAdmission
 	provenance  NativeCandidateProvenanceAdmission
 }
 
-// DuckLakeAuthority is the narrow app-composition surface needed to admit
-// the immutable external commit into DuckLake's PostgreSQL ledger. Both
-// methods operate on the caller-owned transaction; the authority must never
-// begin or commit a second transaction.
-type DuckLakeAuthority interface {
+// DuckLakeSnapshotRetentionAdmission is the narrow physical capability used
+// after canonical delivery completion. It derives the retention identity from
+// the exact delivery seal and never accepts a caller-selected snapshot tuple.
+type DuckLakeSnapshotRetentionAdmission interface {
 	Configured() bool
-	CommitAttemptTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.CommitAttemptInput) (ducklakepostgres.AttemptEvidence, error)
-	BindGenerationTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.GenerationBinding) (ducklakepostgres.GenerationBinding, error)
+	ValidateBuildAdmissionTx(context.Context, ducklakepostgres.Tx, string, string) error
+	AdmitSnapshotRetentionFromSealTx(context.Context, ducklakepostgres.Tx, string) error
 }
 
 // NativeManagedDataBindingAdmission writes the immutable managed-data
@@ -183,20 +183,20 @@ type NativeCandidateProvenanceAdmission interface {
 }
 
 var _ GenerationAdmission = (*generationAdmitter)(nil)
-var _ DuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 var _ NativeCandidateProvenanceAdmission = (*releasepostgres.Repository)(nil)
 
 // NewGenerationAdmission constructs the native capability from the five
-// process-owned PostgreSQL authorities. DuckLake and managed-data bindings
-// are required so an external physical commit cannot be admitted without its
-// complete runtime evidence. It does not begin a transaction or perform
-// schema work.
-func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, ducklake DuckLakeAuthority, managedData NativeManagedDataBindingAdmission, provenance NativeCandidateProvenanceAdmission) (GenerationAdmission, error) {
+// process-owned PostgreSQL authorities. Managed-data bindings and release
+// provenance are retained atomically with canonical delivery state; physical
+// DuckLake catalog/snapshot evidence is supplied as immutable seal values and
+// is not a second lifecycle ledger. It does not begin a transaction or
+// perform schema work.
+func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *servingnative.Repository, physical DuckLakeSnapshotRetentionAdmission, managedData NativeManagedDataBindingAdmission, provenance NativeCandidateProvenanceAdmission) (GenerationAdmission, error) {
 	if delivery == nil || serving == nil || !delivery.Configured() || !serving.Configured() {
 		return nil, errors.New("generation admission requires configured PostgreSQL delivery and serving-state authorities")
 	}
-	if !configuredDuckLakeAuthority(ducklake) {
-		return nil, errors.New("generation admission requires a configured DuckLake authority")
+	if physical == nil || !physical.Configured() {
+		return nil, errors.New("generation admission requires a configured physical retention admission")
 	}
 	if !configuredManagedDataBindingAdmission(managedData) {
 		return nil, errors.New("generation admission requires a managed-data binding authority")
@@ -204,7 +204,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 	if !configuredCandidateProvenanceAdmission(provenance) {
 		return nil, errors.New("generation admission requires a configured release provenance authority")
 	}
-	return &generationAdmitter{delivery: delivery, serving: serving, ducklake: ducklake, managedData: managedData, provenance: provenance}, nil
+	return &generationAdmitter{delivery: delivery, serving: serving, physical: physical, managedData: managedData, provenance: provenance}, nil
 }
 
 // CompleteBuildAndAdmit completes the build, allocates a generation revision,
@@ -212,7 +212,7 @@ func NewGenerationAdmission(delivery *deploymentnative.Repository, serving *serv
 // lower-level Tx method receives the exact same pgx transaction; this
 // convenience method owns Begin, Commit and Rollback.
 func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
+	if a == nil || a.delivery == nil || a.serving == nil || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -241,11 +241,36 @@ func (a *generationAdmitter) CompleteBuildAndAdmit(ctx context.Context, input Ge
 	return result, nil
 }
 
+// ValidatePhysicalAdmissionTx acquires the physical migration/maintenance and
+// marker-quarantine scopes for the exact seal identity carried by input. It
+// is intentionally a narrow, read/lock-only preflight for callers that own a
+// larger completion transaction: they must invoke it immediately after Begin,
+// before taking operation, lease, or delivery-attempt locks. The generation
+// completion method repeats this guard re-entrantly on the same transaction.
+func (a *generationAdmitter) ValidatePhysicalAdmissionTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) error {
+	if a == nil || a.delivery == nil || a.serving == nil || a.physical == nil || !a.physical.Configured() {
+		return fmt.Errorf("%w: generation physical admission authorities are not configured", deploymentnative.ErrInvalid)
+	}
+	if tx == nil {
+		return fmt.Errorf("%w: generation physical admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+	if _, ok := tx.(pgx.Tx); !ok {
+		return fmt.Errorf("%w: generation physical admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
+	}
+	if err := validateText(input.Seal.PhysicalPoolID, "physical pool id", 255); err != nil {
+		return err
+	}
+	if err := validateText(input.Seal.CatalogID, "catalog id", 255); err != nil {
+		return err
+	}
+	return a.physical.ValidateBuildAdmissionTx(ctx, tx, input.Seal.PhysicalPoolID, input.Seal.CatalogID)
+}
+
 // CompleteBuildAndAdmitTx completes the build, allocates a generation
 // revision, and admits the serving bundle in the caller-owned transaction.
 // It never commits or rolls back tx.
 func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx deploymentnative.Tx, input GenerationAdmissionInput) (GenerationAdmissionResult, error) {
-	if a == nil || a.delivery == nil || a.serving == nil || !configuredDuckLakeAuthority(a.ducklake) || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
+	if a == nil || a.delivery == nil || a.serving == nil || a.physical == nil || !a.physical.Configured() || !configuredManagedDataBindingAdmission(a.managedData) || !configuredCandidateProvenanceAdmission(a.provenance) {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -259,8 +284,16 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if _, ok := tx.(pgx.Tx); !ok {
 		return GenerationAdmissionResult{}, fmt.Errorf("%w: generation admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
+	// Acquire the physical fence and quarantine scope before taking any
+	// delivery lease/attempt locks. Quarantine insertion holds this pool scope
+	// while its canonical-attempt FK is checked; preserving quarantine-before-
+	// attempt order avoids a cross-transaction deadlock. The retention helper
+	// invoked after completion repeats this guard re-entrantly on the same tx.
+	if err := a.physical.ValidateBuildAdmissionTx(ctx, tx, normalized.Seal.PhysicalPoolID, normalized.Seal.CatalogID); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
 
-	// Establish target lease -> delivery attempt -> DuckLake attempt ordering.
+	// Establish target lease -> delivery attempt ordering.
 	// Build orchestrators acquire the operation row before entering this
 	// capability, matching heartbeat, settlement, and recovery. CompleteBuildTx
 	// locks the same lease again later, which is re-entrant on this transaction.
@@ -276,9 +309,8 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 		return GenerationAdmissionResult{}, err
 	}
 
-	// Every cross-ledger attempt transition locks the delivery attempt before
-	// the DuckLake attempt. The artifact bind provides that delivery lock and
-	// remains atomic with every later mutation in this caller-owned transaction.
+	// The artifact bind provides the delivery-attempt lock and remains atomic
+	// with every later mutation in this caller-owned transaction.
 	artifactBinding, err := a.delivery.BindBuildArtifactTx(ctx, tx, deploymentnative.BuildArtifactBindingInput{
 		AttemptID: normalized.Commit.AttemptID, ServingArtifactID: normalized.Seal.ServingArtifactID,
 		ServingArtifactDigest: normalized.Seal.ServingArtifactDigest, ServingStateID: normalized.Generation.GenerationID,
@@ -290,19 +322,6 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if err := verifyArtifactBinding(artifactBinding, normalized); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
-	duckAttempt, err := a.ducklake.CommitAttemptTx(ctx, tx, ducklakepostgres.CommitAttemptInput{
-		AttemptID:    normalized.Commit.AttemptID,
-		OwnerID:      normalized.Commit.OwnerID,
-		FencingEpoch: normalized.Commit.FencingEpoch,
-		Snapshot:     ducklakepostgres.SnapshotRef{PhysicalPoolID: normalized.Seal.PhysicalPoolID, CatalogID: normalized.Seal.CatalogID, SnapshotID: normalized.Commit.SnapshotID},
-		CommitMarker: string(normalized.Commit.CommitMarker),
-	})
-	if err != nil {
-		return GenerationAdmissionResult{}, err
-	}
-	if err := verifyDuckLakeAttempt(duckAttempt, normalized); err != nil {
-		return GenerationAdmissionResult{}, err
-	}
 	completed, err := a.delivery.CompleteBuildTx(ctx, tx, deploymentnative.CommitAttemptInput{
 		AttemptID: normalized.Commit.AttemptID, OwnerID: normalized.Commit.OwnerID,
 		FencingEpoch: normalized.Commit.FencingEpoch, SnapshotID: normalized.Commit.SnapshotID,
@@ -312,6 +331,9 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 		return GenerationAdmissionResult{}, err
 	}
 	if err := verifyCompletedBuild(completed, normalized); err != nil {
+		return GenerationAdmissionResult{}, err
+	}
+	if err := a.physical.AdmitSnapshotRetentionFromSealTx(ctx, tx, completed.Seal.SealID); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
 	provenanceInput := normalized.Provenance
@@ -378,26 +400,6 @@ func (a *generationAdmitter) CompleteBuildAndAdmitTx(ctx context.Context, tx dep
 	if err := a.managedData.AdmitServingStateBindingsTx(ctx, tx, identity, normalized.ManagedDataPins); err != nil {
 		return GenerationAdmissionResult{}, err
 	}
-	duckBinding, err := a.ducklake.BindGenerationTx(ctx, tx, ducklakepostgres.GenerationBinding{
-		DeliveryID:             normalized.Commit.DeliveryID,
-		GenerationID:           normalized.Generation.GenerationID,
-		AttemptID:              normalized.Commit.AttemptID,
-		PhysicalPoolID:         normalized.Seal.PhysicalPoolID,
-		CatalogID:              normalized.Seal.CatalogID,
-		SnapshotID:             normalized.Commit.SnapshotID,
-		RelationManifestDigest: normalized.Seal.RelationManifestDigest,
-		CompatibilityDigest:    normalized.Seal.CompatibilityDigest,
-		ServingArtifactDigest:  normalized.Seal.ServingArtifactDigest,
-		RequestDigest:          normalized.Seal.RequestDigest,
-		PlanDigest:             normalized.Seal.PlanDigest,
-		FencingEpoch:           normalized.Commit.FencingEpoch,
-	})
-	if err != nil {
-		return GenerationAdmissionResult{}, err
-	}
-	if err := verifyDuckLakeBinding(duckBinding, normalized); err != nil {
-		return GenerationAdmissionResult{}, err
-	}
 	return GenerationAdmissionResult{
 		AttemptID: completed.Attempt.AttemptID, SealID: completed.Seal.SealID, CandidateID: completed.Candidate.CandidateID,
 		CandidateRevision: completed.Candidate.CandidateRevision,
@@ -417,23 +419,6 @@ func validateAdmissionProvenanceInput(input release.ProvenanceInput, admission G
 		return fmt.Errorf("%w: release provenance plan identity differs", deploymentnative.ErrConflict)
 	}
 	return nil
-}
-
-// configuredDuckLakeAuthority keeps interface-backed constructor checks safe
-// for typed nil implementations. Calling a method on a typed nil is legal in
-// Go but may panic in an implementation that does not guard its receiver.
-func configuredDuckLakeAuthority(authority DuckLakeAuthority) bool {
-	if authority == nil {
-		return false
-	}
-	v := reflect.ValueOf(authority)
-	switch v.Kind() {
-	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
-		if v.IsNil() {
-			return false
-		}
-	}
-	return authority.Configured()
 }
 
 func configuredManagedDataBindingAdmission(authority NativeManagedDataBindingAdmission) bool {
@@ -479,7 +464,7 @@ func verifyArtifactBinding(got deploymentnative.BuildArtifactBinding, input Gene
 func verifyCompletedBuild(got deploymentnative.CompleteBuildResult, input GenerationAdmissionInput) error {
 	attempt := got.Attempt
 	if attempt.AttemptID != input.Commit.AttemptID || attempt.PlanID != input.Generation.PlanID || attempt.CandidateID != input.Generation.CandidateID ||
-		attempt.OwnerID != input.Commit.OwnerID || attempt.PhysicalPoolID != input.Seal.PhysicalPoolID || attempt.FencingEpoch != input.Commit.FencingEpoch ||
+		attempt.OwnerID != input.Commit.OwnerID || attempt.PhysicalPoolID != input.Seal.PhysicalPoolID || attempt.CatalogID != input.Seal.CatalogID || attempt.FencingEpoch != input.Commit.FencingEpoch ||
 		attempt.RequestDigest != input.Seal.RequestDigest || attempt.PlanDigest != input.Generation.PlanDigest || attempt.Namespace != input.Seal.RelationNamespace || attempt.State != deploymentnative.AttemptCommitted ||
 		attempt.SnapshotID != input.Commit.SnapshotID || attempt.SessionIdentity == "" || attempt.LeaseExpiresAt.IsZero() || attempt.CreatedAt.IsZero() || attempt.UpdatedAt.IsZero() || attempt.FinishedAt.IsZero() ||
 		len(attempt.TerminationEvidence) != 0 || !sameCommitMarker(attempt.CommitMarker, input.Commit.CommitMarker) {
@@ -571,27 +556,6 @@ func verifyBundle(got servingnative.Bundle, input GenerationAdmissionInput) erro
 		!sameBundleObject(got.AccessPolicyJSON, want.AccessPolicyJSON) || !sameBundleObject(got.DashboardPublicationsJSON, want.DashboardPublicationsJSON) ||
 		!sameBundleObject(got.DashboardAppearancesJSON, want.DashboardAppearancesJSON) {
 		return admissionEvidenceConflict("serving generation bundle")
-	}
-	return nil
-}
-
-func verifyDuckLakeAttempt(got ducklakepostgres.AttemptEvidence, input GenerationAdmissionInput) error {
-	if got.AttemptID != input.Commit.AttemptID || got.RequestDigest != input.Seal.RequestDigest || got.PlanDigest != input.Generation.PlanDigest ||
-		got.PhysicalPoolID != input.Seal.PhysicalPoolID || got.CatalogID != input.Seal.CatalogID || got.OwnerID != input.Commit.OwnerID ||
-		got.FencingEpoch != input.Commit.FencingEpoch || got.State != ducklakepostgres.AttemptCommitted || got.SnapshotID != input.Commit.SnapshotID ||
-		got.SessionIdentity == "" || got.LeaseExpiresAt.IsZero() || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.TerminalAt.IsZero() || !got.TerminalAt.Equal(got.UpdatedAt) || len(got.TerminationEvidence) != 0 || !sameCommitMarker([]byte(got.CommitMarker), input.Commit.CommitMarker) {
-		return admissionEvidenceConflict("DuckLake attempt ledger")
-	}
-	return nil
-}
-
-func verifyDuckLakeBinding(got ducklakepostgres.GenerationBinding, input GenerationAdmissionInput) error {
-	if got.DeliveryID != input.Commit.DeliveryID || got.GenerationID != input.Generation.GenerationID || got.AttemptID != input.Commit.AttemptID ||
-		got.PhysicalPoolID != input.Seal.PhysicalPoolID || got.CatalogID != input.Seal.CatalogID || got.SnapshotID != input.Commit.SnapshotID ||
-		got.RelationManifestDigest != input.Seal.RelationManifestDigest || got.CompatibilityDigest != input.Seal.CompatibilityDigest ||
-		got.ServingArtifactDigest != input.Seal.ServingArtifactDigest || got.RequestDigest != input.Seal.RequestDigest || got.PlanDigest != input.Seal.PlanDigest ||
-		got.FencingEpoch != input.Commit.FencingEpoch || got.BoundAt.IsZero() {
-		return admissionEvidenceConflict("DuckLake generation binding")
 	}
 	return nil
 }

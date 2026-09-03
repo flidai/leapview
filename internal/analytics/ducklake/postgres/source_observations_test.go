@@ -25,7 +25,7 @@ func TestSourceObservationCaptureExactReplayReadMismatchAndImmutability(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(t.Context(), tx); err != nil {
+	if err := applyDuckLakeTestSchemas(t.Context(), tx); err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
@@ -39,6 +39,10 @@ func TestSourceObservationCaptureExactReplayReadMismatchAndImmutability(t *testi
 	}
 	const attemptID = "0198f2c0-7c7a-7f00-8a11-000000000021"
 	requestDigest, planDigest := digest('b'), digest('c')
+	planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+	if err := seedCanonicalDeliveryAttempt(t.Context(), p, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "builder-observations", FencingEpoch: 1}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "builder-observations", FencingEpoch: 1, SessionIdentity: "session-observations", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}

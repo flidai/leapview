@@ -1,9 +1,9 @@
 package deploymentpostgres
 
 // This file owns the small control-plane transaction that prepares a native
-// physical build for read-only recovery.  It deliberately stops before marker
+// physical build for read-only recovery. It deliberately stops before marker
 // resolution and generation admission: the caller receives the exact,
-// normalized ledgers needed by those later phases.
+// normalized operation and delivery records needed by those later phases.
 
 import (
 	"bytes"
@@ -12,7 +12,6 @@ import (
 	"errors"
 	"fmt"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 )
@@ -23,23 +22,22 @@ import (
 // dependent delivery records are read and checked before the atomic
 // normalization transaction starts.
 //
-// PhysicalPoolID and CatalogID are bound to the admitted build contract. The
-// attempt's fencing epoch, namespace, and session identity are immutable writer
-// evidence and are therefore read from the deterministic attempt row, never
-// supplied by a caller.
+// PhysicalPoolID is bound to the admitted build contract. The attempt's
+// fencing epoch, namespace, and session identity are immutable writer evidence
+// and are therefore read from the deterministic attempt row, never supplied
+// by a caller.
 type NativeBuildRecoveryPreparationInput struct {
 	Request       deploymentmodule.NativeDeliveryBuildRequest
 	RequestDigest string
 	Operation     deploymentmodule.NativeOperationRecord
 
 	PhysicalPoolID string
-	CatalogID      string
 }
 
 // NativeBuildRecoveryPreparationResult contains the fresh records returned by
 // the normalization transaction. Candidate and artifact binding are immutable
 // pre-read evidence (the binding may be absent until final recovery admission);
-// the operation, both attempts, and target lease are returned from the same
+// the operation, delivery attempt, and target lease are returned from the same
 // transaction that changed their states.
 type NativeBuildRecoveryPreparationResult struct {
 	Operation       deploymentmodule.NativeOperationRecord
@@ -47,7 +45,6 @@ type NativeBuildRecoveryPreparationResult struct {
 	Candidate       deploymentnative.DeliveryCandidate
 	Artifact        deploymentnative.BuildArtifactBinding
 	DeliveryAttempt deploymentnative.DeliveryBuildAttempt
-	DuckLakeAttempt ducklakepostgres.AttemptEvidence
 	Lease           deploymentnative.DeliveryLease
 
 	CandidateID  string
@@ -57,11 +54,11 @@ type NativeBuildRecoveryPreparationResult struct {
 }
 
 // PrepareNativeBuildRecovery normalizes one already-indeterminate operation's
-// external attempt ledgers and releases its deterministic target lease. The
-// operation itself is only confirmed (never acquired or renewed); both direct
-// and expiry fencing advance the durable generation once, so the predecessor
-// lease is reconstructed solely to satisfy the confirmation predicate. The
-// function owns one transaction and rolls it back on every mismatch or
+// delivery attempt and operation records and releases its deterministic target
+// lease. The operation itself is only confirmed (never acquired or renewed);
+// both direct and expiry fencing advance the durable generation once, so the
+// predecessor lease is reconstructed solely to satisfy the confirmation
+// predicate. The function owns one transaction and rolls it back on every mismatch or
 // authority error.
 func PrepareNativeBuildRecovery(
 	ctx context.Context,
@@ -225,10 +222,7 @@ func normalizeNativeBuildRecoveryPreparationValues(input NativeBuildRecoveryPrep
 	if err := validateText(input.PhysicalPoolID, "physical pool id", 255); err != nil {
 		return NativeBuildRecoveryPreparationInput{}, preRead, err
 	}
-	if err := validateText(input.CatalogID, "catalog id", 255); err != nil {
-		return NativeBuildRecoveryPreparationInput{}, preRead, err
-	}
-	return NativeBuildRecoveryPreparationInput{Request: request, RequestDigest: digest, Operation: op, PhysicalPoolID: input.PhysicalPoolID, CatalogID: input.CatalogID}, preRead, nil
+	return NativeBuildRecoveryPreparationInput{Request: request, RequestDigest: digest, Operation: op, PhysicalPoolID: input.PhysicalPoolID}, preRead, nil
 }
 
 func validateNativeBuildRecoveryPreRead(input NativeBuildRecoveryPreparationInput, preRead nativeBuildRecoveryPreRead) error {
@@ -289,16 +283,12 @@ func prepareNativeBuildRecoveryTx(
 	if err != nil {
 		return NativeBuildRecoveryPreparationResult{}, err
 	}
-	if termination.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || termination.DuckLakeAttempt.State != ducklakepostgres.AttemptIndeterminate {
-		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: recovery attempts were not normalized to indeterminate", deploymentnative.ErrConflict)
+	if termination.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate {
+		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: recovery delivery attempt was not normalized to indeterminate", deploymentnative.ErrConflict)
 	}
 	if termination.DeliveryAttempt.AttemptID != preRead.AttemptID || termination.DeliveryAttempt.OwnerID != preRead.Attempt.OwnerID || termination.DeliveryAttempt.FencingEpoch != preRead.Attempt.FencingEpoch || termination.DeliveryAttempt.PlanID != preRead.Attempt.PlanID || termination.DeliveryAttempt.CandidateID != preRead.Attempt.CandidateID || termination.DeliveryAttempt.PhysicalPoolID != input.PhysicalPoolID || termination.DeliveryAttempt.Namespace != preRead.Attempt.Namespace || termination.DeliveryAttempt.SessionIdentity != preRead.Attempt.SessionIdentity || !sameTerminationEvidence(termination.DeliveryAttempt.TerminationEvidence, preRead.Evidence) {
 		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: normalized delivery attempt identity differs", deploymentnative.ErrConflict)
 	}
-	if termination.DuckLakeAttempt.AttemptID != preRead.AttemptID || termination.DuckLakeAttempt.OwnerID != preRead.Attempt.OwnerID || termination.DuckLakeAttempt.FencingEpoch != preRead.Attempt.FencingEpoch || termination.DuckLakeAttempt.PhysicalPoolID != input.PhysicalPoolID || termination.DuckLakeAttempt.CatalogID != input.CatalogID || termination.DuckLakeAttempt.SessionIdentity != preRead.Attempt.SessionIdentity || !sameTerminationEvidence(termination.DuckLakeAttempt.TerminationEvidence, preRead.Evidence) {
-		return NativeBuildRecoveryPreparationResult{}, fmt.Errorf("%w: normalized DuckLake attempt identity differs", deploymentnative.ErrConflict)
-	}
-
 	// Both direct MarkIndeterminateTx and expiry fencing advance the operation
 	// generation exactly once. ConfirmExpiredAttemptTx therefore locks and
 	// projects either kind of indeterminate row using the common predecessor
@@ -331,7 +321,7 @@ func prepareNativeBuildRecoveryTx(
 	}
 	return NativeBuildRecoveryPreparationResult{
 		Operation: confirmed, Plan: preRead.Plan, Candidate: preRead.Candidate, Artifact: preRead.Artifact,
-		DeliveryAttempt: termination.DeliveryAttempt, DuckLakeAttempt: termination.DuckLakeAttempt, Lease: lease,
+		DeliveryAttempt: termination.DeliveryAttempt, Lease: lease,
 		CandidateID: preRead.CandidateID, GenerationID: preRead.GenerationID, AttemptID: preRead.AttemptID, LeaseID: preRead.LeaseID,
 	}, nil
 }

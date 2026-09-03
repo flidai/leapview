@@ -93,7 +93,7 @@ func newApprovalFixture(t *testing.T) approvalFixture {
 	if _, err := repository.CreateCandidate(ctx, CandidateInput{CandidateID: ids["candidate"], TargetID: targetID, PlanID: ids["plan"], CandidateRevision: 1, ArtifactDigest: testDigest('e')}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repository.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-approval", PhysicalPoolID: "pool-approval", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: createdPlan.PlanDigest, Namespace: "candidate/approval", SessionIdentity: "session-approval", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := repository.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: ids["attempt"], PlanID: ids["plan"], CandidateID: ids["candidate"], OwnerID: "builder-approval", PhysicalPoolID: "pool-approval", CatalogID: "catalog-approval", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: createdPlan.PlanDigest, Namespace: "candidate/approval", SessionIdentity: "session-approval", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repository.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: ids["attempt"], ServingArtifactID: "artifact-approval", ServingArtifactDigest: testDigest('e'), ServingStateID: "generation-test", OwnerID: "builder-approval", FencingEpoch: 1}); err != nil {

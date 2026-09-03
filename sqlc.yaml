@@ -452,6 +452,10 @@ sql:
     schema:
       - "internal/analytics/ducklake/postgres/schema.sql"
       - "internal/analytics/ducklake/postgres/queries/catalog_schema.sql"
+      # The canonical delivery seal is the source of physical retention
+      # admission and is installed before this capability in the control
+      # database baseline.
+      - "internal/deployment/postgres/schema.sql"
     gen:
       go:
         package: "db"

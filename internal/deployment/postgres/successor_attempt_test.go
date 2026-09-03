@@ -33,7 +33,7 @@ func TestPostgresAdmitSuccessorBuildAttemptRequiresMarkerResolutionAndFencesPred
 		SuccessorLease:       LeaseInput{LeaseID: successorLeaseID, TargetID: f.TargetID, OwnerID: "builder-successor", ExpiresAt: successorExpires},
 		SuccessorAttempt: BuildAttemptInput{
 			AttemptID: successorAttemptID, PlanID: f.PlanID, CandidateID: f.CandidateID,
-			OwnerID: "builder-successor", PhysicalPoolID: "pool-complete",
+			OwnerID: "builder-successor", PhysicalPoolID: "pool-complete", CatalogID: "catalog-complete",
 			RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest, SessionIdentity: "session-successor",
 		},
 	}
@@ -101,10 +101,10 @@ func TestPostgresAdmitSuccessorBuildAttemptRequiresMarkerResolutionAndFencesPred
 		_ = tx.Rollback(ctx)
 		t.Fatalf("successor admission: %v", err)
 	}
-	if first.Predecessor.State != AttemptIndeterminate || first.Successor.State != AttemptRunning || !sameCanonical(first.Predecessor.TerminationEvidence, predecessorEvidence) {
+	if first.Predecessor.State != AttemptIndeterminate || first.Predecessor.CatalogID != input.CatalogID || first.Successor.State != AttemptRunning || !sameCanonical(first.Predecessor.TerminationEvidence, predecessorEvidence) {
 		t.Fatalf("successor states predecessor=%s successor=%s", first.Predecessor.State, first.Successor.State)
 	}
-	if first.Successor.AttemptID != successorAttemptID || first.SuccessorLease.LeaseID != successorLeaseID || first.Successor.FencingEpoch <= f.Lease.FencingEpoch || first.Successor.Namespace == first.Predecessor.Namespace || first.Successor.SessionIdentity == first.Predecessor.SessionIdentity {
+	if first.Successor.AttemptID != successorAttemptID || first.Successor.CatalogID != input.CatalogID || first.SuccessorLease.LeaseID != successorLeaseID || first.Successor.FencingEpoch <= f.Lease.FencingEpoch || first.Successor.Namespace == first.Predecessor.Namespace || first.Successor.SessionIdentity == first.Predecessor.SessionIdentity {
 		t.Fatalf("successor identity predecessor=%#v successor=%#v lease=%#v", first.Predecessor, first.Successor, first.SuccessorLease)
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -139,7 +139,7 @@ func TestPostgresAdmitSuccessorBuildAttemptRequiresMarkerResolutionAndFencesPred
 		_ = replayTx.Rollback(ctx)
 		t.Fatalf("successor replay: %v", err)
 	}
-	if replayed.Successor.AttemptID != first.Successor.AttemptID || replayed.Successor.FencingEpoch != first.Successor.FencingEpoch || replayed.Successor.Namespace != first.Successor.Namespace || replayed.SuccessorLease.LeaseID != first.SuccessorLease.LeaseID {
+	if replayed.Successor.AttemptID != first.Successor.AttemptID || replayed.Successor.CatalogID != first.Successor.CatalogID || replayed.Successor.FencingEpoch != first.Successor.FencingEpoch || replayed.Successor.Namespace != first.Successor.Namespace || replayed.SuccessorLease.LeaseID != first.SuccessorLease.LeaseID {
 		t.Fatalf("successor replay drifted: first=%#v replay=%#v", first, replayed)
 	}
 	if err := replayTx.Commit(ctx); err != nil {

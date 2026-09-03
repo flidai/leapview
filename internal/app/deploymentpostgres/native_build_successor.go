@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
@@ -32,6 +31,7 @@ type NativeBuildSuccessorAdmissionInput struct {
 	// before any external physical work starts.
 	Artifact   CandidateBuildArtifactInput
 	CatalogID  string
+	Physical   CandidateBuildAttemptPhysicalAdmission
 	Resolution []byte
 
 	// LeaseExpiresAt and SessionIdentity are optional convenience overrides for
@@ -40,9 +40,6 @@ type NativeBuildSuccessorAdmissionInput struct {
 	// existing operation successor's expiry is reused exactly.
 	LeaseExpiresAt  time.Time
 	SessionIdentity string
-	// DuckLake is mandatory in production: a successor without its matching
-	// DuckLake attempt ledger cannot execute or be reconciled safely.
-	DuckLake CandidateBuildAttemptSuccessorDuckLakeAdmission
 }
 
 // NativeBuildSuccessorAdmissionResult contains the immutable operation leaf
@@ -52,7 +49,6 @@ type NativeBuildSuccessorAdmissionResult struct {
 	Operation deploymentmodule.NativeOperationSuccessor
 	Delivery  deploymentnative.BuildAttemptSuccessorResult
 	Artifact  deploymentnative.BuildArtifactBinding
-	DuckLake  ducklakepostgres.AttemptEvidence
 }
 
 // AdmitNativeBuildSuccessor atomically appends one executable operation leaf
@@ -72,8 +68,8 @@ func AdmitNativeBuildSuccessor(
 	if nativeBuildAuthorityNil(operations) {
 		return NativeBuildSuccessorAdmissionResult{}, fmt.Errorf("%w: successor operation authority is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
 	}
-	if nativeBuildAuthorityNil(input.DuckLake) {
-		return NativeBuildSuccessorAdmissionResult{}, fmt.Errorf("%w: successor DuckLake authority is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
+	if input.Physical == nil || !input.Physical.Configured() {
+		return NativeBuildSuccessorAdmissionResult{}, fmt.Errorf("%w: successor physical admission guard is unavailable", deploymentmodule.ErrDeliveryInputUnavailable)
 	}
 	ctx = contextOrBackground(ctx)
 	if err := validateNativeBuildSuccessorPredecessor(input); err != nil {
@@ -153,6 +149,12 @@ func AdmitNativeBuildSuccessor(
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	// Preserve quarantine-before-attempt ordering: marker quarantine holds the
+	// pool scope while its canonical-attempt FK is checked, so acquire the
+	// physical fence before locking operation/delivery predecessor rows.
+	if err := input.Physical.ValidateBuildAdmissionTx(ctx, tx, input.DeliveryAttempt.PhysicalPoolID, input.CatalogID); err != nil {
+		return NativeBuildSuccessorAdmissionResult{}, err
+	}
 
 	operationPredecessor := deploymentmodule.NativeOperationLease{
 		Scope: input.Operation.Scope, IdempotencyKey: input.Operation.IdempotencyKey,
@@ -176,7 +178,7 @@ func AdmitNativeBuildSuccessor(
 		Predecessor:          deploymentnative.LeaseFence{LeaseID: input.DeliveryLease.LeaseID, TargetID: input.DeliveryLease.TargetID, OwnerID: input.DeliveryLease.OwnerID, FencingEpoch: input.DeliveryLease.FencingEpoch},
 		PredecessorAttemptID: input.DeliveryAttempt.AttemptID, CatalogID: input.CatalogID, ResolutionEvidence: input.Resolution,
 		SuccessorLease:   deploymentnative.LeaseInput{LeaseID: successorLeaseID, TargetID: input.DeliveryLease.TargetID, OwnerID: input.DeliveryAttempt.OwnerID, ExpiresAt: leaseExpiresAt},
-		SuccessorAttempt: deploymentnative.BuildAttemptInput{AttemptID: successorAttemptID, PlanID: input.DeliveryAttempt.PlanID, CandidateID: input.DeliveryAttempt.CandidateID, OwnerID: input.DeliveryAttempt.OwnerID, PhysicalPoolID: input.DeliveryAttempt.PhysicalPoolID, RequestDigest: input.DeliveryAttempt.RequestDigest, PlanDigest: input.DeliveryAttempt.PlanDigest, SessionIdentity: sessionIdentity},
+		SuccessorAttempt: deploymentnative.BuildAttemptInput{AttemptID: successorAttemptID, PlanID: input.DeliveryAttempt.PlanID, CandidateID: input.DeliveryAttempt.CandidateID, OwnerID: input.DeliveryAttempt.OwnerID, PhysicalPoolID: input.DeliveryAttempt.PhysicalPoolID, CatalogID: input.CatalogID, RequestDigest: input.DeliveryAttempt.RequestDigest, PlanDigest: input.DeliveryAttempt.PlanDigest, SessionIdentity: sessionIdentity},
 	})
 	if err != nil {
 		return NativeBuildSuccessorAdmissionResult{}, err
@@ -195,20 +197,11 @@ func AdmitNativeBuildSuccessor(
 	if artifact.AttemptID != successorAttemptID || artifact.ServingArtifactID != input.Artifact.ServingArtifactID || artifact.ServingArtifactDigest != input.Artifact.ServingArtifactDigest || artifact.ServingStateID != input.Artifact.ServingStateID {
 		return NativeBuildSuccessorAdmissionResult{}, fmt.Errorf("%w: successor artifact binding identity differs", deploymentmodule.ErrNativeOperationConflict)
 	}
-	var duckLakeAttempt ducklakepostgres.AttemptEvidence
-	duckAttempt, duckErr := input.DuckLake.BeginSuccessorDuckLakeAttemptTx(ctx, tx, deliverySuccessor.Successor, input.CatalogID)
-	if duckErr != nil {
-		return NativeBuildSuccessorAdmissionResult{}, duckErr
-	}
-	if duckAttempt.AttemptID != successorAttemptID || duckAttempt.State != "running" || duckAttempt.OwnerID != deliverySuccessor.Successor.OwnerID || duckAttempt.FencingEpoch != deliverySuccessor.Successor.FencingEpoch || duckAttempt.SessionIdentity != sessionIdentity || !duckAttempt.LeaseExpiresAt.Equal(deliverySuccessor.Successor.LeaseExpiresAt) {
-		return NativeBuildSuccessorAdmissionResult{}, fmt.Errorf("%w: DuckLake successor identity differs", deploymentmodule.ErrNativeOperationConflict)
-	}
-	duckLakeAttempt = duckAttempt
 	if err := tx.Commit(ctx); err != nil {
 		return NativeBuildSuccessorAdmissionResult{}, err
 	}
 	committed = true
-	return NativeBuildSuccessorAdmissionResult{Operation: operationSuccessor, Delivery: deliverySuccessor, Artifact: artifact, DuckLake: duckLakeAttempt}, nil
+	return NativeBuildSuccessorAdmissionResult{Operation: operationSuccessor, Delivery: deliverySuccessor, Artifact: artifact}, nil
 }
 
 func validateNativeBuildSuccessorPredecessor(input NativeBuildSuccessorAdmissionInput) error {
@@ -218,7 +211,7 @@ func validateNativeBuildSuccessorPredecessor(input NativeBuildSuccessorAdmission
 	if op.State != deploymentmodule.NativeOperationStateIndeterminate || op.OperationID == "" || op.AttemptID == "" || op.AttemptIdentity == "" || op.FencingGeneration <= 0 || op.LeaseExpiresAt.IsZero() {
 		return fmt.Errorf("%w: successor requires an indeterminate operation predecessor", deploymentmodule.ErrNativeOperationConflict)
 	}
-	if attempt.State != deploymentnative.AttemptIndeterminate || attempt.AttemptID != op.AttemptID || attempt.RequestDigest != op.RequestDigest || attempt.PlanDigest == "" || attempt.PhysicalPoolID == "" || attempt.SessionIdentity == "" || attempt.FencingEpoch <= 0 || len(attempt.TerminationEvidence) == 0 {
+	if attempt.State != deploymentnative.AttemptIndeterminate || attempt.AttemptID != op.AttemptID || attempt.RequestDigest != op.RequestDigest || attempt.PlanDigest == "" || attempt.PhysicalPoolID == "" || attempt.CatalogID != input.CatalogID || attempt.SessionIdentity == "" || attempt.FencingEpoch <= 0 || len(attempt.TerminationEvidence) == 0 {
 		return fmt.Errorf("%w: successor delivery predecessor is not indeterminate", deploymentnative.ErrConflict)
 	}
 	if lease.LeaseID == "" || lease.TargetID == "" || lease.OwnerID != attempt.OwnerID || lease.FencingEpoch != attempt.FencingEpoch || lease.State != "released" || !lease.ExpiresAt.Equal(op.LeaseExpiresAt) {

@@ -41,7 +41,7 @@ type nativeBuildSuccessorResolutionEvidence struct {
 
 // executeNativeBuildSuccessor runs a fresh physical build only after the
 // marker resolver proved the predecessor marker absent and the operation,
-// delivery, artifact-binding, and DuckLake successor rows committed together.
+// delivery and artifact-binding successor rows committed together.
 func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	ctx context.Context,
 	request deploymentmodule.NativeDeliveryBuildRequest,
@@ -107,7 +107,7 @@ func (c *NativeBuildCoordinator) executeNativeBuildSuccessor(
 	marker.FencingToken = fmt.Sprintf("%d", marker.LeaseEpoch)
 	attemptAdmission := CandidateBuildAttemptAdmissionResult{
 		Lease: successor.Delivery.SuccessorLease, Attempt: successor.Delivery.Successor,
-		Artifact: successor.Artifact, DuckLakeAttempt: successor.DuckLake,
+		Artifact: successor.Artifact,
 	}
 	operationLease := successor.Operation.Lease
 	buildCtx, buildCancel := context.WithCancel(ctx)
@@ -213,6 +213,9 @@ func (c *NativeBuildCoordinator) completeNativeBuildSuccessor(ctx context.Contex
 			_ = tx.Rollback(context.Background())
 		}
 	}()
+	if err := c.generationAdmission.ValidatePhysicalAdmissionTx(ctx, tx, assembled); err != nil {
+		return deploymentmodule.NativeDeliveryBuild{}, err
+	}
 	lockedOperation, err := lockNativeBuildOperationTx(ctx, tx, c.operations, reservation.Operation, deploymentmodule.NativeOperationStateIndeterminate)
 	if err != nil {
 		return deploymentmodule.NativeDeliveryBuild{}, err
@@ -346,7 +349,7 @@ func (c *NativeBuildCoordinator) settleNativeBuildSuccessorFailure(ctx context.C
 		}
 	}()
 	// Preserve the global lock order (public operation -> target lease ->
-	// delivery attempt -> DuckLake) before terminalizing either attempt ledger.
+	// delivery attempt) before terminalizing the delivery attempt.
 	lockedOperation, found, lockErr := c.operations.LockOperationTx(cleanupCtx, tx, deploymentmodule.NativeOperationAcquireInput{
 		Scope: successor.Operation.Lease.Scope, OperationType: nativeBuildOperationType,
 		IdempotencyKey: successor.Operation.Lease.IdempotencyKey, RequestDigest: requestDigest,
@@ -369,9 +372,9 @@ func (c *NativeBuildCoordinator) settleNativeBuildSuccessorFailure(ctx context.C
 	if lockedLeaf.AttemptID != successor.Delivery.Successor.AttemptID || (lockedLeaf.State != deploymentmodule.NativeOperationStatePending && lockedLeaf.State != deploymentmodule.NativeOperationStateIndeterminate) {
 		return errors.Join(buildErr, fmt.Errorf("%w: successor settlement operation leaf is not recoverable", deploymentdomain.ErrDeliveryConflict))
 	}
-	// Acquire the target lease before touching delivery/DuckLake attempts. This
-	// keeps settlement in the same public operation -> successor leaf -> target
-	// lease -> delivery attempt -> DuckLake order as completion and heartbeat.
+	// Acquire the target lease before touching the delivery attempt. This keeps
+	// settlement in the same public operation -> successor leaf -> target lease
+	// -> delivery attempt order as completion and heartbeat.
 	lockedTarget, targetErr := lockNativeBuildLeaseTx(cleanupCtx, tx, c.repository, successor.Delivery.SuccessorLease, "active", "released")
 	if targetErr != nil {
 		return errors.Join(buildErr, targetErr)

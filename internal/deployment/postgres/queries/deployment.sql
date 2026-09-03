@@ -85,12 +85,12 @@ WHERE c.candidate_id=sqlc.arg(candidate_id)::uuid
 GROUP BY c.candidate_id,c.target_id,c.plan_id,c.snapshot_seal_id,c.status,c.candidate_revision,c.artifact_digest,t.project_id,t.environment;
 
 -- name: InsertBuildAttempt :exec
-INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity)
-VALUES(sqlc.arg(attempt_id)::uuid,sqlc.arg(plan_id)::uuid,sqlc.narg(candidate_id)::uuid,sqlc.arg(owner_id),sqlc.arg(physical_pool_id),sqlc.arg(fencing_epoch),sqlc.arg(request_digest),sqlc.arg(plan_digest),'running',sqlc.arg(namespace),sqlc.arg(lease_expires_at),sqlc.arg(session_identity))
+INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,catalog_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity)
+VALUES(sqlc.arg(attempt_id)::uuid,sqlc.arg(plan_id)::uuid,sqlc.narg(candidate_id)::uuid,sqlc.arg(owner_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(fencing_epoch),sqlc.arg(request_digest),sqlc.arg(plan_digest),'running',sqlc.arg(namespace),sqlc.arg(lease_expires_at),sqlc.arg(session_identity))
 ON CONFLICT(attempt_id) DO NOTHING;
 
 -- name: GetBuildAttempt :one
-SELECT attempt_id::text,plan_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,owner_id,physical_pool_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity,COALESCE(snapshot_id,0)::bigint AS snapshot_id,commit_marker,termination_evidence,created_at,updated_at,finished_at
+SELECT attempt_id::text,plan_id::text,COALESCE(candidate_id::text,'')::text AS candidate_id,owner_id,physical_pool_id,catalog_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity,COALESCE(snapshot_id,0)::bigint AS snapshot_id,commit_marker,termination_evidence,created_at,updated_at,finished_at
 FROM delivery.delivery_build_attempt WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
 
 -- name: LockBuildAttempt :one

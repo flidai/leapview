@@ -60,7 +60,7 @@ func newCompleteBuildFixtureWithSuffixBindingAndLifetime(t *testing.T, r *Reposi
 	}
 	f.Lease, _, err = r.AcquireLeaseAndBeginBuildAttemptTx(ctx, tx,
 		LeaseInput{LeaseID: f.LeaseID, TargetID: f.TargetID, OwnerID: "builder-complete", ExpiresAt: expires},
-		BuildAttemptInput{AttemptID: f.AttemptID, PlanID: f.PlanID, CandidateID: f.CandidateID, OwnerID: "builder-complete", PhysicalPoolID: "pool-complete", RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest, Namespace: "candidate/complete", SessionIdentity: "session-complete"},
+		BuildAttemptInput{AttemptID: f.AttemptID, PlanID: f.PlanID, CandidateID: f.CandidateID, OwnerID: "builder-complete", PhysicalPoolID: "pool-complete", CatalogID: "catalog-complete", RequestDigest: f.RequestDigest, PlanDigest: f.PlanDigest, Namespace: "candidate/complete", SessionIdentity: "session-complete"},
 	)
 	if err != nil {
 		_ = tx.Rollback(ctx)
@@ -157,7 +157,7 @@ func TestPostgresCompleteBuildTxSuccessAndExactReplay(t *testing.T) {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}
-	if first.Attempt.State != AttemptCommitted || first.Candidate.Status != "qualified" || first.Lease.State != "released" {
+	if first.Attempt.State != AttemptCommitted || first.Attempt.CatalogID != f.Seal.CatalogID || first.Candidate.Status != "qualified" || first.Lease.State != "released" {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("completion result = %#v", first)
 	}
@@ -174,11 +174,14 @@ func TestPostgresCompleteBuildTxSuccessAndExactReplay(t *testing.T) {
 		_ = tx.Rollback(ctx)
 		t.Fatalf("exact completion replay: %v", err)
 	}
-	if replayed.Attempt.State != AttemptCommitted || replayed.Candidate.Status != "qualified" || replayed.Lease.State != "released" {
+	if replayed.Attempt.State != AttemptCommitted || replayed.Attempt.CatalogID != f.Seal.CatalogID || replayed.Candidate.Status != "qualified" || replayed.Lease.State != "released" {
 		t.Fatalf("replayed completion result = %#v", replayed)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
+	}
+	if _, err := r.db.Exec(ctx, `UPDATE delivery.delivery_build_attempt SET catalog_id='catalog-other' WHERE attempt_id=$1::uuid`, f.AttemptID); err == nil {
+		t.Fatal("build attempt catalog identity update succeeded")
 	}
 }
 
@@ -588,5 +591,10 @@ func TestPostgresBuildCompletionRequiresArtifactBindingIdentity(t *testing.T) {
 	wrongSeal.ServingArtifactID = "artifact-other"
 	if _, err := r.CreateSnapshotSeal(ctx, wrongSeal); !errors.Is(err, ErrConflict) {
 		t.Fatalf("mismatched binding artifact = %v", err)
+	}
+	wrongCatalog := mismatch.Seal
+	wrongCatalog.CatalogID = "catalog-other"
+	if _, err := r.CreateSnapshotSeal(ctx, wrongCatalog); !errors.Is(err, ErrNotQualified) {
+		t.Fatalf("mismatched attempt catalog = %v, want ErrNotQualified", err)
 	}
 }

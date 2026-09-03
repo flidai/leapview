@@ -21,10 +21,10 @@ import (
 type nativeRecoveryPreparationFixture struct {
 	Pool      *pgxpool.Pool
 	Delivery  *deploymentnative.Repository
-	DuckLake  *ducklakepostgres.Repository
 	Operation deploymentmodule.NativeBuildOperationAuthority
 	Request   deploymentmodule.NativeDeliveryBuildRequest
 	Digest    string
+	CatalogID string
 	Record    deploymentmodule.NativeOperationRecord
 	Input     NativeBuildRecoveryPreparationInput
 }
@@ -132,15 +132,15 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
 	_, err = admission.AdmitCandidateBuildAttemptTx(t.Context(), tx, CandidateBuildAttemptAdmissionInput{
 		Lease:    deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: request.TargetID, OwnerID: request.PrincipalID, ExpiresAt: reserved.Lease.LeaseExpiresAt},
-		Attempt:  deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: request.PlanID.String(), CandidateID: candidateID, OwnerID: request.PrincipalID, PhysicalPoolID: "pool-recovery-preparation", RequestDigest: digest, PlanDigest: plan.PlanDigest, SessionIdentity: "session-recovery-preparation", LeaseExpiresAt: reserved.Lease.LeaseExpiresAt},
-		Artifact: CandidateBuildArtifactInput{ServingArtifactID: "artifact-" + strings.TrimPrefix(plan.ArtifactDigest, "sha256:"), ServingArtifactDigest: plan.ArtifactDigest, ServingStateID: generationID}, CatalogID: catalogID,
+		Attempt:  deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: request.PlanID.String(), CandidateID: candidateID, OwnerID: request.PrincipalID, PhysicalPoolID: "pool-recovery-preparation", CatalogID: "catalog-recovery-preparation", RequestDigest: digest, PlanDigest: plan.PlanDigest, SessionIdentity: "session-recovery-preparation", LeaseExpiresAt: reserved.Lease.LeaseExpiresAt},
+		Artifact: CandidateBuildArtifactInput{ServingArtifactID: "artifact-" + strings.TrimPrefix(plan.ArtifactDigest, "sha256:"), ServingArtifactDigest: plan.ArtifactDigest, ServingStateID: generationID}, CatalogID: "catalog-recovery-preparation",
 	})
 	if err != nil {
 		_ = tx.Rollback(t.Context())
@@ -178,7 +178,7 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 		if err != nil {
 			t.Fatal(err)
 		}
-		termination, err := NewAttemptTermination(delivery, ducklake)
+		termination, err := NewAttemptTermination(delivery)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -213,9 +213,9 @@ func newNativeRecoveryPreparationFixtureMode(t *testing.T, expireOperation bool)
 		}
 	}
 	return nativeRecoveryPreparationFixture{
-		Pool: p, Delivery: delivery, DuckLake: ducklake, Operation: operations, Request: request, Digest: digest,
+		Pool: p, Delivery: delivery, Operation: operations, Request: request, Digest: digest, CatalogID: catalogID,
 		Record: operationRecord,
-		Input:  NativeBuildRecoveryPreparationInput{Request: request, RequestDigest: digest, Operation: operationRecord, PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: catalogID},
+		Input:  NativeBuildRecoveryPreparationInput{Request: request, RequestDigest: digest, Operation: operationRecord, PhysicalPoolID: attempt.PhysicalPoolID},
 	}
 }
 
@@ -223,7 +223,7 @@ func preparationDigest(ch byte) string { return "sha256:" + strings.Repeat(strin
 
 func TestPrepareNativeBuildRecoveryNormalizesAndReplays(t *testing.T) {
 	f := newNativeRecoveryPreparationFixture(t)
-	termination, err := NewAttemptTermination(f.Delivery, f.DuckLake)
+	termination, err := NewAttemptTermination(f.Delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +231,7 @@ func TestPrepareNativeBuildRecoveryNormalizesAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepare recovery: %v", err)
 	}
-	if first.Operation.State != deploymentmodule.NativeOperationStateIndeterminate || first.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || first.DuckLakeAttempt.State != ducklakepostgres.AttemptIndeterminate || first.Lease.State != "released" {
+	if first.Operation.State != deploymentmodule.NativeOperationStateIndeterminate || first.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || first.Lease.State != "released" {
 		t.Fatalf("prepared recovery = %#v", first)
 	}
 	if first.CandidateID == "" || first.GenerationID == "" || first.AttemptID == "" || first.LeaseID == "" || first.Artifact.ServingStateID != first.GenerationID {
@@ -244,14 +244,14 @@ func TestPrepareNativeBuildRecoveryNormalizesAndReplays(t *testing.T) {
 	if err != nil {
 		t.Fatalf("exact recovery replay: %v", err)
 	}
-	if second.Operation.OperationID != first.Operation.OperationID || string(second.Operation.AttemptEvidence) != string(first.Operation.AttemptEvidence) || second.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || second.DuckLakeAttempt.State != ducklakepostgres.AttemptIndeterminate || second.Lease.State != "released" {
+	if second.Operation.OperationID != first.Operation.OperationID || string(second.Operation.AttemptEvidence) != string(first.Operation.AttemptEvidence) || second.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || second.Lease.State != "released" {
 		t.Fatalf("replayed recovery = %#v, first=%#v", second, first)
 	}
 }
 
 func TestPrepareNativeBuildRecoveryRollsBackWhenOperationEvidenceDiffers(t *testing.T) {
 	f := newNativeRecoveryPreparationFixture(t)
-	termination, err := NewAttemptTermination(f.Delivery, f.DuckLake)
+	termination, err := NewAttemptTermination(f.Delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -302,7 +302,7 @@ func TestPrepareNativeBuildRecoveryAllowsBindingToBeAddedDuringFinalAdmission(t 
 	if enableErr != nil {
 		t.Fatal(enableErr)
 	}
-	termination, err := NewAttemptTermination(f.Delivery, f.DuckLake)
+	termination, err := NewAttemptTermination(f.Delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -317,7 +317,7 @@ func TestPrepareNativeBuildRecoveryAllowsBindingToBeAddedDuringFinalAdmission(t 
 
 func TestPrepareNativeBuildRecoveryReplaysDirectIndeterminateOperation(t *testing.T) {
 	f := newNativeRecoveryPreparationFixtureMode(t, false)
-	termination, err := NewAttemptTermination(f.Delivery, f.DuckLake)
+	termination, err := NewAttemptTermination(f.Delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -325,7 +325,7 @@ func TestPrepareNativeBuildRecoveryReplaysDirectIndeterminateOperation(t *testin
 	if err != nil {
 		t.Fatalf("prepare direct indeterminate recovery: %v", err)
 	}
-	if prepared.Operation.FencingGeneration != 2 || prepared.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || prepared.DuckLakeAttempt.State != ducklakepostgres.AttemptIndeterminate || prepared.Lease.State != "released" {
+	if prepared.Operation.FencingGeneration != 2 || prepared.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || prepared.Lease.State != "released" {
 		t.Fatalf("direct indeterminate preparation = %#v", prepared)
 	}
 	if _, err := PrepareNativeBuildRecovery(t.Context(), f.Delivery, f.Operation, termination, f.Input); err != nil {

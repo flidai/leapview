@@ -409,7 +409,7 @@ func RecordSourceObservationCapture(ctx context.Context, db DBTX, in SourceObser
 }
 
 func recordSourceObservationCapture(ctx context.Context, db DBTX, normalized SourceObservationCapture) (SourceObservationCapture, error) {
-	attempt, err := loadAttemptForUpdate(ctx, db, normalized.AttemptID)
+	attempt, err := lockDeliveryAttemptForObservation(ctx, db, normalized.AttemptID)
 	if err != nil {
 		return SourceObservationCapture{}, err
 	}
@@ -417,7 +417,7 @@ func recordSourceObservationCapture(ctx context.Context, db DBTX, normalized Sou
 	if marker.RequestDigest != attempt.RequestDigest || marker.PlanDigest != attempt.PlanDigest || marker.PhysicalPoolID != attempt.PhysicalPoolID || marker.LeaseEpoch != attempt.FencingEpoch {
 		return SourceObservationCapture{}, fmt.Errorf("%w: source observation capture does not match attempt identity", ErrConflict)
 	}
-	if attempt.State != AttemptRunning && attempt.State != AttemptCommitted {
+	if attempt.State != "running" && attempt.State != "committed" {
 		return SourceObservationCapture{}, fmt.Errorf("%w: source observation capture cannot attach to attempt state %s", ErrConflict, attempt.State)
 	}
 	if err := querygen(db).InsertSourceObservationCapture(ctx, dbgen.InsertSourceObservationCaptureParams{AttemptID: pgUUID(normalized.AttemptID), CommitMarker: normalized.CommitMarker, ObservationEnvelope: normalized.ObservationEnvelope, ContentDigest: normalized.ContentDigest, CapturedAt: pgtype.Timestamptz{Time: normalized.CapturedAt, Valid: true}}); err != nil {
@@ -458,7 +458,7 @@ func LoadSourceObservationCapture(ctx context.Context, db DBTX, attemptID string
 	if err != nil {
 		return SourceObservationCapture{}, fmt.Errorf("%w: stored source observation marker is invalid", ErrConflict)
 	}
-	attempt, err := LoadAttempt(ctx, db, attemptID)
+	attempt, err := getDeliveryAttemptForObservation(ctx, db, attemptID)
 	if err != nil {
 		return SourceObservationCapture{}, err
 	}
@@ -483,6 +483,44 @@ func LoadSourceObservationCapture(ctx context.Context, db DBTX, attemptID string
 		return SourceObservationCapture{}, fmt.Errorf("%w: stored source observation digest is invalid", ErrConflict)
 	}
 	return SourceObservationCapture{AttemptID: row.AttemptID, CommitMarker: json.RawMessage(markerJSON), ObservationEnvelope: envelope, ContentDigest: row.ContentDigest, CapturedAt: capturedAt, CreatedAt: createdAt}, nil
+}
+
+type deliveryAttemptObservationIdentity struct {
+	AttemptID      string
+	RequestDigest  string
+	PlanDigest     string
+	PhysicalPoolID string
+	CatalogID      string
+	FencingEpoch   int64
+	State          string
+}
+
+func lockDeliveryAttemptForObservation(ctx context.Context, db DBTX, attemptID string) (deliveryAttemptObservationIdentity, error) {
+	if db == nil || !validCanonicalSourceObservationUUID(attemptID) {
+		return deliveryAttemptObservationIdentity{}, ErrInvalid
+	}
+	row, err := querygen(db).LockDeliveryAttemptForObservation(ctx, pgUUID(attemptID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return deliveryAttemptObservationIdentity{}, ErrNotFound
+	}
+	if err != nil {
+		return deliveryAttemptObservationIdentity{}, err
+	}
+	return deliveryAttemptObservationIdentity{AttemptID: row.AttemptID, RequestDigest: row.RequestDigest, PlanDigest: row.PlanDigest, PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, FencingEpoch: row.FencingEpoch, State: row.State}, nil
+}
+
+func getDeliveryAttemptForObservation(ctx context.Context, db DBTX, attemptID string) (deliveryAttemptObservationIdentity, error) {
+	if db == nil || !validCanonicalSourceObservationUUID(attemptID) {
+		return deliveryAttemptObservationIdentity{}, ErrInvalid
+	}
+	row, err := querygen(db).GetDeliveryAttemptForObservation(ctx, pgUUID(attemptID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return deliveryAttemptObservationIdentity{}, ErrNotFound
+	}
+	if err != nil {
+		return deliveryAttemptObservationIdentity{}, err
+	}
+	return deliveryAttemptObservationIdentity{AttemptID: row.AttemptID, RequestDigest: row.RequestDigest, PlanDigest: row.PlanDigest, PhysicalPoolID: row.PhysicalPoolID, CatalogID: row.CatalogID, FencingEpoch: row.FencingEpoch, State: row.State}, nil
 }
 
 func validCanonicalSourceObservationUUID(value string) bool {

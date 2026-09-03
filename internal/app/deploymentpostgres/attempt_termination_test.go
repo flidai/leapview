@@ -1,7 +1,6 @@
 package deploymentpostgres
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -9,52 +8,8 @@ import (
 	"time"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 )
-
-type attemptTerminationDuckLakeStub struct {
-	inner  *ducklakepostgres.Repository
-	fail   error
-	tamper bool
-}
-
-func (s *attemptTerminationDuckLakeStub) Configured() bool {
-	return s != nil && s.inner != nil && s.inner.Configured()
-}
-
-func (s *attemptTerminationDuckLakeStub) AbortAttemptTx(ctx context.Context, tx ducklakepostgres.Tx, in ducklakepostgres.TerminateAttemptInput) (ducklakepostgres.AttemptEvidence, error) {
-	if s.fail != nil {
-		return ducklakepostgres.AttemptEvidence{}, s.fail
-	}
-	got, err := s.inner.AbortAttemptTx(ctx, tx, in)
-	if s.tamper {
-		got.RequestDigest = admissionDigest('9')
-	}
-	return got, err
-}
-
-func (s *attemptTerminationDuckLakeStub) MarkAttemptIndeterminateTx(ctx context.Context, tx ducklakepostgres.Tx, in ducklakepostgres.TerminateAttemptInput) (ducklakepostgres.AttemptEvidence, error) {
-	if s.fail != nil {
-		return ducklakepostgres.AttemptEvidence{}, s.fail
-	}
-	got, err := s.inner.MarkAttemptIndeterminateTx(ctx, tx, in)
-	if s.tamper {
-		got.RequestDigest = admissionDigest('9')
-	}
-	return got, err
-}
-
-func (s *attemptTerminationDuckLakeStub) ReconcileAttemptTx(ctx context.Context, tx ducklakepostgres.Tx, in ducklakepostgres.ReconcileAttemptInput) (ducklakepostgres.AttemptEvidence, error) {
-	if s.fail != nil {
-		return ducklakepostgres.AttemptEvidence{}, s.fail
-	}
-	got, err := s.inner.ReconcileAttemptTx(ctx, tx, in)
-	if s.tamper {
-		got.RequestDigest = admissionDigest('9')
-	}
-	return got, err
-}
 
 func deterministicAbortInput(t *testing.T, attempt deploymentnative.DeliveryBuildAttempt, ownerID string, errorDigestByte byte) AttemptTerminationInput {
 	t.Helper()
@@ -84,7 +39,6 @@ func uniqueTerminationFixture(t *testing.T, index int) candidateAdmissionFixture
 	fixture.Input.Attempt.CandidateID = "0198f2c0-7c7a-7f00-8a11-0000000004" + string(rune('0'+index)) + "4"
 	fixture.Input.Lease.TargetID = "target-attempt-termination-" + string(rune('0'+index))
 	fixture.Input.Attempt.PhysicalPoolID = "pool-attempt-termination-" + string(rune('0'+index))
-	fixture.Input.CatalogID = "catalog-attempt-termination-" + string(rune('0'+index))
 	fixture.Input.Artifact.ServingStateID = "serving-state-attempt-termination-" + string(rune('0'+index))
 	fixture.Target.TargetID = fixture.Input.Lease.TargetID
 	fixture.Target.ProjectID = "project-attempt-termination-" + string(rune('0'+index))
@@ -102,21 +56,17 @@ func uniqueTerminationFixture(t *testing.T, index int) candidateAdmissionFixture
 func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T) {
 	p := candidateAdmissionDB(t)
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
-	if _, err := NewAttemptTermination(nil, ducklake); err == nil {
+	if _, err := NewAttemptTermination(nil); err == nil {
 		t.Fatal("attempt termination accepted a nil delivery authority")
 	}
-	if _, err := NewAttemptTermination(delivery, nil); err == nil {
-		t.Fatal("attempt termination accepted a nil DuckLake authority")
-	}
-	termination, err := NewAttemptTermination(delivery, ducklake)
+	termination, err := NewAttemptTermination(delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	aborted := uniqueTerminationFixture(t, 1)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, aborted)
-	admission, _ := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	seedCandidateAdmissionFixture(t, delivery, aborted)
+	admission, _ := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	abortedAdmission, err := admission.AdmitCandidateBuildAttempt(t.Context(), aborted.Input)
 	if err != nil {
 		t.Fatal(err)
@@ -132,10 +82,10 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 	if err != nil {
 		t.Fatalf("abort attempt: %v", err)
 	}
-	if first.DeliveryAttempt.State != deploymentnative.AttemptAborted || first.DuckLakeAttempt.State != ducklakepostgres.AttemptAborted || !sameTerminationEvidence(first.DeliveryAttempt.TerminationEvidence, input.Evidence) || !sameTerminationEvidence(first.DuckLakeAttempt.TerminationEvidence, input.Evidence) {
+	if first.DeliveryAttempt.State != deploymentnative.AttemptAborted || !sameTerminationEvidence(first.DeliveryAttempt.TerminationEvidence, input.Evidence) {
 		t.Fatalf("abort result = %#v", first)
 	}
-	if replay, err := termination.AbortAttempt(t.Context(), input); err != nil || replay.DeliveryAttempt.State != deploymentnative.AttemptAborted || replay.DuckLakeAttempt.State != ducklakepostgres.AttemptAborted {
+	if replay, err := termination.AbortAttempt(t.Context(), input); err != nil || replay.DeliveryAttempt.State != deploymentnative.AttemptAborted {
 		t.Fatalf("exact abort replay = %#v, %v", replay, err)
 	}
 	if _, err := termination.AbortAttempt(t.Context(), deterministicAbortInput(t, abortedAdmission.Attempt, "", '8')); !errors.Is(err, deploymentnative.ErrConflict) {
@@ -146,72 +96,45 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 	}
 
 	indeterminate := uniqueTerminationFixture(t, 2)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, indeterminate)
+	seedCandidateAdmissionFixture(t, delivery, indeterminate)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), indeterminate.Input); err != nil {
 		t.Fatal(err)
 	}
 	indeterminateInput := AttemptTerminationInput{AttemptID: indeterminate.Input.Attempt.AttemptID, OwnerID: indeterminate.Input.Attempt.OwnerID, FencingEpoch: 1, Evidence: []byte(`{"session":"unknown"}`)}
 	indeterminateFirst, err := termination.MarkAttemptIndeterminate(t.Context(), indeterminateInput)
-	if err != nil || indeterminateFirst.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate || indeterminateFirst.DuckLakeAttempt.State != ducklakepostgres.AttemptIndeterminate {
+	if err != nil || indeterminateFirst.DeliveryAttempt.State != deploymentnative.AttemptIndeterminate {
 		t.Fatalf("indeterminate result = %#v, %v", indeterminateFirst, err)
 	}
-	if replay, err := termination.MarkAttemptIndeterminate(t.Context(), indeterminateInput); err != nil || replay.DuckLakeAttempt.State != ducklakepostgres.AttemptIndeterminate {
+	if replay, err := termination.MarkAttemptIndeterminate(t.Context(), indeterminateInput); err != nil {
 		t.Fatalf("exact indeterminate replay = %#v, %v", replay, err)
 	}
 
 	failure := uniqueTerminationFixture(t, 3)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, failure)
+	seedCandidateAdmissionFixture(t, delivery, failure)
 	failureAdmission, err := admission.AdmitCandidateBuildAttempt(t.Context(), failure.Input)
 	if err != nil {
 		t.Fatal(err)
 	}
-	failErr := errors.New("injected second-ledger failure")
-	stub := &attemptTerminationDuckLakeStub{inner: ducklake, fail: failErr}
-	failing, err := NewAttemptTermination(delivery, stub)
-	if err != nil {
-		t.Fatal(err)
-	}
 	failureInput := deterministicAbortInput(t, failureAdmission.Attempt, "", '7')
-	if _, err := failing.AbortAttempt(t.Context(), failureInput); !errors.Is(err, failErr) {
-		t.Fatalf("injected second-ledger error = %v", err)
-	}
-	if got, err := delivery.BuildAttempt(t.Context(), failureInput.AttemptID); err != nil || got.State != deploymentnative.AttemptRunning {
-		t.Fatalf("delivery was not rolled back after second-ledger failure = %#v, %v", got, err)
-	}
-	if got, err := ducklake.LoadAttempt(t.Context(), failureInput.AttemptID); err != nil || got.State != ducklakepostgres.AttemptRunning {
-		t.Fatalf("DuckLake was not rolled back after second-ledger failure = %#v, %v", got, err)
-	}
-	stub.fail = nil
-	if _, err := failing.AbortAttempt(t.Context(), failureInput); err != nil {
+	if _, err := termination.AbortAttempt(t.Context(), failureInput); err != nil {
 		t.Fatalf("abort after injected failure: %v", err)
 	}
 
 	tampered := uniqueTerminationFixture(t, 4)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, tampered)
+	seedCandidateAdmissionFixture(t, delivery, tampered)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), tampered.Input); err != nil {
 		t.Fatal(err)
 	}
-	stub = &attemptTerminationDuckLakeStub{inner: ducklake, tamper: true}
-	tampering, err := NewAttemptTermination(delivery, stub)
-	if err != nil {
-		t.Fatal(err)
-	}
 	tamperInput := AttemptTerminationInput{AttemptID: tampered.Input.Attempt.AttemptID, OwnerID: tampered.Input.Attempt.OwnerID, FencingEpoch: 1, Evidence: []byte(`{"reason":"indeterminate"}`)}
-	if _, err := tampering.MarkAttemptIndeterminate(t.Context(), tamperInput); !errors.Is(err, deploymentnative.ErrConflict) {
-		t.Fatalf("tampered second-ledger output error = %v", err)
-	}
-	if got, err := delivery.BuildAttempt(t.Context(), tamperInput.AttemptID); err != nil || got.State != deploymentnative.AttemptRunning {
-		t.Fatalf("delivery was not rolled back after tampered output = %#v, %v", got, err)
-	}
-	if got, err := ducklake.LoadAttempt(t.Context(), tamperInput.AttemptID); err != nil || got.State != ducklakepostgres.AttemptRunning {
-		t.Fatalf("DuckLake was not rolled back after tampered output = %#v, %v", got, err)
+	if _, err := termination.MarkAttemptIndeterminate(t.Context(), tamperInput); err != nil {
+		t.Fatalf("indeterminate termination = %v", err)
 	}
 
 	expired := uniqueTerminationFixture(t, 5)
 	expired.ExpiresAt = time.Now().UTC().Add(750 * time.Millisecond)
 	expired.Input.Lease.ExpiresAt = expired.ExpiresAt
 	expired.Input.Attempt.LeaseExpiresAt = expired.ExpiresAt
-	seedCandidateAdmissionFixture(t, delivery, ducklake, expired)
+	seedCandidateAdmissionFixture(t, delivery, expired)
 	expiredAdmission, err := admission.AdmitCandidateBuildAttempt(t.Context(), expired.Input)
 	if err != nil {
 		t.Fatal(err)
@@ -242,18 +165,17 @@ func TestAttemptTerminationPostgresAtomicOutcomesReplayAndRollback(t *testing.T)
 func TestAttemptTerminationTxComposesAndCallerControlsRollback(t *testing.T) {
 	p := candidateAdmissionDB(t)
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	termination, err := NewAttemptTermination(delivery, ducklake)
+	termination, err := NewAttemptTermination(delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	aborted := uniqueTerminationFixture(t, 6)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, aborted)
+	seedCandidateAdmissionFixture(t, delivery, aborted)
 	abortedAdmission, err := admission.AdmitCandidateBuildAttempt(t.Context(), aborted.Input)
 	if err != nil {
 		t.Fatal(err)
@@ -268,7 +190,7 @@ func TestAttemptTerminationTxComposesAndCallerControlsRollback(t *testing.T) {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("abort attempt in caller transaction: %v", err)
 	}
-	if result.DeliveryAttempt.State != deploymentnative.AttemptAborted || result.DuckLakeAttempt.State != ducklakepostgres.AttemptAborted {
+	if result.DeliveryAttempt.State != deploymentnative.AttemptAborted {
 		_ = tx.Rollback(t.Context())
 		t.Fatalf("abort result = %#v", result)
 	}
@@ -288,7 +210,7 @@ func TestAttemptTerminationTxComposesAndCallerControlsRollback(t *testing.T) {
 	}
 
 	indeterminate := uniqueTerminationFixture(t, 7)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, indeterminate)
+	seedCandidateAdmissionFixture(t, delivery, indeterminate)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), indeterminate.Input); err != nil {
 		t.Fatal(err)
 	}
@@ -314,9 +236,6 @@ func TestAttemptTerminationTxComposesAndCallerControlsRollback(t *testing.T) {
 	}
 	if got, err := delivery.BuildAttempt(t.Context(), indeterminateInput.AttemptID); err != nil || got.State != deploymentnative.AttemptRunning {
 		t.Fatalf("rolled-back delivery attempt = %#v, %v", got, err)
-	}
-	if got, err := ducklake.LoadAttempt(t.Context(), indeterminateInput.AttemptID); err != nil || got.State != ducklakepostgres.AttemptRunning {
-		t.Fatalf("rolled-back DuckLake attempt = %#v, %v", got, err)
 	}
 }
 
@@ -345,12 +264,11 @@ func TestNormalizeAttemptTerminationInputCanonicalBounds(t *testing.T) {
 func TestAttemptReconciliationExpiredLeaseExactCommitAndReplay(t *testing.T) {
 	p := candidateAdmissionDB(t)
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := NewAttemptTermination(delivery, ducklake)
+	recovery, err := NewAttemptTermination(delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -358,7 +276,7 @@ func TestAttemptReconciliationExpiredLeaseExactCommitAndReplay(t *testing.T) {
 	fixture.ExpiresAt = time.Now().UTC().Add(750 * time.Millisecond)
 	fixture.Input.Lease.ExpiresAt = fixture.ExpiresAt
 	fixture.Input.Attempt.LeaseExpiresAt = fixture.ExpiresAt
-	seedCandidateAdmissionFixture(t, delivery, ducklake, fixture)
+	seedCandidateAdmissionFixture(t, delivery, fixture)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input); err != nil {
 		t.Fatal(err)
 	}
@@ -369,7 +287,7 @@ func TestAttemptReconciliationExpiredLeaseExactCommitAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := AttemptReconciliationInput{AttemptID: fixture.Input.Attempt.AttemptID, OwnerID: fixture.Input.Attempt.OwnerID, FencingEpoch: 1, PhysicalPoolID: fixture.Input.Attempt.PhysicalPoolID, CatalogID: fixture.Input.CatalogID, SnapshotID: 11, CommitMarker: []byte(marker), State: deploymentnative.AttemptCommitted}
+	in := AttemptReconciliationInput{AttemptID: fixture.Input.Attempt.AttemptID, OwnerID: fixture.Input.Attempt.OwnerID, FencingEpoch: 1, PhysicalPoolID: fixture.Input.Attempt.PhysicalPoolID, SnapshotID: 11, CommitMarker: []byte(marker), State: deploymentnative.AttemptCommitted}
 	if _, err := delivery.CommitBuildAttempt(t.Context(), deploymentnative.CommitAttemptInput{AttemptID: in.AttemptID, OwnerID: in.OwnerID, FencingEpoch: 1, SnapshotID: in.SnapshotID, CommitMarker: in.CommitMarker}); !errors.Is(err, deploymentnative.ErrLeaseExpired) {
 		t.Fatalf("normal expired commit error = %v, want lease expiry", err)
 	}
@@ -377,7 +295,7 @@ func TestAttemptReconciliationExpiredLeaseExactCommitAndReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	first, err := recovery.ReconcileAttempt(t.Context(), in)
-	if err != nil || first.DeliveryAttempt.State != deploymentnative.AttemptCommitted || first.DuckLakeAttempt.State != ducklakepostgres.AttemptCommitted {
+	if err != nil || first.DeliveryAttempt.State != deploymentnative.AttemptCommitted {
 		t.Fatalf("expired recovery commit = %#v, %v", first, err)
 	}
 	if replay, err := recovery.ReconcileAttempt(t.Context(), in); err != nil || replay.DeliveryAttempt.State != deploymentnative.AttemptCommitted {
@@ -393,17 +311,16 @@ func TestAttemptReconciliationExpiredLeaseExactCommitAndReplay(t *testing.T) {
 func TestAttemptReconciliationMissingMarkerTerminatedAbort(t *testing.T) {
 	p := candidateAdmissionDB(t)
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	recovery, err := NewAttemptTermination(delivery, ducklake)
+	recovery, err := NewAttemptTermination(delivery)
 	if err != nil {
 		t.Fatal(err)
 	}
 	fixture := uniqueTerminationFixture(t, 9)
-	seedCandidateAdmissionFixture(t, delivery, ducklake, fixture)
+	seedCandidateAdmissionFixture(t, delivery, fixture)
 	if _, err := admission.AdmitCandidateBuildAttempt(t.Context(), fixture.Input); err != nil {
 		t.Fatal(err)
 	}
@@ -413,10 +330,10 @@ func TestAttemptReconciliationMissingMarkerTerminatedAbort(t *testing.T) {
 	evidence := []byte(`{"schema_version":1,"attempt_id":"` + fixture.Input.Attempt.AttemptID + `","owner_id":"` + fixture.Input.Attempt.OwnerID + `","fencing_epoch":1,"session_identity":"` + fixture.Input.Attempt.SessionIdentity + `","session_terminated":true}`)
 	in := AttemptReconciliationInput{AttemptID: fixture.Input.Attempt.AttemptID, OwnerID: fixture.Input.Attempt.OwnerID, FencingEpoch: 1, SessionIdentity: fixture.Input.Attempt.SessionIdentity, TerminationEvidence: evidence, SessionTerminated: true, State: deploymentnative.AttemptAborted}
 	first, err := recovery.ReconcileAttempt(t.Context(), in)
-	if err != nil || first.DeliveryAttempt.State != deploymentnative.AttemptAborted || first.DuckLakeAttempt.State != ducklakepostgres.AttemptAborted {
+	if err != nil || first.DeliveryAttempt.State != deploymentnative.AttemptAborted {
 		t.Fatalf("missing-marker terminated abort = %#v, %v", first, err)
 	}
-	if replay, err := recovery.ReconcileAttempt(t.Context(), in); err != nil || replay.DuckLakeAttempt.State != ducklakepostgres.AttemptAborted {
+	if replay, err := recovery.ReconcileAttempt(t.Context(), in); err != nil || replay.DeliveryAttempt.State != deploymentnative.AttemptAborted {
 		t.Fatalf("exact aborted recovery replay = %#v, %v", replay, err)
 	}
 	bad := in

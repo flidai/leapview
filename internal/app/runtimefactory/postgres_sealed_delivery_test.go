@@ -133,7 +133,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	}
 	attempt, err := delivery.BeginBuildAttempt(t.Context(), deploymentpostgres.BuildAttemptInput{
 		AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "resolver-test-owner",
-		PhysicalPoolID: pool.ID.String(), FencingEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest,
+		PhysicalPoolID: pool.ID.String(), CatalogID: "catalog-id", FencingEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest,
 		Namespace: relationNamespace, SessionIdentity: "resolver-session", LeaseExpiresAt: time.Now().UTC().Add(10 * time.Minute),
 	})
 	if err != nil {

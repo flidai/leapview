@@ -7,7 +7,6 @@ import (
 	"testing"
 	"time"
 
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentoperation "github.com/flidai/leapview/internal/app/deploymentoperation"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
@@ -31,7 +30,6 @@ func (a mismatchingHeartbeatOperationAuthority) RenewLeaseTx(_ context.Context, 
 type nativeHeartbeatFixture struct {
 	Pool      *pgxpool.Pool
 	Delivery  *deploymentnative.Repository
-	DuckLake  *ducklakepostgres.Repository
 	Operation deploymentmodule.NativeBuildOperationAuthority
 	Heartbeat *NativeBuildHeartbeat
 	Request   deploymentmodule.NativeDeliveryBuildRequest
@@ -66,15 +64,10 @@ func newNativeHeartbeatFixtureWithLeaseDuration(t *testing.T, leaseDuration time
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
-	if err := ducklakepostgres.ApplySchema(t.Context(), tx); err != nil {
-		_ = tx.Rollback(t.Context())
-		t.Fatal(err)
-	}
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	delivery := deploymentnative.New(p)
-	ducklake := ducklakepostgres.New(p)
 	operations := deploymentoperation.New(operationpostgres.NewWithConfig(p, leaseDuration, time.Hour))
 	request := deploymentmodule.NativeDeliveryBuildRequest{ProjectID: "project-heartbeat", TargetID: "target-heartbeat", Environment: "prod", PlanID: uuid.MustParse("0198f2c0-7c7a-7f00-8a11-000000000901"), PrincipalID: "builder-heartbeat", IdempotencyKey: "heartbeat-1"}
 	digest, err := nativeBuildRequestDigest(request)
@@ -86,10 +79,6 @@ func newNativeHeartbeatFixtureWithLeaseDuration(t *testing.T, leaseDuration time
 		t.Fatal(err)
 	}
 	if _, err := delivery.CreatePlan(t.Context(), plan); err != nil {
-		t.Fatal(err)
-	}
-	const catalogID = "catalog-heartbeat"
-	if _, err := ducklake.RegisterCatalog(t.Context(), ducklakepostgres.CatalogIdentity{PhysicalPoolID: "pool-candidate-admission", CatalogDatabase: "ducklake", CatalogID: catalogID, CatalogUUID: "0198f2c0-7c7a-7f00-8a11-000000000999", MetadataSchema: "main"}); err != nil {
 		t.Fatal(err)
 	}
 	reserved, err := ReserveNativeBuildOperation(t.Context(), delivery, operations, NativeBuildOperationReservationInput{Request: request, RequestDigest: digest, OwnerID: "0198f2c0-7c7a-7f00-8a11-000000000902", LeaseDuration: leaseDuration})
@@ -112,15 +101,15 @@ func newNativeHeartbeatFixtureWithLeaseDuration(t *testing.T, leaseDuration time
 		t.Fatalf("allocate native build candidate: %v", err)
 	}
 	leaseID := "0198f2c0-7c7a-7f00-8a11-000000000905"
-	admission, err := NewCandidateBuildAttemptAdmission(delivery, ducklake)
+	admission, err := NewCandidateBuildAttemptAdmission(delivery, candidatePhysicalAdmissionStub{})
 	if err != nil {
 		_ = tx.Rollback(t.Context())
 		t.Fatal(err)
 	}
 	admitted, err := admission.AdmitCandidateBuildAttemptTx(t.Context(), tx, CandidateBuildAttemptAdmissionInput{
 		Lease:    deploymentnative.LeaseInput{LeaseID: leaseID, TargetID: request.TargetID, OwnerID: request.PrincipalID, ExpiresAt: reserved.Lease.LeaseExpiresAt},
-		Attempt:  deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: request.PlanID.String(), CandidateID: candidateID, OwnerID: request.PrincipalID, PhysicalPoolID: "pool-candidate-admission", RequestDigest: digest, PlanDigest: plan.PlanDigest, SessionIdentity: "heartbeat-session", LeaseExpiresAt: reserved.Lease.LeaseExpiresAt},
-		Artifact: CandidateBuildArtifactInput{ServingArtifactID: "artifact-" + plan.ArtifactDigest[len("sha256:"):], ServingArtifactDigest: plan.ArtifactDigest, ServingStateID: "state-heartbeat"}, CatalogID: catalogID,
+		Attempt:  deploymentnative.BuildAttemptInput{AttemptID: attemptID, PlanID: request.PlanID.String(), CandidateID: candidateID, OwnerID: request.PrincipalID, PhysicalPoolID: "pool-candidate-admission", CatalogID: "catalog-candidate-admission", RequestDigest: digest, PlanDigest: plan.PlanDigest, SessionIdentity: "heartbeat-session", LeaseExpiresAt: reserved.Lease.LeaseExpiresAt},
+		Artifact: CandidateBuildArtifactInput{ServingArtifactID: "artifact-" + plan.ArtifactDigest[len("sha256:"):], ServingArtifactDigest: plan.ArtifactDigest, ServingStateID: "state-heartbeat"}, CatalogID: "catalog-candidate-admission",
 	})
 	if err != nil {
 		_ = tx.Rollback(t.Context())
@@ -129,11 +118,11 @@ func newNativeHeartbeatFixtureWithLeaseDuration(t *testing.T, leaseDuration time
 	if err := tx.Commit(t.Context()); err != nil {
 		t.Fatalf("commit native build attempt admission: %v", err)
 	}
-	heartbeat, err := NewNativeBuildHeartbeat(delivery, ducklake, operations)
+	heartbeat, err := NewNativeBuildHeartbeat(delivery, operations)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return nativeHeartbeatFixture{Pool: p, Delivery: delivery, DuckLake: ducklake, Operation: operations, Heartbeat: heartbeat, Request: request, Digest: digest, Lease: bound.Lease, Target: deploymentnative.LeaseFence{LeaseID: admitted.Lease.LeaseID, TargetID: admitted.Lease.TargetID, OwnerID: admitted.Lease.OwnerID, FencingEpoch: admitted.Lease.FencingEpoch}, AttemptID: attemptID}
+	return nativeHeartbeatFixture{Pool: p, Delivery: delivery, Operation: operations, Heartbeat: heartbeat, Request: request, Digest: digest, Lease: bound.Lease, Target: deploymentnative.LeaseFence{LeaseID: admitted.Lease.LeaseID, TargetID: admitted.Lease.TargetID, OwnerID: admitted.Lease.OwnerID, FencingEpoch: admitted.Lease.FencingEpoch}, AttemptID: attemptID}
 }
 
 func TestNativeBuildHeartbeatRenewsAllLedgersAtomically(t *testing.T) {
@@ -146,10 +135,10 @@ func TestNativeBuildHeartbeatRenewsAllLedgersAtomically(t *testing.T) {
 	if err != nil {
 		t.Fatalf("heartbeat: %v", err)
 	}
-	if !result.OperationLease.LeaseExpiresAt.Equal(result.TargetLease.ExpiresAt) || !result.TargetLease.ExpiresAt.Equal(result.DeliveryAttempt.LeaseExpiresAt) || !result.DeliveryAttempt.LeaseExpiresAt.Equal(result.DuckLakeAttempt.LeaseExpiresAt) || !result.DeliveryAttempt.LeaseExpiresAt.After(beforeAttempt.LeaseExpiresAt) {
+	if !result.OperationLease.LeaseExpiresAt.Equal(result.TargetLease.ExpiresAt) || !result.TargetLease.ExpiresAt.Equal(result.DeliveryAttempt.LeaseExpiresAt) || !result.DeliveryAttempt.LeaseExpiresAt.After(beforeAttempt.LeaseExpiresAt) {
 		t.Fatalf("heartbeat expiries diverged: %+v", result)
 	}
-	if result.DeliveryAttempt.AttemptID != f.AttemptID || result.DuckLakeAttempt.AttemptID != f.AttemptID || result.DeliveryAttempt.State != deploymentnative.AttemptRunning || result.DuckLakeAttempt.State != ducklakepostgres.AttemptRunning {
+	if result.DeliveryAttempt.AttemptID != f.AttemptID || result.DeliveryAttempt.State != deploymentnative.AttemptRunning {
 		t.Fatalf("heartbeat identity/state = %+v", result)
 	}
 }
@@ -174,7 +163,7 @@ func TestNativeBuildHeartbeatRollsBackOnTargetFenceMismatch(t *testing.T) {
 
 func TestNativeBuildHeartbeatRejectsMismatchedRenewedOperationIdentity(t *testing.T) {
 	f := newNativeHeartbeatFixture(t)
-	heartbeat, err := NewNativeBuildHeartbeat(f.Delivery, f.DuckLake, mismatchingHeartbeatOperationAuthority{NativeBuildOperationAuthority: f.Operation})
+	heartbeat, err := NewNativeBuildHeartbeat(f.Delivery, mismatchingHeartbeatOperationAuthority{NativeBuildOperationAuthority: f.Operation})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -212,15 +201,11 @@ func TestNativeBuildHeartbeatConcurrentRenewalsRemainConsistent(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	duckAttempt, err := f.DuckLake.LoadAttempt(t.Context(), f.AttemptID)
-	if err != nil {
-		t.Fatal(err)
-	}
 	lease, err := f.Delivery.Lease(t.Context(), f.Target.LeaseID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !operation.LeaseExpiresAt.Equal(attempt.LeaseExpiresAt) || !attempt.LeaseExpiresAt.Equal(duckAttempt.LeaseExpiresAt) || !duckAttempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
-		t.Fatalf("concurrent heartbeat expiries diverged: operation=%v delivery=%v ducklake=%v target=%v", operation.LeaseExpiresAt, attempt.LeaseExpiresAt, duckAttempt.LeaseExpiresAt, lease.ExpiresAt)
+	if !operation.LeaseExpiresAt.Equal(attempt.LeaseExpiresAt) || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+		t.Fatalf("concurrent heartbeat expiries diverged: operation=%v delivery=%v target=%v", operation.LeaseExpiresAt, attempt.LeaseExpiresAt, lease.ExpiresAt)
 	}
 }

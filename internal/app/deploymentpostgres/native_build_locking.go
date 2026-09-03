@@ -10,11 +10,10 @@ import (
 )
 
 // lockNativeBuildOperationTx establishes the first lock in the global native
-// build order: operation -> target lease -> delivery attempt -> DuckLake
-// attempt for root builds, and operation -> successor leaf -> target lease ->
-// delivery attempt -> DuckLake for successor recovery. It is read-only and
-// accepts only an exact durable identity in one of the caller-authorized
-// states.
+// build order: operation -> target lease -> delivery attempt for root builds,
+// and operation -> successor leaf -> target lease -> delivery attempt for
+// successor recovery. It is read-only and accepts only an exact durable
+// identity in one of the caller-authorized states.
 func lockNativeBuildOperationTx(ctx context.Context, tx deploymentnative.Tx, operations deploymentmodule.NativeBuildOperationAuthority, expected deploymentmodule.NativeOperationRecord, allowed ...deploymentmodule.NativeOperationState) (deploymentmodule.NativeOperationRecord, error) {
 	if tx == nil || nativeBuildAuthorityNil(operations) {
 		return deploymentmodule.NativeOperationRecord{}, deploymentmodule.ErrDeliveryInputUnavailable

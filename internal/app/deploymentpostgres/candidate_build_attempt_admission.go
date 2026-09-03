@@ -25,28 +25,26 @@ type CandidateBuildArtifactInput struct {
 // CandidateBuildAttemptAdmissionInput carries only value evidence for one
 // candidate build attempt. Lease and Attempt provide the caller's immutable
 // delivery inputs; the admission transaction assigns the fencing epoch, lease
-// expiry, and relation namespace from the admitted lease. CatalogID is the
-// sole DuckLake-specific value because all other DuckLake begin fields are
-// derived from the admitted delivery attempt and lease.
+// expiry, and relation namespace from the admitted lease.
 type CandidateBuildAttemptAdmissionInput struct {
-	Lease     deploymentnative.LeaseInput
-	Attempt   deploymentnative.BuildAttemptInput
-	Artifact  CandidateBuildArtifactInput
+	Lease    deploymentnative.LeaseInput
+	Attempt  deploymentnative.BuildAttemptInput
+	Artifact CandidateBuildArtifactInput
+	// CatalogID is retained only for the physical admission guard. Physical
+	// attempt lifecycle state is owned by canonical delivery.
 	CatalogID string
 }
 
 // CandidateBuildAttemptAdmissionResult is the value-only evidence returned
-// after the lease, delivery attempt, artifact binding, and DuckLake attempt
-// ledger commit together.
+// after the lease, delivery attempt, and artifact binding commit together.
 type CandidateBuildAttemptAdmissionResult struct {
-	Lease           deploymentnative.DeliveryLease
-	Attempt         deploymentnative.DeliveryBuildAttempt
-	Artifact        deploymentnative.BuildArtifactBinding
-	DuckLakeAttempt ducklakepostgres.AttemptEvidence
+	Lease    deploymentnative.DeliveryLease
+	Attempt  deploymentnative.DeliveryBuildAttempt
+	Artifact deploymentnative.BuildArtifactBinding
 }
 
 // CandidateBuildAttemptAdmission is the application-owned native capability
-// for admitting a candidate build attempt across delivery and DuckLake. The
+// for admitting a candidate build attempt in canonical delivery state. The
 // convenience method owns its transaction; the Tx method composes into one
 // supplied by the caller.
 type CandidateBuildAttemptAdmission interface {
@@ -54,96 +52,44 @@ type CandidateBuildAttemptAdmission interface {
 	AdmitCandidateBuildAttemptTx(context.Context, deploymentnative.Tx, CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error)
 }
 
-// CandidateBuildAttemptSuccessorDuckLakeAdmission is the transaction-aware
-// capability used by native recovery. Delivery and operation successor rows
-// are admitted first; this method appends the matching DuckLake attempt on
-// the same caller-owned PostgreSQL transaction so a successor can execute and
-// be reconciled normally. Implementations that cannot provide this capability
-// are not valid native successor authorities.
-type CandidateBuildAttemptSuccessorDuckLakeAdmission interface {
-	BeginSuccessorDuckLakeAttemptTx(context.Context, deploymentnative.Tx, deploymentnative.DeliveryBuildAttempt, string) (ducklakepostgres.AttemptEvidence, error)
-}
-
-// CandidateBuildAttemptSuccessorDuckLakeReader is the read half used by
-// successor-leaf recovery. It remains separate from the admission interface
-// so test doubles that only exercise first-child admission are unaffected.
-type CandidateBuildAttemptSuccessorDuckLakeReader interface {
-	LoadSuccessorDuckLakeAttempt(context.Context, string) (ducklakepostgres.AttemptEvidence, error)
-}
-
-// CandidateBuildAttemptDuckLakeAuthority is the narrow transaction-aware
-// surface required by candidate admission. BeginAttemptTx receives the
-// delivery-owned transaction, so this authority never opens or commits a
-// second transaction.
-type CandidateBuildAttemptDuckLakeAuthority interface {
+// CandidateBuildAttemptPhysicalAdmission is the narrow physical guard used
+// to serialize migration/retention fences and marker quarantine with the
+// canonical delivery attempt row. It does not write a DuckLake attempt
+// ledger.
+type CandidateBuildAttemptPhysicalAdmission interface {
 	Configured() bool
-	BeginAttemptTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.BeginAttemptInput) (ducklakepostgres.AttemptEvidence, error)
+	ValidateBuildAdmissionTx(context.Context, ducklakepostgres.Tx, string, string) error
 }
 
 type candidateBuildAttemptAdmitter struct {
 	delivery *deploymentnative.Repository
-	ducklake CandidateBuildAttemptDuckLakeAuthority
+	physical CandidateBuildAttemptPhysicalAdmission
 }
 
 var _ CandidateBuildAttemptAdmission = (*candidateBuildAttemptAdmitter)(nil)
-var _ CandidateBuildAttemptSuccessorDuckLakeAdmission = (*candidateBuildAttemptAdmitter)(nil)
-var _ CandidateBuildAttemptSuccessorDuckLakeReader = (*candidateBuildAttemptAdmitter)(nil)
-var _ CandidateBuildAttemptDuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 
 // NewCandidateBuildAttemptAdmission constructs the native candidate admission
 // capability. It does not begin a transaction or perform schema work.
-func NewCandidateBuildAttemptAdmission(delivery *deploymentnative.Repository, ducklake CandidateBuildAttemptDuckLakeAuthority) (CandidateBuildAttemptAdmission, error) {
+func NewCandidateBuildAttemptAdmission(delivery *deploymentnative.Repository, physical CandidateBuildAttemptPhysicalAdmission) (CandidateBuildAttemptAdmission, error) {
 	if !deliveryConfigured(delivery) {
 		return nil, errors.New("candidate build-attempt admission requires a configured PostgreSQL delivery authority")
 	}
-	if ducklake == nil || !ducklake.Configured() {
-		return nil, errors.New("candidate build-attempt admission requires a configured DuckLake authority")
+	if physical == nil || !physical.Configured() {
+		return nil, errors.New("candidate build-attempt admission requires a configured physical admission guard")
 	}
-	return &candidateBuildAttemptAdmitter{delivery: delivery, ducklake: ducklake}, nil
+	return &candidateBuildAttemptAdmitter{delivery: delivery, physical: physical}, nil
 }
 
 func deliveryConfigured(delivery *deploymentnative.Repository) bool {
 	return delivery != nil && delivery.Configured()
 }
 
-// BeginSuccessorDuckLakeAttemptTx appends the DuckLake attempt ledger for a
-// delivery successor. The caller owns tx; this method never commits or rolls
-// it back. It intentionally accepts only the already-authoritative delivery
-// attempt projection, preventing caller-selected fences or namespaces.
-func (a *candidateBuildAttemptAdmitter) BeginSuccessorDuckLakeAttemptTx(ctx context.Context, tx deploymentnative.Tx, attempt deploymentnative.DeliveryBuildAttempt, catalogID string) (ducklakepostgres.AttemptEvidence, error) {
-	if a == nil || a.ducklake == nil || !a.ducklake.Configured() || tx == nil {
-		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake admission authority is unavailable", deploymentnative.ErrInvalid)
-	}
-	duckTx, ok := tx.(ducklakepostgres.Tx)
-	if !ok {
-		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
-	}
-	return a.ducklake.BeginAttemptTx(ctx, duckTx, ducklakepostgres.BeginAttemptInput{
-		AttemptID: attempt.AttemptID, RequestDigest: attempt.RequestDigest, PlanDigest: attempt.PlanDigest,
-		PhysicalPoolID: attempt.PhysicalPoolID, CatalogID: catalogID, OwnerID: attempt.OwnerID,
-		FencingEpoch: attempt.FencingEpoch, SessionIdentity: attempt.SessionIdentity, LeaseExpiresAt: attempt.LeaseExpiresAt,
-	})
-}
-
-func (a *candidateBuildAttemptAdmitter) LoadSuccessorDuckLakeAttempt(ctx context.Context, attemptID string) (ducklakepostgres.AttemptEvidence, error) {
-	if a == nil || a.ducklake == nil || !a.ducklake.Configured() {
-		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake reader is unavailable", deploymentnative.ErrInvalid)
-	}
-	reader, ok := a.ducklake.(interface {
-		LoadAttempt(context.Context, string) (ducklakepostgres.AttemptEvidence, error)
-	})
-	if !ok {
-		return ducklakepostgres.AttemptEvidence{}, fmt.Errorf("%w: successor DuckLake reader is unavailable", deploymentnative.ErrInvalid)
-	}
-	return reader.LoadAttempt(ctx, attemptID)
-}
-
 // AdmitCandidateBuildAttempt atomically admits the target lease, delivery
-// build attempt, immutable serving-artifact binding, and DuckLake attempt
-// ledger. The transaction returned by delivery.Begin is the only transaction
+// build attempt and immutable serving-artifact binding. The transaction
+// returned by delivery.Begin is the only transaction
 // used; this convenience method owns its commit and rollback.
 func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.Context, input CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error) {
-	if a == nil || !deliveryConfigured(a.delivery) || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || !deliveryConfigured(a.delivery) || a.physical == nil || !a.physical.Configured() {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -173,10 +119,10 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttempt(ctx context.C
 }
 
 // AdmitCandidateBuildAttemptTx admits the target lease, delivery build
-// attempt, immutable serving-artifact binding, and DuckLake attempt ledger
-// into the caller-owned transaction. It never commits or rolls back tx.
+// attempt, and immutable serving-artifact binding into the caller-owned
+// transaction. It never commits or rolls back tx.
 func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context.Context, tx deploymentnative.Tx, input CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionResult, error) {
-	if a == nil || !deliveryConfigured(a.delivery) || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || !deliveryConfigured(a.delivery) || a.physical == nil || !a.physical.Configured() {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -190,7 +136,13 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 	if _, ok := tx.(pgx.Tx); !ok {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: candidate build-attempt admission requires a native PostgreSQL transaction", deploymentnative.ErrInvalid)
 	}
-
+	// Acquire the physical fence and quarantine scope before taking any
+	// delivery lease/attempt locks. Quarantine insertion holds this pool scope
+	// while its canonical-attempt FK is checked; preserving quarantine-before-
+	// attempt order avoids a cross-transaction deadlock.
+	if err := a.physical.ValidateBuildAdmissionTx(ctx, tx, normalized.Attempt.PhysicalPoolID, normalized.CatalogID); err != nil {
+		return CandidateBuildAttemptAdmissionResult{}, err
+	}
 	lease, err := a.delivery.AcquireLeaseTx(ctx, tx, normalized.Lease)
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err
@@ -199,6 +151,7 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery lease identity drifted", deploymentnative.ErrConflict)
 	}
 	attemptInput := normalized.Attempt
+	attemptInput.CatalogID = normalized.CatalogID
 	attemptInput.FencingEpoch = lease.FencingEpoch
 	attemptInput.LeaseExpiresAt = lease.ExpiresAt
 	attemptInput.Namespace, err = deploymentdomain.DeriveRelationNamespace(deploymentdomain.RelationNamespaceInput{
@@ -211,7 +164,7 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 	if err != nil {
 		return CandidateBuildAttemptAdmissionResult{}, err
 	}
-	if attempt.AttemptID != attemptInput.AttemptID || attempt.PlanID != attemptInput.PlanID || attempt.CandidateID != attemptInput.CandidateID || attempt.OwnerID != attemptInput.OwnerID || attempt.PhysicalPoolID != attemptInput.PhysicalPoolID || attempt.FencingEpoch != attemptInput.FencingEpoch || attempt.RequestDigest != attemptInput.RequestDigest || attempt.PlanDigest != attemptInput.PlanDigest || attempt.Namespace != attemptInput.Namespace || attempt.SessionIdentity != attemptInput.SessionIdentity || attempt.State != deploymentnative.AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+	if attempt.AttemptID != attemptInput.AttemptID || attempt.PlanID != attemptInput.PlanID || attempt.CandidateID != attemptInput.CandidateID || attempt.OwnerID != attemptInput.OwnerID || attempt.PhysicalPoolID != attemptInput.PhysicalPoolID || attempt.CatalogID != attemptInput.CatalogID || attempt.FencingEpoch != attemptInput.FencingEpoch || attempt.RequestDigest != attemptInput.RequestDigest || attempt.PlanDigest != attemptInput.PlanDigest || attempt.Namespace != attemptInput.Namespace || attempt.SessionIdentity != attemptInput.SessionIdentity || attempt.State != deploymentnative.AttemptRunning || !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted delivery build attempt identity drifted", deploymentnative.ErrConflict)
 	}
 
@@ -229,35 +182,7 @@ func (a *candidateBuildAttemptAdmitter) AdmitCandidateBuildAttemptTx(ctx context
 	if binding.AttemptID != attempt.AttemptID || binding.ServingArtifactID != normalized.Artifact.ServingArtifactID || binding.ServingArtifactDigest != normalized.Artifact.ServingArtifactDigest || binding.ServingStateID != normalized.Artifact.ServingStateID {
 		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: admitted serving artifact identity drifted", deploymentnative.ErrConflict)
 	}
-
-	duckAttempt, err := a.ducklake.BeginAttemptTx(ctx, tx, ducklakepostgres.BeginAttemptInput{
-		AttemptID:       attempt.AttemptID,
-		RequestDigest:   attempt.RequestDigest,
-		PlanDigest:      attempt.PlanDigest,
-		PhysicalPoolID:  attempt.PhysicalPoolID,
-		CatalogID:       normalized.CatalogID,
-		OwnerID:         attempt.OwnerID,
-		FencingEpoch:    attempt.FencingEpoch,
-		SessionIdentity: attempt.SessionIdentity,
-		LeaseExpiresAt:  attempt.LeaseExpiresAt,
-	})
-	if err != nil {
-		return CandidateBuildAttemptAdmissionResult{}, err
-	}
-	if duckAttempt.State != ducklakepostgres.AttemptRunning ||
-		duckAttempt.AttemptID != attempt.AttemptID ||
-		duckAttempt.RequestDigest != attempt.RequestDigest ||
-		duckAttempt.PlanDigest != attempt.PlanDigest ||
-		duckAttempt.PhysicalPoolID != attempt.PhysicalPoolID ||
-		duckAttempt.CatalogID != normalized.CatalogID ||
-		duckAttempt.OwnerID != attempt.OwnerID ||
-		duckAttempt.FencingEpoch != attempt.FencingEpoch ||
-		duckAttempt.SessionIdentity != attempt.SessionIdentity ||
-		!duckAttempt.LeaseExpiresAt.Equal(attempt.LeaseExpiresAt) {
-		return CandidateBuildAttemptAdmissionResult{}, fmt.Errorf("%w: DuckLake attempt identity drifted from admitted delivery attempt", deploymentnative.ErrConflict)
-	}
-
-	return CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, Artifact: binding, DuckLakeAttempt: duckAttempt}, nil
+	return CandidateBuildAttemptAdmissionResult{Lease: lease, Attempt: attempt, Artifact: binding}, nil
 }
 
 func normalizeCandidateBuildAttemptAdmissionInput(input CandidateBuildAttemptAdmissionInput) (CandidateBuildAttemptAdmissionInput, error) {
@@ -297,11 +222,13 @@ func normalizeCandidateBuildAttemptAdmissionInput(input CandidateBuildAttemptAdm
 		"physical pool id":    out.Attempt.PhysicalPoolID,
 		"serving artifact id": out.Artifact.ServingArtifactID,
 		"serving state id":    out.Artifact.ServingStateID,
-		"catalog id":          out.CatalogID,
 	} {
 		if err := validateText(value, label, 255); err != nil {
 			return CandidateBuildAttemptAdmissionInput{}, err
 		}
+	}
+	if err := validateText(out.CatalogID, "catalog id", 255); err != nil {
+		return CandidateBuildAttemptAdmissionInput{}, err
 	}
 	if out.Attempt.Namespace != "" {
 		return CandidateBuildAttemptAdmissionInput{}, fmt.Errorf("%w: build attempt relation namespace is authority-derived and must be empty", deploymentnative.ErrInvalid)

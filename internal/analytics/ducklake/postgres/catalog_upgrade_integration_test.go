@@ -46,7 +46,7 @@ func TestPostgresCatalogUpgradeExistingCatalog(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := ApplySchema(ctx, tx); err != nil {
+	if err := applyDuckLakeTestSchemas(ctx, tx); err != nil {
 		_ = tx.Rollback(ctx)
 		t.Fatal(err)
 	}

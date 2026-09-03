@@ -33,8 +33,8 @@ import (
 
 // NativeSealEvidenceAssemblerInput is the complete value-only input for one
 // native build hand-off.  The attempt admission result is retained as a
-// single value so owner, lease fence, artifact binding, and DuckLake ledger
-// evidence cannot accidentally be mixed from different attempts.
+// single value so owner, lease fence, and artifact binding evidence cannot
+// accidentally be mixed from different attempts.
 //
 // TenantDomain, EncryptionDomain, and ObjectNamespace are intentionally
 // explicit. They do not exist in the DuckLake runtime evidence and must be
@@ -114,9 +114,9 @@ func AssembleNativeGenerationAdmissionInput(input NativeSealEvidenceAssemblerInp
 // AssembleRecoveredNativeGenerationAdmissionInput validates and assembles a
 // complete GenerationAdmissionInput from an indeterminate native build.  It
 // is deliberately separate from AssembleNativeGenerationAdmissionInput:
-// recovery accepts only an exact released target lease and indeterminate
-// delivery/DuckLake attempts, while fresh execution continues to require an
-// active lease and running attempts.
+// recovery accepts only an exact released target lease and an indeterminate
+// delivery attempt, while fresh execution continues to require an active
+// lease and a running attempt.
 func AssembleRecoveredNativeGenerationAdmissionInput(input NativeRecoveredSealEvidenceAssemblerInput) (GenerationAdmissionInput, error) {
 	assembled, err := assembleNativeSealEvidenceWithPolicy(NativeSealEvidenceAssemblerInput(input), nativeSealAssemblerRecovery)
 	if err != nil {
@@ -501,7 +501,6 @@ func validateNativeCandidateValuesWithPolicy(input NativeSealEvidenceAssemblerIn
 	}
 	lease := input.AttemptAdmission.Lease
 	attempt := input.AttemptAdmission.Attempt
-	duckAttempt := input.AttemptAdmission.DuckLakeAttempt
 	if lease.TargetID != input.Plan.TargetID || lease.OwnerID != attempt.OwnerID || lease.FencingEpoch != attempt.FencingEpoch || lease.LeaseID == "" {
 		return conflict("admitted lease fence differs from attempt")
 	}
@@ -509,36 +508,29 @@ func validateNativeCandidateValuesWithPolicy(input NativeSealEvidenceAssemblerIn
 		if lease.State != "active" {
 			return conflict("admitted lease is not active")
 		}
-		if attempt.State != deploymentnative.AttemptRunning || duckAttempt.State != ducklakepostgres.AttemptRunning {
-			return conflict("admitted attempts are not running")
+		if attempt.State != deploymentnative.AttemptRunning {
+			return conflict("admitted attempt is not running")
 		}
 	} else {
-		// Recovery is fenced by both ledgers being indeterminate and by the
-		// exact target lease having already been released.  In particular,
+		// Recovery is fenced by the delivery attempt being indeterminate and by
+		// the exact target lease having already been released.  In particular,
 		// expired, active, or any other lease state cannot authorize this
 		// value-only hand-off.
 		if err := validateRecoveredReleasedLease(lease); err != nil {
 			return err
 		}
-		if attempt.State != deploymentnative.AttemptIndeterminate || duckAttempt.State != ducklakepostgres.AttemptIndeterminate {
-			return conflict("recovery requires indeterminate delivery and DuckLake attempts")
+		if attempt.State != deploymentnative.AttemptIndeterminate {
+			return conflict("recovery requires an indeterminate delivery attempt")
 		}
 		if input.AttemptAdmission.Artifact.AttemptID != attempt.AttemptID {
 			return conflict("recovered artifact binding differs from indeterminate attempt")
 		}
-		if !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) || !duckAttempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
+		if !attempt.LeaseExpiresAt.Equal(lease.ExpiresAt) {
 			return conflict("recovered attempt lease evidence differs from released target lease")
 		}
-		if err := validateRecoveredAttemptTermination(attempt, duckAttempt); err != nil {
+		if err := validateRecoveredAttemptTermination(attempt); err != nil {
 			return err
 		}
-	}
-	expectedDuckState := ducklakepostgres.AttemptRunning
-	if policy == nativeSealAssemblerRecovery {
-		expectedDuckState = ducklakepostgres.AttemptIndeterminate
-	}
-	if duckAttempt.State != expectedDuckState || duckAttempt.AttemptID != attempt.AttemptID || duckAttempt.RequestDigest != attempt.RequestDigest || duckAttempt.PlanDigest != input.Plan.Digest || duckAttempt.PhysicalPoolID != input.PoolContract.Pool.ID.String() || duckAttempt.CatalogID != input.Build.CatalogID || duckAttempt.OwnerID != attempt.OwnerID || duckAttempt.FencingEpoch != attempt.FencingEpoch {
-		return conflict("DuckLake attempt admission differs from native build")
 	}
 	if policy == nativeSealAssemblerRecovery && input.Qualification.Digest == "" {
 		return fmt.Errorf("%w: recovered qualification digest is required", deploymentnative.ErrInvalid)
@@ -589,7 +581,7 @@ func validateRecoveredReleasedLease(lease deploymentnative.DeliveryLease) error 
 	return nil
 }
 
-func validateRecoveredAttemptTermination(delivery deploymentnative.DeliveryBuildAttempt, ducklake ducklakepostgres.AttemptEvidence) error {
+func validateRecoveredAttemptTermination(delivery deploymentnative.DeliveryBuildAttempt) error {
 	termination := AttemptTerminationInput{
 		AttemptID: delivery.AttemptID, OwnerID: delivery.OwnerID,
 		FencingEpoch: delivery.FencingEpoch, Evidence: delivery.TerminationEvidence,
@@ -599,12 +591,6 @@ func validateRecoveredAttemptTermination(delivery deploymentnative.DeliveryBuild
 		return fmt.Errorf("%w: recovered attempt termination evidence is invalid: %v", deploymentnative.ErrConflict, err)
 	}
 	if err := verifyDeliveryTermination(delivery, normalized, evidence, deploymentnative.AttemptIndeterminate); err != nil {
-		return err
-	}
-	if err := verifyDuckLakeTermination(ducklake, normalized, evidence, ducklakepostgres.AttemptIndeterminate); err != nil {
-		return err
-	}
-	if err := verifyTerminationLedgerAgreement(delivery, ducklake, evidence); err != nil {
 		return err
 	}
 	return nil

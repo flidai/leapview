@@ -135,7 +135,7 @@ const (
 type DeliveryBuildAttempt struct {
 	AttemptID, PlanID, CandidateID    string
 	OwnerID                           string
-	PhysicalPoolID                    string
+	PhysicalPoolID, CatalogID         string
 	FencingEpoch                      int64
 	RequestDigest, PlanDigest         string
 	State                             BuildAttemptState
@@ -149,7 +149,7 @@ type DeliveryBuildAttempt struct {
 type BuildAttemptInput struct {
 	AttemptID, PlanID, CandidateID string
 	OwnerID                        string
-	PhysicalPoolID                 string
+	PhysicalPoolID, CatalogID      string
 	FencingEpoch                   int64
 	RequestDigest, PlanDigest      string
 	Namespace, SessionIdentity     string
@@ -1538,7 +1538,7 @@ func (r *Repository) AdmitSuccessorBuildAttemptTx(ctx context.Context, tx Tx, in
 	if in.SuccessorAttempt.SessionIdentity == predecessor.SessionIdentity {
 		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor must use a new session identity", ErrConflict)
 	}
-	if in.SuccessorAttempt.PlanID != predecessor.PlanID || in.SuccessorAttempt.CandidateID != predecessor.CandidateID || in.SuccessorAttempt.PhysicalPoolID != predecessor.PhysicalPoolID || in.SuccessorAttempt.RequestDigest != predecessor.RequestDigest || in.SuccessorAttempt.PlanDigest != predecessor.PlanDigest {
+	if in.SuccessorAttempt.PlanID != predecessor.PlanID || in.SuccessorAttempt.CandidateID != predecessor.CandidateID || in.SuccessorAttempt.PhysicalPoolID != predecessor.PhysicalPoolID || in.SuccessorAttempt.CatalogID != catalogID || predecessor.CatalogID != catalogID || in.SuccessorAttempt.RequestDigest != predecessor.RequestDigest || in.SuccessorAttempt.PlanDigest != predecessor.PlanDigest {
 		return BuildAttemptSuccessorResult{}, fmt.Errorf("%w: successor attempt identity differs from predecessor", ErrConflict)
 	}
 	if in.SuccessorLease.OwnerID != in.SuccessorAttempt.OwnerID || in.SuccessorLease.TargetID != in.Predecessor.TargetID {
@@ -1680,7 +1680,7 @@ func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (Deli
 			return DeliveryBuildAttempt{}, err
 		}
 	}
-	if in.PhysicalPoolID == "" || in.PhysicalPoolID != strings.TrimSpace(in.PhysicalPoolID) || len(in.PhysicalPoolID) > 255 {
+	if in.PhysicalPoolID == "" || in.PhysicalPoolID != strings.TrimSpace(in.PhysicalPoolID) || len(in.PhysicalPoolID) > 255 || in.CatalogID == "" || in.CatalogID != strings.TrimSpace(in.CatalogID) || len(in.CatalogID) > 255 {
 		return DeliveryBuildAttempt{}, ErrInvalid
 	}
 	if in.Namespace == "" || in.Namespace != strings.TrimSpace(in.Namespace) || len(in.Namespace) > 512 {
@@ -1708,7 +1708,7 @@ func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (Deli
 			return DeliveryBuildAttempt{}, ErrConflict
 		}
 	}
-	err = depdb.New(db).InsertBuildAttempt(ctx, depdb.InsertBuildAttemptParams{AttemptID: dbUUID(id), PlanID: dbUUID(plan), CandidateID: dbUUID(candidate), OwnerID: owner, PhysicalPoolID: in.PhysicalPoolID, FencingEpoch: in.FencingEpoch, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, Namespace: in.Namespace, LeaseExpiresAt: pgTime(lease), SessionIdentity: in.SessionIdentity})
+	err = depdb.New(db).InsertBuildAttempt(ctx, depdb.InsertBuildAttemptParams{AttemptID: dbUUID(id), PlanID: dbUUID(plan), CandidateID: dbUUID(candidate), OwnerID: owner, PhysicalPoolID: in.PhysicalPoolID, CatalogID: in.CatalogID, FencingEpoch: in.FencingEpoch, RequestDigest: in.RequestDigest, PlanDigest: in.PlanDigest, Namespace: in.Namespace, LeaseExpiresAt: pgTime(lease), SessionIdentity: in.SessionIdentity})
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
@@ -1716,7 +1716,7 @@ func beginBuildAttempt(ctx context.Context, db DBTX, in BuildAttemptInput) (Deli
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	if a.PlanID != plan || a.CandidateID != candidate || a.OwnerID != owner || a.PhysicalPoolID != in.PhysicalPoolID || a.FencingEpoch != in.FencingEpoch || a.RequestDigest != in.RequestDigest || a.PlanDigest != in.PlanDigest || a.Namespace != in.Namespace || a.SessionIdentity != in.SessionIdentity || !a.LeaseExpiresAt.Equal(lease) {
+	if a.PlanID != plan || a.CandidateID != candidate || a.OwnerID != owner || a.PhysicalPoolID != in.PhysicalPoolID || a.CatalogID != in.CatalogID || a.FencingEpoch != in.FencingEpoch || a.RequestDigest != in.RequestDigest || a.PlanDigest != in.PlanDigest || a.Namespace != in.Namespace || a.SessionIdentity != in.SessionIdentity || !a.LeaseExpiresAt.Equal(lease) {
 		return DeliveryBuildAttempt{}, ErrConflict
 	}
 	return a, nil
@@ -1730,7 +1730,7 @@ func loadAttempt(ctx context.Context, db DBTX, id string) (DeliveryBuildAttempt,
 	if err != nil {
 		return DeliveryBuildAttempt{}, err
 	}
-	a.AttemptID, a.PlanID, a.CandidateID, a.OwnerID, a.PhysicalPoolID, a.FencingEpoch, a.RequestDigest, a.PlanDigest, a.State, a.Namespace, a.LeaseExpiresAt, a.SessionIdentity, a.SnapshotID, a.CreatedAt, a.UpdatedAt = row.AttemptID, row.PlanID, row.CandidateID, row.OwnerID, row.PhysicalPoolID, row.FencingEpoch, row.RequestDigest, row.PlanDigest, BuildAttemptState(row.State), row.Namespace, dbTime(row.LeaseExpiresAt), row.SessionIdentity, row.SnapshotID, dbTime(row.CreatedAt), dbTime(row.UpdatedAt)
+	a.AttemptID, a.PlanID, a.CandidateID, a.OwnerID, a.PhysicalPoolID, a.CatalogID, a.FencingEpoch, a.RequestDigest, a.PlanDigest, a.State, a.Namespace, a.LeaseExpiresAt, a.SessionIdentity, a.SnapshotID, a.CreatedAt, a.UpdatedAt = row.AttemptID, row.PlanID, row.CandidateID, row.OwnerID, row.PhysicalPoolID, row.CatalogID, row.FencingEpoch, row.RequestDigest, row.PlanDigest, BuildAttemptState(row.State), row.Namespace, dbTime(row.LeaseExpiresAt), row.SessionIdentity, row.SnapshotID, dbTime(row.CreatedAt), dbTime(row.UpdatedAt)
 	a.CommitMarker, a.TerminationEvidence = append([]byte(nil), row.CommitMarker...), append([]byte(nil), row.TerminationEvidence...)
 	if row.FinishedAt.Valid {
 		a.FinishedAt = row.FinishedAt.Time.UTC()
@@ -2285,8 +2285,8 @@ func validateSessionTerminationEvidence(raw json.RawMessage, attemptID, ownerID,
 // RenewBuildAttemptLeaseTx extends a running build attempt lease on a
 // caller-owned transaction. The attempt identity is immutable; only its
 // expiry and updated timestamp move forward. This method deliberately shares
-// the transaction with the target lease, operation lease, and DuckLake ledger
-// during a native-build heartbeat.
+// the transaction with the target lease and operation lease during a
+// native-build heartbeat.
 func (r *Repository) RenewBuildAttemptLeaseTx(ctx context.Context, tx Tx, attemptID, ownerID string, fencingEpoch int64, expiresAt time.Time) (DeliveryBuildAttempt, error) {
 	if tx == nil {
 		return DeliveryBuildAttempt{}, ErrInvalid
@@ -2573,7 +2573,7 @@ func createSeal(ctx context.Context, db DBTX, in SnapshotSealInput) (SnapshotSea
 	if err != nil {
 		return SnapshotSeal{}, err
 	}
-	if at.State != AttemptCommitted || at.SnapshotID != in.DuckLakeSnapshotID || at.RequestDigest != in.RequestDigest || at.PlanDigest != in.PlanDigest || at.CandidateID != candidate || at.PhysicalPoolID != in.PhysicalPoolID || at.Namespace != in.RelationNamespace {
+	if at.State != AttemptCommitted || at.SnapshotID != in.DuckLakeSnapshotID || at.RequestDigest != in.RequestDigest || at.PlanDigest != in.PlanDigest || at.CandidateID != candidate || at.PhysicalPoolID != in.PhysicalPoolID || at.CatalogID != in.CatalogID || at.Namespace != in.RelationNamespace {
 		return SnapshotSeal{}, fmt.Errorf("%w: attempt is not exact committed evidence", ErrNotQualified)
 	}
 	if !markerMatches(at.CommitMarker, attempt, at.PhysicalPoolID, in.RequestDigest, in.PlanDigest, at.FencingEpoch) {

@@ -8,7 +8,6 @@ import (
 	"fmt"
 
 	catalogartifact "github.com/flidai/leapview/internal/analytics/catalogartifact"
-	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	deploymentnative "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/jackc/pgx/v5"
@@ -22,7 +21,7 @@ import (
 // native session could commit. A later positive session-termination decision
 // uses AttemptReconciliationInput instead. Indeterminate records bounded
 // evidence that the external outcome cannot be established. The evidence is
-// canonicalized before either control ledger is touched.
+// canonicalized before the delivery control ledger is touched.
 type AttemptTerminationInput struct {
 	AttemptID    string
 	OwnerID      string
@@ -30,11 +29,10 @@ type AttemptTerminationInput struct {
 	Evidence     json.RawMessage
 }
 
-// AttemptTerminationResult is the exact evidence returned by both control
-// ledgers after one atomic transition in leapview_control.
+// AttemptTerminationResult is the exact evidence returned by the delivery
+// control ledger after one atomic transition in leapview_control.
 type AttemptTerminationResult struct {
 	DeliveryAttempt deploymentnative.DeliveryBuildAttempt
-	DuckLakeAttempt ducklakepostgres.AttemptEvidence
 }
 
 // AttemptReconciliationInput carries an already-resolved external outcome
@@ -47,7 +45,6 @@ type AttemptReconciliationInput struct {
 	OwnerID             string
 	FencingEpoch        int64
 	PhysicalPoolID      string
-	CatalogID           string
 	SnapshotID          int64
 	CommitMarker        json.RawMessage
 	TerminationEvidence json.RawMessage
@@ -58,8 +55,7 @@ type AttemptReconciliationInput struct {
 
 // AttemptTermination is the application-owned native termination capability.
 // The convenience methods own one delivery transaction; the Tx methods
-// compose into a caller-owned transaction and pass that same native pgx
-// transaction to the application-owned DuckLake ledger.
+// compose into a caller-owned transaction.
 type AttemptTermination interface {
 	AbortAttempt(context.Context, AttemptTerminationInput) (AttemptTerminationResult, error)
 	MarkAttemptIndeterminate(context.Context, AttemptTerminationInput) (AttemptTerminationResult, error)
@@ -69,32 +65,19 @@ type AttemptTermination interface {
 	ReconcileAttemptTx(context.Context, deploymentnative.Tx, AttemptReconciliationInput) (AttemptTerminationResult, error)
 }
 
-type AttemptTerminationDuckLakeAuthority interface {
-	Configured() bool
-	AbortAttemptTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.TerminateAttemptInput) (ducklakepostgres.AttemptEvidence, error)
-	MarkAttemptIndeterminateTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.TerminateAttemptInput) (ducklakepostgres.AttemptEvidence, error)
-	ReconcileAttemptTx(context.Context, ducklakepostgres.Tx, ducklakepostgres.ReconcileAttemptInput) (ducklakepostgres.AttemptEvidence, error)
-}
-
 type attemptTerminator struct {
 	delivery *deploymentnative.Repository
-	ducklake AttemptTerminationDuckLakeAuthority
 }
 
 var _ AttemptTermination = (*attemptTerminator)(nil)
-var _ AttemptTerminationDuckLakeAuthority = (*ducklakepostgres.Repository)(nil)
 
 // NewAttemptTermination constructs the application-owned native termination
-// capability. Both authorities must be configured; no transaction or schema
-// work is performed by the constructor.
-func NewAttemptTermination(delivery *deploymentnative.Repository, ducklake AttemptTerminationDuckLakeAuthority) (AttemptTermination, error) {
+// capability. No transaction or schema work is performed by the constructor.
+func NewAttemptTermination(delivery *deploymentnative.Repository) (AttemptTermination, error) {
 	if delivery == nil || !delivery.Configured() || !delivery.TransactionCapable() {
 		return nil, errors.New("attempt termination requires a configured, transaction-capable PostgreSQL delivery authority")
 	}
-	if ducklake == nil || !ducklake.Configured() {
-		return nil, errors.New("attempt termination requires a configured DuckLake authority")
-	}
-	return &attemptTerminator{delivery: delivery, ducklake: ducklake}, nil
+	return &attemptTerminator{delivery: delivery}, nil
 }
 
 func (a *attemptTerminator) AbortAttempt(ctx context.Context, input AttemptTerminationInput) (AttemptTerminationResult, error) {
@@ -105,23 +88,23 @@ func (a *attemptTerminator) MarkAttemptIndeterminate(ctx context.Context, input 
 	return a.terminateAttempt(ctx, input, attemptTerminationIndeterminate)
 }
 
-// AbortAttemptTx transitions both control ledgers to aborted in the
+// AbortAttemptTx transitions the delivery control ledger to aborted in the
 // caller-owned transaction. It never begins, commits, or rolls back tx.
 func (a *attemptTerminator) AbortAttemptTx(ctx context.Context, tx deploymentnative.Tx, input AttemptTerminationInput) (AttemptTerminationResult, error) {
 	return a.terminateAttemptTx(ctx, tx, input, attemptTerminationAborted)
 }
 
-// MarkAttemptIndeterminateTx transitions both control ledgers to indeterminate
-// in the caller-owned transaction. It never begins, commits, or rolls back tx.
+// MarkAttemptIndeterminateTx transitions the delivery control ledger to
+// indeterminate in the caller-owned transaction. It never begins, commits, or rolls back tx.
 func (a *attemptTerminator) MarkAttemptIndeterminateTx(ctx context.Context, tx deploymentnative.Tx, input AttemptTerminationInput) (AttemptTerminationResult, error) {
 	return a.terminateAttemptTx(ctx, tx, input, attemptTerminationIndeterminate)
 }
 
 // ReconcileAttempt applies an already-resolved exact marker or positive
-// session-termination outcome to both control ledgers in one transaction.
+// session-termination outcome to the delivery control ledger in one transaction.
 // Marker resolution itself is deliberately outside this capability.
 func (a *attemptTerminator) ReconcileAttempt(ctx context.Context, input AttemptReconciliationInput) (AttemptTerminationResult, error) {
-	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt reconciliation authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -150,11 +133,11 @@ func (a *attemptTerminator) ReconcileAttempt(ctx context.Context, input AttemptR
 	return result, nil
 }
 
-// ReconcileAttemptTx applies exact recovery evidence to both ledgers through
-// the caller-owned native PostgreSQL transaction. It never commits or rolls
-// back tx.
+// ReconcileAttemptTx applies exact recovery evidence to the delivery ledger
+// through the caller-owned native PostgreSQL transaction. It never commits or
+// rolls back tx.
 func (a *attemptTerminator) ReconcileAttemptTx(ctx context.Context, tx deploymentnative.Tx, input AttemptReconciliationInput) (AttemptTerminationResult, error) {
-	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt reconciliation authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -179,22 +162,7 @@ func (a *attemptTerminator) ReconcileAttemptTx(ctx context.Context, tx deploymen
 	if err := verifyDeliveryReconciliation(deliveryAttempt, normalized); err != nil {
 		return AttemptTerminationResult{}, err
 	}
-	duckAttempt, err := a.ducklake.ReconcileAttemptTx(ctx, tx, ducklakepostgres.ReconcileAttemptInput{
-		AttemptID: normalized.AttemptID, OwnerID: normalized.OwnerID, FencingEpoch: normalized.FencingEpoch,
-		Snapshot:     ducklakepostgres.SnapshotRef{PhysicalPoolID: normalized.PhysicalPoolID, CatalogID: normalized.CatalogID, SnapshotID: normalized.SnapshotID},
-		CommitMarker: string(normalized.CommitMarker), TerminationEvidence: normalized.TerminationEvidence,
-		SessionTerminated: normalized.SessionTerminated, SessionIdentity: normalized.SessionIdentity, State: ducklakepostgres.AttemptState(normalized.State),
-	})
-	if err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	if err := verifyDuckLakeReconciliation(duckAttempt, normalized); err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	if err := verifyReconciliationLedgerAgreement(deliveryAttempt, duckAttempt, normalized); err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	return AttemptTerminationResult{DeliveryAttempt: deliveryAttempt, DuckLakeAttempt: duckAttempt}, nil
+	return AttemptTerminationResult{DeliveryAttempt: deliveryAttempt}, nil
 }
 
 func normalizeAttemptReconciliationInput(input AttemptReconciliationInput) (AttemptReconciliationInput, error) {
@@ -217,9 +185,6 @@ func normalizeAttemptReconciliationInput(input AttemptReconciliationInput) (Atte
 		if err := validateText(input.PhysicalPoolID, "physical pool id", 255); err != nil {
 			return AttemptReconciliationInput{}, err
 		}
-		if err := validateText(input.CatalogID, "catalog id", 255); err != nil {
-			return AttemptReconciliationInput{}, err
-		}
 		if input.SnapshotID <= 0 || len(marker) == 0 || len(input.TerminationEvidence) != 0 || input.SessionTerminated {
 			return AttemptReconciliationInput{}, fmt.Errorf("%w: committed recovery requires an exact marker and snapshot", deploymentnative.ErrInvalid)
 		}
@@ -232,7 +197,7 @@ func normalizeAttemptReconciliationInput(input AttemptReconciliationInput) (Atte
 		}
 		marker = canonical
 	} else {
-		if input.SnapshotID != 0 || input.PhysicalPoolID != "" || input.CatalogID != "" || len(marker) != 0 || !input.SessionTerminated {
+		if input.SnapshotID != 0 || input.PhysicalPoolID != "" || len(marker) != 0 || !input.SessionTerminated {
 			return AttemptReconciliationInput{}, fmt.Errorf("%w: aborted recovery requires positive session-termination evidence", deploymentnative.ErrInvalid)
 		}
 		if err := validateText(input.SessionIdentity, "session identity", 512); err != nil {
@@ -301,34 +266,6 @@ func verifyDeliveryReconciliation(got deploymentnative.DeliveryBuildAttempt, inp
 	return nil
 }
 
-func verifyDuckLakeReconciliation(got ducklakepostgres.AttemptEvidence, input AttemptReconciliationInput) error {
-	if got.AttemptID != input.AttemptID || got.OwnerID != input.OwnerID || got.FencingEpoch != input.FencingEpoch || got.State != ducklakepostgres.AttemptState(input.State) || got.LeaseExpiresAt.IsZero() || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.TerminalAt.IsZero() {
-		return fmt.Errorf("%w: DuckLake reconciliation evidence identity differs", deploymentnative.ErrConflict)
-	}
-	if input.State == deploymentnative.AttemptCommitted {
-		if got.PhysicalPoolID != input.PhysicalPoolID || got.CatalogID != input.CatalogID || got.SnapshotID != input.SnapshotID || got.TerminationEvidence != nil || !sameCommitMarker([]byte(got.CommitMarker), input.CommitMarker) {
-			return fmt.Errorf("%w: DuckLake committed reconciliation evidence differs", deploymentnative.ErrConflict)
-		}
-	} else if got.SnapshotID != 0 || got.CommitMarker != "" || !sameTerminationEvidence(got.TerminationEvidence, input.TerminationEvidence) {
-		return fmt.Errorf("%w: DuckLake aborted reconciliation evidence differs", deploymentnative.ErrConflict)
-	}
-	return nil
-}
-
-func verifyReconciliationLedgerAgreement(delivery deploymentnative.DeliveryBuildAttempt, ducklake ducklakepostgres.AttemptEvidence, input AttemptReconciliationInput) error {
-	if delivery.AttemptID != ducklake.AttemptID || delivery.OwnerID != ducklake.OwnerID || delivery.FencingEpoch != ducklake.FencingEpoch || delivery.RequestDigest != ducklake.RequestDigest || delivery.PlanDigest != ducklake.PlanDigest || delivery.PhysicalPoolID != ducklake.PhysicalPoolID || delivery.SessionIdentity != ducklake.SessionIdentity || !delivery.LeaseExpiresAt.Equal(ducklake.LeaseExpiresAt) {
-		return fmt.Errorf("%w: delivery and DuckLake reconciliation ledgers disagree", deploymentnative.ErrConflict)
-	}
-	if input.State == deploymentnative.AttemptCommitted {
-		if !sameCommitMarker(delivery.CommitMarker, input.CommitMarker) || !sameCommitMarker([]byte(ducklake.CommitMarker), input.CommitMarker) {
-			return fmt.Errorf("%w: committed reconciliation markers disagree", deploymentnative.ErrConflict)
-		}
-	} else if !sameTerminationEvidence(delivery.TerminationEvidence, input.TerminationEvidence) || !sameTerminationEvidence(ducklake.TerminationEvidence, input.TerminationEvidence) {
-		return fmt.Errorf("%w: aborted reconciliation evidence disagrees", deploymentnative.ErrConflict)
-	}
-	return nil
-}
-
 type attemptTerminationOutcome string
 
 const (
@@ -336,11 +273,11 @@ const (
 	attemptTerminationIndeterminate attemptTerminationOutcome = "indeterminate"
 )
 
-// terminateAttempt transitions the delivery and DuckLake ledgers in one
+// terminateAttempt transitions the delivery ledger in one
 // control transaction owned by the convenience wrapper. The external
 // leapview_ducklake catalog is never opened or mutated by this operation.
 func (a *attemptTerminator) terminateAttempt(ctx context.Context, input AttemptTerminationInput, outcome attemptTerminationOutcome) (AttemptTerminationResult, error) {
-	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	ctx = contextOrBackground(ctx)
@@ -370,11 +307,11 @@ func (a *attemptTerminator) terminateAttempt(ctx context.Context, input AttemptT
 	return result, nil
 }
 
-// terminateAttemptTx applies the delivery and DuckLake transitions to tx.
+// terminateAttemptTx applies the delivery transition to tx.
 // It performs all input and native-transaction validation but never invokes
 // a transaction lifecycle method, leaving commit or rollback to the caller.
 func (a *attemptTerminator) terminateAttemptTx(ctx context.Context, tx deploymentnative.Tx, input AttemptTerminationInput, outcome attemptTerminationOutcome) (AttemptTerminationResult, error) {
-	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() || a.ducklake == nil || !a.ducklake.Configured() {
+	if a == nil || a.delivery == nil || !a.delivery.Configured() || !a.delivery.TransactionCapable() {
 		return AttemptTerminationResult{}, fmt.Errorf("%w: attempt termination authorities are not configured", deploymentnative.ErrInvalid)
 	}
 	if tx == nil {
@@ -418,25 +355,7 @@ func (a *attemptTerminator) terminateAttemptTx(ctx context.Context, tx deploymen
 		}
 	}
 
-	duckInput := ducklakepostgres.TerminateAttemptInput{AttemptID: normalized.AttemptID, OwnerID: normalized.OwnerID, FencingEpoch: normalized.FencingEpoch, Evidence: canonical}
-	var duckAttempt ducklakepostgres.AttemptEvidence
-	duckState := ducklakeTerminationState(outcome)
-	if duckState == ducklakepostgres.AttemptAborted {
-		duckAttempt, err = a.ducklake.AbortAttemptTx(ctx, tx, duckInput)
-	} else {
-		duckAttempt, err = a.ducklake.MarkAttemptIndeterminateTx(ctx, tx, duckInput)
-	}
-	if err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	if err := verifyDuckLakeTermination(duckAttempt, normalized, canonical, duckState); err != nil {
-		return AttemptTerminationResult{}, err
-	}
-	if err := verifyTerminationLedgerAgreement(deliveryAttempt, duckAttempt, canonical); err != nil {
-		return AttemptTerminationResult{}, err
-	}
-
-	return AttemptTerminationResult{DeliveryAttempt: deliveryAttempt, DuckLakeAttempt: duckAttempt}, nil
+	return AttemptTerminationResult{DeliveryAttempt: deliveryAttempt}, nil
 }
 
 func validateDeterministicAbortEvidence(raw json.RawMessage, input AttemptTerminationInput) (nativeBuildTerminationEvidence, error) {
@@ -472,13 +391,6 @@ func terminationStates(outcome attemptTerminationOutcome) (deploymentnative.Buil
 	default:
 		return "", fmt.Errorf("%w: unsupported attempt termination outcome %q", deploymentnative.ErrInvalid, outcome)
 	}
-}
-
-func ducklakeTerminationState(outcome attemptTerminationOutcome) ducklakepostgres.AttemptState {
-	if outcome == attemptTerminationAborted {
-		return ducklakepostgres.AttemptAborted
-	}
-	return ducklakepostgres.AttemptIndeterminate
 }
 
 func normalizeAttemptTerminationInput(input AttemptTerminationInput) (AttemptTerminationInput, json.RawMessage, error) {
@@ -528,26 +440,6 @@ func verifyDeliveryTermination(got deploymentnative.DeliveryBuildAttempt, input 
 		validateText(got.Namespace, "relation namespace", 512) != nil || validateText(got.SessionIdentity, "session identity", 512) != nil || got.LeaseExpiresAt.IsZero() || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.FinishedAt.IsZero() ||
 		!sameTerminationEvidence(got.TerminationEvidence, evidence) {
 		return fmt.Errorf("%w: delivery termination evidence identity differs", deploymentnative.ErrConflict)
-	}
-	return nil
-}
-
-func verifyDuckLakeTermination(got ducklakepostgres.AttemptEvidence, input AttemptTerminationInput, evidence json.RawMessage, state ducklakepostgres.AttemptState) error {
-	if got.AttemptID != input.AttemptID || got.OwnerID != input.OwnerID || got.FencingEpoch != input.FencingEpoch || got.State != state || got.SnapshotID != 0 || got.CommitMarker != "" ||
-		validateDigest(got.RequestDigest, "request digest") != nil || validateDigest(got.PlanDigest, "plan digest") != nil || validateText(got.PhysicalPoolID, "physical pool id", 255) != nil || validateText(got.CatalogID, "catalog id", 255) != nil ||
-		validateText(got.SessionIdentity, "session identity", 512) != nil || got.LeaseExpiresAt.IsZero() || got.CreatedAt.IsZero() || got.UpdatedAt.IsZero() || got.TerminalAt.IsZero() ||
-		!sameTerminationEvidence(got.TerminationEvidence, evidence) {
-		return fmt.Errorf("%w: DuckLake termination evidence identity differs", deploymentnative.ErrConflict)
-	}
-	return nil
-}
-
-func verifyTerminationLedgerAgreement(delivery deploymentnative.DeliveryBuildAttempt, ducklake ducklakepostgres.AttemptEvidence, evidence json.RawMessage) error {
-	if delivery.AttemptID != ducklake.AttemptID || delivery.OwnerID != ducklake.OwnerID || delivery.FencingEpoch != ducklake.FencingEpoch ||
-		delivery.RequestDigest != ducklake.RequestDigest || delivery.PlanDigest != ducklake.PlanDigest || delivery.PhysicalPoolID != ducklake.PhysicalPoolID ||
-		delivery.SessionIdentity != ducklake.SessionIdentity || !delivery.LeaseExpiresAt.Equal(ducklake.LeaseExpiresAt) ||
-		!sameTerminationEvidence(delivery.TerminationEvidence, evidence) || !sameTerminationEvidence(ducklake.TerminationEvidence, evidence) {
-		return fmt.Errorf("%w: delivery and DuckLake termination ledgers disagree", deploymentnative.ErrConflict)
 	}
 	return nil
 }

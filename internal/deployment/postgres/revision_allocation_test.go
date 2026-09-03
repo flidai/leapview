@@ -238,7 +238,7 @@ func TestPostgresGenerationRevisionAllocationReplayRollbackAndConcurrency(t *tes
 	if _, err := r.CreateCandidateAllocated(ctx, CandidateInput{CandidateID: candidateID, TargetID: target, PlanID: planID, ArtifactDigest: artifactDigest}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-generation", PhysicalPoolID: "pool-generation", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/generation", SessionIdentity: "session-generation", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+	if _, err := r.BeginBuildAttempt(ctx, BuildAttemptInput{AttemptID: attemptID, PlanID: planID, CandidateID: candidateID, OwnerID: "builder-generation", PhysicalPoolID: "pool-generation", CatalogID: "catalog-generation", FencingEpoch: 1, RequestDigest: testDigest('f'), PlanDigest: planDigest, Namespace: "candidate/generation", SessionIdentity: "session-generation", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := r.BindBuildArtifact(ctx, BuildArtifactBindingInput{AttemptID: attemptID, ServingArtifactID: "artifact-generation", ServingArtifactDigest: artifactDigest, ServingStateID: "generation-test", OwnerID: "builder-generation", FencingEpoch: 1}); err != nil {

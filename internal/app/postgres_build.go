@@ -633,7 +633,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	attemptTermination, err := appdeploymentpostgres.NewAttemptTermination(graph.DeploymentRepository, graph.DuckLakeControlLedger)
+	attemptTermination, err := appdeploymentpostgres.NewAttemptTermination(graph.DeploymentRepository)
 	if err != nil {
 		return fail(err)
 	}
@@ -645,7 +645,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	heartbeat, err := appdeploymentpostgres.NewNativeBuildHeartbeat(graph.DeploymentRepository, graph.DuckLakeControlLedger, buildOperations)
+	heartbeat, err := appdeploymentpostgres.NewNativeBuildHeartbeat(graph.DeploymentRepository, buildOperations)
 	if err != nil {
 		return fail(err)
 	}
