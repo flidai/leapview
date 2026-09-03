@@ -54,6 +54,8 @@ type builderAuthoringFake struct {
 	forkResult       authoringservice.Result
 	createRequest    authoringservice.CreateRequest
 	forkRequest      sourceadapter.ForkRequest
+	draftRead        application.DraftRead
+	draftRequest     application.DraftRequest
 }
 
 type semanticCatalogMetrics struct{ fakeMetrics }
@@ -83,6 +85,10 @@ func (f *builderAuthoringFake) Create(_ context.Context, request authoringservic
 func (f *builderAuthoringFake) Fork(_ context.Context, request sourceadapter.ForkRequest) (authoringservice.Result, error) {
 	f.forkRequest = request
 	return f.forkResult, f.err
+}
+func (f *builderAuthoringFake) Draft(_ context.Context, request application.DraftRequest) (application.DraftRead, error) {
+	f.draftRequest = request
+	return f.draftRead, f.err
 }
 
 func browserDraftResult(t *testing.T, dashboardID authoring.DashboardID) authoringservice.Result {
@@ -133,6 +139,31 @@ func TestDashboardDraftCreateAndForkBrowserActionsUseAuthoringApplication(t *tes
 	}
 	if fake.forkRequest.Source.Kind != sourceadapter.SourceProject || fake.forkRequest.Source.DashboardID != "revenue" || fake.forkRequest.IdempotencyKey != "fork-form-1" {
 		t.Fatalf("fork request = %#v", fake.forkRequest)
+	}
+}
+
+func TestDashboardArchiveResolvesTheCurrentDraftAndRedirectsToCatalog(t *testing.T) {
+	result := browserDraftResult(t, "dashboard-owned")
+	fake := &builderAuthoringFake{draftRead: application.DraftRead{
+		Lifecycle: result.Lifecycle,
+		Revision:  authoring.Revision{DashboardID: result.Lifecycle.ID, ID: result.Revision.RevisionID, Number: result.Revision.Number, ContentHash: result.Revision.ContentHash},
+	}}
+	handler := Handler{Authoring: fake, ProjectID: "sales", CurrentPrincipalID: func(*nethttp.Request) string { return "principal-1" }}
+	request := httptest.NewRequest(nethttp.MethodPost, "/dashboards/dashboard-owned/archive", strings.NewReader("idempotencyKey=archive-form-1"))
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	request = withBuilderURLParams(request, "sales", "dashboard-owned")
+	recorder := httptest.NewRecorder()
+
+	handler.DashboardArchive(recorder, request)
+
+	if recorder.Code != nethttp.StatusSeeOther || recorder.Header().Get("Location") != "/" {
+		t.Fatalf("archive redirect = %d %q body=%s", recorder.Code, recorder.Header().Get("Location"), recorder.Body.String())
+	}
+	if fake.draftRequest.DashboardID != "dashboard-owned" || fake.draftRequest.ActorID != "principal-1" {
+		t.Fatalf("draft request = %#v", fake.draftRequest)
+	}
+	if fake.executed.ID != "archive-form-1" || fake.executed.Archive == nil || fake.executed.DraftID != "draft-created" || fake.executed.ExpectedRevision != result.Revision {
+		t.Fatalf("archive command = %#v", fake.executed)
 	}
 }
 

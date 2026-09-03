@@ -86,6 +86,7 @@ func (m *Module) MountAuthenticated(r chi.Router, guard RouteGuard) {
 	// boundary performs the exact authoring decision again before exposing a
 	// draft revision or executing a command.
 	r.Get("/dashboards/{dashboard}/edit", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilder))
+	r.Post("/dashboards/{dashboard}/archive", protectAuthoring(access.CapabilityResourceManage, h.DashboardArchive))
 	r.Get("/dashboards/{dashboard}/preview", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderPreview))
 	r.Get("/dashboards/{dashboard}/export.yaml", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderExportYAML))
 	r.Post("/dashboards/{dashboard}/draft/command", protectAuthoring(access.CapabilityResourceEdit, h.DashboardBuilderCommand))

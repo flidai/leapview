@@ -271,6 +271,59 @@ func browserFormRequestID(r *nethttp.Request) (string, error) {
 	return value, nil
 }
 
+// DashboardArchive resolves the repository-authoritative draft pointer before
+// issuing an archive command. Catalog clients only provide the dashboard
+// identity and an idempotency key; revision concurrency remains server-owned.
+func (h Handler) DashboardArchive(w nethttp.ResponseWriter, r *nethttp.Request) {
+	project, err := h.projectIDForRequest(r.Context())
+	actorID := h.currentActor(r)
+	if err != nil || h.Authoring == nil || actorID == "" {
+		writeBuilderError(w, r, access.ErrForbidden)
+		return
+	}
+	reader, ok := h.Authoring.(dashboardAuthoringDraftReader)
+	if !ok {
+		writeBuilderError(w, r, errors.New("dashboard authoring archive operation is unavailable"))
+		return
+	}
+	if err := r.ParseForm(); err != nil {
+		writeBuilderError(w, r, fmt.Errorf("read dashboard archive form: %w", err))
+		return
+	}
+	requestID, err := browserFormRequestID(r)
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	dashboardID := authoring.DashboardID(strings.TrimSpace(chi.URLParam(r, "dashboard")))
+	if err := dashboardID.Validate(); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	draft, err := reader.Draft(r.Context(), application.DraftRequest{
+		ProjectID: project, ActorID: actorID, DashboardID: dashboardID,
+	})
+	if err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	if draft.Lifecycle.Draft == nil || draft.Lifecycle.Draft.ID == "" {
+		writeBuilderError(w, r, fmt.Errorf("%w: dashboard has no current draft", authoring.ErrNotFound))
+		return
+	}
+	command := authoring.Command{
+		ID: authoring.CommandID(requestID), DashboardID: dashboardID, DraftID: draft.Lifecycle.Draft.ID,
+		ExpectedRevision: draft.Revision.Token(),
+		Provenance:       authoring.Provenance{Origin: authoring.OriginUI, ActorID: actorID},
+		Archive:          &authoring.ArchivePayload{},
+	}
+	if _, err := h.Authoring.Execute(r.Context(), project, command); err != nil {
+		writeBuilderError(w, r, err)
+		return
+	}
+	nethttp.Redirect(w, r, "/", nethttp.StatusSeeOther)
+}
+
 // DashboardBuilderUpdates emits the typed builder projection on the canonical
 // Datastar page stream. It intentionally does not accept a client-selected
 // revision; the application resolves the current authorized draft.

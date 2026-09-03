@@ -21,6 +21,7 @@ import {
   BadgeCheck,
   LayoutDashboard,
   LockKeyhole,
+  EllipsisVertical,
   Plus,
   Plug,
   Play,
@@ -67,7 +68,7 @@ export type EntityListItem = {
 export type EntityListRowAction = {
   label: string
   action: string
-  icon?: 'play' | 'refresh' | 'details' | 'cancel'
+  icon?: 'play' | 'refresh' | 'details' | 'cancel' | 'more'
   disabled?: boolean
 }
 
@@ -855,6 +856,9 @@ class EntityList extends LitElement {
                   ${columns.map((column) => {
                     const direction = this.sortColumnId === column.id ? this.sortDirection : false
                     const sortable = column.sortable !== false && column.render !== 'actions'
+                    if (column.render === 'actions') {
+                      return html`<th class=${column.align === 'right' ? 'is-right' : ''} scope="col"><span class="entity-list-visually-hidden">${column.label}</span></th>`
+                    }
                     return html`
                       <th
                         class=${column.align === 'right' ? 'is-right' : ''}
@@ -1067,6 +1071,7 @@ class EntityList extends LitElement {
                   aria-label=${action.label}
                   ?disabled=${action.disabled}
                   @click=${(event: Event) => this.emitRowAction(event, action, item)}
+                  aria-haspopup=${action.icon === 'more' ? 'menu' : nothing}
                 >${lucideIcon(entityActionIcon(action.icon), { size: 15, strokeWidth: 2 })}</button>
 	              `)}</span>`
             : column.render === 'status'
@@ -1152,7 +1157,7 @@ class EntityList extends LitElement {
     this.dispatchEvent(new CustomEvent('lv-entity-list-row-action', {
       bubbles: true,
       composed: true,
-      detail: { action: action.action, item },
+      detail: { action: action.action, item, anchor: event.currentTarget },
     }))
   }
 
@@ -1233,6 +1238,7 @@ function entityIcon(type = ''): IconNode {
 
 function entityActionIcon(type: EntityListRowAction['icon']): IconNode {
   switch (type) {
+    case 'more': return EllipsisVertical
     case 'refresh': return RefreshCw
     case 'details': return FileText
     case 'cancel': return XCircle
