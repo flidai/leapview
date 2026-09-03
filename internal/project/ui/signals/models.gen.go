@@ -94,6 +94,7 @@ type CatalogDashboardSignal struct {
 	CatalogScope    string           `json:"catalogScope" yaml:"catalogScope"`
 	Description     *string          `json:"description,omitempty" yaml:"description,omitempty"`
 	DashboardID     string           `json:"dashboardId" yaml:"dashboardId"`
+	Featured        *bool            `json:"featured,omitempty" yaml:"featured,omitempty"`
 	Href            string           `json:"href" yaml:"href"`
 	ID              string           `json:"id" yaml:"id"`
 	LastRefreshedAt *string          `json:"lastRefreshedAt,omitempty" yaml:"lastRefreshedAt,omitempty"`

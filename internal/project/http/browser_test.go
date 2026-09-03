@@ -92,11 +92,16 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 		},
 		{
 			ID: "dashboard:managed", StableID: "project:project:test:dashboard:managed", ProjectID: "project:test", Title: "Executive sales",
-			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1,
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1, Featured: true,
 		},
 	}}}
+	popularityCount := 0
 	h := &BrowserHandler{
 		DashboardCatalog: reader,
+		DashboardPopularity: func(_ context.Context, dashboardCount int) (map[string]string, error) {
+			popularityCount = dashboardCount
+			return map[string]string{"dashboard:managed": "high"}, nil
+		},
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
 		CurrentUser:      func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice", DevBypass: true}, true },
 	}
@@ -111,8 +116,11 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != "/dashboards/dashboard:mine/edit?draft=draft-mine" || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
 		t.Fatalf("mine = %#v", mine)
 	}
-	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" {
+	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || !managed.Featured || managed.Popularity != "high" {
 		t.Fatalf("managed = %#v", managed)
+	}
+	if popularityCount != 2 {
+		t.Fatalf("popularity dashboard count = %d, want 2", popularityCount)
 	}
 	if len(reader.requests) != 1 || reader.requests[0].ActorID != "alice" || reader.requests[0].ProjectID != "project:test" {
 		t.Fatalf("catalog requests = %#v", reader.requests)

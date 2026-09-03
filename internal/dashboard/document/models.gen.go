@@ -2300,6 +2300,7 @@ type DashboardMetadata struct {
 	Domain        *string   `json:"domain,omitempty" yaml:"domain,omitempty"`
 	Tags          *[]string `json:"tags,omitempty" yaml:"tags,omitempty"`
 	Documentation *string   `json:"documentation,omitempty" yaml:"documentation,omitempty"`
+	Featured      *bool     `json:"featured,omitempty" yaml:"featured,omitempty"`
 }
 
 type DashboardMetadataBindings struct {

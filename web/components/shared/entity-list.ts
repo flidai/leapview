@@ -18,6 +18,7 @@ import {
   Download,
   FilePenLine,
   FileText,
+  BadgeCheck,
   LayoutDashboard,
   LockKeyhole,
   Plus,
@@ -25,6 +26,7 @@ import {
   Play,
   RefreshCw,
   Search,
+  Star,
   Table2,
   TableProperties,
   UsersRound,
@@ -57,6 +59,8 @@ export type EntityListItem = {
   columnTitles?: Record<string, string>
   sortValues?: Record<string, string | number>
   badges?: EntityListBadge[]
+  favorite?: boolean
+  favoriteLabel?: string
   actions?: EntityListRowAction[]
 }
 
@@ -68,9 +72,10 @@ export type EntityListRowAction = {
 }
 
 export type EntityListBadge = {
-  icon: 'popularity'
+  icon: 'popularity' | 'featured'
   label: string
-  level: 'low' | 'medium' | 'high'
+  level?: 'low' | 'medium' | 'high'
+  text?: string
 }
 
 export type EntityListColumn = {
@@ -109,6 +114,13 @@ const entityListStyles = `
   }
 
   .entity-toolbar-actions {
+    display: flex;
+    margin-left: auto;
+    align-items: center;
+    gap: var(--base-size-8);
+  }
+
+  .entity-toolbar-trailing {
     display: flex;
     margin-left: auto;
     align-items: center;
@@ -524,6 +536,25 @@ const entityListStyles = `
     flex: 1 1 auto;
   }
 
+  .entity-list-favorite {
+    display: inline-grid;
+    width: var(--control-medium-size, 32px);
+    height: var(--control-medium-size, 32px);
+    flex: 0 0 auto;
+    place-items: center;
+    border: 0;
+    border-radius: var(--lv-radius-default);
+    color: var(--lv-fg-muted);
+    background: transparent;
+    padding: 0;
+    cursor: pointer;
+  }
+
+  .entity-list-favorite:hover { color: var(--lv-fg-default); background: var(--lv-bg-control-hover); }
+  .entity-list-favorite:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+  .entity-list-favorite[aria-pressed='true'] { color: var(--display-yellow-fgColor); }
+  .entity-list-favorite[aria-pressed='true'] svg { fill: currentColor; }
+
   .entity-list-copy {
     display: grid;
     min-width: 0;
@@ -555,13 +586,18 @@ const entityListStyles = `
   }
 
   .entity-list-badge {
-    display: inline-grid;
-    width: var(--base-size-16);
+    display: inline-flex;
+    width: auto;
     height: var(--base-size-16);
     flex: 0 0 auto;
-    place-items: center;
+    align-items: center;
+    gap: var(--base-size-4);
     color: var(--fgColor-disabled);
+    font: var(--lv-type-caption);
+    white-space: nowrap;
   }
+
+  .entity-list-badge-featured { color: var(--display-purple-fgColor, var(--lv-fg-default)); }
 
   .entity-list-badge-popularity svg path {
     stroke: currentColor;
@@ -588,6 +624,25 @@ const entityListStyles = `
     color: var(--lv-fg-muted);
     font: var(--lv-type-caption);
   }
+
+  .entity-list-secondary {
+    display: flex;
+    min-width: 0;
+    align-items: center;
+    gap: var(--base-size-6);
+  }
+
+  .entity-list-secondary-separator { color: var(--lv-fg-muted); font: var(--lv-type-caption); }
+
+  .entity-list-meta {
+    display: inline-flex;
+    min-width: 0;
+    flex: 0 1 auto;
+    align-items: center;
+    gap: var(--base-size-4);
+  }
+
+  .entity-list-meta svg { width: var(--base-size-12); height: var(--base-size-12); flex: 0 0 auto; }
 
   .entity-list-cell {
     overflow: hidden;
@@ -690,6 +745,9 @@ const entityListStyles = `
       margin-left: auto;
     }
 
+    .entity-toolbar-trailing { width: 100%; margin-left: 0; }
+    .entity-list-badge-text { display: none; }
+
     .entity-list-table th,
     .entity-list-table td {
       padding-inline: var(--base-size-4);
@@ -702,6 +760,7 @@ class EntityList extends LitElement {
   @property({ attribute: false }) columns: EntityListColumn[] = []
   @property({ attribute: false }) filters: EntityListFilter[] = []
   @property({ attribute: false }) actions: EntityListAction[] = []
+  @property({ attribute: false }) toolbarTrailing: unknown = nothing
   @property({ attribute: 'list-label' }) listLabel = 'List'
   @property({ attribute: 'export-filename' }) exportFilename = ''
   @property({ attribute: 'search-placeholder' }) searchPlaceholder = 'Search'
@@ -765,6 +824,7 @@ class EntityList extends LitElement {
               </select>
             </label>
           ` : ''}
+          ${this.toolbarTrailing !== nothing ? html`<div class="entity-toolbar-trailing">${this.toolbarTrailing}</div>` : ''}
           ${this.exportFilename || this.actions.length ? html`
             <div class="entity-toolbar-actions">
               ${this.exportFilename ? html`<button class="entity-export" type="button" @click=${this.exportCSV}>
@@ -957,18 +1017,31 @@ class EntityList extends LitElement {
           <span class="entity-list-title">${item.title}</span>
           ${badgesColumn ? '' : (item.badges ?? []).map((badge) => this.renderBadge(badge))}
         </span>
-        ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
+        ${item.description || item.meta ? html`<span class="entity-list-secondary">
+          ${item.description ? html`<span class="entity-list-description">${item.description}</span>` : ''}
+          ${item.description && item.meta ? html`<span class="entity-list-secondary-separator" aria-hidden="true">·</span>` : ''}
+          ${item.meta ? html`<span class="entity-list-meta">${lucideIcon(Database, { size: 12, strokeWidth: 1.8 })}<span>${item.meta}</span></span>` : ''}
+        </span>` : ''}
       </span>
     `
+    const favorite = item.favoriteLabel ? html`
+      <button
+        type="button"
+        class="entity-list-favorite"
+        aria-label=${item.favoriteLabel}
+        aria-pressed=${String(Boolean(item.favorite))}
+        @click=${(event: Event) => this.toggleFavorite(event, item)}
+      >${lucideIcon(Star, { size: 16, strokeWidth: 1.8 })}</button>
+    ` : ''
     return html`
       <th scope="row">
         ${item.iconButtonLabel
-          ? html`<span class="entity-list-identity-row">${icon}${item.href
-            ? html`<a class="entity-list-identity" href=${item.href} @click=${this.stopRowAction}>${copy}</a>`
+          ? html`<span class="entity-list-identity-row">${favorite}${icon}${item.href
+            ? html`<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${copy}</a>`
             : html`<span class="entity-list-identity">${copy}</span>`}</span>`
           : item.href
-            ? html`<a class="entity-list-identity" href=${item.href} @click=${this.stopRowAction}>${icon}${copy}</a>`
-            : html`<span class="entity-list-identity">${icon}${copy}</span>`}
+            ? html`<span class="entity-list-identity-row">${favorite}<a class="entity-list-identity" data-item-id=${item.id} href=${item.href} @click=${(event: Event) => this.activateIdentity(event, item)}>${icon}${copy}</a></span>`
+            : html`<span class="entity-list-identity-row">${favorite}<span class="entity-list-identity">${icon}${copy}</span></span>`}
       </th>
     `
   }
@@ -1005,10 +1078,30 @@ class EntityList extends LitElement {
 
   private renderBadge(badge: EntityListBadge) {
     return html`
-      <span class=${`entity-list-badge entity-list-badge-${badge.icon} is-${badge.level}`} role="img" aria-label=${badge.label} title=${badge.label}>
+      <span class=${`entity-list-badge entity-list-badge-${badge.icon}${badge.level ? ` is-${badge.level}` : ''}`} role="img" aria-label=${badge.label} title=${badge.label}>
         ${lucideIcon(badgeIcon(badge.icon), { size: 16, strokeWidth: 2.5 })}
+        ${badge.text ? html`<span class="entity-list-badge-text">${badge.text}</span>` : ''}
       </span>
     `
+  }
+
+  private toggleFavorite(event: Event, item: EntityListItem): void {
+    event.preventDefault()
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-favorite-toggle', {
+      bubbles: true,
+      composed: true,
+      detail: { item },
+    }))
+  }
+
+  private activateIdentity(event: Event, item: EntityListItem): void {
+    event.stopPropagation()
+    this.dispatchEvent(new CustomEvent('lv-entity-list-item-activate', {
+      bubbles: true,
+      composed: true,
+      detail: { item },
+    }))
   }
 
   private activateIcon(event: Event, item: EntityListItem): void {
@@ -1072,8 +1165,6 @@ class EntityList extends LitElement {
     }))
   }
 
-  private stopRowAction = (event: Event): void => event.stopPropagation()
-
   private toggleSort(columnId: string): void {
     if (this.sortColumnId === columnId) {
       this.sortDirection = this.sortDirection === 'asc' ? 'desc' : 'asc'
@@ -1114,6 +1205,7 @@ class EntityList extends LitElement {
 function badgeIcon(type: EntityListBadge['icon']): IconNode {
   switch (type) {
     case 'popularity': return ChartNoAxesColumnIncreasing
+    case 'featured': return BadgeCheck
   }
 }
 

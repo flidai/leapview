@@ -23,6 +23,10 @@ func TestListAuthorizesBeforeRevisionDisclosureAndExcludesArchived(t *testing.T)
 		"good":   catalogRevision("good", "rev-good", "Good description"),
 		"denied": {DashboardID: "denied"},
 	}}
+	featured := true
+	goodRevision := repo.revisions["good"]
+	goodRevision.Document.Metadata.Featured = &featured
+	repo.revisions["good"] = goodRevision
 	auth := &catalogAuthorizer{deny: map[string]bool{"denied": true}}
 	svc := newCatalogService(t, repo, auth, nil)
 	result, err := svc.List(t.Context(), ListRequest{ProjectID: "sales", ActorID: "actor"})
@@ -31,6 +35,9 @@ func TestListAuthorizesBeforeRevisionDisclosureAndExcludesArchived(t *testing.T)
 	}
 	if result.Count != 1 || result.Items[0].ID.String() != "good" || len(repo.revisionReads) != 1 || repo.revisionReads[0] != "good" {
 		t.Fatalf("result/revision reads = %#v/%#v", result, repo.revisionReads)
+	}
+	if !result.Items[0].Featured {
+		t.Fatal("instance featured metadata was not projected from the current revision")
 	}
 	if len(auth.requests) != 2 || !auth.requested("good") || !auth.requested("denied") {
 		t.Fatalf("authorization requests = %#v", auth.requests)
@@ -68,9 +75,10 @@ func TestGetHidesUnauthorizedAndArchived(t *testing.T) {
 }
 
 func TestProjectDashboardSourceUsesCanonicalIDAndAuthoredNameSeparately(t *testing.T) {
+	featured := true
 	runtime := catalogSourceRuntime{source: authoring.AuthoredDashboardSource{
 		Document: document.DashboardDocument{
-			Metadata: document.DashboardMetadata{ID: "dashboard:executive-sales", Name: "executive-sales"},
+			Metadata: document.DashboardMetadata{ID: "dashboard:executive-sales", Name: "executive-sales", Featured: &featured},
 			Spec:     document.DashboardSpec{SemanticModel: "semantic-model:sales"},
 		},
 		Metadata: authoring.AuthoredDashboardMetadata{Project: "project:sales", Name: "executive-sales"},
@@ -78,6 +86,9 @@ func TestProjectDashboardSourceUsesCanonicalIDAndAuthoredNameSeparately(t *testi
 	item := Dashboard{ID: "dashboard:executive-sales", ProjectID: "project:sales", SemanticModel: "semantic-model:sales", Source: SourceProject}
 	if err := enrichProjectItem(runtime, &item); err != nil {
 		t.Fatalf("canonical id with symbolic authored name was rejected: %v", err)
+	}
+	if !item.Featured {
+		t.Fatal("featured dashboard metadata was not projected")
 	}
 	runtime.source.Metadata.Name = "different-name"
 	if err := enrichProjectItem(runtime, &item); err == nil {

@@ -158,6 +158,7 @@ type BrowserHandler struct {
 	ProjectDefinitionReader  ProjectDefinitionReader
 	DashboardAppearances     DashboardAppearanceStore
 	DashboardCatalog         DashboardCatalogReader
+	DashboardPopularity      func(context.Context, int) (map[string]string, error)
 	QueryExecutor            DataQueryExecutor
 	Catalog                  CatalogAuthorizer
 	SearchCatalog            ProductSearchCatalog
@@ -1442,6 +1443,14 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 	if err != nil {
 		return projectnavigation.Catalog{}, projectui.CatalogListOptions{}, err
 	}
+	popularity := map[string]string{}
+	if h.DashboardPopularity != nil {
+		// Discovery metadata must never make the dashboard catalog unavailable.
+		// Usage ranking is intentionally best effort and degrades to no meter.
+		if levels, popularityErr := h.DashboardPopularity(r.Context(), len(result.Items)); popularityErr == nil {
+			popularity = levels
+		}
+	}
 	appearanceByID := make(map[string]dashboardappearance.Value, len(catalog.Dashboards))
 	for _, item := range catalog.Dashboards {
 		appearanceByID[item.ID] = item.Appearance
@@ -1471,7 +1480,8 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 			ID: item.StableID, DashboardID: item.ID.String(), Title: item.Title, Description: item.Description,
 			SemanticModel: item.SemanticModel.String(), Href: href, Owner: owner, Status: status,
 			CatalogScope: scope, UpdatedAt: updatedAt, PageCount: item.PageCount, Tags: append([]string(nil), item.Tags...),
-			Appearance: appearanceByID[item.ID.String()],
+			Appearance: appearanceByID[item.ID.String()], Featured: item.Featured,
+			Popularity: projectsignals.PopularityLevel(popularity[item.ID.String()]),
 		})
 	}
 	return catalog, options, nil

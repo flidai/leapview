@@ -763,6 +763,20 @@ func buildApplicationSurfaces(
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
 		ProjectDefinitionReader: projectDefinitionReader, QueryExecutor: metrics, Catalog: capabilities.ProjectCatalog, SearchCatalog: capabilities.ProjectCatalog,
 		DashboardAppearances: dashboardmodule.NewAppearanceStore(data.Database), DashboardCatalog: capabilities.Authoring,
+		DashboardPopularity: func(ctx context.Context, dashboardCount int) (map[string]string, error) {
+			if routes.dashboardModule == nil {
+				return nil, nil
+			}
+			levels, err := routes.dashboardModule.Popularity(ctx, dashboardCount)
+			if err != nil {
+				return nil, err
+			}
+			result := make(map[string]string, len(levels))
+			for dashboardID, level := range levels {
+				result[dashboardID] = string(level)
+			}
+			return result, nil
+		},
 		ResolveProjectID: runtime.resolveProjectID, Environment: runtimeConfig.DefaultEnvironment, TargetID: runtimeConfig.InstanceID,
 		Layout: func(r *http.Request) webpage.Provider {
 			return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
