@@ -341,6 +341,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
             const owner = this.dashboardOwner(dashboard)
+            const lastOpenedAt = this.recentDashboardIDs[dashboard.id]
             return ({
             id: dashboard.id,
             dashboardId: dashboard.dashboardId,
@@ -367,15 +368,18 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               owner: owner.name || '—',
               status: dashboardStatusLabel(dashboard.status),
               updated: formatCompactDate(dashboard.updatedAt || dashboard.lastRefreshedAt),
+              lastOpened: formatCompactDate(lastOpenedAt),
             },
             people: owner.name ? { owner } : undefined,
             sortValues: {
               owner: owner.name,
               status: dashboardStatusRank(dashboard.status),
               updated: dashboard.updatedAt || dashboard.lastRefreshedAt || '',
+              lastOpened: lastOpenedAt || '',
             },
             columnTitles: {
               updated: formatExactTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
+              lastOpened: formatExactTime(lastOpenedAt),
             },
           })})}
           .toolbarTrailing=${this.renderDiscoveryToolbar(sourceDashboards)}
@@ -399,17 +403,19 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private catalogColumns() {
     if (this.catalogScope === 'mine') {
       return [
-        { id: 'name', label: 'Dashboard', width: '54%' },
-        { id: 'status', label: 'Status', width: '24%', render: 'status' as const },
-        { id: 'updated', label: 'Updated', width: '17%' },
+        { id: 'name', label: 'Dashboard', width: '41%' },
+        { id: 'status', label: 'Status', width: '22%', render: 'status' as const },
+        { id: 'updated', label: 'Updated', width: '16%' },
+        { id: 'lastOpened', label: 'Last opened', width: '16%' },
         { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
       ]
     }
     return [
-      { id: 'name', label: 'Dashboard', width: '43%' },
-      { id: 'owner', label: 'Owner', width: '15%', render: 'person' as const },
-      { id: 'status', label: 'Status', width: '19%', render: 'status' as const },
-      { id: 'updated', label: 'Updated', width: '18%' },
+      { id: 'name', label: 'Dashboard', width: '29%' },
+      { id: 'owner', label: 'Owner', width: '17%', render: 'person' as const },
+      { id: 'status', label: 'Status', width: '21%', render: 'status' as const },
+      { id: 'updated', label: 'Updated', width: '13%' },
+      { id: 'lastOpened', label: 'Last opened', width: '15%' },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
     ]
   }
@@ -473,6 +479,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             <dt>Owner</dt><dd>${this.dashboardOwner(dashboard).name || '—'}</dd>
             <dt>Status</dt><dd>${dashboardStatusLabel(dashboard.status)}</dd>
             <dt>Updated</dt><dd>${formatExactTime(updated) || '—'}</dd>
+            <dt>Last opened</dt><dd>${formatExactTime(this.recentDashboardIDs[dashboard.id]) || '—'}</dd>
             <dt>Pages</dt><dd>${dashboard.pageCount}</dd>
             <dt>Popularity</dt><dd>${dashboard.popularity ? popularityPercentile(dashboard.popularity) : 'Not enough data'}</dd>
             <dt>Source</dt><dd>${dashboard.catalogScope === 'managed' ? 'Managed by Analytics' : 'Created in LeapView'}</dd>

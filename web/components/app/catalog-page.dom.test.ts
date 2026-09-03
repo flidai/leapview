@@ -318,6 +318,7 @@ for (const viewport of [
           statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
           updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
           updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.getAttribute('title')),
+          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
@@ -350,11 +351,12 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptionCount: 0,
-        headers: ['Dashboard', 'Owner', 'Status', 'Updated', 'Actions'],
+        headers: ['Dashboard', 'Owner', 'Status', 'Updated', 'Last opened', 'Actions'],
         owners: ['Analytics', 'Operations', 'Supply chain', '—'],
         statuses: ['Published', 'Published', 'Published', 'Published'],
         updated: ['Aug 12', 'Aug 11', 'Aug 10', '—'],
         updatedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
+        lastOpened: ['—', '—', '—', '—'],
         ownerAvatars: [true, true, true, false],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
@@ -518,7 +520,7 @@ test('My dashboards removes the redundant owner column', async () => {
       await element.updateComplete
       return Array.from(element.shadowRoot.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
     })
-    expect(headers).toEqual(['Dashboard', 'Status', 'Updated', 'Actions'])
+    expect(headers).toEqual(['Dashboard', 'Status', 'Updated', 'Last opened', 'Actions'])
   } finally {
     await page.close()
   }
@@ -650,6 +652,36 @@ test('dashboard favorites persist and rank first while recently viewed remains a
     expect(state.pressed).toBe('true')
     expect(state.storedFavorites).toContain('inventory-risk')
     expect(state.recent[0]).toBe('Operations Health')
+  } finally {
+    await page.close()
+  }
+})
+
+test('Last opened uses persisted personal activity with an exact timestamp tooltip', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      localStorage.setItem('leapview.dashboard-catalog.recents.v1', JSON.stringify({
+        'executive-sales': '2026-08-12T08:15:00Z',
+        'operations-health': '2025-12-31T19:30:00Z',
+      }))
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
+        title: row.querySelector('.entity-list-title')?.textContent?.trim(),
+        value: row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim(),
+        tooltip: row.querySelectorAll('.entity-list-cell')[3]?.getAttribute('title'),
+      }))
+    })
+
+    expect(state[0]).toEqual({ title: 'Executive Sales Dashboard', value: 'Aug 12', tooltip: expect.stringContaining('Aug 12, 2026') })
+    expect(state[1]).toEqual({ title: 'Operations Health', value: 'Dec 31, 2025', tooltip: expect.stringContaining('Dec 31, 2025') })
+    expect(state[2].value).toBe('—')
   } finally {
     await page.close()
   }
