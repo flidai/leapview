@@ -489,6 +489,19 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, fmt.Errorf("wait for canonical publication activation barrier: %w", err)
 	}
+	interruptedEvidence, err := qualificationPublicationEvidence(
+		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
+		deploymentCandidate, pendingPublication,
+	)
+	if err != nil {
+		return report, err
+	}
+	if interruptedEvidence.Status != deploymentgen.DeliveryPublicationStatusPending {
+		return report, fmt.Errorf(
+			"publication reached %q before the activation barrier interrupted its commit",
+			interruptedEvidence.Status,
+		)
+	}
 	if err := c.killAndRecoverQualificationCandidate(
 		ctx,
 		options.ContainerID,
