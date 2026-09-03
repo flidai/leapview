@@ -1,19 +1,17 @@
 import { LitElement, css, html } from 'lit'
 import { property } from 'lit/decorators.js'
 import type { DataExploreCommand, DataExploreResultSignal } from '../../generated/signals'
+import type { ExplorationSpec } from '../../generated/exploration'
+import { emptyDataExploreCommand, explorationResultKeyForSort, explorationSortFieldForResult, explorationSpecFor } from './data-explorer-spec'
 import '../shared/windowed-table'
 import type { WindowedTableColumn, WindowedTablePayload, WindowedTableRequest } from '../shared/windowed-table'
-
-const emptyCommand: DataExploreCommand = {
-  dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0,
-}
 
 const emptyResult: DataExploreResultSignal = {
   columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [],
 }
 
 class DataExploreTable extends LitElement {
-  @property({ attribute: false }) command: DataExploreCommand = emptyCommand
+  @property({ attribute: false }) command: DataExploreCommand = emptyDataExploreCommand
   @property({ attribute: false }) result: DataExploreResultSignal = emptyResult
   @property({ attribute: false }) visibleColumns: string[] = []
 
@@ -42,12 +40,16 @@ class DataExploreTable extends LitElement {
   }
 
   private tablePayload(): WindowedTablePayload {
-    const command = this.command ?? emptyCommand
+    const command = this.command ?? emptyDataExploreCommand
+    const spec = explorationSpecFor(command)
     const result = this.result ?? emptyResult
-    const sort = command.sort?.[0]
+    const sort = spec.sort?.[0]
+    const resultSortKey = sort
+      ? explorationResultKeyForSort(spec, sort.field, (result.columns ?? []).map((column) => column.key)) ?? sort.field
+      : ''
     const rows = result.rows ?? []
     return {
-      tableKey: `${command.modelId ?? ''}:${command.datasetId ?? ''}:explore`,
+      tableKey: `${spec.modelId ?? ''}:${spec.datasetId ?? ''}:explore`,
       title: 'Exploration results',
       columns: (result.columns ?? []).map((column): WindowedTableColumn => ({
         key: column.key,
@@ -58,16 +60,16 @@ class DataExploreTable extends LitElement {
       })),
       totalRows: rows.length,
       availableRows: rows.length,
-      chunkSize: Math.max(command.limit || 100, 1),
+      chunkSize: Math.max(spec.limit || 100, 1),
       rowHeight: 32,
       resetVersion: command.resetVersion ?? 0,
-      sort: { key: sort?.field ?? '', column: sort?.field ?? '', direction: sort?.direction ?? '' },
+      sort: { key: resultSortKey, column: resultSortKey, direction: sort?.direction ?? '' },
       blocks: {
         a: {
           start: 0,
           requestSeq: result.requestSeq ?? command.requestSeq ?? 0,
           resetVersion: command.resetVersion ?? 0,
-          sort: { key: sort?.field ?? '', column: sort?.field ?? '', direction: sort?.direction ?? '' },
+          sort: { key: resultSortKey, column: resultSortKey, direction: sort?.direction ?? '' },
           rows,
         },
       },
@@ -82,15 +84,17 @@ class DataExploreTable extends LitElement {
     event.stopPropagation()
     const request = event.detail
     if (request.start > 0) return
-    const field = request.sort.key ?? request.sort.column ?? ''
+    const resultKey = request.sort.key ?? request.sort.column ?? ''
     const direction = request.sort.direction
-    const current = this.command.sort?.[0]
+    const spec = explorationSpecFor(this.command)
+    const field = explorationSortFieldForResult(spec, resultKey)
+    const current = spec.sort?.[0]
     if (!field || (direction !== 'asc' && direction !== 'desc')) return
     if (current?.field === field && current.direction === direction) return
     this.dispatchEvent(new CustomEvent('lv-data-explore-table-command', {
       bubbles: true,
       composed: true,
-      detail: { sort: [{ field, direction }] },
+      detail: { sort: [{ field, direction }] } satisfies Partial<ExplorationSpec>,
     }))
   }
 

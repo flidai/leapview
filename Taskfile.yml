@@ -420,6 +420,7 @@ tasks:
       - task: data-resource-contracts:generate
       - task: desktop-discovery:generate
       - task: visualization-ir:generate
+      - task: exploration-contracts:generate
       - task: dashboard-contracts:generate
       - task: pipeline-contracts:generate
       - task: layout-contract:generate
@@ -669,7 +670,7 @@ tasks:
       - task: generated:git-check
       - task: config:check
       - |
-        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts api/gen/data-resources-ir.json api/gen/pipeline-ir.json web/generated/data-resources web/generated/pipeline schemas/config schemas/desktop schemas/json pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
+        changed="$(git status --porcelain -- .env.example docs/api/openapi.yaml docs/llms.txt docs/reference/agent-tools docs/articles/reference/data-resource-connectors.md internal/agent/contracts internal/project/contracts internal/analytics/exploration api/gen/data-resources-ir.json api/gen/pipeline-ir.json api/gen/exploration-ir.json api/gen/exploration.schema.json web/generated/data-resources web/generated/pipeline web/generated/exploration schemas/config schemas/desktop pkg/duckdbsql/metadata_generated.go pkg/duckdbsql/ast_schema_generated.go pkg/duckdbsql/function_docs_generated.go pkg/duckdbsql/upstream.lock.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/ast_schema_snapshot.json pkg/duckdbsql/internal/cmd/duckdbsqlgen/enum_schema_snapshot.json pkg/duckdbsql/internal/upstream/function_docs.lock.json)"
         test -z "$changed" || { printf 'public contract snapshots are stale:\n%s\n' "$changed" >&2; exit 1; }
 
   generated:git-check:
@@ -851,10 +852,12 @@ tasks:
     desc: Generate UI signal Go and TypeScript contracts from TypeSpec
     deps:
       - api:generate
+      - exploration-contracts:generate
     method: checksum
     sources:
       - Taskfile.yml
       - api/apigen.yaml
+      - api/exploration/**/*.tsp
       - api/signals/**/*.tsp
       - api/visualization/**/*.tsp
       - internal/app/tools/signalcontracts/**/*.go
@@ -921,6 +924,28 @@ tasks:
     cmds:
       - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target dashboard-contracts
       - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target dashboard-contracts
+
+  exploration-contracts:generate:
+    desc: Generate the canonical renderer-neutral ExplorationSpec contract
+    deps:
+      - node:deps
+      - apigen:build
+    method: checksum
+    sources:
+      - Taskfile.yml
+      - api/apigen.yaml
+      - api/exploration/**/*.tsp
+      - pkg/apigen/**/*.go
+      - pkg/apigen/typespec/src/**/*.ts
+      - pkg/apigen/typespec/dist/src/**/*
+    generates:
+      - api/gen/exploration-ir.json
+      - internal/analytics/exploration/models.gen.go
+      - web/generated/exploration/index.ts
+      - api/gen/exploration.schema.json
+    cmds:
+      - go -C pkg/apigen run ./cmd/apigen typespec-compile -manifest ../../api/apigen.yaml -target exploration-contracts
+      - go -C pkg/apigen run ./cmd/apigen all -manifest ../../api/apigen.yaml -target exploration-contracts
 
   pipeline-contracts:generate:
     desc: Generate the canonical asset-selected Pipeline authoring contract

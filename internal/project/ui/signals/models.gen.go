@@ -5,22 +5,23 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	visualizationir "github.com/flidai/leapview/internal/dashboard/visualization/ir"
 )
 
 type AgentContextSignal struct {
-	Surface        string                         `json:"surface" yaml:"surface"`
-	DashboardID    string                         `json:"dashboardId" yaml:"dashboardId"`
-	DashboardTitle string                         `json:"dashboardTitle" yaml:"dashboardTitle"`
-	PageID         string                         `json:"pageId" yaml:"pageId"`
-	PageTitle      string                         `json:"pageTitle" yaml:"pageTitle"`
-	ModelID        string                         `json:"modelId" yaml:"modelId"`
-	DatasetID      *string                        `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Exploration    *DataExploreAgentContextSignal `json:"exploration,omitempty" yaml:"exploration,omitempty"`
-	Generation     int64                          `json:"generation" yaml:"generation"`
-	Filters        DashboardFilterState           `json:"filters" yaml:"filters"`
-	ReferenceLimit int32                          `json:"referenceLimit" yaml:"referenceLimit"`
-	References     []AgentReferenceSignal         `json:"references" yaml:"references"`
+	Surface        string                       `json:"surface" yaml:"surface"`
+	DashboardID    string                       `json:"dashboardId" yaml:"dashboardId"`
+	DashboardTitle string                       `json:"dashboardTitle" yaml:"dashboardTitle"`
+	PageID         string                       `json:"pageId" yaml:"pageId"`
+	PageTitle      string                       `json:"pageTitle" yaml:"pageTitle"`
+	ModelID        string                       `json:"modelId" yaml:"modelId"`
+	DatasetID      *string                      `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
+	Exploration    *exploration.ExplorationSpec `json:"exploration,omitempty" yaml:"exploration,omitempty"`
+	Generation     int64                        `json:"generation" yaml:"generation"`
+	Filters        DashboardFilterState         `json:"filters" yaml:"filters"`
+	ReferenceLimit int32                        `json:"referenceLimit" yaml:"referenceLimit"`
+	References     []AgentReferenceSignal       `json:"references" yaml:"references"`
 }
 
 type AgentReferenceKeySignal struct {
@@ -1009,27 +1010,11 @@ type DashboardUnfilteredExpression struct {
 	Kind string `json:"kind" yaml:"kind"`
 }
 
-type DataExploreAgentContextSignal struct {
-	Dimensions []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters    []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit      int64                     `json:"limit" yaml:"limit"`
-	Metrics    []string                  `json:"metrics" yaml:"metrics"`
-	Sort       []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time       *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
-}
-
 type DataExploreCommand struct {
-	ColumnWidths *map[string]float64       `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
-	DatasetID    *string                   `json:"datasetId,omitempty" yaml:"datasetId,omitempty"`
-	Dimensions   []string                  `json:"dimensions" yaml:"dimensions"`
-	Filters      []DataExploreFilterSignal `json:"filters" yaml:"filters"`
-	Limit        int64                     `json:"limit" yaml:"limit"`
-	Metrics      []string                  `json:"metrics" yaml:"metrics"`
-	ModelID      *string                   `json:"modelId,omitempty" yaml:"modelId,omitempty"`
-	RequestSeq   int64                     `json:"requestSeq" yaml:"requestSeq"`
-	ResetVersion int64                     `json:"resetVersion" yaml:"resetVersion"`
-	Sort         []DataExploreSortSignal   `json:"sort" yaml:"sort"`
-	Time         *DataExploreTimeSignal    `json:"time,omitempty" yaml:"time,omitempty"`
+	Spec         exploration.ExplorationSpec `json:"spec" yaml:"spec"`
+	ColumnWidths *map[string]float64         `json:"columnWidths,omitempty" yaml:"columnWidths,omitempty"`
+	RequestSeq   int64                       `json:"requestSeq" yaml:"requestSeq"`
+	ResetVersion int64                       `json:"resetVersion" yaml:"resetVersion"`
 }
 
 type DataExploreDatasetSignal struct {
@@ -1055,13 +1040,6 @@ type DataExploreFieldSignal struct {
 	RelationshipPath    *[]string `json:"relationshipPath,omitempty" yaml:"relationshipPath,omitempty"`
 	Selected            bool      `json:"selected" yaml:"selected"`
 	Type                *string   `json:"type,omitempty" yaml:"type,omitempty"`
-}
-
-type DataExploreFilterSignal struct {
-	Dataset  *string  `json:"dataset,omitempty" yaml:"dataset,omitempty"`
-	Field    string   `json:"field" yaml:"field"`
-	Operator string   `json:"operator" yaml:"operator"`
-	Values   []string `json:"values" yaml:"values"`
 }
 
 type DataExploreModelSignal struct {
@@ -1092,17 +1070,6 @@ type DataExploreSignal struct {
 	Result          DataExploreResultSignal    `json:"result" yaml:"result"`
 	SelectedDataset *DataExploreDatasetSignal  `json:"selectedDataset,omitempty" yaml:"selectedDataset,omitempty"`
 	SelectedModel   *DataExploreModelSignal    `json:"selectedModel,omitempty" yaml:"selectedModel,omitempty"`
-}
-
-type DataExploreSortSignal struct {
-	Direction string `json:"direction" yaml:"direction"`
-	Field     string `json:"field" yaml:"field"`
-}
-
-type DataExploreTimeSignal struct {
-	Alias *string `json:"alias,omitempty" yaml:"alias,omitempty"`
-	Field string  `json:"field" yaml:"field"`
-	Grain string  `json:"grain" yaml:"grain"`
 }
 
 type DataExplorerCommand struct {

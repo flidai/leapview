@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectview "github.com/flidai/leapview/internal/project"
@@ -61,6 +62,24 @@ func TestExplorerDatasetsProjectsCompositeAndUniqueGrains(t *testing.T) {
 	}
 	if len(customerSnapshots.Entities) != 1 || customerSnapshots.Entities[0].Type != "unique" {
 		t.Fatalf("unique entity signal = %#v, want type unique", customerSnapshots.Entities)
+	}
+}
+
+func TestExplorerFieldsPreferLogicalDatatypeForTypedFilters(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{
+			"quantity": {Type: "number", Datatype: semanticmodel.DataTypeInteger, Label: "Quantity"},
+		}}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := explorerFields(model, "orders", dataExploreState{}, compiled)
+	if len(fields) != 1 || projectsignals.ValueOrZero(fields[0].Type) != string(semanticmodel.DataTypeInteger) {
+		t.Fatalf("typed dimension projection = %#v, want integer logical type", fields)
 	}
 }
 
@@ -146,7 +165,7 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
 	}
-	command := projectsignals.DataExploreCommand{ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"), Dimensions: []string{"customers.region"}, Metrics: []string{"revenue"}}
+	command := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}}, Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}})
 	projection := BuildDataExplorerProjection([]projectview.DevelopAssetView{
 		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
 		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
@@ -203,19 +222,13 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
 	}
-	command := projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
-		Dimensions: []string{"customers.region", "orders.status"},
-	}
+	command := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}, {Field: "orders.status"}}})
 	assets := []projectview.DevelopAssetView{
 		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
 		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
-	customersProjection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
-		Dimensions: []string{"customers.region"},
-	}, compiledProjectionModels(t, project))
+	customersProjection := BuildDataExplorerProjection(assets, project, testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}}}), compiledProjectionModels(t, project))
 	foundOrdersStatus := false
 	for _, field := range customersProjection.Fields {
 		if field.ID == "orders.status" {
@@ -234,7 +247,7 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 	if projection.SelectedDataset == nil || projection.SelectedDataset.ID != "orders" {
 		t.Fatalf("selected dataset = %#v, want safely inferred orders base", projection.SelectedDataset)
 	}
-	if projectsignals.ValueOrZero(projection.Command.DatasetID) != "orders" {
+	if projectsignals.ValueOrZero(projection.Command.Spec.DatasetID) != "orders" {
 		t.Fatalf("resolved command = %#v, want orders base", projection.Command)
 	}
 	if len(projection.Warnings) != 1 || projection.Warnings[0] != "Grain changed from Customers to Orders to support the selected fields." {
@@ -320,9 +333,7 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
-	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
-		ModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("customers"),
-	}, compiledProjectionModels(t, project))
+	projection := BuildDataExplorerProjection(assets, project, testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers")}), compiledProjectionModels(t, project))
 	fields := map[string]projectsignals.DataExploreFieldSignal{}
 	for _, field := range projection.Fields {
 		fields[field.ID] = field

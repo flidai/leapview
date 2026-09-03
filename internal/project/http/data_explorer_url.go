@@ -1,18 +1,18 @@
 package http
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	stdhttp "net/http"
 	"net/url"
 	"strconv"
 	"strings"
 
+	exploration "github.com/flidai/leapview/internal/analytics/exploration"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	projectsignals "github.com/flidai/leapview/internal/project/ui/signals"
+	"github.com/flidai/leapview/pkg/strictjson"
 )
 
 func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
@@ -30,12 +30,26 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 		stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
+	if err := validateDataExplorerURLShape(values); err != nil {
+		stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
+		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+	}
+	mode, modePresent := dataExplorerURLValue(values, "mode")
+	var modeSignal *string
+	if modePresent {
+		modeSignal = projectsignals.Optional(mode)
+	}
+	object, objectPresent := dataExplorerURLValue(values, "object")
+	var objectSignal *string
+	if objectPresent && object != "" {
+		objectSignal = projectsignals.Optional(object)
+	}
 	command := projectsignals.DataExplorerCommand{
-		ObjectKey: projectsignals.Optional(strings.TrimSpace(values.Get("object"))),
-		Mode:      projectsignals.Optional(strings.TrimSpace(values.Get("mode"))),
+		ObjectKey: objectSignal,
+		Mode:      modeSignal,
 		Limit:     dataExplorerDefaultLimit, Count: dataExplorerDefaultLimit, Block: projectsignals.Pointer("all"),
 	}
-	if projectsignals.ValueOrZero(command.Mode) == "explore" {
+	if mode == "explore" {
 		explore, err := dataExploreCommandFromQuery(values)
 		if err != nil {
 			stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
@@ -47,102 +61,297 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 }
 
 const dataExploreURLVersion = "1"
+const dataExploreCanonicalURLVersion = "2"
+
+var dataExplorerURLSingletonKeys = []string{"v", "mode", "object", "model", "dataset", "time", "limit", "state"}
+
+// dataExplorerURLValue returns the one value allowed for a singleton URL
+// parameter. Repeated singleton values are ambiguous because URL parsers
+// otherwise silently select the first value.
+func dataExplorerURLValue(values url.Values, key string) (string, bool) {
+	raw, present := values[key]
+	if !present || len(raw) == 0 {
+		return "", present
+	}
+	return strings.TrimSpace(raw[0]), true
+}
+
+func validateDataExplorerURLShape(values url.Values) error {
+	if err := validateDataExplorerURLSingletons(values); err != nil {
+		return err
+	}
+	if err := validateDataExplorerURLValues(values); err != nil {
+		return err
+	}
+	if err := validateDataExplorerURLVersion(values); err != nil {
+		return err
+	}
+	return validateDataExplorerURLMode(values, true)
+}
+
+func validateDataExplorerURLSingletons(values url.Values) error {
+	for _, key := range dataExplorerURLSingletonKeys {
+		if len(values[key]) > 1 {
+			return fmt.Errorf("%s may only be specified once", key)
+		}
+	}
+	return nil
+}
+
+func validateDataExplorerURLValues(values url.Values) error {
+	for _, key := range []string{"object", "model", "dataset", "time", "limit", "state"} {
+		if value, present := dataExplorerURLValue(values, key); present && value == "" {
+			return fmt.Errorf("%s must not be empty", key)
+		}
+	}
+	return nil
+}
+
+func validateDataExplorerURLVersion(values url.Values) error {
+	if version, present := dataExplorerURLValue(values, "v"); present {
+		if version == "" {
+			return errors.New("version must be specified")
+		}
+		if version != dataExploreURLVersion && version != dataExploreCanonicalURLVersion {
+			return fmt.Errorf("unsupported version %q", version)
+		}
+	}
+	return nil
+}
+
+func validateDataExplorerURLMode(values url.Values, requireExploreMode bool) error {
+	mode, modePresent := dataExplorerURLValue(values, "mode")
+	version, versionPresent := dataExplorerURLValue(values, "v")
+	if modePresent {
+		switch mode {
+		case "browse", "explore":
+		default:
+			return fmt.Errorf("unsupported mode %q; choose browse or explore", mode)
+		}
+	}
+	if mode == "explore" {
+		if _, present := values["object"]; present {
+			return errors.New("object cannot be combined with explore mode")
+		}
+		_, statePresent := values["state"]
+		if version == dataExploreCanonicalURLVersion {
+			if !versionPresent || !statePresent {
+				return errors.New("version 2 explore URLs require a state parameter")
+			}
+			if dataExplorerURLHasLegacyExploreOperands(values) {
+				return errors.New("version 2 state URLs cannot include legacy exploration parameters")
+			}
+		} else if statePresent {
+			return errors.New("state requires version 2")
+		}
+	} else if (modePresent || requireExploreMode) && dataExplorerURLHasExploreOperands(values) {
+		return errors.New("exploration operands require mode=explore")
+	}
+	if versionPresent && version == dataExploreCanonicalURLVersion && mode != "explore" {
+		return errors.New("version 2 URLs require mode=explore")
+	}
+	if mode != "explore" && values["state"] != nil {
+		return errors.New("state requires mode=explore")
+	}
+	return nil
+}
+
+func dataExplorerURLHasExploreOperands(values url.Values) bool {
+	for _, key := range []string{"model", "dataset", "dimension", "metric", "filter", "sort", "time", "limit", "state"} {
+		if _, present := values[key]; present {
+			return true
+		}
+	}
+	return false
+}
+
+func dataExplorerURLHasLegacyExploreOperands(values url.Values) bool {
+	for _, key := range []string{"model", "dataset", "dimension", "metric", "filter", "sort", "time", "limit"} {
+		if _, present := values[key]; present {
+			return true
+		}
+	}
+	return false
+}
 
 func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreCommand, error) {
-	command := projectsignals.DataExploreCommand{
-		Dimensions: append([]string{}, values["dimension"]...),
-		Metrics:    append([]string{}, values["metric"]...),
-		Filters:    []projectsignals.DataExploreFilterSignal{},
-		Sort:       []projectsignals.DataExploreSortSignal{},
-		Limit:      dataExplorerDefaultLimit,
+	if err := validateDataExplorerURLSingletons(values); err != nil {
+		return projectsignals.DataExploreCommand{}, err
 	}
-	for _, field := range append(append([]string(nil), command.Dimensions...), command.Metrics...) {
+	if err := validateDataExplorerURLValues(values); err != nil {
+		return projectsignals.DataExploreCommand{}, err
+	}
+	if err := validateDataExplorerURLVersion(values); err != nil {
+		return projectsignals.DataExploreCommand{}, err
+	}
+	if err := validateDataExplorerURLMode(values, false); err != nil {
+		return projectsignals.DataExploreCommand{}, err
+	}
+	if version, present := dataExplorerURLValue(values, "v"); present && version == dataExploreCanonicalURLVersion {
+		value, statePresent := dataExplorerURLValue(values, "state")
+		if !statePresent || value == "" {
+			return projectsignals.DataExploreCommand{}, errors.New("version 2 explore URLs require a state parameter")
+		}
+		var spec exploration.ExplorationSpec
+		if err := decodeDataExploreURLValue(value, &spec); err != nil {
+			return projectsignals.DataExploreCommand{}, fmt.Errorf("state: %w", err)
+		}
+		if err := exploration.ValidateShape(&spec); err != nil {
+			return projectsignals.DataExploreCommand{}, fmt.Errorf("state: %w", err)
+		}
+		return projectsignals.DataExploreCommand{Spec: spec}, nil
+	}
+	spec, err := legacyExplorationSpecFromQuery(values)
+	if err != nil {
+		return projectsignals.DataExploreCommand{}, err
+	}
+	return projectsignals.DataExploreCommand{Spec: spec}, nil
+}
+
+type legacyDataExploreFilter struct {
+	Dataset  *string  `json:"dataset,omitempty"`
+	Field    string   `json:"field"`
+	Operator string   `json:"operator"`
+	Values   []string `json:"values"`
+}
+
+type legacyDataExploreSort struct {
+	Direction string `json:"direction"`
+	Field     string `json:"field"`
+}
+
+type legacyDataExploreTime struct {
+	Alias *string `json:"alias,omitempty"`
+	Field string  `json:"field"`
+	Grain string  `json:"grain"`
+}
+
+func legacyExplorationSpecFromQuery(values url.Values) (exploration.ExplorationSpec, error) {
+	spec := defaultExplorationSpec()
+	for _, field := range append(append([]string(nil), values["dimension"]...), values["metric"]...) {
 		if strings.TrimSpace(field) == "" {
-			return command, errors.New("dimension and metric identifiers must not be empty")
+			return spec, errors.New("dimension and metric identifiers must not be empty")
 		}
 	}
-	for index := range command.Dimensions {
-		command.Dimensions[index] = strings.TrimSpace(command.Dimensions[index])
+	seen := map[string]string{}
+	for _, field := range values["dimension"] {
+		field = strings.TrimSpace(field)
+		if prior, exists := seen[field]; exists {
+			return spec, fmt.Errorf("%s %q is specified more than once", prior, field)
+		}
+		seen[field] = "dimension"
+		spec.Dimensions = append(spec.Dimensions, exploration.ExplorationDimensionRef{Field: field})
 	}
-	for index := range command.Metrics {
-		command.Metrics[index] = strings.TrimSpace(command.Metrics[index])
+	for _, field := range values["metric"] {
+		field = strings.TrimSpace(field)
+		if prior, exists := seen[field]; exists {
+			return spec, fmt.Errorf("%s %q is specified more than once", prior, field)
+		}
+		seen[field] = "metric"
+		spec.Metrics = append(spec.Metrics, exploration.ExplorationMetricRef{Field: field})
 	}
-	if version := strings.TrimSpace(values.Get("v")); version != "" && version != dataExploreURLVersion {
-		return command, fmt.Errorf("unsupported version %q", version)
+	if value, present := dataExplorerURLValue(values, "model"); present && value != "" {
+		spec.ModelID = value
 	}
-	if value := strings.TrimSpace(values.Get("model")); value != "" {
-		command.ModelID = projectsignals.Optional(value)
+	if value, present := dataExplorerURLValue(values, "dataset"); present && value != "" {
+		spec.DatasetID = &value
 	}
-	if value := strings.TrimSpace(values.Get("dataset")); value != "" {
-		command.DatasetID = projectsignals.Optional(value)
-	}
-	for _, value := range values["filter"] {
-		var filter projectsignals.DataExploreFilterSignal
+	for index, value := range values["filter"] {
+		var filter legacyDataExploreFilter
 		if err := decodeDataExploreURLValue(value, &filter); err != nil {
-			return command, fmt.Errorf("filter: %w", err)
+			return spec, fmt.Errorf("filter %d: %w", index+1, err)
 		}
 		if strings.TrimSpace(filter.Field) == "" || strings.TrimSpace(filter.Operator) == "" || filter.Values == nil {
-			return command, errors.New("filter field, operator, and values are required")
+			return spec, fmt.Errorf("filter %d field, operator, and values are required", index+1)
 		}
-		filter.Field = strings.TrimSpace(filter.Field)
-		filter.Operator = strings.TrimSpace(filter.Operator)
+		filter.Field, filter.Operator = strings.TrimSpace(filter.Field), strings.TrimSpace(filter.Operator)
 		if filter.Dataset != nil {
-			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
+			dataset := strings.TrimSpace(*filter.Dataset)
+			if dataset == "" {
+				return spec, fmt.Errorf("filter %d dataset must not be empty", index+1)
+			}
 			filter.Dataset = &dataset
 		}
-		command.Filters = append(command.Filters, filter)
+		expression, err := legacyFilterExpression(filter)
+		if err != nil {
+			return spec, fmt.Errorf("filter %d: %w", index+1, err)
+		}
+		spec.Filters = append(spec.Filters, exploration.ExplorationFilter{Field: filter.Field, DatasetID: filter.Dataset, Expression: expression})
 	}
-	for _, value := range values["sort"] {
-		var sorting projectsignals.DataExploreSortSignal
+	for index, value := range values["sort"] {
+		var sorting legacyDataExploreSort
 		if err := decodeDataExploreURLValue(value, &sorting); err != nil {
-			return command, fmt.Errorf("sort: %w", err)
+			return spec, fmt.Errorf("sort %d: %w", index+1, err)
 		}
-		sorting.Field = strings.TrimSpace(sorting.Field)
-		sorting.Direction = strings.TrimSpace(sorting.Direction)
+		sorting.Field, sorting.Direction = strings.TrimSpace(sorting.Field), strings.TrimSpace(sorting.Direction)
 		if sorting.Field == "" || (sorting.Direction != "asc" && sorting.Direction != "desc") {
-			return command, errors.New("sort field and asc or desc direction are required")
+			return spec, errors.New("sort field and asc or desc direction are required")
 		}
-		command.Sort = append(command.Sort, sorting)
+		for _, existing := range spec.Sort {
+			if existing.Field == sorting.Field {
+				return spec, fmt.Errorf("sort field %q is specified more than once", sorting.Field)
+			}
+		}
+		spec.Sort = append(spec.Sort, exploration.ExplorationSort{Field: sorting.Field, Direction: exploration.ExplorationSortDirection(sorting.Direction)})
 	}
-	if value := values.Get("time"); value != "" {
-		var timeSelection projectsignals.DataExploreTimeSignal
-		if err := decodeDataExploreURLValue(value, &timeSelection); err != nil {
-			return command, fmt.Errorf("time: %w", err)
+	if value, present := dataExplorerURLValue(values, "time"); present && value != "" {
+		var selection legacyDataExploreTime
+		if err := decodeDataExploreURLValue(value, &selection); err != nil {
+			return spec, fmt.Errorf("time: %w", err)
 		}
-		timeSelection.Field = strings.TrimSpace(timeSelection.Field)
-		timeSelection.Grain = strings.TrimSpace(timeSelection.Grain)
-		if timeSelection.Alias != nil {
-			alias := strings.TrimSpace(projectsignals.ValueOrZero(timeSelection.Alias))
-			timeSelection.Alias = &alias
+		selection.Field, selection.Grain = strings.TrimSpace(selection.Field), strings.TrimSpace(selection.Grain)
+		if selection.Field == "" || selection.Grain == "" {
+			return spec, errors.New("time field and grain are required")
 		}
-		if timeSelection.Field == "" || timeSelection.Grain == "" {
-			return command, errors.New("time field and grain are required")
+		if selection.Alias != nil {
+			alias := strings.TrimSpace(*selection.Alias)
+			if alias == "" {
+				selection.Alias = nil
+			} else {
+				selection.Alias = &alias
+			}
 		}
-		command.Time = &timeSelection
+		spec.Time = &exploration.ExplorationTimeSelection{Field: selection.Field, Grain: exploration.ExplorationTimeGrain(selection.Grain), Alias: selection.Alias}
 	}
-	if value := strings.TrimSpace(values.Get("limit")); value != "" {
-		limit, err := strconv.ParseInt(value, 10, 64)
+	if value, present := dataExplorerURLValue(values, "limit"); present && value != "" {
+		limit, err := strconv.ParseInt(value, 10, 32)
 		if err != nil || limit <= 0 || limit > dataExplorerMaximumLimit {
-			return command, fmt.Errorf("limit must be between 1 and %d", dataExplorerMaximumLimit)
+			return spec, fmt.Errorf("limit must be between 1 and %d", dataExplorerMaximumLimit)
 		}
-		command.Limit = limit
+		spec.Limit = int32(limit)
 	}
-	return command, nil
+	return spec, nil
+}
+
+func legacyFilterExpression(filter legacyDataExploreFilter) (exploration.ExplorationFilterExpression, error) {
+	op := filter.Operator
+	values := make([]exploration.ExplorationFilterValue, 0, len(filter.Values))
+	for _, value := range filter.Values {
+		values = append(values, exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: value}})
+	}
+	switch filter.Operator {
+	case "is_null", "is_not_null":
+		if len(filter.Values) != 0 {
+			return exploration.ExplorationFilterExpression{}, fmt.Errorf("operator %q does not accept values", filter.Operator)
+		}
+		return exploration.ExplorationFilterExpression{Value: &exploration.NullCheckExplorationFilterExpression{Kind: "null_check", Operator: op}}, nil
+	case "in", "not_in":
+		if len(values) == 0 {
+			return exploration.ExplorationFilterExpression{}, fmt.Errorf("operator %q requires at least one value", filter.Operator)
+		}
+		return exploration.ExplorationFilterExpression{Value: &exploration.SetExplorationFilterExpression{Kind: "set", Operator: op, Values: values}}, nil
+	case "equals", "not_equals", "contains", "not_contains", "starts_with", "ends_with", "greater_than", "greater_than_or_equal", "less_than", "less_than_or_equal":
+		if len(values) != 1 {
+			return exploration.ExplorationFilterExpression{}, fmt.Errorf("operator %q requires exactly one value", filter.Operator)
+		}
+		return exploration.ExplorationFilterExpression{Value: &exploration.ComparisonExplorationFilterExpression{Kind: "comparison", Operator: op, Value: values[0]}}, nil
+	default:
+		return exploration.ExplorationFilterExpression{}, fmt.Errorf("unsupported filter operator %q", filter.Operator)
+	}
 }
 
 func decodeDataExploreURLValue(value string, target any) error {
-	decoder := json.NewDecoder(strings.NewReader(value))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("multiple JSON values")
-		}
-		return err
-	}
-	return nil
+	return strictjson.DecodeWithOptions([]byte(value), target, strictjson.Options{MaxBytes: 1 << 20, MaxDepth: 32})
 }
 
 // validateRestoredDataExploreState verifies every durable URL operand against
@@ -150,8 +359,10 @@ func decodeDataExploreURLValue(value string, target any) error {
 // its incremental normalization, but a URL restore must never turn a stale
 // operand into a smaller query by dropping it.
 func validateRestoredDataExploreState(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, compiledModels map[string]*semanticquery.CompiledModel) error {
-	modelID := strings.TrimSpace(projectsignals.ValueOrZero(command.ModelID))
-	selectedModelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.ModelID))
+	spec := normalizeExplorationSpec(command.Spec)
+	state := dataExploreStateFromSpec(spec)
+	modelID := strings.TrimSpace(spec.ModelID)
+	selectedModelID := strings.TrimSpace(projection.Command.Spec.ModelID)
 
 	if modelID != "" {
 		if !explorerModelByID(projection.Models, modelID) {
@@ -168,8 +379,13 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	if compiled == nil || len(compiled.DatasetNames()) == 0 {
 		return fmt.Errorf("model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedModelID)
 	}
+	if model != nil {
+		if err := exploration.ValidateAgainstModel(model, &spec); err != nil {
+			return fmt.Errorf("exploration state: %w; remove it from the URL or choose an active field", err)
+		}
+	}
 
-	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
+	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(spec.DatasetID))
 	if datasetID != "" {
 		if !explorerDatasetByID(projection.Datasets, datasetID) || !compiledDataset(compiled, datasetID) {
 			return fmt.Errorf("dataset %q is no longer available in model %q; choose an active dataset", datasetID, selectedModelID)
@@ -180,9 +396,30 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	for _, field := range projection.Fields {
 		fieldByID[field.ID] = field
 	}
+	for index, dimension := range spec.Dimensions {
+		if dimension.Grain == nil {
+			continue
+		}
+		field, err := restoredExploreField(dimension.Field, fmt.Sprintf("dimension %d", index+1), "dimension", fieldByID)
+		if err != nil {
+			return err
+		}
+		grain := string(*dimension.Grain)
+		if !restoredTimeGrain(grain) {
+			return fmt.Errorf("dimension field %q uses unsupported grain %q; choose a supported time grain", dimension.Field, grain)
+		}
+		if declared, supported := restoredCompiledSemanticTimeGrain(compiled, dimension.Field, grain); declared && !supported {
+			return fmt.Errorf("dimension field %q does not support grain %q in the active semantic model; choose a supported grain", dimension.Field, grain)
+		}
+		fieldType := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(field.Type)))
+		if fieldType != "date" && fieldType != "timestamp" && fieldType != "datetime" {
+			return fmt.Errorf("dimension field %q is not a date or timestamp dimension; choose a temporal field", dimension.Field)
+		}
+	}
 	filterDatasets := restoredFilterDatasetParticipation(command, projection, model, fieldByID)
-	seenFields := make(map[string]string, len(command.Dimensions)+len(command.Metrics))
-	for _, fieldID := range command.Dimensions {
+	seenFields := make(map[string]string, len(state.Dimensions)+len(state.Metrics))
+	selectedReferences := make(map[string]string, len(spec.Dimensions)+len(spec.Metrics))
+	for _, fieldID := range state.Dimensions {
 		if err := validateRestoredExploreField(fieldID, "dimension", fieldByID); err != nil {
 			return err
 		}
@@ -191,7 +428,13 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		}
 		seenFields[fieldID] = "dimension"
 	}
-	for _, fieldID := range command.Metrics {
+	for _, dimension := range spec.Dimensions {
+		selectedReferences[dimension.Field] = dimension.Field
+		if dimension.Alias != nil {
+			selectedReferences[*dimension.Alias] = dimension.Field
+		}
+	}
+	for _, fieldID := range state.Metrics {
 		if err := validateRestoredExploreField(fieldID, "metric", fieldByID); err != nil {
 			return err
 		}
@@ -200,7 +443,13 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		}
 		seenFields[fieldID] = "metric"
 	}
-	for index, filter := range command.Filters {
+	for _, metric := range spec.Metrics {
+		selectedReferences[metric.Field] = metric.Field
+		if metric.Alias != nil {
+			selectedReferences[*metric.Alias] = metric.Field
+		}
+	}
+	for index, filter := range state.Filters {
 		_, err := restoredExploreField(filter.Field, "filter", "dimension", fieldByID)
 		if err != nil {
 			return fmt.Errorf("filter %d: %w", index+1, err)
@@ -222,31 +471,35 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 			}
 		}
 	}
-	for index, sorting := range command.Sort {
-		if _, err := restoredExploreField(sorting.Field, fmt.Sprintf("sort %d", index+1), "", fieldByID); err != nil {
+	for index, sorting := range state.Sort {
+		resolvedSortField := sorting.Field
+		if selected, ok := selectedReferences[sorting.Field]; ok {
+			resolvedSortField = selected
+		}
+		if _, err := restoredExploreField(resolvedSortField, fmt.Sprintf("sort %d", index+1), "", fieldByID); err != nil {
 			return err
 		}
 		if sorting.Direction != "asc" && sorting.Direction != "desc" {
 			return fmt.Errorf("sort %d uses unsupported direction %q; choose asc or desc", index+1, sorting.Direction)
 		}
-		if !containsRestoredExploreSelection(sorting.Field, command.Dimensions, command.Metrics) {
+		if _, selected := selectedReferences[sorting.Field]; !selected {
 			return fmt.Errorf("sort %d field %q is not selected; choose a selected dimension or metric", index+1, sorting.Field)
 		}
 	}
-	if command.Time != nil {
-		field, err := restoredExploreField(command.Time.Field, "time", "dimension", fieldByID)
+	if state.Time != nil {
+		field, err := restoredExploreField(state.Time.Field, "time", "dimension", fieldByID)
 		if err != nil {
 			return err
 		}
-		if !restoredTimeGrain(command.Time.Grain) {
-			return fmt.Errorf("time field %q uses unsupported grain %q; choose a supported time grain", command.Time.Field, command.Time.Grain)
+		if !restoredTimeGrain(state.Time.Grain) {
+			return fmt.Errorf("time field %q uses unsupported grain %q; choose a supported time grain", state.Time.Field, state.Time.Grain)
 		}
-		if declared, supported := restoredCompiledSemanticTimeGrain(compiled, command.Time.Field, command.Time.Grain); declared && !supported {
-			return fmt.Errorf("time field %q does not support grain %q in the active semantic model; choose a supported grain", command.Time.Field, command.Time.Grain)
+		if declared, supported := restoredCompiledSemanticTimeGrain(compiled, state.Time.Field, state.Time.Grain); declared && !supported {
+			return fmt.Errorf("time field %q does not support grain %q in the active semantic model; choose a supported grain", state.Time.Field, state.Time.Grain)
 		}
 		fieldType := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(field.Type)))
 		if fieldType != "date" && fieldType != "timestamp" {
-			return fmt.Errorf("time field %q is not a date or timestamp dimension; choose a temporal field", command.Time.Field)
+			return fmt.Errorf("time field %q is not a date or timestamp dimension; choose a temporal field", state.Time.Field)
 		}
 	}
 	return nil
@@ -259,14 +512,15 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 // dataset target and the complete recursive root union is the safe scope.
 func restoredFilterDatasetParticipation(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, fields map[string]projectsignals.DataExploreFieldSignal) map[string]bool {
 	participating := map[string]bool{}
-	effectiveDataset := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.DatasetID))
-	if !explorerCommandHasMultiRootMetric(command.Metrics, fields) {
+	effectiveDataset := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.Spec.DatasetID))
+	state := dataExploreStateFromSpec(command.Spec)
+	if !explorerCommandHasMultiRootMetric(state.Metrics, fields) {
 		if effectiveDataset != "" {
 			participating[effectiveDataset] = true
 		}
 		return participating
 	}
-	for _, metric := range command.Metrics {
+	for _, metric := range state.Metrics {
 		for _, root := range explorerMetricRootDatasets(model, metric) {
 			participating[root] = true
 		}
@@ -274,7 +528,7 @@ func restoredFilterDatasetParticipation(command projectsignals.DataExploreComman
 	return participating
 }
 
-func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreFilterSignal) error {
+func validateRestoredExploreFilter(index int, filter dataExploreFilter) error {
 	operator := strings.TrimSpace(filter.Operator)
 	valueCount := len(filter.Values)
 	requiresOne := false
@@ -286,6 +540,13 @@ func validateRestoredExploreFilter(index int, filter projectsignals.DataExploreF
 		if valueCount == 0 {
 			return fmt.Errorf("filter %d operator %q requires at least one value; update or remove the stale filter", index+1, operator)
 		}
+	case "unfiltered":
+		if valueCount != 0 {
+			return fmt.Errorf("filter %d unfiltered expression does not accept values; update or remove the stale filter", index+1)
+		}
+	case "range":
+		// The canonical range bounds are validated and lowered directly from
+		// the spec; the compatibility view intentionally carries no values.
 	case "is_null", "is_not_null":
 		requiresZero = true
 	default:

@@ -1,4 +1,5 @@
 import "@yacobolo/apigen";
+import "../exploration/main.tsp";
 import "../visualization/main.tsp";
 import "./personal-settings.tsp";
 import "./product_settings.tsp";
@@ -621,7 +622,7 @@ model AgentContextSignal {
   `pageTitle`: string;
   `modelId`: string;
   `datasetId`?: string;
-  `exploration`?: DataExploreAgentContextSignal;
+  `exploration`?: LeapViewExploration.ExplorationSpec;
   `generation`: int64;
   `filters`: DashboardFilterState;
   `referenceLimit`: int32;
@@ -1339,29 +1340,13 @@ model DataExplorerCommand {
   `visibleColumns`?: string[];
 }
 
-model DataExploreAgentContextSignal {
-  `dimensions`: string[];
-  `filters`: DataExploreFilterSignal[];
-  `limit`: int64;
-  `metrics`: string[];
-  `sort`: DataExploreSortSignal[];
-  `time`?: DataExploreTimeSignal;
-}
-
 @apigen.contract(#{ kind: "ui-command", tags: #["data", "command"] })
 @apigen.`metadata`(#{ `x-leapview-contract-role`: "command", `x-leapview-surface`: "data" })
 model DataExploreCommand {
+  `spec`: LeapViewExploration.ExplorationSpec;
   `columnWidths`?: Record<float64>;
-  `datasetId`?: string;
-  `dimensions`: string[];
-  `filters`: DataExploreFilterSignal[];
-  `limit`: int64;
-  `metrics`: string[];
-  `modelId`?: string;
   `requestSeq`: int64;
   `resetVersion`: int64;
-  `sort`: DataExploreSortSignal[];
-  `time`?: DataExploreTimeSignal;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1391,13 +1376,6 @@ model DataExploreFieldSignal {
   `relationshipPath`?: string[];
   `selected`: boolean;
   `type`?: string;
-}
-
-model DataExploreFilterSignal {
-  `dataset`?: string;
-  `field`: string;
-  `operator`: string;
-  `values`: string[];
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })
@@ -1434,17 +1412,6 @@ model DataExploreSignal {
   `result`: DataExploreResultSignal;
   `selectedDataset`?: DataExploreDatasetSignal;
   `selectedModel`?: DataExploreModelSignal;
-}
-
-model DataExploreSortSignal {
-  `direction`: "asc" | "desc";
-  `field`: string;
-}
-
-model DataExploreTimeSignal {
-  `alias`?: string;
-  `field`: string;
-  `grain`: string;
 }
 
 @apigen.contract(#{ kind: "ui-signal", tags: #["data", "signal"] })

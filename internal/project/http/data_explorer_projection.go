@@ -38,6 +38,7 @@ type DataExplorerProjection struct {
 // output: manifest entries that do not have a visible serving asset are never
 // exposed to the browser.
 func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project projectmanifest.Project, command projectsignals.DataExploreCommand, compiledModels map[string]*semanticquery.CompiledModel) DataExplorerProjection {
+	state := dataExploreStateFromSpec(command.Spec)
 	visible := make(map[string]projectview.DevelopAssetView, len(assets))
 	for _, asset := range assets {
 		if strings.TrimSpace(asset.ID) == "" {
@@ -145,7 +146,7 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	sortExplorerObjects(objects)
 
-	selectedModelID := strings.TrimSpace(projectsignals.ValueOrZero(command.ModelID))
+	selectedModelID := strings.TrimSpace(projectsignals.ValueOrZero(state.ModelID))
 	selectedModelIndex := -1
 	for index := range models {
 		if models[index].ID == selectedModelID {
@@ -166,9 +167,9 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	}
 	selectedModel := models[selectedModelIndex]
 	result.SelectedModel = &selectedModel
-	command.ModelID = projectsignals.Optional(selectedModel.ID)
+	state.ModelID = projectsignals.Optional(selectedModel.ID)
 	result.Datasets = append([]projectsignals.DataExploreDatasetSignal(nil), selectedModel.Datasets...)
-	selectedDatasetID := strings.TrimSpace(projectsignals.ValueOrZero(command.DatasetID))
+	selectedDatasetID := strings.TrimSpace(projectsignals.ValueOrZero(state.DatasetID))
 	for index := range result.Datasets {
 		if result.Datasets[index].ID == selectedDatasetID {
 			selected := result.Datasets[index]
@@ -183,14 +184,14 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 	baseTable := ""
 	if result.SelectedDataset != nil {
 		baseTable = result.SelectedDataset.ID
-		command.DatasetID = projectsignals.Optional(baseTable)
+		state.DatasetID = projectsignals.Optional(baseTable)
 	}
 	model := modelByID[selectedModel.ID]
 	compiled := compiledByID[selectedModel.ID]
-	if resolvedBase, changed := resolveExplorerBase(model, baseTable, command, compiled); changed {
+	if resolvedBase, changed := resolveExplorerBase(model, baseTable, state, compiled); changed {
 		previousBase := baseTable
 		baseTable = resolvedBase
-		command.DatasetID = projectsignals.Optional(baseTable)
+		state.DatasetID = projectsignals.Optional(baseTable)
 		for index := range result.Datasets {
 			if result.Datasets[index].ID == baseTable {
 				selected := result.Datasets[index]
@@ -200,8 +201,9 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 		}
 		result.Warnings = append(result.Warnings, "Grain changed from "+explorerLabel(previousBase)+" to "+explorerLabel(baseTable)+" to support the selected fields.")
 	}
+	command.Spec = explorationSpecWithState(command.Spec, state)
 	result.Command = command
-	result.Fields = explorerFields(model, baseTable, command, compiled)
+	result.Fields = explorerFields(model, baseTable, state, compiled)
 	return result
 }
 
@@ -280,7 +282,7 @@ func explorerDatasetEntities(table semanticmodel.Table) ([]projectsignals.Semant
 	return entities, grainEntity, grainFields
 }
 
-func explorerFields(model *semanticmodel.Model, baseTable string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreFieldSignal {
+func explorerFields(model *semanticmodel.Model, baseTable string, command dataExploreState, compiled *semanticquery.CompiledModel) []projectsignals.DataExploreFieldSignal {
 	if model == nil {
 		return []projectsignals.DataExploreFieldSignal{}
 	}
@@ -303,7 +305,7 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command projec
 		for _, fieldName := range fieldNames {
 			dimension := table.Dimensions[fieldName]
 			id := tableName + "." + fieldName
-			fieldType := firstExplorerNonEmpty(dimension.Type, table.Columns[fieldName].Type)
+			fieldType := firstExplorerNonEmpty(string(dimension.Datatype), dimension.Type, table.Columns[fieldName].Type)
 			compatible, reason, path := explorerFieldCompatibility(model, baseTable, tableName)
 			rebaseDatasetID := ""
 			if !compatible {
@@ -373,7 +375,7 @@ func explorerFieldCompatibility(model *semanticmodel.Model, baseTable, table str
 	return true, "", ids
 }
 
-func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command projectsignals.DataExploreCommand, compiled *semanticquery.CompiledModel) (string, bool) {
+func resolveExplorerBase(model *semanticmodel.Model, currentBase string, command dataExploreState, compiled *semanticquery.CompiledModel) (string, bool) {
 	currentBase = strings.TrimSpace(currentBase)
 	if model == nil {
 		return currentBase, false
@@ -456,7 +458,7 @@ func explorerMetricRootDatasets(model *semanticmodel.Model, name string) []strin
 	return out
 }
 
-func explorerCommandTargets(model *semanticmodel.Model, command projectsignals.DataExploreCommand) ([]string, []string) {
+func explorerCommandTargets(model *semanticmodel.Model, command dataExploreState) ([]string, []string) {
 	if model == nil {
 		return nil, nil
 	}
@@ -527,7 +529,7 @@ func explorerBaseScore(model *semanticmodel.Model, candidate string, targets, me
 	return score
 }
 
-func explorerFieldRebase(model *semanticmodel.Model, command projectsignals.DataExploreCommand, currentBase, fieldID, kind string, compiled *semanticquery.CompiledModel) string {
+func explorerFieldRebase(model *semanticmodel.Model, command dataExploreState, currentBase, fieldID, kind string, compiled *semanticquery.CompiledModel) string {
 	hypothetical := command
 	if kind == "metric" {
 		hypothetical.Metrics = appendUniqueExplorerValue(hypothetical.Metrics, fieldID)
