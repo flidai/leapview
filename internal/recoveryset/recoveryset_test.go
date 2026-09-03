@@ -101,4 +101,8 @@ func TestValidationResultNormalizeRequiresJSONObject(t *testing.T) {
 	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("array evidence error = %v", err)
 	}
+	base.Evidence = []byte(`{"outer":{"ok":1,"ok":2}}`)
+	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate evidence key error = %v", err)
+	}
 }

@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
+	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 )
 
@@ -248,7 +249,7 @@ func (r ValidationResult) Validate() error {
 		return fmt.Errorf("%w: validation evidence must be bounded valid JSON", ErrInvalid)
 	}
 	var evidence map[string]json.RawMessage
-	if err := json.Unmarshal(r.Evidence, &evidence); err != nil || evidence == nil {
+	if err := strictjson.DecodeWithOptions(r.Evidence, &evidence, strictjson.Options{MaxBytes: 65536, MaxDepth: 32, DuplicateKeys: strictjson.CaseSensitiveKeys, AllowUnknownFields: true}); err != nil || evidence == nil {
 		return fmt.Errorf("%w: validation evidence must be a JSON object", ErrInvalid)
 	}
 	if r.RecordedAt.IsZero() {
