@@ -770,6 +770,68 @@ func (e *recordingQualificationExecutor) Execute(
 	return append([]byte(nil), e.output...), e.err
 }
 
+func TestVerifyQualificationRuntimeIdentityBindsBundleImage(t *testing.T) {
+	root := t.TempDir()
+	imageReference := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	const runtimeIdentity = `{"version":"1.2.3","revision":"rev","buildTime":"2026-09-02T00:00:00Z","dirty":false,"development":false}`
+	require.NoError(t, writeQualificationJSON(
+		filepath.Join(root, "release-identity.json"),
+		map[string]any{
+			"version":     "1.2.3",
+			"revision":    "rev",
+			"buildTime":   "2026-09-02T00:00:00Z",
+			"dirty":       false,
+			"development": false,
+			"image":       imageReference,
+		},
+	))
+	evidenceDir := filepath.Join(root, "evidence")
+	require.NoError(t, os.MkdirAll(evidenceDir, 0o700))
+	executor := &recordingQualificationExecutor{output: []byte(runtimeIdentity)}
+	controller, err := New(Options{
+		Root: root, DockerBin: "docker-probe",
+		qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, controller.verifyQualificationRuntimeIdentity(
+		t.Context(), imageReference, evidenceDir,
+	))
+	require.Len(t, executor.requests, 1)
+	require.Equal(t, []string{"run", "--rm", imageReference, "version", "--json"}, executor.requests[0].Arguments)
+	contents, err := os.ReadFile(filepath.Join(evidenceDir, "runtime-identity.json"))
+	require.NoError(t, err)
+	require.Equal(t, runtimeIdentity, string(contents))
+}
+
+func TestVerifyQualificationRuntimeIdentityRejectsBundleImageDrift(t *testing.T) {
+	root := t.TempDir()
+	expectedImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("a", 64)
+	observedImage := "ghcr.io/flidai/leapview@sha256:" + strings.Repeat("b", 64)
+	require.NoError(t, writeQualificationJSON(
+		filepath.Join(root, "release-identity.json"),
+		map[string]any{
+			"version":     "1.2.3",
+			"revision":    "rev",
+			"buildTime":   "2026-09-02T00:00:00Z",
+			"dirty":       false,
+			"development": false,
+			"image":       expectedImage,
+		},
+	))
+	executor := &recordingQualificationExecutor{}
+	controller, err := New(Options{
+		Root: root, DockerBin: "docker-probe",
+		qualificationExecutor: executor,
+	})
+	require.NoError(t, err)
+
+	err = controller.verifyQualificationRuntimeIdentity(t.Context(), observedImage, filepath.Join(root, "evidence"))
+	require.ErrorContains(t, err, "release identity image")
+	require.ErrorContains(t, err, "image-reference.txt")
+	require.Empty(t, executor.requests)
+}
+
 func TestQualificationDockerExecutorPreservesExactArgumentsWithoutShell(t *testing.T) {
 	root := t.TempDir()
 	executor := &recordingQualificationExecutor{output: []byte("ok")}

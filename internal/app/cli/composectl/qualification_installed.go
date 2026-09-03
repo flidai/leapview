@@ -757,6 +757,24 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 	imageReference string,
 	evidenceDir string,
 ) error {
+	var expected struct {
+		Version     string `json:"version"`
+		Revision    string `json:"revision"`
+		BuildTime   string `json:"buildTime"`
+		Dirty       bool   `json:"dirty"`
+		Development bool   `json:"development"`
+		Image       string `json:"image"`
+	}
+	if err := readQualificationJSON(c.path("release-identity.json"), &expected); err != nil {
+		return err
+	}
+	if expected.Image != imageReference {
+		return fmt.Errorf(
+			"release identity image %q does not match image-reference.txt %q",
+			expected.Image,
+			imageReference,
+		)
+	}
 	runtimeOutput, err := c.qualificationDocker(
 		ctx, nil, "run", "--rm", imageReference, "version", "--json",
 	)
@@ -767,20 +785,22 @@ func (c *Controller) verifyQualificationRuntimeIdentity(
 	if err := os.WriteFile(runtimePath, runtimeOutput, 0o600); err != nil {
 		return err
 	}
-	var expected, actual struct {
+	var actual struct {
 		Version     string `json:"version"`
 		Revision    string `json:"revision"`
 		BuildTime   string `json:"buildTime"`
 		Dirty       bool   `json:"dirty"`
 		Development bool   `json:"development"`
 	}
-	if err := readQualificationJSON(c.path("release-identity.json"), &expected); err != nil {
-		return err
-	}
 	if err := json.Unmarshal(runtimeOutput, &actual); err != nil {
 		return err
 	}
-	if expected != actual || actual.Dirty || actual.Development {
+	if expected.Version != actual.Version ||
+		expected.Revision != actual.Revision ||
+		expected.BuildTime != actual.BuildTime ||
+		expected.Dirty != actual.Dirty ||
+		expected.Development != actual.Development ||
+		actual.Dirty || actual.Development {
 		return fmt.Errorf("runtime identity disagrees with release identity")
 	}
 	return nil

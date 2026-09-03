@@ -95,7 +95,11 @@ jobs:
     name: Qualify production image
     needs: build-production-image
     runs-on: ubuntu-24.04
-    timeout-minutes: 90
+    # The release gate now includes the policy-driven performance and repeated
+    # native-refresh phase. Its bounded phase budgets total 115 minutes before
+    # toolchain setup and evidence cleanup, so retain enough outer headroom for
+    # the controller to finish and publish diagnostics on a slow runner.
+    timeout-minutes: 150
     permissions:
       contents: read
       packages: read

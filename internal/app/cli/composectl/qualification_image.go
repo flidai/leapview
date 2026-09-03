@@ -297,6 +297,7 @@ func (c *Controller) QualifyImage(
 	}
 	var nativeTopology *qualificationNativePostgresTopology
 	var nativeComposeLifecycle bool
+	var browserContainer string
 	cleanup.Add(func(cleanupCtx context.Context) error {
 		if !nativeComposeLifecycle && nativeTopology == nil {
 			return nil
@@ -352,6 +353,13 @@ func (c *Controller) QualifyImage(
 			result = errors.Join(result, ignoreQualificationNotFound(downErr))
 		}
 		return result
+	})
+	cleanup.Add(func(cleanupCtx context.Context) error {
+		return removeQualificationNamedContainerHandle(
+			cleanupCtx,
+			instanceController.qualificationContainers,
+			&browserContainer,
+		)
 	})
 	if err := phases.Finish(nil); err != nil {
 		return err
@@ -492,9 +500,54 @@ func (c *Controller) QualifyImage(
 	if err := phases.Finish(nil); err != nil {
 		return err
 	}
+	ctx = phases.Begin(rootContext, "performance", 45*time.Minute)
+	metricsToken, err := envFileValue(
+		instanceController.path(appEnvName),
+		"LEAPVIEW_METRICS_BEARER_TOKEN",
+	)
+	if err != nil {
+		return err
+	}
+	browserContainer, err = instanceController.startQualificationPerformanceBrowser(
+		ctx,
+		composeProject,
+		credentialsPath,
+		evidenceDir,
+		target,
+	)
+	if err != nil {
+		return err
+	}
+	containerID, err = instanceController.containerID(ctx)
+	if err != nil {
+		return err
+	}
+	if err := instanceController.runQualificationPerformance(
+		ctx,
+		browserContainer,
+		containerID,
+		evidenceDir,
+		imageReference,
+		metricsToken,
+	); err != nil {
+		return err
+	}
+	if err := nativeTopology.AssertNativeDeliveryReads(ctx); err != nil {
+		return err
+	}
+	if err := removeQualificationNamedContainerHandle(
+		ctx,
+		instanceController.qualificationContainers,
+		&browserContainer,
+	); err != nil {
+		return err
+	}
+	if err := phases.Finish(nil); err != nil {
+		return err
+	}
 	report.Result = "success"
 	report.Phases = phases.Evidence()
-	_, err = fmt.Fprintln(c.stdout, "production image passed enterprise authoring qualification")
+	_, err = fmt.Fprintln(c.stdout, "production image passed enterprise qualification")
 	return err
 }
 

@@ -2,9 +2,12 @@ package composectl
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -79,6 +82,38 @@ func TestProductionImageQualificationCanRequireImmutableDigest(t *testing.T) {
 	if called {
 		t.Fatal("mutable image validation must fail before invoking Docker")
 	}
+}
+
+func TestProductionImageQualificationRunsPolicyPerformanceAfterAuthoring(t *testing.T) {
+	imageQualification, err := os.ReadFile("qualification_image.go")
+	require.NoError(t, err)
+	source := string(imageQualification)
+	authoring := strings.Index(source, "authoringReport, err := c.runQualificationAuthoring")
+	performance := strings.Index(source, "instanceController.runQualificationPerformance")
+	nativeReads := strings.LastIndex(source, "nativeTopology.AssertNativeDeliveryReads(ctx)")
+	if authoring < 0 || performance < 0 || nativeReads < 0 {
+		t.Fatalf("production qualification is missing authoring, performance, or native-read phase")
+	}
+	if !(authoring < performance && performance < nativeReads) {
+		t.Fatalf("production qualification phase order is authoring=%d performance=%d native-reads=%d", authoring, performance, nativeReads)
+	}
+
+	policyPath := filepath.Join("..", "..", "..", "..", "deploy", "compose", "qualification", "performance-policy.json")
+	policyJSON, err := os.ReadFile(policyPath)
+	require.NoError(t, err)
+	var policy struct {
+		Assumptions struct {
+			Samples struct {
+				RefreshRuns int `json:"refreshRuns"`
+			} `json:"samples"`
+		} `json:"assumptions"`
+	}
+	require.NoError(t, json.Unmarshal(policyJSON, &policy))
+	require.Equal(t, 3, policy.Assumptions.Samples.RefreshRuns)
+
+	performanceScript, err := os.ReadFile(filepath.Join("..", "..", "..", "..", "deploy", "compose", "qualification", "performance.mjs"))
+	require.NoError(t, err)
+	require.Contains(t, string(performanceScript), "for (let index = 0; index < policy.assumptions.samples.refreshRuns; index += 1)")
 }
 
 func TestSiteImageQualificationIsOwnedByGo(t *testing.T) {
