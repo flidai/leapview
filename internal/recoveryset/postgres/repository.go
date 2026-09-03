@@ -286,7 +286,11 @@ func (r *Repository) BeginValidation(ctx context.Context, attempt recoveryset.Va
 	if err != nil {
 		return recoveryset.ValidationAttempt{}, err
 	}
-	if stored.SetID != attempt.SetID || stored.OwnerID != attempt.OwnerID || stored.FenceEpoch != attempt.FenceEpoch || stored.AuditIdentity != attempt.AuditIdentity || !stored.StartedAt.Equal(attempt.StartedAt) {
+	// StartedAt is repository-owned metadata assigned on the first insert. A
+	// retry may arrive after process loss with a fresh caller clock, so the
+	// immutable identity excludes that timestamp while retaining all fencing
+	// and ownership fields.
+	if stored.SetID != attempt.SetID || stored.OwnerID != attempt.OwnerID || stored.FenceEpoch != attempt.FenceEpoch || stored.AuditIdentity != attempt.AuditIdentity || stored.Status != attempt.Status {
 		return recoveryset.ValidationAttempt{}, recoveryset.ErrConflict
 	}
 	return stored, nil
@@ -311,8 +315,17 @@ func (r *Repository) CompleteValidation(ctx context.Context, attempt recoveryset
 	if err != nil {
 		return err
 	}
-	if stored.Status != recoveryset.ValidationRunning || stored.SetID != attempt.SetID || stored.OwnerID != attempt.OwnerID || stored.FenceEpoch != attempt.FenceEpoch || stored.AuditIdentity != attempt.AuditIdentity || !stored.StartedAt.Equal(attempt.StartedAt) {
+	if stored.SetID != attempt.SetID || stored.OwnerID != attempt.OwnerID || stored.FenceEpoch != attempt.FenceEpoch || stored.AuditIdentity != attempt.AuditIdentity || !stored.StartedAt.Equal(attempt.StartedAt) {
 		return recoveryset.ErrFenced
+	}
+	if stored.Status != recoveryset.ValidationRunning {
+		// CompletedAt is repository-owned metadata. Concurrent or post-crash
+		// retries of the same terminal decision succeed when the immutable
+		// outcome agrees; a different decision remains a conflict.
+		if stored.Status == attempt.Status && stored.ResultDigest == attempt.ResultDigest && stored.Error == attempt.Error {
+			return nil
+		}
+		return recoveryset.ErrConflict
 	}
 	if attempt.ResultDigest != "" {
 		result, resultErr := r.ValidationResult(ctx, attempt.AttemptID)
@@ -378,7 +391,10 @@ func (r *Repository) RecordValidationResult(ctx context.Context, result recovery
 	if readErr != nil {
 		return readErr
 	}
-	if stored.ResultDigest != normalized.ResultDigest || !bytes.Equal(stored.Evidence, normalized.Evidence) || !stored.RecordedAt.Equal(normalized.RecordedAt) {
+	// RecordedAt is repository-owned metadata assigned on first insert. Exact
+	// retries prove the immutable result digest and canonical evidence bytes;
+	// caller timestamps are not part of result identity.
+	if stored.ResultDigest != normalized.ResultDigest || !bytes.Equal(stored.Evidence, normalized.Evidence) {
 		return recoveryset.ErrConflict
 	}
 	return nil

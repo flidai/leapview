@@ -84,6 +84,7 @@ type Operations interface {
 	BootstrapPhysicalPool(context.Context, adminoffline.PhysicalPoolBootstrapRequest, io.Writer) error
 	UpgradePhysicalPoolCatalog(context.Context, CatalogUpgradeRequest, io.Writer) error
 	QualificationPoolArtifacts(context.Context) (adminoffline.QualificationPoolArtifacts, error)
+	RecoveryOperations
 }
 
 // Command constructs the Admin command tree.
@@ -127,6 +128,7 @@ func Command(ctx context.Context, operations Operations) *cobra.Command {
 	parent.AddCommand(initialize, maintenance)
 	delivery := deliveryPoolCommand(ctx, operations)
 	parent.AddCommand(delivery)
+	parent.AddCommand(recoveryCommand(ctx, operations))
 	return parent
 }
 

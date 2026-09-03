@@ -141,8 +141,13 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if replay, err := r.BeginValidation(t.Context(), attempt); err != nil || replay != created {
+	retryWithFreshClock := attempt
+	retryWithFreshClock.StartedAt = started.Add(9 * time.Second)
+	if replay, err := r.BeginValidation(t.Context(), retryWithFreshClock); err != nil || replay != created {
 		t.Fatalf("attempt replay = %#v, %v", replay, err)
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.validation_result(attempt_id,result_digest,evidence,recorded_at) VALUES ('018f3f83-7c7a-7f00-8a11-000000000110'::uuid,$1,'{}'::jsonb,clock_timestamp())`, "sha256:"+strings.Repeat("8", 64)); err == nil {
+		t.Fatal("direct arbitrary validation evidence was accepted")
 	}
 	terminal := attempt
 	terminal.Status = recoveryset.ValidationPassed
@@ -166,10 +171,10 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	if err := r.RecordValidationResult(t.Context(), result); err != nil {
 		t.Fatalf("result replay = %v", err)
 	}
-	replayConflict := result
-	replayConflict.RecordedAt = replayConflict.RecordedAt.Add(time.Microsecond)
-	if err := r.RecordValidationResult(t.Context(), replayConflict); !errors.Is(err, recoveryset.ErrConflict) {
-		t.Fatalf("conflicting result replay = %v", err)
+	retryResult := result
+	retryResult.RecordedAt = retryResult.RecordedAt.Add(time.Second)
+	if err := r.RecordValidationResult(t.Context(), retryResult); err != nil {
+		t.Fatalf("result replay with caller timestamp = %v", err)
 	}
 	conflictingEnvelope := envelope
 	conflictingEnvelope.ClosureDigest = "sha256:" + strings.Repeat("9", 64)
@@ -187,6 +192,11 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	}
 	if err := r.CompleteValidation(t.Context(), terminal); err != nil {
 		t.Fatal(err)
+	}
+	terminalRetry := terminal
+	terminalRetry.CompletedAt = terminal.CompletedAt.Add(time.Second)
+	if err := r.CompleteValidation(t.Context(), terminalRetry); err != nil {
+		t.Fatalf("terminal replay with caller timestamp = %v", err)
 	}
 	if err := r.RecordValidationResult(t.Context(), result); err != nil {
 		t.Fatalf("terminal exact replay = %v", err)
@@ -210,6 +220,39 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	}
 	if _, err := db.Exec(t.Context(), `UPDATE recovery.validation_attempt SET owner_id='other' WHERE attempt_id=$1::uuid`, second.AttemptID); err == nil {
 		t.Fatal("validation attempt identity mutation succeeded")
+	}
+}
+
+func TestValidationResultRejectsIncompleteFrontierEvidence(t *testing.T) {
+	db := recoverySetDB(t)
+	set := recoverySetFixture(t)
+	if _, err := New(db).Create(t.Context(), set); err != nil {
+		t.Fatal(err)
+	}
+	attemptID := "018f3f83-7c7a-7f00-8a11-000000000120"
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := New(db).BeginValidation(t.Context(), recoveryset.ValidationAttempt{AttemptID: attemptID, SetID: set.ID, OwnerID: "validator", FenceEpoch: set.FenceEpoch, AuditIdentity: set.AuditIdentity, Status: recoveryset.ValidationRunning, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := recoveryset.NewValidationEvidenceEnvelope(set, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := recoveryset.NewValidationResult(envelope, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `ALTER TABLE recovery.recovery_cluster_point DISABLE TRIGGER recovery_cluster_point_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `DELETE FROM recovery.recovery_cluster_point WHERE set_id=$1::uuid AND database_role='control'`, set.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `ALTER TABLE recovery.recovery_cluster_point ENABLE TRIGGER recovery_cluster_point_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.validation_result(attempt_id,result_digest,evidence,recorded_at) VALUES ($1::uuid,$2,$3::jsonb,clock_timestamp())`, attemptID, result.ResultDigest, result.Evidence); err == nil {
+		t.Fatal("validation result accepted with incomplete frontier children")
 	}
 }
 

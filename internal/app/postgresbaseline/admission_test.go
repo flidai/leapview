@@ -61,6 +61,7 @@ func TestServingAdmissionsAcceptReviewedPrivileges(t *testing.T) {
 				"table:recovery.recovery_set:INSERT":      true,
 				"table:recovery.recovery_set:UPDATE":      true,
 				"table:recovery.validation_result:INSERT": true,
+				"function:delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb):EXECUTE": true,
 			},
 		},
 		"readonly": {
@@ -110,6 +111,9 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 		{name: "extension schema", mutate: func(f *admissionReaderFake) { f.extension.Schema = "public" }},
 		{name: "missing positive privilege", mutate: func(f *admissionReaderFake) { delete(f.allowed, "schema:recovery:USAGE") }},
 		{name: "forbidden privilege", mutate: func(f *admissionReaderFake) { f.allowed["table:platform.schema_revision:UPDATE"] = true }},
+		{name: "runtime recovery-root function grant", mutate: func(f *admissionReaderFake) {
+			f.allowed["function:delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb):EXECUTE"] = true
+		}},
 		{name: "probe error", mutate: func(f *admissionReaderFake) { f.err = errors.New("probe unavailable") }},
 	} {
 		t.Run(test.name, func(t *testing.T) {

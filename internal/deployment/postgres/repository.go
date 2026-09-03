@@ -4136,6 +4136,9 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 	if (root.RootKind == "candidate" || root.RootKind == "generation") && (root.CandidateID == "" || root.GenerationID == "" || root.SnapshotSealID == "") {
 		return DeliveryRetentionRoot{}, ErrInvalid
 	}
+	if root.RootKind == "recovery" && (root.GenerationID == "" || root.SnapshotSealID == "" || root.ExpiresAt.IsZero()) {
+		return DeliveryRetentionRoot{}, ErrInvalid
+	}
 	if !root.ExpiresAt.IsZero() {
 		root.ExpiresAt = root.ExpiresAt.UTC().Truncate(time.Microsecond)
 	}
@@ -4143,13 +4146,34 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
-	err = depdb.New(db).InsertRetentionRoot(contextOrBackground(ctx), depdb.InsertRetentionRootParams{RootID: dbUUID(id), TargetID: target, CandidateID: dbUUID(root.CandidateID), GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), RootKind: root.RootKind, State: root.State, ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
+	if root.RootKind == "recovery" {
+		// Recovery roots are maintenance-owned. Their table intentionally grants
+		// only SELECT to the maintenance role, so creation crosses the narrow
+		// SECURITY DEFINER capability function rather than broadening INSERT.
+		accepted, callErr := depdb.New(db).CreateRecoveryRetentionRoot(contextOrBackground(ctx), depdb.CreateRecoveryRetentionRootParams{RootID: dbUUID(id), TargetID: target, GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
+		err = callErr
+		if err == nil && !accepted {
+			err = ErrConflict
+		}
+	} else {
+		err = depdb.New(db).InsertRetentionRoot(contextOrBackground(ctx), depdb.InsertRetentionRootParams{RootID: dbUUID(id), TargetID: target, CandidateID: dbUUID(root.CandidateID), GenerationID: dbUUID(root.GenerationID), SnapshotSealID: dbUUID(root.SnapshotSealID), RootKind: root.RootKind, State: root.State, ExpiresAt: nullablePgTime(root.ExpiresAt), Evidence: evidence})
+	}
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
 	}
 	persisted, err := loadRetentionRoot(contextOrBackground(ctx), db, id)
 	if err != nil {
 		return DeliveryRetentionRoot{}, err
+	}
+	if root.RootKind == "recovery" {
+		// The SECURITY DEFINER function derives candidate_id from the exact
+		// generation tuple. Maintenance callers are not granted SELECT on
+		// delivery_generation, so load the persisted root (which is readable)
+		// before applying the generic exact-replay comparison.
+		if persisted.CandidateID == "" {
+			return DeliveryRetentionRoot{}, ErrConflict
+		}
+		root.CandidateID = persisted.CandidateID
 	}
 	if persisted.TargetID != target || persisted.CandidateID != root.CandidateID || persisted.GenerationID != root.GenerationID || persisted.SnapshotSealID != root.SnapshotSealID || persisted.RootKind != root.RootKind || persisted.State != root.State || !sameCanonical(persisted.Evidence, evidence) || !nullableTimesEqual(persisted.ExpiresAt, root.ExpiresAt) {
 		return DeliveryRetentionRoot{}, ErrConflict

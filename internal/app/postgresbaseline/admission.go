@@ -39,6 +39,7 @@ func VerifyControlRuntimeAdmission(ctx context.Context, reader AdmissionReader) 
 		{kind: "table", object: "recovery.recovery_set", privilege: "SELECT", want: true},
 		{kind: "table", object: "recovery.recovery_set", privilege: "UPDATE", want: false},
 		{kind: "function", object: "managed_data.publish_binding_set(text,text,text,text,bigint,jsonb)", privilege: "EXECUTE", want: true},
+		{kind: "function", object: "delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb)", privilege: "EXECUTE", want: false},
 	})
 }
 
@@ -53,6 +54,7 @@ func VerifyControlMaintenanceAdmission(ctx context.Context, reader AdmissionRead
 		{kind: "table", object: "recovery.recovery_set", privilege: "DELETE", want: false},
 		{kind: "table", object: "recovery.validation_result", privilege: "INSERT", want: true},
 		{kind: "table", object: "recovery.validation_result", privilege: "UPDATE", want: false},
+		{kind: "function", object: "delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb)", privilege: "EXECUTE", want: true},
 	})
 }
 
@@ -65,6 +67,7 @@ func VerifyControlReadonlyAdmission(ctx context.Context, reader AdmissionReader)
 		{kind: "table", object: "platform.schema_revision", privilege: "INSERT", want: false},
 		{kind: "table", object: "recovery.recovery_set", privilege: "SELECT", want: true},
 		{kind: "table", object: "recovery.recovery_set", privilege: "UPDATE", want: false},
+		{kind: "function", object: "delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb)", privilege: "EXECUTE", want: false},
 	})
 }
 

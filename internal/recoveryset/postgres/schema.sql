@@ -294,6 +294,72 @@ BEGIN
 END;
 $$;
 
+-- Validation results are capability evidence, not an arbitrary JSON side
+-- channel.  Reconstruct the exact v1 envelope from the immutable frontier
+-- and its append-only child rows before accepting a direct SQL INSERT.  The
+-- Go repository performs the same ValidateFor comparison; this trigger keeps
+-- maintenance-role SQL from bypassing that contract before a passed attempt
+-- can be published.
+CREATE OR REPLACE FUNCTION recovery.guard_validation_result_insert()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, recovery AS $$
+DECLARE
+    frontier recovery.recovery_set;
+    expected_evidence jsonb;
+BEGIN
+    SELECT selected.*
+      INTO frontier
+      FROM recovery.validation_attempt AS attempt
+      JOIN recovery.recovery_set AS selected ON selected.set_id = attempt.set_id
+     WHERE attempt.attempt_id = NEW.attempt_id
+     FOR SHARE;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'validation result requires an exact recovery frontier';
+    END IF;
+    IF (SELECT count(*) FROM recovery.recovery_cluster_point WHERE set_id = frontier.set_id) <> frontier.expected_cluster_points
+       OR (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = frontier.set_id) <> frontier.expected_object_roots THEN
+        RAISE EXCEPTION 'validation result requires complete recovery frontier evidence';
+    END IF;
+    expected_evidence := jsonb_build_object(
+        'schema_version', 1,
+        'set_id', frontier.set_id::text,
+        'attempt_id', NEW.attempt_id::text,
+        'frontier_digest', frontier.frontier_digest,
+        'cluster_points', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                'database_role', point.database_role,
+                'cluster_identity', point.cluster_identity,
+                'database_identity', point.database_identity,
+                'recovery_identity', point.recovery_identity
+            ) ORDER BY point.database_role)
+              FROM recovery.recovery_cluster_point AS point
+             WHERE point.set_id = frontier.set_id
+        ), '[]'::jsonb),
+        'object_roots', COALESCE((
+            SELECT jsonb_agg(jsonb_build_object(
+                'kind', root.root_kind,
+                'uri', root.root_uri,
+                'version_id', root.version_id,
+                'digest', root.digest,
+                'provider_recovery_frontier', root.provider_recovery_frontier
+            ) ORDER BY root.root_kind, root.root_uri, root.version_id)
+              FROM recovery.recovery_object_root AS root
+             WHERE root.set_id = frontier.set_id
+        ), '[]'::jsonb),
+        'relation_namespace', frontier.relation_namespace,
+        'relation_manifest_digest', frontier.relation_manifest_digest,
+        'closure_digest', frontier.closure_digest
+    );
+    IF NEW.evidence IS DISTINCT FROM expected_evidence THEN
+        RAISE EXCEPTION 'validation result evidence does not match exact recovery frontier';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS recovery_validation_result_guard ON recovery.validation_result;
+CREATE TRIGGER recovery_validation_result_guard BEFORE INSERT ON recovery.validation_result
+FOR EACH ROW EXECUTE FUNCTION recovery.guard_validation_result_insert();
+
 DROP TRIGGER IF EXISTS recovery_validation_result_immutable ON recovery.validation_result;
 CREATE TRIGGER recovery_validation_result_immutable BEFORE UPDATE OR DELETE ON recovery.validation_result
 FOR EACH ROW EXECUTE FUNCTION recovery.reject_validation_result_mutation();

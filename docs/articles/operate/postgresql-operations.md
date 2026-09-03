@@ -193,6 +193,88 @@ Do not declare success from a successful TCP connection alone. A split-brain
 or a stale DuckLake catalog can accept connections while serving incorrect
 state.
 
+## Production recovery CLI handoff
+
+The provider owns backup/PITR, object-store restore, and the probes that prove
+those operations. LeapView's production Admin CLI records that proof in a
+PostgreSQL recovery frontier; it never performs provider I/O. First restore the
+selected PostgreSQL and object points far enough that the control plane and
+referenced objects are available. Keep writes and traffic stopped, then use
+this exact qualification sequence:
+
+1. **Prepare the frontier and hold.** Supply a prepared, immutable recovery-set
+   document to the production maintenance command:
+
+   ```sh
+   leapview admin recovery prepare \
+     --set /secure/recovery-set.json \
+     --expires-at 2026-10-01T12:00:00Z
+   ```
+
+   `--set` and `--expires-at` are required. The expiry must be a future RFC3339
+   timestamp; the optional `--retain-root-id` is a canonical UUID and defaults
+   to the set ID. Prepare strictly validates a bounded set document, then
+   atomically creates the prepared recovery frontier and its finite physical
+   recovery-retention hold (a live `recovery` root) in one PostgreSQL
+   transaction. It does not invoke PostgreSQL PITR, DuckLake, object-store, or
+   any other provider API.
+
+2. **Validate with providers.** With the finite hold installed, use the
+   PostgreSQL operator and DuckLake/object-store providers to check the exact
+   control/DuckLake database identities and recovery frontiers,
+   object URI/version/digest and provider frontier values, and serving relation
+   namespace/manifest/closure. Produce the typed evidence envelope from those
+   external checks. No LeapView process performs these probes.
+
+3. **Record one exact validation attempt.** Run:
+
+   ```sh
+   leapview admin recovery validate \
+     --set-id 018f3f83-7b2f-7b37-9f9e-000000000010 \
+     --attempt-id 018f3f83-7b2f-7b37-9f9e-000000000021 \
+     --validator operator@example.com \
+     --evidence /secure/recovery-validation.json
+   ```
+
+   All four flags are required; `--validator` is a canonical identity no
+   longer than 255 bytes. Evidence is a maximum 65,536-byte strict v1 JSON
+   envelope with exact keys (unknown and duplicate/case-variant keys are
+   rejected), canonical digests, and identities matching the selected set and
+   attempt. Validation starts or resumes the exact fenced attempt, persists the
+   canonical evidence digest, and records `passed` for a valid envelope;
+   malformed or mismatched evidence is rejected rather than published. It only
+   reads/writes PostgreSQL and never contacts a provider.
+
+4. **Publish under the exact fence.** After validation succeeds, run:
+
+   ```sh
+   leapview admin recovery publish \
+     --set-id 018f3f83-7b2f-7b37-9f9e-000000000010 \
+     --publisher operator@example.com \
+     --fence-epoch 42 \
+     --validation-attempt-id 018f3f83-7b2f-7b37-9f9e-000000000021
+   ```
+
+   Publish changes only that set from `prepared` to `published` under its
+   positive fencing epoch and exact passed attempt. It does not choose a latest
+   set or perform provider I/O.
+
+5. **Gate restart and readiness.** Set `LEAPVIEW_RECOVERY_SET_ID` to the
+   published set ID, restart the instance with the restored configuration and
+   image, and admit traffic only after `/readyz` succeeds. Readiness reads that
+   exact set and checks its publication, immutable validation result, target
+   pointer/revision, generation/publication, native snapshot seal/catalog,
+   admitted compatibility tuple, and serving-artifact identities against the
+   active PostgreSQL projections. It is read-only and performs no object-store
+   or other provider probes. If the variable is unset, normal startup checks
+   run; there is no implicit latest-set selection.
+
+The finite recovery hold is maintained by native PostgreSQL maintenance. Once
+`--expires-at` elapses, maintenance retires the live recovery root and later
+marks it `expired` after the configured grace and exact reader leases drain.
+This monotonic lifecycle protects the selected DuckLake snapshot without
+requiring manual row edits or object deletion; seals remain immutable history.
+
 ## Capacity gates for delivery and background work
 
 Use the following gates before a release, migration, or planned load test:

@@ -15,9 +15,15 @@ import (
 )
 
 type fakeOperations struct {
-	called         string
-	options        Options
-	upgradeRequest CatalogUpgradeRequest
+	called                  string
+	options                 Options
+	upgradeRequest          CatalogUpgradeRequest
+	recoveryPrepareRequest  RecoveryPrepareRequest
+	recoveryValidateRequest RecoveryValidateRequest
+	recoveryPublishRequest  RecoveryPublishRequest
+	recoveryPrepareResult   RecoveryPrepareResult
+	recoveryValidateResult  RecoveryValidateResult
+	recoveryPublishResult   RecoveryPublishResult
 }
 
 func (operations *fakeOperations) Initialize(context.Context, adminoffline.InitializeRequest, io.Writer) error {
@@ -65,6 +71,24 @@ func (operations *fakeOperations) QualificationPoolArtifacts(context.Context) (a
 		},
 		Evidence: physicalpool.EvidenceArtifact{SchemaVersion: physicalpool.EvidenceArtifactSchemaVersion, Evidence: evidence},
 	}, nil
+}
+
+func (operations *fakeOperations) PrepareRecovery(_ context.Context, request RecoveryPrepareRequest) (RecoveryPrepareResult, error) {
+	operations.called = "recovery-prepare"
+	operations.recoveryPrepareRequest = request
+	return operations.recoveryPrepareResult, nil
+}
+
+func (operations *fakeOperations) ValidateRecovery(_ context.Context, request RecoveryValidateRequest) (RecoveryValidateResult, error) {
+	operations.called = "recovery-validate"
+	operations.recoveryValidateRequest = request
+	return operations.recoveryValidateResult, nil
+}
+
+func (operations *fakeOperations) PublishRecovery(_ context.Context, request RecoveryPublishRequest) (RecoveryPublishResult, error) {
+	operations.called = "recovery-publish"
+	operations.recoveryPublishRequest = request
+	return operations.recoveryPublishResult, nil
 }
 
 func TestCommandOwnsMaintenanceFlags(t *testing.T) {

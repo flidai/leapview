@@ -360,6 +360,16 @@ INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,gene
 VALUES(sqlc.arg(root_id)::uuid,sqlc.arg(target_id),sqlc.narg(candidate_id)::uuid,sqlc.narg(generation_id)::uuid,sqlc.narg(snapshot_seal_id)::uuid,sqlc.arg(root_kind),sqlc.arg(state),sqlc.narg(expires_at),sqlc.arg(evidence)::jsonb)
 ON CONFLICT(root_id) DO NOTHING;
 
+-- name: CreateRecoveryRetentionRoot :one
+SELECT delivery.create_recovery_retention_root(
+    sqlc.arg(root_id)::uuid,
+    sqlc.arg(target_id),
+    sqlc.arg(generation_id)::uuid,
+    sqlc.arg(snapshot_seal_id)::uuid,
+    sqlc.narg(expires_at),
+    sqlc.arg(evidence)::jsonb
+) AS accepted;
+
 -- Retention-root lifecycle transitions are capability-owned SECURITY DEFINER
 -- functions. The repository calls these through a caller-owned transaction so
 -- a target/pointer mutation and its root transition share one commit boundary.

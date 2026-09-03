@@ -426,6 +426,143 @@ CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_live_generation_root_idx
     ON delivery.delivery_retention_root(generation_id)
     WHERE root_kind = 'generation' AND state = 'live';
 
+-- Recovery retention is an operator mutation, but the maintenance role is
+-- intentionally denied direct INSERT on delivery_retention_root.  Keep this
+-- narrow capability function SECURITY DEFINER and require the exact
+-- target/generation/seal tuple so a recovery hold cannot be redirected to a
+-- different physical snapshot.  Replays are checked by the repository after
+-- this function returns; the function itself never mutates an existing row.
+CREATE OR REPLACE FUNCTION delivery.create_recovery_retention_root(
+    p_root_id uuid,
+    p_target_id text,
+    p_generation_id uuid,
+    p_snapshot_seal_id uuid,
+    p_expires_at timestamptz,
+    p_evidence jsonb
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+DECLARE
+    tuple_candidate_id uuid;
+    v_recovery_set_id uuid;
+    v_frontier_digest text;
+    existing_root delivery.delivery_retention_root;
+    snapshot_state text;
+BEGIN
+    IF p_root_id IS NULL OR p_target_id IS NULL OR p_target_id <> btrim(p_target_id) OR btrim(p_target_id) = '' THEN
+        RAISE EXCEPTION 'recovery retention root identity is required';
+    END IF;
+    IF p_generation_id IS NULL OR p_snapshot_seal_id IS NULL THEN
+        RAISE EXCEPTION 'recovery retention root requires generation and snapshot seal';
+    END IF;
+    IF p_expires_at IS NULL OR p_expires_at <= clock_timestamp() THEN
+        RAISE EXCEPTION 'recovery retention root expiry must be in the future';
+    END IF;
+    IF jsonb_typeof(p_evidence) <> 'object'
+       OR (SELECT count(*) FROM jsonb_object_keys(p_evidence)) <> 2
+       OR jsonb_typeof(p_evidence->'recovery_set_id') <> 'string'
+       OR jsonb_typeof(p_evidence->'frontier_digest') <> 'string'
+       OR btrim(p_evidence->>'recovery_set_id') = ''
+       OR btrim(p_evidence->>'frontier_digest') = ''
+       OR p_evidence->>'recovery_set_id' !~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$'
+       OR p_evidence->>'frontier_digest' !~ '^sha256:[0-9a-f]{64}$' THEN
+        RAISE EXCEPTION 'recovery retention root evidence is incomplete';
+    END IF;
+    v_recovery_set_id := (p_evidence->>'recovery_set_id')::uuid;
+    v_frontier_digest := p_evidence->>'frontier_digest';
+    IF v_recovery_set_id::text <> p_evidence->>'recovery_set_id' THEN
+        RAISE EXCEPTION 'recovery retention root set id is not canonical';
+    END IF;
+    SELECT generation.candidate_id
+      INTO tuple_candidate_id
+      FROM delivery.delivery_generation AS generation
+     WHERE generation.generation_id = p_generation_id
+       AND generation.target_id = p_target_id
+       AND generation.snapshot_seal_id = p_snapshot_seal_id;
+    IF NOT FOUND THEN
+        RAISE EXCEPTION 'recovery retention root target/generation/seal tuple is unknown';
+    END IF;
+
+    -- Lock the physical DuckLake retention row before creating/replaying the
+    -- root. This closes the race with a concurrent retire/expire operation.
+    SELECT retention_state
+      INTO snapshot_state
+      FROM ducklake.admit_snapshot_retention_from_seal(p_snapshot_seal_id);
+    IF NOT FOUND OR snapshot_state <> 'live' THEN
+        RAISE EXCEPTION 'recovery retention root snapshot retention is not live';
+    END IF;
+
+    SELECT * INTO existing_root
+      FROM delivery.delivery_retention_root
+     WHERE root_id = p_root_id
+     FOR UPDATE;
+    IF FOUND THEN
+        -- Replays remain valid after a prepared set is published or
+        -- superseded, but still require the exact immutable set identity.
+        IF NOT EXISTS (
+            SELECT 1
+              FROM recovery.recovery_set AS selected
+             WHERE selected.set_id = v_recovery_set_id
+               AND selected.target_id = p_target_id
+               AND selected.generation_id = p_generation_id
+               AND selected.snapshot_seal_id = p_snapshot_seal_id
+               AND selected.frontier_digest = v_frontier_digest
+               AND selected.status IN ('prepared', 'published', 'superseded')
+        ) THEN
+            RETURN false;
+        END IF;
+        RETURN existing_root.root_kind = 'recovery'
+           AND existing_root.state = 'live'
+           AND existing_root.target_id = p_target_id
+           AND existing_root.candidate_id = tuple_candidate_id
+           AND existing_root.generation_id = p_generation_id
+           AND existing_root.snapshot_seal_id = p_snapshot_seal_id
+           AND existing_root.expires_at IS NOT DISTINCT FROM p_expires_at
+           AND existing_root.evidence = p_evidence;
+    END IF;
+
+    -- A new root may only be created while the exact frontier is prepared.
+    -- Once inserted, the root itself is immutable and replays above remain
+    -- valid across later publication lifecycle transitions.
+    IF NOT EXISTS (
+        SELECT 1
+          FROM recovery.recovery_set AS selected
+         WHERE selected.set_id = v_recovery_set_id
+           AND selected.target_id = p_target_id
+           AND selected.generation_id = p_generation_id
+           AND selected.snapshot_seal_id = p_snapshot_seal_id
+           AND selected.frontier_digest = v_frontier_digest
+           AND selected.status = 'prepared'
+    ) THEN
+        RAISE EXCEPTION 'recovery retention root evidence does not match a prepared recovery set';
+    END IF;
+
+    INSERT INTO delivery.delivery_retention_root(
+        root_id, target_id, candidate_id, generation_id, snapshot_seal_id,
+        root_kind, state, expires_at, evidence
+    ) VALUES (
+        p_root_id, p_target_id, tuple_candidate_id, p_generation_id,
+        p_snapshot_seal_id, 'recovery', 'live', p_expires_at, p_evidence
+    ) ON CONFLICT(root_id) DO NOTHING;
+    SELECT * INTO existing_root
+      FROM delivery.delivery_retention_root
+     WHERE root_id = p_root_id
+     FOR UPDATE;
+    RETURN FOUND
+       AND existing_root.root_kind = 'recovery'
+       AND existing_root.state = 'live'
+       AND existing_root.target_id = p_target_id
+       AND existing_root.candidate_id = tuple_candidate_id
+       AND existing_root.generation_id = p_generation_id
+       AND existing_root.snapshot_seal_id = p_snapshot_seal_id
+       AND existing_root.expires_at IS NOT DISTINCT FROM p_expires_at
+       AND existing_root.evidence = p_evidence;
+END;
+$$;
+
 CREATE OR REPLACE FUNCTION delivery.reject_authority_history_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
@@ -990,8 +1127,8 @@ BEGIN
 END;
 $$;
 
--- One bounded maintenance pass first retires candidate roots whose explicit
--- governance deadline has elapsed, then expires ready retiring roots. The
+-- One bounded maintenance pass first retires candidate/recovery roots whose
+-- explicit governance deadline has elapsed, then expires ready retiring roots. The
 -- singular expiry function remains the final authority and rechecks reader
 -- leases, active-generation protection, grace, and immutable seal identity
 -- under the root lock. SKIP LOCKED lets parallel workers make progress
@@ -1030,7 +1167,7 @@ BEGIN
     FOR candidate IN
         SELECT root.root_id
           FROM delivery.delivery_retention_root root
-         WHERE root.root_kind = 'candidate'
+         WHERE root.root_kind IN ('candidate', 'recovery')
            AND root.state = 'live'
            AND root.expires_at IS NOT NULL
            AND root.expires_at <= db_now
@@ -1204,6 +1341,7 @@ GRANT SELECT, INSERT ON delivery.delivery_build_attempt_successor TO CURRENT_USE
 REVOKE ALL ON FUNCTION delivery.retire_retention_root(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
@@ -1217,6 +1355,7 @@ BEGIN
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.expire_retention_root(uuid, interval) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) TO leapview_control_maintenance;
     END IF;
 END;
 $$;

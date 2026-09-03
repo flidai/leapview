@@ -997,26 +997,69 @@ point-in-time recovery exercises following PostgreSQL's
 Application startup validates server version, required extensions, schema
 revision, role privileges, and read/write intent before advertising readiness.
 
-Production operators may set the optional `LEAPVIEW_RECOVERY_SET_ID` to a
-canonical recovery-set UUID when bringing a restored target back before
-traffic. With the selector unset, startup performs the ordinary PostgreSQL
-delivery checks. When it is set, readiness reads that exact recovery set (never
-the latest set), requires `published` status bound to one exact passed,
-immutable validation attempt and result, and compares its target pointer,
-generation, publication/revision, complete native snapshot-seal and catalog
-identity, admitted compatibility tuple, and serving-artifact identities with
-the active PostgreSQL projections. Validation evidence is a strict, versioned,
-canonical JSON envelope whose digest binds the exact attempt and frontier,
+The production Admin CLI exposes one exact qualification sequence after native
+providers have restored the selected PostgreSQL and object points far enough
+that the control plane and referenced objects are available. Writes remain
+stopped throughout; there is no offline or provider-orchestrating
+implementation:
+
+1. **Prepare.** Supply a prepared, immutable recovery-set JSON document to
+   `leapview admin recovery prepare --set PATH --expires-at RFC3339
+   [--retain-root-id UUID]`. `--set` and `--expires-at` are required; the
+   expiry must be in the future, and the optional root ID defaults to the set
+   ID. The bounded set is validated and the prepared frontier plus its finite
+   live `recovery` retention root are atomically installed in one PostgreSQL
+   transaction. This finite physical recovery-retention hold is the `recovery`
+   root. The operation performs no PITR, DuckLake, object-store, or other
+   provider I/O.
+2. **External provider validation.** With the finite hold installed, the
+   PostgreSQL operator and DuckLake/object-store providers probe the mutually
+   consistent points. They must prove both database identities and
+   recovery frontiers, every object URI/version/digest and provider recovery
+   frontier, and the selected relation namespace, manifest, and closure. These
+   observations are operator-produced; LeapView does not run the probes.
+3. **Validate.** Record the provider evidence with
+   `leapview admin recovery validate --set-id UUID --attempt-id UUID
+   --validator ID --evidence PATH`. All four flags are required, including
+   `--validator`, which is a canonical identity of at most 255 bytes. Evidence
+   is bounded to 65,536 bytes and must be the strict v1 JSON envelope: exact
+   fields only, no unknown or duplicate (including case-variant) keys, and
+   canonical identities/digests matching the selected set and attempt. The
+   command starts or resumes the exact fenced attempt, persists the canonical
+   evidence digest, and records a passed result for a valid envelope;
+   malformed or mismatched evidence is rejected rather than published. It
+   performs only PostgreSQL control-plane I/O and never contacts a provider.
+4. **Publish.** Run `leapview admin recovery publish --set-id UUID
+   --publisher ID --fence-epoch N --validation-attempt-id UUID`. Publication
+   changes only the exact prepared set to `published` under its positive fence
+   and exact passed validation attempt. It never selects a latest set and
+   performs no provider I/O.
+5. **Select at startup.** Set `LEAPVIEW_RECOVERY_SET_ID` to that published set
+   ID, restart the target with the restored configuration/image, and admit
+   traffic only after `/readyz` succeeds. Readiness reads that exact set (never
+   the latest set), requires its published status and immutable passed
+   attempt/result, and compares target pointer/revision, generation,
+   publication, complete native snapshot-seal and catalog identity, admitted
+   compatibility tuple, and serving-artifact identities with active PostgreSQL
+   projections. The check is read-only: `/readyz` does not create validation
+   attempts, write validation results, or perform object-store/provider probes.
+   With the selector unset, startup performs ordinary PostgreSQL delivery
+   checks; it never implies an implicit recovery-set choice.
+
+The strict validation envelope's digest binds the exact attempt and frontier,
 both database recovery identities, every object kind/URI/version/digest and
 provider recovery frontier, and the relation namespace, manifest, and closure
-digests. Recording and startup independently validate that envelope against
-the selected set. Any missing, unpublished, unvalidated, or mismatched evidence
-fails closed with a stable readiness diagnostic. The check is read-only:
-`/readyz` does not create validation attempts or write validation results.
-Provider object existence and recovery-point probing remain part of the
-external [PostgreSQL operations](/docs/guides/operate/postgresql-operations)
-and [Backup and restore](/docs/guides/operate/backup-restore) procedures; the
-envelope records their results but startup performs no provider I/O.
+digests. Recording and startup independently validate that envelope against the
+selected set. Any missing, unpublished, unvalidated, or mismatched evidence
+fails closed with a stable readiness diagnostic. The finite recovery hold is
+retired by native PostgreSQL maintenance when its deadline elapses: maintenance
+advances `live` to `retiring`, then to `expired` only after configured grace and
+exact reader leases drain. Snapshot seals remain immutable historical evidence
+after physical reachability expires. Provider object existence and
+recovery-point probing remain part of the external [PostgreSQL
+operations](/docs/guides/operate/postgresql-operations) and [Backup and
+restore](/docs/guides/operate/backup-restore) procedures; no LeapView recovery
+stage performs that provider I/O.
 
 Connection budgets are assigned per capability and workload rather than per
 handler. Interactive control requests, background workers, event consumers,
