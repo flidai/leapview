@@ -175,6 +175,13 @@ BEGIN
         GRANT INSERT (deployment_id, project_id, release_id, rollback_of)
             ON release.deployment_linkage TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery, jobs TO leapview_control_runtime;
+        -- Retention-root lifecycle is capability-owned. Runtime activation may
+        -- retire a predecessor through the definer function, but runtime must
+        -- never perform direct root DML or force terminal expiry.
+        REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON delivery.delivery_retention_root FROM leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM leapview_control_runtime;
+        REVOKE EXECUTE ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON agent.conversations, agent.runs TO leapview_control_runtime;
         GRANT SELECT, INSERT ON agent.messages, agent.events TO leapview_control_runtime;
         GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA event TO leapview_control_runtime;
@@ -210,6 +217,9 @@ BEGIN
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
 		GRANT USAGE ON SCHEMA dashboard, event, jobs, physical_pool TO leapview_control_maintenance;
+		GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
+		GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
+		GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid), delivery.expire_retention_root(uuid, interval), delivery.maintain_retention_roots(text, text, interval, integer) TO leapview_control_maintenance;
 		GRANT SELECT, DELETE ON dashboard.view_session, dashboard.view_day TO leapview_control_maintenance;
 		GRANT SELECT ON dashboard.publication_streams TO leapview_control_maintenance;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.publication_streams FROM leapview_control_maintenance;

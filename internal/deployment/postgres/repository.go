@@ -50,6 +50,21 @@ type beginner interface {
 	Begin(context.Context) (pgx.Tx, error)
 }
 
+// MaintenanceDBTX is the separately authenticated control-plane retention
+// surface. PostgreSQL function grants, rather than Go type shape, enforce the
+// destructive boundary.
+type MaintenanceDBTX interface{ DBTX }
+
+// Maintenance owns bounded retention-root drain work. Request-serving code
+// receives Repository instead and therefore has no batch-expiry method.
+type Maintenance struct{ db MaintenanceDBTX }
+
+// RetentionDrainResult is the exact work committed by one bounded pass.
+type RetentionDrainResult struct {
+	Retired int64
+	Expired int64
+}
+
 var (
 	ErrInvalid       = errors.New("invalid delivery authority input")
 	ErrConflict      = errors.New("delivery authority identity conflict")
@@ -376,9 +391,9 @@ func loadRetentionRoot(ctx context.Context, db DBTX, id string) (DeliveryRetenti
 }
 
 // RequireGenerationRootTx proves that a rollback target remains retained by
-// the delivery authority. The generation UUID is also the canonical
-// generation-root UUID allocated at activation; only live/retiring roots are
-// eligible, while expired or missing roots fail closed.
+// the delivery authority. Each activation owns an immutable generation-root
+// identity; any exact live/retiring root is eligible, while expired or missing
+// roots fail closed.
 func (r *Repository) RequireGenerationRootTx(ctx context.Context, tx Tx, targetID, generationID string) error {
 	if tx == nil {
 		return ErrInvalid
@@ -391,14 +406,14 @@ func (r *Repository) RequireGenerationRootTx(ctx context.Context, tx Tx, targetI
 	if err != nil {
 		return err
 	}
-	root, err := depdb.New(tx).LockRetentionRoot(contextOrBackground(ctx), dbUUID(generation))
+	root, err := depdb.New(tx).LockRetainedGenerationRoot(contextOrBackground(ctx), depdb.LockRetainedGenerationRootParams{TargetID: target, GenerationID: dbUUID(generation)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
 	}
 	if err != nil {
 		return err
 	}
-	if root.TargetID != target || root.GenerationID != generation || root.RootKind != "generation" || root.State != "live" || (root.ExpiresAt.Valid && !root.ExpiresAt.Time.After(time.Now().UTC())) {
+	if root.TargetID != target || root.GenerationID != generation || root.RootKind != "generation" || (root.State != "live" && root.State != "retiring") {
 		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
 	}
 	return nil
@@ -439,8 +454,17 @@ func (r *Repository) RequireRollbackRootTx(ctx context.Context, tx Tx, rootID, t
 	if err != nil {
 		return err
 	}
-	if row.TargetID != target || row.GenerationID != generation || row.CandidateID != candidate || row.SnapshotSealID != seal || row.RootKind != "rollback" || row.State != "live" || (row.ExpiresAt.Valid && !row.ExpiresAt.Time.After(time.Now().UTC())) {
+	if row.TargetID != target || row.GenerationID != generation || row.CandidateID != candidate || row.SnapshotSealID != seal || row.RootKind != "rollback" || row.State != "live" {
 		return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
+	}
+	if row.ExpiresAt.Valid {
+		now, clockErr := databaseNow(contextOrBackground(ctx), tx)
+		if clockErr != nil {
+			return clockErr
+		}
+		if !row.ExpiresAt.Time.After(now) {
+			return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
+		}
 	}
 	return nil
 }
@@ -553,6 +577,9 @@ func ApplySchema(ctx context.Context, tx Tx) error {
 }
 
 func New(db DBTX) *Repository { return newRepository(db, Options{}) }
+
+// NewMaintenance constructs the bounded delivery-root retention facade.
+func NewMaintenance(db MaintenanceDBTX) *Maintenance { return &Maintenance{db: db} }
 
 // NewWithOptions constructs a delivery repository with its composition-owned
 // activation audit adapter. A nil adapter is allowed for read/build-only
@@ -3776,6 +3803,26 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 			return ActivationResult{}, err
 		}
 	}
+	// Lock the predecessor generation while the target row is still locked. The
+	// root lock is held through the pointer CAS below, preventing a concurrent
+	// reader lease admission while the active generation changes. Retirement is
+	// performed after the pointer update because the definer capability refuses
+	// to retire whichever generation is still selected by the active pointer.
+	// The first activation has no predecessor root.
+	var predecessor depdb.LockLiveGenerationRootRow
+	if currentGeneration != "" {
+		locked, rootErr := depdb.New(tx).LockLiveGenerationRoot(ctx, depdb.LockLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(currentGeneration)})
+		if errors.Is(rootErr, pgx.ErrNoRows) {
+			return ActivationResult{}, fmt.Errorf("%w: active generation retention root is unavailable", ErrConflict)
+		}
+		if rootErr != nil {
+			return ActivationResult{}, rootErr
+		}
+		if locked.TargetID != target || locked.GenerationID != currentGeneration || locked.RootKind != "generation" || locked.State != "live" {
+			return ActivationResult{}, fmt.Errorf("%w: predecessor retention root identity differs", ErrConflict)
+		}
+		predecessor = locked
+	}
 	newRev := currentRev + 1
 	targetUpdated, err := depdb.New(tx).UpdateTargetRevision(ctx, depdb.UpdateTargetRevisionParams{TargetID: target, NewRevision: newRev, ExpectedRevision: currentRev})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -3790,6 +3837,23 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 	err = depdb.New(tx).UpsertActivePointer(ctx, depdb.UpsertActivePointerParams{TargetID: target, GenerationID: dbUUID(p.GenerationID), PublicationID: dbUUID(p.PublicationID)})
 	if err != nil {
 		return ActivationResult{}, err
+	}
+	// Candidate roots protect qualified preview/build output until activation
+	// transfers reachability to a generation root. Retire that temporary root
+	// after the pointer CAS so the capability can prove activation (or an
+	// already elapsed DB-owned deadline); rollback activation may legitimately
+	// find it already terminal, but only while the generation itself is retained.
+	if err := r.retireCandidateRootForActivation(ctx, tx, p, target); err != nil {
+		return ActivationResult{}, err
+	}
+	if currentGeneration != "" {
+		retired, err := r.RetireRetentionRootTx(ctx, tx, predecessor.RootID)
+		if err != nil {
+			return ActivationResult{}, err
+		}
+		if retired.RootID != predecessor.RootID || retired.TargetID != target || retired.GenerationID != currentGeneration || retired.RootKind != "generation" || retired.State != "retiring" {
+			return ActivationResult{}, fmt.Errorf("%w: predecessor retention root identity differs", ErrConflict)
+		}
 	}
 	publicationUpdated, err := depdb.New(tx).CommitPublication(ctx, depdb.CommitPublicationParams{PublicationID: dbUUID(p.PublicationID), ResultRevision: pgInt8(&newRev)})
 	if errors.Is(err, pgx.ErrNoRows) {
@@ -3828,6 +3892,42 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 // explicit while preserving the ordinary ActivationResult return shape.
 func DeliveryResultError(err error) (ActivationResult, error) { return ActivationResult{}, err }
 
+func (r *Repository) retireCandidateRootForActivation(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
+	row, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(p.CandidateID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		// Direct authority callers may construct already-retained generations
+		// without the higher-level generation-admission coordinator. There is no
+		// candidate root to leak in that case.
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if row.TargetID != target || row.CandidateID != p.CandidateID || row.GenerationID != p.GenerationID || row.SnapshotSealID != p.SnapshotSealID || row.RootKind != "candidate" {
+		return fmt.Errorf("%w: activation candidate retention root identity differs", ErrConflict)
+	}
+	if row.State != "live" {
+		return r.RequireGenerationRootTx(ctx, tx, target, p.GenerationID)
+	}
+	if row.ExpiresAt.Valid {
+		now, clockErr := databaseNow(ctx, tx)
+		if clockErr != nil {
+			return clockErr
+		}
+		if !row.ExpiresAt.Time.After(now) {
+			return r.RequireGenerationRootTx(ctx, tx, target, p.GenerationID)
+		}
+	}
+	retired, err := r.RetireRetentionRootTx(ctx, tx, p.CandidateID)
+	if err != nil {
+		return err
+	}
+	if retired.RootID != p.CandidateID || retired.TargetID != target || retired.CandidateID != p.CandidateID || retired.GenerationID != p.GenerationID || retired.SnapshotSealID != p.SnapshotSealID || retired.RootKind != "candidate" || retired.State != "retiring" {
+		return fmt.Errorf("%w: activation candidate retention root transition differs", ErrConflict)
+	}
+	return nil
+}
+
 func activationPayload(p DeliveryPublication, revision int64) json.RawMessage {
 	payload, _ := canonicalObject(json.RawMessage(fmt.Sprintf(`{"publication_id":%q,"generation_id":%q,"target_revision":%d}`, p.PublicationID, p.GenerationID, revision)), 65536, true)
 	return payload
@@ -3839,9 +3939,9 @@ func activationMetadata(p DeliveryPublication) json.RawMessage {
 }
 
 func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
-	row, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(p.GenerationID))
+	row, err := depdb.New(tx).LockLiveGenerationRoot(ctx, depdb.LockLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(p.GenerationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
-		err = depdb.New(tx).InsertGenerationRoot(ctx, depdb.InsertGenerationRootParams{RootID: dbUUID(p.GenerationID), TargetID: target, CandidateID: dbUUID(p.CandidateID), GenerationID: dbUUID(p.GenerationID), SnapshotSealID: dbUUID(p.SnapshotSealID)})
+		err = depdb.New(tx).InsertGenerationRoot(ctx, depdb.InsertGenerationRootParams{RootID: dbUUID(generationRootID(p.PublicationID)), TargetID: target, CandidateID: dbUUID(p.CandidateID), GenerationID: dbUUID(p.GenerationID), SnapshotSealID: dbUUID(p.SnapshotSealID)})
 		return err
 	}
 	if err != nil {
@@ -3851,6 +3951,15 @@ func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, tar
 		return fmt.Errorf("%w: activation retention root identity differs", ErrConflict)
 	}
 	return nil
+}
+
+// generationRootID gives every successful publication its own immutable
+// reachability-root identity. A later rollback can therefore establish a new
+// live root for an old generation without mutating that generation's retired
+// root history. The derivation is deterministic so transaction retry is
+// idempotent and disjoint from rollback roots keyed directly by publication.
+func generationRootID(publicationID string) string {
+	return uuid.NewSHA1(uuid.NameSpaceURL, []byte("leapview:delivery:generation-root:"+publicationID)).String()
 }
 
 func (r *Repository) appendActivationEvent(ctx context.Context, tx Tx, p DeliveryPublication, in ActivationInput, revision int64, actor string) (Event, error) {
@@ -3976,7 +4085,7 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 	if root.State != "live" {
 		return DeliveryRetentionRoot{}, ErrInvalid
 	}
-	if root.RootKind == "candidate" && root.CandidateID == "" || root.RootKind == "generation" && root.GenerationID == "" {
+	if (root.RootKind == "candidate" || root.RootKind == "generation") && (root.CandidateID == "" || root.GenerationID == "" || root.SnapshotSealID == "") {
 		return DeliveryRetentionRoot{}, ErrInvalid
 	}
 	if !root.ExpiresAt.IsZero() {
@@ -3999,6 +4108,174 @@ func createRetentionRoot(ctx context.Context, db DBTX, root DeliveryRetentionRoo
 	}
 	return persisted, nil
 }
+
+// RetireRetentionRoot transitions one live retention root to retiring through
+// the delivery capability function. The function takes a row lock before the
+// transition, sharing the lock used by serving-state reader admission; this
+// closes the live-root admission race. Replaying an already-retiring root is
+// idempotent, while terminal or missing roots fail closed.
+func (r *Repository) RetireRetentionRootTx(ctx context.Context, tx Tx, rootID string) (DeliveryRetentionRoot, error) {
+	if tx == nil {
+		return DeliveryRetentionRoot{}, ErrInvalid
+	}
+	id, err := uuidID(rootID, "root id", false)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	ctx = contextOrBackground(ctx)
+	locked, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryRetentionRoot{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if locked.State == "expired" {
+		// Retirement intent is already satisfied. Treat terminal replay as
+		// success so publication/cancellation replays keep working after the
+		// maintenance authority has expired the temporary root.
+		return loadRetentionRoot(ctx, tx, id)
+	}
+	if locked.State != "live" && locked.State != "retiring" {
+		return DeliveryRetentionRoot{}, fmt.Errorf("%w: invalid retention root lifecycle state", ErrConflict)
+	}
+	transitioned, err := depdb.New(tx).RetireRetentionRoot(ctx, dbUUID(id))
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if !transitioned {
+		return DeliveryRetentionRoot{}, fmt.Errorf("%w: retention root retirement race", ErrConflict)
+	}
+	return loadRetentionRoot(ctx, tx, id)
+}
+
+// ExpireRetentionRootTx advances a retiring root to expired after its
+// explicit expiry and caller-supplied grace have elapsed on the PostgreSQL
+// clock, and only after exact serving_state reader leases have drained. A
+// zero grace interval is accepted for maintenance callers that have already
+// enforced an external drain window. Replaying an expired root is idempotent.
+func (r *Repository) ExpireRetentionRootTx(ctx context.Context, tx Tx, rootID string, grace ...time.Duration) (DeliveryRetentionRoot, error) {
+	if tx == nil {
+		return DeliveryRetentionRoot{}, ErrInvalid
+	}
+	id, err := uuidID(rootID, "root id", false)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if len(grace) > 1 || (len(grace) == 1 && grace[0] < 0) {
+		return DeliveryRetentionRoot{}, ErrInvalid
+	}
+	interval := pgtype.Interval{Valid: true}
+	if len(grace) == 1 {
+		interval.Microseconds = grace[0].Microseconds()
+	}
+	ctx = contextOrBackground(ctx)
+	locked, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(id))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return DeliveryRetentionRoot{}, ErrNotFound
+	}
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if locked.State == "live" {
+		return DeliveryRetentionRoot{}, fmt.Errorf("%w: live retention root must be retired before expiry", ErrConflict)
+	}
+	if locked.State != "retiring" && locked.State != "expired" {
+		return DeliveryRetentionRoot{}, fmt.Errorf("%w: invalid retention root lifecycle state", ErrConflict)
+	}
+	transitioned, err := depdb.New(tx).ExpireRetentionRoot(ctx, depdb.ExpireRetentionRootParams{RootID: dbUUID(id), Grace: interval})
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if !transitioned {
+		// The capability function deliberately returns false for an unelapsed
+		// grace/expiry window, active reader leases, or corrupt evidence. Do not
+		// treat any of those as success: callers must retry after drain/time.
+		return DeliveryRetentionRoot{}, fmt.Errorf("%w: retention root is not ready for expiry", ErrConflict)
+	}
+	return loadRetentionRoot(ctx, tx, id)
+}
+
+// RetireRetentionRoot owns a transaction for callers that do not need to
+// compose retirement with another delivery mutation.
+func (r *Repository) RetireRetentionRoot(ctx context.Context, rootID string) (DeliveryRetentionRoot, error) {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	root, err := r.RetireRetentionRootTx(ctx, tx, rootID)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	committed = true
+	return root, nil
+}
+
+// ExpireRetentionRoot owns a transaction for standalone maintenance callers.
+func (r *Repository) ExpireRetentionRoot(ctx context.Context, rootID string, grace ...time.Duration) (DeliveryRetentionRoot, error) {
+	tx, err := r.begin(ctx)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback(contextOrBackground(ctx))
+		}
+	}()
+	root, err := r.ExpireRetentionRootTx(ctx, tx, rootID, grace...)
+	if err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	if err := tx.Commit(contextOrBackground(ctx)); err != nil {
+		return DeliveryRetentionRoot{}, err
+	}
+	committed = true
+	return root, nil
+}
+
+// Drain retires at most limit due candidate roots and expires at most limit
+// ready retiring roots. PostgreSQL owns time, locking, active-generation
+// protection, and exact reader-lease checks inside one bounded owner function.
+func (m *Maintenance) Drain(ctx context.Context, physicalPoolID, catalogID string, grace time.Duration, limit int) (RetentionDrainResult, error) {
+	if m == nil || m.db == nil || grace < 0 || limit < 1 || limit > 1000 {
+		return RetentionDrainResult{}, ErrInvalid
+	}
+	physicalPool, err := textID(physicalPoolID, "physical pool id")
+	if err != nil {
+		return RetentionDrainResult{}, err
+	}
+	catalog, err := textID(catalogID, "catalog id")
+	if err != nil {
+		return RetentionDrainResult{}, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	row, err := depdb.New(m.db).MaintainRetentionRoots(ctx, depdb.MaintainRetentionRootsParams{
+		PhysicalPoolID: physicalPool,
+		CatalogID:      catalog,
+		Grace:          pgtype.Interval{Microseconds: grace.Microseconds(), Valid: true},
+		Batch:          int32(limit),
+	})
+	if err != nil {
+		return RetentionDrainResult{}, err
+	}
+	if row.Retired < 0 || row.Retired > int64(limit) || row.Expired < 0 || row.Expired > int64(limit) {
+		return RetentionDrainResult{}, fmt.Errorf("%w: invalid retention drain evidence", ErrConflict)
+	}
+	return RetentionDrainResult{Retired: row.Retired, Expired: row.Expired}, nil
+}
+
 func nullableTimesEqual(a, b time.Time) bool {
 	if a.IsZero() || b.IsZero() {
 		return a.IsZero() && b.IsZero()

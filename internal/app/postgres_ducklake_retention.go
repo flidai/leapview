@@ -20,8 +20,11 @@ import (
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/config"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/extension"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
+	servingstate "github.com/flidai/leapview/internal/servingstate"
+	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/google/uuid"
 )
@@ -29,7 +32,38 @@ import (
 const (
 	defaultDuckLakeRetentionInterval = time.Hour
 	defaultDuckLakeRetentionGrace    = 24 * time.Hour
+	duckLakeRetentionRootBatchLimit  = 1000
 )
+
+// duckLakeRetentionPolicy is resolved from the admitted physical-pool
+// contract for every pass. Reader grace protects serving-state leases while
+// orphan grace governs the separate DuckLake catalog scan.
+type duckLakeRetentionPolicy struct {
+	ReaderGracePeriod time.Duration
+	OrphanGracePeriod time.Duration
+}
+
+// runDuckLakeRetentionPass sequences the control-plane safety phase ahead of
+// any physical catalog mutation. Keeping the phase boundary as a small
+// function makes the ordering explicit and testable without opening either
+// production database in unit tests.
+func runDuckLakeRetentionPass(
+	ctx context.Context,
+	releaseExpiredReaderLeases func(context.Context) error,
+	drainDeliveryRoots func(context.Context) error,
+	physicalMaintenance func(context.Context) error,
+) error {
+	if releaseExpiredReaderLeases == nil || drainDeliveryRoots == nil || physicalMaintenance == nil {
+		return errors.New("DuckLake retention pass dependencies are incomplete")
+	}
+	if err := releaseExpiredReaderLeases(ctx); err != nil {
+		return fmt.Errorf("release expired serving-state reader leases: %w", err)
+	}
+	if err := drainDeliveryRoots(ctx); err != nil {
+		return fmt.Errorf("drain delivery retention roots: %w", err)
+	}
+	return physicalMaintenance(ctx)
+}
 
 func duckLakeRetentionOperationID(now time.Time, interval time.Duration, physicalPoolID, catalogID string) string {
 	if interval <= 0 {
@@ -189,8 +223,11 @@ func postgresDuckLakeRetentionWorker(
 	extensionAdmission extension.Admission,
 	physicalPoolID string,
 	ownerID string,
+	environment string,
+	servingStateMaintenance *servingstatepostgres.Repository,
+	deliveryMaintenance *deploymentpostgres.Maintenance,
 	acquire func(context.Context) (workloadmodule.Lease, error),
-	policyFor func(context.Context) (time.Duration, error),
+	policyFor func(context.Context) (duckLakeRetentionPolicy, error),
 ) (*duckLakeRetentionWorker, error) {
 	if control == nil || !control.Configured() || !control.TransactionCapable() {
 		return nil, errors.New("DuckLake retention control maintenance repository is unavailable")
@@ -200,8 +237,12 @@ func postgresDuckLakeRetentionWorker(
 	}
 	physicalPoolID = strings.TrimSpace(physicalPoolID)
 	ownerID = strings.TrimSpace(ownerID)
-	if physicalPoolID == "" || ownerID == "" || extensionAdmission == nil || acquire == nil || policyFor == nil {
+	environment = strings.TrimSpace(environment)
+	if physicalPoolID == "" || ownerID == "" || environment == "" || extensionAdmission == nil || servingStateMaintenance == nil || !servingStateMaintenance.Configured() || deliveryMaintenance == nil || acquire == nil || policyFor == nil {
 		return nil, errors.New("DuckLake retention worker configuration is incomplete")
+	}
+	if err := servingstate.ValidateEnvironment(servingstate.Environment(environment)); err != nil {
+		return nil, fmt.Errorf("DuckLake retention worker environment is invalid: %w", err)
 	}
 
 	coordinator := &analyticsmodule.PostgresDuckLakeRetentionCoordinator{Control: control}
@@ -284,10 +325,14 @@ func postgresDuckLakeRetentionWorker(
 			}
 			now := time.Now()
 			maintenanceID := duckLakeRetentionOperationID(now, cfg.DuckLakeRetentionInterval, physicalPoolID, catalog.CatalogID)
-			orphanGrace, policyErr := policyFor(ctx)
+			policy, policyErr := policyFor(ctx)
 			if policyErr != nil {
 				return policyErr
 			}
+			if policy.ReaderGracePeriod < 0 {
+				return fmt.Errorf("admitted DuckLake reader grace %s is negative", policy.ReaderGracePeriod)
+			}
+			orphanGrace := policy.OrphanGracePeriod
 			if orphanGrace < time.Microsecond || orphanGrace > analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace {
 				return fmt.Errorf("admitted DuckLake orphan grace %s is outside (0,%s]", orphanGrace, analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace)
 			}
@@ -301,8 +346,20 @@ func postgresDuckLakeRetentionWorker(
 				OrphanScanID:      analyticsmodule.SnapshotOrphanScanIDForMaintenance(maintenanceID, physicalPoolID, catalog.CatalogID),
 				Evidence:          json.RawMessage(`{"source":"lifecycle"}`),
 			}
-			_, err = coordinator.Run(ctx, request)
-			return err
+			return runDuckLakeRetentionPass(
+				ctx,
+				func(phaseCtx context.Context) error {
+					return servingStateMaintenance.ReleaseExpiredQuerySnapshotLeases(phaseCtx, environment)
+				},
+				func(phaseCtx context.Context) error {
+					_, drainErr := deliveryMaintenance.Drain(phaseCtx, physicalPoolID, catalog.CatalogID, policy.ReaderGracePeriod, duckLakeRetentionRootBatchLimit)
+					return drainErr
+				},
+				func(physicalCtx context.Context) error {
+					_, runErr := coordinator.Run(physicalCtx, request)
+					return runErr
+				},
+			)
 		},
 		Logger: slog.Default(),
 	}), nil

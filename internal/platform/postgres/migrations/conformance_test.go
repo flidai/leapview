@@ -201,6 +201,24 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimeCatalogIdentitySelect || !runtimeDeliveryAttemptSelect || !runtimeDeliverySealSelect || !runtimeServingBundleSelect {
 		t.Fatalf("native delivery identity reads missing: catalog_identity=%t delivery_attempt=%t delivery_seal=%t serving_bundle=%t", runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect)
 	}
+	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootExpire, maintenanceRootMaintain bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'INSERT'),
+		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'DELETE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.retire_retention_root(uuid)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
+		       has_table_privilege('leapview_control_maintenance', 'delivery.delivery_retention_root', 'SELECT'),
+		       has_function_privilege('leapview_control_maintenance', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_maintenance', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE')`).
+		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootExpire, &maintenanceRootMaintain); err != nil {
+		t.Fatal(err)
+	}
+	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootExpire || !maintenanceRootMaintain {
+		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete=%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/expire/maintain=%t/%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootExpire, maintenanceRootMaintain)
+	}
 	var runtimeRetentionSelect, runtimeRetentionInsert, runtimeRetentionUpdate, runtimeRetentionDelete, runtimeRetentionExecute bool
 	var readonlyRetentionExecute, maintenanceRetentionExecute, backupRetentionExecute bool
 	if err := db.QueryRow(ctx, `

@@ -173,6 +173,15 @@ BEGIN
     IF NEW.released_at IS NULL AND NEW.expires_at < OLD.expires_at THEN
         RAISE EXCEPTION 'reader lease expiry cannot move backwards';
     END IF;
+    -- Direct UPDATE callers receive the same retention fence as the
+    -- repository's renewal query.  In particular, a renewal must take a
+    -- share lock on the exact live delivery root before it can move the
+    -- expiry forward; this serializes with delivery root retirement/expiry
+    -- and prevents extending a lease after its root has expired.
+    IF NEW.released_at IS NULL AND NEW.expires_at > OLD.expires_at
+       AND NOT serving_state.guard_reader_snapshot_retention(NEW.generation_id, NEW.ducklake_snapshot_id) THEN
+        RAISE EXCEPTION 'reader lease renewal requires a live delivery retention root';
+    END IF;
     RETURN NEW;
 END; $$;
 DROP TRIGGER IF EXISTS reader_lease_mutation ON serving_state.reader_lease;

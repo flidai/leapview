@@ -34,6 +34,7 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -53,6 +54,7 @@ import (
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
+	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 )
 
@@ -753,28 +755,37 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		extensionSupply,
 		physicalPoolID,
 		instanceID,
+		string(environment),
+		servingstatepostgres.New(bootstrap.MaintenancePool()),
+		deploymentpostgres.NewMaintenance(bootstrap.MaintenancePool()),
 		func(acquireCtx context.Context) (workloadmodule.Lease, error) {
 			return workloadBundle.Controller.Acquire(acquireCtx, workloadmodule.MaintenanceRequest("ducklake.retention"))
 		},
-		func(policyCtx context.Context) (time.Duration, error) {
+		func(policyCtx context.Context) (duckLakeRetentionPolicy, error) {
 			contract, resolveErr := contractAuthority.Resolve(policyCtx, appdeploymentpostgres.NativeBuildContractRequest{
 				PhysicalPoolID: physicalPoolID, CompatibilityDigest: compatibilityDigest,
 			})
 			if resolveErr != nil {
-				return 0, resolveErr
+				return duckLakeRetentionPolicy{}, resolveErr
 			}
 			policy := contract.PoolContract.Pool.Identity.RetentionPolicy
 			if policy.OrphanGracePeriodSeconds <= 0 || policy.BuildGracePeriodSeconds <= 0 {
-				return 0, errors.New("admitted DuckLake retention policy has non-positive orphan/build grace")
+				return duckLakeRetentionPolicy{}, errors.New("admitted DuckLake retention policy has non-positive orphan/build grace")
 			}
 			seconds := policy.OrphanGracePeriodSeconds
 			if policy.BuildGracePeriodSeconds > seconds {
 				seconds = policy.BuildGracePeriodSeconds
 			}
 			if seconds > int64(analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace/time.Second) {
-				return 0, fmt.Errorf("admitted DuckLake orphan/build grace %ds exceeds maximum %s", seconds, analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace)
+				return duckLakeRetentionPolicy{}, fmt.Errorf("admitted DuckLake orphan/build grace %ds exceeds maximum %s", seconds, analyticsmodule.MaxPostgresDuckLakeSnapshotOrphanScanGrace)
 			}
-			return time.Duration(seconds) * time.Second, nil
+			if policy.ReaderGracePeriodSeconds < 0 || policy.ReaderGracePeriodSeconds > int64((time.Duration(1<<63-1)/time.Second)) {
+				return duckLakeRetentionPolicy{}, errors.New("admitted DuckLake retention policy has invalid reader grace")
+			}
+			return duckLakeRetentionPolicy{
+				ReaderGracePeriod: time.Duration(policy.ReaderGracePeriodSeconds) * time.Second,
+				OrphanGracePeriod: time.Duration(seconds) * time.Second,
+			}, nil
 		},
 	)
 	if err != nil {

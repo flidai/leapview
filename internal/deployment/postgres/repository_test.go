@@ -198,6 +198,9 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if _, err := r.CreateGeneration(ctx, generationInput); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: ids["candidate"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: ids["seal"], RootKind: "candidate", State: "live", ExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := r.CreatePublication(ctx, PublicationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"], ExpectedTargetRevision: 1, ActorID: "operator", RequestDigest: testDigest('4')}); err != nil {
 		t.Fatal(err)
 	}
@@ -241,6 +244,10 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if first.Replay || first.Pointer.ActiveGenerationID != ids["generation"] || first.Publication.ResultTargetRevision != 2 {
 		t.Fatalf("unexpected activation result: %#v", first)
 	}
+	activeRootID := generationRootID(ids["publication"])
+	if candidateRoot, err := loadRetentionRoot(ctx, p, ids["candidate"]); err != nil || candidateRoot.State != "retiring" || candidateRoot.RetiredAt.IsZero() {
+		t.Fatalf("candidate root was not retired by activation: %#v, %v", candidateRoot, err)
+	}
 	activeGeneration, err := r.ActiveGeneration(ctx, "target_sales_prod")
 	if err != nil {
 		t.Fatal(err)
@@ -260,11 +267,11 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	if err != nil || replayedPublication.PublicationID != ids["publication"] || replayedPublication.ExpectedBaseGenerationID != "" {
 		t.Fatalf("post-activation publication replay = %#v, %v", replayedPublication, err)
 	}
-	if root, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: ids["seal"], RootKind: "generation", State: "live"}); err != nil || root.RootID != ids["generation"] {
+	if root, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: activeRootID, TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: ids["seal"], RootKind: "generation", State: "live"}); err != nil || root.RootID != activeRootID {
 		t.Fatalf("retention root replay = %#v, %v", root, err)
 	}
-	if _, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: ids["generation"], TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: "", RootKind: "generation", State: "live"}); !errors.Is(err, ErrConflict) {
-		t.Fatalf("retention root identity mismatch = %v", err)
+	if _, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: activeRootID, TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: ids["generation"], SnapshotSealID: "", RootKind: "generation", State: "live"}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("incomplete retention root identity = %v", err)
 	}
 	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_candidate(candidate_id,target_id,plan_id,snapshot_seal_id,status,candidate_revision,artifact_digest,qualification_digest,qualified_at) VALUES('0198f2c0-7c7a-7f00-8a11-000000000010','target_sales_prod',$1::uuid,$2::uuid,'qualified',2,$3,$4,clock_timestamp())`, ids["plan"], ids["seal"], testDigest('e'), testDigest('3')); err != nil {
 		t.Fatal(err)
@@ -356,6 +363,95 @@ func TestPostgresDeliveryAuthorityLifecycleAndReplay(t *testing.T) {
 	}
 	if _, err := r.Activate(ctx, ActivationInput{PublicationID: ids["publication"], TargetID: "target_sales_prod", GenerationID: ids["generation"], ExpectedTargetRevision: 1, RequestDigest: testDigest('4'), ActorID: "other", LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}); !errors.Is(err, ErrConflict) {
 		t.Fatalf("actor mismatch = %v", err)
+	}
+
+	// Reactivating a retained generation must create a fresh live root rather
+	// than attempting to revive its immutable retired root. Using the same
+	// generation here isolates the root rotation exercised by a G1->G2->G1
+	// rollback without duplicating the full generation fixture.
+	reactivationID := "0198f2c0-7c7a-7f00-8a11-000000000021"
+	secondGenerationID := "0198f2c0-7c7a-7f00-8a11-000000000022"
+	secondPublicationID := "0198f2c0-7c7a-7f00-8a11-000000000023"
+	rootTx, err := p.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := rootTx.Exec(ctx, `
+		INSERT INTO delivery.delivery_generation(
+			generation_id,target_id,candidate_id,snapshot_seal_id,plan_id,plan_digest,artifact_root,artifact_root_digest,
+			serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision)
+		SELECT $1::uuid,target_id,candidate_id,snapshot_seal_id,plan_id,plan_digest,artifact_root,artifact_root_digest,
+			serving_artifact_digest,compiled_graph_digest,compiled_config_digest,security_domain_fingerprint,generation_revision+1
+		FROM delivery.delivery_generation WHERE generation_id=$2::uuid`, secondGenerationID, ids["generation"]); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("insert second generation: %v", err)
+	}
+	if _, err := rootTx.Exec(ctx, `
+		INSERT INTO delivery.delivery_publication(
+			publication_id,target_id,generation_id,candidate_id,snapshot_seal_id,expected_target_revision,result_target_revision,
+			actor_id,state,request_digest,committed_at)
+		SELECT $1::uuid,target_id,$2::uuid,candidate_id,snapshot_seal_id,2,3,actor_id,'committed',$3,clock_timestamp()
+		FROM delivery.delivery_publication WHERE publication_id=$4::uuid`, secondPublicationID, secondGenerationID, testDigest('5'), ids["publication"]); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("insert second publication: %v", err)
+	}
+	if _, err := r.CreateRetentionRootTx(ctx, rootTx, DeliveryRetentionRoot{RootID: generationRootID(secondPublicationID), TargetID: "target_sales_prod", CandidateID: ids["candidate"], GenerationID: secondGenerationID, SnapshotSealID: ids["seal"], RootKind: "generation", State: "live"}); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("insert second generation root: %v", err)
+	}
+	if _, err := rootTx.Exec(ctx, `UPDATE delivery.delivery_active_pointer SET generation_id=$1::uuid,publication_id=$2::uuid WHERE target_id=$3`, secondGenerationID, secondPublicationID, "target_sales_prod"); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("point target at second generation: %v", err)
+	}
+	if _, err := r.RetireRetentionRootTx(ctx, rootTx, activeRootID); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("retire prior activation root: %v", err)
+	}
+	if _, err := rootTx.Exec(ctx, `
+		INSERT INTO delivery.delivery_publication(
+			publication_id,target_id,generation_id,candidate_id,snapshot_seal_id,expected_target_revision,result_target_revision,
+			actor_id,state,request_digest,committed_at)
+		SELECT $1::uuid,target_id,generation_id,candidate_id,snapshot_seal_id,3,4,actor_id,'committed',$2,clock_timestamp()
+		FROM delivery.delivery_publication WHERE publication_id=$3::uuid`, reactivationID, testDigest('6'), ids["publication"]); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("insert reactivation publication: %v", err)
+	}
+	if _, err := rootTx.Exec(ctx, `UPDATE delivery.delivery_active_pointer SET generation_id=$1::uuid,publication_id=$2::uuid WHERE target_id=$3`, ids["generation"], reactivationID, "target_sales_prod"); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("point target back at retained generation: %v", err)
+	}
+	if _, err := r.RetireRetentionRootTx(ctx, rootTx, generationRootID(secondPublicationID)); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("retire second generation root: %v", err)
+	}
+	if err := ensureActivationRoot(ctx, rootTx, DeliveryPublication{PublicationID: reactivationID, TargetID: "target_sales_prod", GenerationID: ids["generation"], CandidateID: ids["candidate"], SnapshotSealID: ids["seal"]}, "target_sales_prod"); err != nil {
+		_ = rootTx.Rollback(ctx)
+		t.Fatalf("establish reactivation root: %v", err)
+	}
+	if err := rootTx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+	var oldState, secondState, newState, activeGenerationID string
+	if err := p.QueryRow(ctx, `SELECT state FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, activeRootID).Scan(&oldState); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.QueryRow(ctx, `SELECT state FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, generationRootID(secondPublicationID)).Scan(&secondState); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.QueryRow(ctx, `SELECT state FROM delivery.delivery_retention_root WHERE root_id=$1::uuid`, generationRootID(reactivationID)).Scan(&newState); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.QueryRow(ctx, `SELECT generation_id::text FROM delivery.delivery_active_pointer WHERE target_id='target_sales_prod'`).Scan(&activeGenerationID); err != nil {
+		t.Fatal(err)
+	}
+	if oldState != "retiring" || secondState != "retiring" || newState != "live" || activeGenerationID != ids["generation"] {
+		t.Fatalf("generation root rotation = old %q, second %q, new %q, active generation %q", oldState, secondState, newState, activeGenerationID)
+	}
+	if _, err := r.RetireRetentionRoot(ctx, generationRootID(reactivationID)); err == nil {
+		t.Fatal("arbitrary retirement of the active generation root was accepted")
+	}
+	if activeRoot, err := loadRetentionRoot(ctx, p, generationRootID(reactivationID)); err != nil || activeRoot.State != "live" {
+		t.Fatalf("active generation root after rejected retirement = %#v, %v", activeRoot, err)
 	}
 }
 
@@ -1014,5 +1110,49 @@ func TestPostgresAuthorityDatabaseGuards(t *testing.T) {
 	}
 	if _, err := p.Exec(ctx, `INSERT INTO delivery.delivery_build_attempt(attempt_id,plan_id,candidate_id,owner_id,physical_pool_id,catalog_id,fencing_epoch,request_digest,plan_digest,state,namespace,lease_expires_at,session_identity) VALUES('0198f2c0-7c7a-7f00-8a11-000000000033',$1::uuid,$2::uuid,'builder','guard-pool','guard-catalog',1,$3,$3,'committed','guard',clock_timestamp()+interval '1 hour','session')`, plan, candidate, testDigest('a')); err == nil {
 		t.Fatal("terminal build attempt without evidence was accepted")
+	}
+}
+
+func TestRetentionRootLifecycleTxReplayGraceAndExpiry(t *testing.T) {
+	p := deliveryTestDB(t)
+	r := New(p)
+	ctx := t.Context()
+	rootID := "0198f2c0-7c7a-7f00-8a11-000000000040"
+	if _, err := r.CreateTarget(ctx, TargetInput{TargetID: "target_retention_lifecycle", ProjectID: "project_retention_lifecycle", Environment: "prod"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.CreateRetentionRoot(ctx, DeliveryRetentionRoot{RootID: rootID, TargetID: "target_retention_lifecycle", RootKind: "query", State: "live"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.Exec(ctx, `UPDATE delivery.delivery_retention_root SET expires_at=clock_timestamp()-interval '1 second' WHERE root_id=$1::uuid`, rootID); err != nil {
+		t.Fatal(err)
+	}
+	retiring, err := r.RetireRetentionRoot(ctx, rootID)
+	if err != nil || retiring.State != "retiring" || retiring.RetiredAt.IsZero() {
+		t.Fatalf("retire root = %#v, err=%v", retiring, err)
+	}
+	replay, err := r.RetireRetentionRoot(ctx, rootID)
+	if err != nil || replay.State != "retiring" || !replay.RetiredAt.Equal(retiring.RetiredAt) {
+		t.Fatalf("retire replay = %#v, err=%v", replay, err)
+	}
+	if _, err := r.ExpireRetentionRoot(ctx, rootID, time.Hour); !errors.Is(err, ErrConflict) {
+		t.Fatalf("expiry before grace = %v, want ErrConflict", err)
+	}
+	// The explicit expiry is DB-owned evidence. Move it into the past using
+	// the test authority, then expire with zero additional grace.
+	if _, err := p.Exec(ctx, `UPDATE delivery.delivery_retention_root SET expires_at=clock_timestamp()-interval '1 second' WHERE root_id=$1::uuid`, rootID); err != nil {
+		t.Fatal(err)
+	}
+	expired, err := r.ExpireRetentionRoot(ctx, rootID)
+	if err != nil || expired.State != "expired" || expired.ExpiredAt.IsZero() {
+		t.Fatalf("expire root = %#v, err=%v", expired, err)
+	}
+	replayExpired, err := r.ExpireRetentionRoot(ctx, rootID)
+	if err != nil || replayExpired.State != "expired" || !replayExpired.ExpiredAt.Equal(expired.ExpiredAt) {
+		t.Fatalf("expire replay = %#v, err=%v", replayExpired, err)
+	}
+	retireAfterExpiry, err := r.RetireRetentionRoot(ctx, rootID)
+	if err != nil || retireAfterExpiry.State != "expired" || !retireAfterExpiry.ExpiredAt.Equal(expired.ExpiredAt) {
+		t.Fatalf("retire replay after expiry = %#v, err=%v", retireAfterExpiry, err)
 	}
 }

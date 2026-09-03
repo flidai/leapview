@@ -122,6 +122,57 @@ func TestDuckLakeRetentionWorkerStopCancelsBlockingPass(t *testing.T) {
 	}
 }
 
+func TestDuckLakeRetentionPassDrainsControlBeforePhysicalMaintenance(t *testing.T) {
+	var events []string
+	err := runDuckLakeRetentionPass(
+		context.Background(),
+		func(context.Context) error {
+			events = append(events, "reader-leases")
+			return nil
+		},
+		func(context.Context) error {
+			events = append(events, "delivery-roots")
+			return nil
+		},
+		func(context.Context) error {
+			events = append(events, "ducklake-physical")
+			return nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("runDuckLakeRetentionPass() error = %v", err)
+	}
+	want := []string{"reader-leases", "delivery-roots", "ducklake-physical"}
+	if len(events) != len(want) {
+		t.Fatalf("phase events = %v, want %v", events, want)
+	}
+	for i := range want {
+		if events[i] != want[i] {
+			t.Fatalf("phase events = %v, want %v", events, want)
+		}
+	}
+}
+
+func TestDuckLakeRetentionPassDoesNotRunPhysicalMaintenanceWhenDrainFails(t *testing.T) {
+	var physicalCalls atomic.Int32
+	drainErr := errors.New("delivery drain unavailable")
+	err := runDuckLakeRetentionPass(
+		context.Background(),
+		func(context.Context) error { return nil },
+		func(context.Context) error { return drainErr },
+		func(context.Context) error {
+			physicalCalls.Add(1)
+			return nil
+		},
+	)
+	if !errors.Is(err, drainErr) {
+		t.Fatalf("runDuckLakeRetentionPass() error = %v, want %v", err, drainErr)
+	}
+	if got := physicalCalls.Load(); got != 0 {
+		t.Fatalf("physical maintenance calls = %d, want 0", got)
+	}
+}
+
 type retentionCatalogMaintenanceConnection struct{}
 
 func (*retentionCatalogMaintenanceConnection) ExecContext(context.Context, string, ...any) (sql.Result, error) {

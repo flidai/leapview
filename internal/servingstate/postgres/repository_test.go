@@ -714,6 +714,73 @@ func TestLeaseExtensionSerializesRetirement(t *testing.T) {
 	}
 }
 
+func TestLeaseRenewalSerializesWithCommittedRootExpiry(t *testing.T) {
+	admin, pool, _ := servingDB(t)
+	ctx := t.Context()
+	generation := "bcbcbcbc-bcbc-bcbc-bcbc-bcbcbcbcbcbc"
+	digest := "sha256:" + strings.Repeat("1", 64)
+	seedGeneration(t, admin, generation, "target_demo", "cdcdcdcd-cdcd-cdcd-cdcd-cdcdcdcdcdcd", "dededede-dede-dede-dede-dededededede", "efefefef-efef-efef-efef-efefefefefef", digest, testGraph(t).Digest(), 19)
+	r := New(pool)
+	lease, err := r.CreateQuerySnapshotLease(ctx, servingstate.SnapshotLeaseInput{
+		ServingStateID: servingstate.ID(generation), DuckLakeSnapshotID: 19,
+		OwnerID: "renewal-reader", ExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Hold the root lock while moving it to its terminal state. Renewal must
+	// wait for this decision, then re-check the now-expired root and fail.
+	rootTx, err := admin.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rootTx.Rollback(ctx)
+	if _, err := rootTx.Exec(ctx, `UPDATE delivery.delivery_retention_root SET state='expired',expired_at=clock_timestamp() WHERE generation_id=$1::uuid`, generation); err != nil {
+		t.Fatal(err)
+	}
+
+	renewTx, err := pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	renewCtx, cancelRenew := context.WithTimeout(ctx, 2*time.Second)
+	defer cancelRenew()
+	renewDone := make(chan error, 1)
+	go func() {
+		renewDone <- r.ExtendQuerySnapshotLeaseTx(renewCtx, renewTx, lease, time.Now().Add(2*time.Minute))
+	}()
+	select {
+	case got := <-renewDone:
+		_ = renewTx.Rollback(ctx)
+		t.Fatalf("renewal completed before root expiry committed: %v", got)
+	case <-time.After(150 * time.Millisecond):
+	}
+	if err := rootTx.Commit(ctx); err != nil {
+		_ = renewTx.Rollback(ctx)
+		t.Fatal(err)
+	}
+	select {
+	case err := <-renewDone:
+		if !errors.Is(err, servingstate.ErrSnapshotLeaseLost) {
+			_ = renewTx.Rollback(ctx)
+			t.Fatalf("renewal after root expiry = %v, want ErrSnapshotLeaseLost", err)
+		}
+	case <-time.After(2 * time.Second):
+		_ = renewTx.Rollback(ctx)
+		t.Fatal("renewal remained blocked after root expiry committed")
+	}
+	if err := renewTx.Rollback(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	// The trigger applies the same guard to direct runtime UPDATEs, not just
+	// the repository query, so a caller cannot bypass the retention fence.
+	if _, err := pool.Exec(ctx, `UPDATE serving_state.reader_lease SET expires_at=clock_timestamp()+interval '2 minutes' WHERE lease_id=$1`, lease); err == nil {
+		t.Fatal("direct reader-lease renewal bypassed an expired retention root")
+	}
+}
+
 func TestReaderLeaseBindsSnapshotAndDBClock(t *testing.T) {
 	admin, pool, _ := servingDB(t)
 	generation := "11111111-1111-1111-1111-111111111111"

@@ -317,6 +317,40 @@ SELECT target_id,COALESCE(candidate_id::text,'')::text AS candidate_id,COALESCE(
        ,expires_at
 FROM delivery.delivery_retention_root WHERE root_id=sqlc.arg(root_id)::uuid FOR UPDATE;
 
+-- name: LockRetainedGenerationRoot :one
+SELECT r.root_id::text AS root_id,r.target_id,r.candidate_id::text AS candidate_id,r.generation_id::text AS generation_id,r.snapshot_seal_id::text AS snapshot_seal_id,r.root_kind,r.state,r.expires_at
+FROM delivery.delivery_retention_root r
+JOIN delivery.delivery_generation g
+  ON g.generation_id=r.generation_id
+ AND g.target_id=r.target_id
+ AND g.candidate_id=r.candidate_id
+ AND g.snapshot_seal_id=r.snapshot_seal_id
+WHERE r.target_id=sqlc.arg(target_id)
+  AND r.generation_id=sqlc.arg(generation_id)::uuid
+  AND r.root_kind='generation'
+  AND r.state IN ('live','retiring')
+  AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp())
+ORDER BY CASE r.state WHEN 'live' THEN 0 ELSE 1 END, r.created_at DESC, r.root_id
+FOR UPDATE OF r
+LIMIT 1;
+
+-- name: LockLiveGenerationRoot :one
+SELECT r.root_id::text AS root_id,r.target_id,r.candidate_id::text AS candidate_id,r.generation_id::text AS generation_id,r.snapshot_seal_id::text AS snapshot_seal_id,r.root_kind,r.state,r.expires_at
+FROM delivery.delivery_retention_root r
+JOIN delivery.delivery_generation g
+  ON g.generation_id=r.generation_id
+ AND g.target_id=r.target_id
+ AND g.candidate_id=r.candidate_id
+ AND g.snapshot_seal_id=r.snapshot_seal_id
+WHERE r.target_id=sqlc.arg(target_id)
+  AND r.generation_id=sqlc.arg(generation_id)::uuid
+  AND r.root_kind='generation'
+  AND r.state='live'
+  AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp())
+ORDER BY r.created_at DESC, r.root_id
+FOR UPDATE OF r
+LIMIT 1;
+
 -- name: InsertGenerationRoot :exec
 INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state)
 VALUES(sqlc.arg(root_id)::uuid,sqlc.arg(target_id),sqlc.arg(candidate_id)::uuid,sqlc.arg(generation_id)::uuid,sqlc.arg(snapshot_seal_id)::uuid,'generation','live');
@@ -325,3 +359,19 @@ VALUES(sqlc.arg(root_id)::uuid,sqlc.arg(target_id),sqlc.arg(candidate_id)::uuid,
 INSERT INTO delivery.delivery_retention_root(root_id,target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state,expires_at,evidence)
 VALUES(sqlc.arg(root_id)::uuid,sqlc.arg(target_id),sqlc.narg(candidate_id)::uuid,sqlc.narg(generation_id)::uuid,sqlc.narg(snapshot_seal_id)::uuid,sqlc.arg(root_kind),sqlc.arg(state),sqlc.narg(expires_at),sqlc.arg(evidence)::jsonb)
 ON CONFLICT(root_id) DO NOTHING;
+
+-- Retention-root lifecycle transitions are capability-owned SECURITY DEFINER
+-- functions. The repository calls these through a caller-owned transaction so
+-- a target/pointer mutation and its root transition share one commit boundary.
+-- Expiry accepts a caller-supplied grace interval; the function evaluates both
+-- the grace and root expiry against PostgreSQL's wall clock.
+
+-- name: RetireRetentionRoot :one
+SELECT delivery.retire_retention_root(sqlc.arg(root_id)::uuid) AS transitioned;
+
+-- name: ExpireRetentionRoot :one
+SELECT delivery.expire_retention_root(sqlc.arg(root_id)::uuid, sqlc.arg(grace)::interval) AS transitioned;
+
+-- name: MaintainRetentionRoots :one
+SELECT retired::bigint, expired::bigint
+FROM delivery.maintain_retention_roots(sqlc.arg(physical_pool_id), sqlc.arg(catalog_id), sqlc.arg(grace)::interval, sqlc.arg(batch)::integer);

@@ -425,6 +425,80 @@ func TestNativeCoordinatorPostgresRollbackRequiresRetainedGeneration(t *testing.
 	})
 }
 
+func TestNativeCoordinatorPostgresRollbackRootRetiresAtTerminalOutcome(t *testing.T) {
+	t.Run("cancellation", func(t *testing.T) {
+		f := newNativePGFixture(t)
+		ctx := t.Context()
+		if _, err := f.repo.CreateRetentionRoot(ctx, deploymentpostgres.DeliveryRetentionRoot{RootID: f.generation, TargetID: f.targetID, CandidateID: f.candidate, GenerationID: f.generation, SnapshotSealID: f.seal, RootKind: "generation", State: "live"}); err != nil {
+			t.Fatal(err)
+		}
+		request := nativeRollbackRequest(f, "rollback-root-cancel")
+		pending, err := f.coordinator.RollbackGeneration(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		cancelled, err := f.coordinator.CancelRequest(ctx, apiadapter.CancelRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: pending.ID.String()}, Actor: request.PrincipalID, IdempotencyKey: "rollback-root-cancel-terminal"})
+		if err != nil || cancelled.Status != apiadapter.StatusCancelled {
+			t.Fatalf("cancel rollback publication = %#v, %v", cancelled, err)
+		}
+		assertRetiringRollbackRoot(t, f, pending.ID.String())
+
+		// Both terminal replay paths are idempotent and preserve the retiring
+		// state; neither re-admits the temporary root as live.
+		replayedCancel, err := f.coordinator.CancelRequest(ctx, apiadapter.CancelRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: pending.ID.String()}, Actor: request.PrincipalID, IdempotencyKey: "rollback-root-cancel-terminal"})
+		if err != nil || replayedCancel.Status != apiadapter.StatusCancelled {
+			t.Fatalf("cancel replay = %#v, %v", replayedCancel, err)
+		}
+		replayedRollback, err := f.coordinator.RollbackGeneration(ctx, request)
+		if err != nil || replayedRollback.ID != pending.ID || replayedRollback.Status != "rejected" {
+			t.Fatalf("rollback replay after cancellation = %#v, %v", replayedRollback, err)
+		}
+		assertRetiringRollbackRoot(t, f, pending.ID.String())
+	})
+
+	t.Run("activation", func(t *testing.T) {
+		f := newNativePGFixture(t)
+		ctx := t.Context()
+		if _, err := f.repo.CreateRetentionRoot(ctx, deploymentpostgres.DeliveryRetentionRoot{RootID: f.generation, TargetID: f.targetID, CandidateID: f.candidate, GenerationID: f.generation, SnapshotSealID: f.seal, RootKind: "generation", State: "live"}); err != nil {
+			t.Fatal(err)
+		}
+		request := nativeRollbackRequest(f, "rollback-root-activate")
+		pending, err := f.coordinator.RollbackGeneration(ctx, request)
+		if err != nil {
+			t.Fatal(err)
+		}
+		active, err := f.coordinator.Activate(ctx, apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: pending.ID.String()}, Actor: request.PrincipalID, IdempotencyKey: "rollback-root-activate-terminal"})
+		if err != nil || active.Status != apiadapter.StatusActive {
+			t.Fatalf("activate rollback publication = %#v, %v", active, err)
+		}
+		assertRetiringRollbackRoot(t, f, pending.ID.String())
+
+		// Replaying the publication and activation after commit must not require
+		// the temporary root to remain live.
+		replayedRollback, err := f.coordinator.RollbackGeneration(ctx, request)
+		if err != nil || replayedRollback.ID != pending.ID || replayedRollback.Status != "committed" {
+			t.Fatalf("rollback replay after activation = %#v, %v", replayedRollback, err)
+		}
+		replayedActive, err := f.coordinator.Activate(ctx, apiadapter.ActivateRequest{Scope: apiadapter.Scope{Project: "project_sales", DeploymentID: pending.ID.String()}, Actor: request.PrincipalID, IdempotencyKey: "rollback-root-activate-terminal"})
+		if err != nil || replayedActive.Status != apiadapter.StatusActive {
+			t.Fatalf("activation replay = %#v, %v", replayedActive, err)
+		}
+		assertRetiringRollbackRoot(t, f, pending.ID.String())
+	})
+}
+
+func assertRetiringRollbackRoot(t *testing.T, f *nativePGFixture, rootID string) {
+	t.Helper()
+	var state string
+	var retiredAt, expiredAt *time.Time
+	if err := f.db.QueryRow(t.Context(), `SELECT state,retired_at,expired_at FROM delivery.delivery_retention_root WHERE root_id=$1`, rootID).Scan(&state, &retiredAt, &expiredAt); err != nil {
+		t.Fatal(err)
+	}
+	if state != "retiring" || retiredAt == nil || expiredAt != nil {
+		t.Fatalf("rollback root lifecycle = state=%q retired_at=%v expired_at=%v", state, retiredAt, expiredAt)
+	}
+}
+
 func nativeCreateRequest(f *nativePGFixture, key string) apiadapter.CreateRequest {
 	return apiadapter.CreateRequest{Project: "project_sales", Environment: "prod", GenerationID: f.generation, ArtifactDigest: "sha256:" + strings.Repeat("e", 64), Actor: "operator", IdempotencyKey: key, Workflow: func(id string) (jobs.WorkflowIntent, error) {
 		return jobs.WorkflowIntent{Event: jobs.EventInput{Key: "deployment-created-" + id, ResourceKind: "deployment", ResourceID: id, EventType: "deployment.created", Data: []byte(`{"ok":true}`)}}, nil

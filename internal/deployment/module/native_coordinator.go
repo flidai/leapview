@@ -296,8 +296,17 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 			return NativeDeliveryPublication{}, mapNativeError(readErr)
 		}
 		if rollback {
-			if readErr = c.repository.RequireRollbackRootTx(ctx, tx, publication.PublicationID, targetID, publication.GenerationID, publication.CandidateID, publication.SnapshotSealID); readErr != nil {
-				return NativeDeliveryPublication{}, mapNativeError(readErr)
+			// A rollback request keeps its publication-id root live only while
+			// the publication is pending. Once the publication reached a
+			// terminal outcome, the root must be retired (and left for the
+			// retention/drain authority to expire). This also repairs a replay
+			// of a terminal request created before lifecycle wiring was enabled.
+			if publication.State == "pending" {
+				if readErr = c.repository.RequireRollbackRootTx(ctx, tx, publication.PublicationID, targetID, publication.GenerationID, publication.CandidateID, publication.SnapshotSealID); readErr != nil {
+					return NativeDeliveryPublication{}, mapNativeError(readErr)
+				}
+			} else if readErr = c.retireNativeRollbackRootTx(ctx, tx, publication); readErr != nil {
+				return NativeDeliveryPublication{}, readErr
 			}
 		}
 		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
@@ -587,6 +596,12 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 		if target.ProjectID != projectID.String() || publication.TargetID != c.targetID || (c.instanceEnv != "" && target.Environment != c.instanceEnv) {
 			return apiadapter.Deployment{}, deployment.ErrNotFound
 		}
+		// A committed rollback publication no longer needs its temporary
+		// publication-id root. Retire it on replay as well so a lost-ack or
+		// pre-lifecycle terminal row is repaired atomically with the replay.
+		if err := c.retireNativeRollbackRootTx(ctx, tx, publication); err != nil {
+			return apiadapter.Deployment{}, err
+		}
 		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
@@ -609,6 +624,9 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 		return apiadapter.Deployment{}, mapNativeError(err)
 	}
 	if publication.State == "committed" {
+		if err := c.retireNativeRollbackRootTx(ctx, tx, publication); err != nil {
+			return apiadapter.Deployment{}, err
+		}
 		outcome, _ := json.Marshal(nativeMutationOutcome{PublicationID: publication.PublicationID})
 		if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
@@ -634,6 +652,9 @@ func (c *nativeCoordinator) Activate(ctx context.Context, request apiadapter.Act
 	result, err := c.repository.ActivateTxWithPreCommitHook(ctx, tx, deploymentpostgres.ActivationInput{PublicationID: publicationID, TargetID: publication.TargetID, GenerationID: publication.GenerationID, ExpectedTargetRevision: publication.ExpectedTargetRevision, RequestDigest: publication.RequestDigest, ActorID: request.Actor, CorrelationID: correlationID, LeaseID: lease.LeaseID, OwnerID: lease.OwnerID, FencingEpoch: lease.FencingEpoch}, c.beforeActivationCommit)
 	if err != nil {
 		return apiadapter.Deployment{}, mapNativeError(err)
+	}
+	if err := c.retireNativeRollbackRootTx(ctx, tx, result.Publication); err != nil {
+		return apiadapter.Deployment{}, err
 	}
 	outcome, _ := json.Marshal(nativeMutationOutcome{PublicationID: result.Publication.PublicationID, EventID: result.Event.EventID, AuditID: result.Audit.AuditID})
 	if err := c.operations.CompleteTx(ctx, tx, operation.Lease, outcome); err != nil {
@@ -730,6 +751,12 @@ func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapte
 		if target.ProjectID != projectID.String() || publication.TargetID != c.targetID || (c.instanceEnv != "" && target.Environment != c.instanceEnv) {
 			return apiadapter.Deployment{}, deployment.ErrNotFound
 		}
+		// Replayed cancellation is terminal. Retire a rollback publication's
+		// temporary root in the same transaction, while leaving expiry to the
+		// retention/drain authority.
+		if err := c.retireNativeRollbackRootTx(ctx, tx, publication); err != nil {
+			return apiadapter.Deployment{}, err
+		}
 		if err := tx.Commit(contextOrBackground(ctx)); err != nil {
 			return apiadapter.Deployment{}, mapNativeError(err)
 		}
@@ -746,6 +773,9 @@ func (c *nativeCoordinator) CancelRequest(ctx context.Context, request apiadapte
 	}
 	if target.ProjectID != projectID.String() || publication.TargetID != c.targetID || (c.instanceEnv != "" && target.Environment != c.instanceEnv) {
 		return apiadapter.Deployment{}, deployment.ErrNotFound
+	}
+	if err := c.retireNativeRollbackRootTx(ctx, tx, publication); err != nil {
+		return apiadapter.Deployment{}, err
 	}
 	eventID, err := newNativeUUIDv7()
 	if err != nil {
@@ -797,6 +827,28 @@ func (c *nativeCoordinator) appendMutationEvidence(ctx context.Context, tx deplo
 		if err := c.workflow.RecordWorkflow(ctx, tx, workflow); err != nil {
 			return mapNativeError(err)
 		}
+	}
+	return nil
+}
+
+// retireNativeRollbackRootTx retires the temporary root whose identity is the
+// rollback publication ID. Ordinary publications do not create that root, so
+// a missing root is intentionally a no-op. Retiring is deliberately separate
+// from expiry: a retiring root remains durable until the retention/drain
+// authority proves that no reader still relies on its snapshot.
+func (c *nativeCoordinator) retireNativeRollbackRootTx(ctx context.Context, tx deploymentpostgres.Tx, publication deploymentpostgres.DeliveryPublication) error {
+	if c == nil || c.repository == nil || tx == nil {
+		return ErrDeliveryInputUnavailable
+	}
+	root, err := c.repository.RetireRetentionRootTx(ctx, tx, publication.PublicationID)
+	if errors.Is(err, deploymentpostgres.ErrNotFound) || errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return mapNativeError(err)
+	}
+	if root.RootID != publication.PublicationID || root.TargetID != publication.TargetID || root.CandidateID != publication.CandidateID || root.GenerationID != publication.GenerationID || root.SnapshotSealID != publication.SnapshotSealID || root.RootKind != "rollback" || (root.State != "retiring" && root.State != "expired") {
+		return fmt.Errorf("%w: rollback retention root identity differs from publication", deployment.ErrConflict)
 	}
 	return nil
 }

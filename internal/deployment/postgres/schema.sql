@@ -409,10 +409,22 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_retention_root (
     CHECK ((state = 'live' AND retired_at IS NULL AND expired_at IS NULL)
         OR (state = 'retiring' AND retired_at IS NOT NULL AND expired_at IS NULL)
         OR (state = 'expired' AND expired_at IS NOT NULL)),
-    CHECK ((root_kind = 'candidate' AND candidate_id IS NOT NULL)
-        OR (root_kind = 'generation' AND generation_id IS NOT NULL)
-        OR (root_kind NOT IN ('candidate','generation')))
+    CHECK ((root_kind IN ('candidate','generation')
+            AND candidate_id IS NOT NULL AND generation_id IS NOT NULL AND snapshot_seal_id IS NOT NULL)
+        OR (root_kind NOT IN ('candidate','generation'))),
+    FOREIGN KEY (generation_id, target_id, candidate_id, snapshot_seal_id)
+        REFERENCES delivery.delivery_generation(generation_id, target_id, candidate_id, snapshot_seal_id),
+    FOREIGN KEY (candidate_id, target_id, snapshot_seal_id)
+        REFERENCES delivery.delivery_candidate(candidate_id, target_id, snapshot_seal_id)
 );
+
+-- One live generation root is the canonical reader-admission authority for a
+-- generation. Historical roots remain immutable while retiring/expired, and
+-- a later rollback activation may establish a fresh live root for the same
+-- generation without reviving history.
+CREATE UNIQUE INDEX IF NOT EXISTS delivery_one_live_generation_root_idx
+    ON delivery.delivery_retention_root(generation_id)
+    WHERE root_kind = 'generation' AND state = 'live';
 
 CREATE OR REPLACE FUNCTION delivery.reject_authority_history_mutation()
 RETURNS trigger LANGUAGE plpgsql AS $$
@@ -783,6 +795,331 @@ BEGIN
 END;
 $$;
 
+-- Retention-root lifecycle entry points.  Roots are capability-owned reach-
+-- ability records: callers may only advance them live -> retiring -> expired.
+-- Each function locks the root before checking state.  Serving-state reader
+-- lease admission takes a FOR SHARE lock on the same root, so retirement's
+-- FOR UPDATE lock closes the race in which a reader could be admitted after
+-- the root has been selected for retirement.
+CREATE OR REPLACE FUNCTION delivery.retire_retention_root(p_root_id uuid)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+DECLARE
+    root_state text;
+    root_kind text;
+    root_target_id text;
+    root_candidate_id uuid;
+    root_generation_id uuid;
+    root_snapshot_seal_id uuid;
+    root_expires_at timestamptz;
+BEGIN
+    SELECT r.state, r.root_kind, r.target_id, r.candidate_id, r.generation_id, r.snapshot_seal_id, r.expires_at
+      INTO root_state, root_kind, root_target_id, root_candidate_id, root_generation_id, root_snapshot_seal_id, root_expires_at
+      FROM delivery.delivery_retention_root AS r
+     WHERE r.root_id = p_root_id
+     FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    IF root_kind NOT IN ('candidate', 'generation', 'rollback', 'recovery', 'query') THEN
+        RAISE EXCEPTION 'unsupported retention root kind %', root_kind;
+    END IF;
+    -- The runtime capability is intentionally narrow: a generation root that
+    -- is still selected by the active pointer cannot be retired by an
+    -- arbitrary root-id call. Activation updates the pointer before invoking
+    -- this function while retaining the root lock, so predecessor retirement
+    -- remains atomic without exposing a live active root to readers.
+    IF root_kind = 'generation'
+       AND EXISTS (
+           SELECT 1
+             FROM delivery.delivery_active_pointer active
+            WHERE active.target_id = root_target_id
+              AND active.generation_id = root_generation_id
+       ) THEN
+        RAISE EXCEPTION 'cannot retire the active generation retention root';
+    END IF;
+    -- Candidate roots may be retired only when activation has made their
+    -- generation live, or when their explicit DB-owned governance deadline
+    -- has elapsed. This prevents a caller that knows only a candidate UUID
+    -- from dropping preview reachability early.
+    IF root_kind IN ('candidate', 'recovery', 'query')
+       AND NOT (
+           (root_kind = 'candidate' AND EXISTS (
+               SELECT 1
+                 FROM delivery.delivery_active_pointer active
+                WHERE active.target_id = root_target_id
+                  AND active.generation_id = root_generation_id
+           ))
+           OR (root_expires_at IS NOT NULL AND root_expires_at <= clock_timestamp())
+       ) THEN
+        RAISE EXCEPTION 'retention root lacks activation or expired deadline evidence';
+    END IF;
+    -- Rollback roots are keyed by publication ID. Retirement is valid only
+    -- after that exact publication reaches a terminal state and all immutable
+    -- tuple evidence agrees with the root row.
+    IF root_kind = 'rollback'
+       AND NOT EXISTS (
+           SELECT 1
+             FROM delivery.delivery_publication publication
+            WHERE publication.publication_id = p_root_id
+              AND publication.target_id = root_target_id
+              AND publication.candidate_id = root_candidate_id
+              AND publication.generation_id = root_generation_id
+              AND publication.snapshot_seal_id = root_snapshot_seal_id
+              AND publication.state IN ('committed', 'rejected', 'indeterminate')
+       ) THEN
+        RAISE EXCEPTION 'rollback retention root lacks terminal publication evidence';
+    END IF;
+    -- Replaying retirement is a successful no-op after the same evidence
+    -- checks above. Terminal roots cannot be moved backwards or re-retired.
+    IF root_state = 'retiring' THEN
+        RETURN true;
+    ELSIF root_state <> 'live' THEN
+        RETURN false;
+    END IF;
+    UPDATE delivery.delivery_retention_root
+       SET state = 'retiring', retired_at = clock_timestamp()
+     WHERE root_id = p_root_id AND state = 'live';
+    RETURN FOUND;
+END;
+$$;
+
+CREATE OR REPLACE FUNCTION delivery.expire_retention_root(
+    p_root_id uuid,
+    p_grace interval DEFAULT interval '0 seconds'
+)
+RETURNS boolean
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+DECLARE
+    root_state text;
+    root_retired_at timestamptz;
+    root_expires_at timestamptz;
+    root_generation_id uuid;
+    root_target_id text;
+    root_candidate_id uuid;
+    root_snapshot_seal_id uuid;
+    db_now timestamptz;
+    expected_snapshot bigint;
+BEGIN
+    IF p_grace IS NULL OR p_grace < interval '0 seconds' THEN
+        RAISE EXCEPTION 'retention root expiry grace must be non-negative';
+    END IF;
+    -- Lock the root before inspecting reader leases.  Reader admission takes
+    -- a share lock on this row, therefore a concurrent admission either wins
+    -- before this lock (and is observed below) or is rejected after retirement.
+    SELECT state, retired_at, expires_at, target_id, candidate_id, generation_id, snapshot_seal_id
+      INTO root_state, root_retired_at, root_expires_at, root_target_id, root_candidate_id, root_generation_id, root_snapshot_seal_id
+      FROM delivery.delivery_retention_root
+     WHERE root_id = p_root_id
+     FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN false;
+    END IF;
+    IF root_state = 'expired' THEN
+        RETURN true;
+    END IF;
+    IF root_state <> 'retiring' OR root_retired_at IS NULL THEN
+        RETURN false;
+    END IF;
+    db_now := clock_timestamp();
+    -- A root's explicit expiry (for example, a candidate governance deadline)
+    -- remains authoritative.  Retirement grace is evaluated from the DB
+    -- retirement timestamp, never from an application/node clock.
+    IF db_now < root_retired_at + p_grace
+       OR (root_expires_at IS NOT NULL AND db_now < root_expires_at) THEN
+        RETURN false;
+    END IF;
+    -- A stale/malformed retiring root must never make the currently active
+    -- generation collectible. Reactivation is the exception: its fresh live
+    -- generation root remains the canonical admission guard while this older
+    -- immutable root is allowed to expire.
+    IF root_generation_id IS NOT NULL
+       AND EXISTS (
+           SELECT 1 FROM delivery.delivery_active_pointer active
+            WHERE active.generation_id = root_generation_id
+       )
+       AND NOT EXISTS (
+           SELECT 1
+             FROM delivery.delivery_retention_root active_root
+            WHERE active_root.root_id <> p_root_id
+              AND active_root.target_id = root_target_id
+              AND active_root.candidate_id = root_candidate_id
+              AND active_root.generation_id = root_generation_id
+              AND active_root.snapshot_seal_id = root_snapshot_seal_id
+              AND active_root.root_kind = 'generation'
+              AND active_root.state = 'live'
+              AND (active_root.expires_at IS NULL OR active_root.expires_at > db_now)
+       ) THEN
+        RETURN false;
+    END IF;
+    -- Only exact serving-state leases rooted at this generation/snapshot can
+    -- delay expiry.  Expired leases no longer represent readers even if the
+    -- maintenance marker has not yet been written.
+    IF root_generation_id IS NOT NULL THEN
+        SELECT s.ducklake_snapshot_id
+          INTO expected_snapshot
+          FROM delivery.delivery_generation g
+          JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
+         WHERE g.generation_id = root_generation_id
+           AND (root_snapshot_seal_id IS NULL OR s.seal_id = root_snapshot_seal_id);
+        IF expected_snapshot IS NULL THEN
+            -- Corrupt/missing generation evidence fails closed.
+            RETURN false;
+        END IF;
+        IF EXISTS (
+            SELECT 1
+              FROM serving_state.reader_lease l
+             WHERE l.generation_id = root_generation_id
+               AND l.ducklake_snapshot_id = expected_snapshot
+               AND l.released_at IS NULL
+               AND l.expires_at > db_now
+        ) THEN
+            RETURN false;
+        END IF;
+    END IF;
+    UPDATE delivery.delivery_retention_root
+       SET state = 'expired', expired_at = clock_timestamp()
+     WHERE root_id = p_root_id AND state = 'retiring';
+    RETURN FOUND;
+END;
+$$;
+
+-- One bounded maintenance pass first retires candidate roots whose explicit
+-- governance deadline has elapsed, then expires ready retiring roots. The
+-- singular expiry function remains the final authority and rechecks reader
+-- leases, active-generation protection, grace, and immutable seal identity
+-- under the root lock. SKIP LOCKED lets parallel workers make progress
+-- without waiting on activation or reader admission transactions.
+CREATE OR REPLACE FUNCTION delivery.maintain_retention_roots(
+    p_physical_pool_id text,
+    p_catalog_id text,
+    p_grace interval,
+    p_limit integer
+)
+RETURNS TABLE(retired bigint, expired bigint)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+DECLARE
+    candidate record;
+    db_now timestamptz;
+BEGIN
+    IF p_physical_pool_id IS NULL OR p_physical_pool_id <> btrim(p_physical_pool_id)
+       OR octet_length(p_physical_pool_id) NOT BETWEEN 1 AND 255
+       OR p_catalog_id IS NULL OR p_catalog_id <> btrim(p_catalog_id)
+       OR octet_length(p_catalog_id) NOT BETWEEN 1 AND 255 THEN
+        RAISE EXCEPTION 'retention root maintenance pool/catalog identity is invalid';
+    END IF;
+    IF p_grace IS NULL OR p_grace < interval '0 seconds' THEN
+        RAISE EXCEPTION 'retention root maintenance grace must be non-negative';
+    END IF;
+    IF p_limit IS NULL OR p_limit < 1 OR p_limit > 1000 THEN
+        RAISE EXCEPTION 'retention root maintenance limit must be between 1 and 1000';
+    END IF;
+    retired := 0;
+    expired := 0;
+    db_now := clock_timestamp();
+
+    FOR candidate IN
+        SELECT root.root_id
+          FROM delivery.delivery_retention_root root
+         WHERE root.root_kind = 'candidate'
+           AND root.state = 'live'
+           AND root.expires_at IS NOT NULL
+           AND root.expires_at <= db_now
+           AND EXISTS (
+               SELECT 1 FROM delivery.delivery_snapshot_seal seal
+                WHERE seal.seal_id = root.snapshot_seal_id
+                  AND seal.physical_pool_id = p_physical_pool_id
+                  AND seal.catalog_id = p_catalog_id
+           )
+         ORDER BY root.expires_at, root.root_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT p_limit
+    LOOP
+        IF delivery.retire_retention_root(candidate.root_id) THEN
+            retired := retired + 1;
+        END IF;
+    END LOOP;
+
+    -- Retirement timestamps use clock_timestamp(), so refresh the DB clock
+    -- before evaluating zero-grace roots retired by this same bounded pass.
+    db_now := clock_timestamp();
+    FOR candidate IN
+        SELECT root.root_id
+          FROM delivery.delivery_retention_root root
+         WHERE root.state = 'retiring'
+           AND root.retired_at + p_grace <= db_now
+           AND (root.expires_at IS NULL OR root.expires_at <= db_now)
+           AND EXISTS (
+               SELECT 1 FROM delivery.delivery_snapshot_seal scoped_seal
+                WHERE scoped_seal.seal_id = root.snapshot_seal_id
+                  AND scoped_seal.physical_pool_id = p_physical_pool_id
+                  AND scoped_seal.catalog_id = p_catalog_id
+           )
+           AND (
+               root.generation_id IS NULL
+               OR (
+                   EXISTS (
+                       SELECT 1
+                         FROM delivery.delivery_generation g
+                         JOIN delivery.delivery_snapshot_seal seal
+                           ON seal.seal_id = g.snapshot_seal_id
+                        WHERE g.generation_id = root.generation_id
+                          AND (root.snapshot_seal_id IS NULL OR root.snapshot_seal_id = seal.seal_id)
+                   )
+                   AND NOT EXISTS (
+                       SELECT 1
+                         FROM serving_state.reader_lease lease
+                         JOIN delivery.delivery_generation g
+                           ON g.generation_id = lease.generation_id
+                         JOIN delivery.delivery_snapshot_seal seal
+                           ON seal.seal_id = g.snapshot_seal_id
+                        WHERE g.generation_id = root.generation_id
+                          AND (root.snapshot_seal_id IS NULL OR root.snapshot_seal_id = seal.seal_id)
+                          AND lease.ducklake_snapshot_id = seal.ducklake_snapshot_id
+                          AND lease.released_at IS NULL
+                          AND lease.expires_at > db_now
+                   )
+                   AND (
+                       NOT EXISTS (
+                           SELECT 1 FROM delivery.delivery_active_pointer active
+                            WHERE active.generation_id = root.generation_id
+                       )
+                       OR EXISTS (
+                           SELECT 1
+                             FROM delivery.delivery_retention_root active_root
+                            WHERE active_root.root_id <> root.root_id
+                              AND active_root.target_id = root.target_id
+                              AND active_root.candidate_id = root.candidate_id
+                              AND active_root.generation_id = root.generation_id
+                              AND active_root.snapshot_seal_id = root.snapshot_seal_id
+                              AND active_root.root_kind = 'generation'
+                              AND active_root.state = 'live'
+                              AND (active_root.expires_at IS NULL OR active_root.expires_at > db_now)
+                       )
+                   )
+               )
+           )
+         ORDER BY root.retired_at, root.root_id
+         FOR UPDATE SKIP LOCKED
+         LIMIT p_limit
+    LOOP
+        IF delivery.expire_retention_root(candidate.root_id, p_grace) THEN
+            expired := expired + 1;
+        END IF;
+    END LOOP;
+    RETURN NEXT;
+END;
+$$;
+
 DROP TRIGGER IF EXISTS delivery_target_identity_immutable ON delivery.delivery_target;
 CREATE TRIGGER delivery_target_identity_immutable BEFORE UPDATE OR DELETE ON delivery.delivery_target
     FOR EACH ROW EXECUTE FUNCTION delivery.reject_target_identity_mutation();
@@ -861,3 +1198,25 @@ GRANT SELECT, INSERT, UPDATE ON ALL TABLES IN SCHEMA delivery TO CURRENT_USER;
 GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA delivery TO CURRENT_USER;
 REVOKE UPDATE, DELETE ON delivery.delivery_build_attempt_successor FROM CURRENT_USER;
 GRANT SELECT, INSERT ON delivery.delivery_build_attempt_successor TO CURRENT_USER;
+
+-- Runtime activation and maintenance expiry use the narrow capability entry
+-- points above; neither role needs direct retention-root UPDATE/DELETE access.
+REVOKE ALL ON FUNCTION delivery.retire_retention_root(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM PUBLIC;
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
+        -- Expiry is maintenance/drain-owned. Runtime activation may retire
+        -- predecessors but cannot force their terminal expiry.
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
+        GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
+        GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION delivery.expire_retention_root(uuid, interval) TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) TO leapview_control_maintenance;
+    END IF;
+END;
+$$;
