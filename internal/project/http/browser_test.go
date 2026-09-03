@@ -88,11 +88,19 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 		{
 			ID: "dashboard:mine", StableID: "instance:project:test:dashboard:mine", ProjectID: "project:test", Title: "My analysis",
 			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceInstance, Owner: "alice", DraftID: "draft-mine", PageCount: 2,
-			Revision: &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-mine", Number: 2, ContentHash: strings.Repeat("a", 64), CreatedAt: now},
+			FirstPageID: "overview",
+			Revision:    &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-mine", Number: 2, ContentHash: strings.Repeat("a", 64), CreatedAt: now},
 		},
 		{
 			ID: "dashboard:managed", StableID: "project:project:test:dashboard:managed", ProjectID: "project:test", Title: "Executive sales",
 			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceProject, Owner: "analytics", PageCount: 1, Featured: true,
+		},
+		{
+			ID: "dashboard:pending", StableID: "instance:project:test:dashboard:pending", ProjectID: "project:test", Title: "Pending analysis",
+			SemanticModel: "semantic-model:sales", Source: dashboardauthoringcatalog.SourceInstance, Owner: "alice", DraftID: "draft-pending", PageCount: 1,
+			FirstPageID: "overview",
+			Revision:    &dashboardauthoringcatalog.RevisionEvidence{ID: "revision-new", Number: 3, ContentHash: strings.Repeat("c", 64), CreatedAt: now},
+			Publication: &dashboardauthoringcatalog.PublicationEvidence{Revision: dashboardauthoringcatalog.RevisionEvidence{ID: "revision-old", Number: 2, ContentHash: strings.Repeat("b", 64)}},
 		},
 	}}}
 	popularityCount := 0
@@ -109,18 +117,22 @@ func TestDashboardCatalogPageIncludesAuthoredAndRepositoryManagedDashboards(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(options.Dashboards) != 2 {
+	if len(options.Dashboards) != 3 {
 		t.Fatalf("dashboards = %#v", options.Dashboards)
 	}
-	mine, managed := options.Dashboards[0], options.Dashboards[1]
-	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != "/dashboards/dashboard:mine/edit?draft=draft-mine" || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
+	mine, managed, pending := options.Dashboards[0], options.Dashboards[1], options.Dashboards[2]
+	wantMineHref := "/dashboards/dashboard:mine/preview?draft=draft-mine&page=overview&revisionContentHash=" + strings.Repeat("a", 64) + "&revisionId=revision-mine&revisionNumber=2"
+	if mine.CatalogScope != "mine" || mine.Status != "private_draft" || mine.Href != wantMineHref || mine.Owner != "You" || mine.UpdatedAt != now.Format(time.RFC3339) {
 		t.Fatalf("mine = %#v", mine)
 	}
 	if managed.CatalogScope != "managed" || managed.Owner != "analytics" || managed.Status != "published" || managed.Href != "/dashboards/dashboard:managed" || !managed.Featured || managed.Popularity != "high" {
 		t.Fatalf("managed = %#v", managed)
 	}
-	if popularityCount != 2 {
-		t.Fatalf("popularity dashboard count = %d, want 2", popularityCount)
+	if pending.CatalogScope != "mine" || pending.Status != "unpublished_changes" || pending.Href != "/dashboards/dashboard:pending" {
+		t.Fatalf("pending = %#v", pending)
+	}
+	if popularityCount != 3 {
+		t.Fatalf("popularity dashboard count = %d, want 3", popularityCount)
 	}
 	if len(reader.requests) != 1 || reader.requests[0].ActorID != "alice" || reader.requests[0].ProjectID != "project:test" {
 		t.Fatalf("catalog requests = %#v", reader.requests)

@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"path"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1459,10 +1460,14 @@ func (h *BrowserHandler) dashboardCatalogPage(r *stdhttp.Request, query string) 
 	for _, item := range result.Items {
 		status := dashboardCatalogStatus(item)
 		href := "/dashboards/" + url.PathEscape(item.ID.String())
-		if item.Source == dashboardauthoringcatalog.SourceInstance && item.DraftID != "" && status != "published" {
+		if item.Source == dashboardauthoringcatalog.SourceInstance && item.DraftID != "" && status == "private_draft" && item.Revision != nil && strings.TrimSpace(item.FirstPageID) != "" {
 			values := url.Values{}
 			values.Set("draft", item.DraftID.String())
-			href += "/edit?" + values.Encode()
+			values.Set("page", item.FirstPageID)
+			values.Set("revisionContentHash", item.Revision.ContentHash)
+			values.Set("revisionId", item.Revision.ID)
+			values.Set("revisionNumber", strconv.FormatUint(item.Revision.Number, 10))
+			href += "/preview?" + values.Encode()
 		}
 		scope := "managed"
 		owner := strings.TrimSpace(item.Owner)

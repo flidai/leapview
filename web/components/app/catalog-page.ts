@@ -822,7 +822,10 @@ function dashboardViewHref(dashboard: CatalogDashboard): string {
 }
 
 function dashboardEditorHref(dashboard: CatalogDashboard): string {
-  return dashboard.href.includes('/edit') ? dashboard.href : `${dashboardViewHref(dashboard)}/edit`
+  if (dashboard.href.includes('/edit')) return dashboard.href
+  const editorHref = `${dashboardViewHref(dashboard)}/edit`
+  const draftID = new URL(dashboard.href, window.location.origin).searchParams.get('draft')?.trim()
+  return draftID ? `${editorHref}?draft=${encodeURIComponent(draftID)}` : editorHref
 }
 
 function dashboardForkHref(dashboard: CatalogDashboard): string {
