@@ -1,9 +1,10 @@
-package sqlite
+package search
 
 import (
 	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -44,6 +45,18 @@ func TestSearchCompilesUserInputToSafePrefixTerms(t *testing.T) {
 	}
 }
 
+func TestSearchRequiresEveryUnquotedTerm(t *testing.T) {
+	index := buildTestIndex(t, []Document{{Slug: "access-only", Title: "Access guide"}})
+
+	results, err := index.Search(context.Background(), "access policy", 10)
+	if err != nil {
+		t.Fatalf("search documentation: %v", err)
+	}
+	if len(results) != 0 {
+		t.Fatalf("partial-term results = %#v, want no matches", results)
+	}
+}
+
 func TestSearchPreservesQuotedPhrases(t *testing.T) {
 	index := buildTestIndex(t, []Document{
 		{Slug: "exact", Title: "Semantic relationships"},
@@ -59,10 +72,31 @@ func TestSearchPreservesQuotedPhrases(t *testing.T) {
 	}
 }
 
+func TestSearchNormalizesDiacriticsAndCentersExcerptOnMatch(t *testing.T) {
+	words := make([]string, 0, 40)
+	for index := 0; index < 30; index++ {
+		words = append(words, "background")
+	}
+	words = append(words, "café", "guide")
+	for index := 0; index < 8; index++ {
+		words = append(words, "details")
+	}
+	index := buildTestIndex(t, []Document{{Slug: "cafe", Title: "Café", Body: strings.Join(words, " ")}})
+
+	results, err := index.Search(context.Background(), "cafe", 1)
+	if err != nil {
+		t.Fatalf("search diacritic: %v", err)
+	}
+	if len(results) != 1 || !strings.Contains(results[0].Excerpt, "café") || !strings.HasPrefix(results[0].Excerpt, "… ") {
+		t.Fatalf("diacritic search excerpt = %#v, want centered match", results)
+	}
+}
+
 func buildTestIndex(t *testing.T, documents []Document) *Index {
 	t.Helper()
 	directory := t.TempDir()
-	if err := Build(filepath.Join(directory, Filename), documents); err != nil {
+	path := filepath.Join(directory, Filename)
+	if err := Build(path, documents); err != nil {
 		t.Fatalf("build documentation search index: %v", err)
 	}
 	index, err := Open(os.DirFS(directory), Filename)

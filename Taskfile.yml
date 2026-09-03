@@ -536,7 +536,7 @@ tasks:
       - bun scripts/generate_lucide_icon_catalog.ts
 
   docs:generate:
-    desc: Generate reference documentation, the unified catalog, and the FTS5 search index
+    desc: Generate reference documentation, the unified catalog, and the search index
     cmds:
       - task: schema:generate
       - task: data-resource-contracts:generate
@@ -574,13 +574,13 @@ tasks:
     generates:
       - docs/catalog.json
       - docs/llms.txt
-      - docs/search-index.sqlite3
+      - docs/search-index.json
     cmds:
       - bun run docs:validate-diagrams
       - go run ./internal/app/tools/docsitegen
 
   docs:check:
-    desc: Verify the unified documentation catalog and FTS5 search index are current
+    desc: Verify the unified documentation catalog and search index are current
     deps:
       - node:deps
       - ci:extensions:prepare

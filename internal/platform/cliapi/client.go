@@ -26,7 +26,6 @@ type DeliveryMode string
 
 const (
 	DeliveryModeNativePostgres DeliveryMode = "native_postgres"
-	DeliveryModeLegacySQLite   DeliveryMode = "legacy_sqlite"
 )
 
 // Client is the narrow application-facing port used by capability CLI

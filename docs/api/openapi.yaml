@@ -79882,11 +79882,9 @@ components:
       type: string
       enum:
         - native_postgres
-        - legacy_sqlite
       description: |-
         Project authoring delivery transport exposed by this composed server.
-        Native PostgreSQL targets use the canonical plan/build APIs; local SQLite
-        targets retain the legacy candidate synchronization protocol.
+        Native PostgreSQL targets use the canonical plan/build APIs.
       example: native_postgres
     DeliveryOperationKind:
       type: string

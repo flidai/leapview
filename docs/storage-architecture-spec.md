@@ -24,7 +24,8 @@ evaluation fixtures use the node-local layout below:
 PostgreSQL owns projects, releases, deployments, active serving pointers,
 authorization, durable jobs, idempotency, leases, and audit records in
 production. SQLite remains an explicit adapter for local/evaluation fixtures;
-the documentation site's SQLite search index is separate and unchanged.
+the documentation site's immutable search index is separate from the control
+plane and generated from the embedded documentation catalog.
 
 DuckLake owns analytical schemas, snapshots, changesets, statistics, schema
 evolution, and physical-file manifests. Production metadata is PostgreSQL-

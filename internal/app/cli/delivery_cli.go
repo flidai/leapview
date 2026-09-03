@@ -76,7 +76,6 @@ func (operations projectDeliveryPlanOperations) Create(ctx context.Context, opti
 		}
 		remote, err := devloop.NewTransportRemote(
 			newProjectDevSynchronizationTransport(
-				credentials.DeliveryMode,
 				newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic)),
 			),
 			options.UploadConcurrency,

@@ -49,7 +49,7 @@ internal/platform/**/sqlite/*db/
 docs/visuals/examples.gen.json
 web/generated/
 docs/catalog.json
-docs/search-index.sqlite3
+docs/search-index.json
 docs/configuration.md
 docs/api/*.md
 docs/api/operations.json

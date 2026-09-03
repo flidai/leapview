@@ -1,5 +1,5 @@
 // Command docsitegen composes authored navigation with generated reference
-// catalogs into the runtime catalog and FTS5 search index used by the public site.
+// catalogs into the runtime catalog and search index used by the public site.
 package main
 
 import (
@@ -14,14 +14,14 @@ import (
 	"strings"
 	"unicode"
 
-	docsearch "github.com/flidai/leapview/internal/app/site/search/sqlite"
+	docsearch "github.com/flidai/leapview/internal/app/site/search"
 	"gopkg.in/yaml.v3"
 )
 
 func main() {
 	navigation := flag.String("navigation", "docs/navigation.yaml", "authored documentation navigation manifest")
 	catalog := flag.String("catalog", "docs/catalog.json", "generated runtime catalog")
-	search := flag.String("search", "docs/"+docsearch.Filename, "generated FTS5 search index")
+	search := flag.String("search", "docs/"+docsearch.Filename, "generated documentation search index")
 	check := flag.Bool("check", false, "verify generated artifacts are current without changing them")
 	flag.Parse()
 	var err error

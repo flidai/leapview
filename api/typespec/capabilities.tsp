@@ -21,12 +21,10 @@ enum UploadProtocol {
 
 /**
  * Project authoring delivery transport exposed by this composed server.
- * Native PostgreSQL targets use the canonical plan/build APIs; local SQLite
- * targets retain the legacy candidate synchronization protocol.
+ * Native PostgreSQL targets use the canonical plan/build APIs.
  */
 enum DeliveryMode {
   nativePostgres: "native_postgres",
-  legacySqlite: "legacy_sqlite",
 }
 
 enum VisualizationRendererID {

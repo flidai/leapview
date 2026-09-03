@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	content "github.com/flidai/leapview/docs"
-	docsearch "github.com/flidai/leapview/internal/app/site/search/sqlite"
+	docsearch "github.com/flidai/leapview/internal/app/site/search"
 	"github.com/flidai/leapview/internal/app/site/visualdocs"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/extension"

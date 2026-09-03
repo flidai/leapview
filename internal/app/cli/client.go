@@ -206,7 +206,7 @@ func (client capabilityAPIClient) validateAuthoringTarget(
 		)
 	}
 	deliveryMode := cliapi.DeliveryMode(strings.TrimSpace(string(capabilities.DeliveryMode)))
-	if deliveryMode != cliapi.DeliveryModeNativePostgres && deliveryMode != cliapi.DeliveryModeLegacySQLite {
+	if deliveryMode != cliapi.DeliveryModeNativePostgres {
 		return cliapi.Credentials{}, fmt.Errorf(
 			"incompatible client/server delivery mode at %q: target reports %q",
 			target,

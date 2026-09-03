@@ -66,31 +66,16 @@ func TestWriteReportsOnlyRuntimeQueryFormats(t *testing.T) {
 	}
 }
 
-func TestWriteReportsComposedDeliveryMode(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		native bool
-		want   string
-	}{
-		{name: "legacy sqlite"},
-		{name: "native postgres", native: true, want: "native_postgres"},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			recorder := httptest.NewRecorder()
-			Write(recorder, Config{NativeDeliveryMutations: test.native})
-			var response struct {
-				DeliveryMode string `json:"deliveryMode"`
-			}
-			if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
-				t.Fatal(err)
-			}
-			want := test.want
-			if want == "" {
-				want = "legacy_sqlite"
-			}
-			if response.DeliveryMode != want {
-				t.Fatalf("deliveryMode=%q, want %q", response.DeliveryMode, want)
-			}
-		})
+func TestWriteReportsNativePostgresDeliveryMode(t *testing.T) {
+	recorder := httptest.NewRecorder()
+	Write(recorder, Config{})
+	var response struct {
+		DeliveryMode string `json:"deliveryMode"`
+	}
+	if err := json.Unmarshal(recorder.Body.Bytes(), &response); err != nil {
+		t.Fatal(err)
+	}
+	if response.DeliveryMode != "native_postgres" {
+		t.Fatalf("deliveryMode=%q, want native_postgres", response.DeliveryMode)
 	}
 }

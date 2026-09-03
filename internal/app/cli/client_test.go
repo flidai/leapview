@@ -129,6 +129,7 @@ func TestCapabilityAPIClientRejectsMissingOrUnknownDeliveryMode(t *testing.T) {
 		name, field string
 	}{
 		{name: "missing"},
+		{name: "legacy sqlite", field: `"deliveryMode":"legacy_sqlite",`},
 		{name: "unknown", field: `"deliveryMode":"future_transport",`},
 	} {
 		t.Run(mode.name, func(t *testing.T) {
@@ -236,7 +237,7 @@ func TestCapabilityAPIClientExchangesEphemeralWorkloadIdentity(t *testing.T) {
 				"apiVersion":"v1","buildVersion":"test","buildRevision":"test",
 				"buildTime":"2026-07-29T12:00:00Z","buildDirty":false,
 				"buildDevelopment":false,"environment":"production",
-				"deliveryMode":"legacy_sqlite",
+				"deliveryMode":"native_postgres",
 				"authentication":["bearer"],"queryFormats":["application/json"],
 				"uploadProtocols":[],
 				"visualization":{"schemaVersion":3,"renderers":[]}
@@ -317,7 +318,7 @@ func authoringIdentityServerFor(
 					"buildTime":"2026-07-29T12:00:00Z",
 					"buildDirty":false,"buildDevelopment":false,
 					"environment":"production",
-					"deliveryMode":"legacy_sqlite",
+					"deliveryMode":"native_postgres",
 					"authentication":["bearer"],
 					"queryFormats":["application/json"],
 					"uploadProtocols":[],

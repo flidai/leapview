@@ -14,10 +14,6 @@ type Config struct {
 	BuildIdentity buildinfo.Identity
 	TUS           bool
 	S3Multipart   bool
-	// NativeDeliveryMutations reports whether this composed process owns the
-	// canonical PostgreSQL plan/build mutation port. It is deliberately passed
-	// from composition, never inferred from the environment name.
-	NativeDeliveryMutations bool
 	// Arrow reports whether the active query runtime can emit native Arrow
 	// streams. The OpenAPI contract documents the media type, but the
 	// capability response must describe this process's actual runtime.
@@ -44,14 +40,9 @@ func Write(w http.ResponseWriter, config Config) {
 		ApiVersion: "v1", BuildVersion: identity.Version,
 		BuildRevision: identity.Revision, BuildTime: identity.BuildTime,
 		BuildDirty: identity.Dirty, BuildDevelopment: identity.Development,
-		Authentication: []apigenapi.AuthenticationMode{apigenapi.AuthenticationModeBearer},
-		Environment:    config.Environment,
-		DeliveryMode: func() apigenapi.DeliveryMode {
-			if config.NativeDeliveryMutations {
-				return apigenapi.DeliveryModeNativePostgres
-			}
-			return apigenapi.DeliveryModeLegacySqlite
-		}(),
+		Authentication:  []apigenapi.AuthenticationMode{apigenapi.AuthenticationModeBearer},
+		Environment:     config.Environment,
+		DeliveryMode:    apigenapi.DeliveryModeNativePostgres,
 		QueryFormats:    queryFormats,
 		UploadProtocols: uploadProtocols,
 		Visualization: apigenapi.VisualizationCapabilities{
