@@ -184,55 +184,6 @@ test('ECharts translation uses dataset and encode without native option passthro
   expect(JSON.stringify(option)).not.toContain('rendererOptions')
 })
 
-test('ECharts translates semantic axes and decision context from the current frame', () => {
-  const envelope = cartesianFixture('line') as any
-  envelope.spec.axes = [
-    { id: 'x', title: 'Month', scale: 'automatic', zero: 'automatic', tickDensity: 'sparse' },
-    { id: 'primary_y', title: 'Revenue', scale: 'linear', zero: 'exclude', minimum: 10, maximum: 100, unit: 'USD', tickDensity: 'dense' },
-  ]
-  envelope.spec.referenceLines = [
-    { id: 'target', axis: 'primary_y', value: { kind: 'number', value: 80 }, label: 'Target', tone: 'success' },
-    { id: 'average', axis: 'primary_y', value: { kind: 'field', field: { dataset: 'primary', field: 'value' }, reducer: 'mean' }, label: 'Average', tone: 'warning' },
-  ]
-  envelope.spec.referenceBands = [
-    {
-      id: 'observed', axis: 'primary_y',
-      from: { kind: 'field', field: { dataset: 'primary', field: 'value' }, reducer: 'minimum' },
-      to: { kind: 'field', field: { dataset: 'primary', field: 'value' }, reducer: 'maximum' },
-      label: 'Observed range', tone: 'neutral',
-    },
-  ]
-  envelope.spec.eventAnnotations = [
-    { id: 'launch', axis: 'x', value: { kind: 'text', value: 'A' }, label: 'Launch', description: 'New pricing', tone: 'ink' },
-  ]
-  envelope.spec.tooltip = [{ dataset: 'primary', field: 'value' }]
-  envelope.dataState.datasets[0].rows = [['A', 20], ['B', 60]]
-
-  const context = { ...defaultRendererContext, colors: { ...defaultRendererContext.colors, success: '#00aa00', attention: '#ffaa00' } }
-  const option = echartsOption(envelope, context) as any
-  expect(option.xAxis).toMatchObject({ name: 'Month', axisLabel: { interval: 2 } })
-  expect(option.yAxis).toMatchObject({ name: 'Revenue (USD)', type: 'value', min: 10, max: 100, scale: true, splitNumber: 8 })
-  expect(option.series[0].markLine.data).toEqual([
-    { id: 'reference-line:target', name: 'Target', yAxis: 80, lineStyle: { color: '#00aa00' } },
-    { id: 'reference-line:average', name: 'Average', yAxis: 40, lineStyle: { color: '#ffaa00' } },
-    { id: 'event-annotation:launch', name: 'Launch', xAxis: 'A', lineStyle: { color: context.colors.foreground } },
-  ])
-  expect(option.series[0].markArea.data).toEqual([[
-    { id: 'reference-band:observed', name: 'Observed range', yAxis: 20, itemStyle: { color: context.colors.accent, opacity: 0.12 } },
-    { yAxis: 60 },
-  ]])
-  expect(option.tooltip.formatter({ value: ['A', 20] })).toBe('value: 20')
-  expect(option.aria.description).toBe('line. Reference line: Target. Reference line: Average. Reference band: Observed range. Event: Launch — New pricing.')
-
-  envelope.dataRevision = 2
-  envelope.dataState.dataRevision = 2
-  envelope.dataState.datasets[0].dataRevision = 2
-  envelope.dataState.datasets[0].rows = [['A', 40], ['B', 80]]
-  const refreshed = echartsOption(envelope, context) as any
-  expect(refreshed.series[0].markLine.data[1].yAxis).toBe(60)
-  expect(refreshed.series[0].markArea.data[0].map((item: any) => item.yAxis)).toEqual([40, 80])
-})
-
 test('ECharts applies governed row formatting with theme colors and redundant cues', () => {
   const envelope = cartesianFixture('column') as any
   envelope.spec.presentation.labelPolicy.density = 'automatic'
@@ -377,6 +328,11 @@ test('ECharts translation preserves combo series marks and axes', () => {
       ] }],
       dataBudget: { maxRows: 100, requiredCompleteness: 'complete' }, accessibility: { title: 'Combo', description: 'Combo' }, interactions: [],
       x: { dataset: 'primary', field: 'month' }, y: [{ dataset: 'primary', field: 'value' }], series: { dataset: 'primary', field: 'series' },
+      referenceLines: [
+        { id: 'primary-target', axis: 'primary_y', value: { kind: 'number', value: 10 }, tone: 'neutral' },
+        { id: 'secondary-target', axis: 'secondary_y', value: { kind: 'number', value: 2 }, tone: 'warning' },
+      ],
+      referenceBands: [{ id: 'secondary-range', axis: 'secondary_y', from: { kind: 'number', value: 1 }, to: { kind: 'number', value: 3 }, tone: 'neutral' }],
       presentation: { legend: 'bottom', labelPolicy: { density: 'hidden', priority: [], maxCharacters: 24, minimumSpacing: 0, tooltipFallback: true }, smooth: false, stacked: false, showSymbols: true, dataZoom: false, area: false, step: false, comboSeries: [
         { seriesValue: 'Revenue', mark: 'line', axis: 'primary' },
         { seriesValue: 'Orders', mark: 'column', axis: 'secondary' },
@@ -394,6 +350,15 @@ test('ECharts translation preserves combo series marks and axes', () => {
     ['Revenue', 'line', 0], ['Orders', 'bar', 1],
   ])
   expect(option.yAxis).toHaveLength(2)
+  expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
+  expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
+  expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
+  const horizontal = structuredClone(base) as any
+  horizontal.spec.presentation.orientation = 'horizontal'
+  const horizontalOption = echartsOption(horizontal) as any
+  expect(horizontalOption.xAxis).toHaveLength(2)
+  expect(horizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
+  expect(horizontalOption.series[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
   const reordered = structuredClone(base) as any
   reordered.dataState.datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered) as any

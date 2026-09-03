@@ -75,11 +75,23 @@
         }
       ],
       "properties": {
+        "axes": {
+          "items": {
+            "$ref": "#/$defs/DashboardAxisConfiguration"
+          },
+          "type": "array"
+        },
         "dataZoom": {
           "type": "boolean"
         },
         "displayUnits": {
           "$ref": "#/$defs/VisualizationDisplayUnits"
+        },
+        "eventAnnotations": {
+          "items": {
+            "$ref": "#/$defs/DashboardEventAnnotation"
+          },
+          "type": "array"
         },
         "labelPosition": {
           "$ref": "#/$defs/DashboardLabelPosition"
@@ -92,6 +104,18 @@
         },
         "orientation": {
           "$ref": "#/$defs/DashboardOrientation"
+        },
+        "referenceBands": {
+          "items": {
+            "$ref": "#/$defs/DashboardReferenceBand"
+          },
+          "type": "array"
+        },
+        "referenceLines": {
+          "items": {
+            "$ref": "#/$defs/DashboardReferenceLine"
+          },
+          "type": "array"
         },
         "series": {
           "description": "Explicit per-measure marks and axis assignments for combo visuals.",
@@ -218,6 +242,48 @@
         "rose"
       ],
       "type": "string"
+    },
+    "DashboardAxisConfiguration": {
+      "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
+      "properties": {
+        "displayUnits": {
+          "$ref": "#/$defs/VisualizationDisplayUnits"
+        },
+        "id": {
+          "$ref": "#/$defs/VisualizationCartesianAxis"
+        },
+        "maximum": {
+          "format": "double",
+          "type": "number"
+        },
+        "minimum": {
+          "format": "double",
+          "type": "number"
+        },
+        "scale": {
+          "$ref": "#/$defs/VisualizationAxisScale"
+        },
+        "tickDensity": {
+          "$ref": "#/$defs/VisualizationAxisTickDensity"
+        },
+        "title": {
+          "type": "string"
+        },
+        "unit": {
+          "type": "string"
+        },
+        "zero": {
+          "$ref": "#/$defs/VisualizationAxisZeroPolicy"
+        }
+      },
+      "required": [
+        "id",
+        "scale",
+        "tickDensity",
+        "zero"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
     },
     "DashboardCalculation": {
       "properties": {
@@ -629,6 +695,41 @@
         "kind",
         "metadata",
         "spec"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardEventAnnotation": {
+      "description": "A governed event marker, restricted to the visual's horizontal axis.",
+      "properties": {
+        "axis": {
+          "$ref": "#/$defs/VisualizationCartesianAxis"
+        },
+        "description": {
+          "type": "string"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/VisualizationTone"
+        },
+        "value": {
+          "$ref": "#/$defs/DashboardReferenceValue"
+        }
+      },
+      "required": [
+        "axis",
+        "id",
+        "label",
+        "tone",
+        "value"
       ],
       "type": "object",
       "unevaluatedProperties": false
@@ -2001,6 +2102,41 @@
         }
       ]
     },
+    "DashboardReferenceBand": {
+      "description": "A governed interval between two horizontal or numeric reference values.",
+      "properties": {
+        "axis": {
+          "$ref": "#/$defs/VisualizationCartesianAxis"
+        },
+        "from": {
+          "$ref": "#/$defs/DashboardReferenceValue"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "to": {
+          "$ref": "#/$defs/DashboardReferenceValue"
+        },
+        "tone": {
+          "$ref": "#/$defs/VisualizationTone"
+        }
+      },
+      "required": [
+        "axis",
+        "from",
+        "id",
+        "to",
+        "tone"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "DashboardReferenceGeographicLayer": {
       "allOf": [
         {
@@ -2034,6 +2170,62 @@
       ],
       "type": "object",
       "unevaluatedProperties": false
+    },
+    "DashboardReferenceLine": {
+      "description": "A governed horizontal or numeric reference marker.",
+      "properties": {
+        "axis": {
+          "$ref": "#/$defs/VisualizationCartesianAxis"
+        },
+        "id": {
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+          "type": "string"
+        },
+        "label": {
+          "type": "string"
+        },
+        "tone": {
+          "$ref": "#/$defs/VisualizationTone"
+        },
+        "value": {
+          "$ref": "#/$defs/DashboardReferenceValue"
+        }
+      },
+      "required": [
+        "axis",
+        "id",
+        "tone",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
+    "DashboardReferenceValue": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/NumberDashboardReferenceValue"
+        },
+        {
+          "$ref": "#/$defs/TextDashboardReferenceValue"
+        },
+        {
+          "$ref": "#/$defs/FieldDashboardReferenceValue"
+        }
+      ]
+    },
+    "DashboardReferenceValueBase": {
+      "description": "A scalar value used by a governed reference line, band, or annotation.",
+      "properties": {
+        "kind": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "type": "object"
     },
     "DashboardRelativeAnchor": {
       "enum": [
@@ -2534,6 +2726,36 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "FieldDashboardReferenceValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardReferenceValueBase"
+        }
+      ],
+      "properties": {
+        "field": {
+          "minLength": 1,
+          "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "field"
+          ],
+          "type": "string"
+        },
+        "reducer": {
+          "$ref": "#/$defs/VisualizationReferenceReducer"
+        }
+      },
+      "required": [
+        "field",
+        "kind",
+        "reducer"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "FilterDashboardPageComponent": {
       "allOf": [
         {
@@ -2865,6 +3087,31 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "NumberDashboardReferenceValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardReferenceValueBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "number"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "format": "double",
+          "type": "number"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "NumericRangeDashboardFilterControl": {
       "allOf": [
         {
@@ -2994,6 +3241,12 @@
       ],
       "description": "Strict point/scatter presentation and its governed result-frame channels.",
       "properties": {
+        "axes": {
+          "items": {
+            "$ref": "#/$defs/DashboardAxisConfiguration"
+          },
+          "type": "array"
+        },
         "brush": {
           "items": {
             "$ref": "#/$defs/VisualizationPointBrushGesture"
@@ -3007,6 +3260,12 @@
         },
         "colorScale": {
           "$ref": "#/$defs/PointDashboardColorScale"
+        },
+        "eventAnnotations": {
+          "items": {
+            "$ref": "#/$defs/DashboardEventAnnotation"
+          },
+          "type": "array"
         },
         "identity": {
           "items": {
@@ -3029,6 +3288,18 @@
         },
         "overplot": {
           "$ref": "#/$defs/PointDashboardOverplot"
+        },
+        "referenceBands": {
+          "items": {
+            "$ref": "#/$defs/DashboardReferenceBand"
+          },
+          "type": "array"
+        },
+        "referenceLines": {
+          "items": {
+            "$ref": "#/$defs/DashboardReferenceLine"
+          },
+          "type": "array"
         },
         "series": {
           "minLength": 1,
@@ -3614,6 +3885,30 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "TextDashboardReferenceValue": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/DashboardReferenceValueBase"
+        }
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "text"
+          ],
+          "type": "string"
+        },
+        "value": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "type": "object",
+      "unevaluatedProperties": false
+    },
     "TimestampDashboardFilterValue": {
       "allOf": [
         {
@@ -3686,6 +3981,31 @@
       "type": "object",
       "unevaluatedProperties": false
     },
+    "VisualizationAxisScale": {
+      "enum": [
+        "automatic",
+        "linear",
+        "log"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisTickDensity": {
+      "enum": [
+        "automatic",
+        "sparse",
+        "normal",
+        "dense"
+      ],
+      "type": "string"
+    },
+    "VisualizationAxisZeroPolicy": {
+      "enum": [
+        "automatic",
+        "include",
+        "exclude"
+      ],
+      "type": "string"
+    },
     "VisualizationCalculationAxis": {
       "enum": [
         "rows",
@@ -3714,6 +4034,14 @@
         "rank",
         "cumulative_contribution",
         "lookup"
+      ],
+      "type": "string"
+    },
+    "VisualizationCartesianAxis": {
+      "enum": [
+        "x",
+        "primary_y",
+        "secondary_y"
       ],
       "type": "string"
     },

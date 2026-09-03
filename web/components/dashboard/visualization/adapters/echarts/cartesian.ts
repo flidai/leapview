@@ -6,6 +6,8 @@ import { axis, escapeHTML, field, fieldLabel, formatDisplayField, formatField, i
 import { conditionalCategoryColor, conditionalItemColor, seriesColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
+import { parseDecimal } from '../../decimal'
+import { reduceReferenceValue } from './decimal-reference'
 
 type CartesianSpec = Extract<VisualizationEnvelope['spec'], { kind: 'cartesian' }>
 type ReferenceValue = NonNullable<CartesianSpec['referenceLines']>[number]['value']
@@ -136,7 +138,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   }
   const split = splitCartesianSeries(envelope, context, categoryColors)
   if (split) {
-    const secondary = split.series.some((item) => item.yAxisIndex === 1)
+    const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
     const primaryAxis = axis(envelope, spec.y[0]!, 'value', context, 'primary_y', spec.y)
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
     if (split.scrollLegend) {
@@ -148,7 +150,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }
     return {
       dataset: split.datasets, grid: cartesianGrid(spec), legend: legend(spec.presentation.legend, context, split.scrollLegend), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
-      yAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
+      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
+      ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis } : {}),
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
     }
   }
@@ -177,7 +180,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)
     return {
       id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
-      yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
+      ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
       encode: horizontal ? { x: normalizedField ?? value.field, y: spec.x.field } : { x: spec.x.field, y: normalizedField ?? value.field },
       smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
@@ -194,9 +197,11 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   return {
     ...axes,
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
-    yAxis: hasSecondaryComboAxis
-      ? [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)]
-      : yAxis,
+    ...(hasSecondaryComboAxis
+      ? horizontal
+        ? { xAxis: [xAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
+        : { yAxis: [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
+      : {}),
     legend: legend(spec.presentation.legend, context), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
   }
@@ -274,40 +279,48 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
     if (axisID === 'x') return horizontal ? 'yAxis' : 'xAxis'
     return horizontal ? 'xAxis' : 'yAxis'
   }
-  const markLineData = [
+  const markLines = [
     ...(spec.referenceLines ?? []).flatMap((line) => {
       const value = resolveReferenceValue(envelope, line.value)
       if (value === undefined) return []
       return [{
-        id: `reference-line:${line.id}`, name: line.label ?? '', [coordinate(line.axis)]: value,
-        lineStyle: { color: toneColor(line.tone, context) },
+        axis: line.axis,
+        data: { id: `reference-line:${line.id}`, name: line.label ?? '', [coordinate(line.axis)]: value, lineStyle: { color: toneColor(line.tone, context) } },
       }]
     }),
     ...(spec.eventAnnotations ?? []).flatMap((annotation) => {
       const value = resolveReferenceValue(envelope, annotation.value)
       if (value === undefined) return []
       return [{
-        id: `event-annotation:${annotation.id}`, name: annotation.label, [coordinate(annotation.axis)]: value,
-        lineStyle: { color: toneColor(annotation.tone, context) },
+        axis: annotation.axis,
+        data: { id: `event-annotation:${annotation.id}`, name: annotation.label, [coordinate(annotation.axis)]: value, lineStyle: { color: toneColor(annotation.tone, context) } },
       }]
     }),
   ]
-  const markAreaData = (spec.referenceBands ?? []).flatMap((band) => {
+  const markAreas = (spec.referenceBands ?? []).flatMap((band) => {
     const from = resolveReferenceValue(envelope, band.from)
     const to = resolveReferenceValue(envelope, band.to)
     if (from === undefined || to === undefined) return []
     const key = coordinate(band.axis)
-    return [[
+    return [{ axis: band.axis, data: [
       { id: `reference-band:${band.id}`, name: band.label ?? '', [key]: from, itemStyle: { color: toneColor(band.tone, context), opacity: 0.12 } },
       { [key]: to },
-    ]]
+    ] }]
   })
-  if (markLineData.length === 0 && markAreaData.length === 0) return option
+  if (markLines.length === 0 && markAreas.length === 0) return option
   const series = Array.isArray(option.series) ? option.series : []
-  const owner = series.find((candidate: EChartsTranslation) => !candidate.silent && !String(candidate.id ?? '').startsWith('series:interaction-hit:'))
-  if (!owner) return option
-  if (markLineData.length > 0) owner.markLine = { symbol: ['none', 'none'], data: markLineData }
-  if (markAreaData.length > 0) owner.markArea = { silent: true, data: markAreaData }
+  const candidates = series.filter((candidate: EChartsTranslation) => !candidate.silent && !String(candidate.id ?? '').startsWith('series:interaction-hit:'))
+  for (const secondary of [false, true]) {
+    const owner = candidates.find((candidate: EChartsTranslation) => {
+      const axisIndex = coordinate('primary_y') === 'xAxis' ? candidate.xAxisIndex : candidate.yAxisIndex
+      return secondary ? axisIndex === 1 : axisIndex !== 1
+    })
+    if (!owner) continue
+    const lines = markLines.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
+    const areas = markAreas.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
+    if (lines.length > 0) owner.markLine = { symbol: ['none', 'none'], data: lines }
+    if (areas.length > 0) owner.markArea = { silent: true, data: areas }
+  }
   return option
 }
 
@@ -335,34 +348,17 @@ function resolveReferenceValue(envelope: VisualizationEnvelope, value: Reference
   const dataset = inlineDataset(envelope, value.field.dataset)
   const index = dataset?.columns.indexOf(value.field.field) ?? -1
   if (!dataset || index < 0) return undefined
-  const values = dataset.rows.map((row) => row[index]).filter((candidate): candidate is string | number => typeof candidate === 'string' || typeof candidate === 'number')
+  const dataType = field(envelope, value.field)?.dataType
+  const numeric = dataType === 'integer' || dataType === 'decimal' || dataType === 'float'
+  const values = dataset.rows.flatMap((row): (string | number)[] => {
+    const candidate = row[index]
+    if (typeof candidate === 'number') return Number.isFinite(candidate) ? [candidate] : []
+    if (typeof candidate !== 'string') return []
+    if (!numeric) return [candidate]
+    return parseDecimal(candidate) ? [candidate] : []
+  })
   if (values.length === 0) return undefined
-  switch (value.reducer) {
-    case 'first': return values[0]
-    case 'last': return values.at(-1)
-    case 'minimum': return orderedReferenceValue(values, 'minimum')
-    case 'maximum': return orderedReferenceValue(values, 'maximum')
-    case 'mean': {
-      const numbers = values.filter((candidate): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate))
-      return numbers.length === values.length ? numbers.reduce((sum, candidate) => sum + candidate, 0) / numbers.length : undefined
-    }
-    case 'median': {
-      const numbers = values.filter((candidate): candidate is number => typeof candidate === 'number' && Number.isFinite(candidate)).sort((left, right) => left - right)
-      if (numbers.length !== values.length) return undefined
-      const middle = Math.floor(numbers.length / 2)
-      return numbers.length % 2 ? numbers[middle] : (numbers[middle - 1]! + numbers[middle]!) / 2
-    }
-  }
-}
-
-function orderedReferenceValue(values: (string | number)[], reducer: 'minimum' | 'maximum'): string | number | undefined {
-  if (values.every((value) => typeof value === 'number')) {
-    return reducer === 'minimum' ? Math.min(...values as number[]) : Math.max(...values as number[])
-  }
-  if (values.every((value) => typeof value === 'string')) {
-    return [...values as string[]].sort((left, right) => left.localeCompare(right, 'en'))[reducer === 'minimum' ? 0 : values.length - 1]
-  }
-  return undefined
+  return reduceReferenceValue(values, value.reducer)
 }
 
 function interactionHitSeries(envelope: VisualizationEnvelope, spec: CartesianSpec, series: EChartsTranslation[]): EChartsTranslation[] {
@@ -436,6 +432,7 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
 function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[]; scrollLegend: boolean } | undefined {
   const spec = envelope.spec
   if (spec.kind !== 'cartesian' || !spec.series || spec.y.length !== 1 || envelope.dataState.kind !== 'inline') return undefined
+  const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === spec.series?.dataset)
   const seriesIndex = dataset?.columns.indexOf(spec.series.field) ?? -1
   if (!dataset || seriesIndex < 0) return undefined
@@ -475,8 +472,9 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
       ?? conditionalCategoryColor(envelope, valueRef, spec.series!, value, 'series_color', context)
     const markColor = governedSeriesColor ?? fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context))
     return {
-      id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark), yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
-      encode: { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
+      id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark),
+      ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
+      encode: horizontal ? { x: normalized?.dimension ?? spec.y[0]?.field, y: spec.x.field } : { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
         color: markColor,
