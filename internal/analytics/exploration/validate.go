@@ -99,6 +99,9 @@ func ValidateShape(spec *ExplorationSpec) error {
 		if err := addTimeSelection(selected, spec.Time.Field, stringPointerValue(spec.Time.Alias)); err != nil {
 			return err
 		}
+		if err := validateTimeDecoration(spec); err != nil {
+			return err
+		}
 		if err := validateTimeRange(spec.Time.Range, ""); err != nil {
 			return fmt.Errorf("invalid exploration time range: %w", err)
 		}
@@ -116,6 +119,30 @@ func ValidateShape(spec *ExplorationSpec) error {
 	}
 	if err := validateVisualization(spec.Visualization, selected); err != nil {
 		return err
+	}
+	return nil
+}
+
+// validateTimeDecoration prevents a time selection from changing the
+// authored identity of an already selected dimension. The lowering path emits
+// one output for that field, so conflicting grain or alias declarations must
+// fail before query construction rather than producing duplicate columns.
+func validateTimeDecoration(spec *ExplorationSpec) error {
+	if spec == nil || spec.Time == nil {
+		return nil
+	}
+	timeAlias := stringPointerValue(spec.Time.Alias)
+	for _, dimension := range spec.Dimensions {
+		if dimension.Field != spec.Time.Field {
+			continue
+		}
+		if dimension.Grain != nil && *dimension.Grain != spec.Time.Grain {
+			return fmt.Errorf("exploration dimension %q grain %q conflicts with time grain %q", dimension.Field, *dimension.Grain, spec.Time.Grain)
+		}
+		dimensionAlias := stringPointerValue(dimension.Alias)
+		if dimensionAlias != "" && timeAlias != "" && dimensionAlias != timeAlias {
+			return fmt.Errorf("exploration dimension %q alias %q conflicts with time alias %q", dimension.Field, dimensionAlias, timeAlias)
+		}
 	}
 	return nil
 }

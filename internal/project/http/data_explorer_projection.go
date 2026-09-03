@@ -331,6 +331,43 @@ func explorerFields(model *semanticmodel.Model, baseTable string, command dataEx
 			})
 		}
 	}
+	// Conformed dimensions are governed semantic references, not physical
+	// table columns. Expose them only when activation compiled both their
+	// semantic type metadata and a binding for the selected base dataset. The
+	// detached binding supplies the physical owner and relationship route used
+	// by the executor, while the semantic metadata supplies the logical type
+	// needed by typed filters and time validation.
+	semanticNames := make([]string, 0, len(model.Dimensions))
+	for name := range model.Dimensions {
+		semanticNames = append(semanticNames, name)
+	}
+	sort.Strings(semanticNames)
+	for _, name := range semanticNames {
+		semantic, ok := compiled.SemanticDimension(name)
+		if !ok {
+			continue
+		}
+		authored := model.Dimensions[name]
+		binding, compatible := compiled.DimensionBinding(name, baseTable)
+		modelTable := ""
+		path := []string(nil)
+		if compatible {
+			modelTable = binding.Physical.Table
+			for _, relationship := range binding.Path {
+				path = append(path, relationship.ID)
+			}
+		}
+		fieldType := firstExplorerNonEmpty(string(semantic.Datatype), semantic.Type, string(binding.Physical.Datatype), binding.Physical.Type)
+		reason := ""
+		if !compatible {
+			reason = "Not available from " + explorerLabel(baseTable) + " because no compiled binding reaches this semantic dimension."
+		}
+		out = append(out, projectsignals.DataExploreFieldSignal{
+			ID: name, Label: firstExplorerNonEmpty(authored.Label, explorerLabel(name)), Kind: "dimension", ModelTable: modelTable,
+			Description: projectsignals.Optional(authored.Description), Type: projectsignals.Optional(fieldType), Selected: selectedDimensions[name],
+			Compatible: compatible, CompatibilityReason: projectsignals.Optional(reason), RelationshipPath: projectsignals.OptionalSlice(path),
+		})
+	}
 	metricNames := make([]string, 0, len(model.Metrics))
 	for name, metric := range model.Metrics {
 		if !metric.Hidden {

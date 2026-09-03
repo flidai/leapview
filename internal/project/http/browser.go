@@ -1538,9 +1538,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 	}
 	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
 	if strictURLState && legacyURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
-		modelID := strings.TrimSpace(projection.Command.Spec.ModelID)
-		model := definition.SemanticModels[modelID]
-		if err := adaptLegacyExplorationFilterValues(&exploreCommand.Spec, projection.Fields, model); err != nil {
+		if err := adaptLegacyExplorationFilterValues(&exploreCommand.Spec, projection.Fields); err != nil {
 			stdhttp.Error(w, "invalid legacy exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
 			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 		}

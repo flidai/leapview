@@ -300,8 +300,16 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	}
 	aliases := explorerSpecQueryAliases(spec)
 	dimensions := make([]dataquery.Field, 0, len(spec.Dimensions))
+	timeDecoratesDimension := false
 	for _, field := range spec.Dimensions {
-		dimensions = append(dimensions, dataquery.Field{Field: field.Field, Alias: firstExplorerNonEmpty(projectsignals.ValueOrZero(field.Alias), aliases[field.Field]), Grain: string(projectsignals.ValueOrZero(field.Grain))})
+		alias := projectsignals.ValueOrZero(field.Alias)
+		grain := string(projectsignals.ValueOrZero(field.Grain))
+		if spec.Time != nil && field.Field == spec.Time.Field {
+			timeDecoratesDimension = true
+			alias = firstExplorerNonEmpty(alias, projectsignals.ValueOrZero(spec.Time.Alias))
+			grain = firstExplorerNonEmpty(grain, string(spec.Time.Grain))
+		}
+		dimensions = append(dimensions, dataquery.Field{Field: field.Field, Alias: firstExplorerNonEmpty(alias, aliases[field.Field]), Grain: string(grain)})
 	}
 	metrics := make([]dataquery.Field, 0, len(spec.Metrics))
 	for _, field := range spec.Metrics {
@@ -324,7 +332,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 		queryTarget = ""
 	}
 	query := dataquery.SemanticAggregate(modelID, queryTarget, dimensions, metrics, filters, sortSpec, 0, int(spec.Limit)+1)
-	if spec.Time != nil {
+	if spec.Time != nil && !timeDecoratesDimension {
 		query.Time = dataquery.Time{Field: spec.Time.Field, Grain: string(spec.Time.Grain), Alias: projectsignals.ValueOrZero(spec.Time.Alias)}
 	}
 	query = query.WithMetadata(dataquery.Metadata{
@@ -360,8 +368,10 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]string {
 	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Metrics)+1)
 	aliases := make(map[string]string, len(fields))
+	dimensionFields := make(map[string]struct{}, len(spec.Dimensions))
 	for _, dimension := range spec.Dimensions {
 		fields = append(fields, dimension.Field)
+		dimensionFields[dimension.Field] = struct{}{}
 		if alias := strings.TrimSpace(projectsignals.ValueOrZero(dimension.Alias)); alias != "" {
 			aliases[dimension.Field] = alias
 		}
@@ -373,9 +383,16 @@ func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]strin
 		}
 	}
 	if spec.Time != nil {
-		fields = append(fields, spec.Time.Field)
+		if _, exists := dimensionFields[spec.Time.Field]; !exists {
+			fields = append(fields, spec.Time.Field)
+		}
 		if alias := strings.TrimSpace(projectsignals.ValueOrZero(spec.Time.Alias)); alias != "" {
-			aliases[spec.Time.Field] = alias
+			// A time selection may decorate an existing dimension. Preserve an
+			// explicit dimension alias; otherwise the time alias is the merged
+			// output alias for that one dimension.
+			if _, exists := aliases[spec.Time.Field]; !exists {
+				aliases[spec.Time.Field] = alias
+			}
 		}
 	}
 	derived := explorerQueryAliases(fields, nil)
@@ -617,19 +634,6 @@ func validateExplorerProjectedSpec(spec exploration.ExplorationSpec, fields map[
 		}
 	}
 	return nil
-}
-
-func validExplorerFilters(filters []dataExploreFilter, fields map[string]projectsignals.DataExploreFieldSignal) []dataExploreFilter {
-	out := make([]dataExploreFilter, 0, len(filters))
-	for _, filter := range filters {
-		field, ok := fields[filter.Field]
-		if !ok || field.Kind != "dimension" || !field.Compatible || strings.TrimSpace(filter.Operator) == "" {
-			continue
-		}
-		filter.Values = append([]string(nil), filter.Values...)
-		out = append(out, filter)
-	}
-	return out
 }
 
 func explorationSpecSortAliases(spec exploration.ExplorationSpec) map[string]struct{} {

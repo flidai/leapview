@@ -83,6 +83,40 @@ func TestExplorerFieldsPreferLogicalDatatypeForTypedFilters(t *testing.T) {
 	}
 }
 
+func TestExplorerFieldsIncludeCompiledSemanticDimensions(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders": {
+				ModelName: "orders", GrainEntity: "order",
+				Entities:   map[string]semanticmodel.EntityDefinition{"order": {Type: "primary", Fields: []string{"status"}}},
+				Dimensions: map[string]semanticmodel.MetricDimension{"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString}},
+			},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"order_status": {Label: "Order status", Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
+				"orders": {Field: "orders.status"},
+			}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	compiled, err := semanticquery.CompileModel(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := explorerFields(model, "orders", dataExploreState{Dimensions: []string{"order_status"}}, compiled)
+	var got projectsignals.DataExploreFieldSignal
+	for _, field := range fields {
+		if field.ID == "order_status" {
+			got = field
+			break
+		}
+	}
+	if got.ID == "" || !got.Compatible || got.ModelTable != "orders" || projectsignals.ValueOrZero(got.Type) != string(semanticmodel.DataTypeString) || !got.Selected {
+		t.Fatalf("compiled semantic dimension = %#v, want selected compatible orders binding", got)
+	}
+}
+
 func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name:  "sales",

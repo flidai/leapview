@@ -124,6 +124,23 @@ test('time result aliases resolve to canonical time sort references', () => {
   expect(explorationResultKeyForSort(spec, 'order_date', ['order_date'])).toBe('order_date')
 })
 
+test('decorated time dimensions merge into one sortable result reference', () => {
+  const spec: ExplorationSpec = {
+    schemaVersion: 1, modelId: 'sales', dimensions: [{ field: 'orders.created_at' }], metrics: [], filters: [], sort: [], limit: 100,
+    time: { field: 'orders.created_at', grain: 'day', alias: 'order_day' },
+  }
+  expect(explorationSortFieldForResult(spec, 'order_day')).toBe('order_day')
+  expect(explorationResultKeyForSort(spec, 'orders.created_at', ['order_day'])).toBe('order_day')
+
+  const explicitlyAliased: ExplorationSpec = {
+    ...spec,
+    dimensions: [{ field: 'orders.created_at', alias: 'calendar_day' }],
+    time: { ...spec.time!, alias: 'calendar_day' },
+  }
+  expect(explorationSortFieldForResult(explicitlyAliased, 'calendar_day')).toBe('calendar_day')
+  expect(explorationResultKeyForSort(explicitlyAliased, 'orders.created_at', ['calendar_day'])).toBe('calendar_day')
+})
+
 test('removing or toggling a field clears sorts for its field and authored alias', () => {
   const spec: ExplorationSpec = {
     schemaVersion: 1, modelId: 'sales', dimensions: [{ field: 'orders.status', alias: 'status_label' }], metrics: [{ field: 'revenue', alias: 'total_revenue' }], filters: [],

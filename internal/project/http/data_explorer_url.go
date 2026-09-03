@@ -22,8 +22,9 @@ func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhtt
 // dataExplorerSignalsForURL restores durable exploration state from a browser
 // URL. URL state is treated as an assertion about the query, so it is checked
 // strictly after the authorized active-generation projection is available.
-// Interactive command payloads intentionally use the separate command path,
-// whose existing normalization remains permissive for incremental edits.
+// Interactive command payloads use the separate command path; only an empty
+// initialization command may receive defaults, while authored operands fail
+// closed when they are unavailable or incompatible.
 func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *stdhttp.Request, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
@@ -357,7 +358,7 @@ func legacyFilterExpression(filter legacyDataExploreFilter) (exploration.Explora
 // required by ExplorationSpec. This is deliberately called only for v1 (or
 // unversioned) URL restores after the authorized field projection is built;
 // canonical v2 state must never infer a value kind from model metadata.
-func adaptLegacyExplorationFilterValues(spec *exploration.ExplorationSpec, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model) error {
+func adaptLegacyExplorationFilterValues(spec *exploration.ExplorationSpec, fields []projectsignals.DataExploreFieldSignal) error {
 	if spec == nil {
 		return errors.New("exploration spec is required")
 	}
@@ -372,14 +373,8 @@ func adaptLegacyExplorationFilterValues(spec *exploration.ExplorationSpec, field
 			return fmt.Errorf("filter %d field %q is no longer available in the active semantic model; remove it from the URL or reload the explorer", index+1, filter.Field)
 		}
 		fieldType := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(field.Type)))
-		if fieldType == "" && model != nil {
-			if dimension, err := model.ResolveDimension(filter.Field); err == nil {
-				if dimension.Datatype != "" {
-					fieldType = strings.ToLower(string(dimension.Datatype))
-				} else {
-					fieldType = strings.ToLower(strings.TrimSpace(dimension.Type))
-				}
-			}
+		if fieldType == "" {
+			return fmt.Errorf("filter %d field %q has no logical type in the authorized projection; reload the explorer", index+1, filter.Field)
 		}
 		kind, err := legacyExplorationFilterKind(fieldType)
 		if err != nil {
@@ -435,10 +430,7 @@ func adaptLegacyExplorationFilterValues(spec *exploration.ExplorationSpec, field
 func legacyExplorationFilterKind(fieldType string) (string, error) {
 	switch fieldType {
 	case "":
-		// Older model fixtures omitted a logical type for text dimensions. Keep
-		// their established string behavior; a known non-string type is never
-		// guessed here.
-		return "string", nil
+		return "", errors.New("authorized dimension has no logical type")
 	case "integer", "int", "bigint", "smallint":
 		return "integer", nil
 	case "decimal", "float", "number", "numeric", "double", "real":
@@ -583,6 +575,15 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		selectedReferences[metric.Field] = metric.Field
 		if metric.Alias != nil {
 			selectedReferences[*metric.Alias] = metric.Field
+		}
+	}
+	// Time-only selections are valid sort targets too. Keep both the authored
+	// field and its alias in the same reference map used by dimensions and
+	// metrics before validating the ordered sort operands.
+	if spec.Time != nil {
+		selectedReferences[spec.Time.Field] = spec.Time.Field
+		if spec.Time.Alias != nil {
+			selectedReferences[*spec.Time.Alias] = spec.Time.Field
 		}
 	}
 	for index, filter := range state.Filters {

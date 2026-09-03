@@ -359,6 +359,17 @@ func TestDataExplorerLegacyURLRejectsInvalidTypedFilterLiteralWithoutExecution(t
 	}
 }
 
+func TestDataExplorerLegacyURLRejectsMissingProjectedLogicalType(t *testing.T) {
+	command := testExplorationCommand(exploration.ExplorationSpec{
+		ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status"}},
+		Filters: []exploration.ExplorationFilter{testStringFilter("orders.status", "equals", "paid")},
+	})
+	err := adaptLegacyExplorationFilterValues(&command.Spec, []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true}})
+	if err == nil || !strings.Contains(err.Error(), "no logical type") {
+		t.Fatalf("missing logical type conversion error = %v, want fail-closed type diagnostic", err)
+	}
+}
+
 func TestDataExplorerV2URLDoesNotInferLegacyFilterValueKind(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	dataset := "orders"
@@ -571,6 +582,27 @@ func TestDataExplorerRestoredV2URLAcceptsSortByExplicitMetricAlias(t *testing.T)
 	}
 	if explorer.Explore.Command.Spec.Sort[0].Field != "total_revenue" || executor.calls != 1 {
 		t.Fatalf("restored sort/execution = %#v/%d", explorer.Explore.Command.Spec.Sort, executor.calls)
+	}
+}
+
+func TestDataExplorerRestoredV2URLAcceptsTimeOnlySortAlias(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	state, err := json.Marshal(exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders"),
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.created_at", Grain: exploration.ExplorationTimeGrainDay, Alias: projectsignals.Optional("order_day")},
+		Sort: []exploration.ExplorationSort{{Field: "order_day", Direction: exploration.ExplorationSortDirectionAsc}}, Limit: 100,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?mode=explore&v=2&state="+url.QueryEscape(string(state)), nil), true)
+	if !ok {
+		t.Fatalf("time-only sort URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 || len(explorer.Explore.Command.Spec.Sort) != 1 || explorer.Explore.Command.Spec.Sort[0].Field != "order_day" {
+		t.Fatalf("restored time sort/execution = %#v/%d, want alias sort and one query", explorer.Explore.Command.Spec.Sort, executor.calls)
 	}
 }
 

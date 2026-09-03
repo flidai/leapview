@@ -82,7 +82,9 @@ func TestDataExplorerSemanticExploreRejectsPivotWithoutExecution(t *testing.T) {
 func TestDataExplorerSemanticExploreRejectsTypedOperatorBeforeExecution(t *testing.T) {
 	model := &semanticmodel.Model{
 		Tables: map[string]semanticmodel.Table{
-			"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{
+			"orders": {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{
+				"order": {Type: "primary", Fields: []string{"status"}},
+			}, Dimensions: map[string]semanticmodel.MetricDimension{
 				"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
 			}},
 		},
@@ -234,6 +236,96 @@ func TestDataExplorerSemanticExplorePreservesTimeSortAndAlias(t *testing.T) {
 	}
 	if executor.query.Time.Field != "orders.created_at" || executor.query.Time.Alias != alias {
 		t.Fatalf("query time = %#v, want authored time alias", executor.query.Time)
+	}
+}
+
+func TestDataExplorerSemanticExploreMergesTimeDecorationIntoDimension(t *testing.T) {
+	model := &semanticmodel.Model{
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{
+				"created_at": {Field: "orders.created_at", Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
+			}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	compiled, err := semanticquery.CompileDatasetBindings(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	alias := "order_day"
+	dataset := "orders"
+	executor := &browserDataQueryStub{}
+	_, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: &dataset,
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.created_at"}}, Metrics: []exploration.ExplorationMetricRef{}, Filters: []exploration.ExplorationFilter{},
+		Time: &exploration.ExplorationTimeSelection{Field: "orders.created_at", Grain: exploration.ExplorationTimeGrainDay, Alias: &alias, Range: &exploration.ExplorationTimeRange{Value: &exploration.AbsoluteExplorationTimeRange{
+			Kind: "absolute", Lower: &exploration.ExplorationTimeBound{Inclusive: true, Value: exploration.ExplorationTemporalValue{Value: &exploration.TimestampExplorationTemporalValue{Kind: "timestamp", Value: "2026-01-01T00:00:00Z"}}},
+		}}},
+		Sort: []exploration.ExplorationSort{{Field: alias, Direction: exploration.ExplorationSortDirectionAsc}}, Limit: 100,
+	}}, explorerFields(model, "orders", dataExploreState{Dimensions: []string{"orders.created_at"}}, compiled), model)
+	if result.Error != nil {
+		t.Fatalf("decorated dimension result error = %q", *result.Error)
+	}
+	if executor.calls != 1 {
+		t.Fatalf("decorated dimension executed %d queries, want 1", executor.calls)
+	}
+	if len(executor.query.Fields) != 1 {
+		t.Fatalf("query fields = %#v, want one merged dimension", executor.query.Fields)
+	}
+	if got := executor.query.Fields[0]; got.Field != "orders.created_at" || got.Grain != "day" || got.Alias != alias {
+		t.Fatalf("merged dimension = %#v, want field/grain/alias from time decoration", got)
+	}
+	if executor.query.Time.Field != "" {
+		t.Fatalf("query time = %#v, want no duplicate time output", executor.query.Time)
+	}
+	if len(executor.query.Filters) != 1 || executor.query.Filters[0].Field != "orders.created_at" || executor.query.Filters[0].Operator != "greater_than_or_equal" {
+		t.Fatalf("time range filters = %#v, want preserved lower bound", executor.query.Filters)
+	}
+}
+
+func TestDataExplorerSemanticExploreLowersConformedDimensionFilter(t *testing.T) {
+	model := &semanticmodel.Model{
+		Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders", GrainEntity: "order", Entities: map[string]semanticmodel.EntityDefinition{
+				"order": {Type: "primary", Fields: []string{"status"}},
+			}, Dimensions: map[string]semanticmodel.MetricDimension{
+				"status": {Field: "orders.status", Type: "string", Datatype: semanticmodel.DataTypeString},
+			}},
+		},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"order_status": {Label: "Order status", Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{
+				"orders": {Field: "orders.status"},
+			}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+	}
+	compiled, err := semanticquery.CompileModel(model)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fields := explorerFields(model, "orders", dataExploreState{Dimensions: []string{"order_status"}}, compiled)
+	var projected projectsignals.DataExploreFieldSignal
+	for _, field := range fields {
+		if field.ID == "order_status" {
+			projected = field
+			break
+		}
+	}
+	if projected.ID == "" || !projected.Compatible || projectsignals.ValueOrZero(projected.Type) != string(semanticmodel.DataTypeString) {
+		t.Fatalf("conformed dimension projection = %#v, want compatible string field", projected)
+	}
+	dataset := "orders"
+	executor := &browserDataQueryStub{}
+	_, result := dataExplorerSemanticResult(t.Context(), executor, "project:test", projectsignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: &dataset,
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "order_status"}}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{testStringFilter("order_status", "equals", "paid")}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}}, fields, model)
+	if result.Error != nil {
+		t.Fatalf("conformed dimension result error = %q", *result.Error)
+	}
+	if executor.calls != 1 || len(executor.query.Filters) != 1 || executor.query.Filters[0].Field != "order_status" {
+		t.Fatalf("conformed dimension query = %#v, calls=%d; want lowered semantic filter", executor.query, executor.calls)
 	}
 }
 

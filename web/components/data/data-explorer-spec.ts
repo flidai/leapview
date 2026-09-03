@@ -96,9 +96,20 @@ type ExplorationSortRef = { field: string; alias?: string }
 
 function explorationSortRefs(spec: ExplorationSpec): ExplorationSortRef[] {
   const refs: ExplorationSortRef[] = [...spec.dimensions, ...spec.metrics]
-  if (spec.time && !refs.some((ref) => ref.field === spec.time!.field && ref.alias?.trim() === spec.time!.alias?.trim())) {
-    refs.push({ field: spec.time.field, alias: spec.time.alias })
+  if (!spec.time) return refs
+
+  const dimensionIndex = spec.dimensions.findIndex((ref) => ref.field === spec.time!.field)
+  if (dimensionIndex >= 0) {
+    const dimension = refs[dimensionIndex]
+    // The backend gives an authored dimension alias precedence. When the
+    // dimension has no alias, a time alias decorates that same output ref.
+    if (!dimension.alias?.trim() && spec.time.alias?.trim()) {
+      refs[dimensionIndex] = { ...dimension, alias: spec.time.alias }
+    }
+    return refs
   }
+
+  refs.push({ field: spec.time.field, alias: spec.time.alias })
   return refs
 }
 
