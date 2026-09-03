@@ -12,17 +12,6 @@ sql:
         omit_unused_structs: true
 
   - engine: "sqlite"
-    queries: "internal/analytics/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/analytics/internal/db"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
     queries: "internal/access/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
@@ -51,17 +40,6 @@ sql:
       go:
         package: "jobdb"
         out: "internal/platform/jobs/sqlite/jobdb"
-        emit_json_tags: true
-        emit_empty_slices: true
-        omit_unused_structs: true
-
-  - engine: "sqlite"
-    queries: "internal/release/sqlite/queries"
-    schema: "internal/platform/migrations"
-    gen:
-      go:
-        package: "db"
-        out: "internal/release/internal/db"
         emit_json_tags: true
         emit_empty_slices: true
         omit_unused_structs: true

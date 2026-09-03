@@ -86,12 +86,10 @@ COPY --from=sourcegen /src/internal/app/config/config_gen.go ./internal/app/conf
 COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/config/spec/names_gen.go
 COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db
 COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db
-COPY --from=sourcegen /src/internal/analytics/internal/db ./internal/analytics/internal/db
 COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db
 COPY --from=sourcegen /src/internal/deployment/internal/db ./internal/deployment/internal/db
 COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db
 COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db
-COPY --from=sourcegen /src/internal/release/internal/db ./internal/release/internal/db
 COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db
 COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db
 # Every PostgreSQL sqlc package is generated in sourcegen and excluded from the
