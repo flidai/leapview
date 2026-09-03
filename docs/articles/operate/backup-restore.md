@@ -34,9 +34,13 @@ Stop writes, restore PostgreSQL and the matching DuckLake/object-store recovery
 points with the native provider tools, then start LeapView with the matching
 configuration and image. Set `LEAPVIEW_RECOVERY_SET_ID` to the exact published
 frontier whose immutable passed validation evidence describes the restored
-points; LeapView never selects the latest set. Before admitting traffic, verify
-the instance identity, active project/deployment pointers, authorization state,
-managed-data revisions, representative semantic queries, and dashboards.
+points; LeapView never selects the latest set. The versioned evidence envelope
+is canonical and digest-bound to the exact validation attempt and frontier,
+both database recovery identities, each object URI/version/digest and provider
+recovery frontier, and the relation manifest and closure. Recording and startup
+reject evidence that does not match that selected set. Before admitting traffic,
+verify the instance identity, active project/deployment pointers, authorization
+state, managed-data revisions, representative semantic queries, and dashboards.
 Preserve the failed state and recovery evidence until the incident is closed.
 
 For an empty or development SQLite fixture, use the fixture's own test harness;

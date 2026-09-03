@@ -342,6 +342,27 @@ func (r *Repository) RecordValidationResult(ctx context.Context, result recovery
 	if err != nil {
 		return err
 	}
+	attempt, err := r.ValidationAttempt(ctx, normalized.AttemptID)
+	if errors.Is(err, recoveryset.ErrNotFound) {
+		return recoveryset.ErrFenced
+	}
+	if err != nil {
+		return err
+	}
+	set, err := r.ReadExact(ctx, attempt.SetID)
+	if errors.Is(err, recoveryset.ErrNotFound) {
+		return recoveryset.ErrFenced
+	}
+	if err != nil {
+		return err
+	}
+	envelope, err := recoveryset.ParseValidationEvidenceEnvelope(normalized.Evidence)
+	if err != nil {
+		return err
+	}
+	if err := envelope.ValidateFor(set, normalized.AttemptID); err != nil {
+		return err
+	}
 	ai, _ := uuid.Parse(normalized.AttemptID)
 	id, err := recoverydb.New(r.db).InsertValidationResult(ctx, recoverydb.InsertValidationResultParams{AttemptID: pgtype.UUID{Bytes: ai, Valid: true}, ResultDigest: normalized.ResultDigest, Evidence: normalized.Evidence, RecordedAt: normalized.RecordedAt})
 	if err == nil && id != "" {

@@ -1005,12 +1005,18 @@ the latest set), requires `published` status bound to one exact passed,
 immutable validation attempt and result, and compares its target pointer,
 generation, publication/revision, complete native snapshot-seal and catalog
 identity, admitted compatibility tuple, and serving-artifact identities with
-the active PostgreSQL projections. Any missing, unpublished, unvalidated, or
-mismatched evidence fails closed with a stable readiness diagnostic. The check
-is read-only: `/readyz` does not create validation attempts or write validation
-results. Provider object existence, relation-closure, and recovery-point
-probing remain part of the external [PostgreSQL operations](/docs/guides/operate/postgresql-operations)
-and [Backup and restore](/docs/guides/operate/backup-restore) procedures.
+the active PostgreSQL projections. Validation evidence is a strict, versioned,
+canonical JSON envelope whose digest binds the exact attempt and frontier,
+both database recovery identities, every object kind/URI/version/digest and
+provider recovery frontier, and the relation namespace, manifest, and closure
+digests. Recording and startup independently validate that envelope against
+the selected set. Any missing, unpublished, unvalidated, or mismatched evidence
+fails closed with a stable readiness diagnostic. The check is read-only:
+`/readyz` does not create validation attempts or write validation results.
+Provider object existence and recovery-point probing remain part of the
+external [PostgreSQL operations](/docs/guides/operate/postgresql-operations)
+and [Backup and restore](/docs/guides/operate/backup-restore) procedures; the
+envelope records their results but startup performs no provider I/O.
 
 Connection budgets are assigned per capability and workload rather than per
 handler. Interactive control requests, background workers, event consumers,

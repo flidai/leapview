@@ -74,7 +74,14 @@ func TestRecoverySetExactReplayAndFencedPublication(t *testing.T) {
 	if _, err := r.BeginValidation(t.Context(), attempt); err != nil {
 		t.Fatal(err)
 	}
-	result := recoveryset.ValidationResult{AttemptID: validationID, ResultDigest: "sha256:" + strings.Repeat("8", 64), Evidence: []byte(`{"ok":true}`), RecordedAt: started.Add(500 * time.Millisecond)}
+	envelope, err := recoveryset.NewValidationEvidenceEnvelope(in, validationID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := recoveryset.NewValidationResult(envelope, started.Add(500*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := r.RecordValidationResult(t.Context(), result); err != nil {
 		t.Fatal(err)
 	}
@@ -144,17 +151,34 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	if err := r.CompleteValidation(t.Context(), terminal); !errors.Is(err, recoveryset.ErrNotFound) {
 		t.Fatalf("completion without evidence = %v", err)
 	}
-	result := recoveryset.ValidationResult{AttemptID: attempt.AttemptID, ResultDigest: terminal.ResultDigest, Evidence: []byte(`{"seal":"exact", "ok":true}`), RecordedAt: started.Add(500 * time.Millisecond)}
+	envelope, err := recoveryset.NewValidationEvidenceEnvelope(set, attempt.AttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := recoveryset.NewValidationResult(envelope, started.Add(500*time.Millisecond))
+	if err != nil {
+		t.Fatal(err)
+	}
+	terminal.ResultDigest = result.ResultDigest
 	if err := r.RecordValidationResult(t.Context(), result); err != nil {
 		t.Fatal(err)
 	}
 	if err := r.RecordValidationResult(t.Context(), result); err != nil {
 		t.Fatalf("result replay = %v", err)
 	}
-	conflict := result
-	conflict.Evidence = []byte(`{"seal":"different"}`)
-	if err := r.RecordValidationResult(t.Context(), conflict); !errors.Is(err, recoveryset.ErrConflict) {
+	replayConflict := result
+	replayConflict.RecordedAt = replayConflict.RecordedAt.Add(time.Microsecond)
+	if err := r.RecordValidationResult(t.Context(), replayConflict); !errors.Is(err, recoveryset.ErrConflict) {
 		t.Fatalf("conflicting result replay = %v", err)
+	}
+	conflictingEnvelope := envelope
+	conflictingEnvelope.ClosureDigest = "sha256:" + strings.Repeat("9", 64)
+	conflictingResult, err := recoveryset.NewValidationResult(conflictingEnvelope, result.RecordedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := r.RecordValidationResult(t.Context(), conflictingResult); !errors.Is(err, recoveryset.ErrInvalid) {
+		t.Fatalf("unbound validation evidence = %v", err)
 	}
 	wrong := terminal
 	wrong.ResultDigest = "sha256:" + strings.Repeat("9", 64)
@@ -169,6 +193,13 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 	}
 	late := result
 	late.AttemptID = "018f3f83-7b2f-7b37-9f9e-000000000111"
+	lateEnvelope := envelope
+	lateEnvelope.AttemptID = late.AttemptID
+	lateResult, err := recoveryset.NewValidationResult(lateEnvelope, result.RecordedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	late.Evidence, late.ResultDigest = lateResult.Evidence, lateResult.ResultDigest
 	if err := r.RecordValidationResult(t.Context(), late); !errors.Is(err, recoveryset.ErrFenced) {
 		t.Fatalf("unknown attempt result = %v", err)
 	}

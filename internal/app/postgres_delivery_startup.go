@@ -120,13 +120,6 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 			if set.Status != recoveryset.StatusPublished {
 				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetNotPublished)
 			}
-			code, validationErr := postgresDeliveryStartupRecoveryValidation(ctx, config.Recovery, set)
-			if validationErr != nil {
-				return fmt.Errorf("delivery startup recovery validation: %w", validationErr)
-			}
-			if code != "" {
-				return postgresDeliveryStartupDiagnostics(config.TargetID, code)
-			}
 			selectedRecovery = &set
 		}
 		claimedProject, claimFound, err := config.ReadClaim(ctx)
@@ -250,6 +243,13 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 			if code := postgresDeliveryStartupRecoveryMismatch(*selectedRecovery, target, generation, publication, seal, state, artifact, admission); code != "" {
 				return postgresDeliveryStartupDiagnostics(scope, code)
 			}
+			code, validationErr := postgresDeliveryStartupRecoveryValidation(ctx, config.Recovery, *selectedRecovery)
+			if validationErr != nil {
+				return fmt.Errorf("delivery startup recovery validation: %w", validationErr)
+			}
+			if code != "" {
+				return postgresDeliveryStartupDiagnostics(scope, code)
+			}
 		}
 		return nil
 	}, nil
@@ -370,6 +370,10 @@ func postgresDeliveryStartupRecoveryValidation(
 		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
 	}
 	if err := result.Validate(); err != nil {
+		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+	}
+	envelope, err := recoveryset.ParseValidationEvidenceEnvelope(result.Evidence)
+	if err != nil || envelope.ValidateFor(set, attemptID) != nil {
 		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
 	}
 	return "", nil

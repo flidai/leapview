@@ -344,6 +344,19 @@ func TestPostgresDeliveryStartupRequiresExactPassedRecoveryValidation(t *testing
 		{name: "result digest drift", make: func(r *postgresDeliveryStartupRecoveryFake) {
 			r.result.ResultDigest = "sha256:" + strings.Repeat("f", 64)
 		}, want: deployment.DeliveryStartupRecoverySetValidationMismatch},
+		{name: "result evidence frontier drift", make: func(r *postgresDeliveryStartupRecoveryFake) {
+			envelope, err := recoveryset.ParseValidationEvidenceEnvelope(r.result.Evidence)
+			if err != nil {
+				t.Fatalf("parse validation evidence: %v", err)
+			}
+			envelope.ObjectRoots[0].VersionID = "different-version"
+			result, err := recoveryset.NewValidationResult(envelope, r.result.RecordedAt)
+			if err != nil {
+				t.Fatalf("construct validation result: %v", err)
+			}
+			r.result = result
+			r.attempt.ResultDigest = result.ResultDigest
+		}, want: deployment.DeliveryStartupRecoverySetValidationMismatch},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recovery := &postgresDeliveryStartupRecoveryFake{}
@@ -505,8 +518,8 @@ func startupRecoveryFixture(t *testing.T) postgresDeliveryStartupRecoveryFixture
 		Serving:       recoveryset.SnapshotSeal{SealID: seal.SealID, PhysicalPoolID: seal.PhysicalPoolID, TenantDomain: seal.TenantDomain, Region: seal.Region, EncryptionDomain: seal.EncryptionDomain, ObjectNamespace: seal.ObjectNamespace, CatalogDatabase: seal.CatalogDatabase, CatalogID: seal.CatalogID, CatalogUUID: seal.CatalogUUID, CatalogVersion: seal.CatalogVersion, DuckLakeSnapshotID: seal.DuckLakeSnapshotID, RelationManifestDigest: seal.RelationManifestDigest, RelationNamespace: seal.RelationNamespace, ClosureDigest: seal.ClosureDigest, ObjectRoot: seal.ObjectRoot, ObjectRootDigest: seal.ObjectRootDigest, ArtifactRoot: seal.ArtifactRoot, ArtifactRootDigest: seal.ArtifactRootDigest, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest, CompiledGraphDigest: seal.CompiledGraphDigest, CompiledConfigDigest: seal.CompiledConfigDigest, SecurityDomainFingerprint: seal.SecurityDomainFingerprint, RequestDigest: seal.RequestDigest, PlanDigest: seal.PlanDigest, CompatibilityDigest: seal.CompatibilityDigest, DuckDBVersion: seal.DuckDBVersion, RuntimeVersion: seal.RuntimeVersion, DuckLakeExtensionVersion: seal.DuckLakeExtensionVersion, DuckLakeSpecVersion: seal.DuckLakeSpecVersion, CatalogSchemaVersion: seal.CatalogSchemaVersion},
 		Catalog:       recoveryset.CatalogCommit{CatalogID: seal.CatalogID, CatalogDatabase: seal.CatalogDatabase, CatalogUUID: seal.CatalogUUID, CatalogVersion: seal.CatalogVersion, SnapshotID: seal.DuckLakeSnapshotID},
 		ObjectRoots: []recoveryset.ObjectRoot{
-			{Kind: recoveryset.ObjectRootDuckLake, URI: seal.ObjectRoot, VersionID: "v42", Digest: seal.ObjectRootDigest},
-			{Kind: recoveryset.ObjectRootServingArtifact, URI: seal.ArtifactRoot, VersionID: "v2", Digest: seal.ArtifactRootDigest},
+			{Kind: recoveryset.ObjectRootDuckLake, URI: seal.ObjectRoot, VersionID: "v42", Digest: seal.ObjectRootDigest, ProviderRecoveryFrontier: "s3-version:v42"},
+			{Kind: recoveryset.ObjectRootServingArtifact, URI: seal.ArtifactRoot, VersionID: "v2", Digest: seal.ArtifactRootDigest, ProviderRecoveryFrontier: "s3-version:v2"},
 		}, Compatibility: admission.Compatibility,
 		FenceEpoch: 1, AuditIdentity: "recovery-selection", Status: recoveryset.StatusPublished, PublishedValidationAttemptID: validationID, CreatedBy: "operator", CreatedAt: time.Now().UTC(),
 	}
@@ -514,7 +527,14 @@ func startupRecoveryFixture(t *testing.T) postgresDeliveryStartupRecoveryFixture
 		t.Fatalf("recovery fixture: %v", err)
 	}
 	validationStarted := time.Now().UTC().Truncate(time.Microsecond)
-	validationDigest := digest("a")
+	validationEnvelope, err := recoveryset.NewValidationEvidenceEnvelope(set, validationID)
+	if err != nil {
+		t.Fatalf("validation envelope: %v", err)
+	}
+	validationResult, err := recoveryset.NewValidationResult(validationEnvelope, validationStarted.Add(500*time.Millisecond))
+	if err != nil {
+		t.Fatalf("validation result: %v", err)
+	}
 	return postgresDeliveryStartupRecoveryFixture{
 		set: set,
 		authority: &postgresDeliveryStartupAuthorityFake{
@@ -527,10 +547,10 @@ func startupRecoveryFixture(t *testing.T) postgresDeliveryStartupRecoveryFixture
 		// matching immutable result evidence during readiness.
 		validation: recoveryset.ValidationAttempt{
 			AttemptID: validationID, SetID: setID, OwnerID: "validator", FenceEpoch: set.FenceEpoch,
-			AuditIdentity: "recovery-selection", Status: recoveryset.ValidationPassed, ResultDigest: validationDigest,
+			AuditIdentity: "recovery-selection", Status: recoveryset.ValidationPassed, ResultDigest: validationResult.ResultDigest,
 			StartedAt: validationStarted, CompletedAt: validationStarted.Add(time.Second),
 		},
-		result: recoveryset.ValidationResult{AttemptID: validationID, ResultDigest: validationDigest, Evidence: []byte(`{"ok":true}`), RecordedAt: validationStarted.Add(500 * time.Millisecond)},
+		result: validationResult,
 	}
 }
 

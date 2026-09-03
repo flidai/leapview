@@ -69,8 +69,9 @@ func VerifyControlReadonlyAdmission(ctx context.Context, reader AdmissionReader)
 }
 
 // VerifyDuckLakeAdmission proves the retained catalog credential can connect
-// and use—but cannot create—the exact per-pool DuckLake metadata schema or
-// database namespace.
+// and cross the exact per-pool namespace boundary without database/schema
+// creation authority. DuckLake attach remains responsible for its versioned
+// metadata table and sequence compatibility checks.
 func VerifyDuckLakeAdmission(ctx context.Context, reader AdmissionReader, metadataSchema string) error {
 	if metadataSchema == "" {
 		return errors.New("PostgreSQL DuckLake metadata schema is required")

@@ -1,6 +1,7 @@
 package recoveryset
 
 import (
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -99,20 +100,147 @@ func TestRecoverySetDigestRejectsInvalidFrontier(t *testing.T) {
 }
 
 func TestValidationResultNormalizeRequiresJSONObject(t *testing.T) {
-	base := ValidationResult{AttemptID: "018f3f83-7b2f-7b37-9f9e-000000000020", ResultDigest: testDigest('8'), Evidence: []byte(`{"b":2, "a":1}`), RecordedAt: time.Now()}
+	set := testSet(t)
+	const attemptID = "018f3f83-7b2f-7b37-9f9e-000000000020"
+	envelope, err := NewValidationEvidenceEnvelope(set, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base, err := NewValidationResult(envelope, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	evidence := append([]byte(nil), base.Evidence...)
 	normalized, err := base.Normalize()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(normalized.Evidence) != `{"a":1,"b":2}` {
-		t.Fatalf("canonical evidence = %s", normalized.Evidence)
+	if string(normalized.Evidence) != string(evidence) {
+		t.Fatalf("canonical evidence changed = %s", normalized.Evidence)
 	}
 	base.Evidence = []byte(`[]`)
 	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("array evidence error = %v", err)
 	}
-	base.Evidence = []byte(`{"outer":{"ok":1,"ok":2}}`)
+	base.Evidence = append(append([]byte(nil), evidence[:len(evidence)-1]...), []byte(`,"unknown":true}`)...)
 	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
-		t.Fatalf("duplicate evidence key error = %v", err)
+		t.Fatalf("unknown evidence field error = %v", err)
+	}
+	base.Evidence = []byte(strings.Replace(string(evidence), `"set_id"`, `"SET_ID"`, 1))
+	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("case-variant evidence field error = %v", err)
+	}
+	base.Evidence = append(append([]byte(nil), evidence[:len(evidence)-1]...), []byte(`,"set_id":"018f3f83-7b2f-7b37-9f9e-000000000010"}`)...)
+	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("duplicate evidence field error = %v", err)
+	}
+	var rawEnvelope map[string]json.RawMessage
+	if err := json.Unmarshal(evidence, &rawEnvelope); err != nil {
+		t.Fatal(err)
+	}
+	var rawRoots []map[string]json.RawMessage
+	if err := json.Unmarshal(rawEnvelope["object_roots"], &rawRoots); err != nil {
+		t.Fatal(err)
+	}
+	missingFrontier := -1
+	for i, root := range rawRoots {
+		var frontier string
+		if err := json.Unmarshal(root["provider_recovery_frontier"], &frontier); err != nil {
+			t.Fatal(err)
+		}
+		if frontier == "" {
+			missingFrontier = i
+			break
+		}
+	}
+	if missingFrontier < 0 {
+		t.Fatal("test envelope has no local object root")
+	}
+	delete(rawRoots[missingFrontier], "provider_recovery_frontier")
+	rawEnvelope["object_roots"], err = json.Marshal(rawRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Evidence, err = json.Marshal(rawEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("missing provider frontier field error = %v", err)
+	}
+	rawRoots[missingFrontier]["provider_recovery_frontier"] = json.RawMessage("null")
+	rawEnvelope["object_roots"], err = json.Marshal(rawRoots)
+	if err != nil {
+		t.Fatal(err)
+	}
+	base.Evidence, err = json.Marshal(rawEnvelope)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("null provider frontier field error = %v", err)
+	}
+	mismatchedEnvelope := envelope
+	mismatchedEnvelope.AttemptID = "018f3f83-7b2f-7b37-9f9e-000000000021"
+	mismatchedResult, err := NewValidationResult(mismatchedEnvelope, base.RecordedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mismatchedResult.AttemptID = attemptID
+	if _, err := mismatchedResult.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("mismatched evidence attempt ID error = %v", err)
+	}
+	base.Evidence = evidence
+	base.ResultDigest = testDigest('8')
+	if _, err := base.Normalize(); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("digest mismatch error = %v", err)
+	}
+}
+
+func TestValidationEvidenceEnvelopeBindsExactFrontier(t *testing.T) {
+	set := testSet(t)
+	const attemptID = "018f3f83-7b2f-7b37-9f9e-000000000020"
+	envelope, err := NewValidationEvidenceEnvelope(set, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := envelope.ValidateFor(set, attemptID); err != nil {
+		t.Fatalf("exact envelope rejected: %v", err)
+	}
+	mutated := envelope
+	mutated.ObjectRoots = append([]ValidationEvidenceObjectRoot(nil), envelope.ObjectRoots...)
+	mutated.ObjectRoots[0].VersionID = "other-version"
+	if err := mutated.ValidateFor(set, attemptID); err == nil {
+		t.Fatal("object version drift accepted")
+	}
+	mutated = envelope
+	mutated.ObjectRoots = append([]ValidationEvidenceObjectRoot(nil), envelope.ObjectRoots...)
+	remoteIndex := -1
+	for i, root := range mutated.ObjectRoots {
+		if validationRemoteObjectRoot(root.URI) {
+			remoteIndex = i
+			break
+		}
+	}
+	if remoteIndex < 0 {
+		t.Fatal("test envelope has no remote object root")
+	}
+	mutated.ObjectRoots[remoteIndex].ProviderRecoveryFrontier = ""
+	if err := mutated.Validate(); err == nil {
+		t.Fatal("remote root without provider frontier accepted")
+	}
+	mutated.ObjectRoots[remoteIndex].URI = "s3://bucket/%zz"
+	if err := mutated.Validate(); err == nil {
+		t.Fatal("malformed escaped object root URI accepted")
+	}
+	mutated.ObjectRoots[remoteIndex].URI = "/tmp/local-root"
+	if err := mutated.Validate(); err != nil {
+		t.Fatalf("explicit local root without provider frontier rejected: %v", err)
+	}
+	mutated = envelope
+	mutated.ClusterPoints = append([]ClusterRecoveryPoint(nil), envelope.ClusterPoints...)
+	mutated.ClusterPoints[0].RecoveryIdentity = "lsn:0/999"
+	if err := mutated.Validate(); err == nil {
+		t.Fatal("shared-cluster recovery-point drift accepted")
 	}
 }

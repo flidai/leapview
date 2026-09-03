@@ -23,9 +23,12 @@ reads only that ID, requires the set to be published with one exact passed
 immutable validation attempt/result, and fail-closes unless its target
 pointer/revision, generation, publication, native snapshot seal and catalog
 identity, admitted compatibility tuple, and serving-artifact identity match the
-active projections. `/readyz` performs no recovery writes: it does not create
-validation attempts or record validation results. The check does not replace
-provider object/closure probing; follow the [PostgreSQL operations
+active projections. It also recomputes the canonical validation-evidence digest
+and binds the exact attempt/frontier, both database recovery identities, object
+versions and provider frontiers, and relation manifest/closure to that selected
+set. `/readyz` performs no recovery writes: it does not create validation
+attempts or record validation results. The check does not replace provider
+object probing; follow the [PostgreSQL operations
 guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
 guide](/docs/guides/operate/backup-restore) for that recovery evidence.
 
