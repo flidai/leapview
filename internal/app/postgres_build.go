@@ -464,7 +464,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	postgresFactory := appruntimefactory.NewPostgresSealedFactory(appruntimefactory.PostgresSealedFactoryConfig{
 		Base:             appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), SealedLeaseHolder: instanceID, ActivationEvidence: activeRuntimeEvidence},
 		ServingArtifacts: nativeProjectSource.Objects,
-		Resolve:          appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
+		Resolve:          appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool, graph.Lineage), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
 		LeaseHolder: instanceID, DuckLakeSecret: postgresDuckLakeSecret, PostgresSecret: postgresConnectionSecret, ExtensionAdmission: extensionSupply,
 		CredentialBootstrapFactory: newPostgresDuckLakeCredentialBootstrapFactory(cfg, extensionSupply),
 		Authorize: func(ctx context.Context, input appruntimefactory.PostgresServingAuthorizationInput) error {

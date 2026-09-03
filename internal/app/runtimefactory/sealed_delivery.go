@@ -3,6 +3,7 @@ package runtimefactory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,6 +15,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
+	lineagepostgres "github.com/flidai/leapview/internal/lineage/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
 	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/pkg/strictjson"
@@ -118,10 +120,10 @@ func NewSQLiteSealedRootResolver(db *sql.DB, targetID string, delivery *deployme
 // RuntimeInput. The resolver binds its durable ID and digest from the
 // PostgreSQL snapshot seal, while the factory performs the final
 // state/artifact identity check before attach.
-func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres.Repository, pools *physicalpoolpostgres.Repository) SealedRootResolver {
+func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres.Repository, pools *physicalpoolpostgres.Repository, lineage *lineagepostgres.Repository) SealedRootResolver {
 	return func(ctx context.Context, input runtimehost.RuntimeInput) (SealedServingRoot, error) {
-		if delivery == nil || pools == nil || strings.TrimSpace(targetID) == "" || targetID != strings.TrimSpace(targetID) {
-			return SealedServingRoot{}, fmt.Errorf("%w: PostgreSQL durable delivery or physical-pool repository is unavailable", ErrSealedRootUnavailable)
+		if delivery == nil || pools == nil || lineage == nil || !lineage.Configured() || strings.TrimSpace(targetID) == "" || targetID != strings.TrimSpace(targetID) {
+			return SealedServingRoot{}, fmt.Errorf("%w: PostgreSQL durable delivery, physical-pool, or lineage repository is unavailable", ErrSealedRootUnavailable)
 		}
 		if strings.TrimSpace(string(input.State.ID)) == "" || strings.TrimSpace(input.Artifact.ID) == "" || input.Artifact.ID != strings.TrimSpace(input.Artifact.ID) {
 			return SealedServingRoot{}, fmt.Errorf("%w: serving-state and artifact identity are required", ErrSealedRootUnavailable)
@@ -166,6 +168,9 @@ func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres
 				return SealedServingRoot{}, fmt.Errorf("%w: committed build-attempt marker is invalid", ErrSealedRootMismatch)
 			}
 			if err := validatePostgresCandidateTuple(targetID, plan, candidate, seal, attempt, marker, input); err != nil {
+				return SealedServingRoot{}, err
+			}
+			if err := validatePostgresLineageBinding(ctx, lineage, targetID, input.State.ProjectID.String(), marker.GenerationID); err != nil {
 				return SealedServingRoot{}, err
 			}
 			contract, err := loadPostgresPoolContract(ctx, pools, seal.PhysicalPoolID, seal.CompatibilityDigest)
@@ -229,12 +234,32 @@ func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres
 		if err := validatePostgresDeliveryTuple(publication, generation, plan, candidate, seal, attempt, marker, input); err != nil {
 			return SealedServingRoot{}, err
 		}
+		if err := validatePostgresLineageBinding(ctx, lineage, targetID, input.State.ProjectID.String(), generation.GenerationID); err != nil {
+			return SealedServingRoot{}, err
+		}
 		contract, err := loadPostgresPoolContract(ctx, pools, seal.PhysicalPoolID, seal.CompatibilityDigest)
 		if err != nil {
 			return SealedServingRoot{}, err
 		}
 		return postgresSealedServingRoot(marker.DeliveryID, generation.GenerationID, candidate, seal, attempt, contract)
 	}
+}
+
+// validatePostgresLineageBinding verifies that the immutable compiler graph
+// selected for this project and target is bound to the exact generation being
+// served. DeliveryID is deliberately the canonical target ID: marker/root
+// delivery metadata is build provenance and is not a serving-scope selector.
+func validatePostgresLineageBinding(ctx context.Context, lineage *lineagepostgres.Repository, targetID, projectID, generationID string) error {
+	if lineage == nil || !lineage.Configured() {
+		return fmt.Errorf("%w: PostgreSQL lineage repository is unavailable", ErrSealedRootUnavailable)
+	}
+	if _, err := lineage.LoadBoundForProject(ctx, projectID, targetID, generationID); err != nil {
+		if errors.Is(err, lineagepostgres.ErrNotFound) || errors.Is(err, lineagepostgres.ErrTampered) || errors.Is(err, lineagepostgres.ErrInvalid) || errors.Is(err, lineagepostgres.ErrConflict) {
+			return fmt.Errorf("%w: lineage binding: %w", ErrSealedRootMismatch, err)
+		}
+		return fmt.Errorf("%w: lineage binding: %w", ErrSealedRootUnavailable, err)
+	}
+	return nil
 }
 
 func postgresCandidateQualified(candidate deploymentpostgres.DeliveryCandidate) bool {
