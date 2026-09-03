@@ -1,8 +1,8 @@
 # ADR-0019: Integrate dbt at the warehouse contract boundary
 
-Status: proposed
+Status: accepted
 
-Decision date: 2026-09-02
+Decision date: 2026-09-03
 
 Implementation: pending
 
@@ -431,6 +431,9 @@ the warehouse already provides a stable, performant mart.
 - The reference monorepo runs dbt-duckdb and serves a LeapView Dashboard from a
   dbt-produced mart through the ordinary Connection, Source, Model, and
   SemanticModel graph.
+- One documented local command or task runs the dbt-duckdb build and Parquet
+  export and starts `leapview dev` against those outputs without production
+  storage configuration or manual path rewriting between iterations.
 - The same LeapView source bundle can be compiled and deployed from explicitly
   authored resources without supplying a dbt manifest or running dbt inside
   LeapView.
@@ -445,10 +448,12 @@ the warehouse already provides a stable, performant mart.
   serving state remains active.
 - Naming fixtures prove stable `snake_case` identifiers can render with authored
   human-readable labels without adding a cosmetic physical transformation.
-- If metadata import is implemented, fixtures cover supported manifest
-  versions, bounded parsing, dbt selection, deterministic identity mapping,
-  collisions, physical catalog reconciliation, drift reporting, and protection
-  of authored LeapView semantics.
+- If metadata import is implemented, offline fixtures compare supported manifest
+  declarations with authored Source contracts without requiring a warehouse
+  connection. Separate physical fixtures use target catalog access or inspect
+  produced Parquet to reconcile actual column types. Both paths cover bounded
+  parsing, dbt selection, deterministic identity mapping, collisions, drift
+  reporting, and protection of authored LeapView semantics.
 - Architecture tests prove serving and refresh paths never require dbt
   binaries, repositories, manifests, run results, or dbt credentials.
 - Security tests prove Source access is read-only where supported, serving-state
