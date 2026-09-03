@@ -26,7 +26,7 @@ import (
 // artifact identity from the runtime input or canonical generation ID.
 func NewSQLiteSealedRootResolver(db *sql.DB, targetID string, delivery *deploymentsqlite.Repository, pools *physicalpoolsqlite.Repository) SealedRootResolver {
 	return func(ctx context.Context, input runtimehost.RuntimeInput) (SealedServingRoot, error) {
-		if delivery == nil || db == nil || targetID == "" {
+		if delivery == nil || db == nil || strings.TrimSpace(targetID) == "" || targetID != strings.TrimSpace(targetID) {
 			return SealedServingRoot{}, fmt.Errorf("%w: durable delivery repository is unavailable", ErrSealedRootUnavailable)
 		}
 		candidateInput := input.Candidate
@@ -66,7 +66,7 @@ func NewSQLiteSealedRootResolver(db *sql.DB, targetID string, delivery *deployme
 			if persistedStateID != candidate.ServingStateID || candidate.ServingStateID != string(input.State.ID) {
 				return SealedServingRoot{}, fmt.Errorf("%w: candidate persisted state %q does not match artifact %q or requested state %q", ErrSealedRootMismatch, candidate.ServingStateID, persistedStateID, input.State.ID)
 			}
-			return SealedServingRoot{CandidateID: candidate.ID, SealID: seal.ID, CatalogDigest: seal.CatalogDigest, CatalogObjectKey: seal.ObjectKey, CatalogObjectSize: seal.ObjectSize, ClosureDigest: seal.ClosureDigest, QualificationDigest: seal.QualificationDigest, PhysicalPoolID: seal.PhysicalPoolID, Compatibility: poolContract.Tuple, PoolContract: poolContract, ServingStateID: candidate.ServingStateID, ServingArtifactID: candidate.ServingArtifactID, ServingArtifactDigest: candidate.ServingArtifactDigest}, nil
+			return SealedServingRoot{TargetID: targetID, CandidateID: candidate.ID, SealID: seal.ID, CatalogDigest: seal.CatalogDigest, CatalogObjectKey: seal.ObjectKey, CatalogObjectSize: seal.ObjectSize, ClosureDigest: seal.ClosureDigest, QualificationDigest: seal.QualificationDigest, PhysicalPoolID: seal.PhysicalPoolID, Compatibility: poolContract.Tuple, PoolContract: poolContract, ServingStateID: candidate.ServingStateID, ServingArtifactID: candidate.ServingArtifactID, ServingArtifactDigest: candidate.ServingArtifactDigest}, nil
 		}
 		generation, err := delivery.DeliveryGenerationByServingStateID(ctx, targetID, input.State.ProjectID.String(), string(input.State.Environment), string(input.State.ID))
 		if err != nil {
@@ -83,7 +83,7 @@ func NewSQLiteSealedRootResolver(db *sql.DB, targetID string, delivery *deployme
 		if generation.ServingArtifactID == "" || generation.ServingArtifactDigest == "" || candidate.ServingArtifactID == "" || candidate.ServingArtifactDigest == "" || seal.ServingArtifactID == "" || seal.ServingArtifactDigest == "" {
 			return SealedServingRoot{}, fmt.Errorf("%w: persisted serving-artifact identity is missing", ErrSealedRootUnavailable)
 		}
-		if generation.ServingStateID == "" || generation.CompatibilityDigest == "" || candidate.ServingStateID == "" || candidate.CompatibilityDigest == "" || candidate.Status != deployment.DeliveryCandidateReady || seal.Status != deployment.CatalogSealVerified || candidate.CatalogDigest != generation.CatalogDigest || candidate.CatalogObjectKey != generation.CatalogObjectKey || candidate.PhysicalPoolID != generation.PhysicalPoolID || candidate.CompatibilityDigest != generation.CompatibilityDigest || candidate.ServingStateID != generation.ServingStateID || candidate.ServingArtifactID != generation.ServingArtifactID || candidate.ServingArtifactDigest != generation.ServingArtifactDigest || seal.CompatibilityDigest != generation.CompatibilityDigest || seal.ServingArtifactID != generation.ServingArtifactID || seal.ServingArtifactDigest != generation.ServingArtifactDigest {
+		if generation.ServingStateID == "" || generation.CompatibilityDigest == "" || candidate.ServingStateID == "" || candidate.CompatibilityDigest == "" || candidate.Status != deployment.DeliveryCandidateReady || candidate.TargetID != targetID || candidate.ProjectID != generation.ProjectID || candidate.Environment != generation.Environment || seal.Status != deployment.CatalogSealVerified || candidate.CatalogDigest != generation.CatalogDigest || candidate.CatalogObjectKey != generation.CatalogObjectKey || candidate.PhysicalPoolID != generation.PhysicalPoolID || candidate.CompatibilityDigest != generation.CompatibilityDigest || candidate.ServingStateID != generation.ServingStateID || candidate.ServingArtifactID != generation.ServingArtifactID || candidate.ServingArtifactDigest != generation.ServingArtifactDigest || seal.CompatibilityDigest != generation.CompatibilityDigest || seal.ServingArtifactID != generation.ServingArtifactID || seal.ServingArtifactDigest != generation.ServingArtifactDigest {
 			return SealedServingRoot{}, fmt.Errorf("%w: candidate, generation, and seal are not one verified tuple", ErrSealedRootMismatch)
 		}
 		if pools == nil {
@@ -101,7 +101,7 @@ func NewSQLiteSealedRootResolver(db *sql.DB, targetID string, delivery *deployme
 			return SealedServingRoot{}, fmt.Errorf("%w: delivery generation state %q does not match artifact state %q or requested state %q", ErrSealedRootMismatch, generation.ServingStateID, persistedStateID, input.State.ID)
 		}
 		return SealedServingRoot{
-			GenerationID: generation.ID, CandidateID: candidate.ID, SealID: seal.ID,
+			TargetID: targetID, GenerationID: generation.ID, CandidateID: candidate.ID, SealID: seal.ID,
 			CatalogDigest: seal.CatalogDigest, CatalogObjectKey: seal.ObjectKey, CatalogObjectSize: seal.ObjectSize,
 			ClosureDigest: seal.ClosureDigest, QualificationDigest: seal.QualificationDigest,
 			PhysicalPoolID: seal.PhysicalPoolID, Compatibility: poolContract.Tuple, PoolContract: poolContract,
@@ -177,7 +177,7 @@ func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres
 			if err != nil {
 				return SealedServingRoot{}, err
 			}
-			return postgresSealedServingRoot(marker.DeliveryID, marker.GenerationID, candidate, seal, attempt, contract)
+			return postgresSealedServingRoot(targetID, marker.DeliveryID, marker.GenerationID, candidate, seal, attempt, contract)
 		}
 
 		target, err := delivery.Target(ctx, targetID)
@@ -241,14 +241,14 @@ func NewPostgresSealedRootResolver(targetID string, delivery *deploymentpostgres
 		if err != nil {
 			return SealedServingRoot{}, err
 		}
-		return postgresSealedServingRoot(marker.DeliveryID, generation.GenerationID, candidate, seal, attempt, contract)
+		return postgresSealedServingRoot(targetID, marker.DeliveryID, generation.GenerationID, candidate, seal, attempt, contract)
 	}
 }
 
 // validatePostgresLineageBinding verifies that the immutable compiler graph
 // selected for this project and target is bound to the exact generation being
-// served. DeliveryID is deliberately the canonical target ID: marker/root
-// delivery metadata is build provenance and is not a serving-scope selector.
+// served. TargetID is the canonical target scope; marker/root DeliveryID is
+// build provenance and is not a serving-scope selector.
 func validatePostgresLineageBinding(ctx context.Context, lineage *lineagepostgres.Repository, targetID, projectID, generationID string) error {
 	if lineage == nil || !lineage.Configured() {
 		return fmt.Errorf("%w: PostgreSQL lineage repository is unavailable", ErrSealedRootUnavailable)
@@ -386,14 +386,14 @@ func loadPostgresPoolContract(ctx context.Context, pools *physicalpoolpostgres.R
 	return contract, nil
 }
 
-func postgresSealedServingRoot(deliveryID, servingStateID string, candidate deploymentpostgres.DeliveryCandidate, seal deploymentpostgres.SnapshotSeal, attempt deploymentpostgres.DeliveryBuildAttempt, contract *ducklake.PoolContract) (SealedServingRoot, error) {
+func postgresSealedServingRoot(targetID, deliveryID, servingStateID string, candidate deploymentpostgres.DeliveryCandidate, seal deploymentpostgres.SnapshotSeal, attempt deploymentpostgres.DeliveryBuildAttempt, contract *ducklake.PoolContract) (SealedServingRoot, error) {
 	dataPath, err := contract.Pool.DataPath()
 	if err != nil {
 		return SealedServingRoot{}, fmt.Errorf("%w: physical-pool DATA_PATH: %v", ErrSealedRootUnavailable, err)
 	}
 	metadataSchema := ducklake.MetadataSchemaForPool(seal.PhysicalPoolID)
 	return SealedServingRoot{
-		GenerationID: servingStateID, CandidateID: candidate.CandidateID, AttemptID: attempt.AttemptID, SealID: seal.SealID,
+		TargetID: targetID, GenerationID: servingStateID, CandidateID: candidate.CandidateID, AttemptID: attempt.AttemptID, SealID: seal.SealID,
 		ClosureDigest: seal.ClosureDigest, QualificationDigest: candidate.QualificationDigest,
 		PhysicalPoolID: seal.PhysicalPoolID, Compatibility: contract.Tuple, PoolContract: contract,
 		ServingStateID: servingStateID, ServingArtifactID: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest,

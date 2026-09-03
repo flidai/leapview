@@ -821,7 +821,7 @@ change feeds do not substitute for compiler-derived transformation lineage.
 Cache correctness is established by a versioned key containing:
 
 ```text
-stable production or candidate partition
+stable production or candidate partition (target, project, environment, candidate)
 + dependency digest
 + effective policy fingerprint
 + canonical query digest
@@ -854,11 +854,20 @@ allowed only when the planner can either prove determinism or represent the
 volatility explicitly in the dependency/query key with its declared validity
 contract.
 
-Consequently, production cache ownership is not scoped by serving-state or
-generation ID. Runtime generations acquire leases on entries in the stable
-production partition; candidate partitions remain isolated by candidate
-identity. Closing or draining one runtime releases its local leases without
-invalidating otherwise compatible entries.
+The exact delivery target is part of the stable partition, so two targets can
+never share a result merely because their project and environment labels
+match. Cache admission is available only to a runtime constructed from a
+verified snapshot seal and its exact target/project/generation lineage
+binding. Shared manifests retain the originating snapshot-seal ID as
+provenance, but neither that seal nor the serving-generation ID is part of the
+reusable result key. This distinction binds every fill to admitted evidence
+without defeating safe dependency-equivalent reuse after a cutover.
+
+Consequently, production cache ownership is not scoped by serving-state,
+generation or snapshot-seal ID. Runtime generations acquire leases on entries
+in the target-bound stable production partition; candidate partitions remain
+isolated by target and candidate identity. Closing or draining one runtime
+releases its local leases without invalidating otherwise compatible entries.
 
 Events may proactively evict or warm entries, but key rotation is the
 correctness boundary. Missing an event can retain unreachable bytes until

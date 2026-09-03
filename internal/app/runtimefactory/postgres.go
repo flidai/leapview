@@ -256,7 +256,7 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 	if root.Compatibility != poolContract.Tuple {
 		return nil, fmt.Errorf("%w: PostgreSQL root compatibility admission is not canonical", ErrSealedRootMismatch)
 	}
-	if root.CatalogDatabase == "" || root.CatalogID == "" || root.CatalogUUID == "" || root.DeliveryID == "" || root.GenerationID == "" || root.CandidateID == "" || root.AttemptID == "" || root.FencingEpoch <= 0 || root.DataPath == "" {
+	if root.TargetID == "" || root.TargetID != strings.TrimSpace(root.TargetID) || root.CatalogDatabase == "" || root.CatalogID == "" || root.CatalogUUID == "" || root.DeliveryID == "" || root.GenerationID == "" || root.CandidateID == "" || root.AttemptID == "" || root.FencingEpoch <= 0 || root.DataPath == "" {
 		return nil, fmt.Errorf("%w: PostgreSQL catalog and generation identity is incomplete", ErrSealedRootUnavailable)
 	}
 	if err := validatePostgresCatalogRegistration(root); err != nil {
@@ -280,7 +280,7 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 			return nil, fmt.Errorf("%w: %s is invalid: %v", ErrSealedRootUnavailable, name, err)
 		}
 	}
-	for name, value := range map[string]string{"delivery ID": root.DeliveryID, "generation ID": root.GenerationID, "candidate ID": root.CandidateID, "attempt ID": root.AttemptID, "seal ID": root.SealID, "relation namespace": root.RelationNamespace, "object root": root.ObjectRoot, "artifact root": root.ArtifactRoot, "tenant domain": root.TenantDomain, "region": root.Region, "encryption domain": root.EncryptionDomain, "object namespace": root.ObjectNamespace, "catalog database": root.CatalogDatabase, "catalog ID": root.CatalogID, "catalog UUID": root.CatalogUUID, "catalog version": root.CatalogVersion, "DuckDB version": root.DuckDBVersion, "DuckLake extension version": root.DuckLakeExtensionVersion, "DuckLake spec version": root.DuckLakeSpecVersion, "catalog schema version": root.CatalogSchemaVersion, "runtime version": root.RuntimeVersion} {
+	for name, value := range map[string]string{"target ID": root.TargetID, "delivery ID": root.DeliveryID, "generation ID": root.GenerationID, "candidate ID": root.CandidateID, "attempt ID": root.AttemptID, "seal ID": root.SealID, "relation namespace": root.RelationNamespace, "object root": root.ObjectRoot, "artifact root": root.ArtifactRoot, "tenant domain": root.TenantDomain, "region": root.Region, "encryption domain": root.EncryptionDomain, "object namespace": root.ObjectNamespace, "catalog database": root.CatalogDatabase, "catalog ID": root.CatalogID, "catalog UUID": root.CatalogUUID, "catalog version": root.CatalogVersion, "DuckDB version": root.DuckDBVersion, "DuckLake extension version": root.DuckLakeExtensionVersion, "DuckLake spec version": root.DuckLakeSpecVersion, "catalog schema version": root.CatalogSchemaVersion, "runtime version": root.RuntimeVersion} {
 		if strings.TrimSpace(value) != value || strings.TrimSpace(value) == "" || strings.ContainsAny(value, "\x00\r\n") || len(value) > 512 {
 			return nil, fmt.Errorf("%w: PostgreSQL %s identity is not normalized", ErrSealedRootMismatch, name)
 		}
@@ -377,7 +377,7 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		_ = leaseHandle.Close()
 		return nil, err
 	}
-	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env, root.RelationNamespace)
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env, root.RelationNamespace, root.TargetID, root.SealID)
 	if err != nil {
 		_ = env.Close()
 		_ = leaseHandle.Close()

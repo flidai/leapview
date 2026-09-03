@@ -29,6 +29,8 @@ import (
 	tcminio "github.com/testcontainers/testcontainers-go/modules/minio"
 )
 
+const targetL3OriginSnapshotSealID = "00000000-0000-0000-0000-000000000001"
+
 // TestTargetL3CacheMinIOPostgresComposition exercises the production target
 // constructor with a real SQL authority and the real object adapter. Deleting
 // the exact object retires only its manifest; no namespace-wide invalidation
@@ -45,12 +47,12 @@ func TestTargetL3CacheMinIOPostgresComposition(t *testing.T) {
 	contract := targetL3Contract(t, bucket, prefix)
 	db := targetL3PostgresDB(t)
 	repo := cachepostgres.New(db)
-	ns := cachepostgres.Namespace{PartitionKind: cachepostgres.PartitionProduction, ProjectID: "project", Environment: "prod"}
-	cache, err := runtimefactory.NewTargetL3Cache(ctx, contract, repo, gcadapter.S3Config{Region: "us-east-1", AccessKeyID: targetL3User, SecretAccessKey: targetL3Secret, Endpoint: endpoint, PathStyle: true}, runtimefactory.TargetL3CacheConfig{Namespace: ns, Enabled: true, Prefix: "cache"})
+	ns := cachepostgres.Namespace{PartitionKind: cachepostgres.PartitionProduction, TargetID: "target", ProjectID: "project", Environment: "prod"}
+	cache, err := runtimefactory.NewTargetL3Cache(ctx, contract, repo, gcadapter.S3Config{Region: "us-east-1", AccessKeyID: targetL3User, SecretAccessKey: targetL3Secret, Endpoint: endpoint, PathStyle: true}, runtimefactory.TargetL3CacheConfig{Namespace: ns, OriginSnapshotSealID: targetL3OriginSnapshotSealID, Enabled: true, Prefix: "cache"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := cachepostgres.ManifestKey{PartitionKind: cachepostgres.PartitionProduction, ProjectID: "project", Environment: "prod", PartitionFormatVersion: 1, DependencyDigest: targetL3Digest('a'), PolicyFingerprint: targetL3Digest('b'), CanonicalQueryDigest: targetL3Digest('c'), KeyFormatVersion: 1}
+	key := cachepostgres.ManifestKey{PartitionKind: cachepostgres.PartitionProduction, TargetID: "target", ProjectID: "project", Environment: "prod", PartitionFormatVersion: 2, DependencyDigest: targetL3Digest('a'), PolicyFingerprint: targetL3Digest('b'), CanonicalQueryDigest: targetL3Digest('c'), KeyFormatVersion: 2}
 	lease, err := cache.AcquireFill(ctx, key, "minio-owner", time.Minute)
 	if err != nil {
 		t.Fatal(err)

@@ -34,7 +34,7 @@ const (
 	// renderer contract.
 	SpatialTileFormatVersion = 5
 	queryDigestDomain        = "flid.resultidentity.query.v1"
-	cacheKeyDomain           = "flid.resultidentity.cache-key.v1"
+	cacheKeyDomain           = "flid.resultidentity.cache-key.v2"
 )
 
 var (

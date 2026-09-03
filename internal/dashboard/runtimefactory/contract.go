@@ -12,6 +12,7 @@ type Input struct {
 	Directory                                                 string
 	Identity                                                  projectgraph.ServingIdentity
 	SemanticModelDigest, ArtifactDigest, SourceDataDigest     string
+	TargetID, SnapshotSealID                                  string
 	CandidateID, AuthorizationFingerprint, BindingFingerprint string
 	// RelationNamespace is the authority-derived DuckLake schema used for
 	// snapshot-qualified serving reads. Empty retains the legacy model schema.

@@ -45,7 +45,7 @@ type ServingArtifactReader = projectbundle.ArtifactObjectReader
 // prepareDashboard is the common sealed path project-artifact loader. The
 // catalog environment is supplied by the caller after durable lease/fence
 // acquisition; this helper never opens or writes a DuckLake catalog itself.
-func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace string) (*dashboardRuntimeWithGraph, error) {
+func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace, targetID, snapshotSealID string) (*dashboardRuntimeWithGraph, error) {
 	if builder == nil || environment == nil {
 		return nil, fmt.Errorf("sealed dashboard builder and environment are required")
 	}
@@ -127,6 +127,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	runtimeInput := dashboardruntimefactory.Input{
 		Directory: targetDir, Identity: identity, SemanticModelDigest: input.State.Digest,
 		ArtifactDigest: input.Artifact.Digest, SourceDataDigest: input.ManagedData.RevisionID,
+		TargetID: targetID, SnapshotSealID: snapshotSealID,
 		SkipInitialRefresh: true,
 		Definition:         projectDefinition, DependencyEvidence: dependencyEvidence,
 	}

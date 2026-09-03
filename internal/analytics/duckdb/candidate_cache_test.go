@@ -7,11 +7,11 @@ import (
 )
 
 func TestProjectQueryCachePartitionSeparatesCandidateSecurityBoundaries(t *testing.T) {
-	production, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "sales", Environment: "prod"})
+	production, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_prod", ProjectID: "sales", Environment: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionCandidate, ProjectID: "sales", Environment: "prod", CandidateID: "cand_1"})
+	candidate, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionCandidate, TargetID: "target_prod", ProjectID: "sales", Environment: "prod", CandidateID: "cand_1"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -20,10 +20,10 @@ const (
 	// DependencyVersion is the canonical dependency serialization version.
 	DependencyVersion = 1
 	// PartitionVersion is the canonical result partition serialization version.
-	PartitionVersion = 1
-	// CacheKeyFormatVersion reserves the version of a future composite cache key
-	// without coupling this package to a cache implementation.
-	CacheKeyFormatVersion = 1
+	PartitionVersion = 2
+	// CacheKeyFormatVersion is the version of the composite cache key
+	// serialization, without coupling this package to a cache implementation.
+	CacheKeyFormatVersion = 2
 
 	// DependencyDigestDomain separates dependency digests from other SHA-256
 	// content identities. The digest preimage is this value, one NUL byte, and
@@ -48,10 +48,13 @@ const (
 	PartitionCandidate  PartitionKind = "candidate"
 )
 
-// PartitionInput supplies the stable project scope for one result partition.
-// CandidateID must be empty for production and non-empty for candidates.
+// PartitionInput supplies the stable target/project scope for one result
+// partition. TargetID is required for both production and candidate
+// partitions. CandidateID must be empty for production and non-empty for
+// candidates.
 type PartitionInput struct {
 	Kind        PartitionKind
+	TargetID    string
 	ProjectID   projectgraph.ResourceID
 	Environment string
 	CandidateID string
@@ -61,6 +64,7 @@ type PartitionInput struct {
 // owned by the value and accessors never expose mutable storage.
 type Partition struct {
 	kind        PartitionKind
+	targetID    string
 	projectID   projectgraph.ResourceID
 	environment string
 	candidateID string
@@ -71,6 +75,9 @@ type Partition struct {
 func NewPartition(input PartitionInput) (Partition, error) {
 	if err := projectgraph.ValidateServingScope(input.ProjectID, input.Environment); err != nil {
 		return Partition{}, fmt.Errorf("%w: %v", ErrInvalidPartition, err)
+	}
+	if err := validateOpaqueText(input.TargetID); err != nil {
+		return Partition{}, fmt.Errorf("%w: target ID: %v", ErrInvalidPartition, err)
 	}
 
 	switch input.Kind {
@@ -89,6 +96,7 @@ func NewPartition(input PartitionInput) (Partition, error) {
 	wire := partitionWire{
 		Version:     PartitionVersion,
 		Kind:        input.Kind,
+		TargetID:    input.TargetID,
 		ProjectID:   input.ProjectID.String(),
 		Environment: input.Environment,
 		CandidateID: input.CandidateID,
@@ -99,6 +107,7 @@ func NewPartition(input PartitionInput) (Partition, error) {
 	}
 	return Partition{
 		kind:        input.Kind,
+		targetID:    input.TargetID,
 		projectID:   input.ProjectID,
 		environment: input.Environment,
 		candidateID: input.CandidateID,
@@ -117,6 +126,9 @@ func (p Partition) Version() int {
 // Kind returns the partition namespace kind.
 func (p Partition) Kind() PartitionKind { return p.kind }
 
+// TargetID returns the stable delivery target identity.
+func (p Partition) TargetID() string { return p.targetID }
+
 // ProjectID returns the stable project identity.
 func (p Partition) ProjectID() projectgraph.ResourceID { return p.projectID }
 
@@ -133,6 +145,7 @@ func (p Partition) Canonical() []byte { return append([]byte(nil), p.canonical..
 type partitionWire struct {
 	Version     int           `json:"version"`
 	Kind        PartitionKind `json:"kind"`
+	TargetID    string        `json:"targetId"`
 	ProjectID   string        `json:"projectId"`
 	Environment string        `json:"environment"`
 	CandidateID string        `json:"candidateId,omitempty"`

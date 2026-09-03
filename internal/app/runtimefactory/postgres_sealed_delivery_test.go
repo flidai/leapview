@@ -265,7 +265,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if root.DeliveryID != "delivery-preview" || root.GenerationID != generationID || root.ServingStateID != generationID || root.CandidateID != candidateID || root.AttemptID != attemptID || root.SealID != sealID || root.ServingArtifactID != "artifact-preview" || root.ServingArtifactDigest != artifactDigest || root.ClosureDigest != closureDigest || root.RuntimeVersion != "runtime-preview" || root.CatalogSnapshotID != 42 || root.PoolContract == nil {
+	if root.TargetID != targetID || root.DeliveryID != "delivery-preview" || root.GenerationID != generationID || root.ServingStateID != generationID || root.CandidateID != candidateID || root.AttemptID != attemptID || root.SealID != sealID || root.ServingArtifactID != "artifact-preview" || root.ServingArtifactDigest != artifactDigest || root.ClosureDigest != closureDigest || root.RuntimeVersion != "runtime-preview" || root.CatalogSnapshotID != 42 || root.PoolContract == nil {
 		t.Fatalf("unexpected resolved root: %#v", root)
 	}
 	t.Run("artifact digest mismatch fails closed", func(t *testing.T) {
@@ -296,8 +296,8 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if root.GenerationID != generationID || root.DeliveryID != "delivery-preview" {
-			t.Fatalf("root identity=%s/%s", root.GenerationID, root.DeliveryID)
+		if root.TargetID != targetID || root.GenerationID != generationID || root.DeliveryID != "delivery-preview" {
+			t.Fatalf("root identity=%s/%s/%s", root.TargetID, root.GenerationID, root.DeliveryID)
 		}
 	})
 	t.Run("missing and wrong lineage bindings fail closed before pool admission", func(t *testing.T) {

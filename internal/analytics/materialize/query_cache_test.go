@@ -118,7 +118,7 @@ func materializeTestDigest(value byte) string {
 func materializeTestPartition(t testing.TB, kind resultidentity.PartitionKind, candidateID string) resultidentity.Partition {
 	t.Helper()
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
-		Kind: kind, ProjectID: "project:test", Environment: "test", CandidateID: candidateID,
+		Kind: kind, TargetID: "target_test", ProjectID: "project:test", Environment: "test", CandidateID: candidateID,
 	})
 	require.NoError(t, err)
 	return partition
@@ -144,7 +144,7 @@ func materializeTestDependency(t testing.TB, revision byte) resultidentity.Depen
 
 func materializeCacheTestIdentity() (resultidentity.Partition, resultidentity.Dependency) {
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
-		Kind: resultidentity.PartitionProduction, ProjectID: "project:test", Environment: "test",
+		Kind: resultidentity.PartitionProduction, TargetID: "target_test", ProjectID: "project:test", Environment: "test",
 	})
 	if err != nil {
 		panic(err)

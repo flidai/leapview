@@ -323,6 +323,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 			Models: request.Models, Database: database,
 			CredentialResolver: analyticsduckdb.NonSecretCredentialResolver{},
 			SnapshotID:         request.SnapshotID, ServingStateID: request.ServingStateID,
+			TargetType: "deployment", TargetID: request.TargetID,
 			ProjectID: request.ProjectID, Environment: request.Environment,
 			SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 			SourceDataDigest: request.SourceDataDigest, ResultLimits: request.ResultLimits,
@@ -333,7 +334,7 @@ func generateVisualExamples(docsDir, projectPath, dataRoot string) (visualExampl
 		refreshLease.Release()
 		return visualExamplesArtifact{}, fmt.Errorf("build fixture serving identity: %w", err)
 	}
-	service, err := dashboardruntime.NewFromGeneration(refreshLease.Context(), runtimeDir, dashboardadapter.NewFactory(dashboardadapter.Options{Projects: projects, ProjectID: compiled.ProjectID(), Environment: "development"}), identity, definition)
+	service, err := dashboardruntime.NewFromGeneration(refreshLease.Context(), runtimeDir, dashboardadapter.NewFactory(dashboardadapter.Options{Projects: projects, TargetID: "visual-docs", SnapshotSealID: "visual-docs", ProjectID: compiled.ProjectID(), Environment: "development"}), identity, definition)
 	refreshLease.Release()
 	if err != nil {
 		return visualExamplesArtifact{}, fmt.Errorf("open fixture runtime: %w", err)

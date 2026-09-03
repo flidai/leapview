@@ -5,8 +5,11 @@ package analyticsruntime
 import (
 	"context"
 	"fmt"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/flidai/leapview/internal/analytics/arrowquery"
 	"github.com/flidai/leapview/internal/analytics/catalogstats"
@@ -26,6 +29,8 @@ type Options struct {
 	ResultLimits             dataquery.ResultLimits
 	SnapshotID               int64
 	ServingStateID           string
+	TargetID                 string
+	SnapshotSealID           string
 	ProjectID                projectgraph.ResourceID
 	Environment              string
 	SemanticModelDigest      string
@@ -51,6 +56,9 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 	if options.Projects == nil {
 		return nil, fmt.Errorf("analytical project factory is unavailable")
 	}
+	if err := validateCacheAdmissionProvenance(options.TargetID, options.SnapshotSealID); err != nil {
+		return nil, err
+	}
 	models := make(map[string]*semanticmodel.Model, len(config.Definition.Models()))
 	for id, model := range config.Definition.Models() {
 		models[id.String()] = model
@@ -60,6 +68,7 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 		RequiredExtensions: requiredProjectExtensions(config.Definition),
 		ResultLimits:       options.ResultLimits,
 		ServingStateID:     options.ServingStateID, ProjectID: options.ProjectID, Environment: options.Environment,
+		TargetID: options.TargetID, SnapshotSealID: options.SnapshotSealID,
 		SemanticDigest: options.SemanticModelDigest, ArtifactDigest: options.ArtifactDigest, SourceDataDigest: options.SourceDataDigest,
 		CandidateID: options.CandidateID, AuthorizationFingerprint: options.AuthorizationFingerprint,
 		BindingFingerprint: options.BindingFingerprint,
@@ -77,6 +86,28 @@ func (f Factory) OpenDashboardProjectDataRuntimes(ctx context.Context, config da
 		runtimes[id] = projectRuntime{modelID: modelID, runtime: runtime, close: sharedClose, data: reportdef.NewDataQueryService(options.ProjectID, modelID, runtime)}
 	}
 	return runtimes, nil
+}
+
+func validateCacheAdmissionProvenance(targetID, snapshotSealID string) error {
+	if !validCacheAdmissionIdentity(targetID) {
+		return fmt.Errorf("dashboard runtime target ID must be non-empty and canonical")
+	}
+	if !validCacheAdmissionIdentity(snapshotSealID) {
+		return fmt.Errorf("dashboard runtime snapshot seal ID must be non-empty and canonical")
+	}
+	return nil
+}
+
+func validCacheAdmissionIdentity(value string) bool {
+	if value == "" || len(value) > 512 || value != strings.TrimSpace(value) || !utf8.ValidString(value) {
+		return false
+	}
+	for _, character := range value {
+		if unicode.IsControl(character) {
+			return false
+		}
+	}
+	return true
 }
 
 func requiredProjectExtensions(definition *dashboardruntime.ProjectDefinition) []string {

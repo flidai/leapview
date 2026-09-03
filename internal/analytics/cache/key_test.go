@@ -2,6 +2,7 @@ package cache
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -29,7 +30,7 @@ func validDependency(t *testing.T) resultidentity.Dependency {
 
 func validPartition(t *testing.T) resultidentity.Partition {
 	t.Helper()
-	p, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project_sales", Environment: "prod"})
+	p, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -86,6 +87,47 @@ func TestNewKeyBindsPartitionDependencyPolicyAndQuery(t *testing.T) {
 	}
 	if key.Digest() == other.Digest() {
 		t.Fatal("policy boundary did not rotate cache key")
+	}
+}
+
+func TestNewKeyCanonicalizesV2AndBindsTarget(t *testing.T) {
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
+		Kind: resultidentity.PartitionProduction, TargetID: "target_one", ProjectID: "project_sales", Environment: "prod",
+	})
+	if err != nil {
+		t.Fatalf("NewPartition() error = %v", err)
+	}
+	otherPartition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
+		Kind: resultidentity.PartitionProduction, TargetID: "target_two", ProjectID: "project_sales", Environment: "prod",
+	})
+	if err != nil {
+		t.Fatalf("NewPartition(other) error = %v", err)
+	}
+	dependencyDigest, policyFingerprint, queryDigest := digest('a'), digest('b'), digest('c')
+	first, err := NewKeyFromDigests(partition, dependencyDigest, policyFingerprint, queryDigest)
+	if err != nil {
+		t.Fatalf("NewKeyFromDigests(first) error = %v", err)
+	}
+	second, err := NewKeyFromDigests(partition, dependencyDigest, policyFingerprint, queryDigest)
+	if err != nil {
+		t.Fatalf("NewKeyFromDigests(second) error = %v", err)
+	}
+	if first.Version() != 2 || CacheKeyVersion != 2 {
+		t.Fatalf("cache key versions = key %d, contract %d; want 2", first.Version(), CacheKeyVersion)
+	}
+	if string(first.Canonical()) != string(second.Canonical()) || first.Digest() != second.Digest() {
+		t.Fatal("identical v2 key inputs were not deterministic")
+	}
+	wantCanonical := fmt.Sprintf(`{"version":2,"partition":{"version":2,"kind":"production","targetId":"target_one","projectId":"project_sales","environment":"prod"},"dependencyDigest":%q,"policyFingerprint":%q,"canonicalQueryDigest":%q}`, dependencyDigest, policyFingerprint, queryDigest)
+	if got := string(first.Canonical()); got != wantCanonical {
+		t.Fatalf("Canonical() = %s, want %s", got, wantCanonical)
+	}
+	other, err := NewKeyFromDigests(otherPartition, dependencyDigest, policyFingerprint, queryDigest)
+	if err != nil {
+		t.Fatalf("NewKeyFromDigests(other) error = %v", err)
+	}
+	if first.Digest() == other.Digest() {
+		t.Fatal("cache keys with different targets share digest")
 	}
 }
 

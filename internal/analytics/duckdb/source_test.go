@@ -648,7 +648,7 @@ func openSchemaTestRuntime(t *testing.T, ctx context.Context, dir string, model 
 
 func duckdbTestQueryCachePartition(t testing.TB) resultidentity.Partition {
 	t.Helper()
-	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "test", Environment: "test"})
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_test", ProjectID: "test", Environment: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

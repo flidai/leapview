@@ -126,34 +126,39 @@ type ManifestRetirementAuthority interface {
 // derived from this boundary and a manifest key; callers cannot supply an
 // arbitrary object key.
 type Config struct {
-	Authority          Authority
-	Store              ObjectStore
-	Namespace          cachepostgres.Namespace
-	SecurityDomain     string
-	Prefix             string
-	Enabled            bool
-	MaxObjectBytes     int64
-	GracePeriod        time.Duration
-	GCLeaseDuration    time.Duration
-	GCBatchSize        int
-	GCOperationTimeout time.Duration
-	Now                func() time.Time
+	Authority      Authority
+	Store          ObjectStore
+	Namespace      cachepostgres.Namespace
+	SecurityDomain string
+	// OriginSnapshotSealID is immutable provenance for every manifest admitted
+	// through this cache. It is deliberately excluded from namespace and
+	// object/cache-key identity.
+	OriginSnapshotSealID string
+	Prefix               string
+	Enabled              bool
+	MaxObjectBytes       int64
+	GracePeriod          time.Duration
+	GCLeaseDuration      time.Duration
+	GCBatchSize          int
+	GCOperationTimeout   time.Duration
+	Now                  func() time.Time
 }
 
 // Cache is a domain-scoped L3 coordinator.
 type Cache struct {
-	authority          Authority
-	store              ObjectStore
-	namespace          cachepostgres.Namespace
-	securityDomain     string
-	objectPrefix       string
-	maxObjectBytes     int64
-	gracePeriod        time.Duration
-	gcLeaseDuration    time.Duration
-	gcBatchSize        int
-	gcOperationTimeout time.Duration
-	now                func() time.Time
-	enabled            bool
+	authority            Authority
+	store                ObjectStore
+	namespace            cachepostgres.Namespace
+	securityDomain       string
+	originSnapshotSealID string
+	objectPrefix         string
+	maxObjectBytes       int64
+	gracePeriod          time.Duration
+	gcLeaseDuration      time.Duration
+	gcBatchSize          int
+	gcOperationTimeout   time.Duration
+	now                  func() time.Time
+	enabled              bool
 }
 
 // New validates a configuration. Disabled caches intentionally accept nil
@@ -167,6 +172,9 @@ func New(cfg Config) (*Cache, error) {
 		return nil, fmt.Errorf("%w: authority and store are required", ErrInvalid)
 	}
 	if err := validateNamespace(cfg.Namespace); err != nil {
+		return nil, err
+	}
+	if err := validateCanonicalUUID(cfg.OriginSnapshotSealID, "origin snapshot seal id"); err != nil {
 		return nil, err
 	}
 	if platformdigest.ValidateSHA256Identity(cfg.SecurityDomain) != nil {
@@ -213,18 +221,19 @@ func New(cfg Config) (*Cache, error) {
 		now = time.Now
 	}
 	return &Cache{
-		authority:          cfg.Authority,
-		store:              cfg.Store,
-		namespace:          cfg.Namespace,
-		securityDomain:     cfg.SecurityDomain,
-		objectPrefix:       prefix + "sd/" + cfg.SecurityDomain + "/",
-		maxObjectBytes:     maxBytes,
-		gracePeriod:        grace,
-		gcLeaseDuration:    gcLease,
-		gcBatchSize:        gcBatch,
-		gcOperationTimeout: gcTimeout,
-		now:                now,
-		enabled:            true,
+		authority:            cfg.Authority,
+		store:                cfg.Store,
+		namespace:            cfg.Namespace,
+		securityDomain:       cfg.SecurityDomain,
+		originSnapshotSealID: cfg.OriginSnapshotSealID,
+		objectPrefix:         prefix + "sd/" + cfg.SecurityDomain + "/",
+		maxObjectBytes:       maxBytes,
+		gracePeriod:          grace,
+		gcLeaseDuration:      gcLease,
+		gcBatchSize:          gcBatch,
+		gcOperationTimeout:   gcTimeout,
+		now:                  now,
+		enabled:              true,
 	}, nil
 }
 
@@ -232,7 +241,7 @@ func validateNamespace(n cachepostgres.Namespace) error {
 	if n.PartitionKind != cachepostgres.PartitionProduction && n.PartitionKind != cachepostgres.PartitionCandidate {
 		return fmt.Errorf("%w: namespace partition", ErrInvalid)
 	}
-	if !validScopeLiteral(n.ProjectID) || !validScopeLiteral(n.Environment) || len(n.ProjectID) > 255 || len(n.Environment) > 255 {
+	if !validScopeLiteral(n.TargetID) || !validScopeLiteral(n.ProjectID) || !validScopeLiteral(n.Environment) || len(n.TargetID) > 255 || len(n.ProjectID) > 255 || len(n.Environment) > 255 {
 		return fmt.Errorf("%w: namespace scope", ErrInvalid)
 	}
 	if n.CandidateID != "" && (!validScopeLiteral(n.CandidateID) || len(n.CandidateID) > 255) {
@@ -243,6 +252,14 @@ func validateNamespace(n cachepostgres.Namespace) error {
 	}
 	if n.PartitionKind == cachepostgres.PartitionCandidate && n.CandidateID == "" {
 		return fmt.Errorf("%w: candidate namespace requires candidate", ErrInvalid)
+	}
+	return nil
+}
+
+func validateCanonicalUUID(value, name string) error {
+	id, err := uuid.Parse(value)
+	if err != nil || id.String() != value {
+		return fmt.Errorf("%w: invalid %s", ErrInvalid, name)
 	}
 	return nil
 }
@@ -407,7 +424,7 @@ func (c *Cache) Publish(ctx context.Context, in PublishInput) (cachepostgres.Man
 		return cachepostgres.Manifest{}, err
 	}
 	_ = putInfo // verification intentionally trusts the exact reopened object
-	return c.authority.Publish(ctx, cachepostgres.PublishInput{Key: in.Key, StorageSecurityDomain: c.securityDomain, ObjectDigest: digest, ObjectKey: objectKey, ByteSize: int64(len(body)), Metadata: metadata, ExpiresAt: in.ExpiresAt, Lease: in.Lease})
+	return c.authority.Publish(ctx, cachepostgres.PublishInput{Key: in.Key, OriginSnapshotSealID: c.originSnapshotSealID, StorageSecurityDomain: c.securityDomain, ObjectDigest: digest, ObjectKey: objectKey, ByteSize: int64(len(body)), Metadata: metadata, ExpiresAt: in.ExpiresAt, Lease: in.Lease})
 }
 
 // ReadResult distinguishes a hit from a safe miss. Missing or corrupt objects
@@ -726,7 +743,7 @@ func (c *Cache) GCPage(ctx context.Context, after string) (GCResult, error) {
 }
 
 func sameNamespace(key cachepostgres.ManifestKey, n cachepostgres.Namespace) bool {
-	return key.PartitionKind == n.PartitionKind && key.ProjectID == n.ProjectID && key.Environment == n.Environment && key.CandidateID == n.CandidateID
+	return key.PartitionKind == n.PartitionKind && key.TargetID == n.TargetID && key.ProjectID == n.ProjectID && key.Environment == n.Environment && key.CandidateID == n.CandidateID
 }
 
 func canonicalMetadata(raw json.RawMessage) ([]byte, error) {

@@ -16,15 +16,16 @@ import (
 // result cache. Namespace and all storage identity are bound by the caller's
 // admitted target/serving state; this helper does not infer them from routes.
 type TargetL3CacheConfig struct {
-	Namespace          cachepostgres.Namespace
-	Enabled            bool
-	Prefix             string
-	MaxObjectBytes     int64
-	GracePeriod        time.Duration
-	GCLeaseDuration    time.Duration
-	GCBatchSize        int
-	GCOperationTimeout time.Duration
-	Now                func() time.Time
+	Namespace            cachepostgres.Namespace
+	OriginSnapshotSealID string
+	Enabled              bool
+	Prefix               string
+	MaxObjectBytes       int64
+	GracePeriod          time.Duration
+	GCLeaseDuration      time.Duration
+	GCBatchSize          int
+	GCOperationTimeout   time.Duration
+	Now                  func() time.Time
 }
 
 // NewTargetL3Cache composes the PostgreSQL cache authority and the admitted
@@ -51,17 +52,18 @@ func NewTargetL3Cache(ctx context.Context, contract *ducklake.PoolContract, auth
 		return nil, fmt.Errorf("construct target L3 object store: %w", err)
 	}
 	return analyticsl3.New(analyticsl3.Config{
-		Authority:          authority,
-		Store:              store,
-		Namespace:          config.Namespace,
-		SecurityDomain:     domain,
-		Prefix:             config.Prefix,
-		Enabled:            true,
-		MaxObjectBytes:     config.MaxObjectBytes,
-		GracePeriod:        config.GracePeriod,
-		GCLeaseDuration:    config.GCLeaseDuration,
-		GCBatchSize:        config.GCBatchSize,
-		GCOperationTimeout: config.GCOperationTimeout,
-		Now:                config.Now,
+		Authority:            authority,
+		Store:                store,
+		Namespace:            config.Namespace,
+		OriginSnapshotSealID: config.OriginSnapshotSealID,
+		SecurityDomain:       domain,
+		Prefix:               config.Prefix,
+		Enabled:              true,
+		MaxObjectBytes:       config.MaxObjectBytes,
+		GracePeriod:          config.GracePeriod,
+		GCLeaseDuration:      config.GCLeaseDuration,
+		GCBatchSize:          config.GCBatchSize,
+		GCOperationTimeout:   config.GCOperationTimeout,
+		Now:                  config.Now,
 	})
 }

@@ -502,7 +502,7 @@ func newDashboardDirectArrowQualificationFixture(tb testing.TB, rows, maxConnect
 		tb.Fatal(err)
 	}
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
-		Kind: resultidentity.PartitionProduction, ProjectID: identity.ProjectID, Environment: identity.Environment,
+		Kind: resultidentity.PartitionProduction, TargetID: "target_qualification", ProjectID: identity.ProjectID, Environment: identity.Environment,
 	})
 	if err != nil {
 		_ = database.Close()

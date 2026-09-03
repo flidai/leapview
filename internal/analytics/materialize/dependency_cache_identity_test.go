@@ -31,11 +31,11 @@ func TestDependencyCacheKeyUsesStableTypedPartition(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	production, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project_sales", Environment: "prod"})
+	production, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	candidate, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionCandidate, ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate-1"})
+	candidate, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionCandidate, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod", CandidateID: "candidate-1"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestProductionDependencyCacheKeyFailsClosedWithoutPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project_sales", Environment: "prod"})
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_prod", ProjectID: "project_sales", Environment: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -43,7 +43,7 @@ type ownershipPreparedSources struct{}
 
 func ownershipPartition(t *testing.T) resultidentity.Partition {
 	t.Helper()
-	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project:ownership", Environment: "test"})
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_test", ProjectID: "project:ownership", Environment: "test"})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/connectionbinding"
@@ -84,6 +85,7 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		ImmutableByteCache: immutableByteCache, ResultLimits: request.ResultLimits,
 		SnapshotID: request.SnapshotID, ServingStateID: request.ServingStateID,
 		ProjectID: request.ProjectID, Environment: request.Environment,
+		TargetType: "deployment", TargetID: request.TargetID,
 		SemanticDigest: request.SemanticDigest, ArtifactDigest: request.ArtifactDigest,
 		SourceDataDigest:   request.SourceDataDigest,
 		RelationNamespace:  request.RelationNamespace,
@@ -100,13 +102,17 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 }
 
 func projectResultPartition(request analyticsruntime.ProjectRequest) (resultidentity.Partition, error) {
+	targetID := strings.TrimSpace(request.TargetID)
+	if targetID == "" || targetID != request.TargetID {
+		return resultidentity.Partition{}, fmt.Errorf("query result cache partition: target ID must be non-empty and canonical")
+	}
 	kind := resultidentity.PartitionProduction
 	if request.CandidateID != "" {
 		kind = resultidentity.PartitionCandidate
 	}
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
 		Kind: kind, ProjectID: request.ProjectID, Environment: request.Environment,
-		CandidateID: request.CandidateID,
+		CandidateID: request.CandidateID, TargetID: targetID,
 	})
 	if err != nil {
 		return resultidentity.Partition{}, fmt.Errorf("query result cache partition: %w", err)

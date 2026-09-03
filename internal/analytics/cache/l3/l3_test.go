@@ -17,12 +17,17 @@ import (
 
 func testDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
+const (
+	testOriginSnapshotSealID  = "00000000-0000-0000-0000-000000000001"
+	testOriginSnapshotSealID2 = "00000000-0000-0000-0000-000000000002"
+)
+
 func testNamespace() cachepostgres.Namespace {
-	return cachepostgres.Namespace{PartitionKind: cachepostgres.PartitionProduction, ProjectID: "project", Environment: "prod"}
+	return cachepostgres.Namespace{PartitionKind: cachepostgres.PartitionProduction, TargetID: "target", ProjectID: "project", Environment: "prod"}
 }
 
 func testKey() cachepostgres.ManifestKey {
-	return cachepostgres.ManifestKey{PartitionKind: cachepostgres.PartitionProduction, ProjectID: "project", Environment: "prod", PartitionFormatVersion: 1, DependencyDigest: testDigest('a'), PolicyFingerprint: testDigest('b'), CanonicalQueryDigest: testDigest('c'), KeyFormatVersion: 1}
+	return cachepostgres.ManifestKey{PartitionKind: cachepostgres.PartitionProduction, TargetID: "target", ProjectID: "project", Environment: "prod", PartitionFormatVersion: 2, DependencyDigest: testDigest('a'), PolicyFingerprint: testDigest('b'), CanonicalQueryDigest: testDigest('c'), KeyFormatVersion: 2}
 }
 
 type memoryObject struct {
@@ -110,6 +115,7 @@ func (s *memoryStore) List(_ context.Context, prefix, after string, limit int) (
 type fakeAuthority struct {
 	mu                   sync.Mutex
 	manifest             cachepostgres.Manifest
+	publishInputs        []cachepostgres.PublishInput
 	publishCalls         int
 	lookupCalls          int
 	retireCalls          int
@@ -171,7 +177,8 @@ func (a *fakeAuthority) Publish(_ context.Context, in cachepostgres.PublishInput
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.publishCalls++
-	a.manifest = cachepostgres.Manifest{ManifestID: uuid.New(), Key: in.Key, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ByteSize: in.ByteSize, Metadata: append([]byte(nil), in.Metadata...), State: cachepostgres.StateAdmitted}
+	a.publishInputs = append(a.publishInputs, in)
+	a.manifest = cachepostgres.Manifest{ManifestID: uuid.New(), Key: in.Key, OriginSnapshotSealID: in.OriginSnapshotSealID, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ByteSize: in.ByteSize, Metadata: append([]byte(nil), in.Metadata...), State: cachepostgres.StateAdmitted}
 	return a.manifest, nil
 }
 func (a *fakeAuthority) Lookup(context.Context, cachepostgres.LookupInput) (cachepostgres.Manifest, bool, error) {
@@ -212,7 +219,7 @@ func newTestCache(t *testing.T) (*Cache, *fakeAuthority, *memoryStore, cachepost
 	authority := &fakeAuthority{reachable: make(map[string]bool)}
 	store := newMemoryStore()
 	ns := testNamespace()
-	c, err := New(Config{Authority: authority, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), Prefix: "objects", Enabled: true, Now: func() time.Time { return time.Unix(1000, 0).UTC() }, GracePeriod: time.Hour})
+	c, err := New(Config{Authority: authority, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Prefix: "objects", Enabled: true, Now: func() time.Time { return time.Unix(1000, 0).UTC() }, GracePeriod: time.Hour})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,6 +249,60 @@ func TestPublishObjectFirstAndLostAcknowledgementConverges(t *testing.T) {
 	store.putErr = nil
 	if _, err := c.Publish(t.Context(), PublishInput{Key: key, Lease: lease, Body: strings.NewReader("result"), Metadata: []byte(`{"a":"x","z":1}`)}); err != nil {
 		t.Fatalf("idempotent retry: %v", err)
+	}
+}
+
+func TestOriginSnapshotSealIsProvenanceOnly(t *testing.T) {
+	ns := testNamespace()
+	store := newMemoryStore()
+	authorityA := &fakeAuthority{reachable: make(map[string]bool)}
+	authorityB := &fakeAuthority{reachable: make(map[string]bool)}
+	cacheA, err := New(Config{Authority: authorityA, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Prefix: "objects", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheB, err := New(Config{Authority: authorityB, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID2, Prefix: "objects", Enabled: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := testKey()
+	cacheKeyA, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	cacheKeyB, err := key.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cacheKeyA != cacheKeyB {
+		t.Fatalf("cache keys differ by origin seal: %q vs %q", cacheKeyA, cacheKeyB)
+	}
+	digest := digestBytes([]byte("same-result"))
+	objectKeyA, err := cacheA.ObjectKey(key, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	objectKeyB, err := cacheB.ObjectKey(key, digest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if objectKeyA != objectKeyB {
+		t.Fatalf("object keys differ by origin seal: %q vs %q", objectKeyA, objectKeyB)
+	}
+	lease := func(cache *Cache) cachepostgres.FillLease {
+		return cachepostgres.FillLease{LeaseID: uuid.New(), CacheKey: cacheKeyA, Namespace: ns, NamespaceEpoch: 1, OwnerID: "owner", FencingEpoch: 1, ExpiresAt: time.Now().Add(time.Minute)}
+	}
+	if _, err := cacheA.Publish(t.Context(), PublishInput{Key: key, Lease: lease(cacheA), Body: strings.NewReader("same-result")}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := cacheB.Publish(t.Context(), PublishInput{Key: key, Lease: lease(cacheB), Body: strings.NewReader("same-result")}); err != nil {
+		t.Fatal(err)
+	}
+	if len(authorityA.publishInputs) != 1 || authorityA.publishInputs[0].OriginSnapshotSealID != testOriginSnapshotSealID {
+		t.Fatalf("authority A origin seal = %+v", authorityA.publishInputs)
+	}
+	if len(authorityB.publishInputs) != 1 || authorityB.publishInputs[0].OriginSnapshotSealID != testOriginSnapshotSealID2 {
+		t.Fatalf("authority B origin seal = %+v", authorityB.publishInputs)
 	}
 }
 
@@ -435,7 +496,7 @@ func TestDisabledCacheIsSafeAndCrossDomainIsRejected(t *testing.T) {
 }
 
 func TestConfigBoundsObjectSizeAndPortablePrefix(t *testing.T) {
-	base := Config{Authority: &fakeAuthority{reachable: make(map[string]bool)}, Store: newMemoryStore(), Namespace: testNamespace(), SecurityDomain: testDigest('d'), Enabled: true}
+	base := Config{Authority: &fakeAuthority{reachable: make(map[string]bool)}, Store: newMemoryStore(), Namespace: testNamespace(), SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Enabled: true}
 	for _, prefix := range []string{"..", "a/../b", "a\\b", "a//b", "a b"} {
 		base.Prefix = prefix
 		if _, err := New(base); !errors.Is(err, ErrInvalid) {
@@ -446,6 +507,16 @@ func TestConfigBoundsObjectSizeAndPortablePrefix(t *testing.T) {
 	base.MaxObjectBytes = MaxObjectBytesLimit + 1
 	if _, err := New(base); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("oversized max bytes error = %v", err)
+	}
+}
+
+func TestConfigRequiresCanonicalOriginSnapshotSealID(t *testing.T) {
+	base := Config{Authority: &fakeAuthority{reachable: make(map[string]bool)}, Store: newMemoryStore(), Namespace: testNamespace(), SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Enabled: true}
+	for _, seal := range []string{"", "00000000-0000-0000-0000-00000000000A", "{00000000-0000-0000-0000-000000000001}"} {
+		base.OriginSnapshotSealID = seal
+		if _, err := New(base); !errors.Is(err, ErrInvalid) {
+			t.Fatalf("origin seal %q error = %v", seal, err)
+		}
 	}
 }
 
@@ -464,7 +535,7 @@ func (a noGCAuthority) Lookup(ctx context.Context, in cachepostgres.LookupInput)
 func TestGCRefusesDeletionWithoutReachabilityAndLeaseCapabilities(t *testing.T) {
 	base := &fakeAuthority{reachable: make(map[string]bool)}
 	store := newMemoryStore()
-	c, err := New(Config{Authority: noGCAuthority{base: base}, Store: store, Namespace: testNamespace(), SecurityDomain: testDigest('d'), Enabled: true})
+	c, err := New(Config{Authority: noGCAuthority{base: base}, Store: store, Namespace: testNamespace(), SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

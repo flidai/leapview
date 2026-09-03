@@ -85,6 +85,7 @@ const (
 // ManifestKey addresses metadata without including object storage identity.
 type ManifestKey struct {
 	PartitionKind          PartitionKind
+	TargetID               string
 	ProjectID              string
 	Environment            string
 	CandidateID            string
@@ -119,7 +120,7 @@ func (k ManifestKey) partition() (resultidentity.Partition, error) {
 		return resultidentity.Partition{}, fmt.Errorf("%w: invalid partition kind", ErrInvalid)
 	}
 	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{
-		Kind: kind, ProjectID: projectgraph.ResourceID(k.ProjectID), Environment: k.Environment, CandidateID: k.CandidateID,
+		Kind: kind, TargetID: k.TargetID, ProjectID: projectgraph.ResourceID(k.ProjectID), Environment: k.Environment, CandidateID: k.CandidateID,
 	})
 	if err != nil {
 		return resultidentity.Partition{}, fmt.Errorf("%w: partition: %v", ErrInvalid, err)
@@ -138,12 +139,13 @@ func ManifestKeyFromIdentity(key analyticscache.Key) (ManifestKey, error) {
 		kind = PartitionCandidate
 	}
 	partition := key.Partition()
-	return ManifestKey{PartitionKind: kind, ProjectID: partition.ProjectID().String(), Environment: partition.Environment(), CandidateID: partition.CandidateID(), PartitionFormatVersion: int64(partition.Version()), DependencyDigest: key.DependencyDigest(), PolicyFingerprint: key.PolicyFingerprint(), CanonicalQueryDigest: key.CanonicalQueryDigest(), KeyFormatVersion: int64(key.Version())}, nil
+	return ManifestKey{PartitionKind: kind, TargetID: partition.TargetID(), ProjectID: partition.ProjectID().String(), Environment: partition.Environment(), CandidateID: partition.CandidateID(), PartitionFormatVersion: int64(partition.Version()), DependencyDigest: key.DependencyDigest(), PolicyFingerprint: key.PolicyFingerprint(), CanonicalQueryDigest: key.CanonicalQueryDigest(), KeyFormatVersion: int64(key.Version())}, nil
 }
 
 type Manifest struct {
 	ManifestID            uuid.UUID
 	Key                   ManifestKey
+	OriginSnapshotSealID  string
 	StorageSecurityDomain string
 	ObjectDigest          string
 	ObjectKey             string
@@ -219,6 +221,7 @@ type FillLease struct {
 
 type PublishInput struct {
 	Key                   ManifestKey
+	OriginSnapshotSealID  string
 	StorageSecurityDomain string
 	ObjectDigest          string
 	ObjectKey             string
@@ -233,6 +236,7 @@ type PublishInput struct {
 // survive deployment cutovers and are invalidated by dependency revision.
 type Namespace struct {
 	PartitionKind PartitionKind
+	TargetID      string
 	ProjectID     string
 	Environment   string
 	CandidateID   string
@@ -241,15 +245,55 @@ type Namespace struct {
 // NamespaceKey is the canonical, bounded representation persisted by the
 // coordination tables. It intentionally contains no result bytes.
 func (n Namespace) Key() string {
-	wire := struct {
-		Version   int           `json:"v"`
-		Kind      PartitionKind `json:"k"`
-		Project   string        `json:"p"`
-		Env       string        `json:"e"`
-		Candidate string        `json:"c,omitempty"`
-	}{1, n.PartitionKind, n.ProjectID, n.Environment, n.CandidateID}
-	b, _ := json.Marshal(wire)
-	return "ns1_" + base64.RawURLEncoding.EncodeToString(b)
+	var canonical bytes.Buffer
+	canonical.WriteString(`{"v":2,"k":`)
+	writeNamespaceJSONString(&canonical, string(n.PartitionKind))
+	canonical.WriteString(`,"t":`)
+	writeNamespaceJSONString(&canonical, n.TargetID)
+	canonical.WriteString(`,"p":`)
+	writeNamespaceJSONString(&canonical, n.ProjectID)
+	canonical.WriteString(`,"e":`)
+	writeNamespaceJSONString(&canonical, n.Environment)
+	if n.CandidateID != "" {
+		canonical.WriteString(`,"c":`)
+		writeNamespaceJSONString(&canonical, n.CandidateID)
+	}
+	canonical.WriteByte('}')
+	return "ns2_" + base64.RawURLEncoding.EncodeToString(canonical.Bytes())
+}
+
+// writeNamespaceJSONString matches PostgreSQL to_json(text): JSON control,
+// quote, and slash escaping without JavaScript-specific HTML or line-separator
+// escaping. Namespace fields are validated as canonical UTF-8 before use.
+func writeNamespaceJSONString(dst *bytes.Buffer, value string) {
+	const hex = "0123456789abcdef"
+	dst.WriteByte('"')
+	for _, character := range value {
+		switch character {
+		case '"', '\\':
+			dst.WriteByte('\\')
+			dst.WriteRune(character)
+		case '\b':
+			dst.WriteString(`\b`)
+		case '\f':
+			dst.WriteString(`\f`)
+		case '\n':
+			dst.WriteString(`\n`)
+		case '\r':
+			dst.WriteString(`\r`)
+		case '\t':
+			dst.WriteString(`\t`)
+		default:
+			if character < 0x20 {
+				dst.WriteString(`\u00`)
+				dst.WriteByte(hex[byte(character)>>4])
+				dst.WriteByte(hex[byte(character)&0x0f])
+				continue
+			}
+			dst.WriteRune(character)
+		}
+	}
+	dst.WriteByte('"')
 }
 
 type DependencyKind string
@@ -373,6 +417,9 @@ func manifestFromRow(row cachedb.CacheCacheManifest) (Manifest, error) {
 	if !row.ManifestID.Valid || !row.CreatedAt.Valid {
 		return Manifest{}, fmt.Errorf("%w: persisted manifest identity or timestamp is null", ErrInvalid)
 	}
+	if !row.OriginSnapshotSealID.Valid {
+		return Manifest{}, fmt.Errorf("%w: persisted origin snapshot seal is null", ErrInvalid)
+	}
 	expires, err := timeValue(row.ExpiresAt)
 	if err != nil {
 		return Manifest{}, err
@@ -387,7 +434,8 @@ func manifestFromRow(row cachedb.CacheCacheManifest) (Manifest, error) {
 	}
 	return Manifest{
 		ManifestID:            row.ManifestID.Bytes,
-		Key:                   ManifestKey{PartitionKind: PartitionKind(row.PartitionKind), ProjectID: row.ProjectID, Environment: row.Environment, CandidateID: valueOrEmpty(row.CandidateID), PartitionFormatVersion: row.PartitionFormatVersion, DependencyDigest: row.DependencyDigest, PolicyFingerprint: row.PolicyFingerprint, CanonicalQueryDigest: row.CanonicalQueryDigest, KeyFormatVersion: row.KeyFormatVersion},
+		Key:                   ManifestKey{PartitionKind: PartitionKind(row.PartitionKind), TargetID: row.TargetID, ProjectID: row.ProjectID, Environment: row.Environment, CandidateID: valueOrEmpty(row.CandidateID), PartitionFormatVersion: row.PartitionFormatVersion, DependencyDigest: row.DependencyDigest, PolicyFingerprint: row.PolicyFingerprint, CanonicalQueryDigest: row.CanonicalQueryDigest, KeyFormatVersion: row.KeyFormatVersion},
+		OriginSnapshotSealID:  uuid.UUID(row.OriginSnapshotSealID.Bytes).String(),
 		StorageSecurityDomain: row.StorageSecurityDomain, ObjectDigest: row.ObjectDigest, ObjectKey: row.ObjectKey, ByteSize: row.ByteSize,
 		Metadata: append(json.RawMessage(nil), row.Metadata...), State: row.State, CreatedAt: row.CreatedAt.Time.UTC(), ExpiresAt: expires, RetiredAt: retired, ExpiredAt: expired,
 		RetireEvidence: append(json.RawMessage(nil), row.RetireEvidence...), ExpireEvidence: append(json.RawMessage(nil), row.ExpireEvidence...),
@@ -432,7 +480,7 @@ func validateNamespace(n Namespace) error {
 	if n.PartitionKind != PartitionProduction && n.PartitionKind != PartitionCandidate {
 		return fmt.Errorf("%w: invalid namespace partition", ErrInvalid)
 	}
-	if err := validatePartitionScope(ManifestKey{PartitionKind: n.PartitionKind, ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: n.CandidateID, PartitionFormatVersion: resultidentity.PartitionVersion}); err != nil {
+	if err := validatePartitionScope(ManifestKey{PartitionKind: n.PartitionKind, TargetID: n.TargetID, ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: n.CandidateID, PartitionFormatVersion: resultidentity.PartitionVersion}); err != nil {
 		return err
 	}
 	if len(n.Key()) > 2048 {
@@ -462,6 +510,7 @@ func validateDependencyInput(in DependencyRevisionInput) error {
 
 func sameNamespaceKey(key ManifestKey, namespace Namespace) bool {
 	return key.PartitionKind == namespace.PartitionKind &&
+		key.TargetID == namespace.TargetID &&
 		key.ProjectID == namespace.ProjectID &&
 		key.Environment == namespace.Environment &&
 		key.CandidateID == namespace.CandidateID
@@ -471,7 +520,7 @@ func ensureNamespaceTx(ctx context.Context, tx Tx, n Namespace) (int64, error) {
 	if err := validateNamespace(n); err != nil {
 		return 0, err
 	}
-	return cachedb.New(tx).EnsureNamespace(ctx, cachedb.EnsureNamespaceParams{NamespaceKey: n.Key(), PartitionKind: string(n.PartitionKind), ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID)})
+	return cachedb.New(tx).EnsureNamespace(ctx, cachedb.EnsureNamespaceParams{NamespaceKey: n.Key(), PartitionKind: string(n.PartitionKind), TargetID: n.TargetID, ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID)})
 }
 
 func nullableString(value string) *string {
@@ -545,6 +594,9 @@ func validatePublish(in PublishInput) error {
 	if platformdigest.ValidateSHA256Identity(in.StorageSecurityDomain) != nil || !literal(in.ObjectKey, 2048) {
 		return fmt.Errorf("%w: invalid storage identity", ErrInvalid)
 	}
+	if _, err := parseSnapshotSealID(in.OriginSnapshotSealID); err != nil {
+		return err
+	}
 	if err := platformdigest.ValidateSHA256Identity(in.ObjectDigest); err != nil {
 		return fmt.Errorf("%w: object digest: %v", ErrInvalid, err)
 	}
@@ -565,6 +617,14 @@ func validatePublish(in PublishInput) error {
 		return fmt.Errorf("%w: fill fence key does not match manifest key", ErrStaleFence)
 	}
 	return nil
+}
+
+func parseSnapshotSealID(value string) (uuid.UUID, error) {
+	id, err := uuid.Parse(value)
+	if err != nil || id.String() != value {
+		return uuid.Nil, fmt.Errorf("%w: invalid origin snapshot seal id", ErrInvalid)
+	}
+	return id, nil
 }
 
 func canonicalMetadata(raw json.RawMessage) ([]byte, error) {
@@ -620,7 +680,7 @@ func (r *Repository) Lookup(ctx context.Context, in LookupInput) (Manifest, bool
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	row, err := cachedb.New(r.db).GetManifest(ctx, cachedb.GetManifestParams{PartitionKind: string(in.PartitionKind), ProjectID: in.ProjectID, Environment: in.Environment, CandidateID: nullableString(in.CandidateID), PartitionFormatVersion: in.PartitionFormatVersion, DependencyDigest: in.DependencyDigest, PolicyFingerprint: in.PolicyFingerprint, CanonicalQueryDigest: in.CanonicalQueryDigest, KeyFormatVersion: in.KeyFormatVersion})
+	row, err := cachedb.New(r.db).GetManifest(ctx, cachedb.GetManifestParams{PartitionKind: string(in.PartitionKind), TargetID: in.TargetID, ProjectID: in.ProjectID, Environment: in.Environment, CandidateID: nullableString(in.CandidateID), PartitionFormatVersion: in.PartitionFormatVersion, DependencyDigest: in.DependencyDigest, PolicyFingerprint: in.PolicyFingerprint, CanonicalQueryDigest: in.CanonicalQueryDigest, KeyFormatVersion: in.KeyFormatVersion})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, false, nil
 	}
@@ -631,17 +691,17 @@ func (r *Repository) Lookup(ctx context.Context, in LookupInput) (Manifest, bool
 	return manifest, err == nil, err
 }
 
-func (r *Repository) ListByDependency(ctx context.Context, partitionKind PartitionKind, projectID, environment, candidateID, dependency string, limit int) ([]Manifest, error) {
+func (r *Repository) ListByDependency(ctx context.Context, partitionKind PartitionKind, targetID, projectID, environment, candidateID, dependency string, limit int) ([]Manifest, error) {
 	if platformdigest.ValidateSHA256Identity(dependency) != nil || limit < 1 || limit > 1000 {
 		return nil, ErrInvalid
 	}
-	if err := validatePartitionScope(ManifestKey{PartitionKind: partitionKind, ProjectID: projectID, Environment: environment, CandidateID: candidateID, PartitionFormatVersion: resultidentity.PartitionVersion}); err != nil {
+	if err := validatePartitionScope(ManifestKey{PartitionKind: partitionKind, TargetID: targetID, ProjectID: projectID, Environment: environment, CandidateID: candidateID, PartitionFormatVersion: resultidentity.PartitionVersion}); err != nil {
 		return nil, ErrInvalid
 	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	rows, err := cachedb.New(r.db).ListManifestsByDependency(ctx, cachedb.ListManifestsByDependencyParams{PartitionKind: string(partitionKind), ProjectID: projectID, Environment: environment, CandidateID: nullableString(candidateID), PartitionFormatVersion: resultidentity.PartitionVersion, DependencyDigest: dependency, LimitCount: int32(limit)})
+	rows, err := cachedb.New(r.db).ListManifestsByDependency(ctx, cachedb.ListManifestsByDependencyParams{PartitionKind: string(partitionKind), TargetID: targetID, ProjectID: projectID, Environment: environment, CandidateID: nullableString(candidateID), PartitionFormatVersion: resultidentity.PartitionVersion, DependencyDigest: dependency, LimitCount: int32(limit)})
 	if err != nil {
 		return nil, err
 	}
@@ -675,7 +735,7 @@ func (r *Repository) ObjectReachable(ctx context.Context, n Namespace, securityD
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return cachedb.New(r.db).ObjectReachable(ctx, cachedb.ObjectReachableParams{PartitionKind: string(n.PartitionKind), ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID), StorageSecurityDomain: securityDomain, ObjectKey: objectKey})
+	return cachedb.New(r.db).ObjectReachable(ctx, cachedb.ObjectReachableParams{PartitionKind: string(n.PartitionKind), TargetID: n.TargetID, ProjectID: n.ProjectID, Environment: n.Environment, CandidateID: nullableString(n.CandidateID), StorageSecurityDomain: securityDomain, ObjectKey: objectKey})
 }
 
 // InvalidateNamespace records a durable, idempotent invalidation and advances
@@ -984,7 +1044,7 @@ func (r *Repository) ReconcileInvalidations(ctx context.Context, opts ReconcileO
 		if !row.InvalidationID.Valid || !row.CreatedAt.Valid {
 			return nil, ErrConflict
 		}
-		item.InvalidationResult = InvalidationResult{InvalidationID: row.InvalidationID.Bytes, EventID: row.EventID, Namespace: Namespace{PartitionKind: PartitionKind(row.PartitionKind), ProjectID: row.ProjectID, Environment: row.Environment, CandidateID: valueOrEmpty(row.CandidateID)}, NamespaceEpoch: row.NamespaceEpoch, RetiredManifests: row.RetiredManifests, CreatedAt: row.CreatedAt.Time.UTC()}
+		item.InvalidationResult = InvalidationResult{InvalidationID: row.InvalidationID.Bytes, EventID: row.EventID, Namespace: Namespace{PartitionKind: PartitionKind(row.PartitionKind), TargetID: row.TargetID, ProjectID: row.ProjectID, Environment: row.Environment, CandidateID: valueOrEmpty(row.CandidateID)}, NamespaceEpoch: row.NamespaceEpoch, RetiredManifests: row.RetiredManifests, CreatedAt: row.CreatedAt.Time.UTC()}
 		item.Kind = DependencyKind(row.DependencyKind)
 		item.DependencyID = row.DependencyID
 		item.DependencyDigest = valueOrEmpty(row.DependencyDigest)
@@ -1155,6 +1215,10 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	if err != nil {
 		return Manifest{}, err
 	}
+	originSealID, err := parseSnapshotSealID(in.OriginSnapshotSealID)
+	if err != nil {
+		return Manifest{}, err
+	}
 	expiresAt := normalizedExpiry(in.ExpiresAt)
 	var namespaceEpoch int64
 	var namespaceKey string
@@ -1166,7 +1230,7 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	} else if err != nil {
 		return Manifest{}, err
 	}
-	leaseRow, err := cachedb.New(tx).GetFillLeaseForUpdate(ctx, cachedb.GetFillLeaseForUpdateParams{CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, LeaseID: dbUUID(in.Lease.LeaseID)})
+	leaseRow, err := cachedb.New(tx).GetFillLeaseForUpdate(ctx, cachedb.GetFillLeaseForUpdateParams{CacheKey: in.Lease.CacheKey, NamespaceKey: in.Lease.Namespace.Key(), OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, LeaseID: dbUUID(in.Lease.LeaseID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, ErrStaleFence
 	} else if err != nil {
@@ -1220,7 +1284,7 @@ func (r *Repository) PublishTx(ctx context.Context, tx Tx, in PublishInput) (Man
 	if err != nil {
 		return Manifest{}, err
 	}
-	admittedValue, err := cachedb.New(tx).AdmitManifest(ctx, cachedb.AdmitManifestParams{ManifestID: dbUUID(id), LeaseID: dbUUID(in.Lease.LeaseID), CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, NamespaceKey: in.Lease.Namespace.Key(), NamespaceEpoch: in.Lease.NamespaceEpoch, PartitionKind: string(in.Key.PartitionKind), ProjectID: in.Key.ProjectID, Environment: in.Key.Environment, CandidateID: nullableString(in.Key.CandidateID), PartitionFormatVersion: in.Key.PartitionFormatVersion, DependencyDigest: in.Key.DependencyDigest, PolicyFingerprint: in.Key.PolicyFingerprint, CanonicalQueryDigest: in.Key.CanonicalQueryDigest, KeyFormatVersion: in.Key.KeyFormatVersion, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ByteSize: in.ByteSize, Metadata: metadata, ExpiresAt: dbTime(expiresAt)})
+	admittedValue, err := cachedb.New(tx).AdmitManifest(ctx, cachedb.AdmitManifestParams{ManifestID: dbUUID(id), LeaseID: dbUUID(in.Lease.LeaseID), CacheKey: in.Lease.CacheKey, OwnerID: in.Lease.OwnerID, FencingEpoch: in.Lease.FencingEpoch, NamespaceKey: in.Lease.Namespace.Key(), NamespaceEpoch: in.Lease.NamespaceEpoch, PartitionKind: string(in.Key.PartitionKind), TargetID: in.Key.TargetID, ProjectID: in.Key.ProjectID, Environment: in.Key.Environment, CandidateID: nullableString(in.Key.CandidateID), PartitionFormatVersion: in.Key.PartitionFormatVersion, DependencyDigest: in.Key.DependencyDigest, PolicyFingerprint: in.Key.PolicyFingerprint, CanonicalQueryDigest: in.Key.CanonicalQueryDigest, KeyFormatVersion: in.Key.KeyFormatVersion, StorageSecurityDomain: in.StorageSecurityDomain, ObjectDigest: in.ObjectDigest, ObjectKey: in.ObjectKey, ByteSize: in.ByteSize, Metadata: metadata, OriginSnapshotSealID: dbUUID(originSealID), ExpiresAt: dbTime(expiresAt)})
 	if err != nil {
 		if strings.Contains(err.Error(), "stale fill fence") {
 			return Manifest{}, ErrStaleFence
@@ -1571,7 +1635,7 @@ func (r *Repository) RetireManifest(ctx context.Context, manifestID uuid.UUID, e
 }
 
 func lookupTx(ctx context.Context, tx Tx, key ManifestKey) (Manifest, bool, error) {
-	row, err := cachedb.New(tx).GetManifest(ctx, cachedb.GetManifestParams{PartitionKind: string(key.PartitionKind), ProjectID: key.ProjectID, Environment: key.Environment, CandidateID: nullableString(key.CandidateID), PartitionFormatVersion: key.PartitionFormatVersion, DependencyDigest: key.DependencyDigest, PolicyFingerprint: key.PolicyFingerprint, CanonicalQueryDigest: key.CanonicalQueryDigest, KeyFormatVersion: key.KeyFormatVersion})
+	row, err := cachedb.New(tx).GetManifest(ctx, cachedb.GetManifestParams{PartitionKind: string(key.PartitionKind), TargetID: key.TargetID, ProjectID: key.ProjectID, Environment: key.Environment, CandidateID: nullableString(key.CandidateID), PartitionFormatVersion: key.PartitionFormatVersion, DependencyDigest: key.DependencyDigest, PolicyFingerprint: key.PolicyFingerprint, CanonicalQueryDigest: key.CanonicalQueryDigest, KeyFormatVersion: key.KeyFormatVersion})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return Manifest{}, false, nil
 	}

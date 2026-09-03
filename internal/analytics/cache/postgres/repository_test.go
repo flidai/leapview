@@ -20,6 +20,10 @@ import (
 
 func cacheTestDigest(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
 
+const cacheTestOriginSeal = "00000000-0000-0000-0000-000000000001"
+const cacheTestOriginSeal2 = "00000000-0000-0000-0000-000000000002"
+const cacheTestOriginSeal3 = "00000000-0000-0000-0000-000000000003"
+
 func cacheTestEvidence(reason string) json.RawMessage {
 	evidence, err := lifecycleEvidence(json.RawMessage(`{"version":1,"reason":"` + reason + `"}`))
 	if err != nil {
@@ -73,7 +77,7 @@ func cacheTestDB(t *testing.T) *pgxpool.Pool {
 }
 
 func TestManifestKeyIdentityConvergesWithL1CacheKey(t *testing.T) {
-	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project_sales", Environment: "prod"})
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: "target_sales", ProjectID: "project_sales", Environment: "prod"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,54 +102,38 @@ func TestManifestKeyIdentityConvergesWithL1CacheKey(t *testing.T) {
 func TestDatabaseNamespaceKeyMatchesCanonicalJSONEscaping(t *testing.T) {
 	p := cacheTestDB(t)
 	defer p.Close()
-	ns := Namespace{PartitionKind: PartitionCandidate, ProjectID: "project_sales", Environment: "prod", CandidateID: `candidate"\\quoted`}
-	var got string
-	if err := p.QueryRow(t.Context(), `SELECT cache.namespace_key($1,$2,$3,$4)`, ns.PartitionKind, ns.ProjectID, ns.Environment, ns.CandidateID).Scan(&got); err != nil {
-		t.Fatal(err)
-	}
-	if got != ns.Key() {
-		t.Fatalf("database namespace key = %q, want Go canonical %q", got, ns.Key())
-	}
-}
-
-func TestSchemaRerunRemovesLegacyManifestKeyConstraint(t *testing.T) {
-	p := cacheTestDB(t)
-	defer p.Close()
-	ctx := t.Context()
-	if _, err := p.Exec(ctx, `ALTER TABLE cache.cache_manifest ADD CONSTRAINT cache_manifest_legacy_key UNIQUE NULLS NOT DISTINCT (partition_kind,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version)`); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := p.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := ApplySchema(ctx, tx); err != nil {
-		_ = tx.Rollback(ctx)
-		t.Fatal(err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var legacy int
-	if err := p.QueryRow(ctx, `SELECT count(*) FROM pg_constraint WHERE conrelid='cache.cache_manifest'::regclass AND conname='cache_manifest_legacy_key'`).Scan(&legacy); err != nil {
-		t.Fatal(err)
-	}
-	if legacy != 0 {
-		t.Fatal("legacy full-key manifest constraint survived schema rerun")
+	for name, ns := range map[string]Namespace{
+		"quotes and slashes": {PartitionKind: PartitionCandidate, TargetID: "target_sales", ProjectID: "project_sales", Environment: "prod", CandidateID: `candidate"\\quoted`},
+		"HTML characters":    {PartitionKind: PartitionProduction, TargetID: "target<&>", ProjectID: "project_sales", Environment: "prod"},
+		"line separator":     {PartitionKind: PartitionProduction, TargetID: "target\u2028one", ProjectID: "project_sales", Environment: "prod"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			var got string
+			if err := p.QueryRow(t.Context(), `SELECT cache.namespace_key($1,$2,$3,$4,$5)`, ns.PartitionKind, ns.TargetID, ns.ProjectID, ns.Environment, nullableString(ns.CandidateID)).Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got != ns.Key() {
+				t.Fatalf("database namespace key = %q, want Go canonical %q", got, ns.Key())
+			}
+		})
 	}
 }
 
-func cacheTestKey() ManifestKey {
-	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, ProjectID: "project_sales", Environment: "prod"})
+func cacheTestKeyForTarget(target string) ManifestKey {
+	partition, err := resultidentity.NewPartition(resultidentity.PartitionInput{Kind: resultidentity.PartitionProduction, TargetID: target, ProjectID: "project_sales", Environment: "prod"})
 	if err != nil {
 		panic(err)
 	}
-	return ManifestKey{PartitionKind: PartitionProduction, ProjectID: partition.ProjectID().String(), Environment: partition.Environment(), PartitionFormatVersion: int64(partition.Version()), DependencyDigest: cacheTestDigest('a'), PolicyFingerprint: cacheTestDigest('b'), CanonicalQueryDigest: cacheTestDigest('c'), KeyFormatVersion: 1}
+	return ManifestKey{PartitionKind: PartitionProduction, TargetID: partition.TargetID(), ProjectID: partition.ProjectID().String(), Environment: partition.Environment(), PartitionFormatVersion: int64(partition.Version()), DependencyDigest: cacheTestDigest('a'), PolicyFingerprint: cacheTestDigest('b'), CanonicalQueryDigest: cacheTestDigest('c'), KeyFormatVersion: 2}
 }
 
-func cacheTestNamespace() Namespace {
-	return Namespace{PartitionKind: PartitionProduction, ProjectID: "project_sales", Environment: "prod"}
+func cacheTestKey() ManifestKey { return cacheTestKeyForTarget("target_sales") }
+
+func cacheTestNamespaceForTarget(target string) Namespace {
+	return Namespace{PartitionKind: PartitionProduction, TargetID: target, ProjectID: "project_sales", Environment: "prod"}
 }
+
+func cacheTestNamespace() Namespace { return cacheTestNamespaceForTarget("target_sales") }
 
 func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T) {
 	p := cacheTestDB(t)
@@ -163,7 +151,7 @@ func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T)
 	if _, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: fillKey, OwnerID: "node-b", Lease: time.Second}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("second fill error = %v, want ErrBusy", err)
 	}
-	manifest, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/" + cacheTestDigest('e'), ByteSize: 42, Metadata: []byte(`{"rows":1}`), Lease: first})
+	manifest, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/" + cacheTestDigest('e'), ByteSize: 42, Metadata: []byte(`{"rows":1}`), Lease: first})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -206,6 +194,91 @@ func TestRepositoryFillFencePublishLookupAndDependencyInvalidation(t *testing.T)
 	}
 }
 
+func TestTargetIsolationAndOriginSealProvenance(t *testing.T) {
+	p := cacheTestDB(t)
+	defer p.Close()
+	repo := New(p)
+	ctx := t.Context()
+	nsA := cacheTestNamespaceForTarget("target-a")
+	nsB := cacheTestNamespaceForTarget("target-b")
+	keyA := cacheTestKeyForTarget("target-a")
+	keyB := cacheTestKeyForTarget("target-b")
+	digestA, err := keyA.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digestB, err := keyB.CacheKeyDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if digestA == digestB || nsA.Key() == nsB.Key() {
+		t.Fatal("target identity did not separate cache key and namespace")
+	}
+	leaseA, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: nsA, CacheKey: digestA, OwnerID: "target-a", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	leaseB, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: nsB, CacheKey: digestB, OwnerID: "target-b", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestA, err := repo.Publish(ctx, PublishInput{Key: keyA, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: leaseA})
+	if err != nil {
+		t.Fatal(err)
+	}
+	manifestB, err := repo.Publish(ctx, PublishInput{Key: keyB, OriginSnapshotSealID: cacheTestOriginSeal2, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: leaseB})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if manifestA.ManifestID == manifestB.ManifestID || manifestA.OriginSnapshotSealID != cacheTestOriginSeal || manifestB.OriginSnapshotSealID != cacheTestOriginSeal2 {
+		t.Fatalf("target manifests/provenance collided: A=%#v B=%#v", manifestA, manifestB)
+	}
+	gotA, found, err := repo.Lookup(ctx, keyA)
+	if err != nil || !found || gotA.OriginSnapshotSealID != cacheTestOriginSeal {
+		t.Fatalf("target A lookup = %#v, found=%v, err=%v", gotA, found, err)
+	}
+	gotB, found, err := repo.Lookup(ctx, keyB)
+	if err != nil || !found || gotB.OriginSnapshotSealID != cacheTestOriginSeal2 {
+		t.Fatalf("target B lookup = %#v, found=%v, err=%v", gotB, found, err)
+	}
+	// Provenance is intentionally not part of the lookup identity: an
+	// equivalent result produced after a seal cutover reuses the admitted
+	// manifest rather than creating a duplicate key.
+	reuseLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: nsB, CacheKey: digestB, OwnerID: "target-b-reuse", Lease: time.Minute})
+	if err != nil {
+		t.Fatal(err)
+	}
+	reused, err := repo.Publish(ctx, PublishInput{Key: keyB, OriginSnapshotSealID: cacheTestOriginSeal3, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/shared-object", ByteSize: 1, Lease: reuseLease})
+	if err != nil || reused.ManifestID != manifestB.ManifestID || reused.OriginSnapshotSealID != cacheTestOriginSeal2 {
+		t.Fatalf("equivalent result did not reuse manifest provenance: %#v, err=%v", reused, err)
+	}
+	listA, err := repo.ListByDependency(ctx, PartitionProduction, "target-a", "project_sales", "prod", "", keyA.DependencyDigest, 10)
+	if err != nil || len(listA) != 1 || listA[0].Key.TargetID != "target-a" {
+		t.Fatalf("target A dependency list = %#v, err=%v", listA, err)
+	}
+	listB, err := repo.ListByDependency(ctx, PartitionProduction, "target-b", "project_sales", "prod", "", keyB.DependencyDigest, 10)
+	if err != nil || len(listB) != 1 || listB[0].Key.TargetID != "target-b" {
+		t.Fatalf("target B dependency list = %#v, err=%v", listB, err)
+	}
+	reachableA, err := repo.ObjectReachable(ctx, nsA, cacheTestDigest('d'), "cache/shared-object")
+	if err != nil || !reachableA {
+		t.Fatalf("target A reachability = %v, err=%v", reachableA, err)
+	}
+	if _, err := repo.InvalidateNamespace(ctx, NamespaceInvalidationInput{Namespace: nsA, Kind: DependencyCustom, DependencyID: "orders", DependencyDigest: keyA.DependencyDigest, IdempotencyKey: "target-a-invalidate", Reason: "target refresh"}, cacheTestEvidence("target-refresh")); err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := repo.Lookup(ctx, keyA); err != nil || found {
+		t.Fatalf("target A remained admitted after invalidation: found=%v err=%v", found, err)
+	}
+	if _, found, err := repo.Lookup(ctx, keyB); err != nil || !found {
+		t.Fatalf("target B was affected by target A invalidation: found=%v err=%v", found, err)
+	}
+	reachableB, err := repo.ObjectReachable(ctx, nsB, cacheTestDigest('d'), "cache/shared-object")
+	if err != nil || !reachableB {
+		t.Fatalf("target B reachability after target A invalidation = %v, err=%v", reachableB, err)
+	}
+}
+
 func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
 	p := cacheTestDB(t)
 	defer p.Close()
@@ -220,7 +293,7 @@ func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	first, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/history-1", ByteSize: 1, Lease: firstLease})
+	first, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/history-1", ByteSize: 1, Lease: firstLease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -231,7 +304,7 @@ func TestRepositoryRetireThenRepublishPreservesManifestHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	second, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('f'), ObjectKey: "cache/history-2", ByteSize: 2, Lease: secondLease})
+	second, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('f'), ObjectKey: "cache/history-2", ByteSize: 2, Lease: secondLease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +334,7 @@ func TestAdmitManifestRejectsChangedObjectBeforeBindingLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/admit", ByteSize: 1, Lease: firstLease}); err != nil {
+	if _, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/admit", ByteSize: 1, Lease: firstLease}); err != nil {
 		t.Fatal(err)
 	}
 	secondLease, err := repo.AcquireFill(ctx, AcquireFillInput{Namespace: cacheTestNamespace(), CacheKey: cacheKey, OwnerID: "admit-b", Lease: time.Minute})
@@ -272,7 +345,7 @@ func TestAdmitManifestRejectsChangedObjectBeforeBindingLease(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = p.Exec(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21::jsonb,$22)`, manifestID, secondLease.LeaseID, secondLease.CacheKey, secondLease.OwnerID, secondLease.FencingEpoch, secondLease.Namespace.Key(), secondLease.NamespaceEpoch, key.PartitionKind, key.ProjectID, key.Environment, candidateArg(key.CandidateID), key.PartitionFormatVersion, key.DependencyDigest, key.PolicyFingerprint, key.CanonicalQueryDigest, key.KeyFormatVersion, cacheTestDigest('d'), cacheTestDigest('f'), "cache/admit-other", 1, `{}`, nil)
+	_, err = p.Exec(ctx, `SELECT cache.admit_manifest($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22::jsonb,$23::uuid,$24)`, manifestID, secondLease.LeaseID, secondLease.CacheKey, secondLease.OwnerID, secondLease.FencingEpoch, secondLease.Namespace.Key(), secondLease.NamespaceEpoch, key.PartitionKind, key.TargetID, key.ProjectID, key.Environment, candidateArg(key.CandidateID), key.PartitionFormatVersion, key.DependencyDigest, key.PolicyFingerprint, key.CanonicalQueryDigest, key.KeyFormatVersion, cacheTestDigest('d'), cacheTestDigest('f'), "cache/admit-other", 1, `{}`, cacheTestOriginSeal, nil)
 	if err == nil || !strings.Contains(err.Error(), "cache manifest conflict") {
 		t.Fatalf("changed direct admission error = %v, want manifest conflict", err)
 	}
@@ -299,7 +372,7 @@ func TestExpireManifestCapabilityHonorsRetentionRoots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/expire-guard", ByteSize: 1, Lease: lease})
+	manifest, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/expire-guard", ByteSize: 1, Lease: lease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -379,7 +452,7 @@ func TestPublishAdmissionRechecksNamespaceAfterConcurrentInvalidation(t *testing
 	}
 	result := make(chan error, 1)
 	go func() {
-		_, publishErr := repo.PublishTx(ctx, pubTx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race-publish", ByteSize: 1, Lease: lease})
+		_, publishErr := repo.PublishTx(ctx, pubTx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race-publish", ByteSize: 1, Lease: lease})
 		result <- publishErr
 	}()
 	pid := pubTx.Conn().PgConn().PID()
@@ -429,12 +502,12 @@ func TestRepositoryRejectsCrossNamespacePublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	wrongNamespace := Namespace{PartitionKind: PartitionProduction, ProjectID: "project_other", Environment: "prod"}
+	wrongNamespace := Namespace{PartitionKind: PartitionProduction, TargetID: "target_sales", ProjectID: "project_other", Environment: "prod"}
 	lease, err := repo.AcquireFill(t.Context(), AcquireFillInput{Namespace: wrongNamespace, CacheKey: fillKey, OwnerID: "wrong-scope", Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.Publish(t.Context(), PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/wrong-scope", ByteSize: 1, Lease: lease})
+	_, err = repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/wrong-scope", ByteSize: 1, Lease: lease})
 	if !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("cross-namespace publish error = %v, want stale fence", err)
 	}
@@ -534,7 +607,7 @@ func TestRepositoryRejectsUnrelatedFenceOnPublish(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = repo.Publish(ctx, PublishInput{Key: other, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 1, Lease: lease})
+	_, err = repo.Publish(ctx, PublishInput{Key: other, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 1, Lease: lease})
 	if !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("unrelated fence publish error=%v, want ErrStaleFence", err)
 	}
@@ -556,7 +629,7 @@ func TestRepositoryPublishReplayIsIdempotentAndChangedContentsConflict(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	in := PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1}`), Lease: lease}
+	in := PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1}`), Lease: lease}
 	first, err := repo.Publish(ctx, in)
 	if err != nil {
 		t.Fatal(err)
@@ -573,7 +646,7 @@ func TestRepositoryPublishReplayIsIdempotentAndChangedContentsConflict(t *testin
 	if _, err := repo.Publish(ctx, changed); !errors.Is(err, ErrConflict) {
 		t.Fatalf("changed replay error = %v, want conflict", err)
 	}
-	if _, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1,"rows":2}`), Lease: lease}); !errors.Is(err, ErrInvalid) {
+	if _, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Metadata: []byte(`{"rows":1,"rows":2}`), Lease: lease}); !errors.Is(err, ErrInvalid) {
 		t.Fatalf("duplicate metadata error = %v, want invalid", err)
 	}
 }
@@ -591,7 +664,7 @@ func TestRepositoryRetentionLifecycleAndManifestImmutability(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	manifest, err := repo.Publish(ctx, PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Lease: lease})
+	manifest, err := repo.Publish(ctx, PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/object", ByteSize: 7, Lease: lease})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -718,7 +791,7 @@ func TestRetentionRootManifestExpiryRaceLockOrdering(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		manifest, err := repo.Publish(t.Context(), PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race", ByteSize: 1, Lease: lease})
+		manifest, err := repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/race", ByteSize: 1, Lease: lease})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -860,7 +933,7 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	p := cacheTestDB(t)
 	defer p.Close()
 	repo := New(p)
-	ns := Namespace{PartitionKind: PartitionProduction, ProjectID: "project_sales", Environment: "prod"}
+	ns := Namespace{PartitionKind: PartitionProduction, TargetID: "target_sales", ProjectID: "project_sales", Environment: "prod"}
 	if got, err := repo.CurrentEpoch(t.Context(), ns); err != nil || got != 1 {
 		t.Fatalf("initial epoch = %d, %v; want 1", got, err)
 	}
@@ -885,7 +958,7 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Publish(t.Context(), PublishInput{Key: key, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/revision", ByteSize: 1, Lease: fence}); err != nil {
+	if _, err := repo.Publish(t.Context(), PublishInput{Key: key, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/revision", ByteSize: 1, Lease: fence}); err != nil {
 		t.Fatal(err)
 	}
 	second, err := repo.RecordDependencyRevision(t.Context(), DependencyRevisionInput{Namespace: ns, Kind: DependencySource, DependencyID: "orders", RevisionDigest: digestB, ExpectedRevision: 1, Evidence: cacheTestEvidence("source-refresh")})
@@ -925,7 +998,7 @@ func TestNamespaceRevisionEpochInvalidationAndReconciliation(t *testing.T) {
 	if _, err := repo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: ns, Kind: DependencyCustom, DependencyID: "stale-fence", IdempotencyKey: "stale-fence-epoch", Reason: "stale fence"}, cacheTestEvidence("stale-fence")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := repo.Publish(t.Context(), PublishInput{Key: staleKey, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/stale", ByteSize: 1, Lease: stale}); !errors.Is(err, ErrStaleFence) {
+	if _, err := repo.Publish(t.Context(), PublishInput{Key: staleKey, OriginSnapshotSealID: cacheTestOriginSeal, StorageSecurityDomain: cacheTestDigest('d'), ObjectDigest: cacheTestDigest('e'), ObjectKey: "cache/stale", ByteSize: 1, Lease: stale}); !errors.Is(err, ErrStaleFence) {
 		t.Fatalf("stale namespace publish = %v, want stale fence", err)
 	}
 	hint, err := ParseNotificationHint(`{"event_id":1,"namespace":"` + ns.Key() + `"}`)
@@ -977,17 +1050,17 @@ func TestCacheRoleConformance(t *testing.T) {
 	if _, err := runtime.Exec(t.Context(), `SELECT * FROM cache.prune_coordination(clock_timestamp(),1)`); err == nil {
 		t.Fatal("runtime prune capability unexpectedly granted")
 	}
-	if _, err := runtime.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,project_id,environment,epoch) VALUES ('forged','production','project_sales','prod',1)`); err == nil {
+	if _, err := runtime.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,target_id,project_id,environment,epoch) VALUES ('forged','production','target_sales','project_sales','prod',1)`); err == nil {
 		t.Fatal("runtime direct namespace fabrication succeeded")
 	}
 	if _, err := runtime.Exec(t.Context(), `SELECT cache.advance_dependency_revision('forged','custom','orders',$1,0,NULL::jsonb,NULL)`, cacheTestDigest('a')); err == nil {
 		t.Fatal("runtime intermediate dependency revision capability unexpectedly granted")
 	}
 	runtimeRepo := New(runtime)
-	if _, err := runtimeRepo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: Namespace{PartitionKind: PartitionProduction, ProjectID: "runtime_project", Environment: "prod"}, Kind: DependencyCustom, DependencyID: "runtime", IdempotencyKey: "runtime-invalidate", Reason: "runtime test"}, cacheTestEvidence("runtime")); err != nil {
+	if _, err := runtimeRepo.InvalidateNamespace(t.Context(), NamespaceInvalidationInput{Namespace: Namespace{PartitionKind: PartitionProduction, TargetID: "runtime_target", ProjectID: "runtime_project", Environment: "prod"}, Kind: DependencyCustom, DependencyID: "runtime", IdempotencyKey: "runtime-invalidate", Reason: "runtime test"}, cacheTestEvidence("runtime")); err != nil {
 		t.Fatalf("runtime invalidation capability failed: %v", err)
 	}
-	if _, err := admin.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,project_id,environment,epoch) VALUES ('forged','production','project_sales','prod',1)`); err == nil {
+	if _, err := admin.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,target_id,project_id,environment,epoch) VALUES ('forged','production','target_sales','project_sales','prod',1)`); err == nil {
 		t.Fatal("forged namespace identity unexpectedly accepted by database guard")
 	}
 	maintenance, err := pgxpool.New(t.Context(), database.URL(maintenanceRole))

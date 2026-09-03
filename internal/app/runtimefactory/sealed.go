@@ -45,6 +45,10 @@ var (
 // generation. ServingStateID and ServingArtifactDigest bind the new delivery
 // pointer to the compiled graph artifact; a resolver must reject mismatches.
 type SealedServingRoot struct {
+	// TargetID is the canonical configured delivery target that owns this
+	// serving root. DeliveryID remains build provenance and must never be used
+	// as a serving-scope selector.
+	TargetID              string
 	GenerationID          string
 	CandidateID           string
 	AttemptID             string
@@ -143,7 +147,7 @@ type SQLiteSealedFactoryConfig struct {
 // development/evaluation composition; production uses NewPostgresSealedFactory.
 // No process-wide mutable DuckLake environment is opened by this adapter.
 func NewSQLiteSealedFactory(config SQLiteSealedFactoryConfig) (runtimehost.RuntimeFactory, error) {
-	if config.Database == nil || config.TargetID == "" || config.ProjectRuntimeFactory == nil || config.Authorize == nil {
+	if config.Database == nil || strings.TrimSpace(config.TargetID) == "" || config.TargetID != strings.TrimSpace(config.TargetID) || config.ProjectRuntimeFactory == nil || config.Authorize == nil {
 		return nil, fmt.Errorf("SQLite sealed serving database, target, project runtime factory, and authorization are required")
 	}
 	delivery := deploymentsqlite.NewRepositoryWithHooks(config.Database, deploymentsqlite.ActivationHooks{})
@@ -239,7 +243,7 @@ func (f sealedServingFactory) PrepareSealed(ctx context.Context, input runtimeho
 	if root.PoolContract == nil || root.PhysicalPoolID != root.PoolContract.Pool.ID.String() || root.Compatibility != root.PoolContract.Tuple {
 		return nil, fmt.Errorf("%w: physical-pool admission evidence is incomplete", ErrSealedRootUnavailable)
 	}
-	if root.GenerationID == "" && root.CandidateID == "" || root.SealID == "" || root.CatalogDigest == "" || root.CatalogObjectKey == "" || root.CatalogObjectSize <= 0 || root.ClosureDigest == "" || root.QualificationDigest == "" || root.ServingArtifactID == "" || root.ServingArtifactDigest == "" {
+	if root.TargetID == "" || root.TargetID != strings.TrimSpace(root.TargetID) || root.GenerationID == "" && root.CandidateID == "" || root.SealID == "" || root.CatalogDigest == "" || root.CatalogObjectKey == "" || root.CatalogObjectSize <= 0 || root.ClosureDigest == "" || root.QualificationDigest == "" || root.ServingArtifactID == "" || root.ServingArtifactDigest == "" {
 		return nil, fmt.Errorf("%w: complete catalog identity is required", ErrSealedRootUnavailable)
 	}
 	now := time.Now().UTC()
@@ -288,7 +292,7 @@ func (f sealedServingFactory) PrepareSealed(ctx context.Context, input runtimeho
 	closeReader := func() error { return reader.Close() }
 	// Reuse the normal project artifact extraction and authorization compiler,
 	// but direct dashboard query runtimes at this reader's immutable catalog.
-	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, reader.Environment(), "")
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, reader.Environment(), "", root.TargetID, root.SealID)
 	if err != nil {
 		_ = closeReader()
 		return nil, err

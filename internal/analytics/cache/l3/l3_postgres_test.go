@@ -41,7 +41,7 @@ func TestPostgresL3ConcurrentFillAndMissingObjectReconcile(t *testing.T) {
 	repo := cachepostgres.New(db)
 	store := newMemoryStore()
 	ns := testNamespace()
-	c, err := New(Config{Authority: repo, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), Prefix: "objects", Enabled: true})
+	c, err := New(Config{Authority: repo, Store: store, Namespace: ns, SecurityDomain: testDigest('d'), OriginSnapshotSealID: testOriginSnapshotSealID, Prefix: "objects", Enabled: true})
 	if err != nil {
 		t.Fatal(err)
 	}

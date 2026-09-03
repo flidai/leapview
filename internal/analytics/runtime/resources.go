@@ -33,9 +33,18 @@ type ConnectionResolver interface {
 // ProjectRequest describes a governed analytical project without exposing
 // DuckDB construction or cache implementation details to consumer capabilities.
 type ProjectRequest struct {
-	Models                   map[string]*semanticmodel.Model
-	SnapshotID               int64
-	ServingStateID           string
+	Models         map[string]*semanticmodel.Model
+	SnapshotID     int64
+	ServingStateID string
+	// TargetID is the canonical configured delivery target that owns this
+	// runtime. It scopes stable query-result partitions independently of a
+	// serving generation.
+	TargetID string
+	// SnapshotSealID is the exact durable seal admitted for this runtime. It is
+	// cache-admission provenance and is intentionally excluded from the stable
+	// result partition/key so equivalent results can survive generation
+	// cutovers.
+	SnapshotSealID           string
 	ProjectID                projectgraph.ResourceID
 	Environment              string
 	SemanticDigest           string

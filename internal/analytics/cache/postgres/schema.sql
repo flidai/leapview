@@ -5,14 +5,16 @@ CREATE SCHEMA IF NOT EXISTS cache;
 CREATE TABLE IF NOT EXISTS cache.cache_manifest (
     manifest_id uuid PRIMARY KEY,
     partition_kind text NOT NULL CHECK (partition_kind IN ('production','candidate')),
+    target_id text NOT NULL CHECK (target_id = btrim(target_id) AND octet_length(target_id) BETWEEN 1 AND 255),
     project_id text NOT NULL CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
     environment text NOT NULL CHECK (environment = btrim(environment) AND octet_length(environment) BETWEEN 1 AND 255),
     candidate_id text CHECK (candidate_id IS NULL OR (candidate_id = btrim(candidate_id) AND octet_length(candidate_id) BETWEEN 1 AND 255)),
-    partition_format_version bigint NOT NULL CHECK (partition_format_version = 1),
+    partition_format_version bigint NOT NULL CHECK (partition_format_version = 2),
     dependency_digest text NOT NULL CHECK (dependency_digest ~ '^sha256:[0-9a-f]{64}$'),
     policy_fingerprint text NOT NULL CHECK (policy_fingerprint ~ '^sha256:[0-9a-f]{64}$'),
     canonical_query_digest text NOT NULL CHECK (canonical_query_digest ~ '^sha256:[0-9a-f]{64}$'),
-    key_format_version bigint NOT NULL CHECK (key_format_version = 1),
+    key_format_version bigint NOT NULL CHECK (key_format_version = 2),
+    origin_snapshot_seal_id uuid NOT NULL,
     storage_security_domain text NOT NULL CHECK (storage_security_domain ~ '^sha256:[0-9a-f]{64}$'),
     object_digest text NOT NULL CHECK (object_digest ~ '^sha256:[0-9a-f]{64}$'),
     object_key text NOT NULL CHECK (object_key = btrim(object_key) AND octet_length(object_key) BETWEEN 1 AND 2048),
@@ -35,28 +37,13 @@ CREATE TABLE IF NOT EXISTS cache.cache_manifest (
     CHECK ((retired_at IS NULL OR retired_at >= created_at)
         AND (expired_at IS NULL OR expired_at >= COALESCE(retired_at, created_at)))
 );
-CREATE INDEX IF NOT EXISTS cache_manifest_lookup_idx ON cache.cache_manifest (partition_kind, project_id, environment, candidate_id, dependency_digest, policy_fingerprint, canonical_query_digest);
+CREATE INDEX IF NOT EXISTS cache_manifest_lookup_idx ON cache.cache_manifest (partition_kind, target_id, project_id, environment, candidate_id, dependency_digest, policy_fingerprint, canonical_query_digest);
 -- A cache key may have many historical manifests, but only one currently
 -- admitted object.  Retiring and expired rows are immutable evidence and must
 -- never block a later publication for the same key.
 CREATE UNIQUE INDEX IF NOT EXISTS cache_manifest_admitted_key_idx
-    ON cache.cache_manifest (partition_kind, project_id, environment, COALESCE(candidate_id, ''), partition_format_version, dependency_digest, policy_fingerprint, canonical_query_digest, key_format_version)
+    ON cache.cache_manifest (partition_kind, target_id, project_id, environment, COALESCE(candidate_id, ''), partition_format_version, dependency_digest, policy_fingerprint, canonical_query_digest, key_format_version)
     WHERE state = 'admitted';
-
--- Migrate the pre-history schema's one full-key UNIQUE constraint when this
--- file is applied to an existing control database.  The column-vector match
--- is intentionally exact so future unrelated constraints are untouched.
-DO $$
-DECLARE c record; key_columns smallint[];
-BEGIN
-    SELECT ARRAY_AGG(a.attnum ORDER BY x.ord) INTO key_columns
-      FROM unnest(ARRAY['partition_kind','project_id','environment','candidate_id','partition_format_version','dependency_digest','policy_fingerprint','canonical_query_digest','key_format_version']) WITH ORDINALITY AS x(name,ord)
-      JOIN pg_attribute a ON a.attrelid='cache.cache_manifest'::regclass AND a.attname=x.name;
-    FOR c IN SELECT conname FROM pg_constraint WHERE conrelid='cache.cache_manifest'::regclass AND contype='u' AND conkey=key_columns LOOP
-        EXECUTE format('ALTER TABLE cache.cache_manifest DROP CONSTRAINT %I', c.conname);
-    END LOOP;
-END;
-$$;
 
 -- Stable namespace epochs fence fills across nodes. Epochs are scoped by the
 -- exact production or candidate partition; no global counter can accidentally
@@ -64,26 +51,27 @@ $$;
 CREATE TABLE IF NOT EXISTS cache.cache_namespace_epoch (
     namespace_key text PRIMARY KEY CHECK (namespace_key = btrim(namespace_key) AND octet_length(namespace_key) BETWEEN 1 AND 2048),
     partition_kind text NOT NULL CHECK (partition_kind IN ('production','candidate')),
+    target_id text NOT NULL CHECK (target_id = btrim(target_id) AND octet_length(target_id) BETWEEN 1 AND 255),
     project_id text NOT NULL CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
     environment text NOT NULL CHECK (environment = btrim(environment) AND octet_length(environment) BETWEEN 1 AND 255),
     candidate_id text,
     epoch bigint NOT NULL DEFAULT 1 CHECK (epoch > 0),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
-    UNIQUE NULLS NOT DISTINCT (partition_kind, project_id, environment, candidate_id),
+    UNIQUE NULLS NOT DISTINCT (partition_kind, target_id, project_id, environment, candidate_id),
     CHECK ((partition_kind = 'production' AND candidate_id IS NULL) OR (partition_kind = 'candidate' AND candidate_id IS NOT NULL))
 );
 
-CREATE OR REPLACE FUNCTION cache.namespace_key(p_kind text, p_project text, p_environment text, p_candidate text)
+CREATE OR REPLACE FUNCTION cache.namespace_key(p_kind text, p_target text, p_project text, p_environment text, p_candidate text)
 RETURNS text
 LANGUAGE sql
 IMMUTABLE
 SET search_path = pg_catalog, cache
 AS $$
-    SELECT 'ns1_' || replace(replace(replace(rtrim(encode(convert_to(
+    SELECT 'ns2_' || replace(replace(replace(rtrim(encode(convert_to(
         CASE WHEN p_candidate IS NULL THEN
-            '{"v":1,"k":' || to_json(p_kind)::text || ',"p":' || to_json(p_project)::text || ',"e":' || to_json(p_environment)::text || '}'
+            '{"v":2,"k":' || to_json(p_kind)::text || ',"t":' || to_json(p_target)::text || ',"p":' || to_json(p_project)::text || ',"e":' || to_json(p_environment)::text || '}'
         ELSE
-            '{"v":1,"k":' || to_json(p_kind)::text || ',"p":' || to_json(p_project)::text || ',"e":' || to_json(p_environment)::text || ',"c":' || to_json(p_candidate)::text || '}'
+            '{"v":2,"k":' || to_json(p_kind)::text || ',"t":' || to_json(p_target)::text || ',"p":' || to_json(p_project)::text || ',"e":' || to_json(p_environment)::text || ',"c":' || to_json(p_candidate)::text || '}'
         END, 'UTF8'), 'base64'), '='), E'\n', ''), '+', '-'), '/', '_')
 $$;
 
@@ -98,7 +86,7 @@ BEGIN
         IF current_setting('cache.capability', true) IS DISTINCT FROM 'namespace_epoch' THEN
             RAISE EXCEPTION 'namespace creation requires cache capability';
         END IF;
-        IF NEW.namespace_key IS DISTINCT FROM cache.namespace_key(NEW.partition_kind, NEW.project_id, NEW.environment, NEW.candidate_id)
+        IF NEW.namespace_key IS DISTINCT FROM cache.namespace_key(NEW.partition_kind, NEW.target_id, NEW.project_id, NEW.environment, NEW.candidate_id)
            OR NEW.epoch <> 1 THEN
             RAISE EXCEPTION 'namespace identity must be canonical and begin at epoch one';
         END IF;
@@ -107,6 +95,7 @@ BEGIN
     END IF;
     IF NEW.namespace_key IS DISTINCT FROM OLD.namespace_key
        OR NEW.partition_kind IS DISTINCT FROM OLD.partition_kind
+       OR NEW.target_id IS DISTINCT FROM OLD.target_id
        OR NEW.project_id IS DISTINCT FROM OLD.project_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.candidate_id IS DISTINCT FROM OLD.candidate_id THEN
@@ -285,6 +274,7 @@ BEGIN
     END IF;
     IF NEW.manifest_id IS DISTINCT FROM OLD.manifest_id
        OR NEW.partition_kind IS DISTINCT FROM OLD.partition_kind
+       OR NEW.target_id IS DISTINCT FROM OLD.target_id
        OR NEW.project_id IS DISTINCT FROM OLD.project_id
        OR NEW.environment IS DISTINCT FROM OLD.environment
        OR NEW.candidate_id IS DISTINCT FROM OLD.candidate_id
@@ -293,6 +283,7 @@ BEGIN
        OR NEW.policy_fingerprint IS DISTINCT FROM OLD.policy_fingerprint
        OR NEW.canonical_query_digest IS DISTINCT FROM OLD.canonical_query_digest
        OR NEW.key_format_version IS DISTINCT FROM OLD.key_format_version
+       OR NEW.origin_snapshot_seal_id IS DISTINCT FROM OLD.origin_snapshot_seal_id
        OR NEW.storage_security_domain IS DISTINCT FROM OLD.storage_security_domain
        OR NEW.object_digest IS DISTINCT FROM OLD.object_digest
        OR NEW.object_key IS DISTINCT FROM OLD.object_key
@@ -480,7 +471,7 @@ CREATE TRIGGER cache_retention_root_lifecycle
 -- Capability entry points.  Runtime roles receive EXECUTE on these functions,
 -- but no table DML privileges.  Each function sets a transaction-local marker
 -- consumed by the immutable/lifecycle triggers above.
-CREATE OR REPLACE FUNCTION cache.ensure_namespace(p_namespace_key text, p_kind text, p_project text, p_environment text, p_candidate text)
+CREATE OR REPLACE FUNCTION cache.ensure_namespace(p_namespace_key text, p_kind text, p_target text, p_project text, p_environment text, p_candidate text)
 RETURNS bigint
 LANGUAGE plpgsql
 SECURITY DEFINER
@@ -489,11 +480,11 @@ AS $$
 DECLARE out_epoch bigint;
 BEGIN
     PERFORM set_config('cache.capability', 'namespace_epoch', true);
-    INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,project_id,environment,candidate_id,epoch)
-    VALUES (p_namespace_key,p_kind,p_project,p_environment,p_candidate,1)
+    INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,target_id,project_id,environment,candidate_id,epoch)
+    VALUES (p_namespace_key,p_kind,p_target,p_project,p_environment,p_candidate,1)
     ON CONFLICT (namespace_key) DO NOTHING;
     SELECT epoch INTO out_epoch FROM cache.cache_namespace_epoch WHERE namespace_key=p_namespace_key FOR UPDATE;
-    IF out_epoch IS NULL OR p_namespace_key IS DISTINCT FROM cache.namespace_key(p_kind,p_project,p_environment,p_candidate) THEN
+    IF out_epoch IS NULL OR p_namespace_key IS DISTINCT FROM cache.namespace_key(p_kind,p_target,p_project,p_environment,p_candidate) THEN
         RAISE EXCEPTION 'namespace identity is invalid';
     END IF;
     RETURN out_epoch;
@@ -583,9 +574,10 @@ BEGIN
     UPDATE cache.cache_manifest SET state='retiring', retired_at=clock_timestamp(), retire_evidence=p_evidence
       WHERE partition_kind=(SELECT partition_kind FROM cache.cache_namespace_epoch WHERE namespace_key=p_namespace_key)
         AND project_id=(SELECT project_id FROM cache.cache_namespace_epoch WHERE namespace_key=p_namespace_key)
+        AND target_id=(SELECT target_id FROM cache.cache_namespace_epoch WHERE namespace_key=p_namespace_key)
         AND environment=(SELECT environment FROM cache.cache_namespace_epoch WHERE namespace_key=p_namespace_key)
         AND candidate_id IS NOT DISTINCT FROM (SELECT candidate_id FROM cache.cache_namespace_epoch WHERE namespace_key=p_namespace_key)
-        AND partition_format_version=1 AND state='admitted'
+        AND partition_format_version=2 AND state='admitted'
         AND (NULLIF(p_dependency_digest,'') IS NULL OR dependency_digest=p_dependency_digest);
     GET DIAGNOSTICS retired = ROW_COUNT;
     PERFORM set_config('cache.capability', 'invalidation', true);
@@ -642,7 +634,7 @@ BEGIN
 END;
 $$;
 
-CREATE OR REPLACE FUNCTION cache.admit_manifest(p_manifest_id uuid, p_lease_id uuid, p_cache_key text, p_owner_id text, p_fencing_epoch bigint, p_namespace_key text, p_namespace_epoch bigint, p_partition_kind text, p_project_id text, p_environment text, p_candidate_id text, p_partition_format_version bigint, p_dependency_digest text, p_policy_fingerprint text, p_query_digest text, p_key_format_version bigint, p_storage_domain text, p_object_digest text, p_object_key text, p_byte_size bigint, p_metadata jsonb, p_expires_at timestamptz)
+CREATE OR REPLACE FUNCTION cache.admit_manifest(p_manifest_id uuid, p_lease_id uuid, p_cache_key text, p_owner_id text, p_fencing_epoch bigint, p_namespace_key text, p_namespace_epoch bigint, p_partition_kind text, p_target_id text, p_project_id text, p_environment text, p_candidate_id text, p_partition_format_version bigint, p_dependency_digest text, p_policy_fingerprint text, p_query_digest text, p_key_format_version bigint, p_storage_domain text, p_object_digest text, p_object_key text, p_byte_size bigint, p_metadata jsonb, p_origin_snapshot_seal_id uuid, p_expires_at timestamptz)
 RETURNS uuid
 LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, cache
 AS $$
@@ -656,14 +648,14 @@ BEGIN
     IF NOT EXISTS (SELECT 1 FROM cache.cache_fill_lease l WHERE l.lease_id=p_lease_id AND l.cache_key=p_cache_key AND l.owner_id=p_owner_id AND l.fencing_epoch=p_fencing_epoch AND l.namespace_key=p_namespace_key AND l.namespace_epoch=p_namespace_epoch AND l.expires_at>clock_timestamp() AND l.manifest_id IS NULL) THEN
         RAISE EXCEPTION 'cache stale fill fence';
     END IF;
-    INSERT INTO cache.cache_manifest(manifest_id,partition_kind,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version,storage_security_domain,object_digest,object_key,byte_size,metadata,state,expires_at)
-      VALUES (p_manifest_id,p_partition_kind,p_project_id,p_environment,p_candidate_id,p_partition_format_version,p_dependency_digest,p_policy_fingerprint,p_query_digest,p_key_format_version,p_storage_domain,p_object_digest,p_object_key,p_byte_size,p_metadata,'admitted',p_expires_at)
+    INSERT INTO cache.cache_manifest(manifest_id,partition_kind,target_id,project_id,environment,candidate_id,partition_format_version,dependency_digest,policy_fingerprint,canonical_query_digest,key_format_version,storage_security_domain,object_digest,object_key,byte_size,metadata,state,origin_snapshot_seal_id,expires_at)
+      VALUES (p_manifest_id,p_partition_kind,p_target_id,p_project_id,p_environment,p_candidate_id,p_partition_format_version,p_dependency_digest,p_policy_fingerprint,p_query_digest,p_key_format_version,p_storage_domain,p_object_digest,p_object_key,p_byte_size,p_metadata,'admitted',p_origin_snapshot_seal_id,p_expires_at)
       ON CONFLICT DO NOTHING;
-    IF NOT EXISTS (SELECT 1 FROM cache.cache_namespace_epoch n WHERE n.namespace_key=p_namespace_key AND n.epoch=p_namespace_epoch AND n.partition_kind=p_partition_kind AND n.project_id=p_project_id AND n.environment=p_environment AND n.candidate_id IS NOT DISTINCT FROM p_candidate_id) THEN
+    IF NOT EXISTS (SELECT 1 FROM cache.cache_namespace_epoch n WHERE n.namespace_key=p_namespace_key AND n.epoch=p_namespace_epoch AND n.partition_kind=p_partition_kind AND n.target_id=p_target_id AND n.project_id=p_project_id AND n.environment=p_environment AND n.candidate_id IS NOT DISTINCT FROM p_candidate_id) THEN
         RAISE EXCEPTION 'cache stale fill fence';
     END IF;
     SELECT * INTO existing FROM cache.cache_manifest
-      WHERE partition_kind=p_partition_kind AND project_id=p_project_id AND environment=p_environment
+      WHERE partition_kind=p_partition_kind AND target_id=p_target_id AND project_id=p_project_id AND environment=p_environment
         AND candidate_id IS NOT DISTINCT FROM p_candidate_id AND partition_format_version=p_partition_format_version
         AND dependency_digest=p_dependency_digest AND policy_fingerprint=p_policy_fingerprint
         AND canonical_query_digest=p_query_digest AND key_format_version=p_key_format_version
@@ -773,12 +765,12 @@ BEGIN
         GRANT SELECT ON cache.cache_manifest, cache.cache_fill_lease,
             cache.cache_namespace_epoch, cache.cache_dependency_revision,
             cache.cache_invalidation, cache.cache_retention_root TO leapview_control_runtime;
-        GRANT EXECUTE ON FUNCTION cache.ensure_namespace(text,text,text,text,text),
+        GRANT EXECUTE ON FUNCTION cache.ensure_namespace(text,text,text,text,text,text),
             cache.record_dependency_revision(text,text,text,text,bigint,uuid,text,text,jsonb),
             cache.invalidate_namespace(uuid,text,text,text,text,bigint,text,text,jsonb),
             cache.acquire_fill(uuid,text,text,bigint,text,interval), cache.renew_fill(uuid,text,text,bigint,interval),
             cache.release_fill(uuid,text,text,bigint),
-            cache.admit_manifest(uuid,uuid,text,text,bigint,text,bigint,text,text,text,text,bigint,text,text,text,bigint,text,text,text,bigint,jsonb,timestamptz),
+            cache.admit_manifest(uuid,uuid,text,text,bigint,text,bigint,text,text,text,text,text,bigint,text,text,text,bigint,text,text,text,bigint,jsonb,uuid,timestamptz),
             cache.add_retention_root(uuid,uuid,text), cache.retire_retention_root(uuid,jsonb), cache.expire_retention_root(uuid,jsonb),
             cache.expire_manifest(uuid,jsonb), cache.retire_manifest(uuid,jsonb) TO leapview_control_runtime;
     END IF;

@@ -43,7 +43,7 @@ func TestPrepareDashboardRejectsMissingOrInvalidActiveRuntimeEvidence(t *testing
 				Artifact:    artifact,
 				ManagedData: managed,
 			}
-			_, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "")
+			_, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "", "target-1", "seal-1")
 			if err == nil || !strings.Contains(err.Error(), "resolve runtime dependency evidence") {
 				t.Fatalf("prepareDashboard() error = %v, want dependency-evidence failure", err)
 			}
@@ -58,10 +58,12 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 	artifact, identity, managed := runtimeDependencyEvidenceArtifact(t)
 	builderCalled := false
 	var gotEvidence bool
+	var gotTargetID, gotSnapshotSealID string
 	builder := func(_ context.Context, input dashboardruntimefactory.Input, _ *ducklake.Environment) (*dashboardruntime.Service, error) {
 		builderCalled = true
 		evidence, ok := input.DependencyEvidence["semantic:sales"]
 		gotEvidence = ok && evidence.Available()
+		gotTargetID, gotSnapshotSealID = input.TargetID, input.SnapshotSealID
 		return &dashboardruntime.Service{}, nil
 	}
 	factory := servingStateRuntimeFactory{runtimeDir: t.TempDir()}
@@ -77,11 +79,14 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 			Capabilities:       []runtimehost.RuntimeCapabilityEvidence{dependencyEvidenceTestCapability('1')},
 		},
 	}
-	if _, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, ""); err != nil {
+	if _, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "", "target-1", "seal-1"); err != nil {
 		t.Fatalf("prepareDashboard() error = %v, want candidate evidence to remain valid", err)
 	}
 	if !builderCalled || !gotEvidence {
 		t.Fatalf("builderCalled=%v, gotEvidence=%v; want candidate dependency evidence", builderCalled, gotEvidence)
+	}
+	if gotTargetID != "target-1" || gotSnapshotSealID != "seal-1" {
+		t.Fatalf("target/seal provenance=(%q,%q), want (target-1,seal-1)", gotTargetID, gotSnapshotSealID)
 	}
 }
 

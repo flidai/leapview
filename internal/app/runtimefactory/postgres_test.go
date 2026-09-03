@@ -358,7 +358,7 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000102"
 	relationNamespace := runtimeFactoryRelationNamespace(t, candidateID, attemptID, 3)
 	root := SealedServingRoot{
-		GenerationID: "generation", CandidateID: candidateID, AttemptID: attemptID, ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
+		TargetID: "target", GenerationID: "generation", CandidateID: candidateID, AttemptID: attemptID, ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
 		SealID: "seal", QualificationDigest: runtimeFactoryDigest("qualification"), ClosureDigest: runtimeFactoryDigest("closure"),
 		PhysicalPoolID: contract.Pool.ID.String(), PoolContract: contract, Compatibility: contract.Tuple,
 		CatalogDatabase: catalogIdentity.CatalogDatabase, CatalogID: catalogIdentity.CatalogID, CatalogUUID: catalogIdentity.CatalogUUID, CatalogMetadataSchema: catalogIdentity.MetadataSchema,
@@ -447,7 +447,7 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 	attemptID := "0198f2c0-7c7a-7f00-8a11-000000000202"
 	relationNamespace := runtimeFactoryRelationNamespace(t, candidateID, attemptID, 3)
 	baseRoot := SealedServingRoot{
-		GenerationID: "generation", CandidateID: candidateID, AttemptID: attemptID, ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
+		TargetID: "target", GenerationID: "generation", CandidateID: candidateID, AttemptID: attemptID, ServingStateID: string(stateID), ServingArtifactID: "artifact", ServingArtifactDigest: artifactDigest,
 		SealID: "seal", QualificationDigest: runtimeFactoryDigest("qualification"), ClosureDigest: runtimeFactoryDigest("closure"),
 		PhysicalPoolID: contract.Pool.ID.String(), PoolContract: contract, Compatibility: contract.Tuple,
 		CatalogDatabase: catalogIdentity.CatalogDatabase, CatalogID: catalogIdentity.CatalogID, CatalogUUID: catalogIdentity.CatalogUUID, CatalogMetadataSchema: catalogIdentity.MetadataSchema,

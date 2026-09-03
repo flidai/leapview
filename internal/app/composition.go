@@ -1346,7 +1346,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 					}
 				}
 				factory := analyticsModule.ProjectRuntimeFactoryForEnvironment(environment)
-				runtime, err := factory.OpenProject(matCtx, analyticsruntime.ProjectRequest{Models: models, ServingStateID: artifacts.Generation.Identity.GenerationID, ProjectID: artifacts.Generation.Identity.ProjectID, Environment: artifacts.Generation.Identity.Environment, SemanticDigest: artifacts.Artifact.ProjectDigest, ArtifactDigest: artifacts.Generation.ArtifactDigest, SourceDataDigest: artifacts.Generation.DataRevision, CandidateID: candidateID, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, BindingFingerprint: buildInput.Plan.Execution.BindingDigest, SkipInitialRefresh: baseRetained && !refreshAll})
+				runtime, err := factory.OpenProject(matCtx, analyticsruntime.ProjectRequest{Models: models, ServingStateID: artifacts.Generation.Identity.GenerationID, TargetID: buildInput.Plan.TargetID, ProjectID: artifacts.Generation.Identity.ProjectID, Environment: artifacts.Generation.Identity.Environment, SemanticDigest: artifacts.Artifact.ProjectDigest, ArtifactDigest: artifacts.Generation.ArtifactDigest, SourceDataDigest: artifacts.Generation.DataRevision, CandidateID: candidateID, AuthorizationFingerprint: artifacts.AuthorizationFingerprint, BindingFingerprint: buildInput.Plan.Execution.BindingDigest, SkipInitialRefresh: baseRetained && !refreshAll})
 				if err != nil {
 					return err
 				}
