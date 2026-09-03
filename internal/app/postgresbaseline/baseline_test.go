@@ -89,7 +89,7 @@ func TestVerifyRequiresExactBaselineAndMigrationIdentity(t *testing.T) {
 }
 
 func TestProductBaselineComponentOrder(t *testing.T) {
-	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "dashboard.authoring", "dashboard.publication", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "lineage", "cache", "queryaudit"}
+	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "dashboard.authoring", "dashboard.publication", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "recoveryset", "lineage", "cache", "queryaudit"}
 	components := Components()
 	if len(components) != len(want) {
 		t.Fatalf("component count = %d, want %d", len(components), len(want))
@@ -179,6 +179,19 @@ func TestProductRolePolicyRepairsL3CapabilitySplit(t *testing.T) {
 	} {
 		if !strings.Contains(rolePolicySQL, required) {
 			t.Fatalf("role policy is missing L3 capability repair %q", required)
+		}
+	}
+}
+
+func TestProductRolePolicyKeepsRecoveryFrontierFenced(t *testing.T) {
+	for _, required := range []string{
+		"GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_runtime",
+		"REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA recovery FROM leapview_control_runtime",
+		"GRANT SELECT, INSERT, UPDATE ON recovery.recovery_set, recovery.validation_attempt TO leapview_control_maintenance",
+		"REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON recovery.recovery_cluster_point, recovery.recovery_object_root, recovery.validation_result FROM leapview_control_maintenance",
+	} {
+		if !strings.Contains(rolePolicySQL, required) {
+			t.Fatalf("role policy is missing recovery frontier boundary %q", required)
 		}
 	}
 }
