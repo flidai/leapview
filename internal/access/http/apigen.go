@@ -8,9 +8,10 @@ import (
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
 )
 
-// APIGenDispatcher contains only identity, credential, group, audit, avatar,
-// and authoring operations. Project authorization endpoints are owned by the
-// immutable serving-state authorization surface.
+// APIGenDispatcher contains identity, credential, group, audit, avatar,
+// authoring, and platform semantic-attribute administration operations.
+// Project authorization endpoints are owned by the immutable serving-state
+// authorization surface.
 type APIGenDispatcher struct{ handler Handler }
 
 // APIGenTransportErrorResponder adapts generated transport failures to the
@@ -149,6 +150,93 @@ func (d *APIGenDispatcher) AddGroupMember(w stdhttp.ResponseWriter, r *stdhttp.R
 }
 func (d *APIGenDispatcher) RemoveGroupMember(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string) {
 	d.handler.RemoveGroupMember(w, r)
+}
+func (d *APIGenDispatcher) ListGroupSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListGroupSemanticAttributeAssignmentsParams) {
+	d.handler.ListGroupSemanticAttributeAssignments(w, r)
+}
+func (d *APIGenDispatcher) RemoveGroupSemanticAttributeAssignment(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenRemoveGroupSemanticAttributeAssignmentHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	d.handler.RemoveGroupSemanticAttributeAssignment(w, r)
+}
+func (d *APIGenDispatcher) UpsertGroupSemanticAttributeAssignment(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenUpsertGroupSemanticAttributeAssignmentHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	d.handler.UpsertGroupSemanticAttributeAssignment(w, r)
+}
+func (d *APIGenDispatcher) ListPrincipalSemanticAttributeAssignments(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListPrincipalSemanticAttributeAssignmentsParams) {
+	d.handler.ListPrincipalSemanticAttributeAssignments(w, r)
+}
+func (d *APIGenDispatcher) RemovePrincipalSemanticAttributeAssignment(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenRemovePrincipalSemanticAttributeAssignmentHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	d.handler.RemovePrincipalSemanticAttributeAssignment(w, r)
+}
+func (d *APIGenDispatcher) UpsertPrincipalSemanticAttributeAssignment(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenUpsertPrincipalSemanticAttributeAssignmentHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	d.handler.UpsertPrincipalSemanticAttributeAssignment(w, r)
+}
+func (d *APIGenDispatcher) ListSemanticAttributeDefinitions(w stdhttp.ResponseWriter, r *stdhttp.Request, _ accessgen.GenListSemanticAttributeDefinitionsParams) {
+	d.handler.ListSemanticAttributeDefinitions(w, r)
+}
+func (d *APIGenDispatcher) RegisterSemanticAttribute(w stdhttp.ResponseWriter, r *stdhttp.Request, headers accessgen.GenRegisterSemanticAttributeHeaders) {
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.RegisterSemanticAttribute(w, r)
+}
+func (d *APIGenDispatcher) GetSemanticAttributeDefinition(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.GetSemanticAttributeDefinition(w, r)
+}
+func (d *APIGenDispatcher) UpdateSemanticAttributeMetadata(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenUpdateSemanticAttributeMetadataHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	d.handler.UpdateSemanticAttributeMetadata(w, r)
+}
+func (d *APIGenDispatcher) ListSemanticAttributeClaimMappings(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, _ accessgen.GenListSemanticAttributeClaimMappingsParams) {
+	d.handler.ListSemanticAttributeClaimMappings(w, r)
+}
+func (d *APIGenDispatcher) UpsertSemanticAttributeClaimMapping(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenUpsertSemanticAttributeClaimMappingHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.UpsertSemanticAttributeClaimMapping(w, r)
+}
+func (d *APIGenDispatcher) RemoveSemanticAttributeClaimMapping(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, headers accessgen.GenRemoveSemanticAttributeClaimMappingHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	d.handler.RemoveSemanticAttributeClaimMapping(w, r)
+}
+func (d *APIGenDispatcher) DisableSemanticAttribute(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenDisableSemanticAttributeHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.DisableSemanticAttribute(w, r)
+}
+func (d *APIGenDispatcher) PreviewSemanticAttributeImpact(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string) {
+	d.handler.PreviewSemanticAttributeImpact(w, r)
+}
+func (d *APIGenDispatcher) RestoreSemanticAttribute(w stdhttp.ResponseWriter, r *stdhttp.Request, _ string, headers accessgen.GenRestoreSemanticAttributeHeaders) {
+	if headers.IfMatch != "" {
+		r.Header.Set("If-Match", headers.IfMatch)
+	}
+	if headers.IdempotencyKey != "" {
+		r.Header.Set("Idempotency-Key", headers.IdempotencyKey)
+	}
+	d.handler.RestoreSemanticAttribute(w, r)
 }
 func (d *APIGenDispatcher) ListAuditEvents(w stdhttp.ResponseWriter, r *stdhttp.Request, _, _ string, _ accessgen.GenListAuditEventsParams) {
 	d.handler.ListAuditEvents(w, r)

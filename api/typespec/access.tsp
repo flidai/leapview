@@ -1035,3 +1035,362 @@ interface DataPolicies {
 @apigen.authz(#{ mode: "authenticated" })
 @apigen.query
 op checkAuthorizationBatch(@path project: ResourceId, @body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;
+
+// Semantic attributes are a platform-owned control-plane resource. The
+// request models intentionally use a closed scalar union: callers cannot
+// smuggle arbitrary JSON objects, maps, or nested lists into an assignment.
+enum SemanticAttributeValueType {
+  stringValue: "String";
+  booleanValue: "Boolean";
+  integerValue: "Integer";
+  decimalValue: "Decimal";
+  dateValue: "Date";
+  timestampValue: "Timestamp";
+}
+
+enum SemanticAttributeShapeValue {
+  scalarShape: "scalar";
+  listShape: "list";
+}
+
+enum SemanticAttributeOwnerKindValue {
+  instanceOwner: "instance";
+  principalOwner: "principal";
+  groupOwner: "group";
+}
+
+enum SemanticAttributeAssignmentTargetKindValue {
+  principalTarget: "principal";
+  groupTarget: "group";
+}
+
+enum SemanticAttributeClaimSourceKindValue {
+  saml;
+  oidc;
+  embed;
+  serviceToken: "service_token";
+}
+
+model SemanticAttributeValue {
+  type: SemanticAttributeValueType;
+  stringValue?: string;
+  booleanValue?: boolean;
+  // Integers and decimals remain strings on the wire to preserve precision.
+  integerValue?: string;
+  decimalValue?: string;
+  dateValue?: string;
+  timestampValue?: string;
+}
+
+model SemanticAttributeMetadataRequest {
+  ownerKind: SemanticAttributeOwnerKindValue;
+  ownerId?: string;
+  displayName: string;
+  description: string;
+  documentationUrl?: string;
+}
+
+model SemanticAttributeDefinitionResponse {
+  id: string;
+  name: string;
+  type: SemanticAttributeValueType;
+  shape: SemanticAttributeShapeValue;
+  profile: string;
+  definitionVersion: int64;
+  ownerKind: SemanticAttributeOwnerKindValue;
+  ownerId?: string;
+  displayName: string;
+  description: string;
+  documentationUrl?: string;
+  lifecycleState: string;
+  createdAt: utcDateTime;
+  updatedAt: utcDateTime;
+  disabledAt?: utcDateTime;
+}
+
+model SemanticAttributeDefinitionListResponse {
+  items: SemanticAttributeDefinitionResponse[];
+  page: PageInfo;
+}
+
+model SemanticAttributeRegisterRequest {
+  name: string;
+  type: SemanticAttributeValueType;
+  shape: SemanticAttributeShapeValue;
+  metadata: SemanticAttributeMetadataRequest;
+}
+
+model SemanticAttributeAssignmentRequest {
+  values: SemanticAttributeValue[];
+}
+
+model SemanticAttributeAssignmentResponse {
+  id: string;
+  attributeName: string;
+  targetKind: SemanticAttributeAssignmentTargetKindValue;
+  targetId: string;
+  values: SemanticAttributeValue[];
+  assignmentVersion: int64;
+  lifecycleState: string;
+  removedAt?: utcDateTime;
+  createdAt: utcDateTime;
+  updatedAt: utcDateTime;
+}
+
+model SemanticAttributeAssignmentListResponse {
+  items: SemanticAttributeAssignmentResponse[];
+  page: PageInfo;
+}
+
+model SemanticAttributeClaimMappingRequest {
+  sourceKind: SemanticAttributeClaimSourceKindValue;
+  provider: string;
+  issuer: string;
+  audience: string;
+  claim: string;
+}
+
+model SemanticAttributeClaimMappingResponse {
+  id: string;
+  attributeName: string;
+  sourceKind: SemanticAttributeClaimSourceKindValue;
+  provider: string;
+  issuer: string;
+  audience: string;
+  claim: string;
+  mappingVersion: int64;
+  lifecycleState: string;
+  removedAt?: utcDateTime;
+  createdAt: utcDateTime;
+  updatedAt: utcDateTime;
+}
+
+model SemanticAttributeClaimMappingListResponse {
+  items: SemanticAttributeClaimMappingResponse[];
+  page: PageInfo;
+}
+
+model SemanticAttributeImpactPreviewRequest {
+  targetKind: SemanticAttributeAssignmentTargetKindValue;
+  targetId: string;
+  values: SemanticAttributeValue[];
+}
+
+model SemanticAttributeImpactPreviewResponse {
+  attributeName: string;
+  targetKind: SemanticAttributeAssignmentTargetKindValue;
+  targetId: string;
+  affectedPrincipalCount: int32;
+  affectedGroupCount: int32;
+  warnings: string[];
+}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "SEMANTIC_ATTRIBUTE_NOT_FOUND", publicDetail: "Semantic attribute was not found." })
+model SemanticAttributeNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "invalid", statusCode: 400, code: "SEMANTIC_ATTRIBUTE_INVALID", publicDetail: "Semantic attribute request is invalid." })
+model SemanticAttributeInvalidFailure {}
+
+@apigen.failureDefinition(#{ kind: "conflict", statusCode: 409, code: "SEMANTIC_ATTRIBUTE_CONFLICT", publicDetail: "Semantic attribute conflicts with current state." })
+model SemanticAttributeConflictFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "SEMANTIC_ATTRIBUTE_ASSIGNMENT_NOT_FOUND", publicDetail: "Semantic attribute assignment was not found." })
+model SemanticAttributeAssignmentNotFoundFailure {}
+
+@apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "SEMANTIC_ATTRIBUTE_CLAIM_MAPPING_NOT_FOUND", publicDetail: "Semantic attribute claim mapping was not found." })
+model SemanticAttributeClaimMappingNotFoundFailure {}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model SemanticAttributeDefinitionAuditPayload {
+  @apigen.auditInternal
+  attributeName: string;
+  @apigen.auditPublic
+  lifecycle: string;
+  @apigen.auditInternal
+  definitionVersion: int64;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model SemanticAttributeAssignmentAuditPayload {
+  @apigen.auditInternal
+  attributeName: string;
+  @apigen.auditInternal
+  targetKind: string;
+  @apigen.auditPii
+  targetId: string;
+}
+
+@apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
+model SemanticAttributeClaimMappingAuditPayload {
+  @apigen.auditInternal
+  attributeName: string;
+  @apigen.auditPublic
+  sourceKind: string;
+  @apigen.auditPublic
+  provider: string;
+  @apigen.auditPublic
+  claim: string;
+}
+
+alias ListSemanticAttributeDefinitionsOK = OkJson<SemanticAttributeDefinitionListResponse>;
+alias RegisterSemanticAttributeCreated = CreatedJson<SemanticAttributeDefinitionResponse>;
+alias GetSemanticAttributeDefinitionOK = OkJson<SemanticAttributeDefinitionResponse>;
+alias UpdateSemanticAttributeMetadataOK = OkJson<SemanticAttributeDefinitionResponse>;
+alias SemanticAttributeAssignmentOK = OkJson<SemanticAttributeAssignmentResponse>;
+alias SemanticAttributeClaimMappingOK = OkJson<SemanticAttributeClaimMappingResponse>;
+alias SemanticAttributeImpactPreviewOK = OkJson<SemanticAttributeImpactPreviewResponse>;
+
+@tag("Access")
+@summary("List semantic attribute definitions")
+@route("/semantic-attributes")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+interface SemanticAttributeDefinitions {
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  listSemanticAttributeDefinitions(@query q?: string, @query ownerKind?: SemanticAttributeOwnerKindValue, @query limit?: ListLimit, @query pageToken?: PageToken): ListSemanticAttributeDefinitionsOK | CommonErrors;
+
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.registered" })
+  @apigen.failsWith(SemanticAttributeInvalidFailure)
+  @apigen.failsWith(SemanticAttributeConflictFailure)
+  @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
+  registerSemanticAttribute(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: SemanticAttributeRegisterRequest): RegisterSemanticAttributeCreated | CommonErrors;
+
+  @route("/{attribute}")
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  getSemanticAttributeDefinition(@path attribute: string): GetSemanticAttributeDefinitionOK | CommonErrors;
+
+  @route("/{attribute}")
+  @patch
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.metadata_updated" })
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  @apigen.failsWith(SemanticAttributeInvalidFailure)
+  @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
+  updateSemanticAttributeMetadata(@path attribute: string, @header("If-Match") ifMatch: string, @body body: SemanticAttributeMetadataRequest): UpdateSemanticAttributeMetadataOK | CommonErrors;
+
+  @route("/{attribute}/disable")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.disabled" })
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
+  disableSemanticAttribute(@path @apigen.target attribute: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): GetSemanticAttributeDefinitionOK | CommonErrors;
+
+  @route("/{attribute}/restore")
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.restored" })
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
+  restoreSemanticAttribute(@path @apigen.target attribute: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): GetSemanticAttributeDefinitionOK | CommonErrors;
+}
+
+@tag("Access")
+@summary("List and mutate principal semantic attribute assignments")
+@route("/principals/{principal}/semantic-attributes")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+interface PrincipalSemanticAttributeAssignments {
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  listPrincipalSemanticAttributeAssignments(@path principal: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeAssignmentListResponse> | CommonErrors;
+
+  @route("/{attribute}")
+  @put
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.principal_assignment_upserted" })
+  @apigen.failsWith(SemanticAttributeInvalidFailure)
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
+  upsertPrincipalSemanticAttributeAssignment(@path @apigen.target principal: string, @path attribute: string, @header("If-Match") ifMatch: string, @body body: SemanticAttributeAssignmentRequest): SemanticAttributeAssignmentOK | CommonErrors;
+
+  @route("/{attribute}")
+  @delete
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.principal_assignment_removed" })
+  @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
+  removePrincipalSemanticAttributeAssignment(@path @apigen.target principal: string, @path attribute: string, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;
+}
+
+@tag("Access")
+@summary("List and mutate group semantic attribute assignments")
+@route("/groups/{group}/semantic-attributes")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+interface GroupSemanticAttributeAssignments {
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  listGroupSemanticAttributeAssignments(@path group: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeAssignmentListResponse> | CommonErrors;
+
+  @route("/{attribute}")
+  @put
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.group_assignment_upserted" })
+  @apigen.failsWith(SemanticAttributeInvalidFailure)
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
+  upsertGroupSemanticAttributeAssignment(@path @apigen.target group: string, @path attribute: string, @header("If-Match") ifMatch: string, @body body: SemanticAttributeAssignmentRequest): SemanticAttributeAssignmentOK | CommonErrors;
+
+  @route("/{attribute}")
+  @delete
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.group_assignment_removed" })
+  @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
+  removeGroupSemanticAttributeAssignment(@path @apigen.target group: string, @path attribute: string, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;
+}
+
+@tag("Access")
+@summary("List and mutate trusted semantic attribute claim mappings")
+@route("/semantic-attributes/{attribute}/claim-mappings")
+@apigen.commandDefaults(#{ guarantee: "transactional" })
+interface SemanticAttributeClaimMappings {
+  @get
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  listSemanticAttributeClaimMappings(@path attribute: string, @query limit?: ListLimit, @query pageToken?: PageToken): OkJson<SemanticAttributeClaimMappingListResponse> | CommonErrors;
+
+  @post
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping_upserted" })
+  @apigen.failsWith(SemanticAttributeInvalidFailure)
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeClaimMappingAuditPayload)
+  upsertSemanticAttributeClaimMapping(@path @apigen.target attribute: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string, @body body: SemanticAttributeClaimMappingRequest): SemanticAttributeClaimMappingOK | CommonErrors;
+
+  @route("/{mapping}")
+  @delete
+  @apigen.authz(#{ mode: "authenticated" })
+  @extension("x-leapview-object-scope", "platform")
+  @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping_removed" })
+  @apigen.failsWith(SemanticAttributeClaimMappingNotFoundFailure)
+  @apigen.auditPayload(SemanticAttributeClaimMappingAuditPayload)
+  removeSemanticAttributeClaimMapping(@path @apigen.target attribute: string, @path mapping: string, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;
+}
+
+@tag("Access")
+@summary("Preview semantic attribute assignment impact")
+@route("/semantic-attributes/{attribute}/impact-preview")
+@post
+@apigen.query
+@apigen.authz(#{ mode: "authenticated" })
+@extension("x-leapview-object-scope", "platform")
+  @apigen.failsWith(SemanticAttributeInvalidFailure)
+  @apigen.failsWith(SemanticAttributeNotFoundFailure)
+op previewSemanticAttributeImpact(@path @apigen.target attribute: string, @body body: SemanticAttributeImpactPreviewRequest): SemanticAttributeImpactPreviewOK | CommonErrors;

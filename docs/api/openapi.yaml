@@ -10027,6 +10027,927 @@ paths:
         ui:
           action_id: group.member.add
       x-leapview-object-scope: platform
+  /api/v1/groups/{group}/semantic-attributes:
+    get:
+      operationId: listGroupSemanticAttributeAssignments
+      parameters:
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeAssignmentListResponse'
+              example:
+                items:
+                  - assignmentVersion: 1
+                    attributeName: example
+                    createdAt: "2026-01-02T15:04:05Z"
+                    id: example
+                    lifecycleState: example
+                    removedAt: "2026-01-02T15:04:05Z"
+                    targetId: example
+                    targetKind: principal
+                    updatedAt: "2026-01-02T15:04:05Z"
+                    values:
+                      - booleanValue: true
+                        dateValue: example
+                        decimalValue: example
+                        integerValue: example
+                        stringValue: example
+                        timestampValue: example
+                        type: String
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
+  /api/v1/groups/{group}/semantic-attributes/{attribute}:
+    delete:
+      operationId: removeGroupSemanticAttributeAssignment
+      parameters:
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers
+            may be useful. '
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: targetId
+                sensitivity: pii
+              - name: targetKind
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SemanticAttributeAssignmentAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.group_assignment_removed
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_ASSIGNMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute assignment was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: group
+          type: group
+      x-leapview-object-scope: platform
+    put:
+      operationId: upsertGroupSemanticAttributeAssignment
+      parameters:
+        - name: group
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeAssignmentResponse'
+              example:
+                assignmentVersion: 1
+                attributeName: example
+                createdAt: "2026-01-02T15:04:05Z"
+                id: example
+                lifecycleState: example
+                removedAt: "2026-01-02T15:04:05Z"
+                targetId: example
+                targetKind: principal
+                updatedAt: "2026-01-02T15:04:05Z"
+                values:
+                  - booleanValue: true
+                    dateValue: example
+                    decimalValue: example
+                    integerValue: example
+                    stringValue: example
+                    timestampValue: example
+                    type: String
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticAttributeAssignmentRequest'
+            example:
+              values:
+                - booleanValue: true
+                  dateValue: example
+                  decimalValue: example
+                  integerValue: example
+                  stringValue: example
+                  timestampValue: example
+                  type: String
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: targetId
+                sensitivity: pii
+              - name: targetKind
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SemanticAttributeAssignmentAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.group_assignment_upserted
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_INVALID
+            kind: invalid
+            public_detail: Semantic attribute request is invalid.
+            status_code: 400
+          - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: group
+          type: group
+      x-leapview-object-scope: platform
   /api/v1/instance:
     get:
       operationId: getInstance
@@ -19483,6 +20404,927 @@ paths:
           type: principal
         ui:
           action_id: principal.password.reset
+      x-leapview-object-scope: platform
+  /api/v1/principals/{principal}/semantic-attributes:
+    get:
+      operationId: listPrincipalSemanticAttributeAssignments
+      parameters:
+        - name: principal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeAssignmentListResponse'
+              example:
+                items:
+                  - assignmentVersion: 1
+                    attributeName: example
+                    createdAt: "2026-01-02T15:04:05Z"
+                    id: example
+                    lifecycleState: example
+                    removedAt: "2026-01-02T15:04:05Z"
+                    targetId: example
+                    targetKind: principal
+                    updatedAt: "2026-01-02T15:04:05Z"
+                    values:
+                      - booleanValue: true
+                        dateValue: example
+                        decimalValue: example
+                        integerValue: example
+                        stringValue: example
+                        timestampValue: example
+                        type: String
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
+  /api/v1/principals/{principal}/semantic-attributes/{attribute}:
+    delete:
+      operationId: removePrincipalSemanticAttributeAssignment
+      parameters:
+        - name: principal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers
+            may be useful. '
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: targetId
+                sensitivity: pii
+              - name: targetKind
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SemanticAttributeAssignmentAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.principal_assignment_removed
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_ASSIGNMENT_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute assignment was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
+      x-leapview-object-scope: platform
+    put:
+      operationId: upsertPrincipalSemanticAttributeAssignment
+      parameters:
+        - name: principal
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeAssignmentResponse'
+              example:
+                assignmentVersion: 1
+                attributeName: example
+                createdAt: "2026-01-02T15:04:05Z"
+                id: example
+                lifecycleState: example
+                removedAt: "2026-01-02T15:04:05Z"
+                targetId: example
+                targetKind: principal
+                updatedAt: "2026-01-02T15:04:05Z"
+                values:
+                  - booleanValue: true
+                    dateValue: example
+                    decimalValue: example
+                    integerValue: example
+                    stringValue: example
+                    timestampValue: example
+                    type: String
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticAttributeAssignmentRequest'
+            example:
+              values:
+                - booleanValue: true
+                  dateValue: example
+                  decimalValue: example
+                  integerValue: example
+                  stringValue: example
+                  timestampValue: example
+                  type: String
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: targetId
+                sensitivity: pii
+              - name: targetKind
+                sensitivity: internal
+            retention: security
+            schema:
+              ref: SemanticAttributeAssignmentAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.principal_assignment_upserted
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_INVALID
+            kind: invalid
+            public_detail: Semantic attribute request is invalid.
+            status_code: 400
+          - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: principal
+          type: principal
       x-leapview-object-scope: platform
   /api/v1/principals/{principal}/sessions:
     get:
@@ -57142,6 +58984,3052 @@ paths:
       tags:
         - Search
       x-apigen-operation-kind: query
+  /api/v1/semantic-attributes:
+    get:
+      operationId: listSemanticAttributeDefinitions
+      parameters:
+        - name: q
+          in: query
+          required: false
+          schema:
+            type: string
+          example: example
+          explode: false
+        - name: ownerKind
+          in: query
+          required: false
+          schema:
+            $ref: '#/components/schemas/SemanticAttributeOwnerKindValue'
+          example: instance
+          explode: false
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeDefinitionListResponse'
+              example:
+                items:
+                  - createdAt: "2026-01-02T15:04:05Z"
+                    definitionVersion: 1
+                    description: example
+                    disabledAt: "2026-01-02T15:04:05Z"
+                    displayName: example
+                    documentationUrl: example
+                    id: example
+                    lifecycleState: example
+                    name: example
+                    ownerId: example
+                    ownerKind: instance
+                    profile: example
+                    shape: scalar
+                    type: String
+                    updatedAt: "2026-01-02T15:04:05Z"
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
+    post:
+      operationId: registerSemanticAttribute
+      parameters:
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+      responses:
+        '201':
+          description: The request has succeeded and a new resource has been created
+            as a result.
+          headers:
+            location:
+              required: true
+              schema:
+                type: string
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeDefinitionResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                definitionVersion: 1
+                description: example
+                disabledAt: "2026-01-02T15:04:05Z"
+                displayName: example
+                documentationUrl: example
+                id: example
+                lifecycleState: example
+                name: example
+                ownerId: example
+                ownerKind: instance
+                profile: example
+                shape: scalar
+                type: String
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticAttributeRegisterRequest'
+            example:
+              metadata:
+                description: example
+                displayName: example
+                documentationUrl: example
+                ownerId: example
+                ownerKind: instance
+              name: example
+              shape: scalar
+              type: String
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: lifecycle
+                sensitivity: public
+            retention: security
+            schema:
+              ref: SemanticAttributeDefinitionAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.registered
+        authz_mode: authenticated
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_CONFLICT
+            kind: conflict
+            public_detail: Semantic attribute conflicts with current state.
+            status_code: 409
+          - code: SEMANTIC_ATTRIBUTE_INVALID
+            kind: invalid
+            public_detail: Semantic attribute request is invalid.
+            status_code: 400
+        idempotency: required
+        owner: LeapViewAPI.Access
+      x-leapview-object-scope: platform
+  /api/v1/semantic-attributes/{attribute}:
+    get:
+      operationId: getSemanticAttributeDefinition
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeDefinitionResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                definitionVersion: 1
+                description: example
+                disabledAt: "2026-01-02T15:04:05Z"
+                displayName: example
+                documentationUrl: example
+                id: example
+                lifecycleState: example
+                name: example
+                ownerId: example
+                ownerKind: instance
+                profile: example
+                shape: scalar
+                type: String
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
+    patch:
+      operationId: updateSemanticAttributeMetadata
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeDefinitionResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                definitionVersion: 1
+                description: example
+                disabledAt: "2026-01-02T15:04:05Z"
+                displayName: example
+                documentationUrl: example
+                id: example
+                lifecycleState: example
+                name: example
+                ownerId: example
+                ownerKind: instance
+                profile: example
+                shape: scalar
+                type: String
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticAttributeMetadataRequest'
+            example:
+              description: example
+              displayName: example
+              documentationUrl: example
+              ownerId: example
+              ownerKind: instance
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: lifecycle
+                sensitivity: public
+            retention: security
+            schema:
+              ref: SemanticAttributeDefinitionAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.metadata_updated
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_INVALID
+            kind: invalid
+            public_detail: Semantic attribute request is invalid.
+            status_code: 400
+          - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: attribute
+          type: attribute
+      x-leapview-object-scope: platform
+  /api/v1/semantic-attributes/{attribute}/claim-mappings:
+    get:
+      operationId: listSemanticAttributeClaimMappings
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: integer
+            format: int32
+            minimum: 1
+            maximum: 200
+          example: 1
+          explode: false
+        - name: pageToken
+          in: query
+          required: false
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 2048
+          example: example
+          explode: false
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeClaimMappingListResponse'
+              example:
+                items:
+                  - attributeName: example
+                    audience: example
+                    claim: example
+                    createdAt: "2026-01-02T15:04:05Z"
+                    id: example
+                    issuer: example
+                    lifecycleState: example
+                    mappingVersion: 1
+                    provider: example
+                    removedAt: "2026-01-02T15:04:05Z"
+                    sourceKind: saml
+                    updatedAt: "2026-01-02T15:04:05Z"
+                page:
+                  nextCursor: example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
+    post:
+      operationId: upsertSemanticAttributeClaimMapping
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeClaimMappingResponse'
+              example:
+                attributeName: example
+                audience: example
+                claim: example
+                createdAt: "2026-01-02T15:04:05Z"
+                id: example
+                issuer: example
+                lifecycleState: example
+                mappingVersion: 1
+                provider: example
+                removedAt: "2026-01-02T15:04:05Z"
+                sourceKind: saml
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticAttributeClaimMappingRequest'
+            example:
+              audience: example
+              claim: example
+              issuer: example
+              provider: example
+              sourceKind: saml
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: claim
+                sensitivity: public
+              - name: provider
+                sensitivity: public
+              - name: sourceKind
+                sensitivity: public
+            retention: security
+            schema:
+              ref: SemanticAttributeClaimMappingAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.claim_mapping_upserted
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_INVALID
+            kind: invalid
+            public_detail: Semantic attribute request is invalid.
+            status_code: 400
+          - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute was not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: attribute
+          type: attribute
+      x-leapview-object-scope: platform
+  /api/v1/semantic-attributes/{attribute}/claim-mappings/{mapping}:
+    delete:
+      operationId: removeSemanticAttributeClaimMapping
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: mapping
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '204':
+          description: 'There is no content to send for this request, but the headers
+            may be useful. '
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: claim
+                sensitivity: public
+              - name: provider
+                sensitivity: public
+              - name: sourceKind
+                sensitivity: public
+            retention: security
+            schema:
+              ref: SemanticAttributeClaimMappingAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.claim_mapping_removed
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_CLAIM_MAPPING_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute claim mapping was not found.
+            status_code: 404
+        owner: LeapViewAPI.Access
+        target:
+          parameter: attribute
+          type: attribute
+      x-leapview-object-scope: platform
+  /api/v1/semantic-attributes/{attribute}/disable:
+    post:
+      operationId: disableSemanticAttribute
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeDefinitionResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                definitionVersion: 1
+                description: example
+                disabledAt: "2026-01-02T15:04:05Z"
+                displayName: example
+                documentationUrl: example
+                id: example
+                lifecycleState: example
+                name: example
+                ownerId: example
+                ownerKind: instance
+                profile: example
+                shape: scalar
+                type: String
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: lifecycle
+                sensitivity: public
+            retention: security
+            schema:
+              ref: SemanticAttributeDefinitionAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.disabled
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute was not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: attribute
+          type: attribute
+      x-leapview-object-scope: platform
+  /api/v1/semantic-attributes/{attribute}/impact-preview:
+    post:
+      operationId: previewSemanticAttributeImpact
+      summary: Preview semantic attribute assignment impact
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeImpactPreviewResponse'
+              example:
+                affectedGroupCount: 1
+                affectedPrincipalCount: 1
+                attributeName: example
+                targetId: example
+                targetKind: principal
+                warnings:
+                  - example
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SemanticAttributeImpactPreviewRequest'
+            example:
+              targetId: example
+              targetKind: principal
+              values:
+                - booleanValue: true
+                  dateValue: example
+                  decimalValue: example
+                  integerValue: example
+                  stringValue: example
+                  timestampValue: example
+                  type: String
+      x-apigen-operation-kind: query
+      x-leapview-object-scope: platform
+  /api/v1/semantic-attributes/{attribute}/restore:
+    post:
+      operationId: restoreSemanticAttribute
+      parameters:
+        - name: attribute
+          in: path
+          required: true
+          schema:
+            type: string
+          example: example
+        - name: Idempotency-Key
+          in: header
+          required: true
+          schema:
+            type: string
+            minLength: 1
+            maxLength: 200
+          example: example
+        - name: If-Match
+          in: header
+          required: true
+          schema:
+            type: string
+          example: example
+      responses:
+        '200':
+          description: The request has succeeded.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SemanticAttributeDefinitionResponse'
+              example:
+                createdAt: "2026-01-02T15:04:05Z"
+                definitionVersion: 1
+                description: example
+                disabledAt: "2026-01-02T15:04:05Z"
+                displayName: example
+                documentationUrl: example
+                id: example
+                lifecycleState: example
+                name: example
+                ownerId: example
+                ownerKind: instance
+                profile: example
+                shape: scalar
+                type: String
+                updatedAt: "2026-01-02T15:04:05Z"
+        '400':
+          description: The server could not understand the request due to invalid
+            syntax.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '401':
+          description: Access is unauthorized.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '403':
+          description: Access is forbidden.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '404':
+          description: The server cannot find the requested resource.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '409':
+          description: The request conflicts with the current state of the server.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '412':
+          description: Precondition failed.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '413':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '415':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '422':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '429':
+          description: Client error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '500':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '502':
+          description: Server error
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+        '503':
+          description: Service unavailable.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/ProblemDetails'
+              example:
+                code: example
+                detail: example
+                errors:
+                  - code: example
+                    detail: example
+                    field: example
+                instance: example
+                requestId: example
+                status: 1
+                title: example
+                type: example
+      tags:
+        - Access
+      x-apigen-operation-kind: command
+      x-apigen-command:
+        audit:
+          guarantee: transactional
+          payload:
+            fields:
+              - name: attributeName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: lifecycle
+                sensitivity: public
+            retention: security
+            schema:
+              ref: SemanticAttributeDefinitionAuditPayload
+            schema_version: 1
+          required: true
+          success_action: semantic_attribute.restored
+        authz_mode: authenticated
+        concurrency: if-match
+        failures:
+          - code: SEMANTIC_ATTRIBUTE_NOT_FOUND
+            kind: not_found
+            public_detail: Semantic attribute was not found.
+            status_code: 404
+        idempotency: required
+        owner: LeapViewAPI.Access
+        target:
+          parameter: attribute
+          type: attribute
+      x-leapview-object-scope: platform
   /api/v1/semantic-models:
     get:
       operationId: listSemanticModels
@@ -82231,6 +87119,683 @@ components:
           - example
         toggle: true
         type: example
+    SemanticAttributeAssignmentAuditPayload:
+      type: object
+      required:
+        - attributeName
+        - targetKind
+        - targetId
+      properties:
+        attributeName:
+          type: string
+          example: example
+        targetKind:
+          type: string
+          example: example
+        targetId:
+          type: string
+          example: example
+      example:
+        attributeName: example
+        targetId: example
+        targetKind: example
+    SemanticAttributeAssignmentListResponse:
+      type: object
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticAttributeAssignmentResponse'
+          example:
+            - assignmentVersion: 1
+              attributeName: example
+              createdAt: "2026-01-02T15:04:05Z"
+              id: example
+              lifecycleState: example
+              removedAt: "2026-01-02T15:04:05Z"
+              targetId: example
+              targetKind: principal
+              updatedAt: "2026-01-02T15:04:05Z"
+              values:
+                - booleanValue: true
+                  dateValue: example
+                  decimalValue: example
+                  integerValue: example
+                  stringValue: example
+                  timestampValue: example
+                  type: String
+        page:
+          $ref: '#/components/schemas/PageInfo'
+      example:
+        items:
+          - assignmentVersion: 1
+            attributeName: example
+            createdAt: "2026-01-02T15:04:05Z"
+            id: example
+            lifecycleState: example
+            removedAt: "2026-01-02T15:04:05Z"
+            targetId: example
+            targetKind: principal
+            updatedAt: "2026-01-02T15:04:05Z"
+            values:
+              - booleanValue: true
+                dateValue: example
+                decimalValue: example
+                integerValue: example
+                stringValue: example
+                timestampValue: example
+                type: String
+        page:
+          nextCursor: example
+    SemanticAttributeAssignmentRequest:
+      type: object
+      required:
+        - values
+      properties:
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticAttributeValue'
+          example:
+            - booleanValue: true
+              dateValue: example
+              decimalValue: example
+              integerValue: example
+              stringValue: example
+              timestampValue: example
+              type: String
+      example:
+        values:
+          - booleanValue: true
+            dateValue: example
+            decimalValue: example
+            integerValue: example
+            stringValue: example
+            timestampValue: example
+            type: String
+    SemanticAttributeAssignmentResponse:
+      type: object
+      required:
+        - id
+        - attributeName
+        - targetKind
+        - targetId
+        - values
+        - assignmentVersion
+        - lifecycleState
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: example
+        attributeName:
+          type: string
+          example: example
+        targetKind:
+          $ref: '#/components/schemas/SemanticAttributeAssignmentTargetKindValue'
+        targetId:
+          type: string
+          example: example
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticAttributeValue'
+          example:
+            - booleanValue: true
+              dateValue: example
+              decimalValue: example
+              integerValue: example
+              stringValue: example
+              timestampValue: example
+              type: String
+        assignmentVersion:
+          type: integer
+          format: int64
+          example: 1
+        lifecycleState:
+          type: string
+          example: example
+        removedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        assignmentVersion: 1
+        attributeName: example
+        createdAt: "2026-01-02T15:04:05Z"
+        id: example
+        lifecycleState: example
+        removedAt: "2026-01-02T15:04:05Z"
+        targetId: example
+        targetKind: principal
+        updatedAt: "2026-01-02T15:04:05Z"
+        values:
+          - booleanValue: true
+            dateValue: example
+            decimalValue: example
+            integerValue: example
+            stringValue: example
+            timestampValue: example
+            type: String
+    SemanticAttributeAssignmentTargetKindValue:
+      type: string
+      enum:
+        - principal
+        - group
+      example: principal
+    SemanticAttributeClaimMappingAuditPayload:
+      type: object
+      required:
+        - attributeName
+        - sourceKind
+        - provider
+        - claim
+      properties:
+        attributeName:
+          type: string
+          example: example
+        sourceKind:
+          type: string
+          example: example
+        provider:
+          type: string
+          example: example
+        claim:
+          type: string
+          example: example
+      example:
+        attributeName: example
+        claim: example
+        provider: example
+        sourceKind: example
+    SemanticAttributeClaimMappingListResponse:
+      type: object
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticAttributeClaimMappingResponse'
+          example:
+            - attributeName: example
+              audience: example
+              claim: example
+              createdAt: "2026-01-02T15:04:05Z"
+              id: example
+              issuer: example
+              lifecycleState: example
+              mappingVersion: 1
+              provider: example
+              removedAt: "2026-01-02T15:04:05Z"
+              sourceKind: saml
+              updatedAt: "2026-01-02T15:04:05Z"
+        page:
+          $ref: '#/components/schemas/PageInfo'
+      example:
+        items:
+          - attributeName: example
+            audience: example
+            claim: example
+            createdAt: "2026-01-02T15:04:05Z"
+            id: example
+            issuer: example
+            lifecycleState: example
+            mappingVersion: 1
+            provider: example
+            removedAt: "2026-01-02T15:04:05Z"
+            sourceKind: saml
+            updatedAt: "2026-01-02T15:04:05Z"
+        page:
+          nextCursor: example
+    SemanticAttributeClaimMappingRequest:
+      type: object
+      required:
+        - sourceKind
+        - provider
+        - issuer
+        - audience
+        - claim
+      properties:
+        sourceKind:
+          $ref: '#/components/schemas/SemanticAttributeClaimSourceKindValue'
+        provider:
+          type: string
+          example: example
+        issuer:
+          type: string
+          example: example
+        audience:
+          type: string
+          example: example
+        claim:
+          type: string
+          example: example
+      example:
+        audience: example
+        claim: example
+        issuer: example
+        provider: example
+        sourceKind: saml
+    SemanticAttributeClaimMappingResponse:
+      type: object
+      required:
+        - id
+        - attributeName
+        - sourceKind
+        - provider
+        - issuer
+        - audience
+        - claim
+        - mappingVersion
+        - lifecycleState
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: example
+        attributeName:
+          type: string
+          example: example
+        sourceKind:
+          $ref: '#/components/schemas/SemanticAttributeClaimSourceKindValue'
+        provider:
+          type: string
+          example: example
+        issuer:
+          type: string
+          example: example
+        audience:
+          type: string
+          example: example
+        claim:
+          type: string
+          example: example
+        mappingVersion:
+          type: integer
+          format: int64
+          example: 1
+        lifecycleState:
+          type: string
+          example: example
+        removedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        attributeName: example
+        audience: example
+        claim: example
+        createdAt: "2026-01-02T15:04:05Z"
+        id: example
+        issuer: example
+        lifecycleState: example
+        mappingVersion: 1
+        provider: example
+        removedAt: "2026-01-02T15:04:05Z"
+        sourceKind: saml
+        updatedAt: "2026-01-02T15:04:05Z"
+    SemanticAttributeClaimSourceKindValue:
+      type: string
+      enum:
+        - saml
+        - oidc
+        - embed
+        - service_token
+      example: saml
+    SemanticAttributeDefinitionAuditPayload:
+      type: object
+      required:
+        - attributeName
+        - lifecycle
+        - definitionVersion
+      properties:
+        attributeName:
+          type: string
+          example: example
+        lifecycle:
+          type: string
+          example: example
+        definitionVersion:
+          type: integer
+          format: int64
+          example: 1
+      example:
+        attributeName: example
+        definitionVersion: 1
+        lifecycle: example
+    SemanticAttributeDefinitionListResponse:
+      type: object
+      required:
+        - items
+        - page
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticAttributeDefinitionResponse'
+          example:
+            - createdAt: "2026-01-02T15:04:05Z"
+              definitionVersion: 1
+              description: example
+              disabledAt: "2026-01-02T15:04:05Z"
+              displayName: example
+              documentationUrl: example
+              id: example
+              lifecycleState: example
+              name: example
+              ownerId: example
+              ownerKind: instance
+              profile: example
+              shape: scalar
+              type: String
+              updatedAt: "2026-01-02T15:04:05Z"
+        page:
+          $ref: '#/components/schemas/PageInfo'
+      example:
+        items:
+          - createdAt: "2026-01-02T15:04:05Z"
+            definitionVersion: 1
+            description: example
+            disabledAt: "2026-01-02T15:04:05Z"
+            displayName: example
+            documentationUrl: example
+            id: example
+            lifecycleState: example
+            name: example
+            ownerId: example
+            ownerKind: instance
+            profile: example
+            shape: scalar
+            type: String
+            updatedAt: "2026-01-02T15:04:05Z"
+        page:
+          nextCursor: example
+    SemanticAttributeDefinitionResponse:
+      type: object
+      required:
+        - id
+        - name
+        - type
+        - shape
+        - profile
+        - definitionVersion
+        - ownerKind
+        - displayName
+        - description
+        - lifecycleState
+        - createdAt
+        - updatedAt
+      properties:
+        id:
+          type: string
+          example: example
+        name:
+          type: string
+          example: example
+        type:
+          $ref: '#/components/schemas/SemanticAttributeValueType'
+        shape:
+          $ref: '#/components/schemas/SemanticAttributeShapeValue'
+        profile:
+          type: string
+          example: example
+        definitionVersion:
+          type: integer
+          format: int64
+          example: 1
+        ownerKind:
+          $ref: '#/components/schemas/SemanticAttributeOwnerKindValue'
+        ownerId:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+        documentationUrl:
+          type: string
+          example: example
+        lifecycleState:
+          type: string
+          example: example
+        createdAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        updatedAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+        disabledAt:
+          type: string
+          format: date-time
+          example: "2026-01-02T15:04:05Z"
+      example:
+        createdAt: "2026-01-02T15:04:05Z"
+        definitionVersion: 1
+        description: example
+        disabledAt: "2026-01-02T15:04:05Z"
+        displayName: example
+        documentationUrl: example
+        id: example
+        lifecycleState: example
+        name: example
+        ownerId: example
+        ownerKind: instance
+        profile: example
+        shape: scalar
+        type: String
+        updatedAt: "2026-01-02T15:04:05Z"
+    SemanticAttributeImpactPreviewRequest:
+      type: object
+      required:
+        - targetKind
+        - targetId
+        - values
+      properties:
+        targetKind:
+          $ref: '#/components/schemas/SemanticAttributeAssignmentTargetKindValue'
+        targetId:
+          type: string
+          example: example
+        values:
+          type: array
+          items:
+            $ref: '#/components/schemas/SemanticAttributeValue'
+          example:
+            - booleanValue: true
+              dateValue: example
+              decimalValue: example
+              integerValue: example
+              stringValue: example
+              timestampValue: example
+              type: String
+      example:
+        targetId: example
+        targetKind: principal
+        values:
+          - booleanValue: true
+            dateValue: example
+            decimalValue: example
+            integerValue: example
+            stringValue: example
+            timestampValue: example
+            type: String
+    SemanticAttributeImpactPreviewResponse:
+      type: object
+      required:
+        - attributeName
+        - targetKind
+        - targetId
+        - affectedPrincipalCount
+        - affectedGroupCount
+        - warnings
+      properties:
+        attributeName:
+          type: string
+          example: example
+        targetKind:
+          $ref: '#/components/schemas/SemanticAttributeAssignmentTargetKindValue'
+        targetId:
+          type: string
+          example: example
+        affectedPrincipalCount:
+          type: integer
+          format: int32
+          example: 1
+        affectedGroupCount:
+          type: integer
+          format: int32
+          example: 1
+        warnings:
+          type: array
+          items:
+            type: string
+          example:
+            - example
+      example:
+        affectedGroupCount: 1
+        affectedPrincipalCount: 1
+        attributeName: example
+        targetId: example
+        targetKind: principal
+        warnings:
+          - example
+    SemanticAttributeMetadataRequest:
+      type: object
+      required:
+        - ownerKind
+        - displayName
+        - description
+      properties:
+        ownerKind:
+          $ref: '#/components/schemas/SemanticAttributeOwnerKindValue'
+        ownerId:
+          type: string
+          example: example
+        displayName:
+          type: string
+          example: example
+        description:
+          type: string
+          example: example
+        documentationUrl:
+          type: string
+          example: example
+      example:
+        description: example
+        displayName: example
+        documentationUrl: example
+        ownerId: example
+        ownerKind: instance
+    SemanticAttributeOwnerKindValue:
+      type: string
+      enum:
+        - instance
+        - principal
+        - group
+      example: instance
+    SemanticAttributeRegisterRequest:
+      type: object
+      required:
+        - name
+        - type
+        - shape
+        - metadata
+      properties:
+        name:
+          type: string
+          example: example
+        type:
+          $ref: '#/components/schemas/SemanticAttributeValueType'
+        shape:
+          $ref: '#/components/schemas/SemanticAttributeShapeValue'
+        metadata:
+          $ref: '#/components/schemas/SemanticAttributeMetadataRequest'
+      example:
+        metadata:
+          description: example
+          displayName: example
+          documentationUrl: example
+          ownerId: example
+          ownerKind: instance
+        name: example
+        shape: scalar
+        type: String
+    SemanticAttributeShapeValue:
+      type: string
+      enum:
+        - scalar
+        - list
+      example: scalar
+    SemanticAttributeValue:
+      type: object
+      required:
+        - type
+      properties:
+        type:
+          $ref: '#/components/schemas/SemanticAttributeValueType'
+        stringValue:
+          type: string
+          example: example
+        booleanValue:
+          type: boolean
+          example: true
+        integerValue:
+          type: string
+          example: example
+        decimalValue:
+          type: string
+          example: example
+        dateValue:
+          type: string
+          example: example
+        timestampValue:
+          type: string
+          example: example
+      example:
+        booleanValue: true
+        dateValue: example
+        decimalValue: example
+        integerValue: example
+        stringValue: example
+        timestampValue: example
+        type: String
+    SemanticAttributeValueType:
+      type: string
+      enum:
+        - String
+        - Boolean
+        - Integer
+        - Decimal
+        - Date
+        - Timestamp
+      example: String
     SemanticDashboardBooleanFilterValue:
       type: object
       allOf:

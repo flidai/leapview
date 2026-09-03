@@ -102,6 +102,10 @@ type RegisterSemanticAttributeInput struct {
 type UpdateSemanticAttributeMetadataInput struct {
 	Name     string
 	Metadata SemanticAttributeMetadata
+	// ExpectedVersion is checked after the registry row is locked. Zero keeps
+	// legacy internal callers source-compatible; version-aware command paths
+	// must provide the version returned by the previous read.
+	ExpectedVersion int64
 	Mutation SemanticAttributeMutationContext
 }
 
@@ -147,4 +151,12 @@ type SemanticAttributeRegistry interface {
 	UpdateSemanticAttributeMetadata(context.Context, UpdateSemanticAttributeMetadataInput) (SemanticAttributeDefinition, error)
 	SetSemanticAttributeEnabled(context.Context, string, bool, SemanticAttributeMutationContext) (SemanticAttributeDefinition, error)
 	ValidateSemanticAttributeValue(context.Context, string, any) (CanonicalSemanticAttributeValue, error)
+}
+
+// VersionedSemanticAttributeRegistry is the optimistic-concurrency surface
+// used by command adapters. It is separate so read-only registry consumers do
+// not acquire lifecycle mutation authority.
+type VersionedSemanticAttributeRegistry interface {
+	UpdateSemanticAttributeMetadataExpected(context.Context, UpdateSemanticAttributeMetadataInput) (SemanticAttributeDefinition, error)
+	SetSemanticAttributeEnabledExpected(context.Context, string, bool, int64, SemanticAttributeMutationContext) (SemanticAttributeDefinition, error)
 }
