@@ -408,8 +408,35 @@ func (s *S3Store) PutImmutable(ctx context.Context, key string, reader io.Reader
 		ContentType: aws.String(metadata.ContentType), Metadata: providerMetadata, IfNoneMatch: aws.String("*"),
 	}
 	s.applyEncryption(input)
-	_, putErr := s.client.PutObject(ctx, input)
+	putOutput, putErr := s.client.PutObject(ctx, input)
 	if putErr == nil {
+		// A successful PUT normally carries the provider ETag/version. Some
+		// compatible S3 implementations omit one or both from PUT responses, so
+		// obtain the authoritative identity from HEAD before returning. This
+		// allows callers to retain an exact observed object for conditional
+		// maintenance without duplicating provider-specific reads.
+		if putOutput != nil {
+			if putOutput.VersionId != nil {
+				expected.VersionID = aws.ToString(putOutput.VersionId)
+			}
+			if putOutput.ETag != nil {
+				expected.ETag = aws.ToString(putOutput.ETag)
+			}
+		}
+		if expected.ETag == "" || expected.VersionID == "" {
+			head, headErr := s.client.HeadObject(ctx, &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner})
+			if headErr != nil {
+				if isS3NotFound(headErr) {
+					return ObjectInfo{}, fmt.Errorf("%w: committed object is not yet visible", ErrAmbiguous)
+				}
+				return ObjectInfo{}, headErr
+			}
+			observed, infoErr := s.infoFromHead(key, head)
+			if infoErr != nil {
+				return ObjectInfo{}, infoErr
+			}
+			return observed, nil
+		}
 		return expected, nil
 	}
 	providerCanceled := ctx.Err() != nil || errors.Is(putErr, context.Canceled) || errors.Is(putErr, context.DeadlineExceeded)
@@ -541,7 +568,7 @@ func (s *S3Store) Open(ctx context.Context, key string) (Object, error) {
 
 func (s *S3Store) openWithHead(ctx context.Context, key, full string, head *awss3.HeadObjectOutput, info ObjectInfo) (Object, error) {
 	input := &awss3.GetObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner}
-	if head.VersionId != nil && aws.ToString(head.VersionId) != "" {
+	if head.VersionId != nil && aws.ToString(head.VersionId) != "" && !strings.EqualFold(aws.ToString(head.VersionId), "null") {
 		input.VersionId = head.VersionId
 	} else if head.ETag != nil && aws.ToString(head.ETag) != "" {
 		input.IfMatch = head.ETag
@@ -662,7 +689,15 @@ func (s *S3Store) infoFromHead(key string, head *awss3.HeadObjectOutput) (Object
 	if err != nil || createdAt.IsZero() {
 		return ObjectInfo{}, fmt.Errorf("%w: key %q creation metadata is invalid", ErrCorrupt, key)
 	}
-	return ObjectInfo{Key: key, StorageSecurityDomain: domain, Digest: digest, SizeBytes: size, ContentType: contentType, MetadataDigest: metadataDigest, CreatedAt: createdAt.UTC()}, nil
+	versionID := ""
+	if head.VersionId != nil {
+		versionID = aws.ToString(head.VersionId)
+	}
+	etag := ""
+	if head.ETag != nil {
+		etag = aws.ToString(head.ETag)
+	}
+	return ObjectInfo{Key: key, StorageSecurityDomain: domain, Digest: digest, SizeBytes: size, ContentType: contentType, MetadataDigest: metadataDigest, CreatedAt: createdAt.UTC(), VersionID: versionID, ETag: etag}, nil
 }
 
 func (s *S3Store) verifyEncryption(head *awss3.HeadObjectOutput) error {
@@ -834,6 +869,93 @@ func (s *S3Store) Delete(ctx context.Context, key string) error {
 		return err
 	}
 	return nil
+}
+
+// DeleteExact removes one object only when the provider identity observed by
+// the caller still names that exact immutable incarnation. A non-null
+// VersionID takes precedence; the literal S3 "null" version is mutable and
+// therefore falls back to the observed ETag precondition.
+func (s *S3Store) DeleteExact(ctx context.Context, observed ObjectInfo) error {
+	if s == nil {
+		return fmt.Errorf("%w: nil store", ErrInvalid)
+	}
+	if err := contextErr(ctx); err != nil {
+		return err
+	}
+	full, err := s.fullKey(observed.Key)
+	if err != nil {
+		return err
+	}
+	if observed.StorageSecurityDomain != s.domain {
+		return fmt.Errorf("%w: key %q", ErrDomainMismatch, observed.Key)
+	}
+	input := &awss3.DeleteObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner}
+	if observed.VersionID != "" && !strings.EqualFold(observed.VersionID, "null") {
+		input.VersionId = aws.String(observed.VersionID)
+	} else if observed.ETag != "" {
+		input.IfMatch = aws.String(observed.ETag)
+	} else {
+		return fmt.Errorf("%w: key %q has no immutable version or ETag", ErrCorrupt, observed.Key)
+	}
+	_, deleteErr := s.client.DeleteObject(ctx, input)
+	if deleteErr == nil {
+		return nil
+	}
+	providerCanceled := ctx.Err() != nil || errors.Is(deleteErr, context.Canceled) || errors.Is(deleteErr, context.DeadlineExceeded)
+	if providerCanceled {
+		reconcileCtx, cancel := s.detachedReconcileContext()
+		reconcileErr := s.reconcileDeleteExact(reconcileCtx, observed.Key, full, observed)
+		cancel()
+		if errors.Is(reconcileErr, context.DeadlineExceeded) {
+			return fmt.Errorf("%w: provider delete acknowledgement was canceled", ErrAmbiguous)
+		}
+		return reconcileErr
+	}
+	if isS3NotFound(deleteErr) {
+		return fmt.Errorf("%w: key %q", ErrNotFound, observed.Key)
+	}
+	if status := s3HTTPStatus(deleteErr); status == 412 || s3APIErrorCode(deleteErr, "preconditionfailed") {
+		return fmt.Errorf("%w: key %q delete identity precondition failed", ErrConflict, observed.Key)
+	}
+	if status := s3HTTPStatus(deleteErr); status == 409 || s3APIErrorCode(deleteErr, "conditionalrequestconflict") || classifyS3Error(deleteErr) == s3PutAmbiguous {
+		return s.reconcileDeleteExact(ctx, observed.Key, full, observed)
+	}
+	return deleteErr
+}
+
+func (s *S3Store) reconcileDeleteExact(ctx context.Context, key, full string, observed ObjectInfo) error {
+	headInput := &awss3.HeadObjectInput{Bucket: aws.String(s.bucket), Key: aws.String(full), ExpectedBucketOwner: s.expectedBucketOwner}
+	if observed.VersionID != "" && !strings.EqualFold(observed.VersionID, "null") {
+		headInput.VersionId = aws.String(observed.VersionID)
+	}
+	head, err := s.client.HeadObject(ctx, headInput)
+	if err != nil {
+		if isS3NotFound(err) {
+			return nil
+		}
+		if contextErr(ctx) != nil {
+			return contextErr(ctx)
+		}
+		if classifyS3Error(err) == s3PutAmbiguous {
+			return fmt.Errorf("%w: reconcile exact delete HEAD: %v", ErrAmbiguous, err)
+		}
+		return err
+	}
+	current, infoErr := s.infoFromHead(key, head)
+	if infoErr != nil {
+		if errors.Is(infoErr, ErrDomainMismatch) {
+			return fmt.Errorf("%w: key %q changed while deleting", ErrConflict, key)
+		}
+		return infoErr
+	}
+	if observed.VersionID != "" && !strings.EqualFold(observed.VersionID, "null") {
+		if current.VersionID != observed.VersionID {
+			return fmt.Errorf("%w: key %q changed while deleting", ErrConflict, key)
+		}
+	} else if current.ETag != observed.ETag {
+		return fmt.Errorf("%w: key %q changed while deleting", ErrConflict, key)
+	}
+	return fmt.Errorf("%w: key %q remains after ambiguous delete", ErrAmbiguous, key)
 }
 
 func (s *S3Store) reconcileDelete(ctx context.Context, key, full string, original ObjectInfo) error {

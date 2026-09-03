@@ -810,6 +810,12 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 	if request.Surface != dataquery.SurfaceDashboard {
 		return false
 	}
+	// Model-table rows are lowered through an opaque SQL plan without PlanIR
+	// equivalence evidence. Keep them out of the result cache until that
+	// planner-owned identity exists.
+	if request.Kind == dataquery.KindModelTableRows {
+		return false
+	}
 	switch request.Operation {
 	case dataquery.OperationDashboardAggregate,
 		dataquery.OperationDashboardRows,

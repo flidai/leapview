@@ -141,6 +141,7 @@ type workloadCapabilityConfig struct {
 	Production   bool
 	LeaseTimeout time.Duration
 	Logger       *slog.Logger
+	NodeID       string
 }
 
 func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) (workloadCapabilityBundle, error) {
@@ -158,6 +159,7 @@ func buildWorkloadCapability(ctx context.Context, cfg workloadCapabilityConfig) 
 		Persistence: cfg.Persistence,
 		Production:  cfg.Production,
 		Admission:   workloadmodule.JobAdmitter(controller), LeaseTimeout: cfg.LeaseTimeout, Logger: cfg.Logger,
+		OwnerID: cfg.NodeID,
 	})
 	if err != nil {
 		controller.Close()

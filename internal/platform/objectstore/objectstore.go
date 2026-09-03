@@ -66,6 +66,11 @@ type ObjectInfo struct {
 	ContentType           string
 	MetadataDigest        string
 	CreatedAt             time.Time
+	// VersionID and ETag are provider identities observed during an exact
+	// read/list. They are intentionally evidence, not caller-selected keys;
+	// destructive adapters may use them to fence deletion to that incarnation.
+	VersionID string `json:",omitempty"`
+	ETag      string `json:",omitempty"`
 }
 
 // Object is an exact-key immutable object. Callers must close Body after
@@ -81,6 +86,15 @@ type ImmutableStore interface {
 	Open(context.Context, string) (Object, error)
 	List(context.Context, string, string, int) ([]ObjectInfo, string, error)
 	Delete(context.Context, string) error
+}
+
+// ExactDeleteStore is an optional destructive capability for providers that
+// can fence deletion to an identity observed by a prior read/list. Keeping
+// it separate from ImmutableStore prevents ordinary publication callers from
+// acquiring delete authority while allowing maintenance adapters to opt in.
+type ExactDeleteStore interface {
+	ImmutableStore
+	DeleteExact(context.Context, ObjectInfo) error
 }
 
 // MemoryStore is a concurrency-safe reference implementation for tests and

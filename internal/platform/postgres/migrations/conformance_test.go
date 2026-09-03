@@ -53,6 +53,18 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
 	}
+	// Simulate ACL drift on objects introduced by a forward migration. The
+	// product role policy runs even when every schema revision is already
+	// recorded, so restart/migration replay must restore the exact capability
+	// split without replaying migration DDL.
+	if _, err := db.Exec(ctx, `
+		GRANT SELECT ON cache.cache_l3_gc_state TO leapview_control_runtime;
+		GRANT UPDATE ON cache.cache_l3_gc_state TO leapview_control_maintenance;
+		REVOKE EXECUTE ON FUNCTION cache.acquire_l3_object_fence(uuid,text,text,text,interval) FROM leapview_control_runtime;
+		REVOKE EXECUTE ON FUNCTION cache.prepare_l3_object_gc(uuid,text,text,text,bigint) FROM leapview_control_maintenance;
+		REVOKE SELECT ON cache.cache_l3_gc_state FROM leapview_control_readonly`); err != nil {
+		t.Fatal(err)
+	}
 	// Re-running a clean baseline is safe for retries; the recorded checksum is
 	// verified rather than replaced.
 	tx, err = conn.Begin(ctx)
@@ -65,6 +77,19 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if err := tx.Commit(ctx); err != nil {
 		t.Fatal(err)
+	}
+	var runtimeL3Table, runtimeL3Fence, maintenanceL3Table, maintenanceL3GC, readonlyL3 bool
+	if err := db.QueryRow(ctx, `
+		SELECT has_table_privilege('leapview_control_runtime','cache.cache_l3_gc_state','SELECT'),
+		       has_function_privilege('leapview_control_runtime','cache.acquire_l3_object_fence(uuid,text,text,text,interval)','EXECUTE'),
+		       has_table_privilege('leapview_control_maintenance','cache.cache_l3_gc_state','UPDATE'),
+		       has_function_privilege('leapview_control_maintenance','cache.prepare_l3_object_gc(uuid,text,text,text,bigint)','EXECUTE'),
+		       has_table_privilege('leapview_control_readonly','cache.cache_l3_gc_state','SELECT')`).
+		Scan(&runtimeL3Table, &runtimeL3Fence, &maintenanceL3Table, &maintenanceL3GC, &readonlyL3); err != nil {
+		t.Fatal(err)
+	}
+	if runtimeL3Table || !runtimeL3Fence || maintenanceL3Table || !maintenanceL3GC || !readonlyL3 {
+		t.Fatalf("L3 ACL replay drift: runtime table/fence=%t/%t maintenance table/GC=%t/%t readonly=%t", runtimeL3Table, runtimeL3Fence, maintenanceL3Table, maintenanceL3GC, readonlyL3)
 	}
 
 	var schemaCount int

@@ -219,6 +219,12 @@ BEGIN
         GRANT EXECUTE ON FUNCTION serving_state.guard_reader_snapshot_retention(uuid, bigint) TO leapview_control_runtime;
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON serving_state.bundle, serving_state.asset, serving_state.asset_edge FROM leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA physical_pool FROM leapview_control_runtime;
+        -- Reassert the revision-3 L3 split on every migration replay. Runtime
+        -- may publish under exact object fences but cannot enumerate or drive
+        -- pool-wide garbage collection.
+        REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_runtime;
+        REVOKE ALL ON FUNCTION cache.prune_coordination(timestamptz,integer), cache.acquire_l3_gc_lease(uuid,text,text,interval), cache.renew_l3_gc_lease(uuid,text,text,bigint,interval), cache.release_l3_gc_lease(uuid,text,text,bigint), cache.advance_l3_gc_cursor(uuid,text,text,bigint,text,boolean), cache.prepare_l3_object_gc(uuid,text,text,text,bigint) FROM leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION cache.acquire_l3_object_fence(uuid,text,text,text,interval), cache.renew_l3_object_fence(uuid,text,text,text,bigint,interval), cache.release_l3_object_fence(uuid,text,text,text,bigint), cache.admit_manifest(uuid,uuid,text,text,bigint,text,bigint,text,text,text,text,text,bigint,text,text,text,bigint,text,text,text,uuid,text,bigint,bigint,jsonb,uuid,timestamptz) TO leapview_control_runtime;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
 		GRANT USAGE ON SCHEMA dashboard, event, jobs, physical_pool TO leapview_control_maintenance;
@@ -234,6 +240,10 @@ BEGIN
         GRANT SELECT, INSERT, UPDATE, DELETE ON physical_pool.namespace_deletion_leases TO leapview_control_maintenance;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON physical_pool.physical_pools, physical_pool.physical_pool_admissions, physical_pool.namespace_ownership_claims FROM leapview_control_maintenance;
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_maintenance;
+        GRANT USAGE ON SCHEMA cache TO leapview_control_maintenance;
+        REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_maintenance;
+        REVOKE ALL ON FUNCTION cache.admit_manifest(uuid,uuid,text,text,bigint,text,bigint,text,text,text,text,text,bigint,text,text,text,bigint,text,text,text,uuid,text,bigint,bigint,jsonb,uuid,timestamptz) FROM leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION cache.prune_coordination(timestamptz,integer), cache.acquire_l3_object_fence(uuid,text,text,text,interval), cache.renew_l3_object_fence(uuid,text,text,text,bigint,interval), cache.release_l3_object_fence(uuid,text,text,text,bigint), cache.acquire_l3_gc_lease(uuid,text,text,interval), cache.renew_l3_gc_lease(uuid,text,text,bigint,interval), cache.release_l3_gc_lease(uuid,text,text,bigint), cache.advance_l3_gc_cursor(uuid,text,text,bigint,text,boolean), cache.prepare_l3_object_gc(uuid,text,text,text,bigint) TO leapview_control_maintenance;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, cache, physical_pool, serving_state TO leapview_control_readonly;
@@ -254,6 +264,7 @@ BEGIN
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
         GRANT SELECT ON platform.schema_revision, platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_key_metadata TO leapview_control_readonly;
         REVOKE ALL ON platform.api_cursor_signing_keys FROM leapview_control_readonly;
+        GRANT SELECT ON cache.cache_l3_object_fence, cache.cache_l3_gc_state TO leapview_control_readonly;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
 		GRANT USAGE ON SCHEMA project, access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, cache, physical_pool, serving_state TO leapview_control_backup;
@@ -268,6 +279,7 @@ BEGIN
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.schema_revision, platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_keys TO leapview_control_backup;
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_backup;
+        GRANT SELECT ON cache.cache_l3_object_fence, cache.cache_l3_gc_state TO leapview_control_backup;
     END IF;
 END
 $$;`

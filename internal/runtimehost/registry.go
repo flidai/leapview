@@ -75,6 +75,15 @@ func (r *Registry) ProjectID() projectgraph.ResourceID {
 	return r.manager.ProjectID()
 }
 
+// CurrentServingStateID exposes only the local convergence hint. Durable
+// delivery state is still re-read by the active reconciler before activation.
+func (r *Registry) CurrentServingStateID() servingstate.ID {
+	if r == nil || r.manager == nil {
+		return ""
+	}
+	return r.manager.CurrentServingStateID()
+}
+
 // BindClaimedProject binds the process host to the durable instance claim
 // before any generation is active. It does not create or load a serving state.
 func (r *Registry) BindClaimedProject(projectID projectgraph.ResourceID, environment servingstate.Environment) error {
@@ -137,6 +146,22 @@ func (r *Registry) ReconcileSealed(ctx context.Context, id servingstate.ID) erro
 		return fmt.Errorf("sealed serving state id is required")
 	}
 	return r.manager.ReconcileSealed(ctx, id)
+}
+
+// ReconcileNoActive clears a local generation only after confirming that the
+// canonical sealed active pointer is still absent while serialized with
+// runtime cutover.
+func (r *Registry) ReconcileNoActive(ctx context.Context, resolve func(context.Context) (servingstate.ID, error)) error {
+	if r == nil || r.manager == nil {
+		return ErrRegistryClosed
+	}
+	r.mu.Lock()
+	closed := r.closed
+	r.mu.Unlock()
+	if closed {
+		return ErrRegistryClosed
+	}
+	return r.manager.ReconcileNoActive(ctx, resolve)
 }
 func (r *Registry) PrepareServingState(ctx context.Context, id string) (*Prepared, error) {
 	if r == nil || r.manager == nil {

@@ -11,6 +11,7 @@ CREATE TABLE IF NOT EXISTS cache.cache_l3_object_fence (
     expires_at timestamptz NOT NULL,
     acquired_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (storage_security_domain, object_key),
+    CHECK (object_key ~ ('(^|/)sd/' || storage_security_domain || '/sha256:[0-9a-f]{64}/sha256:[0-9a-f]{64}$')),
     CHECK (expires_at > acquired_at)
 );
 
@@ -24,8 +25,26 @@ CREATE TABLE IF NOT EXISTS cache.cache_l3_gc_state (
     expires_at timestamptz NOT NULL,
     acquired_at timestamptz NOT NULL DEFAULT clock_timestamp(),
     updated_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+    CHECK (cursor_object_key = '' OR cursor_object_key ~ ('(^|/)sd/' || storage_security_domain || '/sha256:[0-9a-f]{64}/sha256:[0-9a-f]{64}$')),
     CHECK (expires_at > acquired_at)
 );
+
+-- The baseline manifest table predates this forward migration. Bind every L3
+-- reference to the exact security-domain path suffix so even a compromised
+-- runtime role cannot admit an object outside the collector's domain scan.
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM pg_constraint
+        WHERE conrelid='cache.cache_manifest'::regclass
+          AND conname='cache_manifest_l3_object_key_domain_check'
+    ) THEN
+        ALTER TABLE cache.cache_manifest
+            ADD CONSTRAINT cache_manifest_l3_object_key_domain_check
+            CHECK (object_key ~ ('(^|/)sd/' || storage_security_domain || '/sha256:[0-9a-f]{64}/sha256:[0-9a-f]{64}$'));
+    END IF;
+END;
+$$;
 
 -- Refresh takeover timestamps from the database clock instead of reusing the
 -- caller's potentially stale values when an expired fill lease is replaced.

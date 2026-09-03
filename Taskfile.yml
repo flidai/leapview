@@ -1251,6 +1251,13 @@ tasks:
     cmds:
       - bash scripts/postgres-conformance-tests.sh run
 
+  test:go:postgres-multinode-qualification:
+    desc: Run the FAI-572 independent PostgreSQL multi-node fencing qualification suites
+    env:
+      LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
+    cmds:
+      - go test -tags 'integration duckdb_arrow' -p 1 -count=1 -run '^TestPostgreSQL18MultiNode.*Qualification$' ./internal/platform/jobs/postgres ./internal/analytics/cache/postgres
+
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView
     cmds:

@@ -33,7 +33,15 @@ type Config struct {
 	OnLeaseRenewalFailure func(error)
 	CandidateReapInterval time.Duration
 	OnCandidateReap       func(int)
-	RequireSealedCatalog  bool
+	// ActiveReconcileInterval bounds how long a node may remain stale when it
+	// misses a delivery notification. Reconciliation always re-reads the
+	// canonical durable active pointer; notifications are only a latency hint.
+	ActiveReconcileInterval time.Duration
+	// ActiveReconcileTimeout bounds one durable pointer reconciliation pass so
+	// a wedged database call cannot suppress all subsequent polls. Zero uses a
+	// conservative default; negative values are rejected.
+	ActiveReconcileTimeout time.Duration
+	RequireSealedCatalog   bool
 	// ResolveSealedActiveState is the authoritative delivery-pointer lookup
 	// used during production startup. When sealed mode is enabled, legacy
 	// serving-state active pointers are not consulted.
@@ -41,19 +49,31 @@ type Config struct {
 }
 
 type Module struct {
-	registry  *runtimehost.Registry
-	reapStop  chan struct{}
-	reapDone  chan struct{}
-	closeOnce sync.Once
-	closeErr  error
+	registry         *runtimehost.Registry
+	reapStop         chan struct{}
+	reapDone         chan struct{}
+	reconcileStop    chan struct{}
+	reconcileDone    chan struct{}
+	reconcileCancel  context.CancelFunc
+	reconcileMu      sync.Mutex
+	reconcileRunning bool
+	logger           *slog.Logger
+	closeOnce        sync.Once
+	closeErr         error
 }
 
 func Build(ctx context.Context, config Config) (*Module, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if config.RequireSealedCatalog && config.ResolveSealedActiveState == nil {
 		return nil, errors.New("sealed runtime host requires an authoritative active-state resolver")
 	}
 	if config.States == nil || config.Factory == nil {
 		return nil, errors.New("serving-state repository and runtime factory are required")
+	}
+	if config.ActiveReconcileTimeout < 0 {
+		return nil, errors.New("active reconciliation timeout must not be negative")
 	}
 	var registry *runtimehost.Registry
 	registry = runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{Repo: config.States, ProjectID: config.ProjectID, Environment: config.Environment, Factory: config.Factory, ManagedData: config.ManagedData, Authorization: config.Authorization, Logger: config.Logger, OnCleanupFailure: config.OnCleanupFailure, OnLeaseRenewalFailure: config.OnLeaseRenewalFailure, OnDrained: config.OnDrained, RequireSealedCatalog: config.RequireSealedCatalog})
@@ -83,7 +103,11 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 		_ = registry.Close()
 		return nil, err
 	}
-	m := &Module{registry: registry, reapStop: make(chan struct{}), reapDone: make(chan struct{})}
+	logger := config.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+	m := &Module{registry: registry, reapStop: make(chan struct{}), reapDone: make(chan struct{}), reconcileStop: make(chan struct{}), reconcileDone: make(chan struct{}), logger: logger}
 	interval := config.CandidateReapInterval
 	if interval <= 0 {
 		interval = time.Minute
@@ -103,7 +127,96 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			}
 		}
 	}()
+	reconcileInterval := config.ActiveReconcileInterval
+	if reconcileInterval <= 0 {
+		reconcileInterval = time.Minute
+	}
+	reconcileTimeout := config.ActiveReconcileTimeout
+	if reconcileTimeout <= 0 {
+		reconcileTimeout = 30 * time.Second
+	}
+	if config.RequireSealedCatalog {
+		// Do not retain the startup admission context: its workload lease is
+		// released when Build returns. The reconciler owns an independent
+		// lifecycle context and performs only its own bounded durable reads.
+		reconcileCtx, reconcileCancel := context.WithCancel(context.Background())
+		m.reconcileCancel = reconcileCancel
+		go func() {
+			defer close(m.reconcileDone)
+			ticker := time.NewTicker(reconcileInterval)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-ticker.C:
+					m.startActiveReconcile(reconcileCtx, config.ResolveSealedActiveState, reconcileTimeout)
+				case <-m.reconcileStop:
+					return
+				}
+			}
+		}()
+	} else {
+		// Local/evaluation hosts retain their existing explicit Reload behavior;
+		// the durable active-pointer reconciler is production/sealed only.
+		close(m.reconcileDone)
+	}
 	return m, nil
+}
+
+func (m *Module) startActiveReconcile(ctx context.Context, resolve func(context.Context) (servingstate.ID, error), timeout time.Duration) {
+	if m == nil || m.registry == nil || resolve == nil {
+		return
+	}
+	m.reconcileMu.Lock()
+	if m.reconcileRunning {
+		m.reconcileMu.Unlock()
+		return
+	}
+	m.reconcileRunning = true
+	m.reconcileMu.Unlock()
+	go func() {
+		defer func() {
+			m.reconcileMu.Lock()
+			m.reconcileRunning = false
+			m.reconcileMu.Unlock()
+		}()
+		passCtx, cancel := context.WithTimeout(ctx, timeout)
+		defer cancel()
+		if err := m.reconcileActive(passCtx, resolve); err != nil && !errors.Is(err, context.Canceled) && !errors.Is(err, runtimehost.ErrRegistryClosed) {
+			logger := m.logger
+			if logger == nil {
+				logger = slog.Default()
+			}
+			logger.WarnContext(ctx, "sealed active serving generation reconciliation failed", "error", err)
+		}
+	}()
+}
+
+func (m *Module) reconcileActive(ctx context.Context, resolve func(context.Context) (servingstate.ID, error)) error {
+	if m == nil || m.registry == nil {
+		return errors.New("runtime host is unavailable")
+	}
+	if resolve == nil {
+		return errors.New("sealed active-state resolver is unavailable")
+	}
+	id, err := resolve(ctx)
+	if err != nil {
+		if errors.Is(err, servingstate.ErrNotFound) {
+			// Confirm absence while serialized with local cutover before
+			// retiring a generation. A concurrent activation wins the race.
+			if confirmErr := m.registry.ReconcileNoActive(ctx, resolve); confirmErr != nil {
+				return confirmErr
+			}
+			return nil
+		}
+		return err
+	}
+	if id == "" {
+		return errors.New("sealed active-state resolver returned an empty generation")
+	}
+	if id == m.registry.CurrentServingStateID() {
+		return nil
+	}
+	return m.registry.ReconcileSealed(ctx, id)
 }
 func (m *Module) Reload(ctx context.Context) error { return m.registry.Reload(ctx) }
 
@@ -208,6 +321,11 @@ func (m *Module) Close() error {
 	m.closeOnce.Do(func() {
 		close(m.reapStop)
 		<-m.reapDone
+		if m.reconcileCancel != nil {
+			m.reconcileCancel()
+		}
+		close(m.reconcileStop)
+		<-m.reconcileDone
 		if m.registry != nil {
 			m.closeErr = m.registry.Close()
 		}

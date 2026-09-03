@@ -320,6 +320,22 @@ func (m *Manager) ProjectID() projectgraph.ResourceID {
 	return m.projectID
 }
 
+// CurrentServingStateID reports the process-local generation currently
+// serving this manager. It is intentionally only a convergence optimization:
+// durable delivery state remains the authority and callers must re-read that
+// state before relying on this value.
+func (m *Manager) CurrentServingStateID() servingstate.ID {
+	if m == nil {
+		return ""
+	}
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.current == nil {
+		return ""
+	}
+	return m.current.servingStateID
+}
+
 // ActiveArtifact reports the exact active serving generation for this
 // manager's immutable project/environment scope. It deliberately consults
 // the serving-state repository rather than inferring activity from the
@@ -462,6 +478,51 @@ func (m *Manager) ReconcileSealed(ctx context.Context, id servingstate.ID) error
 		return err
 	}
 	return m.activatePreparedContext(ctx, prepared, func() error { return nil })
+}
+
+// ReconcileNoActive retires the process-local generation only after a second
+// authoritative pointer read serialized with cutover. This prevents a stale
+// not-found observation from racing a concurrent delivery activation.
+func (m *Manager) ReconcileNoActive(ctx context.Context, resolve func(context.Context) (servingstate.ID, error)) error {
+	if m == nil || resolve == nil {
+		return errors.New("sealed active-state resolver is required")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	m.cutoverMu.Lock()
+	// The confirmation read is part of the cutover fence, but a broken or
+	// wedged durable reader must not hold that fence through shutdown. Keep the
+	// result channel buffered so the resolver goroutine can always finish its
+	// send after cancellation releases the lock.
+	confirmation := make(chan error, 1)
+	go func() {
+		_, err := resolve(ctx)
+		confirmation <- err
+	}()
+	var err error
+	select {
+	case err = <-confirmation:
+	case <-ctx.Done():
+		m.cutoverMu.Unlock()
+		return ctx.Err()
+	}
+	if err == nil {
+		m.cutoverMu.Unlock()
+		return errReloadReadRace
+	}
+	if !errors.Is(err, servingstate.ErrNotFound) {
+		m.cutoverMu.Unlock()
+		return err
+	}
+	m.mu.Lock()
+	current := m.current
+	m.current = nil
+	retired := m.retireLocked(current)
+	m.mu.Unlock()
+	m.cutoverMu.Unlock()
+	m.cleanupRetired(retired)
+	return nil
 }
 
 func (m *Manager) prepareActiveSealed(ctx context.Context, state servingstate.State, artifact servingstate.Artifact) (*Prepared, error) {

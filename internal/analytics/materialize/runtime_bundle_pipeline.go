@@ -88,6 +88,15 @@ type bundleExecution struct {
 	summary dataquery.Result
 }
 
+func branchResultEquivalenceDigest(plan semanticquery.BundlePlan, id string, request dataquery.Query) string {
+	for _, branch := range plan.Branches {
+		if branch.ID == id {
+			return materializeResultEquivalenceDigest(branch.ResultEquivalenceDigest, request)
+		}
+	}
+	return ""
+}
+
 // ExecuteDataQueryBundle authorizes every branch before compiling one
 // single-dataset GROUPING SETS statement. The deliberately short orchestration
 // method gives each stage one failure boundary and typed state, while a bundle
@@ -211,7 +220,7 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			continue
 		}
 		started := time.Now()
-		cached, address, hit, lookup, err := r.queryCache.lookupArrow(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL)
+		cached, address, hit, lookup, err := r.queryCache.lookupArrowWithDigest(ctx, branch.Query, r.resultPartition, dependency, plan.Plan.SQL, branchResultEquivalenceDigest(plan, branch.ID, branch.Query))
 		duration := time.Since(started)
 		if err != nil {
 			observePendingBundleCacheError(ctx, out)

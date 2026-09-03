@@ -122,7 +122,7 @@ func NewL3ObjectStore(ctx context.Context, contract *ducklake.PoolContract, conf
 			return nil, fmt.Errorf("resolve target-owned S3 encryption key: %w", err)
 		}
 	}
-	return analyticsl3.NewS3ObjectStoreWithResolvedEncryption(client, parsed.Host, prefix, encryptionRef, providerKey)
+	return analyticsl3.NewS3ObjectStoreWithResolvedEncryption(client, parsed.Host, prefix, encryptionRef, providerKey, string(contract.Pool.ID))
 }
 
 // CandidateCatalogRunnerConfig binds the admitted physical pool and the

@@ -313,11 +313,15 @@ type BundlePlan struct {
 }
 
 type BundleBranch struct {
-	ID                   string
-	Ordinal              int
-	Columns              []BundleColumn
-	Fingerprint          string
-	DependencyProjection DependencyProjection
+	ID          string
+	Ordinal     int
+	Columns     []BundleColumn
+	Fingerprint string
+	// ResultEquivalenceDigest is the planner-owned, target-independent result
+	// identity for this branch. It is distinct from Fingerprint, which remains
+	// the executable graph fingerprint used for diagnostics.
+	ResultEquivalenceDigest string
+	DependencyProjection    DependencyProjection
 }
 
 type BundleColumn struct {

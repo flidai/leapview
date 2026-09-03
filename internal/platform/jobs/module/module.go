@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +24,10 @@ type Config struct {
 	LeaseTimeout time.Duration
 	PollInterval time.Duration
 	Logger       *slog.Logger
+	// OwnerID optionally binds runner lease ownership to one process
+	// incarnation. When empty, the legacy per-run generated owner is kept for
+	// non-production callers.
+	OwnerID string
 }
 
 type Module struct {
@@ -61,17 +66,23 @@ func (m *Module) RegisterHandlers(handlers []jobs.Handler) error {
 	if m.runner != nil || m.cancel != nil {
 		return errors.New("job handlers are already registered")
 	}
-	runner, err := jobs.NewRunner(jobs.RunnerConfig{
+	ownerID := strings.TrimSpace(m.config.OwnerID)
+	runnerConfig := jobs.RunnerConfig{
 		Repository: m.repository, Admission: m.config.Admission, Handlers: handlers,
 		Classes:      []string{jobpolicy.WorkloadClassControl, jobpolicy.WorkloadClassBackground},
 		LeaseTimeout: m.config.LeaseTimeout, PollInterval: m.config.PollInterval, Logger: m.config.Logger,
-		OwnerFactory: func() string { return jobpolicy.WorkerOwner(time.Now().UnixNano()) },
 		FailureEncoder: func(_ error) []byte {
 			// Never persist handler error text: it may contain SQL, payloads, or
 			// credentials. This bounded stable code is the only durable detail.
 			return []byte(`{"code":"ASYNC_JOB_FAILED"}`)
 		},
-	})
+	}
+	if ownerID != "" {
+		runnerConfig.OwnerID = ownerID
+	} else {
+		runnerConfig.OwnerFactory = func() string { return jobpolicy.WorkerOwner(time.Now().UnixNano()) }
+	}
+	runner, err := jobs.NewRunner(runnerConfig)
 	if err != nil {
 		return err
 	}

@@ -86,6 +86,9 @@ func (f *fakeS3Client) HeadObject(ctx context.Context, in *awss3.HeadObjectInput
 	if !ok {
 		return nil, &smithy.GenericAPIError{Code: "NotFound", Message: "missing"}
 	}
+	if in.VersionId != nil && aws.ToString(in.VersionId) != o.version {
+		return nil, &smithy.GenericAPIError{Code: "NoSuchVersion", Message: "version missing"}
+	}
 	return &awss3.HeadObjectOutput{ContentLength: aws.Int64(int64(len(o.body))), Metadata: cloneMap(o.meta), ContentType: aws.String(o.contentType), LastModified: aws.Time(o.created), ETag: aws.String(o.etag), VersionId: aws.String(o.version), ServerSideEncryption: o.encryption, SSEKMSKeyId: aws.String(o.kmsKey)}, nil
 }
 
@@ -164,7 +167,14 @@ func (f *fakeS3Client) DeleteObject(ctx context.Context, in *awss3.DeleteObjectI
 	if !ok {
 		return nil, &smithy.GenericAPIError{Code: "NoSuchKey", Message: "missing"}
 	}
-	if f.deleteRejectIfMatch || in.IfMatch == nil || aws.ToString(in.IfMatch) != o.etag {
+	if f.deleteRejectIfMatch {
+		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "delete rejected"}
+	}
+	if in.VersionId != nil {
+		if aws.ToString(in.VersionId) != o.version {
+			return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "version mismatch"}
+		}
+	} else if in.IfMatch == nil || aws.ToString(in.IfMatch) != o.etag {
 		return nil, &smithy.GenericAPIError{Code: "PreconditionFailed", Message: "etag mismatch"}
 	}
 	delete(f.objects, key)
@@ -242,6 +252,68 @@ func TestS3StorePutOpenConflictAndLostAck(t *testing.T) {
 	}
 	client.putErr = nil
 	client.putErrAfterCommit = false
+}
+
+func TestS3StoreExactIdentityUsesVersionOrETag(t *testing.T) {
+	client := newFakeS3()
+	store := s3TestStore(t, client, S3EncryptionConfig{Mode: S3EncryptionSSES3})
+	body := []byte("exact")
+	info, err := store.PutImmutable(context.Background(), "exact/versioned", bytes.NewReader(body), metadataFor(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if info.VersionID != "v1" || info.ETag == "" {
+		t.Fatalf("put identity = %+v", info)
+	}
+	if err := store.DeleteExact(context.Background(), info); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.deletes[len(client.deletes)-1]; got.VersionId == nil || aws.ToString(got.VersionId) != "v1" || got.IfMatch != nil {
+		t.Fatalf("versioned delete input = %#v", got)
+	}
+
+	// A mutable null version must be fenced with the observed ETag, including
+	// when the object was opened rather than listed.
+	body = []byte("null-version")
+	if _, err := store.PutImmutable(context.Background(), "exact/null", bytes.NewReader(body), metadataFor(body)); err != nil {
+		t.Fatal(err)
+	}
+	client.mu.Lock()
+	nullObject := client.objects["objects/exact/null"]
+	nullObject.version = "null"
+	client.objects["objects/exact/null"] = nullObject
+	client.mu.Unlock()
+	opened, err := store.Open(context.Background(), "exact/null")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := client.gets[len(client.gets)-1]; got.VersionId != nil || aws.ToString(got.IfMatch) != nullObject.etag {
+		t.Fatalf("null-version open input = %#v", got)
+	}
+	if err := store.DeleteExact(context.Background(), opened.Info); err != nil {
+		t.Fatal(err)
+	}
+	if got := client.deletes[len(client.deletes)-1]; got.VersionId != nil || aws.ToString(got.IfMatch) != nullObject.etag {
+		t.Fatalf("null-version delete input = %#v", got)
+	}
+}
+
+func TestS3StoreExactDeleteReconcilesObservedVersion(t *testing.T) {
+	client := newFakeS3()
+	store := s3TestStore(t, client, S3EncryptionConfig{Mode: S3EncryptionSSES3})
+	body := []byte("ambiguous-exact")
+	info, err := store.PutImmutable(context.Background(), "exact/ambiguous", bytes.NewReader(body), metadataFor(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.deleteErr = &smithy.GenericAPIError{Code: "InternalError", Message: "uncertain"}
+	client.deleteErrAfterDelete = true
+	if err := store.DeleteExact(context.Background(), info); err != nil {
+		t.Fatalf("ambiguous versioned delete = %v", err)
+	}
+	if got := client.deletes[len(client.deletes)-1]; got.VersionId == nil || aws.ToString(got.VersionId) != info.VersionID {
+		t.Fatalf("delete input = %#v", got)
+	}
 }
 
 func TestS3StoreSpoolsWithoutExposingUnverifiedBytes(t *testing.T) {

@@ -275,6 +275,10 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(fmt.Errorf("read PostgreSQL instance identity: %w", err))
 	}
+	nodeID, err := newProcessNodeID()
+	if err != nil {
+		return fail(err)
+	}
 	fingerprintKey := []byte(strings.TrimSpace(cfg.TokenHashKey))
 	if len(fingerprintKey) < 32 {
 		fingerprintKey = []byte(strings.TrimSpace(cfg.CSRFKey))
@@ -338,7 +342,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: true, LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default(), Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
+	workloadBundle, err := buildWorkloadCapability(ctx, workloadCapabilityConfig{Persistence: &jobsPersistence, Production: true, NodeID: nodeID, LeaseTimeout: cfg.RefreshJobLeaseTimeout, Logger: slog.Default(), Workload: workloadmodule.Config{Policy: cfg.WorkloadConfig()}})
 	if err != nil {
 		return fail(err)
 	}
@@ -378,7 +382,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
-	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: instanceID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, NativeFinalizer: nativeRefreshFinalizer, Operations: refreshOperations, CancelAuditWriter: graph.RefreshCancelAudit, CreateAuditWriter: graph.RefreshCancelAudit})
+	refreshPersistence, err := refreshmodule.NewPostgresPersistence(graph.Refresh, refreshmodule.PostgresPersistenceConfig{SchedulerOwner: nodeID, PublicationIdentityResolver: identityResolver, Jobs: graph.RefreshJobs, CanonicalVerifier: canonicalVerifier, NativeFinalizer: nativeRefreshFinalizer, Operations: refreshOperations, CancelAuditWriter: graph.RefreshCancelAudit, CreateAuditWriter: graph.RefreshCancelAudit})
 	if err != nil {
 		return fail(fmt.Errorf("build refresh persistence: %w", err))
 	}
@@ -799,7 +803,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		bootstrap.DuckLakeMaintenancePool(),
 		extensionSupply,
 		physicalPoolID,
-		instanceID,
+		nodeID,
 		string(environment),
 		servingstatepostgres.New(bootstrap.MaintenancePool()),
 		deploymentpostgres.NewMaintenance(bootstrap.MaintenancePool()),
@@ -863,7 +867,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 			}
 			l3GC := newL3GCWorker(l3GCWorkerConfig{
 				SecurityDomain: contract.PhysicalPoolID,
-				OwnerID:        instanceID,
+				OwnerID:        nodeID,
 				Authority:      maintenance,
 				Collector:      collector,
 				Acquire: func(acquireCtx context.Context) (workloadmodule.Lease, error) {

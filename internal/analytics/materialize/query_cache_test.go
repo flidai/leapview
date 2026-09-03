@@ -1201,7 +1201,9 @@ func TestRuntimeDegenerateBundleObservesFirstLogicalLookupReason(t *testing.T) {
 	require.NoError(t, err)
 	dependency, reusable := runtime.dependencyForPlan(planned.plan)
 	require.True(t, reusable)
-	address, err := runtime.queryCache.cacheAddress(requests[1].Query, runtime.resultPartition, dependency)
+	queryDigest, err := planned.plan.ResultEquivalenceDigest()
+	require.NoError(t, err)
+	address, err := runtime.queryCache.cacheAddressWithDigest(requests[1].Query, runtime.resultPartition, dependency, queryDigest)
 	require.NoError(t, err)
 	runtime.queryCache.scope.Delete(address.key)
 

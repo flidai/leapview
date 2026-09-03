@@ -5,7 +5,7 @@ package l3
 import (
 	"context"
 	"encoding/base64"
-	"errors"
+	"io"
 	"os"
 	"strings"
 	"testing"
@@ -25,10 +25,10 @@ const (
 	l3MinIOSecret = "leapview-conformance-secret"
 )
 
-// TestS3ObjectStoreMinIOConformance owns its disposable MinIO service and
-// exercises the same immutable object protocol used by the target runtime.
-// The lane is opt-in locally and required by CI's external-service task.
-func TestS3ObjectStoreMinIOConformance(t *testing.T) {
+// TestS3ObjectStoreMinIOAdapterSmoke exercises only the L3-specific metadata
+// and capability translation. The platform package owns the exhaustive S3
+// protocol/error conformance tests; this lane verifies the real adapter path.
+func TestS3ObjectStoreMinIOAdapterSmoke(t *testing.T) {
 	ctx := context.Background()
 	endpoint := startL3MinIO(t, ctx)
 	client := l3MinIOClient(t, ctx, endpoint)
@@ -37,77 +37,33 @@ func TestS3ObjectStoreMinIOConformance(t *testing.T) {
 		t.Fatal(err)
 	}
 	prefix := "l3-" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-"))
-	store, err := NewS3ObjectStore(client, bucket, prefix)
+	domain := testDigest('d')
+	store, err := NewS3ObjectStore(client, bucket, prefix, domain)
 	if err != nil {
 		t.Fatal(err)
 	}
-	domain := testDigest('d')
-	key1 := "objects/sd/" + domain + "/" + testDigest('a') + "/" + testDigest('b')
-	key2 := "objects/sd/" + domain + "/" + testDigest('a') + "/" + testDigest('c')
-	metadata := ObjectMetadata{SecurityDomain: domain, Metadata: []byte(`{"rows":1}`)}
-	if _, err := store.PutImmutable(ctx, key1, strings.NewReader("one"), metadata); err != nil {
+	body := []byte("adapter-smoke")
+	key := "objects/sd/" + domain + "/" + testDigest('a')
+	info, err := store.PutImmutable(ctx, key, strings.NewReader(string(body)), ObjectMetadata{SecurityDomain: domain, Metadata: []byte(`{"rows":1}`), Digest: digestBytes(body), Size: int64(len(body))})
+	if err != nil {
 		l3MinIOSkipOrFail(t, "MinIO does not support explicit SSE-S3", err)
 	}
-	if _, err := store.PutImmutable(ctx, key2, strings.NewReader("two"), metadata); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := store.PutImmutable(ctx, key1, strings.NewReader("one"), metadata); !errors.Is(err, ErrObjectExists) {
-		t.Fatalf("duplicate immutable put error = %v, want ErrObjectExists", err)
-	}
-	obj, err := store.Open(ctx, key1)
+	opened, err := store.Open(ctx, key)
 	if err != nil {
-		l3MinIOSkipOrFail(t, "MinIO did not return explicit SSE-S3 HEAD evidence", err)
+		l3MinIOSkipOrFail(t, "MinIO adapter object read", err)
 	}
-	if got := obj.Info.MetadataDigest; got != digestBytes([]byte(`{"rows":1}`)) {
-		t.Fatalf("metadata digest = %q", got)
+	readBody, readErr := io.ReadAll(opened.Body)
+	opened.Body.Close()
+	if readErr != nil || string(readBody) != string(body) || opened.Info.MetadataDigest != digestBytes([]byte(`{"rows":1}`)) {
+		t.Fatalf("opened body/info = %q/%+v err=%v", readBody, opened.Info, readErr)
 	}
-	_ = obj.Body.Close()
-
-	first, next, err := store.List(ctx, "objects/sd/"+domain, "", 1)
-	if err != nil || len(first) != 1 || next == "" {
-		t.Fatalf("first page objects=%+v next=%q err=%v", first, next, err)
+	page, next, err := store.List(ctx, "objects/sd/"+domain, "", 1)
+	if err != nil || len(page) != 1 || next != "" {
+		t.Fatalf("list = %+v next=%q err=%v", page, next, err)
 	}
-	second, next2, err := store.List(ctx, "objects/sd/"+domain, next, 1)
-	if err != nil || len(second) != 1 || next2 != "" {
-		t.Fatalf("second page objects=%+v next=%q err=%v", second, next2, err)
-	}
-	if err := store.DeleteExact(ctx, obj.Info); err != nil {
+	if err := store.DeleteExact(ctx, info); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.Open(ctx, key1); err == nil {
-		t.Fatal("deleted MinIO object reopened")
-	}
-
-	// A successful provider write followed by a lost acknowledgement must be
-	// reconciled by reopening the exact immutable key.
-	lostStore, err := NewS3ObjectStore(&l3LostAckClient{S3Client: client}, bucket, prefix)
-	if err != nil {
-		t.Fatal(err)
-	}
-	key3 := "objects/sd/" + domain + "/" + testDigest('a') + "/" + testDigest('e')
-	if _, err := lostStore.PutImmutable(ctx, key3, strings.NewReader("three"), metadata); !errors.Is(err, ErrObjectAmbiguous) {
-		t.Fatalf("lost acknowledgement error = %v, want ErrObjectAmbiguous", err)
-	}
-	opened, err := lostStore.Open(ctx, key3)
-	if err != nil {
-		t.Fatal(err)
-	}
-	_ = opened.Body.Close()
-
-}
-
-type l3LostAckClient struct {
-	S3Client
-	acked bool
-}
-
-func (c *l3LostAckClient) PutObject(ctx context.Context, in *awss3.PutObjectInput, opts ...func(*awss3.Options)) (*awss3.PutObjectOutput, error) {
-	out, err := c.S3Client.PutObject(ctx, in, opts...)
-	if err != nil || c.acked {
-		return out, err
-	}
-	c.acked = true
-	return nil, errors.New("lost MinIO PUT acknowledgement")
 }
 
 func startL3MinIO(t *testing.T, ctx context.Context) string {

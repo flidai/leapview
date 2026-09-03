@@ -51,6 +51,12 @@ type ObjectMetadata struct {
 	SecurityDomain string
 	Metadata       json.RawMessage
 	MetadataDigest string
+	// Digest and Size are pre-committed body evidence. Publication callers
+	// that already performed the bounded digest pass populate these fields so
+	// provider adapters can delegate buffering and verification without a
+	// second read of the body.
+	Digest string
+	Size   int64
 }
 
 // ObjectInfo is returned by object stores for both writes and exact reads.
@@ -419,7 +425,7 @@ func (c *Cache) Publish(ctx context.Context, in PublishInput) (cachepostgres.Man
 	}()
 	metadataDigest := digestBytes(metadata)
 	expected := ObjectInfo{Key: objectKey, SecurityDomain: c.securityDomain, Digest: digest, Size: int64(len(body)), Metadata: metadata, MetadataDigest: metadataDigest}
-	putInfo, putErr := c.store.PutImmutable(guard.ctx, objectKey, bytes.NewReader(body), ObjectMetadata{SecurityDomain: c.securityDomain, Metadata: metadata, MetadataDigest: metadataDigest})
+	putInfo, putErr := c.store.PutImmutable(guard.ctx, objectKey, bytes.NewReader(body), ObjectMetadata{SecurityDomain: c.securityDomain, Metadata: metadata, MetadataDigest: metadataDigest, Digest: digest, Size: int64(len(body))})
 	if putErr != nil && !errors.Is(putErr, ErrObjectExists) && !errors.Is(putErr, ErrObjectAmbiguous) {
 		return cachepostgres.Manifest{}, putErr
 	}

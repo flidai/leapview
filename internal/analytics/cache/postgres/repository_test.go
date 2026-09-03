@@ -1366,6 +1366,9 @@ func TestCacheRoleConformance(t *testing.T) {
 	if _, err := runtime.Exec(t.Context(), `SELECT cache.prepare_l3_object_gc($1,$2,'cache/object','runtime',1)`, uuid.New(), cacheTestDigest('d')); err == nil {
 		t.Fatal("runtime L3 object-GC preparation capability unexpectedly granted")
 	}
+	if _, err := runtime.Exec(t.Context(), `SELECT * FROM cache.acquire_l3_object_fence($1,$2,$3,'runtime',interval '1 minute')`, uuid.New(), cacheTestDigest('d'), "cache/l3/sd/"+cacheTestDigest('e')+"/"+cacheTestDigest('a')+"/"+cacheTestDigest('b')); err == nil {
+		t.Fatal("runtime acquired an L3 object fence outside its storage-security-domain path")
+	}
 	if _, err := runtime.Exec(t.Context(), `INSERT INTO cache.cache_namespace_epoch(namespace_key,partition_kind,target_id,project_id,environment,epoch) VALUES ('forged','production','target_sales','project_sales','prod',1)`); err == nil {
 		t.Fatal("runtime direct namespace fabrication succeeded")
 	}

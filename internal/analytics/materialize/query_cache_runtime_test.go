@@ -32,9 +32,11 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	require.NoError(t, err)
 	dependency, reusable := runtime.dependencyForPlan(planned.plan)
 	require.True(t, reusable)
-	key, _, err := runtime.queryCache.cacheKey(request, runtime.resultPartition, dependency)
+	queryDigest, err := planned.plan.ResultEquivalenceDigest()
 	require.NoError(t, err)
-	entry, _, found, err := runtime.queryCache.scope.LookupArrow(key)
+	address, err := runtime.queryCache.cacheAddressWithDigest(request, runtime.resultPartition, dependency, queryDigest)
+	require.NoError(t, err)
+	entry, _, found, err := runtime.queryCache.scope.LookupArrow(address.key)
 	require.NoError(t, err)
 	require.True(t, found)
 	defer entry.Release()
@@ -52,6 +54,42 @@ func TestRuntimeCachesOwnedArrowAndRebuildsRequestTimingOnHit(t *testing.T) {
 	}
 	if got := second.Rows[0]["id"]; got != int64(1) {
 		t.Fatalf("cached id = %#v", got)
+	}
+}
+
+func TestRuntimeCacheUsesPlannerEquivalentOperatorAndSortSyntax(t *testing.T) {
+	database := &arrowCountingRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db:         database,
+		queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
+		Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields:  []dataquery.Field{{Field: "orders.id", Alias: "id"}},
+		Filters: []dataquery.Filter{{Field: "orders.id", Operator: "EQUALS", Values: []any{int64(1)}}},
+		Sort:    []dataquery.Sort{{Field: "id", Direction: "ASC"}}, Limit: 1,
+	}
+	first, err := runtime.ExecuteDataQuery(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Filters[0].Operator = "equals"
+	request.Sort[0].Direction = "asc"
+	second, err := runtime.ExecuteDataQuery(context.Background(), request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.CacheOutcome != dataquery.CacheMiss || second.CacheOutcome != dataquery.CacheHit {
+		t.Fatalf("cache outcomes = (%q, %q)", first.CacheOutcome, second.CacheOutcome)
+	}
+	if got := database.queries.Load(); got != 1 {
+		t.Fatalf("Arrow executions = %d, want 1", got)
 	}
 }
 
@@ -98,9 +136,11 @@ func TestRuntimeSharedPartitionCacheReusesDataWithoutStaleSQLOrByteLifetime(t *t
 	require.NoError(t, err)
 	firstDependency, reusable := first.dependencyForPlan(firstPlan.plan)
 	require.True(t, reusable)
-	key, generation, err := first.queryCache.cacheKey(request, first.resultPartition, firstDependency)
+	queryDigest, err := firstPlan.plan.ResultEquivalenceDigest()
 	require.NoError(t, err)
-	first.queryCache.store(key, generation, dataquery.Result{
+	address, err := first.queryCache.cacheAddressWithDigest(request, first.resultPartition, firstDependency, queryDigest)
+	require.NoError(t, err)
+	first.queryCache.store(address.key, address.generation, dataquery.Result{
 		SQL:  "select * from snapshot_one.stale_physical_target",
 		Rows: []dataquery.Row{{"id": int64(1)}}, Columns: dataquery.ColumnsFromNames([]string{"id"}),
 	})
@@ -493,7 +533,7 @@ func TestRuntimeNonCacheableQueryRetainsCurrentPlanSQL(t *testing.T) {
 	}))
 }
 
-func TestRuntimeNonDeterministicPlanBypassesLookupStoreAndCoalescing(t *testing.T) {
+func TestRuntimeModelTableRowsBypassesLookupStoreAndCoalescing(t *testing.T) {
 	database := &countingCacheRuntimeDatabase{}
 	runtime := activatedCacheRuntime(t, &Runtime{
 		modelID: "sales",
@@ -515,14 +555,14 @@ func TestRuntimeNonDeterministicPlanBypassesLookupStoreAndCoalescing(t *testing.
 	for range 2 {
 		result, err := runtime.ExecuteDataQuery(ctx, request)
 		require.NoError(t, err)
-		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+		require.Empty(t, result.CacheOutcome)
 	}
 	require.Equal(t, int32(2), database.queries.Load())
 	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
 	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
 		return observation.Phase == dataquery.CacheObservationAdmission &&
 			observation.Decision == dataquery.CacheAdmissionBypassed &&
-			observation.AdmissionReason == dataquery.CacheAdmissionReasonNonDeterministic
+			observation.AdmissionReason == dataquery.CacheAdmissionReasonQueryNotCacheable
 	}))
 	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
 		return observation.Phase == dataquery.CacheObservationLookup || observation.Phase == dataquery.CacheObservationStore

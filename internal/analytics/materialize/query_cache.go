@@ -3,15 +3,18 @@ package materialize
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	resultcacheidentity "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
+	semanticquery "github.com/flidai/leapview/internal/analytics/query"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
 	"github.com/flidai/leapview/internal/analytics/resulttier"
@@ -87,11 +90,81 @@ type tierArrowLookup struct {
 	decoded  dataquery.Result
 }
 
+// executeArrow is retained for cache-unit tests and low-level callers that
+// intentionally provide an authored-query identity. Runtime execution uses
+// executeArrowWithPlan so the key is always derived from normalized PlanIR.
 func (c *queryResultCache) executeArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
 	if observationStarted.IsZero() {
 		observationStarted = time.Now()
 	}
-	address, err := c.cacheAddress(request, partition, dependency)
+	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
+	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute)
+}
+
+func (c *queryResultCache) executeArrowWithPlan(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, plan semanticquery.Plan, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+	if observationStarted.IsZero() {
+		observationStarted = time.Now()
+	}
+	baseDigest, err := plan.ResultEquivalenceDigest()
+	if err != nil {
+		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
+		return dataquery.Result{}, err
+	}
+	queryDigest := materializeResultEquivalenceDigest(baseDigest, request)
+	return c.executeArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, observationStarted, queryDigest, execute)
+}
+
+const authorizationProjectionDomain = "flid.resultidentity.authorization-projection.v1"
+
+// materializeResultEquivalenceDigest binds the authorization-only projection
+// to a planner-owned result identity. Authorization aliases and declaration
+// order are presentation details; the sorted, deduplicated field-name set is
+// the complete authorization semantic that can affect the result.
+func materializeResultEquivalenceDigest(baseDigest string, request dataquery.Query) string {
+	if baseDigest == "" || len(request.AuthorizationFields) == 0 {
+		return baseDigest
+	}
+	fieldSet := make(map[string]struct{}, len(request.AuthorizationFields))
+	for _, field := range request.AuthorizationFields {
+		name := strings.TrimSpace(field.Field)
+		if name != "" {
+			fieldSet[name] = struct{}{}
+		}
+	}
+	if len(fieldSet) == 0 {
+		return baseDigest
+	}
+	fields := make([]string, 0, len(fieldSet))
+	for field := range fieldSet {
+		fields = append(fields, field)
+	}
+	sort.Strings(fields)
+	canonical, err := json.Marshal(struct {
+		Base   string   `json:"base"`
+		Fields []string `json:"fields"`
+	}{Base: baseDigest, Fields: fields})
+	if err != nil {
+		// The input consists only of strings, so encoding cannot fail. Keep this
+		// fail-open if that ever changes: an unbound digest is still preferable
+		// to making an otherwise valid query unavailable.
+		return baseDigest
+	}
+	hash := sha256.New()
+	_, _ = hash.Write([]byte(authorizationProjectionDomain))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write(canonical)
+	return "sha256:" + hex.EncodeToString(hash.Sum(nil))
+}
+
+func (c *queryResultCache) executeArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string, observationStarted time.Time, queryDigest string, execute func(context.Context) (arrowQueryExecution, error)) (dataquery.Result, error) {
+	if observationStarted.IsZero() {
+		observationStarted = time.Now()
+	}
+	address, err := c.cacheAddressWithDigest(request, partition, dependency, queryDigest)
 	if err != nil {
 		observeTypedCacheFinal(ctx, dataquery.CacheObservationError, time.Since(observationStarted))
 		return dataquery.Result{}, err
@@ -309,7 +382,15 @@ func (c *queryResultCache) coalesceBytes(ctx context.Context, key string, execut
 }
 
 func (c *queryResultCache) lookupArrow(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
-	address, err := c.cacheAddress(request, partition, dependency)
+	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
+	if err != nil {
+		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
+	}
+	return c.lookupArrowWithDigest(ctx, request, partition, dependency, diagnosticsSQL, queryDigest)
+}
+
+func (c *queryResultCache) lookupArrowWithDigest(ctx context.Context, request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, diagnosticsSQL, canonicalDigest string) (dataquery.Result, queryCacheAddress, bool, resultcache.LookupObservation, error) {
+	address, err := c.cacheAddressWithDigest(request, partition, dependency, canonicalDigest)
 	if err != nil {
 		return dataquery.Result{}, queryCacheAddress{}, false, resultcache.LookupObservation{}, err
 	}
@@ -576,6 +657,13 @@ func (c *queryResultCache) cacheAddress(request dataquery.Query, partition resul
 	queryDigest, err := resultcacheidentity.CanonicalQueryDigest(request)
 	if err != nil {
 		return queryCacheAddress{}, err
+	}
+	return c.cacheAddressWithDigest(request, partition, dependency, queryDigest)
+}
+
+func (c *queryResultCache) cacheAddressWithDigest(request dataquery.Query, partition resultidentity.Partition, dependency resultidentity.Dependency, queryDigest string) (queryCacheAddress, error) {
+	if !queryCacheIdentityAvailable(request, partition, dependency) {
+		return queryCacheAddress{}, fmt.Errorf("complete query result cache identity is required")
 	}
 	key, err := resultcacheidentity.NewKey(resultcacheidentity.KeyInput{
 		Partition: partition, Dependency: dependency,

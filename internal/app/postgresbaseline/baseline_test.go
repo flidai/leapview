@@ -166,6 +166,23 @@ func TestProductRolePolicyKeepsRetentionOutOfRuntime(t *testing.T) {
 	}
 }
 
+func TestProductRolePolicyRepairsL3CapabilitySplit(t *testing.T) {
+	for _, required := range []string{
+		"REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_runtime",
+		"cache.prepare_l3_object_gc(uuid,text,text,text,bigint) FROM leapview_control_runtime",
+		"cache.acquire_l3_object_fence(uuid,text,text,text,interval)",
+		"cache.admit_manifest(uuid,uuid,text,text,bigint",
+		"REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_maintenance",
+		"cache.prepare_l3_object_gc(uuid,text,text,text,bigint) TO leapview_control_maintenance",
+		"GRANT SELECT ON cache.cache_l3_object_fence, cache.cache_l3_gc_state TO leapview_control_readonly",
+		"GRANT SELECT ON cache.cache_l3_object_fence, cache.cache_l3_gc_state TO leapview_control_backup",
+	} {
+		if !strings.Contains(rolePolicySQL, required) {
+			t.Fatalf("role policy is missing L3 capability repair %q", required)
+		}
+	}
+}
+
 func TestProductRolePolicyNamesDashboardTablesExplicitly(t *testing.T) {
 	if strings.Contains(rolePolicySQL, "ALL TABLES IN SCHEMA dashboard") {
 		t.Fatal("dashboard role policy must not broaden future tables through ALL TABLES")
