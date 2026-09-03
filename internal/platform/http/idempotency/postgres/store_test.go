@@ -73,7 +73,7 @@ func TestClaimReplayAndExactConflict(t *testing.T) {
 	}
 }
 
-func TestExpiredTakeoverFencesOldHTTPOwner(t *testing.T) {
+func TestExpiredGenericLeaseIsQuarantined(t *testing.T) {
 	s, _ := testStore(t)
 	first, execute, err := s.Claim(t.Context(), "expiring", strings.Repeat("a", 64), "owner-1", 250*time.Millisecond, time.Hour)
 	if err != nil || !execute {
@@ -85,13 +85,32 @@ func TestExpiredTakeoverFencesOldHTTPOwner(t *testing.T) {
 	}
 	time.Sleep(350 * time.Millisecond)
 	next, execute, err := s.Claim(t.Context(), "expiring", strings.Repeat("a", 64), "owner-2", time.Second, time.Hour)
-	if err != nil || !execute || next.State != "pending" || next.LeaseGeneration != first.LeaseGeneration+1 {
-		t.Fatalf("takeover=%#v execute=%t err=%v", next, execute, err)
+	if err != nil || execute || next.State != "indeterminate" || next.Status != http.StatusConflict || next.LeaseGeneration != first.LeaseGeneration+1 {
+		t.Fatalf("quarantine=%#v execute=%t err=%v", next, execute, err)
 	}
 	if err := s.Complete(t.Context(), "expiring", strings.Repeat("a", 64), "owner-1", first.LeaseGeneration, http.StatusOK, nil, []byte(`{"old":true}`)); !errors.Is(err, idempotency.ErrLeaseLost) {
 		t.Fatalf("stale completion=%v, want lease lost", err)
 	}
-	if err := s.Complete(t.Context(), "expiring", strings.Repeat("a", 64), "owner-2", next.LeaseGeneration, http.StatusOK, nil, []byte(`{"new":true}`)); err != nil {
+	if next.Owner != "owner-1" {
+		t.Fatalf("quarantined owner = %q, want original owner", next.Owner)
+	}
+}
+
+func TestReclaimableExpiredTakeoverFencesOldHTTPOwner(t *testing.T) {
+	s, _ := testStore(t)
+	first, execute, err := s.ClaimReclaimable(t.Context(), "expiring-reclaimable", strings.Repeat("a", 64), "owner-1", 250*time.Millisecond, time.Hour)
+	if err != nil || !execute {
+		t.Fatalf("first claim=%#v execute=%t err=%v", first, execute, err)
+	}
+	time.Sleep(350 * time.Millisecond)
+	next, execute, err := s.ClaimReclaimable(t.Context(), "expiring-reclaimable", strings.Repeat("a", 64), "owner-2", time.Second, time.Hour)
+	if err != nil || !execute || next.State != "pending" || next.LeaseGeneration != first.LeaseGeneration+1 || next.Owner != "owner-2" {
+		t.Fatalf("takeover=%#v execute=%t err=%v", next, execute, err)
+	}
+	if err := s.Complete(t.Context(), "expiring-reclaimable", strings.Repeat("a", 64), "owner-1", first.LeaseGeneration, http.StatusOK, nil, []byte(`{"old":true}`)); !errors.Is(err, idempotency.ErrLeaseLost) {
+		t.Fatalf("stale completion=%v, want lease lost", err)
+	}
+	if err := s.Complete(t.Context(), "expiring-reclaimable", strings.Repeat("a", 64), "owner-2", next.LeaseGeneration, http.StatusOK, nil, []byte(`{"new":true}`)); err != nil {
 		t.Fatalf("new owner completion=%v", err)
 	}
 }

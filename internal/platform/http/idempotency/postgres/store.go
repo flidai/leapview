@@ -34,6 +34,7 @@ type Store struct {
 }
 
 var _ idempotency.Store = (*Store)(nil)
+var _ idempotency.ReclaimableStore = (*Store)(nil)
 
 func NewStore(db DBTX) *Store {
 	if db == nil {
@@ -65,6 +66,18 @@ func NewStoreWithConfig(db DBTX, lease, retention time.Duration) *Store {
 }
 
 func (s *Store) Claim(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (idempotency.Record, bool, error) {
+	return s.claim(ctx, scope, digest, owner, lease, lifetime, false)
+}
+
+// ClaimReclaimable is the explicit opt-in acquisition path for reviewed
+// endpoints whose mutation is durably reentrant. Generic Claim binds an
+// external attempt so an expired lease becomes indeterminate instead of being
+// silently handed to a second worker.
+func (s *Store) ClaimReclaimable(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (idempotency.Record, bool, error) {
+	return s.claim(ctx, scope, digest, owner, lease, lifetime, true)
+}
+
+func (s *Store) claim(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration, reclaimExpired bool) (idempotency.Record, bool, error) {
 	if s == nil || s.repo == nil {
 		return idempotency.Record{}, false, idempotency.ErrNotFound
 	}
@@ -76,23 +89,28 @@ func (s *Store) Claim(ctx context.Context, scope, digest, owner string, lease, l
 	if !ok || strings.TrimSpace(owner) != owner || owner == "" || len(owner) > 255 {
 		return idempotency.Record{}, false, operation.ErrInvalid
 	}
-	// HTTP idempotency owns only the request execution lease. Unlike domain
-	// operations that bind an external attempt before doing work, a generic
-	// HTTP handler has no durable attempt identity to reconcile after a
-	// process crash. Keep the operation attempt unbound while the handler is
-	// in flight so an expired pending request can advance its fence and be
-	// retried by a waiter. Handlers that return an uncertain outcome still
-	// bind an attempt through MarkIndeterminate before quarantine.
-	result, err := s.repo.Acquire(ctx, operation.AcquireInput{
+	input := operation.AcquireInput{
 		Scope: opScope, OperationType: "http_idempotency", IdempotencyKey: opKey,
 		RequestDigest: "sha256:" + strings.ToLower(digest), OwnerID: owner,
 		Lease: lease, Retention: lifetime,
-	})
-	if errors.Is(err, operation.ErrBusy) {
+	}
+	var result operation.AcquireResult
+	var acquireErr error
+	if reclaimExpired {
+		// Reviewed reentrant endpoints intentionally leave the operation attempt
+		// unbound so Acquire can advance the fence after an expired lease.
+		result, acquireErr = s.repo.Acquire(ctx, input)
+	} else {
+		// Generic HTTP handlers may mutate secrets or issue one-time tokens. An
+		// explicit attempt binds the in-flight work; AcquireWithAttempt then
+		// converts an expired lease to an indeterminate terminal outcome.
+		result, acquireErr = s.repo.AcquireWithAttempt(ctx, input, operationAttemptIdentity(owner, opScope))
+	}
+	if errors.Is(acquireErr, operation.ErrBusy) {
 		record, recordErr := recordFromOperation(result.Operation)
 		return record, false, recordErr
 	}
-	if errors.Is(err, operation.ErrConflict) {
+	if errors.Is(acquireErr, operation.ErrConflict) {
 		// Acquire returns no operation on a digest conflict in order to avoid
 		// exposing a second request's state. Load solely to preserve the HTTP
 		// protocol's exact 409 conflict response.
@@ -101,8 +119,8 @@ func (s *Store) Claim(ctx context.Context, scope, digest, owner string, lease, l
 			return record, false, recordErr
 		}
 	}
-	if err != nil {
-		return idempotency.Record{}, false, err
+	if acquireErr != nil {
+		return idempotency.Record{}, false, acquireErr
 	}
 	record, recordErr := recordFromOperation(result.Operation)
 	if recordErr != nil {

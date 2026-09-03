@@ -284,6 +284,10 @@ type dataAssemblyInputs struct {
 	// hatch for commands whose domain transaction owns exact replay semantics.
 	// Local/evaluation SQLite composition leaves this unset.
 	BypassDurableIdempotency map[string]struct{}
+	// ReclaimExpiredIdempotency is the explicit operation-ID allowlist for
+	// commands whose complete mutation path is durably reentrant. It must stay
+	// narrower than the ordinary required-idempotency command inventory.
+	ReclaimExpiredIdempotency map[string]struct{}
 	// DashboardPublicationReconciler is the explicit activation projection for
 	// the selected dashboard authority.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
@@ -829,8 +833,9 @@ func buildApplicationSurfaces(
 	if platform.apiProtocol == nil {
 		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
 			Idempotency: data.APIIdempotency, CursorSigning: data.CursorSigning,
-			BypassDurableIdempotency: data.BypassDurableIdempotency,
-			RequireExplicit:          data.RequireExplicitAPIProtocol,
+			BypassDurableIdempotency:  data.BypassDurableIdempotency,
+			ReclaimExpiredIdempotency: data.ReclaimExpiredIdempotency,
+			RequireExplicit:           data.RequireExplicitAPIProtocol,
 		}); err != nil {
 			return fail(fmt.Errorf("build API protocol: %w", err))
 		}

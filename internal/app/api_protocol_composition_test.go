@@ -30,10 +30,17 @@ func TestAPIProtocolPersistenceRequiresCompleteExplicitAuthorities(t *testing.T)
 	}
 }
 
-type compositionCountingIdempotencyStore struct{ claims atomic.Int32 }
+type compositionCountingIdempotencyStore struct {
+	claims   atomic.Int32
+	reclaims atomic.Int32
+}
 
 func (s *compositionCountingIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (idempotency.Record, bool, error) {
 	s.claims.Add(1)
+	return idempotency.Record{State: "pending", Digest: digest, Owner: owner, LeaseGeneration: 1, LeaseExpires: time.Now().Add(lease)}, true, nil
+}
+func (s *compositionCountingIdempotencyStore) ClaimReclaimable(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (idempotency.Record, bool, error) {
+	s.reclaims.Add(1)
 	return idempotency.Record{State: "pending", Digest: digest, Owner: owner, LeaseGeneration: 1, LeaseExpires: time.Now().Add(lease)}, true, nil
 }
 func (*compositionCountingIdempotencyStore) Load(context.Context, string) (idempotency.Record, error) {
@@ -73,5 +80,30 @@ func TestConfigureAPIProtocolBypassesOnlyConfiguredCommandDurability(t *testing.
 	}
 	if store.claims.Load() != 0 {
 		t.Fatalf("configured bypass claimed durable idempotency %d times", store.claims.Load())
+	}
+}
+
+func TestConfigureAPIProtocolReclaimsOnlyConfiguredCommand(t *testing.T) {
+	store := &compositionCountingIdempotencyStore{}
+	platform := &platformServices{}
+	if err := configureAPIProtocol(&capabilityRoutes{}, &runtimeServices{}, platform, &httpPolicy{}, t.Context(), apiProtocolPersistence{
+		Idempotency: store, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		ReclaimExpiredIdempotency: map[string]struct{}{"retainProjectCandidateSource": {}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/candidate-sync/source", strings.NewReader(`{"candidateKey":"candidate","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[]}`))
+	request.Header.Set("Authorization", "Bearer credential")
+	request.Header.Set("Idempotency-Key", "source-key")
+	request.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	platform.apiProtocol.Middleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	})).ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusCreated {
+		t.Fatalf("configured reclaim response = %d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if store.reclaims.Load() != 1 || store.claims.Load() != 0 {
+		t.Fatalf("configured reclaim calls = %d ordinary claims = %d", store.reclaims.Load(), store.claims.Load())
 	}
 }

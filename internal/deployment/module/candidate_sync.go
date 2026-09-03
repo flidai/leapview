@@ -29,6 +29,11 @@ import (
 
 const maxCandidateSourceBlobBytes = 16 << 20
 
+// RetainProjectCandidateSourceOperationID exposes the generated source-retention
+// command identity through the deployment module boundary. Native production
+// composition uses it for the narrowly reviewed expired-lease reclaim policy.
+const RetainProjectCandidateSourceOperationID = string(deploymentgen.GenOperationRetainProjectCandidateSource)
+
 func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *http.Request, project, idempotencyKey string) {
 	operationID := deploymentgen.GenCommandOperationPlanProjectCandidateSynchronization()
 	request, ok := m.decodeCandidateSynchronizationRequest(w, r)

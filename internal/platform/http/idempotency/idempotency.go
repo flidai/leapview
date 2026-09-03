@@ -29,14 +29,25 @@ type Record struct {
 // Store is the engine-neutral port consumed by the public HTTP protocol.
 // Claim returns execute=true only for the worker that owns a new lease. A
 // duplicate pending request returns execute=false and may be awaited through
-// Load; once its lease expires, a waiter may call Claim again to atomically
-// advance the fence. A terminal record is replayed exactly by the protocol.
+// Load. Generic Claim implementations bind an external attempt (or quarantine
+// in a fixture) when that lease expires; reviewed reentrant endpoints opt into
+// ReclaimableStore. A terminal record is replayed exactly by the protocol.
 type Store interface {
 	Claim(context.Context, string, string, string, time.Duration, time.Duration) (Record, bool, error)
 	Load(context.Context, string) (Record, error)
 	Renew(context.Context, string, string, string, int64, time.Duration) (time.Time, error)
 	Complete(context.Context, string, string, string, int64, int, http.Header, []byte) error
 	MarkIndeterminate(context.Context, string, string, string, int64) error
+}
+
+// ReclaimableStore is the explicit opt-in surface for endpoints whose
+// mutation is durably content-addressed/reentrant. Generic HTTP idempotency
+// must use Store.Claim, which binds an external attempt and quarantines an
+// expired lease instead of risking a duplicate mutation. Protocol assembly
+// may call ClaimReclaimable only for a reviewed operation-ID allowlist.
+type ReclaimableStore interface {
+	Store
+	ClaimReclaimable(context.Context, string, string, string, time.Duration, time.Duration) (Record, bool, error)
 }
 
 // Errors are capability-neutral and allow protocol handlers to preserve

@@ -18,7 +18,11 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
+	apiidempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
 	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
+	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func withSQLiteProtocolConfig(t *testing.T, config Config) Config {
@@ -430,7 +434,7 @@ func TestAdversarialTransientRenewalFailureRecoversBeforeExpiry(t *testing.T) {
 	}
 }
 
-func TestExpiredPendingWaiterReclaimsAndFencesOldOwner(t *testing.T) {
+func TestExpiredPendingWaiterQuarantinesUnsafeOwner(t *testing.T) {
 	store := newReclaimingIdempotencyStore()
 	p := testLeaseProtocol(store, 100*time.Millisecond, time.Second)
 	var calls atomic.Int32
@@ -465,30 +469,154 @@ func TestExpiredPendingWaiterReclaimsAndFencesOldOwner(t *testing.T) {
 	go func() { secondResult <- invokeIdempotentProtocol(p, next, "reclaim-key") }()
 	select {
 	case <-secondEntered:
-		t.Fatal("waiter reclaimed the pending lease before it expired")
+		t.Fatal("unsafe waiter reclaimed the pending lease")
 	case <-time.After(25 * time.Millisecond):
 	}
 	select {
-	case <-secondEntered:
+	case response := <-secondResult:
+		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "IDEMPOTENCY_OUTCOME_UNKNOWN") {
+			t.Fatalf("unsafe expired response = %d %s", response.Code, response.Body.String())
+		}
 	case <-time.After(time.Second):
-		t.Fatal("expired waiter did not reclaim the pending lease")
+		t.Fatal("unsafe expired waiter did not become indeterminate")
 	}
 	close(releaseFirst)
 
-	reclaimedResponse := <-secondResult
-	if reclaimedResponse.Code != http.StatusCreated || reclaimedResponse.Body.String() != `{"owner":"new"}` {
-		t.Fatalf("reclaimed response = %d %s", reclaimedResponse.Code, reclaimedResponse.Body.String())
-	}
 	firstResponse := <-firstResult
 	if firstResponse.Code != http.StatusInternalServerError || !strings.Contains(firstResponse.Body.String(), "IDEMPOTENCY_UNAVAILABLE") {
 		t.Fatalf("stale owner response = %d %s", firstResponse.Code, firstResponse.Body.String())
 	}
+	if calls.Load() != 1 {
+		t.Fatalf("handler calls = %d, want 1", calls.Load())
+	}
+	stored, _ := store.Load(context.Background(), "")
+	if stored.State != "completed" || stored.Status != http.StatusConflict || stored.LeaseGeneration != 1 {
+		t.Fatalf("unsafe durable quarantine = %#v", stored)
+	}
+}
+
+func TestExpiredPendingWaiterReclaimsAllowlistedCandidateSource(t *testing.T) {
+	store := newReclaimingIdempotencyStore()
+	p := testLeaseProtocol(store, 20*time.Millisecond, time.Second)
+	p.config.ReclaimExpiredIdempotency = map[string]struct{}{"retainProjectCandidateSource": {}}
+	var calls atomic.Int32
+	releaseFirst := make(chan struct{})
+	firstEntered := make(chan struct{})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			close(firstEntered)
+			<-releaseFirst
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"owner":"new"}`))
+	})
+	invoke := func() *httptest.ResponseRecorder {
+		r := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/candidate-sync/source", strings.NewReader(`{"candidateKey":"key","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[]}`))
+		r.Header.Set("Authorization", "Bearer credential")
+		r.Header.Set("Idempotency-Key", "reclaim-key")
+		recorder := httptest.NewRecorder()
+		p.Middleware(next).ServeHTTP(recorder, r)
+		return recorder
+	}
+	firstResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstResult <- invoke() }()
+	<-firstEntered
+	secondResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { secondResult <- invoke() }()
+	second := <-secondResult
+	if second.Code != http.StatusCreated || second.Body.String() != `{"owner":"new"}` {
+		t.Fatalf("reclaimed response = %d %s", second.Code, second.Body.String())
+	}
+	close(releaseFirst)
+	first := <-firstResult
+	if first.Code != http.StatusInternalServerError || !strings.Contains(first.Body.String(), "IDEMPOTENCY_UNAVAILABLE") {
+		t.Fatalf("stale owner response = %d %s", first.Code, first.Body.String())
+	}
 	if calls.Load() != 2 {
 		t.Fatalf("handler calls = %d, want 2", calls.Load())
 	}
-	stored, _ := store.Load(context.Background(), "")
-	if stored.State != "completed" || stored.Owner == "" || stored.LeaseGeneration != 2 || string(stored.Body) != `{"owner":"new"}` {
-		t.Fatalf("durable winner = %#v", stored)
+}
+
+func TestBuildRejectsReclaimAllowlistWithoutCapability(t *testing.T) {
+	_, err := Build(t.Context(), Config{
+		Store: &fakeIdempotencyStore{}, CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		ReclaimExpiredIdempotency: map[string]struct{}{"retainProjectCandidateSource": {}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "reclaim allowlist requires") {
+		t.Fatalf("Build error = %v, want reclaimable capability error", err)
+	}
+}
+
+func TestBuildRejectsUnknownReclaimOperation(t *testing.T) {
+	_, err := Build(t.Context(), Config{
+		Store: newReclaimingIdempotencyStore(), CursorSigning: cursorsigning.NewEphemeralInitializer(),
+		ReclaimExpiredIdempotency: map[string]struct{}{"typoCandidateSource": {}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "invalid operation") {
+		t.Fatalf("Build error = %v, want invalid reclaim operation error", err)
+	}
+}
+
+func TestPostgresProtocolReclaimsAllowlistedLeaseAndFencesStaleOwner(t *testing.T) {
+	harness := postgrestest.Start(t)
+	database := harness.NewDatabase(t, "protocol_reclaim_test")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Close)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := operationpostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatal(err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	store := apiidempotencypostgres.NewStoreWithConfig(pool, 40*time.Millisecond, time.Hour)
+	p := testLeaseProtocol(store, 40*time.Millisecond, time.Hour)
+	p.config.ReclaimExpiredIdempotency = map[string]struct{}{"retainProjectCandidateSource": {}}
+	var calls atomic.Int32
+	releaseFirst := make(chan struct{})
+	firstEntered := make(chan struct{})
+	next := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if calls.Add(1) == 1 {
+			close(firstEntered)
+			<-releaseFirst
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		w.WriteHeader(http.StatusCreated)
+		_, _ = w.Write([]byte(`{"owner":"new"}`))
+	})
+	invoke := func() *httptest.ResponseRecorder {
+		request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/candidate-sync/source", strings.NewReader(`{"candidateKey":"key","artifactDigest":"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","artifacts":[]}`))
+		request.Header.Set("Authorization", "Bearer credential")
+		request.Header.Set("Idempotency-Key", "postgres-reclaim-key")
+		recorder := httptest.NewRecorder()
+		p.Middleware(next).ServeHTTP(recorder, request)
+		return recorder
+	}
+	firstResult := make(chan *httptest.ResponseRecorder, 1)
+	go func() { firstResult <- invoke() }()
+	<-firstEntered
+	second := invoke()
+	if second.Code != http.StatusCreated || second.Body.String() != `{"owner":"new"}` {
+		t.Fatalf("reclaimed response = %d %s", second.Code, second.Body.String())
+	}
+	close(releaseFirst)
+	first := <-firstResult
+	if first.Code != http.StatusInternalServerError || !strings.Contains(first.Body.String(), "IDEMPOTENCY_UNAVAILABLE") {
+		t.Fatalf("stale owner response = %d %s", first.Code, first.Body.String())
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("handler calls = %d, want 2", calls.Load())
 	}
 }
 
@@ -514,7 +642,15 @@ func newReclaimingIdempotencyStore() *reclaimingIdempotencyStore {
 	return &reclaimingIdempotencyStore{}
 }
 
-func (s *reclaimingIdempotencyStore) Claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration) (apiidempotencysqlite.Record, bool, error) {
+func (s *reclaimingIdempotencyStore) Claim(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (apiidempotencysqlite.Record, bool, error) {
+	return s.claim(ctx, scope, digest, owner, lease, lifetime, false)
+}
+
+func (s *reclaimingIdempotencyStore) ClaimReclaimable(ctx context.Context, scope, digest, owner string, lease, lifetime time.Duration) (apiidempotencysqlite.Record, bool, error) {
+	return s.claim(ctx, scope, digest, owner, lease, lifetime, true)
+}
+
+func (s *reclaimingIdempotencyStore) claim(_ context.Context, _ string, digest, owner string, lease, _ time.Duration, reclaimExpired bool) (apiidempotencysqlite.Record, bool, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	now := time.Now().UTC()
@@ -529,6 +665,13 @@ func (s *reclaimingIdempotencyStore) Claim(_ context.Context, _ string, digest, 
 		return cloneProtocolRecord(s.record), false, nil
 	}
 	if s.record.LeaseExpires.After(now) {
+		return cloneProtocolRecord(s.record), false, nil
+	}
+	if !reclaimExpired {
+		s.record.State = "completed"
+		s.record.Status = http.StatusConflict
+		s.record.Header = http.Header{"Content-Type": []string{"application/problem+json"}}
+		s.record.Body = []byte(`{"code":"IDEMPOTENCY_OUTCOME_UNKNOWN","detail":"The original request outcome is indeterminate and will not be executed again"}`)
 		return cloneProtocolRecord(s.record), false, nil
 	}
 	s.record.Owner = owner
