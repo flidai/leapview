@@ -6883,6 +6883,78 @@
                       }
                     ],
                     "properties": {
+                      "axes": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
+                          "properties": {
+                            "displayUnits": {
+                              "enum": [
+                                "auto",
+                                "none",
+                                "thousands",
+                                "millions",
+                                "billions",
+                                "trillions"
+                              ],
+                              "type": "string"
+                            },
+                            "id": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "maximum": {
+                              "type": "number"
+                            },
+                            "minimum": {
+                              "type": "number"
+                            },
+                            "scale": {
+                              "enum": [
+                                "automatic",
+                                "linear",
+                                "log"
+                              ],
+                              "type": "string"
+                            },
+                            "tickDensity": {
+                              "enum": [
+                                "automatic",
+                                "sparse",
+                                "normal",
+                                "dense"
+                              ],
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "unit": {
+                              "type": "string"
+                            },
+                            "zero": {
+                              "enum": [
+                                "automatic",
+                                "include",
+                                "exclude"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "scale",
+                            "tickDensity",
+                            "zero"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "dataZoom": {
                         "type": "boolean"
                       },
@@ -6896,6 +6968,170 @@
                           "trillions"
                         ],
                         "type": "string"
+                      },
+                      "eventAnnotations": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A governed event marker, restricted to the visual's horizontal axis.",
+                          "properties": {
+                            "axis": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "tone": {
+                              "enum": [
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "axis",
+                            "id",
+                            "label",
+                            "tone",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "labelPosition": {
                         "enum": [
@@ -6960,6 +7196,444 @@
                           "vertical"
                         ],
                         "type": "string"
+                      },
+                      "referenceBands": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A governed interval between two horizontal or numeric reference values.",
+                          "properties": {
+                            "axis": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "from": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "id": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "to": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "tone": {
+                              "enum": [
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "axis",
+                            "from",
+                            "id",
+                            "to",
+                            "tone"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "referenceLines": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A governed horizontal or numeric reference marker.",
+                          "properties": {
+                            "axis": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "id": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "tone": {
+                              "enum": [
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "axis",
+                            "id",
+                            "tone",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "series": {
                         "description": "Explicit per-measure marks and axis assignments for combo visuals.",
@@ -7586,6 +8260,78 @@
                     ],
                     "description": "Strict point/scatter presentation and its governed result-frame channels.",
                     "properties": {
+                      "axes": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A renderer-neutral axis policy for Cartesian and point visuals.",
+                          "properties": {
+                            "displayUnits": {
+                              "enum": [
+                                "auto",
+                                "none",
+                                "thousands",
+                                "millions",
+                                "billions",
+                                "trillions"
+                              ],
+                              "type": "string"
+                            },
+                            "id": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "maximum": {
+                              "type": "number"
+                            },
+                            "minimum": {
+                              "type": "number"
+                            },
+                            "scale": {
+                              "enum": [
+                                "automatic",
+                                "linear",
+                                "log"
+                              ],
+                              "type": "string"
+                            },
+                            "tickDensity": {
+                              "enum": [
+                                "automatic",
+                                "sparse",
+                                "normal",
+                                "dense"
+                              ],
+                              "type": "string"
+                            },
+                            "title": {
+                              "type": "string"
+                            },
+                            "unit": {
+                              "type": "string"
+                            },
+                            "zero": {
+                              "enum": [
+                                "automatic",
+                                "include",
+                                "exclude"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "id",
+                            "scale",
+                            "tickDensity",
+                            "zero"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
                       "brush": {
                         "items": {
                           "enum": [
@@ -7626,6 +8372,170 @@
                           "kind"
                         ],
                         "type": "object"
+                      },
+                      "eventAnnotations": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A governed event marker, restricted to the visual's horizontal axis.",
+                          "properties": {
+                            "axis": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "description": {
+                              "type": "string"
+                            },
+                            "id": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "tone": {
+                              "enum": [
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "axis",
+                            "id",
+                            "label",
+                            "tone",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "identity": {
                         "items": {
@@ -7718,6 +8628,444 @@
                           "strategy"
                         ],
                         "type": "object"
+                      },
+                      "referenceBands": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A governed interval between two horizontal or numeric reference values.",
+                          "properties": {
+                            "axis": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "from": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "id": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "to": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            },
+                            "tone": {
+                              "enum": [
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger"
+                              ],
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "axis",
+                            "from",
+                            "id",
+                            "to",
+                            "tone"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
+                      },
+                      "referenceLines": {
+                        "items": {
+                          "additionalProperties": false,
+                          "description": "A governed horizontal or numeric reference marker.",
+                          "properties": {
+                            "axis": {
+                              "enum": [
+                                "x",
+                                "primary_y",
+                                "secondary_y"
+                              ],
+                              "type": "string"
+                            },
+                            "id": {
+                              "maxLength": 128,
+                              "minLength": 1,
+                              "pattern": "^[A-Za-z_][A-Za-z0-9_-]*$",
+                              "type": "string"
+                            },
+                            "label": {
+                              "type": "string"
+                            },
+                            "tone": {
+                              "enum": [
+                                "neutral",
+                                "ink",
+                                "success",
+                                "warning",
+                                "danger"
+                              ],
+                              "type": "string"
+                            },
+                            "value": {
+                              "oneOf": [
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "number"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "number"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "kind": {
+                                      "enum": [
+                                        "text"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "value": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "kind",
+                                    "value"
+                                  ],
+                                  "type": "object"
+                                },
+                                {
+                                  "additionalProperties": false,
+                                  "allOf": [
+                                    {
+                                      "description": "A scalar value used by a governed reference line, band, or annotation.",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind"
+                                      ],
+                                      "type": "object"
+                                    }
+                                  ],
+                                  "properties": {
+                                    "field": {
+                                      "minLength": 1,
+                                      "pattern": "^[A-Za-z_][A-Za-z0-9_]*$",
+                                      "type": "string"
+                                    },
+                                    "kind": {
+                                      "enum": [
+                                        "field"
+                                      ],
+                                      "type": "string"
+                                    },
+                                    "reducer": {
+                                      "enum": [
+                                        "first",
+                                        "last",
+                                        "minimum",
+                                        "maximum",
+                                        "mean",
+                                        "median"
+                                      ],
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "field",
+                                    "kind",
+                                    "reducer"
+                                  ],
+                                  "type": "object"
+                                }
+                              ]
+                            }
+                          },
+                          "required": [
+                            "axis",
+                            "id",
+                            "tone",
+                            "value"
+                          ],
+                          "type": "object"
+                        },
+                        "type": "array"
                       },
                       "series": {
                         "minLength": 1,
