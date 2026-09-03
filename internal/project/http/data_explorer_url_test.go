@@ -146,7 +146,7 @@ func TestDataExploreCommandFromQueryTrimsMetadataButPreservesFilterValues(t *tes
 	command, err := dataExploreCommandFromQuery(url.Values{
 		"dimension": {" orders.status "},
 		"metric":    {" revenue "},
-		"filter":    {`{"field":" orders.status ","operator":" equals ","dataset":" orders ","values":[" paid "]}`},
+		"filter":    {`{"field":" orders.status ","operator":" equals ","datasetId":" orders ","values":[" paid "]}`},
 		"sort":      {`{"field":" revenue ","direction":" desc "}`},
 		"time":      {`{"field":" orders.created_at ","grain":" month ","alias":" order_month "}`},
 	})
@@ -156,7 +156,7 @@ func TestDataExploreCommandFromQueryTrimsMetadataButPreservesFilterValues(t *tes
 	if len(command.Dimensions) != 1 || command.Dimensions[0] != "orders.status" || len(command.Metrics) != 1 || command.Metrics[0] != "revenue" {
 		t.Fatalf("trimmed fields = %#v/%#v", command.Dimensions, command.Metrics)
 	}
-	if len(command.Filters) != 1 || command.Filters[0].Field != "orders.status" || command.Filters[0].Operator != "equals" || projectsignals.ValueOrZero(command.Filters[0].Dataset) != "orders" || len(command.Filters[0].Values) != 1 || command.Filters[0].Values[0] != " paid " {
+	if len(command.Filters) != 1 || command.Filters[0].Field != "orders.status" || command.Filters[0].Operator != "equals" || projectsignals.ValueOrZero(command.Filters[0].DatasetID) != "orders" || len(command.Filters[0].Values) != 1 || command.Filters[0].Values[0] != " paid " {
 		t.Fatalf("trimmed filter metadata or changed value = %#v", command.Filters)
 	}
 	if len(command.Sort) != 1 || command.Sort[0].Field != "revenue" || command.Sort[0].Direction != "desc" {
@@ -423,7 +423,7 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 		Command: projectsignals.DataExploreCommand{SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders")},
 	}
 	filter := func(dataset string) []projectsignals.DataExploreFilterSignal {
-		return []projectsignals.DataExploreFilterSignal{{Field: "orders.status", Dataset: projectsignals.Optional(dataset), Operator: "equals", Values: []string{"paid"}}}
+		return []projectsignals.DataExploreFilterSignal{{Field: "orders.status", DatasetID: projectsignals.Optional(dataset), Operator: "equals", Values: []string{"paid"}}}
 	}
 	singleRoot := projectsignals.DataExploreCommand{
 		SemanticModelID: projectsignals.Optional("semantic:sales"), DatasetID: projectsignals.Optional("orders"), Filters: filter("customers"),

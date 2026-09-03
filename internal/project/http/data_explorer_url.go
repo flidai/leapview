@@ -86,9 +86,9 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		}
 		filter.Field = strings.TrimSpace(filter.Field)
 		filter.Operator = strings.TrimSpace(filter.Operator)
-		if filter.Dataset != nil {
-			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
-			filter.Dataset = &dataset
+		if filter.DatasetID != nil {
+			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID))
+			filter.DatasetID = &dataset
 		}
 		command.Filters = append(command.Filters, filter)
 	}
@@ -208,12 +208,12 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		if err := validateRestoredExploreFilter(index, filter); err != nil {
 			return err
 		}
-		if filter.Dataset == nil || strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset)) == "" {
-			if filter.Dataset != nil {
+		if filter.DatasetID == nil || strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID)) == "" {
+			if filter.DatasetID != nil {
 				return fmt.Errorf("filter %d dataset is empty; remove the stale filter or choose an active dataset", index+1)
 			}
 		} else {
-			filterDataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
+			filterDataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.DatasetID))
 			if !explorerDatasetByID(projection.Datasets, filterDataset) || !compiledDataset(compiled, filterDataset) {
 				return fmt.Errorf("filter %d dataset %q is no longer available; remove the stale filter or choose an active dataset", index+1, filterDataset)
 			}
