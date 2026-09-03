@@ -68,7 +68,7 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 	t.Cleanup(maintenanceDB.Close)
 	maintRepo := New(maintenanceDB)
 	scanID := "0198f2c0-7c7a-7f00-8a11-000000000902"
-	begin := BeginSnapshotOrphanScanInput{ScanID: scanID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: fence.OwnerID, FencingEpoch: fence.FencingEpoch, PageSize: 2, GracePeriod: 100 * time.Millisecond, RequestEvidence: json.RawMessage(`{"adapter":"test"}`)}
+	begin := BeginSnapshotOrphanScanInput{ScanID: scanID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: fence.OwnerID, FencingEpoch: fence.FencingEpoch, PageSize: 2, GracePeriod: 5 * time.Second, RequestEvidence: json.RawMessage(`{"adapter":"test"}`)}
 	if err := maintRepo.BeginSnapshotOrphanScan(t.Context(), begin); err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +76,12 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 	page, err := maintRepo.RecordSnapshotOrphanScanPage(t.Context(), pageInput)
 	if err != nil || page.OrphanCount != 1 {
 		t.Fatalf("scan page=%#v err=%v", page, err)
+	}
+	if _, err := maintRepo.ClaimSnapshotOrphanCleanupUnderPoolFence(t.Context(), SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 1}, "cleanup-owner", time.Now().Add(time.Minute), fence); !errors.Is(err, ErrSnapshotOrphanCleanupGrace) {
+		t.Fatalf("early cleanup claim err=%v", err)
+	}
+	if eligible, err := maintRepo.ListSnapshotOrphanCleanupEligible(t.Context(), poolID, catalogID, 0, MaxSnapshotOrphanScanPageSize); err != nil || len(eligible) != 0 {
+		t.Fatalf("early cleanup candidates=%#v err=%v", eligible, err)
 	}
 	if replay, err := maintRepo.RecordSnapshotOrphanScanPage(t.Context(), pageInput); err != nil || replay.OrphanCount != page.OrphanCount {
 		t.Fatalf("page replay=%#v err=%v", replay, err)
@@ -179,13 +185,16 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reacquire maintenance fence: %v", err)
 	}
-	if _, err := maintRepo.ClaimSnapshotOrphanCleanupUnderPoolFence(t.Context(), SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 1}, "cleanup-owner", time.Now().Add(time.Minute), successorFence); !errors.Is(err, ErrSnapshotOrphanCleanupGrace) {
-		t.Fatalf("early cleanup claim err=%v", err)
+	waitForCleanupGrace := func(snapshotID int64) {
+		var cleanupNotBefore, databaseNow time.Time
+		if err := admin.QueryRow(t.Context(), `SELECT cleanup_not_before,clock_timestamp() FROM ducklake.snapshot_orphan WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3`, poolID, catalogID, snapshotID).Scan(&cleanupNotBefore, &databaseNow); err != nil {
+			t.Fatalf("read cleanup grace for snapshot %d: %v", snapshotID, err)
+		}
+		if wait := cleanupNotBefore.Sub(databaseNow) + 100*time.Millisecond; wait > 0 {
+			time.Sleep(wait)
+		}
 	}
-	if eligible, err := maintRepo.ListSnapshotOrphanCleanupEligible(t.Context(), poolID, catalogID, 0, MaxSnapshotOrphanScanPageSize); err != nil || len(eligible) != 0 {
-		t.Fatalf("early cleanup candidates=%#v err=%v", eligible, err)
-	}
-	time.Sleep(120 * time.Millisecond)
+	waitForCleanupGrace(1)
 	eligible, err := maintRepo.ListSnapshotOrphanCleanupEligible(t.Context(), poolID, catalogID, 0, MaxSnapshotOrphanScanPageSize)
 	if err != nil || len(eligible) != 1 || eligible[0].SnapshotID != 1 {
 		t.Fatalf("eligible cleanup candidates=%#v err=%v", eligible, err)
@@ -241,10 +250,11 @@ func TestPostgres18SnapshotOrphanScanBoundedReplayAndFencedRole(t *testing.T) {
 	protectedScanID := "0198f2c0-7c7a-7f00-0000-000000000907"
 	protected := begin
 	protected.ScanID, protected.OwnerID, protected.FencingEpoch = protectedScanID, successorFence.OwnerID, successorFence.FencingEpoch
+	protected.GracePeriod = 100 * time.Millisecond
 	if _, err := maintRepo.RunSnapshotOrphanScan(t.Context(), protected, &scannerPageFake{pages: []SnapshotCatalogPage{{CursorAfter: 3, SnapshotIDs: []int64{3}, Evidence: map[int64]json.RawMessage{3: json.RawMessage(`{"source":"catalog"}`)}, Done: true}}}, successorFence, 2); err != nil {
 		t.Fatalf("protected scanner run: %v", err)
 	}
-	time.Sleep(120 * time.Millisecond)
+	waitForCleanupGrace(3)
 	if _, err := admin.Exec(t.Context(), `INSERT INTO ducklake.snapshot_retention(physical_pool_id,catalog_id,snapshot_id,state) VALUES ($1,$2,3,'live')`, poolID, catalogID); err != nil {
 		t.Fatal(err)
 	}
