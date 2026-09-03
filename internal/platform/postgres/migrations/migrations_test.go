@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 12 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() {
+	if len(recorder.sqls) != 14 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -232,6 +232,71 @@ func TestIdentityRestoreTransitionMigrationAddsApprovedEvidence(t *testing.T) {
 	}
 }
 
+func TestAccessAuthorityCompatibilityMigrationPreservesLegacyRowsAndAddsRepositoryContracts(t *testing.T) {
+	sql := AccessAuthorityCompatibilitySQL()
+	for _, marker := range []string{
+		"ADD COLUMN IF NOT EXISTS project_id text",
+		"ADD COLUMN IF NOT EXISTS environment text",
+		"ADD COLUMN IF NOT EXISTS generation_id text",
+		"audit_event_project_id_compatibility_check",
+		"audit_event_environment_compatibility_check",
+		"audit_event_generation_id_compatibility_check",
+		"ALTER TABLE access.principal",
+		"ADD COLUMN IF NOT EXISTS email text",
+		"UPDATE access.principal",
+		"SET disabled_at = COALESCE(disabled_at, clock_timestamp())",
+		"principal_email_length_compatibility_check",
+		"CHECK (length(email) <= 320)",
+		"ADD COLUMN IF NOT EXISTS revoked_at timestamptz",
+		"ALTER TABLE access.principal_group",
+		"membership_id uuid DEFAULT uuidv7()",
+		"DROP CONSTRAINT IF EXISTS principal_group_pkey",
+		"UPDATE access.session",
+		"revoked_at = COALESCE(revoked_at, clock_timestamp())",
+		"decode(repeat('00', 32), 'hex')",
+		"ALTER COLUMN verifier SET NOT NULL",
+		"CREATE TABLE IF NOT EXISTS access.oauth_client",
+		"CREATE TABLE IF NOT EXISTS access.oauth_session",
+		"CREATE TABLE IF NOT EXISTS access.oauth_client_assertion",
+		"CREATE TABLE IF NOT EXISTS access.authoring_session",
+		"CREATE TABLE IF NOT EXISTS access.authorization_snapshot",
+		"CREATE UNIQUE INDEX IF NOT EXISTS principal_email_active_key",
+		"CREATE UNIQUE INDEX IF NOT EXISTS principal_group_active_key",
+		"CREATE INDEX IF NOT EXISTS oauth_session_request_idx",
+		"session_instance_id_length_compatibility_check",
+		"CHECK (length(instance_id) <= 128)",
+		"session_profile_id_length_compatibility_check",
+		"CHECK (length(profile_id) <= 128)",
+		"session_client_id_length_compatibility_check",
+		"CHECK (length(client_id) <= 255)",
+		"CREATE TRIGGER principal_identity_immutable",
+		"CREATE TRIGGER session_revocation_monotonic",
+		"GRANT DELETE ON access.oauth_session, access.oauth_client_assertion TO leapview_control_runtime",
+		"REVOKE SELECT ON access.session, access.local_credential",
+		"REVOKE SELECT, INSERT, UPDATE ON access.credential, access.access_grant",
+		"REVOKE SELECT ON access.credential, access.access_grant",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE leapview_control_owner IN SCHEMA access",
+		"REVOKE DELETE ON TABLES FROM leapview_control_runtime",
+		"REVOKE SELECT ON TABLES FROM leapview_control_readonly",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("access compatibility migration missing %q", marker)
+		}
+	}
+	for _, forbidden := range []string{
+		"internal/access/postgres/schema.sql",
+		"FAI-648",
+		"FAI-649",
+		"FAI-632",
+		"DROP TABLE access.",
+		"DELETE FROM access.session",
+	} {
+		if strings.Contains(sql, forbidden) {
+			t.Errorf("access compatibility migration contains forbidden operation/reference %q", forbidden)
+		}
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -251,6 +316,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		IdentityRestoreTransitionRevision: {
 			revision: IdentityRestoreTransitionRevision, migrationID: IdentityRestoreTransitionMigrationID, checksum: IdentityRestoreTransitionChecksum(),
+		},
+		AccessAuthorityCompatibilityRevision: {
+			revision: AccessAuthorityCompatibilityRevision, migrationID: AccessAuthorityCompatibilityMigrationID, checksum: AccessAuthorityCompatibilityChecksum(),
 		},
 	}
 }

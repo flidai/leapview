@@ -12,6 +12,7 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -200,10 +201,14 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 		if len(list) > maxAuditReadRows {
 			t.Fatalf("bounded export returned %d rows", len(list))
 		}
-		// Historical actor evidence survives principal deletion; the audit row
-		// is not rewritten by an FK action.
-		if _, err := db.admin.Exec(ctx, `DELETE FROM access.principal WHERE id = $1::uuid`, auditActorID); err != nil {
-			t.Fatal(err)
+		// Principal history is append-only, so a hard delete is rejected.  Audit
+		// history has its own append-only fence and must remain readable after
+		// attempted principal tampering.
+		if _, err := db.admin.Exec(ctx, `DELETE FROM access.principal WHERE id = $1::uuid`, auditActorID); err == nil {
+			t.Fatal("principal hard delete unexpectedly succeeded")
+		}
+		if _, err := db.admin.Exec(ctx, `UPDATE audit.audit_event SET principal_id = NULL WHERE audit_id = $1::uuid`, auditEventID); err == nil {
+			t.Fatal("audit principal rewrite unexpectedly succeeded")
 		}
 		var preserved string
 		if err := db.runtime.QueryRow(ctx, `SELECT principal_id::text FROM audit.audit_event WHERE audit_id = $1::uuid`, auditEventID).Scan(&preserved); err != nil {
@@ -330,4 +335,45 @@ func TestRecordAuditEventPostgreSQL18AtomicImmutableAndCanonical(t *testing.T) {
 			t.Fatal("same-database audit outbox unexpectedly exists")
 		}
 	})
+}
+
+func TestRecordCanonicalAuditEventPostgreSQL18CompatibilityMigration(t *testing.T) {
+	db := newAuditDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	projectID := projectgraph.ResourceID("project_compat")
+	resource, err := access.NewResourceRef(projectgraph.ResourceID("semantic_model_compat"), projectgraph.KindSemanticModel)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RecordCanonicalAuditEvent(ctx, access.CanonicalAuditEvent{
+		Identity:      projectgraph.ServingIdentity{ProjectID: projectID, Environment: "production", GenerationID: "generation_compat"},
+		PrincipalID:   auditActorID,
+		Action:        "data_query.executed",
+		Resource:      resource,
+		Capability:    access.CapabilityResourceRead,
+		Status:        "success",
+		RequestID:     "30000000-0000-0000-0000-000000000002",
+		CorrelationID: "40000000-0000-0000-0000-000000000002",
+		MetadataJSON:  `{}`,
+	}); err != nil {
+		t.Fatalf("record canonical audit event on 001-007 schema: %v", err)
+	}
+
+	var gotProject, gotEnvironment, gotGeneration string
+	if err := db.runtime.QueryRow(ctx, `
+		SELECT project_id, environment, generation_id
+		FROM audit.audit_event
+		WHERE action='data_query.executed' AND request_id='30000000-0000-0000-0000-000000000002'::uuid`).
+		Scan(&gotProject, &gotEnvironment, &gotGeneration); err != nil {
+		t.Fatal(err)
+	}
+	if gotProject != projectID.String() || gotEnvironment != "production" || gotGeneration != "generation_compat" {
+		t.Fatalf("canonical audit scope = %q/%q/%q", gotProject, gotEnvironment, gotGeneration)
+	}
 }
