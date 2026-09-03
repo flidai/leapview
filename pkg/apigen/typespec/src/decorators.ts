@@ -1,4 +1,4 @@
-import { isRecordModelType, type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar } from "@typespec/compiler";
+import { isArrayModelType, isRecordModelType, type DecoratorContext, type Enum, type Interface, type Model, type ModelProperty, type Namespace, type Operation, type Scalar, type Type } from "@typespec/compiler";
 
 import { reportDiagnostic } from "./lib.js";
 
@@ -180,6 +180,7 @@ const toolKey = Symbol.for("@yacobolo/apigen.tool");
 const transportErrorsKey = Symbol.for("@yacobolo/apigen.transportErrors");
 const propertyNamesKey = Symbol.for("@yacobolo/apigen.propertyNames");
 const minPropertiesKey = Symbol.for("@yacobolo/apigen.minProperties");
+const uniqueItemsKey = Symbol.for("@yacobolo/apigen.uniqueItems");
 
 export function $cli(context: DecoratorContext, target: Operation, options: CLIOptions) {
   context.program.stateMap(cliKey).set(target, options);
@@ -465,6 +466,36 @@ export function $minProperties(context: DecoratorContext, target: ModelProperty,
   context.program.stateMap(minPropertiesKey).set(target, numeric);
 }
 
+export function $uniqueItems(context: DecoratorContext, target: ModelProperty) {
+  if (context.program.stateMap(uniqueItemsKey).has(target)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-unique-items",
+      format: { reason: "the decorator may only be applied once" },
+      target,
+    });
+    return;
+  }
+  if (!isArrayValuedType(target.type)) {
+    reportDiagnostic(context.program, {
+      code: "invalid-unique-items",
+      format: { reason: "target must be an array or a union containing only arrays" },
+      target,
+    });
+    return;
+  }
+  context.program.stateMap(uniqueItemsKey).set(target, true);
+}
+
+function isArrayValuedType(type: Type): boolean {
+  if (type.kind === "Model") {
+    return isArrayModelType(type);
+  }
+  if (type.kind !== "Union" || type.variants.size === 0) {
+    return false;
+  }
+  return [...type.variants.values()].every((variant) => variant.type.kind === "Model" && isArrayModelType(variant.type));
+}
+
 export const $decorators = {
   apigen: {
     cli: $cli,
@@ -494,6 +525,7 @@ export const $decorators = {
     transportErrors: $transportErrors,
     propertyNames: $propertyNames,
     minProperties: $minProperties,
+    uniqueItems: $uniqueItems,
   },
 };
 
@@ -646,4 +678,11 @@ export function getMinProperties(
   target: ModelProperty,
 ) {
   return context.program.stateMap(minPropertiesKey).get(target) as number | undefined;
+}
+
+export function getUniqueItems(
+  context: { program: DecoratorContext["program"] },
+  target: ModelProperty,
+) {
+  return context.program.stateMap(uniqueItemsKey).get(target) === true;
 }

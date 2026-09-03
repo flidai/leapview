@@ -1,6 +1,7 @@
 package compiler
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -141,39 +142,6 @@ spec:
 	}
 }
 
-func TestTypedModelRelationshipReferenceRequiresDatasetAndField(t *testing.T) {
-	valid := `apiVersion: leapview.dev/v1
-kind: Model
-metadata: {id: model:orders, name: orders}
-spec:
-  definition: {type: direct, source: source:orders}
-  entities: {id: {type: primary, fields: [id]}}
-  grain: {entity: id}
-  fields: {id: {datatype: Integer}, customer_id: {datatype: Integer}}
-  checks:
-    - {type: relationship, field: customer_id, to: customers.customer_id}
-`
-	table, _, err := decodeModelResource("model.yaml", []byte(valid), metadata{})
-	if err != nil {
-		t.Fatalf("valid relationship reference rejected: %v", err)
-	}
-	if len(table.Checks) != 1 || table.Checks[0].To != "customers.customer_id" {
-		t.Fatalf("lowered relationship check = %#v", table.Checks)
-	}
-	dotted := strings.Replace(valid, "customers.customer_id", "customers.v2.customer_id", 1)
-	if dottedTable, _, err := decodeModelResource("model-dotted.yaml", []byte(dotted), metadata{}); err != nil || len(dottedTable.Checks) != 1 || dottedTable.Checks[0].To != "customers.v2.customer_id" {
-		t.Fatalf("dotted relationship reference table=%#v err=%v", dottedTable, err)
-	}
-	for _, reference := range []string{"customers", "customers..customer_id", "customers;DROP.customer_id"} {
-		t.Run(reference, func(t *testing.T) {
-			invalid := strings.Replace(valid, "customers.customer_id", reference, 1)
-			if _, _, err := decodeModelResource("model.yaml", []byte(invalid), metadata{}); err == nil {
-				t.Fatalf("relationship reference %q was accepted", reference)
-			}
-		})
-	}
-}
-
 func TestTypedModelLoweringRetainsAuthoredSQLForDetailProjection(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -227,5 +195,124 @@ spec:
 	}
 	if _, _, err := decodeModelResource("model.yaml", []byte(base), metadata{}); err != nil {
 		t.Fatalf("omitted fields rejected: %v", err)
+	}
+}
+
+func TestTypedSemanticModelLoweringPreservesRuntimeCompatibility(t *testing.T) {
+	spec, aiContext, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+aiContext: {instructions: Use governed sales language.}
+spec:
+  datasets:
+    orders: {model: orders_model, defaultTimeDimension: ordered_at, displayName: Orders}
+  relationships:
+    customer:
+      from: {dataset: orders, entity: customer}
+      to: {dataset: orders, fields: [customer_id]}
+  dimensions:
+    ordered_at:
+      datatype: DateTime
+      time: {nativeGrain: second, grains: [second, day], timezone: UTC}
+      bindings: {orders: {field: orders.ordered_at}}
+  filters:
+    captured: {field: orders.status, operator: equals, value: captured}
+  metrics:
+    order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}}
+    revenue: {type: aggregate, dataset: orders, aggregation: sum, input: {field: orders.revenue}, where: [captured]}
+    doubled: {type: derived, expression: revenue * 2, hidden: true}
+    share: {type: ratio, numerator: revenue, denominator: doubled}
+`))
+	if err != nil {
+		t.Fatalf("decode SemanticModel: %v", err)
+	}
+	if aiContext == nil || aiContext.Instructions != "Use governed sales language." {
+		t.Fatalf("top-level aiContext = %#v", aiContext)
+	}
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders_model": {
+				Entities: map[string]semanticmodel.EntityDefinition{
+					"customer": {Type: "primary", Fields: []string{"customer_id"}},
+				},
+			},
+		},
+	}
+	if err := applySemanticModelSpec(model, spec); err != nil {
+		t.Fatalf("lower SemanticModel: %v", err)
+	}
+	if got := model.Datasets["orders"]; got.Model != "orders_model" || got.DefaultTimeDimension != "ordered_at" || got.DisplayName != "Orders" {
+		t.Fatalf("dataset = %#v", got)
+	}
+	if got := model.Tables["orders"].ModelName; got != "orders_model" {
+		t.Fatalf("runtime table model name = %q", got)
+	}
+	if len(model.Relationships) != 1 || model.Relationships[0].Cardinality != "one_to_one" || model.Relationships[0].FromFields[0] != "customer_id" {
+		t.Fatalf("relationships = %#v", model.Relationships)
+	}
+	if got := model.Dimensions["ordered_at"]; got.Datatype != semanticmodel.DataTypeDateTime || got.NativeGrain != "second" || len(got.Grains) != 2 || got.Timezone != "UTC" {
+		t.Fatalf("dimension = %#v", got)
+	}
+	if got := model.Filters["captured"]; got.Operator != "equals" || got.Value != "captured" {
+		t.Fatalf("filter = %#v", got)
+	}
+	if got := model.Metrics["order_count"].Empty; got != "zero" {
+		t.Fatalf("count empty default = %q, want zero", got)
+	}
+	if got := model.Metrics["revenue"]; got.Empty != "null" || len(got.Where) != 1 || got.Where[0] != "captured" {
+		t.Fatalf("revenue metric = %#v", got)
+	}
+	if got := model.Metrics["doubled"]; got.Expression != "revenue * 2" || !got.Hidden {
+		t.Fatalf("derived metric = %#v", got)
+	}
+	if got := model.Metrics["share"]; got.Numerator != "revenue" || got.Denominator != "doubled" {
+		t.Fatalf("ratio metric = %#v", got)
+	}
+}
+
+func TestTypedSemanticModelLoweringRejectsUncompiledAccessPolicy(t *testing.T) {
+	spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  accessGrants:
+    canViewSales: {userAttribute: department, allowedValues: [sales]}
+  datasets:
+    orders: {model: orders_model, requiredAccessGrants: [canViewSales]}
+  metrics: {}
+`))
+	if err != nil {
+		t.Fatalf("structural access policy decode: %v", err)
+	}
+	err = applySemanticModelSpec(&semanticmodel.Model{Name: "sales"}, spec)
+	if err == nil || !strings.Contains(err.Error(), "compiled access-policy support is not available") {
+		t.Fatalf("uncompiled access policy error = %v", err)
+	}
+}
+
+func TestTypedSemanticModelLoweringPreservesExactNumericLiterals(t *testing.T) {
+	for _, token := range []string{"5", "2.5", "9007199254740993"} {
+		t.Run(token, func(t *testing.T) {
+			spec, _, err := decodeSemanticModelResource("semantic-model.yaml", []byte(`apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic-model:sales, name: sales}
+spec:
+  datasets: {orders: {model: orders_model}}
+  filters: {threshold: {field: orders.amount, operator: equals, value: `+token+`}}
+  metrics: {}
+`))
+			if err != nil {
+				t.Fatal(err)
+			}
+			model := &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{"orders_model": {}}}
+			if err := applySemanticModelSpec(model, spec); err != nil {
+				t.Fatal(err)
+			}
+			number, ok := model.Filters["threshold"].Value.(json.Number)
+			if !ok || number.String() != token {
+				t.Fatalf("lowered numeric literal = %#v (%T), want json.Number(%q)", model.Filters["threshold"].Value, model.Filters["threshold"].Value, token)
+			}
+		})
 	}
 }

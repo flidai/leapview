@@ -415,6 +415,7 @@ func (value *TableVisualizationFormattingRule) UnmarshalJSON(data []byte) error 
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -867,6 +868,7 @@ func (value *VisualizationConditionalRule) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1119,6 +1121,7 @@ func (value *VisualizationDataState) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1566,6 +1569,7 @@ func (value *VisualizationFormat) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1851,6 +1855,7 @@ func (value *VisualizationGeographicLayer) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -2774,6 +2779,7 @@ func (value *VisualizationReferenceValue) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -3059,6 +3065,7 @@ func (value *VisualizationSpatialSelectionGeometry) UnmarshalJSON(data []byte) e
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -3321,6 +3328,7 @@ func (value *VisualizationSpec) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}

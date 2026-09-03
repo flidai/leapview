@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"strings"
 )
 
 type AIContext struct {
@@ -18,6 +19,31 @@ type AcceptedValuesModelCheck struct {
 	Field    string   `json:"field" yaml:"field"`
 	Values   []string `json:"values" yaml:"values"`
 	Severity *string  `json:"severity,omitempty" yaml:"severity,omitempty"`
+}
+
+type AggregateSemanticMetric struct {
+	Type                 string              `json:"type" yaml:"type"`
+	Dataset              string              `json:"dataset" yaml:"dataset"`
+	Aggregation          string              `json:"aggregation" yaml:"aggregation"`
+	Input                SemanticMetricInput `json:"input" yaml:"input"`
+	Where                *[]string           `json:"where,omitempty" yaml:"where,omitempty"`
+	Empty                *string             `json:"empty,omitempty" yaml:"empty,omitempty"`
+	TimeDimension        *string             `json:"timeDimension,omitempty" yaml:"timeDimension,omitempty"`
+	Label                *string             `json:"label,omitempty" yaml:"label,omitempty"`
+	Description          *string             `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext          `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Unit                 *string             `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format               *string             `json:"format,omitempty" yaml:"format,omitempty"`
+	Hidden               *bool               `json:"hidden,omitempty" yaml:"hidden,omitempty"`
+	RequiredAccessGrants *[]string           `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+}
+
+type AllSemanticFilter struct {
+	All []SemanticFilter `json:"all" yaml:"all"`
+}
+
+type AnySemanticFilter struct {
+	Any []SemanticFilter `json:"any" yaml:"any"`
 }
 
 type AzureBlobConnection struct {
@@ -166,6 +192,7 @@ func (value *ConnectionSpec) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -507,6 +534,18 @@ type DeltaReaderOptions struct {
 	Version *string `json:"version,omitempty" yaml:"version,omitempty"`
 }
 
+type DerivedSemanticMetric struct {
+	Type                 string     `json:"type" yaml:"type"`
+	Expression           string     `json:"expression" yaml:"expression"`
+	Label                *string    `json:"label,omitempty" yaml:"label,omitempty"`
+	Description          *string    `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Unit                 *string    `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format               *string    `json:"format,omitempty" yaml:"format,omitempty"`
+	Hidden               *bool      `json:"hidden,omitempty" yaml:"hidden,omitempty"`
+	RequiredAccessGrants *[]string  `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+}
+
 type DirectModelDefinition struct {
 	ModelDefinitionBase
 	Type   string `json:"type" yaml:"type"`
@@ -516,6 +555,14 @@ type DirectModelDefinition struct {
 type DuckLakeConnection struct {
 	ConnectionSpecBase
 	Type string `json:"type" yaml:"type"`
+}
+
+type EqualsSemanticFilter struct {
+	Field     string          `json:"field" yaml:"field"`
+	Operator  string          `json:"operator" yaml:"operator"`
+	Value     SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 }
 
 type ExcelPathSourceLocation struct {
@@ -536,6 +583,11 @@ type FieldFreshness struct {
 	ErrorAfter   *FreshnessDuration `json:"errorAfter,omitempty" yaml:"errorAfter,omitempty"`
 }
 
+type FieldsSemanticRelationshipEndpoint struct {
+	Dataset string   `json:"dataset" yaml:"dataset"`
+	Fields  []string `json:"fields" yaml:"fields"`
+}
+
 type FreshnessDuration struct {
 	Amount int64  `json:"amount" yaml:"amount"`
 	Unit   string `json:"unit" yaml:"unit"`
@@ -546,6 +598,22 @@ type GCSConnection struct {
 	Type     string          `json:"type" yaml:"type"`
 	Access   *PublicAccess   `json:"access,omitempty" yaml:"access,omitempty"`
 	Defaults *ReaderDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
+}
+
+type GreaterThanOrEqualSemanticFilter struct {
+	Field     string          `json:"field" yaml:"field"`
+	Operator  string          `json:"operator" yaml:"operator"`
+	Value     SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type GreaterThanSemanticFilter struct {
+	Field     string          `json:"field" yaml:"field"`
+	Operator  string          `json:"operator" yaml:"operator"`
+	Value     SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 }
 
 type HTTPConnection struct {
@@ -565,8 +633,30 @@ type IcebergReaderOptions struct {
 	Snapshot *string `json:"snapshot,omitempty" yaml:"snapshot,omitempty"`
 }
 
+type InSemanticFilter struct {
+	Field     string            `json:"field" yaml:"field"`
+	Operator  string            `json:"operator" yaml:"operator"`
+	Value     []SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string         `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext        `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
 type InferredSourceSchema struct {
 	Mode string `json:"mode" yaml:"mode"`
+}
+
+type IsNotNullSemanticFilter struct {
+	Field     string     `json:"field" yaml:"field"`
+	Operator  string     `json:"operator" yaml:"operator"`
+	Path      *[]string  `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type IsNullSemanticFilter struct {
+	Field     string     `json:"field" yaml:"field"`
+	Operator  string     `json:"operator" yaml:"operator"`
+	Path      *[]string  `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 }
 
 type JSONPathSourceLocation struct {
@@ -583,6 +673,22 @@ type JSONReaderOptions struct {
 type LancePathSourceLocation struct {
 	PathSourceLocationBase
 	Format string `json:"format" yaml:"format"`
+}
+
+type LessThanOrEqualSemanticFilter struct {
+	Field     string          `json:"field" yaml:"field"`
+	Operator  string          `json:"operator" yaml:"operator"`
+	Value     SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type LessThanSemanticFilter struct {
+	Field     string          `json:"field" yaml:"field"`
+	Operator  string          `json:"operator" yaml:"operator"`
+	Value     SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
 }
 
 type ManagedConnection struct {
@@ -667,6 +773,7 @@ func (value *ModelCheck) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -899,6 +1006,7 @@ func (value *ModelDefinition) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1042,10 +1150,35 @@ type MySQLConnection struct {
 	Type string `json:"type" yaml:"type"`
 }
 
+type NamedSemanticRelationshipEndpoint struct {
+	Dataset string `json:"dataset" yaml:"dataset"`
+	Entity  string `json:"entity" yaml:"entity"`
+}
+
 type NonNullModelCheck struct {
 	Type     string  `json:"type" yaml:"type"`
 	Field    string  `json:"field" yaml:"field"`
 	Severity *string `json:"severity,omitempty" yaml:"severity,omitempty"`
+}
+
+type NotEqualsSemanticFilter struct {
+	Field     string          `json:"field" yaml:"field"`
+	Operator  string          `json:"operator" yaml:"operator"`
+	Value     SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string       `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext      `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type NotInSemanticFilter struct {
+	Field     string            `json:"field" yaml:"field"`
+	Operator  string            `json:"operator" yaml:"operator"`
+	Value     []SemanticLiteral `json:"value" yaml:"value"`
+	Path      *[]string         `json:"path,omitempty" yaml:"path,omitempty"`
+	AiContext *AIContext        `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type NotSemanticFilter struct {
+	Not SemanticFilter `json:"not" yaml:"not"`
 }
 
 type ParquetPathSourceLocation struct {
@@ -1156,6 +1289,7 @@ func (value *PathSourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1547,6 +1681,19 @@ type R2Connection struct {
 	Defaults *ReaderDefaults `json:"defaults,omitempty" yaml:"defaults,omitempty"`
 }
 
+type RatioSemanticMetric struct {
+	Type                 string     `json:"type" yaml:"type"`
+	Numerator            string     `json:"numerator" yaml:"numerator"`
+	Denominator          string     `json:"denominator" yaml:"denominator"`
+	Label                *string    `json:"label,omitempty" yaml:"label,omitempty"`
+	Description          *string    `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Unit                 *string    `json:"unit,omitempty" yaml:"unit,omitempty"`
+	Format               *string    `json:"format,omitempty" yaml:"format,omitempty"`
+	Hidden               *bool      `json:"hidden,omitempty" yaml:"hidden,omitempty"`
+	RequiredAccessGrants *[]string  `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+}
+
 type ReaderDefaults struct {
 	Csv     *CSVReaderOptions     `json:"csv,omitempty" yaml:"csv,omitempty"`
 	JSON    *JSONReaderOptions    `json:"json,omitempty" yaml:"json,omitempty"`
@@ -1623,6 +1770,954 @@ type SQLiteConnection struct {
 	Type string `json:"type" yaml:"type"`
 }
 
+type SemanticAccessFilter struct {
+	Field         string `json:"field" yaml:"field"`
+	UserAttribute string `json:"userAttribute" yaml:"userAttribute"`
+}
+
+type SemanticAccessGrant struct {
+	UserAttribute string                `json:"userAttribute" yaml:"userAttribute"`
+	AllowedValues SemanticAllowedValues `json:"allowedValues" yaml:"allowedValues"`
+}
+
+type SemanticAllowedValues []any
+
+type SemanticDataset struct {
+	Model                string                  `json:"model" yaml:"model"`
+	DefaultTimeDimension *string                 `json:"defaultTimeDimension,omitempty" yaml:"defaultTimeDimension,omitempty"`
+	DisplayName          *string                 `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Description          *string                 `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext              `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	RequiredAccessGrants *[]string               `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+	AccessFilters        *[]SemanticAccessFilter `json:"accessFilters,omitempty" yaml:"accessFilters,omitempty"`
+}
+
+type SemanticDimension struct {
+	Label                *string                             `json:"label,omitempty" yaml:"label,omitempty"`
+	Description          *string                             `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext            *AIContext                          `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Datatype             string                              `json:"datatype" yaml:"datatype"`
+	Time                 *SemanticTimeSemantics              `json:"time,omitempty" yaml:"time,omitempty"`
+	Bindings             map[string]SemanticDimensionBinding `json:"bindings" yaml:"bindings"`
+	RequiredAccessGrants *[]string                           `json:"requiredAccessGrants,omitempty" yaml:"requiredAccessGrants,omitempty"`
+}
+
+type SemanticDimensionBinding struct {
+	Field string    `json:"field" yaml:"field"`
+	Path  *[]string `json:"path,omitempty" yaml:"path,omitempty"`
+}
+
+type SemanticFilterVariant interface {
+	isSemanticFilterVariant()
+}
+
+type SemanticFilter struct {
+	Value SemanticFilterVariant
+}
+
+func (*EqualsSemanticFilter) isSemanticFilterVariant()             {}
+func (*NotEqualsSemanticFilter) isSemanticFilterVariant()          {}
+func (*InSemanticFilter) isSemanticFilterVariant()                 {}
+func (*NotInSemanticFilter) isSemanticFilterVariant()              {}
+func (*LessThanSemanticFilter) isSemanticFilterVariant()           {}
+func (*LessThanOrEqualSemanticFilter) isSemanticFilterVariant()    {}
+func (*GreaterThanSemanticFilter) isSemanticFilterVariant()        {}
+func (*GreaterThanOrEqualSemanticFilter) isSemanticFilterVariant() {}
+func (*IsNullSemanticFilter) isSemanticFilterVariant()             {}
+func (*IsNotNullSemanticFilter) isSemanticFilterVariant()          {}
+func (*AllSemanticFilter) isSemanticFilterVariant()                {}
+func (*AnySemanticFilter) isSemanticFilterVariant()                {}
+func (*NotSemanticFilter) isSemanticFilterVariant()                {}
+
+func (value SemanticFilter) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *EqualsSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *NotEqualsSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *InSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *NotInSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *LessThanSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *LessThanOrEqualSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *GreaterThanSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *GreaterThanOrEqualSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *IsNullSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *IsNotNullSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *AllSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *AnySemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case *NotSemanticFilter:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticFilter variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("SemanticFilter variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported SemanticFilter variant %T", variant)
+	}
+}
+
+func (value *SemanticFilter) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SemanticFilter into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode SemanticFilter object: %w", err)
+	}
+	*value = SemanticFilter{}
+	var matched string
+	var decoded any
+	var failures []string
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "EqualsSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "EqualsSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "EqualsSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "EqualsSemanticFilter: required property operator must equal \"equals\"")
+			} else if value, ok := actual.(string); !ok || value != "equals" {
+				valid = false
+				failures = append(failures, "EqualsSemanticFilter: required property operator must equal \"equals\"")
+			}
+		}
+		if valid {
+			var candidate EqualsSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and EqualsSemanticFilter", matched)
+				}
+				matched = "EqualsSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "EqualsSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "NotEqualsSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "NotEqualsSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "NotEqualsSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "NotEqualsSemanticFilter: required property operator must equal \"not_equals\"")
+			} else if value, ok := actual.(string); !ok || value != "not_equals" {
+				valid = false
+				failures = append(failures, "NotEqualsSemanticFilter: required property operator must equal \"not_equals\"")
+			}
+		}
+		if valid {
+			var candidate NotEqualsSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and NotEqualsSemanticFilter", matched)
+				}
+				matched = "NotEqualsSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "NotEqualsSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "InSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "InSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "InSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "InSemanticFilter: required property operator must equal \"in\"")
+			} else if value, ok := actual.(string); !ok || value != "in" {
+				valid = false
+				failures = append(failures, "InSemanticFilter: required property operator must equal \"in\"")
+			}
+		}
+		if valid {
+			var candidate InSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and InSemanticFilter", matched)
+				}
+				matched = "InSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "InSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "NotInSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "NotInSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "NotInSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "NotInSemanticFilter: required property operator must equal \"not_in\"")
+			} else if value, ok := actual.(string); !ok || value != "not_in" {
+				valid = false
+				failures = append(failures, "NotInSemanticFilter: required property operator must equal \"not_in\"")
+			}
+		}
+		if valid {
+			var candidate NotInSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and NotInSemanticFilter", matched)
+				}
+				matched = "NotInSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "NotInSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "LessThanSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "LessThanSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "LessThanSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "LessThanSemanticFilter: required property operator must equal \"less_than\"")
+			} else if value, ok := actual.(string); !ok || value != "less_than" {
+				valid = false
+				failures = append(failures, "LessThanSemanticFilter: required property operator must equal \"less_than\"")
+			}
+		}
+		if valid {
+			var candidate LessThanSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and LessThanSemanticFilter", matched)
+				}
+				matched = "LessThanSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "LessThanSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "LessThanOrEqualSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "LessThanOrEqualSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "LessThanOrEqualSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "LessThanOrEqualSemanticFilter: required property operator must equal \"less_than_or_equal\"")
+			} else if value, ok := actual.(string); !ok || value != "less_than_or_equal" {
+				valid = false
+				failures = append(failures, "LessThanOrEqualSemanticFilter: required property operator must equal \"less_than_or_equal\"")
+			}
+		}
+		if valid {
+			var candidate LessThanOrEqualSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and LessThanOrEqualSemanticFilter", matched)
+				}
+				matched = "LessThanOrEqualSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "LessThanOrEqualSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "GreaterThanSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "GreaterThanSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "GreaterThanSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "GreaterThanSemanticFilter: required property operator must equal \"greater_than\"")
+			} else if value, ok := actual.(string); !ok || value != "greater_than" {
+				valid = false
+				failures = append(failures, "GreaterThanSemanticFilter: required property operator must equal \"greater_than\"")
+			}
+		}
+		if valid {
+			var candidate GreaterThanSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and GreaterThanSemanticFilter", matched)
+				}
+				matched = "GreaterThanSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "GreaterThanSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "GreaterThanOrEqualSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "GreaterThanOrEqualSemanticFilter: required property operator is missing")
+		}
+		if _, ok := fields["value"]; !ok {
+			valid = false
+			failures = append(failures, "GreaterThanOrEqualSemanticFilter: required property value is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "GreaterThanOrEqualSemanticFilter: required property operator must equal \"greater_than_or_equal\"")
+			} else if value, ok := actual.(string); !ok || value != "greater_than_or_equal" {
+				valid = false
+				failures = append(failures, "GreaterThanOrEqualSemanticFilter: required property operator must equal \"greater_than_or_equal\"")
+			}
+		}
+		if valid {
+			var candidate GreaterThanOrEqualSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and GreaterThanOrEqualSemanticFilter", matched)
+				}
+				matched = "GreaterThanOrEqualSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "GreaterThanOrEqualSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "IsNullSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "IsNullSemanticFilter: required property operator is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "IsNullSemanticFilter: required property operator must equal \"is_null\"")
+			} else if value, ok := actual.(string); !ok || value != "is_null" {
+				valid = false
+				failures = append(failures, "IsNullSemanticFilter: required property operator must equal \"is_null\"")
+			}
+		}
+		if valid {
+			var candidate IsNullSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and IsNullSemanticFilter", matched)
+				}
+				matched = "IsNullSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "IsNullSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["field"]; !ok {
+			valid = false
+			failures = append(failures, "IsNotNullSemanticFilter: required property field is missing")
+		}
+		if _, ok := fields["operator"]; !ok {
+			valid = false
+			failures = append(failures, "IsNotNullSemanticFilter: required property operator is missing")
+		}
+		if valid {
+			var actual any
+			if err := json.Unmarshal(fields["operator"], &actual); err != nil {
+				valid = false
+				failures = append(failures, "IsNotNullSemanticFilter: required property operator must equal \"is_not_null\"")
+			} else if value, ok := actual.(string); !ok || value != "is_not_null" {
+				valid = false
+				failures = append(failures, "IsNotNullSemanticFilter: required property operator must equal \"is_not_null\"")
+			}
+		}
+		if valid {
+			var candidate IsNotNullSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and IsNotNullSemanticFilter", matched)
+				}
+				matched = "IsNotNullSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "IsNotNullSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["all"]; !ok {
+			valid = false
+			failures = append(failures, "AllSemanticFilter: required property all is missing")
+		}
+		if valid {
+			var candidate AllSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and AllSemanticFilter", matched)
+				}
+				matched = "AllSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "AllSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["any"]; !ok {
+			valid = false
+			failures = append(failures, "AnySemanticFilter: required property any is missing")
+		}
+		if valid {
+			var candidate AnySemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and AnySemanticFilter", matched)
+				}
+				matched = "AnySemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "AnySemanticFilter: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["not"]; !ok {
+			valid = false
+			failures = append(failures, "NotSemanticFilter: required property not is missing")
+		}
+		if valid {
+			var candidate NotSemanticFilter
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticFilter: object matches both %s and NotSemanticFilter", matched)
+				}
+				matched = "NotSemanticFilter"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "NotSemanticFilter: "+err.Error())
+			}
+		}
+	}
+	if matched == "" {
+		return fmt.Errorf("decode SemanticFilter: no object variant matched (fields=%v, errors=%s)", fields, strings.Join(failures, "; "))
+	}
+	switch matched {
+	case "EqualsSemanticFilter":
+		value.Value = decoded.(*EqualsSemanticFilter)
+	case "NotEqualsSemanticFilter":
+		value.Value = decoded.(*NotEqualsSemanticFilter)
+	case "InSemanticFilter":
+		value.Value = decoded.(*InSemanticFilter)
+	case "NotInSemanticFilter":
+		value.Value = decoded.(*NotInSemanticFilter)
+	case "LessThanSemanticFilter":
+		value.Value = decoded.(*LessThanSemanticFilter)
+	case "LessThanOrEqualSemanticFilter":
+		value.Value = decoded.(*LessThanOrEqualSemanticFilter)
+	case "GreaterThanSemanticFilter":
+		value.Value = decoded.(*GreaterThanSemanticFilter)
+	case "GreaterThanOrEqualSemanticFilter":
+		value.Value = decoded.(*GreaterThanOrEqualSemanticFilter)
+	case "IsNullSemanticFilter":
+		value.Value = decoded.(*IsNullSemanticFilter)
+	case "IsNotNullSemanticFilter":
+		value.Value = decoded.(*IsNotNullSemanticFilter)
+	case "AllSemanticFilter":
+		value.Value = decoded.(*AllSemanticFilter)
+	case "AnySemanticFilter":
+		value.Value = decoded.(*AnySemanticFilter)
+	case "NotSemanticFilter":
+		value.Value = decoded.(*NotSemanticFilter)
+	}
+	return nil
+}
+
+type SemanticLiteral = any
+
+type SemanticMetricVariant interface {
+	isSemanticMetricVariant()
+}
+
+type SemanticMetric struct {
+	Value SemanticMetricVariant
+}
+
+func (*SemanticMetricAggregateVariant) isSemanticMetricVariant() {}
+func (*SemanticMetricDerivedVariant) isSemanticMetricVariant()   {}
+func (*SemanticMetricRatioVariant) isSemanticMetricVariant()     {}
+
+func (value SemanticMetric) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *SemanticMetricAggregateVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return json.Marshal(variant)
+	case *SemanticMetricDerivedVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return json.Marshal(variant)
+	case *SemanticMetricRatioVariant:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("SemanticMetric variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported SemanticMetric variant %T", variant)
+	}
+}
+
+func (value *SemanticMetric) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SemanticMetric into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode SemanticMetric object: %w", err)
+	}
+	var tag struct {
+		Value string `json:"type"`
+	}
+	if err := json.Unmarshal(data, &tag); err != nil {
+		return fmt.Errorf("decode SemanticMetric discriminator: %w", err)
+	}
+	if tag.Value == "" {
+		return fmt.Errorf("SemanticMetric discriminator type is required")
+	}
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	switch tag.Value {
+	case "aggregate":
+		if _, ok := fields["aggregation"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property aggregation is missing", tag.Value)
+		}
+		if _, ok := fields["dataset"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property dataset is missing", tag.Value)
+		}
+		if _, ok := fields["input"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property input is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property type is missing", tag.Value)
+		}
+		var variant SemanticMetricAggregateVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode SemanticMetric variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "derived":
+		if _, ok := fields["expression"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property expression is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property type is missing", tag.Value)
+		}
+		var variant SemanticMetricDerivedVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode SemanticMetric variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	case "ratio":
+		if _, ok := fields["denominator"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property denominator is missing", tag.Value)
+		}
+		if _, ok := fields["numerator"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property numerator is missing", tag.Value)
+		}
+		if _, ok := fields["type"]; !ok {
+			return fmt.Errorf("decode SemanticMetric variant %q: required property type is missing", tag.Value)
+		}
+		var variant SemanticMetricRatioVariant
+		if err := decode(&variant); err != nil {
+			return fmt.Errorf("decode SemanticMetric variant %q: %w", tag.Value, err)
+		}
+		value.Value = &variant
+	default:
+		return fmt.Errorf("unknown SemanticMetric discriminator %q", tag.Value)
+	}
+	return nil
+}
+
+type SemanticMetricVisitor interface {
+	VisitSemanticMetricAggregateVariant(*SemanticMetricAggregateVariant) error
+	VisitSemanticMetricDerivedVariant(*SemanticMetricDerivedVariant) error
+	VisitSemanticMetricRatioVariant(*SemanticMetricRatioVariant) error
+}
+
+func (value *SemanticMetric) Visit(visitor SemanticMetricVisitor) error {
+	if value == nil {
+		return fmt.Errorf("cannot visit nil SemanticMetric")
+	}
+	if visitor == nil {
+		return fmt.Errorf("SemanticMetric visitor is required")
+	}
+	switch variant := value.Value.(type) {
+	case *SemanticMetricAggregateVariant:
+		if variant == nil {
+			return fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return visitor.VisitSemanticMetricAggregateVariant(variant)
+	case *SemanticMetricDerivedVariant:
+		if variant == nil {
+			return fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return visitor.VisitSemanticMetricDerivedVariant(variant)
+	case *SemanticMetricRatioVariant:
+		if variant == nil {
+			return fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return visitor.VisitSemanticMetricRatioVariant(variant)
+	case nil:
+		return fmt.Errorf("SemanticMetric variant is required")
+	default:
+		return fmt.Errorf("unsupported SemanticMetric variant %T", variant)
+	}
+}
+
+func (value *SemanticMetric) Type() (string, error) {
+	if value == nil {
+		return "", fmt.Errorf("cannot inspect nil SemanticMetric")
+	}
+	switch variant := value.Value.(type) {
+	case *SemanticMetricAggregateVariant:
+		if variant == nil {
+			return "", fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return "aggregate", nil
+	case *SemanticMetricDerivedVariant:
+		if variant == nil {
+			return "", fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return "derived", nil
+	case *SemanticMetricRatioVariant:
+		if variant == nil {
+			return "", fmt.Errorf("SemanticMetric variant is nil")
+		}
+		return "ratio", nil
+	case nil:
+		return "", fmt.Errorf("SemanticMetric variant is required")
+	default:
+		return "", fmt.Errorf("unsupported SemanticMetric variant %T", variant)
+	}
+}
+
+type SemanticMetricAggregateVariant struct {
+	AggregateSemanticMetric
+	Type string `json:"type" yaml:"type"`
+}
+
+type SemanticMetricDerivedVariant struct {
+	DerivedSemanticMetric
+	Type string `json:"type" yaml:"type"`
+}
+
+type SemanticMetricInput struct {
+	Field string `json:"field" yaml:"field"`
+}
+
+type SemanticMetricRatioVariant struct {
+	RatioSemanticMetric
+	Type string `json:"type" yaml:"type"`
+}
+
+type SemanticModel struct {
+	APIVersion string                `json:"apiVersion" yaml:"apiVersion"`
+	Kind       string                `json:"kind" yaml:"kind"`
+	Metadata   SemanticModelMetadata `json:"metadata" yaml:"metadata"`
+	AiContext  *AIContext            `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+	Spec       SemanticModelSpec     `json:"spec" yaml:"spec"`
+}
+
+type SemanticModelMetadata struct {
+	ID            string              `json:"id" yaml:"id"`
+	Name          string              `json:"name" yaml:"name"`
+	DisplayName   *string             `json:"displayName,omitempty" yaml:"displayName,omitempty"`
+	Description   *string             `json:"description,omitempty" yaml:"description,omitempty"`
+	Owner         *string             `json:"owner,omitempty" yaml:"owner,omitempty"`
+	Domain        *string             `json:"domain,omitempty" yaml:"domain,omitempty"`
+	Tags          *[]string           `json:"tags,omitempty" yaml:"tags,omitempty"`
+	Documentation *string             `json:"documentation,omitempty" yaml:"documentation,omitempty"`
+	Provenance    *ResourceProvenance `json:"provenance,omitempty" yaml:"provenance,omitempty"`
+}
+
+type SemanticModelSpec struct {
+	Datasets      map[string]SemanticDataset       `json:"datasets" yaml:"datasets"`
+	AccessGrants  *map[string]SemanticAccessGrant  `json:"accessGrants,omitempty" yaml:"accessGrants,omitempty"`
+	Relationships *map[string]SemanticRelationship `json:"relationships,omitempty" yaml:"relationships,omitempty"`
+	Dimensions    *map[string]SemanticDimension    `json:"dimensions,omitempty" yaml:"dimensions,omitempty"`
+	Filters       *map[string]SemanticFilter       `json:"filters,omitempty" yaml:"filters,omitempty"`
+	Metrics       map[string]SemanticMetric        `json:"metrics" yaml:"metrics"`
+}
+
+type SemanticRelationship struct {
+	From        SemanticRelationshipEndpoint `json:"from" yaml:"from"`
+	To          SemanticRelationshipEndpoint `json:"to" yaml:"to"`
+	Description *string                      `json:"description,omitempty" yaml:"description,omitempty"`
+	AiContext   *AIContext                   `json:"aiContext,omitempty" yaml:"aiContext,omitempty"`
+}
+
+type SemanticRelationshipEndpointVariant interface {
+	isSemanticRelationshipEndpointVariant()
+}
+
+type SemanticRelationshipEndpoint struct {
+	Value SemanticRelationshipEndpointVariant
+}
+
+func (*NamedSemanticRelationshipEndpoint) isSemanticRelationshipEndpointVariant()  {}
+func (*FieldsSemanticRelationshipEndpoint) isSemanticRelationshipEndpointVariant() {}
+
+func (value SemanticRelationshipEndpoint) MarshalJSON() ([]byte, error) {
+	switch variant := value.Value.(type) {
+	case *NamedSemanticRelationshipEndpoint:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticRelationshipEndpoint variant is nil")
+		}
+		return json.Marshal(variant)
+	case *FieldsSemanticRelationshipEndpoint:
+		if variant == nil {
+			return nil, fmt.Errorf("SemanticRelationshipEndpoint variant is nil")
+		}
+		return json.Marshal(variant)
+	case nil:
+		return nil, fmt.Errorf("SemanticRelationshipEndpoint variant is required")
+	default:
+		return nil, fmt.Errorf("unsupported SemanticRelationshipEndpoint variant %T", variant)
+	}
+}
+
+func (value *SemanticRelationshipEndpoint) UnmarshalJSON(data []byte) error {
+	if value == nil {
+		return fmt.Errorf("cannot unmarshal SemanticRelationshipEndpoint into nil receiver")
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(data, &fields); err != nil {
+		return fmt.Errorf("decode SemanticRelationshipEndpoint object: %w", err)
+	}
+	*value = SemanticRelationshipEndpoint{}
+	var matched string
+	var decoded any
+	var failures []string
+	decode := func(dest any) error {
+		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
+		decoder.DisallowUnknownFields()
+		return decoder.Decode(dest)
+	}
+	{
+		valid := true
+		if _, ok := fields["dataset"]; !ok {
+			valid = false
+			failures = append(failures, "NamedSemanticRelationshipEndpoint: required property dataset is missing")
+		}
+		if _, ok := fields["entity"]; !ok {
+			valid = false
+			failures = append(failures, "NamedSemanticRelationshipEndpoint: required property entity is missing")
+		}
+		if valid {
+			var candidate NamedSemanticRelationshipEndpoint
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticRelationshipEndpoint: object matches both %s and NamedSemanticRelationshipEndpoint", matched)
+				}
+				matched = "NamedSemanticRelationshipEndpoint"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "NamedSemanticRelationshipEndpoint: "+err.Error())
+			}
+		}
+	}
+	{
+		valid := true
+		if _, ok := fields["dataset"]; !ok {
+			valid = false
+			failures = append(failures, "FieldsSemanticRelationshipEndpoint: required property dataset is missing")
+		}
+		if _, ok := fields["fields"]; !ok {
+			valid = false
+			failures = append(failures, "FieldsSemanticRelationshipEndpoint: required property fields is missing")
+		}
+		if valid {
+			var candidate FieldsSemanticRelationshipEndpoint
+			if err := decode(&candidate); err == nil {
+				if matched != "" {
+					return fmt.Errorf("decode SemanticRelationshipEndpoint: object matches both %s and FieldsSemanticRelationshipEndpoint", matched)
+				}
+				matched = "FieldsSemanticRelationshipEndpoint"
+				decoded = &candidate
+			} else {
+				failures = append(failures, "FieldsSemanticRelationshipEndpoint: "+err.Error())
+			}
+		}
+	}
+	if matched == "" {
+		return fmt.Errorf("decode SemanticRelationshipEndpoint: no object variant matched (fields=%v, errors=%s)", fields, strings.Join(failures, "; "))
+	}
+	switch matched {
+	case "NamedSemanticRelationshipEndpoint":
+		value.Value = decoded.(*NamedSemanticRelationshipEndpoint)
+	case "FieldsSemanticRelationshipEndpoint":
+		value.Value = decoded.(*FieldsSemanticRelationshipEndpoint)
+	}
+	return nil
+}
+
+type SemanticTimeSemantics struct {
+	NativeGrain string   `json:"nativeGrain" yaml:"nativeGrain"`
+	Grains      []string `json:"grains" yaml:"grains"`
+	Calendar    *string  `json:"calendar,omitempty" yaml:"calendar,omitempty"`
+	Timezone    *string  `json:"timezone,omitempty" yaml:"timezone,omitempty"`
+}
+
 type Source struct {
 	APIVersion string           `json:"apiVersion" yaml:"apiVersion"`
 	Kind       string           `json:"kind" yaml:"kind"`
@@ -1679,6 +2774,7 @@ func (value *SourceFreshness) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1824,6 +2920,7 @@ func (value *SourceLocation) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}
@@ -1972,6 +3069,7 @@ func (value *SourceSchema) UnmarshalJSON(data []byte) error {
 	}
 	decode := func(dest any) error {
 		decoder := json.NewDecoder(bytes.NewReader(data))
+		decoder.UseNumber()
 		decoder.DisallowUnknownFields()
 		return decoder.Decode(dest)
 	}

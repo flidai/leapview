@@ -12,6 +12,7 @@ import (
 	dashboardcompiler "github.com/flidai/leapview/internal/dashboard/compiler"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/publication"
+	projectcontracts "github.com/flidai/leapview/internal/project/contracts"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/project/manifest"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
@@ -449,13 +450,30 @@ func addSourceAlias(aliases map[string]string, keyOwners map[string]string, key,
 	return nil
 }
 
-func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticModelSpec) error {
-	if len(spec.Datasets) == 0 {
+func applySemanticModelSpec(model *semanticmodel.Model, spec projectcontracts.SemanticModelSpec) error {
+	if err := rejectSemanticAccessPolicy(spec); err != nil {
+		return err
+	}
+	datasets := lowerSemanticDatasets(spec.Datasets)
+	relationshipsSpec, err := lowerSemanticRelationships(spec.Relationships)
+	if err != nil {
+		return err
+	}
+	dimensionsSpec := lowerSemanticDimensions(spec.Dimensions)
+	filters, err := lowerSemanticFilters(spec.Filters)
+	if err != nil {
+		return err
+	}
+	metricsSpec, err := lowerSemanticMetrics(spec.Metrics)
+	if err != nil {
+		return err
+	}
+	if len(datasets) == 0 {
 		return fmt.Errorf("SemanticModel %q requires datasets", model.Name)
 	}
 	baseTables := model.Tables
 	tables := map[string]semanticmodel.Table{}
-	for datasetName, dataset := range spec.Datasets {
+	for datasetName, dataset := range datasets {
 		table, ok := baseTables[dataset.Model]
 		if !ok {
 			return fmt.Errorf("SemanticModel %q dataset %q references unknown Model %q", model.Name, datasetName, dataset.Model)
@@ -463,25 +481,25 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		table.ModelName = dataset.Model
 		tables[datasetName] = table
 	}
-	relationships := make([]semanticmodel.Relationship, 0, len(spec.Relationships))
-	for id, relationship := range spec.Relationships {
-		fromDataset, fromFields, err := semanticRelationshipEndpointTuple(baseTables, spec.Datasets, relationship.From)
+	relationships := make([]semanticmodel.Relationship, 0, len(relationshipsSpec))
+	for id, relationship := range relationshipsSpec {
+		fromDataset, fromFields, err := semanticRelationshipEndpointTuple(baseTables, datasets, relationship.From)
 		if err != nil {
 			return fmt.Errorf("SemanticModel %q relationship %q from: %w", model.Name, id, err)
 		}
-		toDataset, toFields, err := semanticRelationshipEndpointTuple(baseTables, spec.Datasets, relationship.To)
+		toDataset, toFields, err := semanticRelationshipEndpointTuple(baseTables, datasets, relationship.To)
 		if err != nil {
 			return fmt.Errorf("SemanticModel %q relationship %q to: %w", model.Name, id, err)
 		}
 		cardinality := "many_to_one"
-		if semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.From) && semanticRelationshipEndpointUnique(baseTables, spec.Datasets, relationship.To) {
+		if semanticRelationshipEndpointUnique(baseTables, datasets, relationship.From) && semanticRelationshipEndpointUnique(baseTables, datasets, relationship.To) {
 			cardinality = "one_to_one"
 		}
 		relationships = append(relationships, semanticmodel.Relationship{ID: id, FromDataset: fromDataset, FromFields: fromFields, ToDataset: toDataset, ToFields: toFields, Cardinality: cardinality, Description: relationship.Description, AIContext: relationship.AIContext})
 	}
 	sort.SliceStable(relationships, func(i, j int) bool { return relationships[i].ID < relationships[j].ID })
 	dimensions := map[string]semanticmodel.SemanticDimension{}
-	for name, dimension := range spec.Dimensions {
+	for name, dimension := range dimensionsSpec {
 		converted := semanticmodel.SemanticDimension{Label: dimension.Label, Description: dimension.Description, Type: canonicalDimensionTypeName(string(dimension.Datatype)), Datatype: dimension.Datatype, Bindings: dimension.Bindings, AIContext: dimension.AIContext}
 		if dimension.Time != nil {
 			converted.NativeGrain = dimension.Time.NativeGrain
@@ -492,7 +510,7 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		dimensions[name] = converted
 	}
 	metrics := map[string]semanticmodel.Metric{}
-	for name, metric := range spec.Metrics {
+	for name, metric := range metricsSpec {
 		common := semanticmodel.Metric{Label: metric.Label, Description: metric.Description, Unit: metric.Unit, Format: metric.Format, Hidden: metric.Hidden, AIContext: metric.AIContext}
 		switch metric.Type {
 		case "aggregate":
@@ -520,12 +538,12 @@ func applySemanticModelSpec(model *semanticmodel.Model, spec projectSemanticMode
 		}
 	}
 	model.Tables = tables
-	model.Datasets = spec.Datasets
-	model.StructuredRelationships = spec.Relationships
+	model.Datasets = datasets
+	model.StructuredRelationships = relationshipsSpec
 	model.Relationships = relationships
 	model.Dimensions = dimensions
 	model.Metrics = metrics
-	model.Filters = spec.Filters
+	model.Filters = filters
 	return nil
 }
 

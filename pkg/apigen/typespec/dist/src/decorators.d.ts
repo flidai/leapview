@@ -169,6 +169,7 @@ export declare function $tool(context: DecoratorContext, target: Operation, opti
 export declare function $transportErrors(context: DecoratorContext, target: Namespace, schema: Model, options: TransportErrorsOptions): void;
 export declare function $propertyNames(context: DecoratorContext, target: ModelProperty, key: Scalar): void;
 export declare function $minProperties(context: DecoratorContext, target: ModelProperty, value: number): void;
+export declare function $uniqueItems(context: DecoratorContext, target: ModelProperty): void;
 export declare const $decorators: {
     apigen: {
         cli: typeof $cli;
@@ -198,6 +199,7 @@ export declare const $decorators: {
         transportErrors: typeof $transportErrors;
         propertyNames: typeof $propertyNames;
         minProperties: typeof $minProperties;
+        uniqueItems: typeof $uniqueItems;
     };
 };
 export declare function getCLI(context: {
@@ -275,3 +277,6 @@ export declare function getPropertyNames(context: {
 export declare function getMinProperties(context: {
     program: DecoratorContext["program"];
 }, target: ModelProperty): number | undefined;
+export declare function getUniqueItems(context: {
+    program: DecoratorContext["program"];
+}, target: ModelProperty): boolean;

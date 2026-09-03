@@ -108,6 +108,11 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 			return resourceDiagnostic(filename, nil, "schema.decode", "Model destination requires kind model")
 		}
 		return decodeGeneratedResource(kind, filename, content, destination)
+	case *projectcontracts.SemanticModel:
+		if kind != KindSemanticModel {
+			return resourceDiagnostic(filename, nil, "schema.decode", "SemanticModel destination requires kind semantic-model")
+		}
+		return decodeGeneratedResource(kind, filename, content, destination)
 	case *projectcontracts.PipelineDocument:
 		if kind != KindPipeline {
 			return resourceDiagnostic(filename, nil, "schema.decode", "Pipeline destination requires kind pipeline")
@@ -135,8 +140,8 @@ func DecodeResource(kind Kind, filename string, content []byte, destination any)
 }
 
 func decodeGeneratedResource(kind Kind, filename string, content []byte, destination any) error {
-	if kind != KindConnection && kind != KindSource && kind != KindModel {
-		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, and Model")
+	if kind != KindConnection && kind != KindSource && kind != KindModel && kind != KindSemanticModel {
+		return resourceDiagnostic(filename, nil, "schema.decode", "generated decoding is only available for Connection, Source, Model, and SemanticModel")
 	}
 	normalized, err := generatedResourceJSON(kind, filename, content)
 	if err != nil {
@@ -148,7 +153,7 @@ func decodeGeneratedResource(kind Kind, filename string, content []byte, destina
 	return nil
 }
 
-// validateGeneratedResource validates a generated Connection, Source, or Model
+// validateGeneratedResource validates a generated data-resource envelope
 // envelope without decoding into a destination. It is deliberately shared by
 // ValidateBytes and DecodeResource so direct schema callers cannot bypass the
 // generated tagged-union contract.
@@ -185,7 +190,7 @@ func generatedResourceJSON(kind Kind, filename string, content []byte) ([]byte, 
 	if err := json.Unmarshal(normalized, &envelope); err != nil {
 		return nil, resourceDiagnostic(filename, root, "schema.decode", err.Error())
 	}
-	wantKind := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model"}[kind]
+	wantKind := map[Kind]string{KindConnection: "Connection", KindSource: "Source", KindModel: "Model", KindSemanticModel: "SemanticModel"}[kind]
 	if envelope.Kind != wantKind {
 		return nil, resourceDiagnostic(filename, root, "schema.kind", fmt.Sprintf("resource kind %q does not match requested %s", envelope.Kind, wantKind))
 	}
@@ -203,7 +208,7 @@ var (
 func compiledGeneratedSchema(kind Kind) (*jsonschema.Schema, error) {
 	generatedSchemaOnce.Do(func() {
 		generatedSchemas = map[Kind]*jsonschema.Schema{}
-		for _, candidate := range []Kind{KindConnection, KindSource, KindModel} {
+		for _, candidate := range []Kind{KindConnection, KindSource, KindModel, KindSemanticModel} {
 			content, err := generatedJSONSchema(candidate)
 			if err != nil {
 				generatedSchemaErr = err
