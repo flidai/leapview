@@ -5,49 +5,10 @@ import (
 	"errors"
 	"fmt"
 	"sync"
-	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/gcadapter"
 )
-
-// These limits intentionally remain local until audit delivery policy has a
-// public configuration contract. They are high enough to avoid transient
-// readiness flaps while still surfacing a stuck outbox before it becomes an
-// unbounded operational backlog.
-const (
-	auditOutboxReadinessMaxUndelivered = int64(10_000)
-	auditOutboxReadinessMaxAge         = time.Hour
-)
-
-// auditOutboxReadiness reports only aggregate outbox state. In particular, it
-// never includes event identity or metadata in the readiness response.
-func auditOutboxReadiness(ctx context.Context, store access.AuditOutboxStatsReader) error {
-	if store == nil {
-		return nil
-	}
-	stats, err := store.AuditOutboxStats(ctx, time.Now().UTC())
-	if err != nil {
-		return errors.New("audit outbox unavailable")
-	}
-	if stats.Poison > 0 || stats.Quarantined > 0 {
-		return fmt.Errorf("audit outbox has terminal intents (poison=%d quarantined=%d)", stats.Poison, stats.Quarantined)
-	}
-	undelivered := stats.Pending + stats.Retry + stats.Leased
-	terminal := stats.Poison + stats.Quarantined
-	undelivered += terminal
-	if stats.Capacity > 0 && undelivered >= stats.Capacity {
-		return fmt.Errorf("audit outbox capacity exhausted (count=%d capacity=%d)", undelivered, stats.Capacity)
-	}
-	if undelivered > auditOutboxReadinessMaxUndelivered {
-		return fmt.Errorf("audit outbox backlog exceeds %d intents (count=%d)", auditOutboxReadinessMaxUndelivered, undelivered)
-	}
-	if stats.OldestUndeliveredAge > auditOutboxReadinessMaxAge {
-		return fmt.Errorf("audit outbox backlog exceeds %s (age=%s)", auditOutboxReadinessMaxAge, stats.OldestUndeliveredAge.Round(time.Second))
-	}
-	return nil
-}
 
 // runtimeLifecycle adapts process-owned workers and health signaling to
 // Application without retaining construction resources or HTTP routing.

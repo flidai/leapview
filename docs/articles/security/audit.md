@@ -31,23 +31,22 @@ Use bounded time ranges and pagination. Filter by actor/action/target for admini
 
 Audit access requires its own privilege. Restrict it to security and operational roles that need the relevant project visibility. Query text and target metadata can reveal sensitive business context even when row data is absent.
 
-## Monitor durable delivery
+## Monitor durable writes
 
-The removed offline audit-outbox operation is not available. Use the protected
-metrics endpoint and application logs to monitor delivery handoff health,
-including pending/retrying work, terminal failures, oldest undelivered age, and
-capacity. Keep event IDs, bounded failure codes, and payload digests in
-restricted incident evidence only; payload and actor metadata must not be
-exported into metrics.
+Audit intents append directly to PostgreSQL in the caller-owned transaction.
+Monitor append failures through application error metrics, PostgreSQL health,
+and the bounded audit API. Preserve event identity and request correlation only
+in restricted incident evidence; payload and actor metadata must not be
+exported into metrics or unrestricted logs.
 
-Treat terminal failures, capacity exhaustion, or an unavailable sink as an
-outage boundary. Stop writers, preserve readiness, metrics, logs, and the
-PostgreSQL-native recovery evidence, then correct the source or sink through its
-owner workflow. Do not edit audit rows, increase retries by hand, or replay a
-delivery without a reviewed, durable procedure. PostgreSQL backup/PITR and
-DuckLake/object-store recovery remain native operator responsibilities; follow
-the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations)
-and [Backup and restore guide](/docs/guides/operate/backup-restore).
+Treat a failed transaction or unavailable PostgreSQL authority as an outage
+boundary. Preserve readiness, metrics, logs, and PostgreSQL recovery evidence,
+then correct the source or database through its owner workflow. Do not edit
+immutable audit rows or replay a mutation outside its normal idempotency
+contract. PostgreSQL backup/PITR and DuckLake/object-store recovery remain
+native operator responsibilities; follow the [PostgreSQL operations
+guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
+guide](/docs/guides/operate/backup-restore).
 
 ## Correlate sources
 

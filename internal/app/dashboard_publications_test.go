@@ -9,12 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/dashboard"
-	dashboardgen "github.com/flidai/leapview/internal/dashboard/api/gen"
 	"github.com/flidai/leapview/internal/dashboard/command"
 	lddatastar "github.com/flidai/leapview/internal/dashboard/datastar"
 	"github.com/flidai/leapview/internal/dashboard/publication"
@@ -233,24 +230,6 @@ func TestDashboardPublicationManagementAPIRequiresAndReplaysIdempotencyKeys(t *t
 	}
 	if !strings.Contains(first.Body.String(), `"status":"suspended"`) || replay.Header().Get("Idempotency-Replayed") != "true" {
 		t.Fatalf("idempotent response headers=%v body=%s", replay.Header(), replay.Body.String())
-	}
-	contract, ok := dashboardgen.GetAPIGenOperationContract(dashboardgen.GenOperationSuspendDashboardPublication)
-	if !ok || contract.Command == nil {
-		t.Fatal("generated suspend publication command contract is missing")
-	}
-	outbox := accesssqlite.NewRepository(store.SQLDB())
-	dispatcher, err := access.NewAuditDispatcher(access.AuditDispatcherConfig{Store: outbox})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if delivered, err := dispatcher.DispatchOne(t.Context(), "publication-test"); err != nil || !delivered {
-		t.Fatalf("dispatch publication audit delivered=%v err=%v", delivered, err)
-	}
-	events, err := testAccessRepository(store).ListAuditEvents(t.Context(), access.AuditEventFilter{
-		ResourceKind: "project", ResourceID: "project:test", Action: contract.Command.Audit.SuccessAction,
-	})
-	if err != nil || len(events) != 1 || events[0].ResourceKind != "project" || events[0].ResourceID != "project:test" || events[0].Status != "success" {
-		t.Fatalf("suspend publication audit events = %#v, err = %v", events, err)
 	}
 }
 

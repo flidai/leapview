@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"strings"
-	"time"
 	"unicode"
 
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -18,16 +17,10 @@ import (
 
 const MaxAuditIntentMetadataBytes = 64 * 1024
 
-// MaxUndeliveredAuditIntents is the fail-closed local backlog bound. Delivered
-// handoff rows are governed by retention and do not consume this capacity.
-const MaxUndeliveredAuditIntents = 100_000
-
-var (
-	ErrAuditIntentConflict = errors.New("audit intent conflicts with durable state")
-	ErrAuditIntentFence    = errors.New("audit intent lease fence is stale")
-	ErrAuditOutboxCapacity = errors.New("audit outbox undelivered capacity is exhausted")
-	ErrAuditOutboxNotFound = errors.New("audit outbox event was not found")
-)
+// ErrAuditIntentConflict indicates that a retry identity already exists with
+// a different canonical payload. PostgreSQL direct immutable insertion and
+// its capability adapters use this sentinel to reject conflicting replays.
+var ErrAuditIntentConflict = errors.New("audit intent conflicts with durable state")
 
 // AuditIntent is the canonical, non-secret handoff committed by a source
 // capability in the same transaction as its security-relevant mutation.
@@ -70,110 +63,6 @@ type AuditIntentRecorderFunc func(context.Context, transaction.Transaction, Audi
 
 func (f AuditIntentRecorderFunc) RecordAuditIntent(ctx context.Context, tx transaction.Transaction, intent AuditIntent) error {
 	return f(ctx, tx, intent)
-}
-
-type AuditIntentState string
-
-const (
-	AuditIntentPending     AuditIntentState = "pending"
-	AuditIntentRetry       AuditIntentState = "retry"
-	AuditIntentLeased      AuditIntentState = "leased"
-	AuditIntentDelivered   AuditIntentState = "delivered"
-	AuditIntentPoison      AuditIntentState = "poison"
-	AuditIntentQuarantined AuditIntentState = "quarantined"
-)
-
-type AuditIntentLease struct {
-	Intent          AuditIntent
-	State           AuditIntentState
-	AttemptCount    int
-	LeaseOwner      string
-	LeaseGeneration int64
-	LeaseExpiresAt  time.Time
-	CreatedAt       time.Time
-}
-
-type AuditOutboxStats struct {
-	Pending, Retry, Leased, Delivered, Poison, Quarantined int64
-	OldestUndeliveredAge                                   time.Duration
-	// AttemptCount is the bounded aggregate of persisted delivery attempts.
-	// Capacity and CapacityRemaining deliberately describe only the local
-	// undelivered queue; they never expose event or actor dimensions.
-	AttemptCount      int64
-	Capacity          int64
-	CapacityRemaining int64
-}
-
-// MaxAuditOutboxInspectionRows bounds operator output and protects the
-// offline command from turning a terminal backlog into an unbounded export.
-const MaxAuditOutboxInspectionRows = 100
-
-// AuditOutboxTerminalIntent is the safe operator view of one terminal intent.
-// It intentionally omits the immutable payload and metadata. PayloadDigest
-// lets an operator bind a recovery command to the exact stored payload without
-// copying sensitive fields into a shell history or incident ticket.
-type AuditOutboxTerminalIntent struct {
-	EventID           string
-	State             AuditIntentState
-	AttemptCount      int
-	LastErrorCode     string
-	PayloadDigest     string
-	AggregateKey      string
-	AggregateSequence int64
-	LeaseGeneration   int64
-	CreatedAt         time.Time
-}
-
-type AuditOutboxInspection struct {
-	Stats     AuditOutboxStats
-	Terminals []AuditOutboxTerminalIntent
-	Truncated bool
-}
-
-// AuditOutboxRequeueRequest provides optional compare-and-swap guards for the
-// operator recovery operation. EventID is always required; an omitted guard
-// means that dimension is not part of the compare-and-swap.
-type AuditOutboxRequeueRequest struct {
-	EventID               string
-	ExpectedState         AuditIntentState
-	ExpectedAttempts      *int
-	ExpectedFailureCode   string
-	ExpectedPayloadDigest string
-}
-
-// AuditOutboxDeliveryStore is the least-privilege worker surface. It contains only
-// the lease and state-transition operations needed by the dispatcher; in
-// particular, it cannot inspect terminal payload facts or recover an intent.
-type AuditOutboxDeliveryStore interface {
-	ClaimAuditIntent(context.Context, string, time.Duration) (AuditIntentLease, bool, error)
-	CompleteAuditIntent(context.Context, AuditIntentLease) error
-	RetryAuditIntent(context.Context, AuditIntentLease, time.Time, string) error
-	PoisonAuditIntent(context.Context, AuditIntentLease, string) error
-	QuarantineAuditIntent(context.Context, AuditIntentLease, string) error
-}
-
-// AuditOutboxStatsReader is the aggregate-only observability surface. It is
-// intentionally separate from delivery and operator controls so metrics and
-// readiness cannot acquire mutation authority.
-type AuditOutboxStatsReader interface {
-	AuditOutboxStats(context.Context, time.Time) (AuditOutboxStats, error)
-}
-
-// AuditOutboxOperator is the least-privilege operator surface. It is separate
-// from worker and producer contracts and only exposes guarded recovery.
-type AuditOutboxOperator interface {
-	InspectAuditOutbox(context.Context, time.Time, int) (AuditOutboxInspection, error)
-	RequeueAuditIntentExact(context.Context, AuditOutboxRequeueRequest) error
-}
-
-// AuditStore is the module-owned durable audit surface used by process
-// composition. Producer capabilities receive only AuditIntentRecorder, while
-// lifecycle and operator wiring may use the worker or recovery subsets.
-type AuditStore interface {
-	AuditIntentRecorder
-	AuditOutboxDeliveryStore
-	AuditOutboxStatsReader
-	AuditOutboxOperator
 }
 
 func (intent AuditIntent) Canonicalize() (AuditIntent, error) {

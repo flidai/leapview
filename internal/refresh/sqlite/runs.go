@@ -86,7 +86,7 @@ func (r *SQLRunRepository) recordAuditIntent(ctx context.Context, tx transaction
 	}
 	// Resource identity remains the generated project target. The run ID is
 	// still the durable aggregate and event identity, so independent runs do
-	// not collide in the audit outbox.
+	// not collide in the audit record.
 	hash := sha256.Sum256([]byte(copy.Operation + "\x00" + copy.PrincipalID + "\x00" + runID + "\x00" + copy.RequestID))
 	copy.EventID = "sha256:" + hex.EncodeToString(hash[:])
 	return r.audit.RecordAuditIntent(ctx, tx, copy)
