@@ -38,6 +38,103 @@ spec: {type: managed}
 	}
 }
 
+func TestCompileSourceRootPublicAPIsCompileAllAuthoredKindsWithoutManifest(t *testing.T) {
+	root := t.TempDir()
+	writeAuthoredDiscoveryFiles(t, root, map[string]string{
+		"connections/warehouse.yaml": `apiVersion: leapview.dev/v1
+kind: Connection
+metadata: {id: connection:warehouse, name: warehouse}
+spec: {type: managed}
+`,
+		"sources/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Source
+metadata: {id: source:orders, name: orders}
+spec:
+  connection: warehouse
+  location: {type: path, path: orders.csv, format: csv}
+`,
+		"models/orders.yaml": `apiVersion: leapview.dev/v1
+kind: Model
+metadata: {id: model:orders, name: orders_model}
+spec:
+  definition: {type: direct, source: orders}
+  entities: {order: {type: primary, fields: [order_id]}}
+  grain: {entity: order}
+  fields: {order_id: {datatype: String}}
+`,
+		"semantic-models/sales.yaml": `apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata: {id: semantic:sales, name: sales}
+spec:
+  datasets: {orders: {model: orders_model}}
+  metrics: {order_count: {type: aggregate, dataset: orders, aggregation: count, input: {field: orders.order_id}, empty: zero}}
+`,
+		"pipelines/sales.yaml": `apiVersion: leapview.dev/v1
+kind: Pipeline
+metadata: {id: pipeline:sales, name: sales_refresh}
+spec: {selection: {semanticModel: sales}}
+`,
+		"dashboards/sales.yaml": `apiVersion: leapview.dev/v1
+kind: Dashboard
+metadata: {id: dashboard:sales, name: sales_dashboard, displayName: Sales Dashboard}
+spec:
+  semanticModel: sales
+  filters: []
+  visuals:
+    order_count:
+      type: kpi
+      query: {type: aggregate, dimensions: [], metrics: [order_count]}
+      presentation: {type: kpi}
+  pages: [{id: overview, title: Overview, components: []}]
+`,
+	})
+
+	graph, err := CompileSourceRootGraph(root)
+	if err != nil {
+		t.Fatalf("CompileSourceRootGraph() error = %v", err)
+	}
+	compiled, err := CompileSourceRoot(root)
+	if err != nil {
+		t.Fatalf("CompileSourceRoot() error = %v", err)
+	}
+	if compiled.Graph().Digest() != graph.Digest() {
+		t.Fatalf("public compile APIs returned different graph digests: artifact=%q graph=%q", compiled.Graph().Digest(), graph.Digest())
+	}
+
+	if graph.ProjectID() != syntheticSourceRootID {
+		t.Fatalf("project id = %q, want synthetic internal root %q", graph.ProjectID(), syntheticSourceRootID)
+	}
+	resources := graph.Resources()
+	if len(resources) != 7 {
+		t.Fatalf("resource count = %d, want synthetic root plus six authored resources", len(resources))
+	}
+	wantKinds := map[projectgraph.Kind]bool{
+		projectgraph.KindProject: true, projectgraph.KindConnection: true, projectgraph.KindSource: true,
+		projectgraph.KindModel: true, projectgraph.KindSemanticModel: true, projectgraph.KindPipeline: true,
+		projectgraph.KindDashboard: true,
+	}
+	seenKinds := map[projectgraph.Kind]bool{}
+	for _, resource := range resources {
+		if !wantKinds[resource.Kind] {
+			t.Fatalf("unexpected compiled resource kind %q for %q", resource.Kind, resource.ID)
+		}
+		seenKinds[resource.Kind] = true
+	}
+	for kind := range wantKinds {
+		if !seenKinds[kind] {
+			t.Fatalf("compiled graph omitted authored resource kind %q", kind)
+		}
+	}
+
+	manifest := compiled.Manifest()
+	if _, ok := manifest.AuthoredResourceSources[syntheticSourceRootID.String()]; ok {
+		t.Fatal("synthetic source root was exposed as authored resource source")
+	}
+	if _, ok := manifest.NameIndex.Dashboards[syntheticSourceRootName]; ok {
+		t.Fatal("synthetic source root was exposed through the authored dashboard name index")
+	}
+}
+
 func TestSourceRootFilesAreStableAndExcludeSyntheticRoot(t *testing.T) {
 	root := t.TempDir()
 	writeAuthoredDiscoveryFiles(t, root, map[string]string{
