@@ -135,7 +135,7 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint, responseContentType strin
 		}
 		bindings = append(bindings, binding)
 		if mode == "model" {
-			property := schemaRefJSON(doc, source.Schema, map[string]bool{})
+			property := portableInputSchemaJSON(doc, source.Schema)
 			if description != "" {
 				property["description"] = description
 			}
@@ -155,6 +155,71 @@ func buildInput(doc ir.Document, endpoint ir.Endpoint, responseContentType strin
 		return nil, nil, fmt.Errorf("encode input schema: %w", err)
 	}
 	return bindings, encoded, nil
+}
+
+// portableInputSchemaJSON projects canonical JSON Schema onto the subset
+// accepted by the agent provider. Binding schemas retain the canonical
+// constraints for server-side validation, while provider schemas express
+// numeric constants as one-value enums and omit unsupported cardinality
+// keywords.
+func portableInputSchemaJSON(doc ir.Document, ref ir.SchemaRef) map[string]any {
+	return projectPortableInputSchema(schemaRefJSON(doc, ref, map[string]bool{})).(map[string]any)
+}
+
+func projectPortableInputSchema(value any) any {
+	object, ok := value.(map[string]any)
+	if !ok {
+		return value
+	}
+	projected := make(map[string]any, len(object))
+	var constant any
+	hasConstant := false
+	for key, child := range object {
+		switch key {
+		case "minItems", "maxItems", "minProperties":
+			continue
+		case "const":
+			// Defer setting enum until after the loop so a canonical enum
+			// cannot override the const projection.
+			constant, hasConstant = child, true
+		case "properties":
+			properties, ok := child.(map[string]any)
+			if !ok {
+				projected[key] = child
+				continue
+			}
+			projectedProperties := make(map[string]any, len(properties))
+			for name, property := range properties {
+				projectedProperties[name] = projectPortableInputSchema(property)
+			}
+			projected[key] = projectedProperties
+		case "items", "additionalProperties", "propertyNames":
+			// These keywords contain one schema, while boolean
+			// additionalProperties is already portable as-is.
+			if _, ok := child.(map[string]any); ok {
+				projected[key] = projectPortableInputSchema(child)
+			} else {
+				projected[key] = child
+			}
+		case "oneOf", "allOf":
+			branches, ok := child.([]any)
+			if !ok {
+				projected[key] = child
+				continue
+			}
+			projectedBranches := make([]any, len(branches))
+			for index, branch := range branches {
+				projectedBranches[index] = projectPortableInputSchema(branch)
+			}
+			projected[key] = projectedBranches
+		default:
+			projected[key] = child
+		}
+	}
+	if hasConstant {
+		projected["enum"] = []any{constant}
+	}
+	return projected
 }
 
 func buildOutput(doc ir.Document, endpoint ir.Endpoint) (runtime.Output, json.RawMessage, string, error) {

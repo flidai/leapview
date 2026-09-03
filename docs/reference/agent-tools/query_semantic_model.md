@@ -41,7 +41,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
         ],
         "type": "object"
       },
-      "maxItems": 50,
       "type": "array"
     },
     "filters": {
@@ -101,7 +100,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
         },
         "type": "object"
       },
-      "maxItems": 100,
       "type": "array"
     },
     "limit": {
@@ -127,7 +125,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
         ],
         "type": "object"
       },
-      "maxItems": 50,
       "type": "array"
     },
     "model": {
@@ -164,7 +161,6 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
         ],
         "type": "object"
       },
-      "maxItems": 50,
       "type": "array"
     },
     "time": {
@@ -233,9 +229,15 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
             "additionalProperties": false,
             "properties": {
               "id": {
+                "maxLength": 200,
+                "minLength": 1,
                 "type": "string"
               },
               "type": {
+                "enum": [
+                  "field",
+                  "metric"
+                ],
                 "type": "string"
               }
             },
@@ -249,6 +251,10 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
             "type": "string"
           },
           "kind": {
+            "enum": [
+              "dimension",
+              "metric"
+            ],
             "type": "string"
           },
           "label": {
@@ -302,9 +308,17 @@ Machine-readable: [focused JSON](/docs/agent-tools/tools/query_semantic_model.js
           "type": "string"
         },
         "source": {
+          "enum": [
+            "publish",
+            "refresh"
+          ],
           "type": "string"
         },
         "status": {
+          "enum": [
+            "current",
+            "stale"
+          ],
           "type": "string"
         }
       },

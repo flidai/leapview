@@ -108,28 +108,85 @@ func portableSchema(value any, definitions map[string]any, resolving map[string]
 			return resolved, err
 		}
 		out := make(map[string]any, len(typed))
+		var constant any
+		hasConstant := false
 		for key, item := range typed {
 			switch key {
 			case "$defs", "$schema":
 				continue
+			case "const":
+				// Provider input schemas do not support const. Defer writing
+				// the equivalent one-value enum until after the loop so an
+				// authored enum cannot overwrite the projection.
+				constant, hasConstant = item, true
+				continue
+			case "minItems", "maxItems", "minProperties":
+				// These canonical constraints remain available to full schema
+				// emitters and runtime bindings, but are not provider-portable.
+				continue
 			case "unevaluatedProperties":
 				key = "additionalProperties"
+			}
+			if !portableContractSchemaKeywords[key] {
+				continue
+			}
+			if key == "properties" {
+				properties, ok := item.(map[string]any)
+				if ok {
+					projectedProperties := make(map[string]any, len(properties))
+					for name, property := range properties {
+						resolved, err := portableSchema(property, definitions, resolving)
+						if err != nil {
+							return nil, err
+						}
+						// Property names are data, not schema keywords. In
+						// particular, preserve names such as minItems and const.
+						projectedProperties[name] = resolved
+					}
+					out[key] = projectedProperties
+					continue
+				}
 			}
 			if key == "format" {
 				if _, keyword := item.(string); keyword {
 					continue
 				}
 			}
-			resolved, err := portableSchema(item, definitions, resolving)
-			if err != nil {
-				return nil, err
+			resolved := item
+			if key == "items" || key == "additionalProperties" || key == "propertyNames" || key == "oneOf" || key == "allOf" {
+				var err error
+				resolved, err = portableSchema(item, definitions, resolving)
+				if err != nil {
+					return nil, err
+				}
 			}
 			out[key] = resolved
+		}
+		if hasConstant {
+			out["enum"] = []any{constant}
 		}
 		return out, nil
 	default:
 		return value, nil
 	}
+}
+
+var portableContractSchemaKeywords = map[string]bool{
+	"additionalProperties": true,
+	"allOf":                true,
+	"description":          true,
+	"enum":                 true,
+	"items":                true,
+	"maximum":              true,
+	"maxLength":            true,
+	"minimum":              true,
+	"minLength":            true,
+	"oneOf":                true,
+	"pattern":              true,
+	"properties":           true,
+	"propertyNames":        true,
+	"required":             true,
+	"type":                 true,
 }
 
 func goIdentifier(value string) string {

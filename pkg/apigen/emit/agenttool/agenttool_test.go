@@ -2,6 +2,7 @@ package agenttool
 
 import (
 	"encoding/json"
+	"net/http"
 	"testing"
 
 	"github.com/Yacobolo/toolbelt/apigen/ir"
@@ -195,6 +196,110 @@ func TestSchemaRefJSONPreservesConstraintsBesideReferences(t *testing.T) {
 	got := schemaRefJSON(doc, ir.SchemaRef{Ref: "Versions", MaxItems: &maximum}, map[string]bool{})
 	require.Equal(t, "array", got["type"])
 	require.Equal(t, 2, got["maxItems"])
+}
+
+func TestBuildProjectsInputSchemaForProviderAndRetainsBindingConstraints(t *testing.T) {
+	constant := 1.0
+	minimum := 2
+	maximum := 3
+	minProperties := 1
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/api"},
+		Info:          ir.Info{Title: "Tools", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Payload": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"values": {Schema: ir.SchemaRef{
+						Type: "array", MinItems: &minimum, MaxItems: &maximum,
+						Items: &ir.SchemaRef{Type: "integer", Const: &constant},
+					}},
+					"settings": {Schema: ir.SchemaRef{Type: "object", MinProperties: &minProperties}},
+				},
+			},
+		},
+		Endpoints: []ir.Endpoint{{
+			Method: "post", Path: "/values", OperationID: "setValues",
+			RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+				ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Payload"},
+			}}},
+			Responses: []ir.Response{{StatusCode: http.StatusNoContent, Description: "updated"}},
+			Tool:      &ir.Tool{Name: "set_values", Effect: "write", Output: ir.ToolOutput{Mode: "empty"}},
+		}},
+	}
+
+	contracts, err := Build(doc)
+	require.NoError(t, err)
+	contract := contracts["set_values"]
+
+	var inputSchema map[string]any
+	require.NoError(t, json.Unmarshal(contract.InputSchema, &inputSchema))
+	properties := inputSchema["properties"].(map[string]any)
+	values := properties["values"].(map[string]any)
+	require.NotContains(t, values, "minItems")
+	require.NotContains(t, values, "maxItems")
+	require.Equal(t, []any{float64(1)}, values["items"].(map[string]any)["enum"])
+	settings := properties["settings"].(map[string]any)
+	require.NotContains(t, settings, "minProperties")
+
+	var valuesBinding runtime.Binding
+	for _, binding := range contract.Bindings {
+		if binding.Argument == "values" {
+			valuesBinding = binding
+			break
+		}
+	}
+	require.Equal(t, &minimum, valuesBinding.Schema.MinItems)
+	require.Equal(t, &maximum, valuesBinding.Schema.MaxItems)
+	require.NotNil(t, valuesBinding.Schema.Items)
+	require.Equal(t, &constant, valuesBinding.Schema.Items.Const)
+
+	_, err = runtime.BuildRequest(contract, json.RawMessage(`{"values":[1]}`), nil)
+	require.ErrorContains(t, err, `argument "values" does not match its schema`)
+	_, err = runtime.BuildRequest(contract, json.RawMessage(`{"values":[1,1]}`), nil)
+	require.NoError(t, err)
+}
+
+func TestBuildPreservesInputPropertyNamesThatMatchSchemaKeywords(t *testing.T) {
+	doc := ir.Document{
+		SchemaVersion: ir.CurrentSchemaVersion,
+		API:           ir.API{BasePath: "/api"},
+		Info:          ir.Info{Title: "Tools", Version: "1"},
+		Schemas: map[string]ir.Schema{
+			"Payload": {
+				Type: "object",
+				Properties: map[string]ir.SchemaProperty{
+					"const":         {Schema: ir.SchemaRef{Type: "string"}},
+					"maxItems":      {Schema: ir.SchemaRef{Type: "integer"}},
+					"minItems":      {Schema: ir.SchemaRef{Type: "integer"}},
+					"minProperties": {Schema: ir.SchemaRef{Type: "integer"}},
+				},
+			},
+		},
+		Endpoints: []ir.Endpoint{{
+			Method: "post", Path: "/values", OperationID: "setValues",
+			RequestBody: &ir.RequestBody{Required: true, Contents: []ir.BodyContent{{
+				ContentType: "application/json", BodyKind: "json", Schema: &ir.SchemaRef{Ref: "Payload"},
+			}}},
+			Responses: []ir.Response{{StatusCode: http.StatusNoContent, Description: "updated"}},
+			Tool:      &ir.Tool{Name: "set_values", Effect: "write", Output: ir.ToolOutput{Mode: "empty"}},
+		}},
+	}
+
+	contracts, err := Build(doc)
+	require.NoError(t, err)
+	var inputSchema map[string]any
+	require.NoError(t, json.Unmarshal(contracts["set_values"].InputSchema, &inputSchema))
+	properties := inputSchema["properties"].(map[string]any)
+	for name, wantType := range map[string]string{
+		"const": "string", "maxItems": "integer", "minItems": "integer", "minProperties": "integer",
+	} {
+		property, ok := properties[name].(map[string]any)
+		require.Truef(t, ok, "input property %q", name)
+		require.Equal(t, wantType, property["type"], name)
+		require.NotContains(t, property, "enum", name)
+	}
 }
 
 func TestSchemaJSONOmitsEmptyType(t *testing.T) {
