@@ -232,9 +232,10 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	baselineRevision := active.Revision.ID
-	if baselineRevision == "" {
-		return report, fmt.Errorf("active managed-data revision is empty")
-	}
+	// A clean installation legitimately has no active managed-data revision
+	// until its first deployment selects a staged revision. The interruption
+	// invariant is still exact: the partial upload must leave that empty active
+	// pointer unchanged, just as it must preserve an existing revision.
 	if err := c.prepareQualificationRecoveryData(ctx, options, workDir); err != nil {
 		return report, err
 	}
