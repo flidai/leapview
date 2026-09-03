@@ -47,7 +47,7 @@ afterAll(async () => {
   await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()))
 }, 15_000)
 
-test('catalog introduces authoring as New dashboard', async () => {
+test('catalog introduces authoring as an explicit New dashboard action with a creation icon', async () => {
   const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
   try {
     await page.goto(baseURL)
@@ -56,9 +56,9 @@ test('catalog introduces authoring as New dashboard', async () => {
       element.setAttribute('create-draft-href', '/dashboards/new')
       await element.updateComplete
       const trigger = element.shadowRoot.querySelector('.catalog-create-draft') as HTMLAnchorElement
-      return { label: trigger?.textContent?.trim(), tagName: trigger?.tagName, href: trigger?.getAttribute('href') }
+      return { label: trigger?.textContent?.trim(), tagName: trigger?.tagName, href: trigger?.getAttribute('href'), hasIcon: Boolean(trigger?.querySelector('svg')) }
     })
-    expect(action).toEqual({ label: 'New dashboard', tagName: 'A', href: '/dashboards/new' })
+    expect(action).toEqual({ label: 'New dashboard', tagName: 'A', href: '/dashboards/new', hasIcon: true })
   } finally {
     await page.close()
   }
