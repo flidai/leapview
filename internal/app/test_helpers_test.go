@@ -246,9 +246,7 @@ type assemblyConfig struct {
 	PlatformHealth          platformHealth
 	AgentSettings           agentmodule.Settings
 	AgentPersistence        *agentmodule.Persistence
-	AccessPersistence       *accessmodule.Persistence
 	ServingStateRepo        servingStateRepository
-	ServingStatePersistence *servingstatemodule.Persistence
 	ManagedDataValidation   refreshmodule.CandidateValidationHook
 	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
 	ReleaseModule           *releasemodule.Module
@@ -298,8 +296,7 @@ type assemblyConfig struct {
 	ProjectCatalog          *projectcatalog.Service
 	ProjectGraph            projecthttp.GraphReader
 
-	RefreshPersistence           *refreshmodule.Persistence
-	RefreshServingStateMutations refreshmodule.ServingStateRepository
+	RefreshPersistence *refreshmodule.Persistence
 }
 
 // appTestHarness is the test-only composition adapter used by app-package tests.
@@ -383,16 +380,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		publicURL = "http://localhost:8080"
 	}
 	if options.AccessModule == nil {
-		if options.AccessPersistence == nil && options.Database != nil {
-			persistence, err := accessmodule.NewSQLitePersistence(ctx, accessmodule.SQLitePersistenceConfig{Database: options.Database})
-			if err != nil {
-				return nil, err
-			}
-			options.AccessPersistence = &persistence
-		}
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
-			Persistence:  options.AccessPersistence,
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
 			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})
@@ -407,76 +396,14 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		}
 		options.Workload = controller
 	}
-	if options.JobModule == nil && options.Database != nil {
-		persistence, err := jobsmodule.NewSQLitePersistence(jobsmodule.SQLitePersistenceConfig{Database: options.Database})
-		if err != nil {
-			return nil, err
-		}
-		options.JobModule, err = jobsmodule.Build(ctx, jobsmodule.Config{
-			Persistence:  &persistence,
-			Admission:    workloadmodule.JobAdmitter(options.Workload),
-			LeaseTimeout: options.JobLeaseTimeout,
-			Logger:       options.Logger,
-		})
-		if err != nil {
-			return nil, err
-		}
-	}
 	data := dataAssemblyInputs{
 		PlatformHealth: options.PlatformHealth, ServingStateRepo: options.ServingStateRepo,
-		RefreshServingStateMutations: options.RefreshServingStateMutations,
-		AccessRepo:                   options.AccessRepo,
-		RefreshPersistence:           options.RefreshPersistence,
+		AccessRepo:         options.AccessRepo,
+		RefreshPersistence: options.RefreshPersistence,
 	}
 	if options.Database != nil {
-		audit, err := newAuditRuntime(options.Database)
-		if err != nil {
-			return nil, fmt.Errorf("build test audit runtime: %w", err)
-		}
-		data.AuditRuntime = audit
-		data.RecoveryMetrics = refreshmodule.NewSQLiteRecoveryMetricsCollector(options.Database, nil)
 		data.APIIdempotency = idempotencysqlite.NewStore(options.Database)
 		data.CursorSigning = cursorsigningsqlite.NewInitializer(options.Database)
-		data.DashboardPublicationReconciler = newSQLiteDashboardPublicationReconciler(options.Database)
-
-		dashboardPersistence, err := dashboardmodule.NewSQLitePersistence(options.Database, audit.recorder)
-		if err != nil {
-			return nil, fmt.Errorf("build test dashboard persistence: %w", err)
-		}
-		data.DashboardSQLite = dashboardPersistence
-
-		if data.RefreshPersistence == nil {
-			refreshPersistence, err := refreshmodule.NewSQLitePersistence(refreshmodule.SQLitePersistenceConfig{
-				Database: options.Database,
-				Workflow: options.JobModule,
-				Audit:    audit.recorder,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("build test refresh persistence: %w", err)
-			}
-			data.RefreshPersistence = &refreshPersistence
-		}
-		if options.AgentPersistence == nil {
-			agentPersistence, err := agentmodule.NewSQLitePersistence(agentmodule.SQLitePersistenceConfig{
-				Database:            options.Database,
-				Workflow:            options.JobModule,
-				AuditIntentRecorder: audit.recorder,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("build test agent persistence: %w", err)
-			}
-			options.AgentPersistence = &agentPersistence
-		}
-		if options.RecoveryLifecycle != nil && options.RecoveryLifecycle.Repository == nil {
-			lifecycle := *options.RecoveryLifecycle
-			if data.RefreshPersistence != nil && data.RefreshPersistence.Recovery != nil {
-				lifecycle.Repository = data.RefreshPersistence.Recovery
-				options.RecoveryLifecycle = &lifecycle
-			} else {
-				lifecycle.Repository = refreshmodule.NewSQLiteRecoveryRepository(options.Database)
-				options.RecoveryLifecycle = &lifecycle
-			}
-		}
 	}
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
 		catalog, err := projectcatalog.NewService(

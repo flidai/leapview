@@ -17,7 +17,6 @@ import (
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
 
 // Test application routes are project-scoped, so their fixtures need the same
@@ -41,7 +40,15 @@ func closeTestRuntimeHost(database *sql.DB) {
 // explicit test-only project roles (platform admins get project-admin and all
 // other principals get project-viewer) while token capability allowlists still
 // apply.
-func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states *servingstatemodule.Module, projectID projectgraph.ResourceID, environment servingstate.Environment) (*runtimehostmodule.Module, error) {
+type testServingStateRepository interface {
+	servingStateRepository
+	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
+	SaveValidated(context.Context, servingstate.ID, servingstate.Validation, servingstate.Artifact) (servingstate.State, error)
+	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
+	Activate(context.Context, projectgraph.ResourceID, servingstate.Environment, servingstate.ID, servingstate.ID) (servingstate.State, error)
+}
+
+func ensureTestRuntimeHost(ctx context.Context, store *platform.Store, states testServingStateRepository, projectID projectgraph.ResourceID, environment servingstate.Environment) (*runtimehostmodule.Module, error) {
 	if store == nil || states == nil {
 		return nil, errors.New("test runtime fixture requires store and serving states")
 	}

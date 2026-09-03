@@ -18,22 +18,15 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
+	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
 
 func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyConfig {
 	options.Database = store.SQLDB()
 	options.PlatformHealth = store
 	options.AgentSettings = store
-	if options.AccessPersistence == nil {
-		persistence, err := accessmodule.NewSQLitePersistence(context.Background(), accessmodule.SQLitePersistenceConfig{Database: store.SQLDB()})
-		if err != nil {
-			panic(err)
-		}
-		options.AccessPersistence = &persistence
-	}
 	if options.AccessRepo == nil {
-		options.AccessRepo = options.AccessPersistence.Repository
+		options.AccessRepo = testAccessRepository(store)
 	}
 	if options.AccessModule == nil && options.Auth != nil {
 		publicURL := options.PublicURL
@@ -41,7 +34,6 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 			publicURL = options.MCPOAuth.PublicURL
 		}
 		module, err := accessmodule.Build(context.Background(), accessmodule.Config{
-			Persistence:  options.AccessPersistence,
 			ExistingAuth: options.Auth, PublicURL: publicURL,
 			MCPIssuerURL: options.MCPOAuth.IssuerURL,
 		})
@@ -51,27 +43,15 @@ func testStoreOptions(store *platform.Store, options assemblyConfig) assemblyCon
 		options.AccessModule = module
 	}
 	if options.ServingStateRepo == nil {
-		if options.ServingStatePersistence == nil {
-			persistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
-			if err != nil {
-				panic(err)
-			}
-			options.ServingStatePersistence = &persistence
-		}
-		states, err := servingstatemodule.Build(context.Background(), servingstatemodule.Config{Persistence: options.ServingStatePersistence})
-		if err != nil {
-			panic(err)
-		}
-		options.ServingStateRepo = states
-	}
-	if options.RefreshServingStateMutations == nil {
-		if mutations, ok := options.ServingStateRepo.(refreshmodule.ServingStateRepository); ok {
-			options.RefreshServingStateMutations = mutations
-		}
+		options.ServingStateRepo = servingstatesqlite.NewRepository(store.SQLDB())
 	}
 	if options.RuntimeHost == nil {
 		environment := servingstate.NormalizeEnvironment(servingstate.Environment(options.DefaultEnvironment))
-		host, err := ensureTestRuntimeHost(context.Background(), store, options.ServingStateRepo.(*servingstatemodule.Module), testProjectID, environment)
+		states, ok := options.ServingStateRepo.(testServingStateRepository)
+		if !ok {
+			panic("test serving-state repository does not expose mutation fixture capabilities")
+		}
+		host, err := ensureTestRuntimeHost(context.Background(), store, states, testProjectID, environment)
 		if err != nil {
 			panic(err)
 		}

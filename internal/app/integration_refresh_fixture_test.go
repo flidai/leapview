@@ -13,14 +13,17 @@ import (
 	"github.com/flidai/leapview/internal/access"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
+	platformtransaction "github.com/flidai/leapview/internal/platform/transaction"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
+	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
-	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
+	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )
 
 type canonicalRefreshHarness struct {
@@ -31,7 +34,7 @@ type canonicalRefreshHarness struct {
 	pipelineID    projectgraph.ResourceID
 	semanticModel projectgraph.ResourceID
 	modelIDs      []projectgraph.ResourceID
-	states        *servingstatemodule.Module
+	states        testServingStateRepository
 }
 
 func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
@@ -61,14 +64,10 @@ func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
 	}
 
 	store := testStore(t)
-	statePersistence, err := servingstatemodule.NewSQLitePersistence(store.SQLDB())
-	if err != nil {
-		t.Fatalf("build serving-state persistence: %v", err)
-	}
-	states, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Persistence: &statePersistence})
-	if err != nil {
-		t.Fatalf("build serving-state repository: %v", err)
-	}
+	// The runtimehost contract remains topology-neutral. This fixture uses the
+	// direct SQLite repository adapter rather than the removed module wrapper;
+	// native PostgreSQL serving-state behavior is covered by the postgres tests.
+	states := servingstatesqlite.NewRepository(store.SQLDB())
 	environment := servingstate.DefaultEnvironment
 	created, err := states.Create(ctx, servingstate.CreateInput{
 		ProjectID: project.ProjectID(), Environment: environment, CreatedBy: "integration", Source: servingstate.SourcePublish,
@@ -107,10 +106,19 @@ func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
 		t.Fatalf("build canonical runtime host: %v", err)
 	}
 	t.Cleanup(func() { _ = runtimeHost.Close() })
+	runRepository := refreshsqlite.NewSQLRunRepository(store.SQLDB())
+	scheduleRepository := refreshsqlite.NewRepository(store.SQLDB())
+	publication := refreshsqlite.NewPublicationUnitOfWork(store.SQLDB(), func(context.Context, platformtransaction.Transaction, string) error {
+		return nil
+	})
+	refreshPersistence := refreshmodule.Persistence{
+		Runs: runRepository, Schedules: scheduleRepository, Publication: publication,
+		TerminalRecovery: runRepository,
+	}
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 		Auth:        testAuth(store, accessmodule.AuthConfig{DevBypass: true}),
 		RuntimeHost: runtimeHost, ProjectID: project.ProjectID(), DefaultEnvironment: string(environment), Reloader: runtimeHost,
-		RefreshMaterializer: canonicalRefreshMaterializer{}, EnableRefreshDispatcher: true,
+		RefreshPersistence: &refreshPersistence, RefreshMaterializer: canonicalRefreshMaterializer{}, EnableRefreshDispatcher: true,
 	}))
 	if err := server.routes.refreshModule.Start(ctx); err != nil {
 		t.Fatalf("start refresh module: %v", err)
