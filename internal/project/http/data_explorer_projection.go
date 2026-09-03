@@ -150,8 +150,10 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 				objects = append(objects, explorerModelObject(asset, table, columns, "", ""))
 				continue
 			}
-			// One object per semantic model keeps field compatibility scoped to
-			// the selected model while preserving a stable canonical asset ID.
+			// One object per semantic dataset binding keeps field compatibility
+			// scoped to the selected model and dataset. The object key carries
+			// the full binding identity; ResourceID remains the backing logical
+			// Model resource for governed preview execution and detail links.
 			for _, binding := range bindings {
 				objects = append(objects, explorerModelObject(asset, table, columns, binding.SemanticModelID, binding.DatasetID))
 			}
@@ -568,7 +570,7 @@ func appendUniqueExplorerValue(values []string, value string) []string {
 func explorerModelObject(asset projectview.DevelopAssetView, table semanticmodel.Table, columns []projectsignals.DataPreviewColumnSignal, semanticModelID, datasetID string) projectsignals.DataExplorerObjectSignal {
 	datasetID = firstExplorerNonEmpty(datasetID, asset.Key, asset.ID)
 	object := projectsignals.DataExplorerObjectSignal{
-		Key:             "model:" + asset.ID,
+		Key:             explorerModelObjectKey(asset.ID, semanticModelID, datasetID),
 		AssetID:         projectsignals.Optional(asset.ID),
 		ResourceID:      asset.ID,
 		Layer:           "model",
@@ -583,6 +585,21 @@ func explorerModelObject(asset projectview.DevelopAssetView, table semanticmodel
 		Columns:         projectsignals.OptionalSlice(columns),
 	}
 	return object
+}
+
+// explorerModelObjectKey identifies one browser object backed by a logical
+// Model. A semantic model may expose the same Model through multiple dataset
+// aliases, so the backing resource ID alone is not a sufficient selection key.
+// Keep the components in canonical identity order and leave ResourceID
+// untouched on the signal for query authorization and detail navigation.
+func explorerModelObjectKey(modelID, semanticModelID, datasetID string) string {
+	modelID = strings.TrimSpace(modelID)
+	semanticModelID = strings.TrimSpace(semanticModelID)
+	datasetID = strings.TrimSpace(datasetID)
+	if semanticModelID == "" {
+		return "model:" + modelID
+	}
+	return "model:" + modelID + ":" + semanticModelID + ":" + datasetID
 }
 
 func explorerSourceColumns(source semanticmodel.Source) []projectsignals.DataPreviewColumnSignal {

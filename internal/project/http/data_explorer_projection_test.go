@@ -120,8 +120,8 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 			modelObject = object
 		}
 	}
-	if modelObject.Key != "model:model:orders" || modelObject.SemanticModelID == nil || *modelObject.SemanticModelID != "semantic:sales" {
-		t.Fatalf("model object = %#v, want canonical object and semantic model context", modelObject)
+	if modelObject.Key != "model:model:orders:semantic:sales:orders" || modelObject.ResourceID != "model:orders" || modelObject.SemanticModelID == nil || *modelObject.SemanticModelID != "semantic:sales" || projectsignals.ValueOrZero(modelObject.DatasetID) != "orders" {
+		t.Fatalf("model object = %#v, want binding identity key and backing model resource", modelObject)
 	}
 	if modelObject.ColumnCount != 2 || modelObject.Columns == nil || len(*modelObject.Columns) != 2 {
 		t.Fatalf("model object columns = %#v, want rich table columns", modelObject)
@@ -151,6 +151,74 @@ func TestBuildDataExplorerProjectionPreservesSemanticDatasetAlias(t *testing.T) 
 	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiledProjectionModels(t, project))
 	if len(projection.Objects) != 1 || projectsignals.ValueOrZero(projection.Objects[0].DatasetID) != "order_facts" {
 		t.Fatalf("objects = %#v, want semantic dataset alias order_facts", projection.Objects)
+	}
+}
+
+func TestBuildDataExplorerProjectionKeysEachSemanticDatasetBinding(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":        {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"order_history": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders":        {Model: "orders"},
+			"order_history": {Model: "orders"},
+		},
+	}
+	project := projectmanifest.Project{
+		Models:         map[string]semanticmodel.Table{"model:orders": {ModelName: "orders"}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
+		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
+	}
+	assets := []projectview.DevelopAssetView{
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
+	}
+	compiled := compiledProjectionModels(t, project)
+	first := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiled)
+	second := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiled)
+	if len(first.Objects) != 2 || len(second.Objects) != 2 {
+		t.Fatalf("objects = %#v / %#v, want one object per dataset alias", first.Objects, second.Objects)
+	}
+	wantKeys := []string{
+		"model:model:orders:semantic:sales:order_history",
+		"model:model:orders:semantic:sales:orders",
+	}
+	for index, wantKey := range wantKeys {
+		left, right := first.Objects[index], second.Objects[index]
+		if left.Key != wantKey || right.Key != wantKey || left.Key != right.Key {
+			t.Fatalf("objects[%d] = %#v / %#v, want stable key %q", index, left, right, wantKey)
+		}
+		if left.ResourceID != "model:orders" || projectsignals.ValueOrZero(left.SemanticModelID) != "semantic:sales" {
+			t.Fatalf("objects[%d] identity = %#v, want backing model and semantic model", index, left)
+		}
+	}
+
+	for _, datasetID := range []string{"orders", "order_history"} {
+		projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{
+			SemanticModelID: projectsignals.Optional("semantic:sales"),
+			DatasetID:       projectsignals.Optional(datasetID),
+		}, compiled)
+		if projection.SelectedDataset == nil || projection.SelectedDataset.ID != datasetID {
+			t.Fatalf("selected dataset for %q = %#v, want alias selected independently", datasetID, projection.SelectedDataset)
+		}
+		if projectsignals.ValueOrZero(projection.Command.SemanticModelID) != "semantic:sales" || projectsignals.ValueOrZero(projection.Command.DatasetID) != datasetID {
+			t.Fatalf("command for %q = %#v, want semantic model and alias", datasetID, projection.Command)
+		}
+		var found bool
+		for _, object := range projection.Objects {
+			if projectsignals.ValueOrZero(object.DatasetID) != datasetID {
+				continue
+			}
+			found = true
+			if object.Key != explorerModelObjectKey("model:orders", "semantic:sales", datasetID) || object.ResourceID != "model:orders" {
+				t.Fatalf("object for %q = %#v, want independent binding selection and backing Model", datasetID, object)
+			}
+		}
+		if !found {
+			t.Fatalf("no object found for dataset alias %q", datasetID)
+		}
 	}
 }
 

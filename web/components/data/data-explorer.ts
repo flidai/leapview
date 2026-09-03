@@ -1047,7 +1047,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selected = explorer.selectedObject
     const semanticActive = explorer.command?.mode === 'explore' || this.optimisticExplore !== null
     const filtered = filterObjects(explorer.objects ?? [], this.search)
-    const grouped = groupObjectsByModel(filtered, explorer.explore?.semanticModels ?? [])
+    const grouped = groupObjectsBySemanticModel(filtered, explorer.explore?.semanticModels ?? [])
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
@@ -1174,7 +1174,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <aside class="browser explore-browser" aria-label="Semantic fields">
           <div class="selectors">
             <label>Semantic model
-              <select .value=${command.semanticModelId ?? ''} @change=${(event: Event) => this.changeExploreModel((event.target as HTMLSelectElement).value, explore)}>
+              <select .value=${command.semanticModelId ?? ''} @change=${(event: Event) => this.changeExploreSemanticModel((event.target as HTMLSelectElement).value, explore)}>
                 ${(explore.semanticModels ?? []).map((model) => html`<option value=${model.id}>${model.title}</option>`)}
               </select>
             </label>
@@ -1331,7 +1331,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ mode, explore: this.optimisticExplore ?? current.explore ?? this.dataExplorer.explore.command })
   }
 
-  private changeExploreModel(semanticModelId: string, explore: DataExploreSignal) {
+  private changeExploreSemanticModel(semanticModelId: string, explore: DataExploreSignal) {
     const model = explore.semanticModels.find((candidate) => candidate.id === semanticModelId)
     const current = this.optimisticExplore ?? explore.command
     this.emitExplore({
@@ -1783,7 +1783,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <dl class="metadata-grid">
           <div class="metadata-card"><dt>Data layer</dt><dd>${layerLabel(object.layer)}</dd></div>
           <div class="metadata-card"><dt>Project generation</dt><dd>${label(this.page?.context?.projectId)} · ${label(this.page?.context?.generationId)}</dd></div>
-          <div class="metadata-card"><dt>Model</dt><dd>${label(object.semanticModelId)}</dd></div>
+          <div class="metadata-card"><dt>Semantic Model</dt><dd>${label(object.semanticModelId)}</dd></div>
           <div class="metadata-card"><dt>Grain</dt><dd>${object.grain ? label(object.grain) : 'Not declared'}</dd></div>
           ${object.description ? html`<div class="metadata-card"><dt>Description</dt><dd>${object.description}</dd></div>` : nothing}
         </dl>
@@ -1886,7 +1886,7 @@ function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: stri
     .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
 }
 
-function groupObjectsByModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
+function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
   const groups = new Map<string, ResourceGroup>()
   const modelTitles = new Map(semanticModels.map((model) => [model.id, model.title]))
   for (const object of objects) {
