@@ -269,8 +269,10 @@ psql --host 127.0.0.1 --username leapview_control_readonly --dbname leapview_con
 }
 
 // AssertNativeDeliveryReads proves that the exact long-running control role
-// retains and can exercise the identity-table reads required before a native
-// build.
+// retains and can exercise the canonical delivery/serving-state reads
+// required before a native build. DuckLake no longer owns a duplicate
+// generation-binding lifecycle table; delivery seals and serving-state bundles
+// are the authoritative hand-off evidence.
 // Keeping this at the qualification boundary catches role-policy drift before
 // browser authoring turns it into an opaque delivery-plan failure.
 func (topology *qualificationNativePostgresTopology) AssertNativeDeliveryReads(ctx context.Context) error {
@@ -284,12 +286,12 @@ func (topology *qualificationNativePostgresTopology) AssertNativeDeliveryReads(c
 		nil,
 		"sh", "-ec",
 		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD" PGSSLMODE=require
-psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database() || '|' || has_table_privilege(current_user, 'ducklake.catalog_identity', 'SELECT')::text || '|' || has_table_privilege(current_user, 'ducklake.generation_binding', 'SELECT')::text" --command "SELECT physical_pool_id FROM ducklake.catalog_identity LIMIT 0" --command "SELECT delivery_id FROM ducklake.generation_binding LIMIT 0"`,
+psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database() || '|' || has_table_privilege(current_user, 'ducklake.catalog_identity', 'SELECT')::text || '|' || has_table_privilege(current_user, 'delivery.delivery_build_attempt', 'SELECT')::text || '|' || has_table_privilege(current_user, 'delivery.delivery_snapshot_seal', 'SELECT')::text || '|' || has_table_privilege(current_user, 'serving_state.bundle', 'SELECT')::text" --command "SELECT physical_pool_id FROM ducklake.catalog_identity LIMIT 0" --command "SELECT attempt_id FROM delivery.delivery_build_attempt LIMIT 0" --command "SELECT seal_id FROM delivery.delivery_snapshot_seal LIMIT 0" --command "SELECT generation_id FROM serving_state.bundle LIMIT 0"`,
 	)
 	if err != nil {
 		return qualificationContainerOperationError(ctx, topology.Container, "verify native delivery PostgreSQL reads", err)
 	}
-	const expected = "leapview_control_runtime|leapview_control|true|true"
+	const expected = "leapview_control_runtime|leapview_control|true|true|true|true"
 	actual := strings.TrimSpace(string(redactQualificationLog(output, 1)))
 	if actual != expected {
 		return fmt.Errorf("native delivery PostgreSQL read boundary = %q, want %q", actual, expected)

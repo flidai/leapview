@@ -23,38 +23,6 @@ CREATE TABLE IF NOT EXISTS ducklake.catalog_identity (
     CHECK (metadata_schema = btrim(metadata_schema) AND metadata_schema ~ '^[A-Za-z_][A-Za-z0-9_]*$')
 );
 
--- One row is the exact external attempt ledger.  A commit is accepted only
--- with the marker and snapshot selected by the local DuckLake connection;
--- lease expiry alone never permits a retry.
-CREATE TABLE IF NOT EXISTS ducklake.attempt_evidence (
-    attempt_id           uuid PRIMARY KEY,
-    request_digest       text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
-    plan_digest          text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
-    physical_pool_id     text NOT NULL,
-    catalog_id           text NOT NULL,
-    owner_id             text NOT NULL,
-    fencing_epoch        bigint NOT NULL CHECK (fencing_epoch > 0),
-    lease_expires_at     timestamptz NOT NULL,
-    session_identity     text NOT NULL,
-    state                text NOT NULL CHECK (state IN ('running', 'committed', 'aborted', 'indeterminate', 'fenced')),
-    snapshot_id          bigint CHECK (snapshot_id IS NULL OR snapshot_id > 0),
-    commit_marker        jsonb,
-    termination_evidence jsonb,
-    created_at           timestamptz NOT NULL DEFAULT clock_timestamp(),
-    updated_at           timestamptz NOT NULL DEFAULT clock_timestamp(),
-    terminal_at          timestamptz,
-    FOREIGN KEY (physical_pool_id, catalog_id) REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
-    CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
-    CHECK (lease_expires_at > created_at),
-    CHECK (session_identity = btrim(session_identity) AND octet_length(session_identity) BETWEEN 1 AND 512),
-    CHECK (commit_marker IS NULL OR (jsonb_typeof(commit_marker) = 'object' AND octet_length(commit_marker::text) <= 4096)),
-    CHECK (termination_evidence IS NULL OR (jsonb_typeof(termination_evidence) = 'object' AND octet_length(termination_evidence::text) <= 32768)),
-    CHECK ((state = 'running' AND terminal_at IS NULL) OR (state <> 'running' AND terminal_at IS NOT NULL)),
-    CHECK ((state = 'committed' AND snapshot_id IS NOT NULL AND commit_marker IS NOT NULL)
-           OR (state <> 'committed' AND snapshot_id IS NULL AND commit_marker IS NULL)),
-    CHECK (state IN ('running', 'committed') OR termination_evidence IS NOT NULL)
-);
-
 -- Marker anomalies are durable pool-wide quarantine evidence.  They are
 -- deliberately separate from positive attempt termination evidence: an
 -- ambiguous or mismatched external marker cannot be represented as an abort
@@ -130,34 +98,6 @@ CREATE TRIGGER source_observation_capture_immutable
 BEFORE UPDATE OR DELETE ON ducklake.source_observation_capture
 FOR EACH ROW EXECUTE FUNCTION ducklake.guard_source_observation_capture_immutable();
 
-
--- A generation binding is immutable evidence.  Serving selects this exact
--- pool/catalog/snapshot tuple; it never selects a catalog by path or recency.
-CREATE TABLE IF NOT EXISTS ducklake.generation_binding (
-    delivery_id                text NOT NULL,
-    generation_id              text NOT NULL,
-    attempt_id                 uuid NOT NULL,
-    physical_pool_id           text NOT NULL,
-    catalog_id                 text NOT NULL,
-    snapshot_id                bigint NOT NULL CHECK (snapshot_id > 0),
-    relation_manifest_digest   text NOT NULL CHECK (relation_manifest_digest ~ '^sha256:[0-9a-f]{64}$'),
-    compatibility_digest       text NOT NULL CHECK (compatibility_digest ~ '^sha256:[0-9a-f]{64}$'),
-    serving_artifact_digest    text NOT NULL CHECK (serving_artifact_digest ~ '^sha256:[0-9a-f]{64}$'),
-    request_digest             text NOT NULL CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$'),
-    plan_digest                text NOT NULL CHECK (plan_digest ~ '^sha256:[0-9a-f]{64}$'),
-    fencing_epoch              bigint NOT NULL CHECK (fencing_epoch > 0),
-    bound_at                   timestamptz NOT NULL DEFAULT clock_timestamp(),
-    PRIMARY KEY (delivery_id, generation_id),
-    UNIQUE (attempt_id),
-    UNIQUE (physical_pool_id, catalog_id, snapshot_id),
-    FOREIGN KEY (physical_pool_id, catalog_id) REFERENCES ducklake.catalog_identity(physical_pool_id, catalog_id),
-    FOREIGN KEY (attempt_id) REFERENCES ducklake.attempt_evidence(attempt_id),
-    CHECK (delivery_id = btrim(delivery_id) AND octet_length(delivery_id) BETWEEN 1 AND 255),
-    CHECK (generation_id = btrim(generation_id) AND octet_length(generation_id) BETWEEN 1 AND 255)
-);
-
-CREATE INDEX IF NOT EXISTS ducklake_generation_binding_attempt_idx
-    ON ducklake.generation_binding (attempt_id, fencing_epoch);
 
 -- A retention row is the gate for every durable root and active query lease.
 -- Retiring/expiring prevents new leases while existing leases drain; expiring
@@ -250,71 +190,58 @@ BEGIN
     END IF;
 END $$;
 
--- Query leases carry the exact generation binding and owner fence.  They are
--- roots only while active; release and expiry are monotonic transitions.
--- Durable roots outlive a process and are the only non-query protection that
--- keeps a snapshot from retirement.  The generation binding itself creates a
--- generation root; rollback/recovery/candidate callers create additional
--- typed roots through the repository.
-CREATE TABLE IF NOT EXISTS ducklake.snapshot_root (
-    root_id          uuid PRIMARY KEY,
-    physical_pool_id text NOT NULL,
-    catalog_id       text NOT NULL,
-    snapshot_id      bigint NOT NULL CHECK (snapshot_id > 0),
-    root_kind        text NOT NULL CHECK (root_kind IN ('candidate', 'generation', 'rollback', 'recovery', 'active', 'cache', 'lineage', 'delivery')),
-    state            text NOT NULL CHECK (state IN ('live', 'retiring', 'expired', 'quarantined', 'cleanup-complete')),
-    created_at       timestamptz NOT NULL DEFAULT clock_timestamp(),
-    retired_at       timestamptz,
-    expired_at       timestamptz,
-    quarantined_at   timestamptz,
-    cleanup_completed_at timestamptz,
-    quarantine_evidence jsonb,
-    cleanup_evidence jsonb,
-    evidence         jsonb NOT NULL DEFAULT '{}'::jsonb
-        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
-    FOREIGN KEY (physical_pool_id, catalog_id, snapshot_id)
-        REFERENCES ducklake.snapshot_retention(physical_pool_id, catalog_id, snapshot_id),
-    CHECK ((state = 'live' AND retired_at IS NULL AND expired_at IS NULL) OR state <> 'live'),
-    CHECK (state <> 'retiring' OR (retired_at IS NOT NULL AND expired_at IS NULL)),
-    CHECK (state NOT IN ('expired', 'quarantined', 'cleanup-complete') OR expired_at IS NOT NULL),
-    CHECK (retired_at IS NULL OR retired_at >= created_at),
-    CHECK (expired_at IS NULL OR expired_at >= COALESCE(retired_at, created_at)),
-    CHECK ((state IN ('quarantined', 'cleanup-complete') AND quarantined_at IS NOT NULL) OR state NOT IN ('quarantined', 'cleanup-complete')),
-    CHECK ((state = 'cleanup-complete' AND cleanup_completed_at IS NOT NULL) OR state <> 'cleanup-complete'),
-    CHECK (quarantine_evidence IS NULL OR (jsonb_typeof(quarantine_evidence) = 'object' AND octet_length(quarantine_evidence::text) <= 32768)),
-    CHECK (cleanup_evidence IS NULL OR (jsonb_typeof(cleanup_evidence) = 'object' AND octet_length(cleanup_evidence::text) <= 32768)),
-    CHECK (quarantined_at IS NULL OR quarantined_at >= COALESCE(expired_at, created_at)),
-    CHECK (cleanup_completed_at IS NULL OR cleanup_completed_at >= COALESCE(quarantined_at, created_at))
-);
+-- Runtime admission is a narrow capability: callers may name only the
+-- canonical delivery seal, while this owner-executed function derives the
+-- exact physical pool/catalog/snapshot identity and idempotently creates the
+-- live retention gate. Keep the search path fixed and qualify every object
+-- so an untrusted caller cannot redirect SECURITY DEFINER resolution.
+CREATE OR REPLACE FUNCTION ducklake.admit_snapshot_retention_from_seal(p_seal_id uuid)
+RETURNS TABLE (physical_pool_id text, catalog_id text, snapshot_id bigint, retention_state text)
+LANGUAGE plpgsql
+SECURITY DEFINER
+SET search_path = pg_catalog
+AS $$
+DECLARE
+    v_physical_pool_id text;
+    v_catalog_id text;
+    v_snapshot_id bigint;
+BEGIN
+    SELECT s.physical_pool_id, s.catalog_id, s.ducklake_snapshot_id
+      INTO v_physical_pool_id, v_catalog_id, v_snapshot_id
+      FROM delivery.delivery_snapshot_seal AS s
+     WHERE s.seal_id = p_seal_id;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
 
-CREATE INDEX IF NOT EXISTS ducklake_snapshot_root_active_idx
-    ON ducklake.snapshot_root (physical_pool_id, catalog_id, snapshot_id, state);
+    -- Enforce the same migration/maintenance serialization at the database
+    -- capability boundary. A caller with EXECUTE privilege must not be able
+    -- to bypass the repository's admission check by invoking this function
+    -- directly.
+    PERFORM ducklake.assert_attempt_admission_fence(v_physical_pool_id, v_catalog_id);
 
-CREATE TABLE IF NOT EXISTS ducklake.snapshot_lease (
-    lease_id         uuid PRIMARY KEY,
-    delivery_id      text NOT NULL,
-    generation_id    text NOT NULL,
-    physical_pool_id text NOT NULL,
-    catalog_id       text NOT NULL,
-    snapshot_id      bigint NOT NULL CHECK (snapshot_id > 0),
-    owner_id         text NOT NULL,
-    fencing_epoch    bigint NOT NULL CHECK (fencing_epoch > 0),
-    state            text NOT NULL CHECK (state IN ('active', 'released', 'expired')),
-    expires_at       timestamptz NOT NULL,
-    acquired_at      timestamptz NOT NULL DEFAULT clock_timestamp(),
-    released_at      timestamptz,
-    evidence         jsonb NOT NULL DEFAULT '{}'::jsonb
-        CHECK (jsonb_typeof(evidence) = 'object' AND octet_length(evidence::text) <= 32768),
-    FOREIGN KEY (delivery_id, generation_id)
-        REFERENCES ducklake.generation_binding(delivery_id, generation_id),
-    FOREIGN KEY (physical_pool_id, catalog_id, snapshot_id)
-        REFERENCES ducklake.snapshot_retention(physical_pool_id, catalog_id, snapshot_id),
-    CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),
-    CHECK ((state = 'active' AND released_at IS NULL) OR (state <> 'active' AND released_at IS NOT NULL))
-);
+    INSERT INTO ducklake.snapshot_retention AS r
+        (physical_pool_id, catalog_id, snapshot_id, state)
+    VALUES (v_physical_pool_id, v_catalog_id, v_snapshot_id, 'live')
+    ON CONFLICT ON CONSTRAINT snapshot_retention_pkey DO NOTHING;
 
-CREATE INDEX IF NOT EXISTS ducklake_snapshot_lease_active_idx
-    ON ducklake.snapshot_lease (physical_pool_id, catalog_id, snapshot_id, state, expires_at);
+    SELECT r.state
+      INTO retention_state
+      FROM ducklake.snapshot_retention AS r
+     WHERE r.physical_pool_id = v_physical_pool_id
+       AND r.catalog_id = v_catalog_id
+       AND r.snapshot_id = v_snapshot_id
+     FOR UPDATE;
+    IF NOT FOUND THEN
+        RETURN;
+    END IF;
+    physical_pool_id := v_physical_pool_id;
+    catalog_id := v_catalog_id;
+    snapshot_id := v_snapshot_id;
+    RETURN NEXT;
+END;
+$$;
+REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM PUBLIC;
 
 -- Orphan observations are immutable, bounded evidence for snapshots found in
 -- DuckLake metadata before a control retention row was established.  They are
@@ -697,195 +624,10 @@ $$;
 CREATE INDEX IF NOT EXISTS ducklake_snapshot_requalification_lookup_idx
     ON ducklake.snapshot_requalification (physical_pool_id, catalog_id, snapshot_id, status, compatibility_digest, catalog_schema_version);
 
--- Reader-drain observability is a view over the authoritative lease rows.  It
--- intentionally exposes no payload or session secret, only bounded identity,
--- age and deadline information useful to maintenance workers and metrics.
-CREATE OR REPLACE VIEW ducklake.snapshot_reader_drain AS
-SELECT lease_id, delivery_id, generation_id, physical_pool_id, catalog_id,
-       snapshot_id, owner_id, fencing_epoch, state, acquired_at, expires_at,
-       (state = 'active' AND expires_at <= clock_timestamp()) AS overdue,
-       (state = 'active' AND expires_at <= clock_timestamp()
-        AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining
-  FROM ducklake.snapshot_lease;
-
-CREATE INDEX IF NOT EXISTS ducklake_attempt_evidence_identity_idx
-    ON ducklake.attempt_evidence (physical_pool_id, catalog_id, request_digest, plan_digest);
-
 CREATE OR REPLACE FUNCTION ducklake.reject_immutable_change()
 RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
     RAISE EXCEPTION 'DuckLake identity evidence is immutable';
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION ducklake.reject_attempt_identity_change()
-RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP = 'DELETE' THEN
-        RAISE EXCEPTION 'DuckLake attempt identity evidence is immutable';
-    END IF;
-    IF NEW.attempt_id <> OLD.attempt_id
-       OR NEW.request_digest <> OLD.request_digest
-       OR NEW.plan_digest <> OLD.plan_digest
-       OR NEW.physical_pool_id <> OLD.physical_pool_id
-       OR NEW.catalog_id <> OLD.catalog_id
-       OR ((NEW.owner_id <> OLD.owner_id OR NEW.fencing_epoch <> OLD.fencing_epoch)
-           AND NOT (OLD.state = 'running' AND NEW.state = 'running' AND NEW.fencing_epoch > OLD.fencing_epoch))
-       OR NEW.session_identity <> OLD.session_identity THEN
-        RAISE EXCEPTION 'DuckLake attempt identity is immutable';
-    END IF;
-    IF OLD.state <> 'running' AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
-        RAISE EXCEPTION 'DuckLake terminal attempt lease expiry is immutable';
-    ELSIF OLD.state = 'running' AND NEW.state = 'running'
-          AND NEW.lease_expires_at < OLD.lease_expires_at THEN
-        RAISE EXCEPTION 'DuckLake running attempt lease expiry cannot move backwards';
-    ELSIF OLD.state = 'running' AND NEW.state <> 'running'
-          AND NEW.lease_expires_at IS DISTINCT FROM OLD.lease_expires_at THEN
-        RAISE EXCEPTION 'DuckLake terminal attempt lease expiry is immutable';
-    END IF;
-    IF OLD.state = 'indeterminate' AND NEW.state NOT IN ('indeterminate','committed','aborted') THEN
-        RAISE EXCEPTION 'indeterminate DuckLake attempt may only be reconciled to committed or aborted';
-    END IF;
-    IF OLD.state NOT IN ('running','indeterminate') THEN
-        IF NEW.state <> OLD.state
-           OR NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
-           OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
-           OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
-           OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at
-           OR NEW.updated_at IS DISTINCT FROM OLD.updated_at THEN
-            RAISE EXCEPTION 'DuckLake terminal attempt evidence is immutable';
-        END IF;
-    ELSIF OLD.state = 'running' AND NEW.state = 'running'
-          AND (NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
-               OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
-               OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
-               OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at) THEN
-        RAISE EXCEPTION 'DuckLake running attempt evidence is immutable';
-    ELSIF OLD.state = 'indeterminate' AND NEW.state = 'indeterminate'
-          AND (NEW.snapshot_id IS DISTINCT FROM OLD.snapshot_id
-               OR NEW.commit_marker IS DISTINCT FROM OLD.commit_marker
-               OR NEW.termination_evidence IS DISTINCT FROM OLD.termination_evidence
-               OR NEW.terminal_at IS DISTINCT FROM OLD.terminal_at
-               OR NEW.updated_at IS DISTINCT FROM OLD.updated_at) THEN
-        RAISE EXCEPTION 'DuckLake indeterminate attempt evidence is immutable';
-    END IF;
-    IF NEW.state = 'committed' THEN
-        IF NEW.commit_marker->>'attempt_id' IS DISTINCT FROM NEW.attempt_id::text
-           OR NEW.commit_marker->>'request_digest' IS DISTINCT FROM NEW.request_digest
-           OR NEW.commit_marker->>'plan_digest' IS DISTINCT FROM NEW.plan_digest
-           OR NEW.commit_marker->>'physical_pool_id' IS DISTINCT FROM NEW.physical_pool_id
-           OR NEW.commit_marker->>'lease_epoch' IS DISTINCT FROM NEW.fencing_epoch::text THEN
-            RAISE EXCEPTION 'DuckLake commit marker does not match attempt identity';
-        END IF;
-    ELSIF NEW.commit_marker IS NOT NULL OR NEW.snapshot_id IS NOT NULL THEN
-        RAISE EXCEPTION 'DuckLake non-committed attempt cannot carry commit evidence';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
--- Snapshot roots and query leases expose the same immutable identity rule as
--- attempts. Their lifecycle columns are intentionally mutable only through
--- the monotonic release/expiry operations in the repository.
-CREATE OR REPLACE FUNCTION ducklake.reject_snapshot_root_identity_change()
-RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP = 'DELETE'
-       OR NEW.root_id <> OLD.root_id
-       OR NEW.physical_pool_id <> OLD.physical_pool_id
-       OR NEW.catalog_id <> OLD.catalog_id
-       OR NEW.snapshot_id <> OLD.snapshot_id
-       OR NEW.root_kind <> OLD.root_kind THEN
-        RAISE EXCEPTION 'DuckLake snapshot root identity is immutable';
-    END IF;
-    IF NEW.created_at IS DISTINCT FROM OLD.created_at
-       OR NEW.evidence IS DISTINCT FROM OLD.evidence THEN
-        RAISE EXCEPTION 'DuckLake snapshot root evidence is immutable';
-    END IF;
-    IF OLD.state = 'cleanup-complete' THEN
-        IF NEW.state <> OLD.state
-           OR NEW.retired_at IS DISTINCT FROM OLD.retired_at
-           OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
-           OR NEW.quarantined_at IS DISTINCT FROM OLD.quarantined_at
-           OR NEW.cleanup_completed_at IS DISTINCT FROM OLD.cleanup_completed_at
-           OR NEW.quarantine_evidence IS DISTINCT FROM OLD.quarantine_evidence
-           OR NEW.cleanup_evidence IS DISTINCT FROM OLD.cleanup_evidence THEN
-            RAISE EXCEPTION 'DuckLake cleanup-complete snapshot root is immutable';
-        END IF;
-    ELSIF OLD.state IN ('expired', 'quarantined') AND NEW.state = 'live' THEN
-        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
-    ELSIF OLD.state = 'quarantined' AND NEW.state NOT IN ('quarantined', 'cleanup-complete') THEN
-        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
-    ELSIF OLD.state = 'expired' AND NEW.state NOT IN ('expired', 'quarantined', 'cleanup-complete') THEN
-        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
-    ELSIF OLD.state = 'live' AND NEW.state = 'retiring'
-          AND (NEW.retired_at IS NULL OR NEW.expired_at IS NOT NULL) THEN
-        RAISE EXCEPTION 'DuckLake retiring snapshot root requires retired_at';
-    ELSIF OLD.state IN ('live', 'retiring') AND NEW.state = 'expired'
-          AND NEW.expired_at IS NULL THEN
-        RAISE EXCEPTION 'DuckLake expired snapshot root requires expired_at';
-    ELSIF OLD.state = 'retiring' AND NEW.state NOT IN ('retiring', 'expired') THEN
-        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
-    ELSIF OLD.state = 'live' AND NEW.state NOT IN ('live', 'retiring', 'expired') THEN
-        RAISE EXCEPTION 'DuckLake snapshot root lifecycle is monotonic';
-    ELSIF NEW.state = 'cleanup-complete' AND (OLD.state <> 'quarantined' OR NEW.cleanup_completed_at IS NULL OR NEW.cleanup_evidence IS NULL) THEN
-        RAISE EXCEPTION 'DuckLake snapshot root must be quarantined before cleanup-complete';
-    ELSIF NEW.state = 'quarantined' AND (NEW.expired_at IS NULL OR NEW.quarantined_at IS NULL OR NEW.quarantine_evidence IS NULL) THEN
-        RAISE EXCEPTION 'DuckLake quarantined snapshot root requires expired_at';
-    ELSIF NEW.state = OLD.state
-          AND (NEW.retired_at IS DISTINCT FROM OLD.retired_at
-               OR NEW.expired_at IS DISTINCT FROM OLD.expired_at
-               OR NEW.quarantined_at IS DISTINCT FROM OLD.quarantined_at
-               OR NEW.cleanup_completed_at IS DISTINCT FROM OLD.cleanup_completed_at
-               OR NEW.quarantine_evidence IS DISTINCT FROM OLD.quarantine_evidence
-               OR NEW.cleanup_evidence IS DISTINCT FROM OLD.cleanup_evidence
-               ) THEN
-        RAISE EXCEPTION 'DuckLake snapshot root evidence is immutable';
-    END IF;
-    RETURN NEW;
-END;
-$$;
-
-CREATE OR REPLACE FUNCTION ducklake.reject_snapshot_lease_identity_change()
-RETURNS trigger LANGUAGE plpgsql AS $$
-BEGIN
-    IF TG_OP = 'DELETE'
-       OR NEW.lease_id <> OLD.lease_id
-       OR NEW.delivery_id <> OLD.delivery_id
-       OR NEW.generation_id <> OLD.generation_id
-       OR NEW.physical_pool_id <> OLD.physical_pool_id
-       OR NEW.catalog_id <> OLD.catalog_id
-       OR NEW.snapshot_id <> OLD.snapshot_id
-       OR NEW.owner_id <> OLD.owner_id
-       OR NEW.fencing_epoch <> OLD.fencing_epoch THEN
-        RAISE EXCEPTION 'DuckLake snapshot lease identity is immutable';
-    END IF;
-    IF NEW.acquired_at IS DISTINCT FROM OLD.acquired_at
-       OR NEW.evidence IS DISTINCT FROM OLD.evidence THEN
-        RAISE EXCEPTION 'DuckLake snapshot lease evidence is immutable';
-    END IF;
-    IF OLD.state <> 'active' AND NEW.state <> OLD.state THEN
-        RAISE EXCEPTION 'DuckLake snapshot lease lifecycle is monotonic';
-    END IF;
-    IF OLD.state <> 'active' THEN
-        IF NEW.expires_at IS DISTINCT FROM OLD.expires_at
-           OR NEW.acquired_at IS DISTINCT FROM OLD.acquired_at
-           OR NEW.released_at IS DISTINCT FROM OLD.released_at
-           OR NEW.evidence IS DISTINCT FROM OLD.evidence THEN
-            RAISE EXCEPTION 'DuckLake terminal snapshot lease is immutable';
-        END IF;
-    ELSIF NEW.state = 'active'
-          AND NEW.expires_at < OLD.expires_at THEN
-        RAISE EXCEPTION 'DuckLake snapshot lease expiry cannot move backwards';
-    ELSIF OLD.state = 'active' AND NEW.state <> 'active'
-          AND NEW.expires_at IS DISTINCT FROM OLD.expires_at THEN
-        RAISE EXCEPTION 'DuckLake terminal snapshot lease expiry is immutable';
-    ELSIF NEW.state = 'released' AND NEW.released_at IS NULL THEN
-        RAISE EXCEPTION 'Released DuckLake snapshot lease requires released_at';
-    ELSIF NEW.state = 'expired' AND NEW.released_at IS NULL THEN
-        RAISE EXCEPTION 'Expired DuckLake snapshot lease requires released_at';
-    END IF;
-    RETURN NEW;
 END;
 $$;
 
@@ -956,11 +698,16 @@ BEGIN
     END IF;
     IF OLD.state = 'live' AND NEW.state = 'retiring'
        AND EXISTS (
-           SELECT 1 FROM ducklake.snapshot_root
-            WHERE physical_pool_id=OLD.physical_pool_id
-              AND catalog_id=OLD.catalog_id
-              AND snapshot_id=OLD.snapshot_id
-              AND state IN ('live','retiring')) THEN
+           -- A delivery root is physically attributable only through its
+           -- immutable snapshot seal. Roots with a NULL seal are not mapped
+           -- to a pool/catalog/snapshot by inference.
+           SELECT 1
+             FROM delivery.delivery_retention_root root
+             JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+            WHERE seal.physical_pool_id=OLD.physical_pool_id
+              AND seal.catalog_id=OLD.catalog_id
+              AND seal.ducklake_snapshot_id=OLD.snapshot_id
+              AND root.state IN ('live','retiring')) THEN
         RAISE EXCEPTION 'DuckLake snapshot durable roots must be released before retirement';
     END IF;
     IF NEW.evidence IS DISTINCT FROM OLD.evidence
@@ -977,18 +724,24 @@ BEGIN
     END IF;
     IF OLD.state IN ('retiring', 'expiring') AND NEW.state = 'expired'
        AND (EXISTS (
-               SELECT 1 FROM ducklake.snapshot_lease
-                WHERE physical_pool_id=OLD.physical_pool_id
-                  AND catalog_id=OLD.catalog_id
-                  AND snapshot_id=OLD.snapshot_id
-                  AND state='active')
+               SELECT 1
+                 FROM serving_state.reader_lease l
+                 JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
+                 JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+                WHERE seal.physical_pool_id=OLD.physical_pool_id
+                  AND seal.catalog_id=OLD.catalog_id
+                  AND seal.ducklake_snapshot_id=OLD.snapshot_id
+                  AND l.released_at IS NULL)
             OR EXISTS (
-               SELECT 1 FROM ducklake.snapshot_root
-                WHERE physical_pool_id=OLD.physical_pool_id
-                  AND catalog_id=OLD.catalog_id
-                  AND snapshot_id=OLD.snapshot_id
-                  AND state IN ('live','retiring'))) THEN
-        RAISE EXCEPTION 'DuckLake snapshot leases or roots remain';
+               SELECT 1
+                 FROM delivery.delivery_retention_root root
+                 JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+                WHERE seal.physical_pool_id=OLD.physical_pool_id
+                  AND seal.catalog_id=OLD.catalog_id
+                  AND seal.ducklake_snapshot_id=OLD.snapshot_id
+                  AND root.state IN ('live','retiring'))
+            ) THEN
+        RAISE EXCEPTION 'canonical snapshot protections remain';
     END IF;
     IF NEW.state = 'cleanup-complete' AND (OLD.state <> 'quarantined' OR NEW.cleanup_completed_at IS NULL OR NEW.cleanup_evidence IS NULL) THEN
         RAISE EXCEPTION 'DuckLake snapshot must be quarantined before cleanup-complete';
@@ -1117,35 +870,15 @@ BEGIN
 END;
 $$;
 
-DROP TRIGGER IF EXISTS generation_binding_immutable ON ducklake.generation_binding;
-CREATE TRIGGER generation_binding_immutable
-    BEFORE UPDATE OR DELETE ON ducklake.generation_binding
-    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_immutable_change();
-
 DROP TRIGGER IF EXISTS catalog_identity_immutable ON ducklake.catalog_identity;
 CREATE TRIGGER catalog_identity_immutable
     BEFORE UPDATE OR DELETE ON ducklake.catalog_identity
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_immutable_change();
 
-DROP TRIGGER IF EXISTS attempt_identity_immutable ON ducklake.attempt_evidence;
-CREATE TRIGGER attempt_identity_immutable
-    BEFORE UPDATE OR DELETE ON ducklake.attempt_evidence
-    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_attempt_identity_change();
-
 DROP TRIGGER IF EXISTS marker_quarantine_immutable ON ducklake.marker_quarantine;
 CREATE TRIGGER marker_quarantine_immutable
     BEFORE UPDATE OR DELETE ON ducklake.marker_quarantine
     FOR EACH ROW EXECUTE FUNCTION ducklake.reject_immutable_change();
-
-DROP TRIGGER IF EXISTS snapshot_root_identity_immutable ON ducklake.snapshot_root;
-CREATE TRIGGER snapshot_root_identity_immutable
-    BEFORE UPDATE OR DELETE ON ducklake.snapshot_root
-    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_root_identity_change();
-
-DROP TRIGGER IF EXISTS snapshot_lease_identity_immutable ON ducklake.snapshot_lease;
-CREATE TRIGGER snapshot_lease_identity_immutable
-    BEFORE UPDATE OR DELETE ON ducklake.snapshot_lease
-    FOR EACH ROW EXECUTE FUNCTION ducklake.reject_snapshot_lease_identity_change();
 
 DROP TRIGGER IF EXISTS snapshot_retention_identity_immutable ON ducklake.snapshot_retention;
 CREATE TRIGGER snapshot_retention_identity_immutable
@@ -1944,8 +1677,23 @@ BEGIN
            retention_claim_fencing_epoch=p_fencing_epoch,retention_claimed_at=v_now
      WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id
        AND r.state IN ('retiring','expired') AND r.retention_claim_id IS NULL
-       AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_root root WHERE root.physical_pool_id=r.physical_pool_id AND root.catalog_id=r.catalog_id AND root.snapshot_id=r.snapshot_id AND root.state IN ('live','retiring'))
-       AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_lease lease WHERE lease.physical_pool_id=r.physical_pool_id AND lease.catalog_id=r.catalog_id AND lease.snapshot_id=r.snapshot_id AND lease.state='active')
+       AND NOT EXISTS (
+           SELECT 1
+             FROM delivery.delivery_retention_root root
+             JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+            WHERE seal.physical_pool_id=r.physical_pool_id
+              AND seal.catalog_id=r.catalog_id
+              AND seal.ducklake_snapshot_id=r.snapshot_id
+              AND root.state IN ('live','retiring'))
+       AND NOT EXISTS (
+           SELECT 1
+             FROM serving_state.reader_lease lease
+             JOIN delivery.delivery_generation g ON g.generation_id = lease.generation_id
+             JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+            WHERE seal.physical_pool_id=r.physical_pool_id
+              AND seal.catalog_id=r.catalog_id
+              AND seal.ducklake_snapshot_id=r.snapshot_id
+              AND lease.released_at IS NULL)
         RETURNING r.snapshot_id
     )
     SELECT COALESCE(array_agg(snapshot_id ORDER BY snapshot_id),'{}'::bigint[]) INTO v_ids FROM changed;
@@ -1978,9 +1726,25 @@ BEGIN
      WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id FOR UPDATE;
     IF NOT FOUND OR v_retention.retention_claim_id IS DISTINCT FROM p_maintenance_id THEN RAISE EXCEPTION 'maintenance fence stale'; END IF;
     IF v_retention.state='expiring' THEN
-        IF EXISTS (SELECT 1 FROM ducklake.snapshot_lease l WHERE l.physical_pool_id=p_physical_pool_id AND l.catalog_id=p_catalog_id AND l.snapshot_id=p_snapshot_id AND l.state='active')
-           OR EXISTS (SELECT 1 FROM ducklake.snapshot_root root WHERE root.physical_pool_id=p_physical_pool_id AND root.catalog_id=p_catalog_id AND root.snapshot_id=p_snapshot_id AND root.state IN ('live','retiring')) THEN
-            RAISE EXCEPTION 'DuckLake snapshot leases or roots remain';
+        IF EXISTS (
+               SELECT 1
+                 FROM serving_state.reader_lease l
+                 JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
+                 JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+                WHERE seal.physical_pool_id=p_physical_pool_id
+                  AND seal.catalog_id=p_catalog_id
+                  AND seal.ducklake_snapshot_id=p_snapshot_id
+                  AND l.released_at IS NULL)
+           OR EXISTS (
+               SELECT 1
+                 FROM delivery.delivery_retention_root root
+                 JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+                WHERE seal.physical_pool_id=p_physical_pool_id
+                  AND seal.catalog_id=p_catalog_id
+                  AND seal.ducklake_snapshot_id=p_snapshot_id
+                  AND root.state IN ('live','retiring'))
+           THEN
+            RAISE EXCEPTION 'canonical snapshot protections remain';
         END IF;
         UPDATE ducklake.snapshot_retention SET state='expired',expired_at=v_expired,evidence=p_evidence
          WHERE physical_pool_id=p_physical_pool_id AND catalog_id=p_catalog_id AND snapshot_id=p_snapshot_id AND state='expiring';
@@ -2616,25 +2380,40 @@ BEGIN
     FOR v_i IN 1..v_len LOOP
         v_id := p_snapshot_ids[v_i];
         -- A snapshot is protected if any authoritative control row knows it.
-        -- Retention rows (including terminal rows), any attempt evidence,
-        -- active leases, generation bindings, maintenance children, or live
-        -- durable roots all suppress orphan classification.
+        -- Retention rows (including terminal rows), delivery attempts,
+        -- generation/seal evidence, active reader leases, maintenance
+        -- children, or live durable roots all suppress orphan classification.
+        -- A delivery root with no snapshot_seal_id remains un-attributable;
+        -- never guess its physical identity from target/generation metadata.
         SELECT EXISTS (
             SELECT 1 FROM ducklake.snapshot_retention r
              WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=v_id
             UNION ALL
-            SELECT 1 FROM ducklake.snapshot_root root
-             WHERE root.physical_pool_id=p_physical_pool_id AND root.catalog_id=p_catalog_id AND root.snapshot_id=v_id
-                   AND root.state IN ('live','retiring')
+            SELECT 1
+              FROM delivery.delivery_retention_root root
+              JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+             WHERE seal.physical_pool_id=p_physical_pool_id
+               AND seal.catalog_id=p_catalog_id
+               AND seal.ducklake_snapshot_id=v_id
+               AND root.state IN ('live','retiring')
             UNION ALL
-            SELECT 1 FROM ducklake.snapshot_lease l
-             WHERE l.physical_pool_id=p_physical_pool_id AND l.catalog_id=p_catalog_id AND l.snapshot_id=v_id
-                   AND l.state='active'
+            SELECT 1
+              FROM serving_state.reader_lease l
+              JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
+              JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+             WHERE seal.physical_pool_id=p_physical_pool_id
+               AND seal.catalog_id=p_catalog_id
+               AND seal.ducklake_snapshot_id=v_id
+               AND l.released_at IS NULL
             UNION ALL
-            SELECT 1 FROM ducklake.generation_binding b
-             WHERE b.physical_pool_id=p_physical_pool_id AND b.catalog_id=p_catalog_id AND b.snapshot_id=v_id
+            SELECT 1
+              FROM delivery.delivery_generation g
+              JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+             WHERE seal.physical_pool_id=p_physical_pool_id
+               AND seal.catalog_id=p_catalog_id
+               AND seal.ducklake_snapshot_id=v_id
             UNION ALL
-            SELECT 1 FROM ducklake.attempt_evidence a
+            SELECT 1 FROM delivery.delivery_build_attempt a
              WHERE a.physical_pool_id=p_physical_pool_id AND a.catalog_id=p_catalog_id AND a.snapshot_id=v_id
             UNION ALL
             SELECT 1 FROM ducklake.retention_maintenance_snapshot m
@@ -2796,18 +2575,35 @@ BEGIN
     END IF;
     -- Recheck every protected authority while the exact fence and orphan row
     -- remain locked. The admission path takes the same pool-fence row first,
-    -- so no new running writer can slip in after this check.
+    -- so no new running writer can slip in after this check. Roots lacking a
+    -- snapshot seal are deliberately not assigned a physical identity.
     IF EXISTS (SELECT 1 FROM ducklake.snapshot_retention r
                WHERE r.physical_pool_id=p_physical_pool_id AND r.catalog_id=p_catalog_id AND r.snapshot_id=p_snapshot_id)
-       OR EXISTS (SELECT 1 FROM ducklake.snapshot_root root
-                  WHERE root.physical_pool_id=p_physical_pool_id AND root.catalog_id=p_catalog_id AND root.snapshot_id=p_snapshot_id
-                    AND root.state IN ('live','retiring'))
-       OR EXISTS (SELECT 1 FROM ducklake.snapshot_lease l
-                  WHERE l.physical_pool_id=p_physical_pool_id AND l.catalog_id=p_catalog_id AND l.snapshot_id=p_snapshot_id
-                    AND l.state='active' AND l.expires_at > v_now)
-       OR EXISTS (SELECT 1 FROM ducklake.generation_binding b
-                  WHERE b.physical_pool_id=p_physical_pool_id AND b.catalog_id=p_catalog_id AND b.snapshot_id=p_snapshot_id)
-       OR EXISTS (SELECT 1 FROM ducklake.attempt_evidence a
+       OR EXISTS (
+              SELECT 1
+                FROM delivery.delivery_retention_root root
+                JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+               WHERE seal.physical_pool_id=p_physical_pool_id
+                 AND seal.catalog_id=p_catalog_id
+                 AND seal.ducklake_snapshot_id=p_snapshot_id
+                 AND root.state IN ('live','retiring'))
+       OR EXISTS (
+              SELECT 1
+                FROM serving_state.reader_lease l
+                JOIN delivery.delivery_generation g ON g.generation_id = l.generation_id
+                JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+               WHERE seal.physical_pool_id=p_physical_pool_id
+                 AND seal.catalog_id=p_catalog_id
+                 AND seal.ducklake_snapshot_id=p_snapshot_id
+                 AND l.released_at IS NULL)
+       OR EXISTS (
+              SELECT 1
+                FROM delivery.delivery_generation g
+                JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+               WHERE seal.physical_pool_id=p_physical_pool_id
+                 AND seal.catalog_id=p_catalog_id
+                 AND seal.ducklake_snapshot_id=p_snapshot_id)
+       OR EXISTS (SELECT 1 FROM delivery.delivery_build_attempt a
                   WHERE a.physical_pool_id=p_physical_pool_id AND a.catalog_id=p_catalog_id AND a.snapshot_id=p_snapshot_id)
        OR EXISTS (SELECT 1 FROM ducklake.retention_maintenance_snapshot m
                   WHERE m.physical_pool_id=p_physical_pool_id AND m.catalog_id=p_catalog_id AND m.snapshot_id=p_snapshot_id) THEN
@@ -2868,11 +2664,11 @@ DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_runtime';
-        EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.catalog_identity, ducklake.generation_binding TO leapview_control_runtime';
-        EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime';
-        EXECUTE 'GRANT SELECT, INSERT, UPDATE ON TABLE '
-            || 'ducklake.attempt_evidence, ducklake.snapshot_retention, '
-            || 'ducklake.snapshot_root, ducklake.snapshot_lease TO leapview_control_runtime';
+        EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.catalog_identity TO leapview_control_runtime';
+        EXECUTE 'REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ducklake.catalog_identity FROM leapview_control_runtime';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_retention TO leapview_control_runtime';
+        EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON TABLE ducklake.snapshot_retention FROM leapview_control_runtime';
+        EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) TO leapview_control_runtime';
         -- Runtime admission does not discover or reconcile physical orphans.
         -- Keep the row visible for bounded diagnostics, but remove every
         -- direct lifecycle mutation capability (including grants left by an
@@ -2882,19 +2678,17 @@ BEGIN
         EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.marker_quarantine TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT, INSERT ON TABLE ducklake.source_observation_capture TO leapview_control_runtime';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.snapshot_reader_drain TO leapview_control_runtime';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.catalog_migration, ducklake.snapshot_requalification TO leapview_control_runtime';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) TO leapview_control_runtime';
     END IF;
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_readonly';
         EXECUTE 'REVOKE EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) FROM leapview_control_readonly';
+        EXECUTE 'REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_readonly';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_readonly';
         EXECUTE 'GRANT SELECT ON TABLE '
-            || 'ducklake.catalog_identity, ducklake.attempt_evidence, '
-            || 'ducklake.generation_binding, ducklake.snapshot_retention, '
-            || 'ducklake.snapshot_root, ducklake.snapshot_lease, '
-            || 'ducklake.snapshot_orphan, ducklake.marker_quarantine, ducklake.snapshot_reader_drain, '
+            || 'ducklake.catalog_identity, ducklake.snapshot_retention, '
+            || 'ducklake.snapshot_orphan, ducklake.marker_quarantine, '
             || 'ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page, '
             || 'ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.pool_maintenance_fence, '
             || 'ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, '
@@ -2922,12 +2716,13 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         EXECUTE 'GRANT USAGE ON SCHEMA ducklake TO leapview_control_maintenance';
         EXECUTE 'REVOKE EXECUTE ON FUNCTION ducklake.assert_attempt_admission_fence(text,text) FROM leapview_control_maintenance';
+        EXECUTE 'REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_maintenance';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan FROM leapview_control_maintenance';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page FROM leapview_control_maintenance';
         EXECUTE 'REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention FROM leapview_control_maintenance';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.pool_maintenance_fence TO leapview_control_maintenance';
         EXECUTE 'GRANT SELECT ON TABLE ducklake.retention_maintenance, ducklake.retention_maintenance_snapshot, ducklake.snapshot_retention TO leapview_control_maintenance';
-        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_root, ducklake.snapshot_lease, ducklake.snapshot_orphan, ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page TO leapview_control_maintenance';
+        EXECUTE 'GRANT SELECT ON TABLE ducklake.catalog_identity, ducklake.snapshot_orphan, ducklake.snapshot_orphan_scan, ducklake.snapshot_orphan_scan_page TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.acquire_pool_maintenance_fence(text,text,text,timestamptz) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.release_pool_maintenance_fence(text,text,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.renew_pool_maintenance_fence(text,text,text,bigint,timestamptz) TO leapview_control_maintenance';
@@ -2945,6 +2740,9 @@ BEGIN
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.prune_snapshot_orphan_scan_pages(text,text,text,bigint,bigint,integer) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.claim_snapshot_orphan_cleanup_under_pool_fence(text,text,bigint,text,timestamptz,text,bigint) TO leapview_control_maintenance';
         EXECUTE 'GRANT EXECUTE ON FUNCTION ducklake.complete_snapshot_orphan_cleanup_under_pool_fence(text,text,bigint,text,bigint,jsonb,text,bigint) TO leapview_control_maintenance';
+    END IF;
+    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_backup') THEN
+        EXECUTE 'REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_backup';
     END IF;
 END
 $$;

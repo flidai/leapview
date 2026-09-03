@@ -95,7 +95,7 @@ func TestQualificationNativePostgresBootstrapInvariant(t *testing.T) {
 
 func TestQualificationNativePostgresNativeDeliveryReadInvariant(t *testing.T) {
 	container := &nativePostgresContainerFixture{
-		execOutput: []byte("leapview_control_runtime|leapview_control|true|true\n"),
+		execOutput: []byte("leapview_control_runtime|leapview_control|true|true|true|true\n"),
 	}
 	topology := &qualificationNativePostgresTopology{Container: container}
 	require.NoError(t, topology.AssertNativeDeliveryReads(t.Context()))
@@ -103,10 +103,14 @@ func TestQualificationNativePostgresNativeDeliveryReadInvariant(t *testing.T) {
 	require.Contains(t, container.probes[0], "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD")
 	require.Contains(t, container.probes[0], "PGSSLMODE=require")
 	require.Contains(t, container.probes[0], "ducklake.catalog_identity")
+	require.Contains(t, container.probes[0], "delivery.delivery_build_attempt")
+	require.Contains(t, container.probes[0], "delivery.delivery_snapshot_seal")
+	require.Contains(t, container.probes[0], "serving_state.bundle")
+	require.NotContains(t, container.probes[0], "ducklake.generation_binding")
 	require.Contains(t, container.probes[0], "LIMIT 0")
 	require.NotContains(t, container.probes[0], "postgres://")
 
-	container.execOutput = []byte("leapview_control_runtime|leapview_control|false|false\n")
+	container.execOutput = []byte("leapview_control_runtime|leapview_control|false|false|false|false\n")
 	err := topology.AssertNativeDeliveryReads(t.Context())
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "read boundary")

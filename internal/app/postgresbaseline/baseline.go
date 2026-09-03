@@ -193,8 +193,11 @@ BEGIN
         -- because Apply skips already-recorded capability SQL on replay.
         -- INSERT remains capability-owned (bootstrap/admission); UPDATE and
         -- DELETE stay forbidden for these immutable identity rows.
-        GRANT SELECT ON ducklake.catalog_identity, ducklake.generation_binding TO leapview_control_runtime;
-        REVOKE UPDATE, DELETE ON ducklake.catalog_identity, ducklake.generation_binding FROM leapview_control_runtime;
+        GRANT SELECT ON ducklake.catalog_identity TO leapview_control_runtime;
+        REVOKE UPDATE, DELETE ON ducklake.catalog_identity FROM leapview_control_runtime;
+        GRANT SELECT ON ducklake.snapshot_retention TO leapview_control_runtime;
+        REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ducklake.snapshot_retention FROM leapview_control_runtime;
+        GRANT EXECUTE ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE ON ducklake.catalog_runtime_compatibility, ducklake.migration_fence, ducklake.catalog_migration, ducklake.snapshot_requalification FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION event.prune_event_log(timestamptz, integer) FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION jobs.prune(timestamptz, integer) FROM leapview_control_runtime;
@@ -215,6 +218,7 @@ BEGIN
         GRANT SELECT ON physical_pool.physical_pools, physical_pool.physical_pool_admissions, physical_pool.namespace_ownership_claims TO leapview_control_maintenance;
         GRANT SELECT, INSERT, UPDATE, DELETE ON physical_pool.namespace_deletion_leases TO leapview_control_maintenance;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON physical_pool.physical_pools, physical_pool.physical_pool_admissions, physical_pool.namespace_ownership_claims FROM leapview_control_maintenance;
+        REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_maintenance;
     END IF;
 	IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_readonly') THEN
 		GRANT USAGE ON SCHEMA access, admin, dashboard, delivery, event, audit, release, ducklake, jobs, agent, lineage, cache, physical_pool, serving_state TO leapview_control_readonly;
@@ -230,6 +234,7 @@ BEGIN
         GRANT SELECT ON jobs.job_observability TO leapview_control_readonly;
         REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.job, jobs.attempt, jobs.event_sequence, jobs.event FROM leapview_control_readonly;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, cache, physical_pool FROM leapview_control_readonly;
+        REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_readonly;
         REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential FROM leapview_control_readonly;
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
         GRANT SELECT ON platform.schema_revision, platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_key_metadata TO leapview_control_readonly;
@@ -247,6 +252,7 @@ BEGIN
         GRANT SELECT ON ALL TABLES IN SCHEMA agent TO leapview_control_backup;
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.schema_revision, platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_keys TO leapview_control_backup;
+        REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_backup;
     END IF;
 END
 $$;`

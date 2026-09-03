@@ -377,28 +377,6 @@ func (r *Repository) UpdateRetentionMaintenancePhase(ctx context.Context, in Ret
 	return inRepositoryExecTransaction(ctx, r.db, func(tx DBTX) error { return UpdateRetentionMaintenancePhase(ctx, tx, in) })
 }
 
-func ListExpiryEligibleSnapshots(ctx context.Context, db DBTX, physicalPoolID, catalogID string) ([]SnapshotRef, error) {
-	if db == nil || !validID(physicalPoolID) || !validID(catalogID) {
-		return nil, ErrInvalid
-	}
-	rows, err := querygen(db).ListExpiryEligibleSnapshots(ctx, dbgen.ListExpiryEligibleSnapshotsParams{PhysicalPoolID: physicalPoolID, CatalogID: catalogID})
-	if err != nil {
-		return nil, err
-	}
-	out := make([]SnapshotRef, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, SnapshotRef{PhysicalPoolID: physicalPoolID, CatalogID: catalogID, SnapshotID: row.SnapshotID})
-	}
-	return out, nil
-}
-
-func (r *Repository) ListExpiryEligibleSnapshots(ctx context.Context, physicalPoolID, catalogID string) ([]SnapshotRef, error) {
-	if r == nil {
-		return nil, ErrInvalid
-	}
-	return ListExpiryEligibleSnapshots(ctx, r.db, physicalPoolID, catalogID)
-}
-
 // prepareRetentionSnapshots locks the eligible retention rows and records the
 // exact child set in one control transaction.  Retirement prevents new roots
 // or query leases, while the row lock closes the enumeration/claim gap before

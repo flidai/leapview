@@ -126,9 +126,12 @@ func TestProductRolePolicyDoesNotRestoreDuckLakeMigrationAuthority(t *testing.T)
 }
 
 func TestProductRolePolicyGrantsNativeDeliveryIdentityReads(t *testing.T) {
-	const required = "GRANT SELECT ON ducklake.catalog_identity, ducklake.generation_binding TO leapview_control_runtime"
+	const required = "GRANT SELECT ON ducklake.catalog_identity TO leapview_control_runtime"
 	if !strings.Contains(rolePolicySQL, required) {
 		t.Fatalf("native delivery role policy is missing exact identity read grant %q", required)
+	}
+	if strings.Contains(rolePolicySQL, "generation_binding") {
+		t.Fatal("native delivery role policy references removed DuckLake generation binding authority")
 	}
 	for _, forbidden := range []string{
 		"GRANT SELECT ON ALL TABLES IN SCHEMA ducklake TO leapview_control_runtime",

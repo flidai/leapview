@@ -206,6 +206,8 @@ CREATE TABLE IF NOT EXISTS delivery.delivery_snapshot_seal (
     UNIQUE (attempt_id),
     UNIQUE (seal_id, candidate_id),
     UNIQUE (physical_pool_id, catalog_id, catalog_database, catalog_uuid, ducklake_snapshot_id),
+    FOREIGN KEY (attempt_id, physical_pool_id, catalog_id)
+        REFERENCES delivery.delivery_build_attempt(attempt_id, physical_pool_id, catalog_id),
     FOREIGN KEY (attempt_id, candidate_id) REFERENCES delivery.delivery_build_attempt(attempt_id, candidate_id)
 );
 

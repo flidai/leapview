@@ -43,9 +43,6 @@ func TestSourceObservationCaptureExactReplayReadMismatchAndImmutability(t *testi
 	if err := seedCanonicalDeliveryAttempt(t.Context(), p, canonicalDeliveryAttemptInput{PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "builder-observations", FencingEpoch: 1}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.BeginAttempt(t.Context(), BeginAttemptInput{AttemptID: attemptID, RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "builder-observations", FencingEpoch: 1, SessionIdentity: "session-observations", LeaseExpiresAt: time.Now().UTC().Add(time.Hour)}); err != nil {
-		t.Fatal(err)
-	}
 	marker := ducklake.CommitMarker{SchemaVersion: ducklake.CommitMarkerSchemaVersion, DeliveryID: "delivery-observations", GenerationID: "generation-observations", AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest, Project: "project-observations", Environment: "prod", PhysicalPoolID: poolID}
 	observations := []materialize.SourceObservation{{ID: "orders", Revision: "revision-1", Schema: []semanticmodel.ColumnSchema{{Name: "id", Ordinal: 0, PhysicalType: "BIGINT"}}, ObservationQueries: 1, ObservationRows: 2, ObservationMillis: 3}}
 	capture, err := NewSourceObservationCapture(attemptID, marker, observations, time.Date(2026, time.August, 31, 1, 2, 3, 4_000, time.UTC))

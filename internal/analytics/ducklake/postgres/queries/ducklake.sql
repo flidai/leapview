@@ -24,40 +24,17 @@ VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_database),sqlc.arg(catalog_i
 SELECT physical_pool_id,catalog_database,catalog_id,catalog_uuid,metadata_schema,created_at
 FROM ducklake.catalog_identity WHERE physical_pool_id=$1;
 
--- name: InsertSnapshotRetentionLive :exec
-INSERT INTO ducklake.snapshot_retention (physical_pool_id,catalog_id,snapshot_id,state)
-VALUES (sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),'live') ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING;
-
 -- name: AdmitSnapshotRetentionFromSeal :one
--- The delivery seal is the only authority allowed to select the physical
--- retention identity.  In particular, callers cannot manufacture a live
--- row by supplying a pool/catalog/snapshot tuple of their choice.
-WITH seal AS (
-    SELECT physical_pool_id,catalog_id,ducklake_snapshot_id
-    FROM delivery.delivery_snapshot_seal
-    WHERE seal_id=sqlc.arg(seal_id)::uuid
-), inserted AS (
-    INSERT INTO ducklake.snapshot_retention (physical_pool_id,catalog_id,snapshot_id,state)
-    SELECT physical_pool_id,catalog_id,ducklake_snapshot_id,'live'
-    FROM seal
-    ON CONFLICT (physical_pool_id,catalog_id,snapshot_id) DO NOTHING
-    RETURNING physical_pool_id,catalog_id,snapshot_id
-)
-SELECT physical_pool_id,catalog_id,snapshot_id
-FROM inserted
-UNION ALL
-SELECT physical_pool_id,catalog_id,ducklake_snapshot_id
-FROM seal
-WHERE NOT EXISTS (SELECT 1 FROM inserted);
+SELECT (r).physical_pool_id::text AS physical_pool_id,
+       (r).catalog_id::text AS catalog_id,
+       (r).snapshot_id::bigint AS snapshot_id,
+       (r).retention_state::text AS retention_state
+FROM ducklake.admit_snapshot_retention_from_seal(sqlc.arg(seal_id)::uuid) AS r;
 
 -- name: GetSnapshotRetentionSealIdentity :one
 SELECT physical_pool_id,catalog_id,ducklake_snapshot_id
 FROM delivery.delivery_snapshot_seal
 WHERE seal_id=sqlc.arg(seal_id)::uuid;
-
--- name: LockSnapshotRetentionState :one
-SELECT state FROM ducklake.snapshot_retention
-WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) FOR UPDATE;
 
 -- name: LockSnapshotRetentionCleanup :one
 SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at
@@ -70,10 +47,6 @@ FROM ducklake.snapshot_retention WHERE physical_pool_id=sqlc.arg(physical_pool_i
 -- name: LockSnapshotRetentionComplete :one
 SELECT state,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,cleanup_evidence
 FROM ducklake.snapshot_retention WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) FOR UPDATE;
-
--- name: GetAttemptForBinding :one
-SELECT state,request_digest,plan_digest,physical_pool_id,catalog_id,fencing_epoch,snapshot_id,CAST(COALESCE(commit_marker::text,'') AS text) AS commit_marker
-FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id) FOR UPDATE;
 
 -- name: InsertSourceObservationCapture :exec
 INSERT INTO ducklake.source_observation_capture
@@ -96,90 +69,6 @@ SELECT attempt_id::text,request_digest,plan_digest,physical_pool_id,catalog_id,f
 FROM delivery.delivery_build_attempt
 WHERE attempt_id=sqlc.arg(attempt_id)::uuid;
 
--- name: InsertGenerationBinding :exec
-INSERT INTO ducklake.generation_binding
-(delivery_id,generation_id,attempt_id,physical_pool_id,catalog_id,snapshot_id,relation_manifest_digest,compatibility_digest,serving_artifact_digest,request_digest,plan_digest,fencing_epoch)
-VALUES (sqlc.arg(delivery_id),sqlc.arg(generation_id),sqlc.arg(attempt_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(relation_manifest_digest),sqlc.arg(compatibility_digest),sqlc.arg(serving_artifact_digest),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(fencing_epoch)) ON CONFLICT (delivery_id,generation_id) DO NOTHING;
-
--- name: GetGenerationBinding :one
-SELECT delivery_id,generation_id,attempt_id::text,physical_pool_id,catalog_id,snapshot_id,relation_manifest_digest,compatibility_digest,serving_artifact_digest,request_digest,plan_digest,fencing_epoch,bound_at
-FROM ducklake.generation_binding WHERE delivery_id=sqlc.arg(delivery_id) AND generation_id=sqlc.arg(generation_id);
-
--- name: InsertSnapshotRoot :exec
-INSERT INTO ducklake.snapshot_root (root_id,physical_pool_id,catalog_id,snapshot_id,root_kind,state,created_at,evidence)
-VALUES (sqlc.arg(root_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(root_kind),'live',sqlc.arg(created_at),sqlc.arg(evidence)::jsonb) ON CONFLICT (root_id) DO NOTHING;
-
--- name: GetSnapshotRootForCheck :one
-SELECT physical_pool_id,catalog_id,snapshot_id,root_kind,state,evidence FROM ducklake.snapshot_root WHERE root_id=sqlc.arg(root_id);
-
--- name: ExpireSnapshotRoot :execresult
-UPDATE ducklake.snapshot_root SET state='expired',expired_at=sqlc.arg(expired_at)
-WHERE root_id=sqlc.arg(root_id) AND state IN ('live','retiring');
-
--- name: GetSnapshotRootState :one
-SELECT state FROM ducklake.snapshot_root WHERE root_id=sqlc.arg(root_id);
-
--- name: QuarantineSnapshotRoot :execresult
-UPDATE ducklake.snapshot_root SET state='quarantined',quarantine_evidence=sqlc.arg(quarantine_evidence)::jsonb,quarantined_at=sqlc.arg(quarantined_at)
-WHERE root_id=sqlc.arg(root_id) AND state='expired';
-
--- name: GetSnapshotRootQuarantine :one
-SELECT state,quarantine_evidence FROM ducklake.snapshot_root WHERE root_id=sqlc.arg(root_id);
-
--- name: CompleteSnapshotRootCleanup :execresult
-UPDATE ducklake.snapshot_root SET state='cleanup-complete',cleanup_evidence=sqlc.arg(cleanup_evidence)::jsonb,cleanup_completed_at=sqlc.arg(cleanup_completed_at)
-WHERE root_id=sqlc.arg(root_id) AND state='quarantined';
-
--- name: GetSnapshotRootCleanup :one
-SELECT state,cleanup_evidence FROM ducklake.snapshot_root WHERE root_id=sqlc.arg(root_id);
-
--- name: GetSnapshotRoot :one
-SELECT root_id::text,physical_pool_id,catalog_id,snapshot_id,root_kind,state,created_at,retired_at,expired_at,quarantined_at,cleanup_completed_at,evidence,quarantine_evidence,cleanup_evidence
-FROM ducklake.snapshot_root WHERE root_id=sqlc.arg(root_id);
-
--- name: InsertAttemptEvidence :exec
-INSERT INTO ducklake.attempt_evidence
-(attempt_id,request_digest,plan_digest,physical_pool_id,catalog_id,owner_id,fencing_epoch,lease_expires_at,session_identity,state)
-VALUES (sqlc.arg(attempt_id),sqlc.arg(request_digest),sqlc.arg(plan_digest),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(lease_expires_at),sqlc.arg(session_identity),'running') ON CONFLICT (attempt_id) DO NOTHING;
-
--- name: UpdateAttemptCommitted :exec
-UPDATE ducklake.attempt_evidence
-SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
-WHERE attempt_id=sqlc.arg(attempt_id) AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
-
--- name: ReconcileAttemptCommitted :execrows
--- Explicit restart recovery may close an exact running or indeterminate
--- attempt. Ordinary CommitAttempt remains unchanged and owns its normal
--- running-attempt transition.
-UPDATE ducklake.attempt_evidence
-SET state='committed',snapshot_id=sqlc.arg(snapshot_id),commit_marker=sqlc.arg(commit_marker)::jsonb,termination_evidence=NULL,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
-WHERE attempt_id=sqlc.arg(attempt_id) AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
-
--- name: UpdateAttemptTerminal :exec
-UPDATE ducklake.attempt_evidence SET state=sqlc.arg(state),termination_evidence=sqlc.arg(termination_evidence)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
-WHERE attempt_id=sqlc.arg(attempt_id) AND state='running' AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
-
--- name: ReconcileAttemptTerminal :execrows
-UPDATE ducklake.attempt_evidence SET state=sqlc.arg(state),termination_evidence=sqlc.arg(termination_evidence)::jsonb,updated_at=sqlc.arg(updated_at),terminal_at=sqlc.arg(updated_at)
-WHERE attempt_id=sqlc.arg(attempt_id) AND state IN ('running','indeterminate') AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch);
-
--- name: RenewAttemptLease :execresult
-UPDATE ducklake.attempt_evidence
-SET lease_expires_at=sqlc.arg(expires_at),updated_at=clock_timestamp()
-WHERE attempt_id=sqlc.arg(attempt_id)
-  AND owner_id=sqlc.arg(owner_id)
-  AND fencing_epoch=sqlc.arg(fencing_epoch)
-  AND state='running'
-  AND lease_expires_at>clock_timestamp()
-  AND lease_expires_at<=sqlc.arg(expires_at);
-
--- name: GetAttemptEvidence :one
-SELECT attempt_id::text,request_digest,plan_digest,physical_pool_id,catalog_id,owner_id,fencing_epoch,lease_expires_at,session_identity,state,snapshot_id,commit_marker,termination_evidence,created_at,updated_at,terminal_at
-FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id);
-
--- name: LockAttempt :one
-SELECT attempt_id::text FROM ducklake.attempt_evidence WHERE attempt_id=sqlc.arg(attempt_id) FOR UPDATE;
-
 -- name: InsertMarkerQuarantine :exec
 INSERT INTO ducklake.marker_quarantine
  (physical_pool_id,catalog_id,attempt_id,request_digest,plan_digest,reason,evidence,observed_marker_digest,observed_snapshot_ids)
@@ -198,53 +87,6 @@ SELECT EXISTS (SELECT 1 FROM ducklake.marker_quarantine WHERE physical_pool_id=s
 SELECT pg_advisory_xact_lock(
   hashtextextended('leapview:ducklake:marker-quarantine:' || sqlc.arg(physical_pool_id)::text, 0)
 );
-
--- name: GetGenerationBindingSnapshot :one
-SELECT physical_pool_id,catalog_id,snapshot_id,fencing_epoch
-FROM ducklake.generation_binding WHERE delivery_id=sqlc.arg(delivery_id) AND generation_id=sqlc.arg(generation_id);
-
--- name: UpdateRetentionProtection :exec
-UPDATE ducklake.snapshot_retention SET protected_until=GREATEST(COALESCE(protected_until,sqlc.arg(protected_until)),sqlc.arg(protected_until))
-WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id);
-
--- name: InsertSnapshotLease :exec
-INSERT INTO ducklake.snapshot_lease (lease_id,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,expires_at,acquired_at)
-VALUES (sqlc.arg(lease_id),sqlc.arg(delivery_id),sqlc.arg(generation_id),sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),'active',sqlc.arg(expires_at),sqlc.arg(acquired_at)) ON CONFLICT (lease_id) DO NOTHING;
-
--- name: GetSnapshotLeaseClaim :one
-SELECT state,owner_id,fencing_epoch,expires_at FROM ducklake.snapshot_lease WHERE lease_id=sqlc.arg(lease_id) FOR UPDATE;
-
--- name: RenewSnapshotLease :execresult
-WITH renewed AS (
-    UPDATE ducklake.snapshot_lease SET expires_at=sqlc.arg(expires_at)
-    WHERE lease_id=sqlc.arg(lease_id) AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch) AND state='active' AND expires_at > sqlc.arg(now)
-    RETURNING physical_pool_id,catalog_id,snapshot_id
-)
-UPDATE ducklake.snapshot_retention AS r
-SET protected_until=GREATEST(COALESCE(r.protected_until,sqlc.arg(expires_at)),sqlc.arg(expires_at))
-FROM renewed
-WHERE r.physical_pool_id=renewed.physical_pool_id AND r.catalog_id=renewed.catalog_id AND r.snapshot_id=renewed.snapshot_id;
-
--- name: ReleaseSnapshotLease :execresult
-UPDATE ducklake.snapshot_lease SET state='released',released_at=sqlc.arg(released_at)
-WHERE lease_id=sqlc.arg(lease_id) AND owner_id=sqlc.arg(owner_id) AND fencing_epoch=sqlc.arg(fencing_epoch) AND state='active';
-
--- name: ExpireSnapshotLeases :exec
-UPDATE ducklake.snapshot_lease SET state='expired',released_at=sqlc.arg(released_at)
-WHERE state='active' AND expires_at <= sqlc.arg(released_at);
-
--- name: LockSnapshotRetentionForState :one
-SELECT state FROM ducklake.snapshot_retention WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) FOR UPDATE;
-
--- name: CountSnapshotRootsLiveRetiring :one
-SELECT count(*) FROM ducklake.snapshot_root WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) AND state IN ('live','retiring');
-
--- name: RetireSnapshot :execresult
-UPDATE ducklake.snapshot_retention SET state='retiring',retired_at=sqlc.arg(retired_at)
-WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) AND state='live';
-
--- name: CountActiveSnapshotLeases :one
-SELECT count(*) FROM ducklake.snapshot_lease WHERE physical_pool_id=sqlc.arg(physical_pool_id) AND catalog_id=sqlc.arg(catalog_id) AND snapshot_id=sqlc.arg(snapshot_id) AND state='active';
 
 -- name: ExpireSnapshotUnderMaintenanceFence :execresult
 SELECT ducklake.expire_snapshot_under_maintenance_fence(sqlc.arg(expired_at),sqlc.arg(evidence)::jsonb,sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(maintenance_id),sqlc.arg(maintenance_owner_id),sqlc.arg(maintenance_fencing_epoch));
@@ -289,23 +131,11 @@ SELECT ducklake.prune_snapshot_orphan_scan_pages(sqlc.arg(physical_pool_id),sqlc
 SELECT scan_id::text,physical_pool_id,catalog_id,owner_id,fencing_epoch,page_size,grace_micros,cursor_snapshot_id,pages_scanned,snapshots_scanned,orphans_recorded,state,request_evidence,completion_evidence,cleanup_not_before,pruned_at,pruned_page_count,pruned_page_digest,started_at,updated_at,completed_at
 FROM ducklake.snapshot_orphan_scan WHERE scan_id=sqlc.arg(scan_id);
 
--- name: GetSnapshotOrphanScanPage :one
-SELECT scan_id::text,physical_pool_id,catalog_id,page_number,cursor_before,cursor_after,snapshot_ids,orphan_count,terminal,page_digest,evidence,created_at
-FROM ducklake.snapshot_orphan_scan_page WHERE scan_id=sqlc.arg(scan_id) AND page_number=sqlc.arg(page_number);
-
--- name: ListSnapshotOrphanScanPages :many
-SELECT scan_id::text,physical_pool_id,catalog_id,page_number,cursor_before,cursor_after,snapshot_ids,orphan_count,terminal,page_digest,evidence,created_at
-FROM ducklake.snapshot_orphan_scan_page WHERE scan_id=sqlc.arg(scan_id) ORDER BY page_number;
-
 -- name: ClaimSnapshotOrphanCleanupUnderPoolFence :one
 SELECT ducklake.claim_snapshot_orphan_cleanup_under_pool_fence(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(owner_id),sqlc.arg(cleanup_lease_expires_at),sqlc.arg(fence_owner_id),sqlc.arg(fencing_epoch));
 
 -- name: CompleteSnapshotOrphanCleanupUnderPoolFence :exec
 SELECT ducklake.complete_snapshot_orphan_cleanup_under_pool_fence(sqlc.arg(physical_pool_id),sqlc.arg(catalog_id),sqlc.arg(snapshot_id),sqlc.arg(owner_id),sqlc.arg(fencing_epoch),sqlc.arg(evidence)::jsonb,sqlc.arg(fence_owner_id),sqlc.arg(pool_fencing_epoch));
-
--- name: GetSnapshotLease :one
-SELECT lease_id::text,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,expires_at,acquired_at,released_at
-FROM ducklake.snapshot_lease WHERE lease_id=$1;
 
 -- name: GetSnapshotRetention :one
 SELECT physical_pool_id,catalog_id,snapshot_id,state,protected_until,retired_at,expired_at,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,quarantined_at,cleanup_completed_at,quarantine_evidence,cleanup_evidence,evidence,created_at
@@ -314,69 +144,34 @@ FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND
 -- name: ListRetainedSnapshotIDs :many
 SELECT snapshot_id FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND state IN ('live','retiring') ORDER BY snapshot_id;
 
--- name: ListSnapshotReadersAll :many
-SELECT lease_id::text,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,acquired_at,expires_at,
-       (state='active' AND expires_at <= clock_timestamp()) AS overdue,
-       (state='active' AND expires_at <= clock_timestamp() AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining
-FROM ducklake.snapshot_reader_drain WHERE state='active' ORDER BY expires_at,lease_id;
-
--- name: ListSnapshotReadersByRef :many
-SELECT lease_id::text,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,acquired_at,expires_at,
-       (state='active' AND expires_at <= clock_timestamp()) AS overdue,
-       (state='active' AND expires_at <= clock_timestamp() AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining
-FROM ducklake.snapshot_reader_drain WHERE state='active' AND physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3 ORDER BY expires_at,lease_id;
-
--- name: ListOverdueSnapshotReaders :many
-SELECT lease_id::text,delivery_id,generation_id,physical_pool_id,catalog_id,snapshot_id,owner_id,fencing_epoch,state,acquired_at,expires_at,
-       (state='active' AND expires_at <= clock_timestamp()) AS overdue,
-       (state='active' AND expires_at <= clock_timestamp() AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining
-FROM ducklake.snapshot_reader_drain WHERE state='active' AND (state='active' AND expires_at <= clock_timestamp()) ORDER BY expires_at,lease_id;
-
--- name: ReadRetentionBacklog :one
-SELECT
- (SELECT count(*) FROM ducklake.snapshot_retention WHERE state IN ('expired','quarantined')) AS cleanup_pending,
- (SELECT count(*) FROM ducklake.snapshot_retention WHERE state='quarantined') AS quarantined,
- (SELECT count(*) FROM ducklake.snapshot_orphan WHERE state='quarantined') AS orphans,
- (SELECT count(*) FROM ducklake.snapshot_lease WHERE state='active' AND expires_at <= clock_timestamp()) AS overdue_readers,
- (SELECT count(*) FROM ducklake.snapshot_lease WHERE state='active' AND expires_at <= clock_timestamp() AND acquired_at < clock_timestamp() - interval '1 hour') AS non_draining_readers;
-
--- name: ListRetentionByState :many
-SELECT physical_pool_id,catalog_id,snapshot_id,state,protected_until,retired_at,expired_at,cleanup_owner_id,cleanup_fencing_epoch,cleanup_lease_expires_at,quarantined_at,cleanup_completed_at,quarantine_evidence,cleanup_evidence,evidence,created_at
-FROM ducklake.snapshot_retention WHERE state = ANY(sqlc.arg(states)::text[]) ORDER BY expired_at,physical_pool_id,catalog_id,snapshot_id;
-
--- name: ListExpiryEligibleSnapshots :many
--- Enumerate only explicit retiring/expired rows whose complete control-plane
--- reachability set is empty.  No age predicate is used here.
-SELECT r.snapshot_id,r.state
-FROM ducklake.snapshot_retention r
-WHERE r.physical_pool_id=sqlc.arg(physical_pool_id)
-  AND r.catalog_id=sqlc.arg(catalog_id)
-  AND r.state IN ('retiring','expired')
-  AND r.retention_claim_id IS NULL
-  AND NOT EXISTS (
-      SELECT 1 FROM ducklake.snapshot_root root
-      WHERE root.physical_pool_id=r.physical_pool_id
-        AND root.catalog_id=r.catalog_id
-        AND root.snapshot_id=r.snapshot_id
-        AND root.state IN ('live','retiring'))
-  AND NOT EXISTS (
-      SELECT 1 FROM ducklake.snapshot_lease lease
-      WHERE lease.physical_pool_id=r.physical_pool_id
-        AND lease.catalog_id=r.catalog_id
-        AND lease.snapshot_id=r.snapshot_id
-        AND lease.state='active')
-ORDER BY r.snapshot_id
-FOR UPDATE OF r;
-
 -- name: ListRetentionDryRunSnapshots :many
+-- Dry-run uses the same canonical reachability set as the fenced claim path,
+-- but does not mutate retention rows.  Delivery roots are mapped through
+-- their immutable snapshot seals; roots without a seal are intentionally not
+-- assigned a physical identity here.
 SELECT r.snapshot_id,r.state
 FROM ducklake.snapshot_retention r
 WHERE r.physical_pool_id=sqlc.arg(physical_pool_id)
   AND r.catalog_id=sqlc.arg(catalog_id)
   AND r.state IN ('retiring','expired')
   AND r.retention_claim_id IS NULL
-  AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_root root WHERE root.physical_pool_id=r.physical_pool_id AND root.catalog_id=r.catalog_id AND root.snapshot_id=r.snapshot_id AND root.state IN ('live','retiring'))
-  AND NOT EXISTS (SELECT 1 FROM ducklake.snapshot_lease lease WHERE lease.physical_pool_id=r.physical_pool_id AND lease.catalog_id=r.catalog_id AND lease.snapshot_id=r.snapshot_id AND lease.state='active')
+  AND NOT EXISTS (
+      SELECT 1
+        FROM delivery.delivery_retention_root root
+        JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = root.snapshot_seal_id
+       WHERE seal.physical_pool_id=r.physical_pool_id
+         AND seal.catalog_id=r.catalog_id
+         AND seal.ducklake_snapshot_id=r.snapshot_id
+         AND root.state IN ('live','retiring'))
+  AND NOT EXISTS (
+      SELECT 1
+        FROM serving_state.reader_lease lease
+        JOIN delivery.delivery_generation g ON g.generation_id = lease.generation_id
+        JOIN delivery.delivery_snapshot_seal seal ON seal.seal_id = g.snapshot_seal_id
+       WHERE seal.physical_pool_id=r.physical_pool_id
+         AND seal.catalog_id=r.catalog_id
+         AND seal.ducklake_snapshot_id=r.snapshot_id
+         AND lease.released_at IS NULL)
 ORDER BY r.snapshot_id
 FOR UPDATE OF r;
 

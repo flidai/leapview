@@ -6,14 +6,18 @@ import (
 	"time"
 
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	servingstatepostgres "github.com/flidai/leapview/internal/servingstate/postgres"
 )
 
 // applyDuckLakeTestSchemas installs the canonical delivery authority before
-// DuckLake. DuckLake's marker and source-observation tables have unconditional
-// foreign keys into delivery, so every isolated control-database test must use
-// the same baseline ordering as production.
+// serving-state and DuckLake. DuckLake's retention and orphan checks consult
+// serving-state reader leases, so every isolated control-database test must use
+// the same capability ordering as production.
 func applyDuckLakeTestSchemas(ctx context.Context, tx deploymentpostgres.Tx) error {
 	if err := deploymentpostgres.ApplySchema(ctx, tx); err != nil {
+		return err
+	}
+	if err := servingstatepostgres.ApplySchema(ctx, tx); err != nil {
 		return err
 	}
 	return ApplySchema(ctx, tx)
@@ -21,7 +25,8 @@ func applyDuckLakeTestSchemas(ctx context.Context, tx deploymentpostgres.Tx) err
 
 // canonicalDeliveryAttemptInput describes the immutable identity that
 // canonical delivery owns for a physical build. Tests seed this authority
-// explicitly instead of treating ducklake.attempt_evidence as canonical.
+// explicitly; DuckLake only retains catalog identity and external retention
+// evidence.
 type canonicalDeliveryAttemptInput struct {
 	PlanID         string
 	CandidateID    string

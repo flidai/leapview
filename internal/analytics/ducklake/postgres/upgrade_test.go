@@ -54,7 +54,7 @@ func TestPostgres18RetentionStateConstraintUpgrade(t *testing.T) {
 	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	fence, err := r.AcquireRetentionMaintenanceFence(t.Context(), AcquireRetentionMaintenanceFenceInput{PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "state-upgrade-worker", LeaseExpiresAt: time.Now().Add(time.Minute)})

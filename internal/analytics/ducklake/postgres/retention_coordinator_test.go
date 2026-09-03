@@ -2,11 +2,14 @@ package postgres
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"sync"
 	"testing"
 	"time"
 
+	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
+	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -192,7 +195,7 @@ func TestPostgres18RetentionMaintenanceRoleCapabilities(t *testing.T) {
 	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	tx, err := p.Begin(t.Context())
@@ -234,7 +237,7 @@ func TestPostgres18RetentionCoordinatorReplayAndExactSnapshotVerification(t *tes
 		if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.RetireSnapshot(t.Context(), ref, time.Now()); err != nil {
+		if err := retireSnapshot(t.Context(), r.db, ref, time.Now()); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -268,7 +271,7 @@ func TestPostgres18RetentionCoordinatorReplayAndExactSnapshotVerification(t *tes
 	if err := ensureSnapshotLive(t.Context(), r.db, newRef); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), newRef, time.Now()); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, newRef, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	succeeded := &retentionSessionFake{}
@@ -305,7 +308,7 @@ func TestPostgres18RetentionReplayAfterExternalExpiryUsesFrozenClaim(t *testing.
 	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), ref, time.Now()); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	request := RetentionMaintenanceRequest{MaintenanceID: "0198f2c0-7c7a-7f00-8a11-000000000061", PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour}
@@ -344,7 +347,7 @@ func TestPostgres18RetentionReplayReconcilesAdvancedStateBeforeChildEvidence(t *
 	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	request := RetentionMaintenanceRequest{MaintenanceID: "0198f2c0-7c7a-7f00-0000-000000000086", PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour}
@@ -390,7 +393,7 @@ func TestPostgres18RetentionReplayReconcilesQuarantinedAndCleanupCompleteChildEv
 		if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 			t.Fatal(err)
 		}
-		if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
+		if err := retireSnapshot(t.Context(), r.db, ref, time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -465,7 +468,7 @@ func TestPostgres18RetentionDryRunDoesNotClaimOrMutateRetention(t *testing.T) {
 	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), ref, time.Now()); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	request := RetentionMaintenanceRequest{MaintenanceID: "0198f2c0-7c7a-7f00-0000-000000000071", PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-worker", LeaseExpiresAt: time.Now().Add(time.Minute), FileGrace: time.Hour, DryRun: true}
@@ -502,7 +505,7 @@ func TestPostgres18RetentionDryRunDoesNotClaimOrMutateRetention(t *testing.T) {
 	if err := ensureSnapshotLive(t.Context(), r.db, newRef); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), newRef, time.Now()); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, newRef, time.Now()); err != nil {
 		t.Fatal(err)
 	}
 	second := &retentionSessionFake{}
@@ -518,13 +521,168 @@ func TestPostgres18RetentionDryRunDoesNotClaimOrMutateRetention(t *testing.T) {
 	}
 }
 
+func TestPostgres18CommittedCanonicalAttemptDoesNotBlockRetentionAfterRootsDrain(t *testing.T) {
+	r, p, poolID, catalogID := retentionTestRepository(t, "committed_attempt_reachability")
+	ctx := t.Context()
+	retained := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 941}
+	if err := ensureSnapshotLive(ctx, r.db, retained); err != nil {
+		t.Fatal(err)
+	}
+	if err := retireSnapshot(ctx, r.db, retained, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	seedCommittedAttempt := func(attemptID string, snapshotID int64, requestDigest, planDigest string) {
+		t.Helper()
+		planID, candidateID, targetID := canonicalAttemptIDs(attemptID)
+		if err := seedCanonicalDeliveryAttempt(ctx, p, canonicalDeliveryAttemptInput{
+			PlanID: planID, CandidateID: candidateID, TargetID: targetID, AttemptID: attemptID,
+			RequestDigest: requestDigest, PlanDigest: planDigest, PhysicalPoolID: poolID,
+			CatalogID: catalogID, OwnerID: "committed-builder", FencingEpoch: 1,
+		}); err != nil {
+			t.Fatal(err)
+		}
+		marker := ducklake.CommitMarker{
+			SchemaVersion: ducklake.CommitMarkerSchemaVersion,
+			DeliveryID:    "delivery-committed-attempt", GenerationID: "generation-committed-attempt",
+			AttemptID: attemptID, LeaseEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest,
+			Project: "project-retention", Environment: "prod", PhysicalPoolID: poolID,
+		}
+		canonicalMarker, err := marker.CanonicalJSON()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := deploymentpostgres.New(p).CommitBuildAttempt(ctx, deploymentpostgres.CommitAttemptInput{
+			AttemptID: attemptID, OwnerID: "committed-builder", FencingEpoch: 1,
+			SnapshotID: snapshotID, CommitMarker: []byte(canonicalMarker),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	// The committed attempt has a physical snapshot identity but no delivery
+	// seal/root or serving reader. Retention must therefore be eligible once
+	// the snapshot itself is retired.
+	seedCommittedAttempt("0198f2c0-7c7a-7f00-8a11-000000000941", retained.SnapshotID, digest('a'), digest('b'))
+	dryFence, err := r.AcquireRetentionMaintenanceFence(ctx, AcquireRetentionMaintenanceFenceInput{
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-dry-run", LeaseExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryOperation, err := startAndPrepareRetentionMaintenance(ctx, r.db, RetentionMaintenance{
+		MaintenanceID: "0198f2c0-7c7a-7f00-8a11-000000000951", PhysicalPoolID: poolID, CatalogID: catalogID,
+		OwnerID: dryFence.OwnerID, FencingEpoch: dryFence.FencingEpoch, State: "running", Phase: "expiry",
+		DryRun: true, FileGraceMicros: int64(time.Hour / time.Microsecond),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	dryItems, err := r.ListRetentionMaintenanceSnapshots(ctx, dryOperation.MaintenanceID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(dryItems) != 1 || dryItems[0].SnapshotID != retained.SnapshotID {
+		t.Fatalf("dry-run snapshots=%#v, want committed attempt snapshot %d", dryItems, retained.SnapshotID)
+	}
+	retention, err := r.LoadSnapshotRetention(ctx, retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retention.State != RetentionRetiring {
+		t.Fatalf("dry-run retention state=%s, want retiring", retention.State)
+	}
+	var claimID *string
+	if err := p.QueryRow(ctx, `SELECT retention_claim_id::text FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3`, poolID, catalogID, retained.SnapshotID).Scan(&claimID); err != nil {
+		t.Fatal(err)
+	}
+	if claimID != nil {
+		t.Fatalf("dry-run populated retention claim %q", *claimID)
+	}
+	if err := r.ReleaseRetentionMaintenanceFence(ctx, dryFence); err != nil {
+		t.Fatal(err)
+	}
+
+	claimFence, err := r.AcquireRetentionMaintenanceFence(ctx, AcquireRetentionMaintenanceFenceInput{
+		PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: "retention-claim", LeaseExpiresAt: time.Now().Add(time.Minute),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	operation, err := startAndPrepareRetentionMaintenance(ctx, r.db, RetentionMaintenance{
+		MaintenanceID: "0198f2c0-7c7a-7f00-8a11-000000000952", PhysicalPoolID: poolID, CatalogID: catalogID,
+		OwnerID: claimFence.OwnerID, FencingEpoch: claimFence.FencingEpoch, State: "running", Phase: "expiry",
+		FileGraceMicros: int64(time.Hour / time.Microsecond),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	retention, err = r.LoadSnapshotRetention(ctx, retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var retentionClaimID string
+	if err := p.QueryRow(ctx, `SELECT retention_claim_id::text FROM ducklake.snapshot_retention WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3`, poolID, catalogID, retained.SnapshotID).Scan(&retentionClaimID); err != nil {
+		t.Fatal(err)
+	}
+	if retention.State != RetentionExpiring || retentionClaimID != operation.MaintenanceID {
+		t.Fatalf("claimed retention=%#v claim=%s, want expiring claim %s", retention, retentionClaimID, operation.MaintenanceID)
+	}
+	evidence := maintenanceEvidence(RetentionMaintenanceRequest{MaintenanceID: operation.MaintenanceID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: claimFence.OwnerID}, "expiry", map[string]any{"snapshot_id": retained.SnapshotID, "dry_run": false})
+	if err := r.ExpireSnapshotUnderMaintenanceFence(ctx, retained, evidence, time.Time{}, operation.MaintenanceID, claimFence); err != nil {
+		t.Fatal(err)
+	}
+	retention, err = r.LoadSnapshotRetention(ctx, retained)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if retention.State != RetentionExpired {
+		t.Fatalf("expired retention state=%s, want expired", retention.State)
+	}
+
+	// An unsealed committed attempt remains authoritative for orphan safety.
+	orphanSnapshotID := int64(942)
+	seedCommittedAttempt("0198f2c0-7c7a-7f00-8a11-000000000942", orphanSnapshotID, digest('c'), digest('d'))
+	scanID := "0198f2c0-7c7a-7f00-8a11-000000000953"
+	if err := r.BeginSnapshotOrphanScan(ctx, BeginSnapshotOrphanScanInput{
+		ScanID: scanID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: claimFence.OwnerID,
+		FencingEpoch: claimFence.FencingEpoch, PageSize: 1, GracePeriod: time.Second,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	page, err := r.RecordSnapshotOrphanScanPage(ctx, RecordSnapshotOrphanScanPageInput{
+		ScanID: scanID, PhysicalPoolID: poolID, CatalogID: catalogID, OwnerID: claimFence.OwnerID,
+		FencingEpoch: claimFence.FencingEpoch, PageNumber: 1, CursorBefore: 0, CursorAfter: orphanSnapshotID,
+		SnapshotIDs: []int64{orphanSnapshotID}, Evidence: map[int64]json.RawMessage{orphanSnapshotID: json.RawMessage(`{"source":"catalog"}`)}, Terminal: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if page.OrphanCount != 0 {
+		t.Fatalf("unsealed committed attempt classified as orphan: page=%#v", page)
+	}
+	var orphanCount int
+	if err := p.QueryRow(ctx, `SELECT count(*) FROM ducklake.snapshot_orphan WHERE physical_pool_id=$1 AND catalog_id=$2 AND snapshot_id=$3`, poolID, catalogID, orphanSnapshotID).Scan(&orphanCount); err != nil {
+		t.Fatal(err)
+	}
+	if orphanCount != 0 {
+		t.Fatalf("unsealed committed attempt produced orphan row: %d", orphanCount)
+	}
+	if err := r.CompleteSnapshotOrphanScan(ctx, scanID, claimFence, json.RawMessage(`{"done":true}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.ReleaseRetentionMaintenanceFence(ctx, claimFence); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func TestPostgres18RetentionExpiryTimestampAndClaimedExpiredFiltering(t *testing.T) {
 	r, _, poolID, catalogID := retentionTestRepository(t, "expiry_timestamp")
 	ref := SnapshotRef{PhysicalPoolID: poolID, CatalogID: catalogID, SnapshotID: 911}
 	if err := ensureSnapshotLive(t.Context(), r.db, ref); err != nil {
 		t.Fatal(err)
 	}
-	if err := r.RetireSnapshot(t.Context(), ref, time.Time{}); err != nil {
+	if err := retireSnapshot(t.Context(), r.db, ref, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	retiring, err := r.LoadSnapshotRetention(t.Context(), ref)
@@ -552,11 +710,13 @@ func TestPostgres18RetentionExpiryTimestampAndClaimedExpiredFiltering(t *testing
 	if !retention.ExpiredAt.Equal(expiredAt) {
 		t.Fatalf("expired_at=%s, want explicit timestamp %s", retention.ExpiredAt, expiredAt)
 	}
-	eligible, err := r.ListExpiryEligibleSnapshots(t.Context(), poolID, catalogID)
-	if err != nil {
+	var eligible int
+	if err := r.db.QueryRow(t.Context(), `
+		SELECT count(*) FROM ducklake.snapshot_retention
+		WHERE physical_pool_id=$1 AND catalog_id=$2 AND state='expired' AND retention_claim_id IS NULL`, poolID, catalogID).Scan(&eligible); err != nil {
 		t.Fatal(err)
 	}
-	if len(eligible) != 0 {
-		t.Fatalf("claimed expired snapshot was listed as eligible: %#v", eligible)
+	if eligible != 0 {
+		t.Fatalf("claimed expired snapshot was listed as eligible: %d rows", eligible)
 	}
 }
