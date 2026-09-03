@@ -159,6 +159,61 @@ func TestVerifyRequiresBoundTrustIdentityAndSourceFingerprint(t *testing.T) {
 	}
 }
 
+func TestSourceIdentityLimitsAreExactAndFieldSpecific(t *testing.T) {
+	validProvider := strings.Repeat("p", MaxProviderBytes)
+	validIssuer := strings.Repeat("i", MaxIssuerBytes)
+	validAudience := strings.Repeat("a", MaxAudienceBytes)
+	if err := ValidateSourceIdentity(validProvider, validIssuer, validAudience); err != nil {
+		t.Fatalf("source identity at each limit rejected: %v", err)
+	}
+
+	for _, test := range []struct {
+		name     string
+		provider string
+		issuer   string
+		audience string
+	}{
+		{name: "provider", provider: strings.Repeat("p", MaxProviderBytes+1), issuer: "issuer", audience: "audience"},
+		{name: "issuer", provider: "provider", issuer: strings.Repeat("i", MaxIssuerBytes+1), audience: "audience"},
+		{name: "audience", provider: "provider", issuer: "issuer", audience: strings.Repeat("a", MaxAudienceBytes+1)},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if err := ValidateSourceIdentity(test.provider, test.issuer, test.audience); !errors.Is(err, ErrTrustIdentityMissing) {
+				t.Fatalf("ValidateSourceIdentity() error = %v, want trust identity rejection", err)
+			}
+		})
+	}
+
+	if err := ValidateSubjectIdentity(strings.Repeat("s", MaxSubjectBytes)); err != nil {
+		t.Fatalf("subject at its limit rejected: %v", err)
+	}
+	if err := ValidateSubjectIdentity(strings.Repeat("s", MaxSubjectBytes+1)); !errors.Is(err, ErrTrustIdentityMissing) {
+		t.Fatalf("subject over limit error = %v, want trust identity rejection", err)
+	}
+}
+
+func TestVerifyUsesFieldSpecificSourceIdentityLimits(t *testing.T) {
+	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
+	for _, test := range []struct {
+		name string
+		edit func(*VerifiedClaims)
+	}{
+		{name: "provider", edit: func(claims *VerifiedClaims) { claims.Provider = strings.Repeat("p", MaxProviderBytes+1) }},
+		{name: "issuer", edit: func(claims *VerifiedClaims) { claims.Issuer = strings.Repeat("i", MaxIssuerBytes+1) }},
+		{name: "audience", edit: func(claims *VerifiedClaims) { claims.Audience = strings.Repeat("a", MaxAudienceBytes+1) }},
+		{name: "subject", edit: func(claims *VerifiedClaims) { claims.Subject = strings.Repeat("s", MaxSubjectBytes+1) }},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			claims := validVerifiedClaims(now)
+			test.edit(&claims)
+			_, err := Verify(context.Background(), RawEvidence{Source: SourceOIDC, Raw: []byte("evidence")}, &testVerifier{kind: SourceOIDC, result: claims}, VerifyOptions{Now: now})
+			if !errors.Is(err, ErrTrustIdentityMissing) {
+				t.Fatalf("Verify() error = %v, want trust identity rejection", err)
+			}
+		})
+	}
+}
+
 func TestVerifyRejectsMapsNestedListsNullsAndUnsupportedValuesWithoutCoercion(t *testing.T) {
 	now := time.Date(2026, 9, 3, 12, 0, 0, 0, time.UTC)
 	values := []struct {

@@ -50,7 +50,7 @@ CREATE TABLE access.semantic_attribute_claim_mapping (
     mapping_id          uuid PRIMARY KEY DEFAULT uuidv7(),
     source_kind        text NOT NULL CHECK (source_kind IN ('saml','oidc','embed','service_token')),
     provider            text NOT NULL CHECK (provider = btrim(provider) AND octet_length(provider) BETWEEN 1 AND 128 AND provider !~ '[[:cntrl:]]'),
-    issuer              text NOT NULL CHECK (issuer = btrim(issuer) AND octet_length(issuer) BETWEEN 1 AND 2048 AND issuer !~ '[[:cntrl:]]'),
+    issuer              text NOT NULL CHECK (issuer = btrim(issuer) AND octet_length(issuer) BETWEEN 1 AND 1024 AND issuer !~ '[[:cntrl:]]'),
     audience            text NOT NULL CHECK (audience = btrim(audience) AND octet_length(audience) BETWEEN 1 AND 512 AND audience !~ '[[:cntrl:]]'),
     claim               text NOT NULL CHECK (claim = btrim(claim) AND octet_length(claim) BETWEEN 1 AND 1024 AND claim !~ '[[:cntrl:]]'),
     definition_id       uuid NOT NULL REFERENCES access.semantic_attribute_definition(definition_id),

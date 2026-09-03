@@ -18,6 +18,21 @@ func (h Handler) ListSemanticAttributeDefinitions(w stdhttp.ResponseWriter, r *s
 	if !h.requirePlatformAdmin(w, r) {
 		return
 	}
+	owner := strings.TrimSpace(r.URL.Query().Get("ownerKind"))
+	if owner != "" && !access.SemanticAttributeOwnerKind(owner).Valid() {
+		writeSemanticAttributeError(w, invalidSemanticAttributeRequest(errors.New("ownerKind is invalid")))
+		return
+	}
+	limit, err := parseAPILimitQuery(r.URL.Query().Get("limit"))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
+	afterName, afterDefinitionID, err := semanticAttributePageCursor(r.URL.Query().Get("pageToken"))
+	if err != nil {
+		writeJSONError(w, err, stdhttp.StatusBadRequest)
+		return
+	}
 	repo, err := h.repository()
 	if err != nil {
 		writeSemanticAttributeError(w, err)
@@ -28,23 +43,40 @@ func (h Handler) ListSemanticAttributeDefinitions(w stdhttp.ResponseWriter, r *s
 		writeSemanticAttributeError(w, errSemanticAttributeUnavailable)
 		return
 	}
-	rows, err := registry.SearchSemanticAttributes(r.Context(), access.SemanticAttributeSearch{Query: strings.TrimSpace(r.URL.Query().Get("q")), Limit: 200})
+	rows, err := registry.SearchSemanticAttributes(r.Context(), access.SemanticAttributeSearch{
+		Query: strings.TrimSpace(r.URL.Query().Get("q")), OwnerKind: access.SemanticAttributeOwnerKind(owner),
+		AfterName: afterName, AfterDefinitionID: afterDefinitionID, Limit: limit + 1,
+	})
 	if err != nil {
 		writeSemanticAttributeError(w, err)
 		return
 	}
-	owner := strings.TrimSpace(r.URL.Query().Get("ownerKind"))
-	if owner != "" && !access.SemanticAttributeOwnerKind(owner).Valid() {
-		writeSemanticAttributeError(w, invalidSemanticAttributeRequest(errors.New("ownerKind is invalid")))
-		return
+	nextCursor := ""
+	if len(rows) > limit {
+		last := rows[limit-1]
+		nextCursor = encodeKeyCursor(last.Name + "\x00" + last.ID)
+		rows = rows[:limit]
 	}
 	items := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
-		if owner == "" || string(row.Metadata.Owner.Kind) == owner {
-			items = append(items, semanticAttributeDefinitionDTO(row))
-		}
+		items = append(items, semanticAttributeDefinitionDTO(row))
 	}
-	_ = writePagedJSON(w, r, items)
+	writeJSON(w, stdhttp.StatusOK, map[string]any{"items": items, "page": map[string]any{"nextCursor": nextCursor}})
+}
+
+func semanticAttributePageCursor(token string) (string, string, error) {
+	if strings.TrimSpace(token) == "" {
+		return "", "", nil
+	}
+	cursor, err := decodeKeyCursor(token)
+	if err != nil {
+		return "", "", err
+	}
+	name, definitionID, ok := strings.Cut(cursor, "\x00")
+	if !ok || strings.TrimSpace(name) == "" || strings.TrimSpace(definitionID) == "" {
+		return "", "", errors.New("pageToken is invalid")
+	}
+	return name, definitionID, nil
 }
 
 func (h Handler) GetSemanticAttributeDefinition(w stdhttp.ResponseWriter, r *stdhttp.Request) {

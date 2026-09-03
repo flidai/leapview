@@ -83,11 +83,16 @@ SELECT definition_id::text AS definition_id, name, value_type, value_shape,
        COALESCE(disabled_at::text, '')::text AS disabled_at,
        created_at::text AS created_at, updated_at::text AS updated_at
 FROM access.semantic_attribute_definition
-WHERE sqlc.arg(search_query)::text = ''
+WHERE (sqlc.arg(search_query)::text = ''
    OR strpos(lower(name), lower(sqlc.arg(search_query)::text)) > 0
    OR strpos(lower(display_name), lower(sqlc.arg(search_query)::text)) > 0
-   OR strpos(lower(description), lower(sqlc.arg(search_query)::text)) > 0
-ORDER BY name
+   OR strpos(lower(description), lower(sqlc.arg(search_query)::text)) > 0)
+  AND (sqlc.arg(owner_kind)::text = '' OR owner_kind = sqlc.arg(owner_kind)::text)
+  AND (sqlc.arg(after_name)::text = ''
+       OR name > sqlc.arg(after_name)::text
+       OR (name = sqlc.arg(after_name)::text
+           AND definition_id > NULLIF(sqlc.arg(after_definition_id)::text, '')::uuid))
+ORDER BY name, definition_id
 LIMIT sqlc.arg(page_size)::int;
 
 -- name: UpdateSemanticAttributeDefinitionMetadata :one

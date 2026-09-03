@@ -135,6 +135,158 @@ func TestSemanticAttributeControlAuditProjectionOmitsValues(t *testing.T) {
 	}
 }
 
+func TestEffectiveSemanticAttributeAssignmentsRejectsOutOfBandRowCorruption(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	ctx := t.Context()
+	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
+		t.Fatalf("apply attribute registry migration: %v", err)
+	}
+	if _, err := db.admin.Exec(ctx, SemanticAttributeControlMigrationSQL()); err != nil {
+		t.Fatalf("apply semantic attribute control migration: %v", err)
+	}
+	for _, id := range []string{auditActorID, controlSubjectID} {
+		if _, err := db.admin.Exec(ctx, `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, id); err != nil {
+			t.Fatalf("insert principal %s: %v", id, err)
+		}
+	}
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := access.SemanticAttributeMutationContext{ActorPrincipalID: auditActorID}
+	definition, err := repo.RegisterSemanticAttribute(ctx, access.RegisterSemanticAttributeInput{
+		Name: "integrity_region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("register definition: %v", err)
+	}
+	assignment, err := repo.SetSemanticAttributeAssignment(ctx, access.SemanticAttributeAssignmentInput{
+		DefinitionID: definition.ID, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID}, Values: "west", Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("set assignment: %v", err)
+	}
+	if _, err := repo.SemanticAttributeControl(ctx); err != nil {
+		t.Fatalf("validate initial control snapshot: %v", err)
+	}
+
+	// A privileged out-of-band writer can bypass the repository's control-state
+	// advancement. Effective resolution must recompute the snapshot digest and
+	// reject the row instead of trusting the unchanged revision/digest pair.
+	if _, err := db.admin.Exec(ctx, `
+		UPDATE access.semantic_attribute_assignment
+		SET canonical_values = ARRAY['tampered'], assignment_version = assignment_version + 1
+		WHERE assignment_id = $1::uuid`, assignment.ID); err != nil {
+		t.Fatalf("corrupt assignment out of band: %v", err)
+	}
+	_, err = repo.EffectiveDirectSemanticAttributeAssignments(ctx, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID})
+	if !errors.Is(err, access.ErrSemanticAttributeControlCorrupt) {
+		t.Fatalf("out-of-band assignment corruption error = %v, want control corruption", err)
+	}
+}
+
+func TestSemanticAttributeControlPostgreSQL18CanonicalTimestampsAreSessionIndependent(t *testing.T) {
+	db := newStandaloneAccessDatabase(t)
+	ctx := t.Context()
+	if _, err := db.admin.Exec(ctx, AttributeRegistryMigrationSQL()); err != nil {
+		t.Fatalf("apply attribute registry migration: %v", err)
+	}
+	if _, err := db.admin.Exec(ctx, SemanticAttributeControlMigrationSQL()); err != nil {
+		t.Fatalf("apply semantic attribute control migration: %v", err)
+	}
+	for _, id := range []string{auditActorID, controlSubjectID} {
+		if _, err := db.admin.Exec(ctx, `INSERT INTO access.principal (id, principal_type, status) VALUES ($1::uuid, 'user', 'active')`, id); err != nil {
+			t.Fatalf("insert principal %s: %v", id, err)
+		}
+	}
+	repo, err := NewAccess(db.runtime, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	mutation := access.SemanticAttributeMutationContext{ActorPrincipalID: auditActorID}
+	definition, err := repo.RegisterSemanticAttribute(ctx, access.RegisterSemanticAttributeInput{
+		Name: "timestamp_region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("register definition: %v", err)
+	}
+	assignment, err := repo.SetSemanticAttributeAssignment(ctx, access.SemanticAttributeAssignmentInput{
+		DefinitionID: definition.ID, Subject: access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID}, Values: "west", Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("set assignment: %v", err)
+	}
+	if _, err := repo.TombstoneSemanticAttributeAssignment(ctx, assignment.ID, assignment.AssignmentVersion, mutation); err != nil {
+		t.Fatalf("tombstone assignment: %v", err)
+	}
+	baseline, err := repo.SemanticAttributeControl(ctx)
+	if err != nil {
+		t.Fatalf("read baseline control snapshot: %v", err)
+	}
+
+	conn, err := db.runtime.Acquire(ctx)
+	if err != nil {
+		t.Fatalf("acquire non-default session: %v", err)
+	}
+	defer conn.Release()
+	if _, err := conn.Exec(ctx, `SET TIME ZONE 'America/Los_Angeles'`); err != nil {
+		t.Fatalf("set non-default timezone: %v", err)
+	}
+	if _, err := conn.Exec(ctx, `SET DateStyle = 'SQL, DMY'`); err != nil {
+		t.Fatalf("set non-default datestyle: %v", err)
+	}
+	nonDefaultRepo, err := NewAccess(conn, FingerprintConfig{Key: []byte("0123456789abcdef0123456789abcdef")})
+	if err != nil {
+		t.Fatal(err)
+	}
+	nonDefault, err := nonDefaultRepo.SemanticAttributeControl(ctx)
+	if err != nil {
+		t.Fatalf("read non-default control snapshot: %v", err)
+	}
+	if nonDefault.State.Digest != baseline.State.Digest {
+		t.Fatalf("control digest changed with session formatting: %q != %q", nonDefault.State.Digest, baseline.State.Digest)
+	}
+	if nonDefault.State.UpdatedAt == "" {
+		t.Fatal("control state updated timestamp is empty")
+	}
+	assertRFC3339UTCTimestamp(t, nonDefault.State.UpdatedAt)
+	var tombstoned access.SemanticAttributeAssignment
+	for _, row := range nonDefault.Assignments {
+		if row.ID == assignment.ID {
+			tombstoned = row
+			break
+		}
+	}
+	if tombstoned.ID == "" {
+		t.Fatalf("tombstoned assignment missing from control snapshot: %#v", nonDefault.Assignments)
+	}
+	assertRFC3339UTCTimestamp(t, tombstoned.CreatedAt)
+	assertRFC3339UTCTimestamp(t, tombstoned.UpdatedAt)
+	assertRFC3339UTCTimestamp(t, tombstoned.TombstonedAt)
+	var tombstonedMicros int64
+	if err := conn.QueryRow(ctx, `SELECT (extract(epoch FROM tombstoned_at) * 1000000)::bigint FROM access.semantic_attribute_assignment WHERE assignment_id = $1::uuid`, assignment.ID).Scan(&tombstonedMicros); err != nil {
+		t.Fatalf("read tombstone microseconds: %v", err)
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, tombstoned.TombstonedAt)
+	if err != nil {
+		t.Fatalf("parse canonical tombstone timestamp: %v", err)
+	}
+	if parsed.UTC().UnixMicro() != tombstonedMicros {
+		t.Fatalf("tombstone timestamp lost microsecond precision: API=%d database=%d", parsed.UTC().UnixMicro(), tombstonedMicros)
+	}
+}
+
+func assertRFC3339UTCTimestamp(t *testing.T, value string) {
+	t.Helper()
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		t.Fatalf("timestamp %q is not RFC3339: %v", value, err)
+	}
+	if parsed.Location() != time.UTC || !strings.HasSuffix(value, "Z") {
+		t.Fatalf("timestamp %q is not UTC", value)
+	}
+}
+
 func TestSemanticAttributeControlPostgreSQL18LifecycleAndTrust(t *testing.T) {
 	db := newStandaloneAccessDatabase(t)
 	ctx := t.Context()

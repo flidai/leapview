@@ -105,7 +105,7 @@ func (r *Repository) setSemanticAttributeAssignmentCore(ctx context.Context, db 
 }
 
 func assignmentFromActive(row accessdb.GetActiveSemanticAttributeAssignmentRow) access.SemanticAttributeAssignment {
-	return access.SemanticAttributeAssignment{ID: row.AssignmentID, DefinitionID: row.DefinitionID, DefinitionName: row.DefinitionName, DefinitionVersion: row.DefinitionVersion, Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape), Subject: access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID}, CanonicalValues: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest, AssignmentVersion: row.AssignmentVersion, Tombstoned: textValue(row.TombstonedAt) != "", TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return access.SemanticAttributeAssignment{ID: row.AssignmentID, DefinitionID: row.DefinitionID, DefinitionName: row.DefinitionName, DefinitionVersion: row.DefinitionVersion, Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape), Subject: access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID}, CanonicalValues: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest, AssignmentVersion: row.AssignmentVersion, Tombstoned: textValue(row.TombstonedAt) != "", TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func mustPGUUID(value string) pgtype.UUID {

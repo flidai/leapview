@@ -12,12 +12,15 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
 	"github.com/flidai/leapview/internal/access"
 	accessdb "github.com/flidai/leapview/internal/access/postgres/internal/db"
+	"github.com/flidai/leapview/internal/access/trustedclaims"
 	"github.com/flidai/leapview/internal/semanticvalue"
 )
 
@@ -36,7 +39,7 @@ type semanticAttributeAssignmentDigestWire struct {
 	Values                                   []string
 	ValueDigest                              string
 	Version                                  int64
-	TombstonedAt                             string
+	TombstonedAtMicros                       int64
 }
 
 type trustedClaimMappingDigestWire struct {
@@ -45,7 +48,7 @@ type trustedClaimMappingDigestWire struct {
 	Type                                                            semanticvalue.Type
 	Shape                                                           access.SemanticAttributeShape
 	Version                                                         int64
-	TombstonedAt                                                    string
+	TombstonedAtMicros                                              int64
 }
 
 type semanticAttributeControlDigestWire struct {
@@ -60,8 +63,8 @@ func assignmentFromRow(row accessdb.ListSemanticAttributeAssignmentsRow) access.
 		Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape),
 		Subject:         access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID},
 		CanonicalValues: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest,
-		AssignmentVersion: row.AssignmentVersion, Tombstoned: row.TombstonedAt != "",
-		TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		AssignmentVersion: row.AssignmentVersion, Tombstoned: textValue(row.TombstonedAt) != "",
+		TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func assignmentFromInsert(row accessdb.InsertSemanticAttributeAssignmentRow, name string) access.SemanticAttributeAssignment {
@@ -71,7 +74,7 @@ func assignmentFromInsert(row accessdb.InsertSemanticAttributeAssignmentRow, nam
 		Subject:         access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID},
 		CanonicalValues: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest,
 		AssignmentVersion: row.AssignmentVersion, Tombstoned: textValue(row.TombstonedAt) != "",
-		TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func assignmentFromUpdate(row accessdb.UpdateSemanticAttributeAssignmentRow, name string) access.SemanticAttributeAssignment {
@@ -81,7 +84,7 @@ func assignmentFromUpdate(row accessdb.UpdateSemanticAttributeAssignmentRow, nam
 		Subject:         access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID},
 		CanonicalValues: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest,
 		AssignmentVersion: row.AssignmentVersion, Tombstoned: textValue(row.TombstonedAt) != "",
-		TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func assignmentFromTombstone(row accessdb.TombstoneSemanticAttributeAssignmentRow, name string) access.SemanticAttributeAssignment {
@@ -91,7 +94,7 @@ func assignmentFromTombstone(row accessdb.TombstoneSemanticAttributeAssignmentRo
 		Subject:         access.SubjectRef{Kind: access.SubjectKind(row.SubjectKind), ID: row.SubjectID},
 		CanonicalValues: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest,
 		AssignmentVersion: row.AssignmentVersion, Tombstoned: textValue(row.TombstonedAt) != "",
-		TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func mappingFromList(row accessdb.ListTrustedClaimMappingsRow) access.TrustedClaimMapping {
@@ -100,8 +103,8 @@ func mappingFromList(row accessdb.ListTrustedClaimMappingsRow) access.TrustedCla
 		DefinitionID: row.DefinitionID, DefinitionName: row.DefinitionName,
 		DefinitionVersion: row.DefinitionVersion, Type: semanticvalue.Type(row.ValueType),
 		Shape: access.SemanticAttributeShape(row.ValueShape), MappingVersion: row.MappingVersion,
-		Tombstoned: textValue(row.TombstonedAt) != "", TombstonedAt: textValue(row.TombstonedAt),
-		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		Tombstoned: textValue(row.TombstonedAt) != "", TombstonedAt: timestampAPIValue(row.TombstonedAt),
+		CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func mappingFromInsert(row accessdb.InsertTrustedClaimMappingRow, name string) access.TrustedClaimMapping {
@@ -110,7 +113,7 @@ func mappingFromInsert(row accessdb.InsertTrustedClaimMappingRow, name string) a
 		DefinitionID: row.DefinitionID, DefinitionName: name, DefinitionVersion: row.DefinitionVersion,
 		Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape),
 		MappingVersion: row.MappingVersion, Tombstoned: textValue(row.TombstonedAt) != "",
-		TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func mappingFromTombstone(row accessdb.TombstoneTrustedClaimMappingRow, name string) access.TrustedClaimMapping {
@@ -119,14 +122,47 @@ func mappingFromTombstone(row accessdb.TombstoneTrustedClaimMappingRow, name str
 		DefinitionID: row.DefinitionID, DefinitionName: name, DefinitionVersion: row.DefinitionVersion,
 		Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape),
 		MappingVersion: row.MappingVersion, Tombstoned: textValue(row.TombstonedAt) != "",
-		TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+		TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func textValue(value interface{}) string {
 	if value == nil {
 		return ""
 	}
+	if bytes, ok := value.([]byte); ok {
+		return string(bytes)
+	}
 	return fmt.Sprint(value)
+}
+
+// timestampAPIValue converts the control query's epoch-microsecond wire value
+// into the stable UTC representation exposed by access APIs. The SQL query
+// deliberately does not return timestamptz::text because that representation
+// changes with the PostgreSQL session's TimeZone and DateStyle settings.
+func timestampAPIValue(value interface{}) string {
+	raw := textValue(value)
+	if raw == "" {
+		return ""
+	}
+	micros, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return ""
+	}
+	return time.UnixMicro(micros).UTC().Format(time.RFC3339Nano)
+}
+
+func timestampMicroseconds(value string) (int64, error) {
+	if value == "" {
+		return 0, nil
+	}
+	if micros, err := strconv.ParseInt(value, 10, 64); err == nil {
+		return micros, nil
+	}
+	parsed, err := time.Parse(time.RFC3339Nano, value)
+	if err != nil {
+		return 0, fmt.Errorf("invalid timestamp %q: %w", value, err)
+	}
+	return parsed.UTC().UnixMicro(), nil
 }
 
 func semanticAttributeControlDigest(assignments []access.SemanticAttributeAssignment, mappings []access.TrustedClaimMapping) (string, error) {
@@ -138,16 +174,24 @@ func semanticAttributeControlDigest(assignments []access.SemanticAttributeAssign
 		Assignments: make([]semanticAttributeAssignmentDigestWire, len(assignments)),
 		Mappings:    make([]trustedClaimMappingDigestWire, len(mappings))}
 	for i, row := range assignments {
+		tombstonedAt, err := timestampMicroseconds(row.TombstonedAt)
+		if err != nil {
+			return "", fmt.Errorf("assignment %s tombstoned timestamp: %w", row.ID, err)
+		}
 		wire.Assignments[i] = semanticAttributeAssignmentDigestWire{ID: row.ID, DefinitionID: row.DefinitionID,
 			SubjectKind: string(row.Subject.Kind), SubjectID: row.Subject.ID, DefinitionVersion: row.DefinitionVersion,
 			Type: row.Type, Shape: row.Shape, Values: append([]string(nil), row.CanonicalValues...), ValueDigest: row.ValueDigest,
-			Version: row.AssignmentVersion, TombstonedAt: row.TombstonedAt}
+			Version: row.AssignmentVersion, TombstonedAtMicros: tombstonedAt}
 	}
 	for i, row := range mappings {
+		tombstonedAt, err := timestampMicroseconds(row.TombstonedAt)
+		if err != nil {
+			return "", fmt.Errorf("mapping %s tombstoned timestamp: %w", row.ID, err)
+		}
 		wire.Mappings[i] = trustedClaimMappingDigestWire{ID: row.ID, SourceKind: string(row.SourceKind),
 			Provider: row.Provider, Issuer: row.Issuer, Audience: row.Audience, Claim: row.Claim,
 			DefinitionID: row.DefinitionID, DefinitionVersion: row.DefinitionVersion, Type: row.Type,
-			Shape: row.Shape, Version: row.MappingVersion, TombstonedAt: row.TombstonedAt}
+			Shape: row.Shape, Version: row.MappingVersion, TombstonedAtMicros: tombstonedAt}
 	}
 	encoded, err := json.Marshal(wire)
 	if err != nil {
@@ -162,7 +206,7 @@ func lockSemanticAttributeControlState(ctx context.Context, db DBTX) (semanticAt
 	if err != nil {
 		return semanticAttributeControlStateRow{}, fmt.Errorf("lock semantic attribute control state: %w", err)
 	}
-	return semanticAttributeControlStateRow{Profile: row.Profile, Revision: row.ControlRevision, Digest: row.ControlDigest, UpdatedAt: row.UpdatedAt}, nil
+	return semanticAttributeControlStateRow{Profile: row.Profile, Revision: row.ControlRevision, Digest: row.ControlDigest, UpdatedAt: timestampAPIValue(row.UpdatedAt)}, nil
 }
 
 func readSemanticAttributeControlState(ctx context.Context, db DBTX) (semanticAttributeControlStateRow, error) {
@@ -170,7 +214,7 @@ func readSemanticAttributeControlState(ctx context.Context, db DBTX) (semanticAt
 	if err != nil {
 		return semanticAttributeControlStateRow{}, fmt.Errorf("read semantic attribute control state: %w", err)
 	}
-	return semanticAttributeControlStateRow{Profile: row.Profile, Revision: row.ControlRevision, Digest: row.ControlDigest, UpdatedAt: row.UpdatedAt}, nil
+	return semanticAttributeControlStateRow{Profile: row.Profile, Revision: row.ControlRevision, Digest: row.ControlDigest, UpdatedAt: timestampAPIValue(row.UpdatedAt)}, nil
 }
 
 func allControlRows(ctx context.Context, db DBTX) ([]access.SemanticAttributeAssignment, []access.TrustedClaimMapping, error) {
@@ -225,7 +269,7 @@ func advanceSemanticAttributeControl(ctx context.Context, db DBTX, current seman
 	if err != nil {
 		return semanticAttributeControlStateRow{}, fmt.Errorf("advance semantic attribute control state: %w", err)
 	}
-	return semanticAttributeControlStateRow{Profile: row.Profile, Revision: row.ControlRevision, Digest: row.ControlDigest, UpdatedAt: row.UpdatedAt}, nil
+	return semanticAttributeControlStateRow{Profile: row.Profile, Revision: row.ControlRevision, Digest: row.ControlDigest, UpdatedAt: timestampAPIValue(row.UpdatedAt)}, nil
 }
 
 func (r *Repository) SemanticAttributeControl(ctx context.Context) (access.SemanticAttributeControlSnapshot, error) {
@@ -299,8 +343,8 @@ func canonicalTrustedClaimSource(source access.TrustedClaimSource) (access.Trust
 	if !source.Kind.Valid() {
 		return access.TrustedClaimSource{}, errors.New("trusted claim source kind is invalid")
 	}
-	if !validTrustedClaimText(source.Provider, 128) || !validTrustedClaimText(source.Issuer, 2048) || !validTrustedClaimText(source.Audience, 512) {
-		return access.TrustedClaimSource{}, errors.New("trusted claim source identity is invalid")
+	if err := trustedclaims.ValidateSourceIdentity(source.Provider, source.Issuer, source.Audience); err != nil {
+		return access.TrustedClaimSource{}, fmt.Errorf("trusted claim source identity is invalid: %w", err)
 	}
 	return source, nil
 }
@@ -334,16 +378,20 @@ func (r *Repository) TrustedClaimMappings(ctx context.Context, filter access.Tru
 		return nil, errors.New("trusted claim source kind is invalid")
 	}
 	for _, field := range []struct {
-		label string
-		value string
-		limit int
+		label    string
+		value    string
+		validate func(string) error
 	}{
-		{label: "provider", value: source.Provider, limit: 128}, {label: "issuer", value: source.Issuer, limit: 2048},
-		{label: "audience", value: source.Audience, limit: 512}, {label: "claim", value: filter.Claim, limit: 1024},
+		{label: "provider", value: source.Provider, validate: trustedclaims.ValidateProvider},
+		{label: "issuer", value: source.Issuer, validate: trustedclaims.ValidateIssuer},
+		{label: "audience", value: source.Audience, validate: trustedclaims.ValidateAudience},
 	} {
-		if field.value != "" && !validTrustedClaimText(field.value, field.limit) {
+		if field.value != "" && field.validate(field.value) != nil {
 			return nil, fmt.Errorf("trusted claim %s is invalid", field.label)
 		}
+	}
+	if filter.Claim != "" && !validTrustedClaimText(filter.Claim, 1024) {
+		return nil, errors.New("trusted claim claim is invalid")
 	}
 	claim := filter.Claim
 	db, err := r.requireDB()

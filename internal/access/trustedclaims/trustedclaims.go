@@ -10,7 +10,6 @@ import (
 	"reflect"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
 
 	"github.com/flidai/leapview/internal/semanticvalue"
@@ -218,18 +217,11 @@ func Verify(ctx context.Context, evidence RawEvidence, verifier SourceVerifier, 
 }
 
 func validateVerifiedClaims(claims VerifiedClaims, source SourceKind, now time.Time) error {
-	provider := strings.TrimSpace(claims.Provider)
-	issuer := strings.TrimSpace(claims.Issuer)
-	audience := strings.TrimSpace(claims.Audience)
-	subject := strings.TrimSpace(claims.Subject)
-	if provider == "" || issuer == "" || audience == "" || subject == "" {
-		return fmt.Errorf("%w: provider, issuer, audience, and subject are required", ErrTrustIdentityMissing)
+	if err := ValidateSourceIdentity(claims.Provider, claims.Issuer, claims.Audience); err != nil {
+		return err
 	}
-	if provider != claims.Provider || issuer != claims.Issuer || audience != claims.Audience || subject != claims.Subject {
-		return fmt.Errorf("%w: provider, issuer, audience, and subject must not contain surrounding whitespace", ErrTrustIdentityMissing)
-	}
-	if !validIdentity(provider) || !validIdentity(issuer) || !validIdentity(audience) || !validIdentity(subject) {
-		return fmt.Errorf("%w: trust identity contains invalid text", ErrTrustIdentityMissing)
+	if err := ValidateSubjectIdentity(claims.Subject); err != nil {
+		return err
 	}
 	if claims.IssuedAt.IsZero() || claims.ExpiresAt.IsZero() {
 		return fmt.Errorf("%w: issued and expiry times are required", ErrTrustIdentityMissing)
@@ -402,19 +394,6 @@ func lowerHex(value string) bool {
 		}
 	}
 	return true
-}
-
-func validIdentity(value string) bool {
-	return value != "" && value == strings.TrimSpace(value) && utf8.ValidString(value) && !hasControl(value) && len(value) <= 1024
-}
-
-func hasControl(value string) bool {
-	for _, character := range value {
-		if unicode.IsControl(character) {
-			return true
-		}
-	}
-	return false
 }
 
 func isNilInterface(value any) bool {

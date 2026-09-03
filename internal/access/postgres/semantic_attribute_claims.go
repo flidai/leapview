@@ -17,7 +17,7 @@ import (
 )
 
 func mappingFromActive(row accessdb.GetActiveTrustedClaimMappingRow) access.TrustedClaimMapping {
-	return access.TrustedClaimMapping{ID: row.MappingID, SourceKind: access.TrustedClaimSourceKind(row.SourceKind), Provider: row.Provider, Issuer: row.Issuer, Audience: row.Audience, Claim: row.Claim, DefinitionID: row.DefinitionID, DefinitionName: row.DefinitionName, DefinitionVersion: row.DefinitionVersion, Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape), MappingVersion: row.MappingVersion, Tombstoned: textValue(row.TombstonedAt) != "", TombstonedAt: textValue(row.TombstonedAt), CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt}
+	return access.TrustedClaimMapping{ID: row.MappingID, SourceKind: access.TrustedClaimSourceKind(row.SourceKind), Provider: row.Provider, Issuer: row.Issuer, Audience: row.Audience, Claim: row.Claim, DefinitionID: row.DefinitionID, DefinitionName: row.DefinitionName, DefinitionVersion: row.DefinitionVersion, Type: semanticvalue.Type(row.ValueType), Shape: access.SemanticAttributeShape(row.ValueShape), MappingVersion: row.MappingVersion, Tombstoned: textValue(row.TombstonedAt) != "", TombstonedAt: timestampAPIValue(row.TombstonedAt), CreatedAt: timestampAPIValue(row.CreatedAt), UpdatedAt: timestampAPIValue(row.UpdatedAt)}
 }
 
 func (r *Repository) setTrustedClaimMappingCore(ctx context.Context, db DBTX, input access.TrustedClaimMappingInput) (access.TrustedClaimMapping, access.AuditEventInput, error) {
@@ -244,7 +244,7 @@ func (r *Repository) effectiveSemanticAttributeAssignments(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	controlBefore, err := readSemanticAttributeControlState(ctx, db)
+	controlBefore, err := r.SemanticAttributeControl(ctx)
 	if err != nil {
 		return nil, err
 	}
@@ -252,9 +252,12 @@ func (r *Repository) effectiveSemanticAttributeAssignments(ctx context.Context, 
 	if err != nil {
 		return nil, err
 	}
-	assignments, err := r.SemanticAttributeAssignments(ctx, access.SemanticAttributeAssignmentFilter{Subject: subject})
-	if err != nil {
-		return nil, err
+	assignments := make([]access.SemanticAttributeAssignment, 0, len(controlBefore.Assignments))
+	for _, assignment := range controlBefore.Assignments {
+		if assignment.Tombstoned || assignment.Subject != subject {
+			continue
+		}
+		assignments = append(assignments, assignment)
 	}
 	if subject.Kind == access.SubjectKindPrincipal {
 		groups, queryErr := accessdb.New(db).ListPrincipalSemanticAttributeGroups(ctx, mustPGUUID(subject.ID))
@@ -262,11 +265,13 @@ func (r *Repository) effectiveSemanticAttributeAssignments(ctx context.Context, 
 			return nil, queryErr
 		}
 		for _, groupID := range groups {
-			groupAssignments, listErr := r.SemanticAttributeAssignments(ctx, access.SemanticAttributeAssignmentFilter{Subject: access.SubjectRef{Kind: access.SubjectKindGroup, ID: groupID}})
-			if listErr != nil {
-				return nil, listErr
+			groupSubject := access.SubjectRef{Kind: access.SubjectKindGroup, ID: groupID}
+			for _, assignment := range controlBefore.Assignments {
+				if assignment.Tombstoned || assignment.Subject != groupSubject {
+					continue
+				}
+				assignments = append(assignments, assignment)
 			}
-			assignments = append(assignments, groupAssignments...)
 		}
 	}
 	byDefinition := make(map[string]access.EffectiveSemanticAttribute)
@@ -293,11 +298,10 @@ func (r *Repository) effectiveSemanticAttributeAssignments(ctx context.Context, 
 		}
 	}
 	if source.Kind != "" {
-		mappings, err := r.TrustedClaimMappings(ctx, access.TrustedClaimMappingFilter{SourceKind: source.Kind, Provider: source.Provider, Issuer: source.Issuer, Audience: source.Audience})
-		if err != nil {
-			return nil, err
-		}
-		for _, mapping := range mappings {
+		for _, mapping := range controlBefore.Mappings {
+			if mapping.Tombstoned || mapping.SourceKind != source.Kind || mapping.Provider != source.Provider || mapping.Issuer != source.Issuer || mapping.Audience != source.Audience {
+				continue
+			}
 			var found bool
 			var raw any
 			for _, claim := range claims {
@@ -336,11 +340,11 @@ func (r *Repository) effectiveSemanticAttributeAssignments(ctx context.Context, 
 			}
 		}
 	}
-	controlAfter, err := readSemanticAttributeControlState(ctx, db)
+	controlAfter, err := r.SemanticAttributeControl(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if controlBefore.Revision != controlAfter.Revision || controlBefore.Digest != controlAfter.Digest {
+	if controlBefore.State.Revision != controlAfter.State.Revision || controlBefore.State.Digest != controlAfter.State.Digest {
 		return nil, fmt.Errorf("%w: control state changed during effective resolution", access.ErrSemanticAttributeSourceConflict)
 	}
 	registryAfter, err := r.SemanticAttributeRegistry(ctx)

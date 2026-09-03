@@ -106,12 +106,15 @@ type UpdateSemanticAttributeMetadataInput struct {
 	// legacy internal callers source-compatible; version-aware command paths
 	// must provide the version returned by the previous read.
 	ExpectedVersion int64
-	Mutation SemanticAttributeMutationContext
+	Mutation        SemanticAttributeMutationContext
 }
 
 type SemanticAttributeSearch struct {
-	Query string
-	Limit int
+	Query             string
+	OwnerKind         SemanticAttributeOwnerKind
+	AfterName         string
+	AfterDefinitionID string
+	Limit             int
 }
 
 // CanonicalSemanticAttributeValue is the profile-qualified value identity

@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,6 +21,8 @@ type semanticAttributeHTTPTestRepository struct {
 	access.Repository
 	admin       bool
 	definition  access.SemanticAttributeDefinition
+	definitions []access.SemanticAttributeDefinition
+	lastSearch  access.SemanticAttributeSearch
 	assignment  access.SemanticAttributeAssignment
 	mapping     access.TrustedClaimMapping
 	mappingErr  error
@@ -45,8 +48,26 @@ func (r *semanticAttributeHTTPTestRepository) SemanticAttributeDefinitionByID(_ 
 	}
 	return r.definition, nil
 }
-func (r *semanticAttributeHTTPTestRepository) SearchSemanticAttributes(context.Context, access.SemanticAttributeSearch) ([]access.SemanticAttributeDefinition, error) {
-	return []access.SemanticAttributeDefinition{r.definition}, nil
+func (r *semanticAttributeHTTPTestRepository) SearchSemanticAttributes(_ context.Context, filter access.SemanticAttributeSearch) ([]access.SemanticAttributeDefinition, error) {
+	r.lastSearch = filter
+	definitions := r.definitions
+	if len(definitions) == 0 {
+		definitions = []access.SemanticAttributeDefinition{r.definition}
+	}
+	filtered := make([]access.SemanticAttributeDefinition, 0, len(definitions))
+	for _, definition := range definitions {
+		if filter.OwnerKind != "" && definition.Metadata.Owner.Kind != filter.OwnerKind {
+			continue
+		}
+		if filter.AfterName != "" && (definition.Name < filter.AfterName || (definition.Name == filter.AfterName && definition.ID <= filter.AfterDefinitionID)) {
+			continue
+		}
+		filtered = append(filtered, definition)
+	}
+	if filter.Limit > 0 && len(filtered) > filter.Limit {
+		filtered = filtered[:filter.Limit]
+	}
+	return filtered, nil
 }
 func (r *semanticAttributeHTTPTestRepository) RegisterSemanticAttribute(_ context.Context, input access.RegisterSemanticAttributeInput) (access.SemanticAttributeDefinition, error) {
 	r.definition = access.SemanticAttributeDefinition{ID: "definition-2", Name: input.Name, Type: input.Type, Shape: input.Shape, Profile: semanticvalue.Profile, DefinitionVersion: 1, Metadata: input.Metadata, LifecycleState: access.SemanticAttributeActive, Enabled: true}
@@ -179,6 +200,87 @@ func semanticAttributeRequest(method, path, body string, params ...string) *http
 }
 func semanticAttributeHTTPRepository() *semanticAttributeHTTPTestRepository {
 	return &semanticAttributeHTTPTestRepository{admin: true, definition: access.SemanticAttributeDefinition{ID: "definition-1", Name: "region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile, DefinitionVersion: 1, Metadata: access.SemanticAttributeMetadata{Owner: access.SemanticAttributeOwner{Kind: access.SemanticAttributeOwnerInstance}, DisplayName: "Region", Description: "Region"}, LifecycleState: access.SemanticAttributeActive, Enabled: true}}
+}
+
+func TestSemanticAttributeHTTPDefinitionListFiltersBeforePagination(t *testing.T) {
+	const nonMatchingDefinitions = 45
+	const matchingDefinitions = 205
+	definitions := make([]access.SemanticAttributeDefinition, 0, nonMatchingDefinitions+matchingDefinitions)
+	for i := 0; i < nonMatchingDefinitions+matchingDefinitions; i++ {
+		ownerKind := access.SemanticAttributeOwnerInstance
+		if i >= nonMatchingDefinitions {
+			ownerKind = access.SemanticAttributeOwnerGroup
+		}
+		definitions = append(definitions, access.SemanticAttributeDefinition{
+			ID: fmt.Sprintf("definition-%03d", i), Name: fmt.Sprintf("attribute-%03d", i),
+			Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar, Profile: semanticvalue.Profile,
+			DefinitionVersion: 1, Metadata: access.SemanticAttributeMetadata{Owner: access.SemanticAttributeOwner{Kind: ownerKind}},
+			LifecycleState: access.SemanticAttributeActive, Enabled: true,
+		})
+	}
+	repo := &semanticAttributeHTTPTestRepository{admin: true, definitions: definitions}
+	handler := semanticAttributeHTTPHandler(repo, true)
+
+	var names []string
+	pageToken := ""
+	for {
+		path := "/api/v1/semantic-attributes?ownerKind=group&limit=50"
+		if pageToken != "" {
+			path += "&pageToken=" + pageToken
+		}
+		response := httptest.NewRecorder()
+		handler.ListSemanticAttributeDefinitions(response, httptest.NewRequest(http.MethodGet, path, nil))
+		if response.Code != http.StatusOK {
+			t.Fatalf("list status=%d body=%s", response.Code, response.Body.String())
+		}
+		var body struct {
+			Items []struct {
+				Name      string `json:"name"`
+				OwnerKind string `json:"ownerKind"`
+			} `json:"items"`
+			Page struct {
+				NextCursor string `json:"nextCursor"`
+			} `json:"page"`
+		}
+		if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+			t.Fatal(err)
+		}
+		for _, item := range body.Items {
+			if item.OwnerKind != string(access.SemanticAttributeOwnerGroup) {
+				t.Fatalf("page included owner kind %q", item.OwnerKind)
+			}
+			names = append(names, item.Name)
+		}
+		pageToken = body.Page.NextCursor
+		if pageToken == "" {
+			break
+		}
+	}
+
+	if len(names) != matchingDefinitions {
+		t.Fatalf("filtered definitions = %d, want %d", len(names), matchingDefinitions)
+	}
+	for i, name := range names {
+		want := fmt.Sprintf("attribute-%03d", nonMatchingDefinitions+i)
+		if name != want {
+			t.Fatalf("filtered definition %d = %q, want %q", i, name, want)
+		}
+	}
+	if repo.lastSearch.OwnerKind != access.SemanticAttributeOwnerGroup || repo.lastSearch.Limit != 51 {
+		t.Fatalf("repository search = %#v, want owner filter and limit+1 request", repo.lastSearch)
+	}
+}
+
+func TestSemanticAttributeHTTPDefinitionListRejectsInvalidPageToken(t *testing.T) {
+	handler := semanticAttributeHTTPHandler(semanticAttributeHTTPRepository(), true)
+	for _, token := range []string{"not-base64", encodeKeyCursor("region"), encodeKeyCursor("\x00definition-1")} {
+		request := httptest.NewRequest(http.MethodGet, "/api/v1/semantic-attributes?pageToken="+token, nil)
+		response := httptest.NewRecorder()
+		handler.ListSemanticAttributeDefinitions(response, request)
+		if response.Code != http.StatusBadRequest {
+			t.Fatalf("pageToken %q status=%d body=%s", token, response.Code, response.Body.String())
+		}
+	}
 }
 
 func TestSemanticAttributeHTTPPlatformBoundary(t *testing.T) {

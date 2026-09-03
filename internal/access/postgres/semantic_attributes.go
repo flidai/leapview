@@ -125,6 +125,20 @@ func (r *Repository) SearchSemanticAttributes(ctx context.Context, filter access
 	if len(query) > 255 || strings.ContainsRune(query, '\x00') {
 		return nil, errors.New("semantic attribute search query is invalid")
 	}
+	if filter.OwnerKind != "" && !filter.OwnerKind.Valid() {
+		return nil, errors.New("semantic attribute owner kind is invalid")
+	}
+	if (filter.AfterName == "") != (filter.AfterDefinitionID == "") {
+		return nil, errors.New("semantic attribute search cursor is invalid")
+	}
+	if filter.AfterName != "" {
+		if err := semanticvalue.ValidateAttributeName(filter.AfterName); err != nil {
+			return nil, fmt.Errorf("semantic attribute search cursor is invalid: %w", err)
+		}
+		if _, err := uuidID("semantic attribute search cursor definition id", filter.AfterDefinitionID); err != nil {
+			return nil, err
+		}
+	}
 	limit := filter.Limit
 	if limit <= 0 {
 		limit = 100
@@ -136,7 +150,7 @@ func (r *Repository) SearchSemanticAttributes(ctx context.Context, filter access
 	if err != nil {
 		return nil, err
 	}
-	rows, err := accessdb.New(db).SearchSemanticAttributeDefinitions(ctx, accessdb.SearchSemanticAttributeDefinitionsParams{SearchQuery: query, PageSize: int32(limit)})
+	rows, err := accessdb.New(db).SearchSemanticAttributeDefinitions(ctx, accessdb.SearchSemanticAttributeDefinitionsParams{SearchQuery: query, OwnerKind: string(filter.OwnerKind), AfterName: filter.AfterName, AfterDefinitionID: filter.AfterDefinitionID, PageSize: int32(limit)})
 	if err != nil {
 		return nil, fmt.Errorf("search semantic attribute definitions: %w", err)
 	}
