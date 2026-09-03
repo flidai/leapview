@@ -8,12 +8,10 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	stdhttp "net/http"
 	"net/url"
 	"path"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -1499,136 +1497,6 @@ func projectAreaType(area string) string {
 	default:
 		return string(projectview.AssetTypeSource)
 	}
-}
-
-func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	return h.dataExplorerSignalsForURL(w, r, true)
-}
-
-// dataExplorerSignalsForURL restores durable exploration state from a browser
-// URL. URL state is treated as an assertion about the query, so it is checked
-// strictly after the authorized active-generation projection is available.
-// Interactive command payloads intentionally use the separate command path,
-// whose existing normalization remains permissive for incremental edits.
-func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *stdhttp.Request, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	values, err := url.ParseQuery(r.URL.RawQuery)
-	if err != nil {
-		stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
-		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-	}
-	command := projectsignals.DataExplorerCommand{
-		ObjectKey: projectsignals.Optional(strings.TrimSpace(values.Get("object"))),
-		Mode:      projectsignals.Optional(strings.TrimSpace(values.Get("mode"))),
-		Limit:     dataExplorerDefaultLimit, Count: dataExplorerDefaultLimit, Block: projectsignals.Pointer("all"),
-	}
-	if projectsignals.ValueOrZero(command.Mode) == "explore" {
-		explore, err := dataExploreCommandFromQuery(values)
-		if err != nil {
-			stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
-			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
-		}
-		command.Explore = &explore
-	}
-	return h.dataExplorerSignalsForRestoredCommand(w, r, command, executeQuery)
-}
-
-const dataExploreURLVersion = "1"
-
-func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreCommand, error) {
-	command := projectsignals.DataExploreCommand{
-		Dimensions: append([]string{}, values["dimension"]...),
-		Metrics:    append([]string{}, values["metric"]...),
-		Filters:    []projectsignals.DataExploreFilterSignal{},
-		Sort:       []projectsignals.DataExploreSortSignal{},
-		Limit:      dataExplorerDefaultLimit,
-	}
-	for _, field := range append(append([]string(nil), command.Dimensions...), command.Metrics...) {
-		if strings.TrimSpace(field) == "" {
-			return command, errors.New("dimension and metric identifiers must not be empty")
-		}
-	}
-	for index := range command.Dimensions {
-		command.Dimensions[index] = strings.TrimSpace(command.Dimensions[index])
-	}
-	for index := range command.Metrics {
-		command.Metrics[index] = strings.TrimSpace(command.Metrics[index])
-	}
-	if version := strings.TrimSpace(values.Get("v")); version != "" && version != dataExploreURLVersion {
-		return command, fmt.Errorf("unsupported version %q", version)
-	}
-	if value := strings.TrimSpace(values.Get("model")); value != "" {
-		command.ModelID = projectsignals.Optional(value)
-	}
-	if value := strings.TrimSpace(values.Get("dataset")); value != "" {
-		command.DatasetID = projectsignals.Optional(value)
-	}
-	for _, value := range values["filter"] {
-		var filter projectsignals.DataExploreFilterSignal
-		if err := decodeDataExploreURLValue(value, &filter); err != nil {
-			return command, fmt.Errorf("filter: %w", err)
-		}
-		if strings.TrimSpace(filter.Field) == "" || strings.TrimSpace(filter.Operator) == "" || filter.Values == nil {
-			return command, errors.New("filter field, operator, and values are required")
-		}
-		filter.Field = strings.TrimSpace(filter.Field)
-		filter.Operator = strings.TrimSpace(filter.Operator)
-		if filter.Dataset != nil {
-			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
-			filter.Dataset = &dataset
-		}
-		command.Filters = append(command.Filters, filter)
-	}
-	for _, value := range values["sort"] {
-		var sorting projectsignals.DataExploreSortSignal
-		if err := decodeDataExploreURLValue(value, &sorting); err != nil {
-			return command, fmt.Errorf("sort: %w", err)
-		}
-		sorting.Field = strings.TrimSpace(sorting.Field)
-		sorting.Direction = strings.TrimSpace(sorting.Direction)
-		if sorting.Field == "" || (sorting.Direction != "asc" && sorting.Direction != "desc") {
-			return command, errors.New("sort field and asc or desc direction are required")
-		}
-		command.Sort = append(command.Sort, sorting)
-	}
-	if value := values.Get("time"); value != "" {
-		var timeSelection projectsignals.DataExploreTimeSignal
-		if err := decodeDataExploreURLValue(value, &timeSelection); err != nil {
-			return command, fmt.Errorf("time: %w", err)
-		}
-		timeSelection.Field = strings.TrimSpace(timeSelection.Field)
-		timeSelection.Grain = strings.TrimSpace(timeSelection.Grain)
-		if timeSelection.Alias != nil {
-			alias := strings.TrimSpace(projectsignals.ValueOrZero(timeSelection.Alias))
-			timeSelection.Alias = &alias
-		}
-		if timeSelection.Field == "" || timeSelection.Grain == "" {
-			return command, errors.New("time field and grain are required")
-		}
-		command.Time = &timeSelection
-	}
-	if value := strings.TrimSpace(values.Get("limit")); value != "" {
-		limit, err := strconv.ParseInt(value, 10, 64)
-		if err != nil || limit <= 0 || limit > dataExplorerMaximumLimit {
-			return command, fmt.Errorf("limit must be between 1 and %d", dataExplorerMaximumLimit)
-		}
-		command.Limit = limit
-	}
-	return command, nil
-}
-
-func decodeDataExploreURLValue(value string, target any) error {
-	decoder := json.NewDecoder(strings.NewReader(value))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(target); err != nil {
-		return err
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		if err == nil {
-			return errors.New("multiple JSON values")
-		}
-		return err
-	}
-	return nil
 }
 
 func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
