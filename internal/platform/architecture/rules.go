@@ -74,7 +74,9 @@ var WorkloadImportPrefixes = []string{
 // SharedContractPrefixes are narrow cross-capability contracts whose package
 // ownership remains with another capability. They are checked explicitly
 // before capability dependency edges so a consumer cannot import the owning
-// capability's broader implementation packages by accident.
+// capability's broader implementation packages by accident. Refresh's
+// OpenLineage projection uses package-scoped entries below; it must not acquire
+// a general project or release dependency.
 var SharedContractPrefixes = map[string][]string{
 	// Resource identity is the one project contract shared by every runtime
 	// capability. Keep the declarations exact: a consumer may import the
@@ -87,7 +89,7 @@ var SharedContractPrefixes = map[string][]string{
 	"dashboard":    {"internal/project/graph", "internal/project/runtime", "internal/project/schema"},
 	"deployment":   {"internal/dashboard/publication", "internal/project/graph"},
 	"manageddata":  {"internal/access", "internal/project/graph"},
-	"refresh":      {"internal/project/graph", "internal/project/manifest", "internal/project/contracts/pipelineplan"},
+	"refresh":      {"internal/project/graph", "internal/project/manifest", "internal/project/contracts/pipelineplan", "internal/project/contractprojection", "internal/project/contractversion", "internal/project/identityledger", "internal/release", "internal/analytics/catalogstats", "internal/analytics/query/planir"},
 	"release":      {"internal/project/graph"},
 	"runtimehost":  {"internal/access/snapshot", "internal/project/graph", "internal/project/runtime", "internal/analytics/model"},
 	"servingstate": {"internal/project/graph", "internal/project/manifest"},

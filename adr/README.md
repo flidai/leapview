@@ -48,6 +48,7 @@ historical records.
 - [DuckDB SQL analysis conformance](specifications/duckdb-sql-analysis-conformance.md)
 - [Workload admission conformance](specifications/workload-admission-conformance.md)
 - [Data-contract versioning conformance](specifications/data-contract-versioning-conformance.md)
+- [OpenLineage projection conformance](specifications/openlineage-conformance.md)
 - [Semantic access-policy conformance](specifications/semantic-access-policy-conformance.md)
 
 ## Conventions
