@@ -378,7 +378,11 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	catalog := h.navigationCatalog(r)
-	page, explorer, ok := h.dataExplorerSignals(w, r)
+	// The document request only renders the shell.  The canonical updates
+	// stream owns the first analytical execution so a deep link cannot execute
+	// the same exploration once during HTML rendering and again during signal
+	// bootstrap.
+	page, explorer, ok := h.dataExplorerSignalsForURL(w, r, false)
 	if !ok {
 		return
 	}
@@ -675,7 +679,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	case "data":
 		surface := r.URL.Query().Get("surface")
 		if surface == "explore" {
-			page, explorer, ok := h.dataExplorerSignals(w, r)
+			page, explorer, ok := h.dataExplorerSignalsForURL(w, r, true)
 			if !ok {
 				return
 			}
@@ -1498,6 +1502,15 @@ func projectAreaType(area string) string {
 }
 
 func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForURL(w, r, true)
+}
+
+// dataExplorerSignalsForURL restores durable exploration state from a browser
+// URL. URL state is treated as an assertion about the query, so it is checked
+// strictly after the authorized active-generation projection is available.
+// Interactive command payloads intentionally use the separate command path,
+// whose existing normalization remains permissive for incremental edits.
+func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *stdhttp.Request, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	values, err := url.ParseQuery(r.URL.RawQuery)
 	if err != nil {
 		stdhttp.Error(w, "invalid exploration URL: "+err.Error(), stdhttp.StatusBadRequest)
@@ -1516,7 +1529,7 @@ func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhtt
 		}
 		command.Explore = &explore
 	}
-	return h.dataExplorerSignalsForCommand(w, r, command)
+	return h.dataExplorerSignalsForRestoredCommand(w, r, command, executeQuery)
 }
 
 const dataExploreURLVersion = "1"
@@ -1533,6 +1546,12 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		if strings.TrimSpace(field) == "" {
 			return command, errors.New("dimension and metric identifiers must not be empty")
 		}
+	}
+	for index := range command.Dimensions {
+		command.Dimensions[index] = strings.TrimSpace(command.Dimensions[index])
+	}
+	for index := range command.Metrics {
+		command.Metrics[index] = strings.TrimSpace(command.Metrics[index])
 	}
 	if version := strings.TrimSpace(values.Get("v")); version != "" && version != dataExploreURLVersion {
 		return command, fmt.Errorf("unsupported version %q", version)
@@ -1551,6 +1570,12 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		if strings.TrimSpace(filter.Field) == "" || strings.TrimSpace(filter.Operator) == "" || filter.Values == nil {
 			return command, errors.New("filter field, operator, and values are required")
 		}
+		filter.Field = strings.TrimSpace(filter.Field)
+		filter.Operator = strings.TrimSpace(filter.Operator)
+		if filter.Dataset != nil {
+			dataset := strings.TrimSpace(projectsignals.ValueOrZero(filter.Dataset))
+			filter.Dataset = &dataset
+		}
 		command.Filters = append(command.Filters, filter)
 	}
 	for _, value := range values["sort"] {
@@ -1558,7 +1583,9 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		if err := decodeDataExploreURLValue(value, &sorting); err != nil {
 			return command, fmt.Errorf("sort: %w", err)
 		}
-		if strings.TrimSpace(sorting.Field) == "" || (sorting.Direction != "asc" && sorting.Direction != "desc") {
+		sorting.Field = strings.TrimSpace(sorting.Field)
+		sorting.Direction = strings.TrimSpace(sorting.Direction)
+		if sorting.Field == "" || (sorting.Direction != "asc" && sorting.Direction != "desc") {
 			return command, errors.New("sort field and asc or desc direction are required")
 		}
 		command.Sort = append(command.Sort, sorting)
@@ -1568,7 +1595,13 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 		if err := decodeDataExploreURLValue(value, &timeSelection); err != nil {
 			return command, fmt.Errorf("time: %w", err)
 		}
-		if strings.TrimSpace(timeSelection.Field) == "" || strings.TrimSpace(timeSelection.Grain) == "" {
+		timeSelection.Field = strings.TrimSpace(timeSelection.Field)
+		timeSelection.Grain = strings.TrimSpace(timeSelection.Grain)
+		if timeSelection.Alias != nil {
+			alias := strings.TrimSpace(projectsignals.ValueOrZero(timeSelection.Alias))
+			timeSelection.Alias = &alias
+		}
+		if timeSelection.Field == "" || timeSelection.Grain == "" {
 			return command, errors.New("time field and grain are required")
 		}
 		command.Time = &timeSelection
@@ -1599,6 +1632,14 @@ func decodeDataExploreURLValue(value string, target any) error {
 }
 
 func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, true, false)
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true)
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, strictURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
@@ -1628,6 +1669,13 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
 	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
+		modelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.ModelID))
+		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[modelID], compiledModels); err != nil {
+			stdhttp.Error(w, "invalid exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+	}
 	explorer.Objects = projection.Objects
 	explorer.Explore.Models = projection.Models
 	explorer.Explore.SelectedModel = projection.SelectedModel
@@ -1637,7 +1685,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 	exploreCommand = projection.Command
 	explorer.Explore.Command = exploreCommand
 	explorer.Command.Explore = &exploreCommand
-	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
+	if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
 		projectID, err := h.boundProject(r.Context())
 		if err != nil {
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
@@ -1677,7 +1725,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 				stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 				return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 			}
-			if projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
+			if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
 				explorer.Preview = dataExplorerPreview(r.Context(), h.QueryExecutor, projectID, object, explorer.Command)
 			}
 			break
