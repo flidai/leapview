@@ -796,6 +796,29 @@ func (m *Module) Reconcile(ctx context.Context) error {
 		if state.Source != servingstate.SourcePublish || state.DuckLakeSnapshotID <= 0 {
 			continue
 		}
+		if m.publishedVersion != nil {
+			published, found, publishedErr := m.publishedVersion(ctx, identity)
+			if publishedErr != nil {
+				reconcileErrors = append(reconcileErrors, publishedErr)
+				continue
+			}
+			if !found {
+				reconcileErrors = append(reconcileErrors, errors.New("canonical publication data version is unavailable"))
+				continue
+			}
+			if published.SnapshotID <= 0 || published.RefreshedAt.IsZero() {
+				reconcileErrors = append(reconcileErrors, errors.New("canonical publication data version is incomplete"))
+				continue
+			}
+			if published.SnapshotID != state.DuckLakeSnapshotID {
+				reconcileErrors = append(reconcileErrors, fmt.Errorf("canonical publication snapshot %d differs from serving-state snapshot %d", published.SnapshotID, state.DuckLakeSnapshotID))
+				continue
+			}
+			// Deployment publication owns this baseline. The resolver has already
+			// proved the exact committed publication, so refresh must not create a
+			// duplicate refresh.data_version row or publish a second invalidation.
+			continue
+		}
 		refreshedAt, err := parseServingStateTime(state.ActivatedAt)
 		if err != nil {
 			reconcileErrors = append(reconcileErrors, err)

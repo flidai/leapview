@@ -443,6 +443,107 @@ func TestReconcileProjectsPublishedServingStateIntoRefreshDataVersions(t *testin
 	}
 }
 
+func TestReconcileUsesCanonicalPublishedVersionWithoutRefreshDataVersion(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('state_1', 'sales', 'prod', 'active')`); err != nil {
+		t.Fatalf("insert serving state: %v", err)
+	}
+	states := reconciliationStates{
+		state: servingstate.State{
+			ID: "state_1", ProjectID: "sales", Environment: "prod", Source: servingstate.SourcePublish,
+			DuckLakeSnapshotID: 42, ActivatedAt: "2026-07-22T12:00:00Z",
+		},
+		artifact: servingstate.Artifact{Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"},
+	}
+	publisher := &versionPublisher{}
+	var resolverCalls int
+	module, err := Build(t.Context(), Config{
+		Persistence: sqlitePersistence(t, store.SQLDB()), Authorization: testAuthorization(),
+		PublishedVersion: func(context.Context, projectgraph.ServingIdentity) (PublishedDataVersion, bool, error) {
+			resolverCalls++
+			return PublishedDataVersion{SnapshotID: 42, RefreshedAt: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)}, true, nil
+		},
+		Service: refreshrun.Service{
+			ServingStates: states,
+			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
+				return refreshrun.LoadedArtifact{Definition: &artifact.Definition{
+					Models:    map[string]*semanticmodel.Model{"orders": {}},
+					Pipelines: map[string]refreshschedule.Definition{"daily": {ID: "daily", SemanticModelID: "orders"}},
+				}}, nil
+			}),
+			Publisher: publisher,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build module: %v", err)
+	}
+	if err := module.Reconcile(t.Context()); err != nil {
+		t.Fatalf("reconcile schedules: %v", err)
+	}
+	identity, err := projectgraph.NewServingIdentity("sales", "prod", "state_1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	modelID, err := projectgraph.NewResourceID("orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	version, found, err := refreshsqlite.NewRepository(store.SQLDB()).DataVersion(t.Context(), identity, modelID)
+	if err != nil {
+		t.Fatalf("read data version: %v", err)
+	}
+	if found {
+		t.Fatalf("canonical publication created refresh data version: %#v", version)
+	}
+	if resolverCalls != 1 {
+		t.Fatalf("published-version resolver calls = %d, want 1", resolverCalls)
+	}
+	if publisher.modelID != "" {
+		t.Fatalf("canonical publication emitted refresh publisher notification for %q", publisher.modelID)
+	}
+}
+
+func TestReconcileRejectsCanonicalPublishedSnapshotDrift(t *testing.T) {
+	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
+	if err != nil {
+		t.Fatalf("open platform store: %v", err)
+	}
+	defer store.Close()
+	if _, err := store.SQLDB().ExecContext(t.Context(), `INSERT INTO serving_states (id, project_id, environment, status) VALUES ('state_1', 'sales', 'prod', 'active')`); err != nil {
+		t.Fatalf("insert serving state: %v", err)
+	}
+	publisher := &versionPublisher{}
+	module, err := Build(t.Context(), Config{
+		Persistence: sqlitePersistence(t, store.SQLDB()), Authorization: testAuthorization(),
+		PublishedVersion: func(context.Context, projectgraph.ServingIdentity) (PublishedDataVersion, bool, error) {
+			return PublishedDataVersion{SnapshotID: 99, RefreshedAt: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)}, true, nil
+		},
+		Service: refreshrun.Service{
+			ServingStates: reconciliationStates{state: servingstate.State{
+				ID: "state_1", ProjectID: "sales", Environment: "prod", Source: servingstate.SourcePublish,
+				DuckLakeSnapshotID: 42, ActivatedAt: "2026-07-22T12:00:00Z",
+			}, artifact: servingstate.Artifact{Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000"}},
+			Artifacts: artifactLoaderFunc(func(context.Context, servingstate.Artifact) (refreshrun.LoadedArtifact, error) {
+				return refreshrun.LoadedArtifact{Definition: &artifact.Definition{Models: map[string]*semanticmodel.Model{"orders": {}}}}, nil
+			}),
+			Publisher: publisher,
+		},
+	})
+	if err != nil {
+		t.Fatalf("build module: %v", err)
+	}
+	if err := module.Reconcile(t.Context()); err == nil || !strings.Contains(err.Error(), "differs from serving-state snapshot") {
+		t.Fatalf("reconcile error = %v, want canonical snapshot drift", err)
+	}
+	if publisher.modelID != "" {
+		t.Fatalf("snapshot drift emitted refresh publisher notification for %q", publisher.modelID)
+	}
+}
+
 func TestReconcileRejectsMultipleActiveServingScopes(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "platform.db"))
 	if err != nil {
