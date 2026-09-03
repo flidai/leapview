@@ -397,6 +397,30 @@ func TestCanonicalPublicPublicationAndCandidateClosures(t *testing.T) {
 	}
 }
 
+func TestCanonicalPublicPublicationQueryKinds(t *testing.T) {
+	_, _, semantic, physical, dashboard := canonicalGraph(t)
+	capability := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, ModelID: semantic, DependencyAssetIDs: []access.ResourceRef{dashboard, semantic, physical}}
+	objects := []access.ResourceRef{semantic, physical}
+	for _, kind := range []dataquery.Kind{
+		dataquery.KindSemanticAggregate,
+		dataquery.KindSemanticRows,
+		dataquery.KindSemanticHistogram,
+		dataquery.KindSemanticDistribution,
+		dataquery.KindSemanticSpatialTile,
+		dataquery.KindSemanticSpatialTileBudget,
+		dataquery.KindSemanticSpatialMetadata,
+	} {
+		request := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationDashboardRows, ModelID: semantic.CanonicalID(), Kind: kind}
+		if err := validateDashboardPublicationQuery(capability, request, objects); err != nil {
+			t.Fatalf("publication rejected canonical query kind %q: %v", kind, err)
+		}
+	}
+	modelRows := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationDashboardRows, ModelID: semantic.CanonicalID(), Kind: dataquery.KindModelRows}
+	if err := validateDashboardPublicationQuery(capability, modelRows, objects); err == nil {
+		t.Fatal("publication accepted model_rows query kind")
+	}
+}
+
 func TestCanonicalPolicyAlgebraAndCandidateRestrictions(t *testing.T) {
 	_, _, semantic, physical, _ := canonicalGraph(t)
 	globalCompiled, err := accesspolicy.Compile("global", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
