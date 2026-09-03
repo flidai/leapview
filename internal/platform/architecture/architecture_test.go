@@ -605,6 +605,12 @@ func TestAccessCLIUsesStandardOAuthClient(t *testing.T) {
 
 func TestProductionCodeDoesNotImportTestcontainers(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
+		// postgrestest is an explicitly test-only helper package.  It owns the
+		// disposable PostgreSQL container lifecycle used by conformance lanes;
+		// production packages remain prohibited from importing testcontainers.
+		if strings.Contains(filepath.ToSlash(file.path), "/postgrestest/") {
+			continue
+		}
 		for _, imported := range file.imports {
 			if strings.HasPrefix(imported, "github.com/testcontainers/testcontainers-go") {
 				t.Errorf("%s imports test-only container framework %q", file.path, imported)
@@ -3242,7 +3248,6 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	prWorkflow := read(".github", "workflows", "ci.yml")
 	mergeWorkflow := read(".github", "workflows", "merge-validation.yml")
 	nightlyWorkflow := read(".github", "workflows", "nightly.yml")
-
 	pr := taskfileTaskBlock(t, taskfile, "ci:pr")
 	for _, want := range []string{
 		"- task: ci:prepare",
@@ -3293,7 +3298,8 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 	for _, want := range []string{
 		"- task: desktop:test",
 		"go vet ./...",
-		"go test -race ./pkg/... ./internal/access ./internal/runtimehost",
+		"go test -race ./pkg/...",
+		"- task: quality:critical:race",
 		"- task: qa:ui-framework",
 		"- task: deploy:check",
 	} {

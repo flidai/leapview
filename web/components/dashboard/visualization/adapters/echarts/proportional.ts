@@ -1,6 +1,7 @@
 import type { VisualizationEnvelope } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
 import { formatDisplayField, formatField, inlineDataset, legend, type EChartsTranslation } from './common'
+import { conditionalItemColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
 
@@ -27,6 +28,8 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
   }, context)
   const categoryValues = categoryIndex < 0 ? [] : (dataset?.rows ?? []).map((row) => row[categoryIndex])
   categoryColors.register(envelope, spec.category, categoryValues)
+  const governedColor = conditionalItemColor(envelope, spec.value, 'mark_fill', context)
+    ?? conditionalItemColor(envelope, spec.value, 'series_color', context)
   const series: EChartsTranslation = {
     id: `series:primary:${spec.mark}`, type: spec.mark === 'funnel' ? 'funnel' : 'pie',
     encode: { itemName: spec.category.field, value: spec.value.field },
@@ -48,7 +51,7 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
     } : {}),
     roseType: presentation.rose ? 'radius' : false,
     itemStyle: {
-      color: (params: { value?: unknown[] }) => categoryColors.color(envelope, spec.category, Array.isArray(params.value) ? params.value[categoryIndex] : undefined, context),
+      color: governedColor ?? ((params: { value?: unknown[] }) => categoryColors.color(envelope, spec.category, Array.isArray(params.value) ? params.value[categoryIndex] : undefined, context)),
     },
   }
   if (radius !== undefined) series.radius = radius
@@ -78,6 +81,18 @@ export function proportionalOption(envelope: VisualizationEnvelope, context: Ren
         lineHeight: 16,
         textAlign: 'center',
         textVerticalAlign: 'middle',
+        rich: {
+          centerValue: {
+            fontSize: 18,
+            fontWeight: 600,
+            lineHeight: 22,
+          },
+          centerLabel: {
+            fontSize: 13,
+            fontWeight: 500,
+            lineHeight: 18,
+          },
+        },
       },
     }],
   }
@@ -99,14 +114,22 @@ export function proportionalCenterText(envelope: VisualizationEnvelope, context:
   if (activeRow) {
     const category = formatField(envelope, spec.category, categoryIndex >= 0 ? activeRow[categoryIndex] : undefined, context)
     const amount = formatDisplayField(envelope, spec.value, valueIndex >= 0 ? activeRow[valueIndex] : undefined, context)
-    return `${category}\n${amount}`
+    return proportionalCenterValueText(amount, category)
   }
   if (spec.presentation.centerLabel) return spec.presentation.centerLabel
   const total = (dataset?.rows ?? []).reduce((sum, row) => {
     const value = valueIndex >= 0 ? Number(row[valueIndex]) : Number.NaN
     return Number.isFinite(value) ? sum + value : sum
   }, 0)
-  return `Total\n${formatDisplayField(envelope, spec.value, total, context)}`
+  return proportionalCenterValueText(formatDisplayField(envelope, spec.value, total, context), 'Total')
+}
+
+function proportionalCenterValueText(value: string, label: string): string {
+  return `{centerValue|${escapeRichText(value)}}\n{centerLabel|${escapeRichText(label)}}`
+}
+
+function escapeRichText(value: string): string {
+  return value.replaceAll('\\', '\\\\').replaceAll('{', '\\{').replaceAll('}', '\\}')
 }
 
 function uniqueValueCount(values: readonly unknown[]): number {

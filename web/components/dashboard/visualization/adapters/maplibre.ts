@@ -2,6 +2,7 @@ import type { VisualizationEnvelope, VisualizationGeographicLayer, Visualization
 import { Map as MapLibre, NavigationControl, type GeoJSONSource, type Map as MapLibreMap, type MapMouseEvent, type MapOptions, type VectorTileSource } from 'maplibre-gl'
 import type { FeatureCollection } from 'geojson'
 import type { OptimisticInteractionCommand } from '../../interaction-selection'
+import { interactionOptions } from '../interaction-command'
 import { Change, type RendererAdapter, type RendererContext, type RendererHandle } from '../host-controller'
 import { MapSelectionControl } from './map-selection-control'
 import { blankMapStyle, loadGeometryAsset, loadMapStyleAsset, registerPMTilesProtocol } from './maplibre/assets'
@@ -9,10 +10,11 @@ import { applyBasemapTheme, basemapThemeKey, createBasemapThemeScheduler, mapThe
 import { installMapLibreChromeStyles } from './maplibre/chrome'
 import { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 import { applyFeatureScales, mapLayer, mapOutlineLayer, paletteColors, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer } from './maplibre/layers'
-import { clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, updateSelectionSources } from './maplibre/interactions'
+import { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 import { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries, type RenderedFeatureLocator } from './maplibre/overlays'
 import { emitMapObservation, installWebGLRecovery, mapNow, removeRendererFrame, waitForMapIdle, waitForMapRender, type MapObservationStage } from './maplibre/lifecycle'
 import { MapSpatialSelectionControl } from './maplibre/spatial-selection-control'
+import { combineMapFilters, formatMapRangeValue, mapValueFilteredEnvelope, mapValueFilterExpression, mapValueRange, mapValueRangePercent, withMapValueSelection, type MapValueRange } from './maplibre/value-range'
 import { coordinateReferenceGrid, fitMapToGeographicData, fitMapToSpatialExtent, resetMapToHome, type MapHomeCamera } from './maplibre/viewport'
 
 export { loadMapStyleAsset, sameOriginGeometryURL, verifyGeometryDigest } from './maplibre/assets'
@@ -20,10 +22,50 @@ export { applyBasemapTheme, basemapBoundaryLayer, basemapLayer, basemapThemeKey,
 export { mapLibreChromeCSS } from './maplibre/chrome'
 export { coordinateGeometry, joinGeometry, pathGeometry } from './maplibre/data'
 export { applyFeatureScales, mapLayer, mapOutlineLayer, normalizeFeatureWeights, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer } from './maplibre/layers'
-export { clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, updateSelectionSources } from './maplibre/interactions'
+export { aggregateExpansionCamera, clusterExpansionForRenderedFeatures, interactionCommandForRenderedFeatures, mapInteractionCommand, mapInteractionOptions, updateSelectionSources } from './maplibre/interactions'
 export { mapAccessibleData, mapAccessibleRenderedFeatures, mapTooltipEntries } from './maplibre/overlays'
 export { installWebGLRecovery, removeRendererFrame, waitForMapIdle, waitForMapRender } from './maplibre/lifecycle'
 export { coordinateReferenceGrid, fitMapToGeographicData, resetMapToHome } from './maplibre/viewport'
+
+export const mapAccessibleTableStyle = 'position:absolute;z-index:3;left:10px;bottom:50px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
+
+export function mapAccessibleTableSides(legendPosition: string): { left: string; right: string } {
+  return legendPosition === 'left' || legendPosition === 'bottom'
+    ? { left: '', right: '10px' }
+    : { left: '10px', right: '' }
+}
+
+export function progressiveAggregateRefinementZoom(currentZoom: number, targetZoom: number, maximumStep = 2): number {
+  if (!Number.isFinite(currentZoom) || !Number.isFinite(targetZoom) || !Number.isFinite(maximumStep) || maximumStep <= 0) return targetZoom
+  return targetZoom > currentZoom ? Math.min(targetZoom, currentZoom + maximumStep) : targetZoom
+}
+
+export function mapOverlayBottom(attributionHeight: number): string {
+  return `${Math.max(28, Math.ceil(attributionHeight) + 12)}px`
+}
+
+export function mapOverlaysNeedStacking(frameWidth: number, legendWidth: number, tableWidth: number): boolean {
+  // Both overlays are inset by 10px, so reserving their combined 20px edge
+  // margins is sufficient; any remaining width becomes the gap between them.
+  return legendWidth + tableWidth + 20 > frameWidth
+}
+
+export function mapVisibleDataSummary(visibleRows: number, aggregateRows: number, rawRows: number, totalRows: number): { label: string; accessibleLabel: string } {
+  const precision = aggregateRows > 0 && rawRows === 0
+    ? `${visibleRows} visible aggregate cells`
+    : rawRows > 0 && aggregateRows === 0
+      ? `${visibleRows} visible raw points`
+      : `${visibleRows} visible features: ${rawRows} raw points, ${aggregateRows} aggregate cells`
+  const count = aggregateRows > 0 && rawRows === 0
+    ? `${visibleRows} cells`
+    : rawRows > 0 && aggregateRows === 0
+      ? `${visibleRows} points`
+      : `${visibleRows} features`
+  return {
+    label: `View map data (${count})`,
+    accessibleLabel: `View visible map data (${precision}${totalRows > 0 ? `; ${totalRows} total coordinates` : ''})`,
+  }
+}
 
 export function vectorTileTemplateURL(template: string, base: string): string {
   return new URL(template, base).toString()
@@ -32,14 +74,9 @@ export function vectorTileTemplateURL(template: string, base: string): string {
     .replaceAll('%7By%7D', '{y}')
 }
 
-export function aggregateExpansionCamera(properties: Record<string, unknown> | null | undefined): { center: [number, number]; zoom: number } | undefined {
-	const west = properties?.__lv_west, south = properties?.__lv_south, east = properties?.__lv_east, north = properties?.__lv_north, targetZoom = properties?.__lv_target_zoom
-	if (![west, south, east, north, targetZoom].every((value) => typeof value === 'number' && Number.isFinite(value))) return undefined
-	let longitudeSpan = (east as number) - (west as number)
-	if (longitudeSpan < 0) longitudeSpan += 360
-	let longitude = (west as number) + longitudeSpan / 2
-	if (longitude >= 180) longitude -= 360
-	return { center: [longitude, ((south as number) + (north as number)) / 2], zoom: targetZoom as number }
+export function mapClickCanRefineCamera(envelope: VisualizationEnvelope): boolean {
+	if (envelope.spec.kind !== 'geographic') return false
+	return envelope.spec.interactions.length === 0 && envelope.spec.spatialInteractions.length === 0
 }
 
 function isPlaceholderTileURL(value: string): boolean {
@@ -53,7 +90,7 @@ export const adapter: RendererAdapter = {
     installMapLibreChromeStyles(frame)
     const surface = document.createElement('div'); surface.style.cssText = 'position:absolute;inset:0'
     const attribution = document.createElement('div'); attribution.dataset.mapAttribution = ''; attribution.setAttribute('role', 'note'); attribution.setAttribute('aria-label', 'Map attribution')
-    attribution.style.cssText = 'position:absolute;right:6px;bottom:6px;z-index:1;max-width:calc(100% - 12px);padding:2px 5px;border-radius:4px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 88%,transparent);color:var(--lv-fg-muted,#57606a);font:var(--lv-type-caption);pointer-events:none;text-align:right'
+    attribution.style.cssText = 'position:absolute;right:6px;bottom:6px;z-index:1;max-width:calc(100% - 12px);padding:2px 5px;border-radius:4px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-muted,#57606a);font:var(--lv-type-caption);pointer-events:none;text-align:right'
     frame.append(surface, attribution); container.replaceChildren(frame)
     const pointerOptions = mapPointerOptions(envelope)
     const backgroundColor = getComputedStyle(frame).backgroundColor || '#f6f8fa'
@@ -108,6 +145,10 @@ export function mapPointerOptions(envelope: VisualizationEnvelope): Pick<MapOpti
   }
 }
 
+export function mapSelectionControlAvailable(envelope: VisualizationEnvelope): boolean {
+  return envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
+}
+
 class MapLibreHandle implements RendererHandle {
   private sourceIDs: string[] = []
   private layerIDs: string[] = []
@@ -129,7 +170,11 @@ class MapLibreHandle implements RendererHandle {
   private resetButton?: HTMLButtonElement
   private readonly tooltip: HTMLDivElement
   private readonly legend: HTMLDivElement
+  private readonly legendStyle: HTMLStyleElement
+  private readonly legendRanges = new Map<string, MapValueRange>()
+  private readonly legendBaseFilters = new Map<string, unknown>()
   private readonly accessibleTable: HTMLDetailsElement
+  private readonly mapLoading: HTMLDivElement
   private readonly mapError: HTMLDivElement
   private homeCamera?: { center: [number, number]; zoom: number; bearing: number; pitch: number }
   private viewportInitialized = false
@@ -141,24 +186,37 @@ class MapLibreHandle implements RendererHandle {
     this.tooltip = document.createElement('div')
     this.tooltip.setAttribute('role', 'tooltip')
     this.tooltip.hidden = true
-    this.tooltip.style.cssText = 'position:absolute;z-index:4;max-width:280px;padding:8px 10px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);box-shadow:var(--lv-shadow-floating,0 8px 24px rgba(140,149,159,.2));color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);pointer-events:none'
+    this.tooltip.style.cssText = 'position:absolute;z-index:4;max-width:280px;padding:8px 10px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);box-shadow:var(--lv-shadow-floating,0 8px 24px rgba(140,149,159,.2));color:var(--lv-fg-default,#1f2328);font:var(--lv-type-caption);pointer-events:none'
     this.legend = document.createElement('div')
-    this.legend.setAttribute('role', 'note')
+    this.legend.setAttribute('role', 'group')
+    this.legend.setAttribute('aria-label', 'Map value filters')
     this.legend.dataset.mapLegend = ''
     this.legend.hidden = true
-    this.legend.style.cssText = 'position:absolute;z-index:3;right:10px;bottom:28px;min-width:132px;max-width:220px;padding:8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 94%,transparent);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary)'
+    this.legend.style.cssText = 'position:absolute;z-index:3;right:10px;bottom:28px;min-width:154px;max-width:220px;padding:8px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary)'
+    this.legendStyle = document.createElement('style')
+    this.legendStyle.textContent = `[data-map-value-range]{display:grid;gap:2px;min-width:150px}.lv-map-range-values{display:flex;justify-content:space-between;padding:0 2px;color:var(--lv-fg-default,#1f2328);font-weight:var(--base-text-weight-medium);font-variant-numeric:tabular-nums}.lv-map-range-track{position:relative;height:22px}.lv-map-range-rail,.lv-map-range-fill{position:absolute;top:7px;right:2px;left:2px;height:8px;border-radius:999px}.lv-map-range-rail{background:var(--lv-line-default,#d0d7de)}.lv-map-range-fill{right:auto;background:var(--lv-map-range-gradient);pointer-events:none}.lv-map-range-input{position:absolute;inset:0;width:100%;height:22px;margin:0;appearance:none;-webkit-appearance:none;background:transparent;outline:none;pointer-events:none}.lv-map-range-input::-webkit-slider-runnable-track{height:8px;background:transparent}.lv-map-range-input::-webkit-slider-thumb{width:10px;height:22px;margin-top:-7px;border:2px solid var(--lv-bg-panel,#fff);border-radius:5px;background:var(--lv-accent-emphasis,#0969da);box-shadow:0 0 0 1px var(--lv-line-accent,#0969da);appearance:none;-webkit-appearance:none;pointer-events:auto;cursor:ew-resize}.lv-map-range-input::-moz-range-track{height:8px;background:transparent}.lv-map-range-input::-moz-range-thumb{width:8px;height:18px;border:2px solid var(--lv-bg-panel,#fff);border-radius:5px;background:var(--lv-accent-emphasis,#0969da);box-shadow:0 0 0 1px var(--lv-line-accent,#0969da);pointer-events:auto;cursor:ew-resize}.lv-map-range-input:focus-visible::-webkit-slider-thumb{outline:2px solid var(--lv-line-accent,#0969da);outline-offset:2px}.lv-map-range-input:focus-visible::-moz-range-thumb{outline:2px solid var(--lv-line-accent,#0969da);outline-offset:2px}`
     this.accessibleTable = document.createElement('details')
     this.accessibleTable.dataset.mapDataTable = ''
-    this.accessibleTable.style.cssText = 'position:absolute;z-index:3;left:10px;bottom:28px;max-width:min(520px,calc(100% - 20px));max-height:55%;overflow:auto;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:0 1px 3px rgba(31,35,40,.12)'
+    // Reserve enough room for attribution to wrap on narrow maps. Keeping the
+    // disclosure above that band prevents two independent overlays from
+    // obscuring one another at mobile widths.
+    this.accessibleTable.style.cssText = mapAccessibleTableStyle
+    this.accessibleTable.addEventListener('toggle', this.handleAccessibleTableToggle)
+    this.mapLoading = document.createElement('div')
+    this.mapLoading.hidden = true
+    this.mapLoading.setAttribute('role', 'status')
+    this.mapLoading.setAttribute('aria-live', 'polite')
+    this.mapLoading.style.cssText = 'position:absolute;z-index:5;left:50%;top:50%;transform:translate(-50%,-50%);padding:8px 12px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);font-weight:var(--base-text-weight-medium);box-shadow:var(--lv-shadow-floating,0 8px 24px rgba(140,149,159,.2));pointer-events:none;white-space:nowrap'
     this.mapError = document.createElement('div')
     this.mapError.hidden = true
     this.mapError.style.cssText = 'position:absolute;z-index:5;left:50%;top:50%;transform:translate(-50%,-50%);max-width:min(360px,calc(100% - 32px));padding:12px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);color:var(--lv-fg-default,#1f2328);font:var(--lv-type-secondary);box-shadow:var(--lv-shadow-floating,0 8px 24px rgba(140,149,159,.2));text-align:center'
-    this.frame.append(this.tooltip, this.legend, this.accessibleTable, this.mapError)
+    this.frame.append(this.legendStyle, this.tooltip, this.legend, this.accessibleTable, this.mapLoading, this.mapError)
     this.map.on('click', this.handleClick)
     this.map.on('mousemove', this.handlePointerMove)
     this.map.on('mouseout', this.handlePointerLeave)
     this.map.on('zoom', this.handleZoom)
     this.map.on('moveend', this.handleMoveEnd)
+    this.map.on('idle', this.handleIdle)
     this.map.on('error', this.handleMapError)
     this.map.on('sourcedata', this.handleSourceData)
     this.disposeWebGLRecovery = installWebGLRecovery(this.map.getCanvas(), this.map, (stage) => {
@@ -212,20 +270,31 @@ class MapLibreHandle implements RendererHandle {
       const sourceLifecycle = tiledSourceLifecycle(sourceTransition, sourceUpdated)
       if (sourceLifecycle === 'error') {
         this.hideTiledLayersForSourceTransition()
+        this.hideMapLoading()
         this.showMapError()
       } else if (sourceLifecycle === 'stable') {
         this.tiledRawVisible = undefined
         this.syncTiledPrecisionVisibility()
         this.hideMapError()
+        const rendered = this.queryRenderedTiledFeatures()
+        if (rendered.length > 0 || (envelope.dataState.cardinality.count ?? 0) === 0) {
+          this.hideMapLoading()
+          this.selectionControl?.update(envelope, mapInteractionOptions(envelope, rendered, this.selectableLayerIDs))
+        } else {
+          this.showMapLoading('Loading map data…')
+        }
+      } else {
+        this.showMapLoading('Updating map data…')
       }
       const fitted = this.initializeViewport(envelope, [])
       this.updateLegend(envelope)
       if (fitted && sourceLifecycle !== 'error') this.handleMoveEnd()
       await waitForMapRender(this.map)
-      if (sourceLifecycle === 'stable') this.updateAccessibleTiledFeatures(envelope)
+      if (sourceLifecycle !== 'error') this.updateAccessibleTiledFeatures(envelope)
       return
     }
     this.removeOwnedMapData()
+    this.legendBaseFilters.clear()
     this.sourceIDs = []
     this.layerIDs = []
     this.dynamicLayers = []
@@ -244,6 +313,7 @@ class MapLibreHandle implements RendererHandle {
     const coordinateCollections: FeatureCollection[] = []
     const attributions = new Set<string>()
     if (envelope.dataState.kind === 'spatial_tiled') {
+      this.showMapLoading('Loading map data…')
       const id = `lv-${envelope.visualID}-tiles`
       const tiles = isPlaceholderTileURL(envelope.dataState.tileURL) ? [] : [vectorTileTemplateURL(envelope.dataState.tileURL, location.href)]
       this.map.addSource(id, { type: 'vector', tiles, minzoom: envelope.dataState.minimumZoom, maxzoom: envelope.dataState.maximumZoom, promoteId: '__lv_id' })
@@ -272,7 +342,7 @@ class MapLibreHandle implements RendererHandle {
     await waitForMapRender(this.map)
     this.updateAccessibleTiledFeatures(envelope)
   }
-  resize(): void { this.map.resize() }
+  resize(): void { this.map.resize(); this.updateOverlayLayout() }
   async snapshot(): Promise<Blob> {
     await waitForMapIdle(this.map)
     const canvas = this.map.getCanvas()
@@ -294,8 +364,11 @@ class MapLibreHandle implements RendererHandle {
     this.map.off('mouseout', this.handlePointerLeave)
     this.map.off('zoom', this.handleZoom)
     this.map.off('moveend', this.handleMoveEnd)
+    this.map.off('idle', this.handleIdle)
+    this.map.off('render', this.handleValueRangeRendered)
     this.map.off('error', this.handleMapError)
     this.map.off('sourcedata', this.handleSourceData)
+    this.accessibleTable.removeEventListener('toggle', this.handleAccessibleTableToggle)
     this.disposeWebGLRecovery()
     this.selectionControl?.dispose()
     this.spatialSelectionControl?.dispose()
@@ -451,15 +524,30 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private updateSelectionControl(envelope: VisualizationEnvelope): void {
-    const selectable = envelope.spec.interactions.some((candidate) => candidate.kind === 'select')
+    const selectable = mapSelectionControlAvailable(envelope)
     if (!selectable) {
       this.selectionControl?.dispose()
       this.selectionControl = undefined
+      this.syncMapSelectionControls()
       return
     }
-    this.selectionControl ??= new MapSelectionControl((command) => this.dispatchInteraction(command))
+    this.selectionControl ??= new MapSelectionControl(
+      (command) => this.dispatchInteraction(command),
+      () => this.syncMapSelectionControls(),
+      (center, zoom) => this.map.easeTo({
+        center: [center[0], center[1]],
+        zoom: progressiveAggregateRefinementZoom(this.map.getZoom(), zoom),
+        duration: 250,
+      }),
+    )
     if (!this.selectionControl.element.isConnected) this.frame.append(this.selectionControl.element)
-    this.selectionControl.update(envelope)
+    const filteredEnvelope = envelope.spec.kind === 'geographic'
+      ? mapValueFilteredEnvelope(envelope, envelope.spec.layers, this.legendRanges)
+      : envelope
+    const options = envelope.dataState.kind === 'spatial_tiled' && this.tiledSourceID
+      ? mapInteractionOptions(envelope, this.queryRenderedTiledFeatures(), this.selectableLayerIDs)
+      : interactionOptions(filteredEnvelope)
+    this.selectionControl.update(envelope, options)
   }
 
   private updateSpatialSelectionControl(envelope: VisualizationEnvelope): void {
@@ -467,13 +555,21 @@ class MapLibreHandle implements RendererHandle {
     if (!selectable) {
       this.spatialSelectionControl?.dispose()
       this.spatialSelectionControl = undefined
+      this.syncMapSelectionControls()
       return
     }
     this.spatialSelectionControl ??= new MapSpatialSelectionControl(this.map, this.frame, (command) => {
       this.container.dispatchEvent(new CustomEvent('lv-interaction-spatial-select', { bubbles: true, composed: true, detail: command }))
-    })
+    }, () => this.syncMapSelectionControls())
     if (!this.spatialSelectionControl.element.isConnected) this.frame.append(this.spatialSelectionControl.element)
     this.spatialSelectionControl.update(envelope)
+    this.syncMapSelectionControls()
+  }
+
+  private syncMapSelectionControls(): void {
+    const combined = Boolean(this.selectionControl && this.spatialSelectionControl)
+    this.spatialSelectionControl?.setEmbedded(combined)
+    this.selectionControl?.setSpatialSelectionControl(this.spatialSelectionControl)
   }
 
   private addClusterLayers(sourceID: string, layer: Extract<VisualizationGeographicLayer, { kind: 'point' }>, before?: string): void {
@@ -496,6 +592,7 @@ class MapLibreHandle implements RendererHandle {
     const labelField = tiled && layer.label ? layer.label.field : '__lv_label'
     this.map.addLayer({ id, source: sourceID, ...(tiled ? { 'source-layer': 'primary' } : {}), type: 'symbol', filter: layer.kind === 'point' ? ['all', ['!', ['has', 'point_count']], ['!', ['boolean', ['get', '__lv_aggregate'], false]], ['!=', ['get', labelField], '']] : ['!=', ['get', labelField], ''], minzoom: layer.visibility.minimumZoom, maxzoom: layer.visibility.maximumZoom, layout: {
       'text-field': ['get', labelField], 'text-font': ['Noto Sans Medium'], 'text-size': 11, 'text-offset': [0, layer.kind === 'point' ? 1.25 : 0], 'text-anchor': layer.kind === 'point' ? 'top' : 'center', 'text-optional': true,
+      ...(layer.kind === 'point' ? { 'text-padding': tiled ? 20 : 8, 'symbol-sort-key': ['-', ['to-number', ['get', '__lv_weight'], 0]] } : {}),
     }, paint: { 'text-color': theme === 'dark' ? '#f0f6fc' : '#1f2328', 'text-halo-color': theme === 'dark' ? '#0d1821' : '#ffffff', 'text-halo-width': 1.25 } })
     this.layerIDs.push(id)
 		return id
@@ -540,8 +637,13 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private updateLegend(envelope: VisualizationEnvelope): void {
+    const tableSides = mapAccessibleTableSides(envelope.spec.kind === 'geographic' ? envelope.spec.presentation.legend : '')
+    this.accessibleTable.style.left = tableSides.left
+    this.accessibleTable.style.right = tableSides.right
+    const overlayBottom = this.updateOverlayBottom()
     if (envelope.spec.kind !== 'geographic' || envelope.spec.presentation.legend === 'hidden') { this.legend.hidden = true; return }
     const rows: HTMLElement[] = []
+    const rangeLayerIDs = new Set<string>()
     for (const layer of envelope.spec.layers) {
       const value = 'value' in layer ? layer.value : undefined
       const category = 'category' in layer ? layer.category : undefined
@@ -550,29 +652,138 @@ class MapLibreHandle implements RendererHandle {
       const schema = envelope.spec.datasets.find((candidate) => candidate.id === field.dataset)
       const definition = schema?.fields.find((candidate) => candidate.id === field.field)
       const item = document.createElement('div'); item.style.cssText = 'display:grid;gap:4px;margin-bottom:7px'
-      const title = document.createElement('strong'); title.textContent = definition?.label ?? field.field
       const colors = 'color' in layer ? paletteColors(layer.color) : paletteColors()
-      const scale = document.createElement('span'); scale.style.cssText = `display:block;width:100%;height:8px;border-radius:999px;background:linear-gradient(90deg,${colors.join(',')})`
-      item.append(title, scale); rows.push(item)
+      const range = value ? mapValueRange(envelope, layer, this.legendRanges.get(layer.id)) : undefined
+      if (range) {
+        rangeLayerIDs.add(layer.id)
+        this.legendRanges.set(layer.id, range)
+        rows.push(this.createValueRangeFilter(layer, definition?.label ?? field.field, colors, range))
+        this.applyValueRangeFilter(layer, range)
+      } else {
+        const title = document.createElement('strong'); title.textContent = definition?.label ?? field.field
+        const scale = document.createElement('span'); scale.style.cssText = `display:block;width:100%;height:8px;border-radius:999px;background:linear-gradient(90deg,${colors.join(',')})`
+        item.append(title, scale); rows.push(item)
+      }
     }
+    for (const layerID of this.legendRanges.keys()) if (!rangeLayerIDs.has(layerID)) this.legendRanges.delete(layerID)
     this.legend.replaceChildren(...rows); this.legend.hidden = rows.length === 0
     const position = envelope.spec.presentation.legend
-    this.legend.style.left = position === 'left' ? '10px' : ''
+    this.legend.style.left = position === 'left' || position === 'bottom' || position === 'top' ? '10px' : ''
     this.legend.style.right = position === 'right' ? '10px' : ''
     this.legend.style.top = position === 'top' ? '10px' : ''
-    this.legend.style.bottom = position === 'bottom' ? '28px' : position === 'top' ? '' : '28px'
+    this.legend.style.bottom = position === 'top' ? '' : overlayBottom
+    this.updateOverlayLayout()
+  }
+
+  private createValueRangeFilter(layer: VisualizationGeographicLayer, label: string, colors: string[], initial: MapValueRange): HTMLElement {
+    const item = document.createElement('div')
+    item.dataset.mapValueRange = layer.id
+    item.setAttribute('role', 'group')
+    item.setAttribute('aria-label', `${label} range filter`)
+    item.style.setProperty('--lv-map-range-gradient', `linear-gradient(90deg,${colors.join(',')})`)
+    const values = document.createElement('div'); values.className = 'lv-map-range-values'
+    const minimumValue = document.createElement('output'), maximumValue = document.createElement('output')
+    values.append(minimumValue, maximumValue)
+    const track = document.createElement('div'); track.className = 'lv-map-range-track'
+    const rail = document.createElement('span'); rail.className = 'lv-map-range-rail'
+    const fill = document.createElement('span'); fill.className = 'lv-map-range-fill'
+    const minimum = rangeInput(`Minimum ${label}`, initial, initial.selectedMinimum)
+    const maximum = rangeInput(`Maximum ${label}`, initial, initial.selectedMaximum)
+    minimum.dataset.mapRangeMinimum = ''; maximum.dataset.mapRangeMaximum = ''
+    track.append(rail, fill, minimum, maximum)
+    item.append(values, track)
+    const sync = (changed?: 'minimum' | 'maximum') => {
+      let lower = Number(minimum.value), upper = Number(maximum.value)
+      if (lower > upper) {
+        if (changed === 'minimum') { upper = lower; maximum.value = String(upper) }
+        else { lower = upper; minimum.value = String(lower) }
+      }
+      const next = withMapValueSelection(initial, lower, upper)
+      minimum.max = String(next.selectedMaximum); maximum.min = String(next.selectedMinimum)
+      minimumValue.value = formatMapRangeValue(next.selectedMinimum); maximumValue.value = formatMapRangeValue(next.selectedMaximum)
+      minimum.setAttribute('aria-valuetext', minimumValue.value); maximum.setAttribute('aria-valuetext', maximumValue.value)
+      const left = mapValueRangePercent(next.selectedMinimum, next), right = mapValueRangePercent(next.selectedMaximum, next)
+      fill.style.left = `${left}%`; fill.style.width = `${right - left}%`
+      this.legendRanges.set(layer.id, next)
+      this.applyValueRangeFilter(layer, next)
+    }
+    minimum.addEventListener('input', () => sync('minimum'))
+    maximum.addEventListener('input', () => sync('maximum'))
+    sync()
+    return item
+  }
+
+  private applyValueRangeFilter(layer: VisualizationGeographicLayer, range: MapValueRange): void {
+    const value = 'value' in layer ? layer.value : undefined
+    if (!value) return
+    const property = this.envelope?.dataState.kind === 'spatial_tiled' ? value.field : '__lv_value'
+    const rangeFilter = mapValueFilterExpression(property, range)
+    const rootID = `lv-${layer.id}`
+    const candidateIDs = [rootID, `${rootID}-aggregate`, `${rootID}-aggregate-count`, `${rootID}-data-label`, `${rootID}-selected-outline`]
+    for (const id of candidateIDs) {
+      if (!this.map.getLayer(id)) continue
+      if (!this.legendBaseFilters.has(id)) this.legendBaseFilters.set(id, this.map.getFilter(id) ?? null)
+      this.map.setFilter(id, combineMapFilters(this.legendBaseFilters.get(id), rangeFilter) as never)
+    }
+    this.updateValueFilteredRepresentations()
+    this.map.triggerRepaint()
+  }
+
+  private updateValueFilteredRepresentations(): void {
+    const envelope = this.envelope
+    if (!envelope || envelope.spec.kind !== 'geographic') return
+    if (envelope.dataState.kind === 'spatial_tiled') {
+      this.map.off('render', this.handleValueRangeRendered)
+      this.map.once('render', this.handleValueRangeRendered)
+      return
+    }
+    const filtered = mapValueFilteredEnvelope(envelope, envelope.spec.layers, this.legendRanges)
+    this.selectionControl?.update(envelope, interactionOptions(filtered))
+    this.renderAccessibleData(filtered, mapAccessibleData(filtered, 100, this.context), false)
+  }
+
+  private updateOverlayBottom(): string {
+    const attributionHeight = this.attribution.hidden ? 0 : this.attribution.getBoundingClientRect().height
+    const bottom = mapOverlayBottom(attributionHeight)
+    this.accessibleTable.style.bottom = bottom
+    if (this.legend.style.top === '') this.legend.style.bottom = bottom
+    return bottom
+  }
+
+  private updateOverlayLayout(): void {
+    const bottom = this.updateOverlayBottom()
+    if (!this.envelope || this.envelope.spec.kind !== 'geographic' || this.legend.hidden || this.envelope.spec.presentation.legend === 'top') return
+    if (!mapOverlaysNeedStacking(this.frame.clientWidth, this.legend.offsetWidth, this.accessibleTable.offsetWidth)) return
+    this.accessibleTable.style.bottom = `${Number.parseFloat(bottom) + this.legend.offsetHeight + 8}px`
   }
 
   private updateAccessibleFallback(envelope: VisualizationEnvelope): void {
-    const data = mapAccessibleData(envelope, 100, this.context)
-    this.renderAccessibleData(envelope, data, false)
+    // Tiled rows only exist after decoding the visible vector tiles. Retain
+    // the previous disclosure during a source refresh instead of replacing it
+    // with a misleading transient "0 rows" state.
+    if (envelope.dataState.kind === 'spatial_tiled') {
+      if (!this.accessibleTable.querySelector('summary')) {
+        this.renderAccessibleData(envelope, mapAccessibleRenderedFeatures(envelope, [], 100, this.context), true)
+      }
+      return
+    }
+    const filtered = envelope.spec.kind === 'geographic'
+      ? mapValueFilteredEnvelope(envelope, envelope.spec.layers, this.legendRanges)
+      : envelope
+    this.renderAccessibleData(filtered, mapAccessibleData(filtered, 100, this.context), false)
   }
 
   private updateAccessibleTiledFeatures(envelope: VisualizationEnvelope): void {
-    if (envelope.dataState.kind !== 'spatial_tiled' || !this.tiledSourceID) return
-    const layers = this.layerIDs.filter((id) => this.map.getLayer(id)?.source === this.tiledSourceID)
-    const features = layers.length > 0 ? this.map.queryRenderedFeatures({ layers }) : []
+    if (envelope.dataState.kind !== 'spatial_tiled' || !this.tiledSourceID || !this.mapLoading.hidden) return
+    const features = this.queryRenderedTiledFeatures()
+    this.selectionControl?.update(envelope, mapInteractionOptions(envelope, features, this.selectableLayerIDs))
     this.renderAccessibleData(envelope, mapAccessibleRenderedFeatures(envelope, features, 100, this.context), true)
+  }
+
+  private queryRenderedTiledFeatures(): RenderedFeatureLocator[] {
+    if (!this.tiledSourceID) return []
+    const layers = this.layerIDs.filter((id) => this.map.getLayer(id)?.source === this.tiledSourceID)
+    return layers.length > 0 ? this.map.queryRenderedFeatures({ layers }) : []
   }
 
   private renderAccessibleData(envelope: VisualizationEnvelope, data: ReturnType<typeof mapAccessibleData> & Partial<{ visibleRows: number; aggregateRows: number; rawRows: number }>, visible: boolean): void {
@@ -581,16 +792,14 @@ class MapLibreHandle implements RendererHandle {
       const visibleRows = data.visibleRows ?? data.rows.length
       const aggregates = data.aggregateRows ?? 0
       const raw = data.rawRows ?? 0
-      const precision = aggregates > 0 && raw === 0
-        ? `${visibleRows} visible aggregate cells`
-        : raw > 0 && aggregates === 0
-          ? `${visibleRows} visible raw points`
-          : `${visibleRows} visible features: ${raw} raw points, ${aggregates} aggregate cells`
-      summary.textContent = `View visible map data (${precision}${data.totalRows > 0 ? `; ${data.totalRows} total coordinates` : ''})`
+      const labels = mapVisibleDataSummary(visibleRows, aggregates, raw, data.totalRows)
+      summary.textContent = labels.label
+      summary.setAttribute('aria-label', labels.accessibleLabel)
+      summary.title = labels.accessibleLabel
     } else {
       summary.textContent = `View map data (${data.rows.length}${data.totalRows > data.rows.length ? ` of ${data.totalRows}` : ''} rows)`
     }
-    summary.style.cssText = 'padding:6px 8px;cursor:pointer;font-weight:var(--base-text-weight-medium);white-space:nowrap'
+    summary.style.cssText = 'padding:6px 8px;background:var(--lv-bg-panel,#fff);cursor:pointer;font-weight:var(--base-text-weight-medium);white-space:nowrap'
     const table = document.createElement('table')
     table.style.cssText = 'border-collapse:collapse;min-width:100%;background:var(--lv-bg-panel,#fff)'
     const caption = document.createElement('caption')
@@ -615,6 +824,7 @@ class MapLibreHandle implements RendererHandle {
     }
     table.append(caption, head, body)
     this.accessibleTable.replaceChildren(summary, table)
+    this.updateOverlayLayout()
   }
 
   private dispatchInteraction(command: OptimisticInteractionCommand): void {
@@ -624,20 +834,25 @@ class MapLibreHandle implements RendererHandle {
   private readonly handleClick = (event: MapMouseEvent) => {
     if (!this.envelope) return
     if (this.spatialSelectionControl?.consumeClick()) return
+    const canRefineCamera = mapClickCanRefineCamera(this.envelope)
     if (this.envelope.dataState.kind === 'spatial_tiled') {
       const features = this.selectableLayerIDs.length ? this.map.queryRenderedFeatures(event.point, { layers: this.selectableLayerIDs }) : []
       const aggregate = features.find((feature) => feature.properties?.__lv_aggregate === true)
       if (aggregate) {
-				const expansion = aggregateExpansionCamera(aggregate.properties)
-				if (expansion) this.map.easeTo({ ...expansion, duration: 250 })
+				if (canRefineCamera) {
+					const expansion = aggregateExpansionCamera(aggregate.properties)
+					if (expansion) this.map.easeTo({ ...expansion, duration: 250 })
+				}
         return
       }
     }
     const clusters = this.clusterLayerIDs.length ? this.map.queryRenderedFeatures(event.point, { layers: this.clusterLayerIDs }) : []
     const expansion = clusterExpansionForRenderedFeatures(clusters, this.clusterSources)
     if (expansion) {
-      const source = this.map.getSource(expansion.sourceID) as GeoJSONSource | undefined
-      void source?.getClusterExpansionZoom(expansion.clusterID).then((zoom) => this.map.easeTo({ center: expansion.center, zoom }))
+		if (canRefineCamera) {
+			const source = this.map.getSource(expansion.sourceID) as GeoJSONSource | undefined
+			void source?.getClusterExpansionZoom(expansion.clusterID).then((zoom) => this.map.easeTo({ center: expansion.center, zoom }))
+		}
       return
     }
     if (this.selectableLayerIDs.length === 0) return
@@ -652,7 +867,20 @@ class MapLibreHandle implements RendererHandle {
     this.updateAccessibleTiledFeatures(this.envelope)
   }
 
+  private readonly handleIdle = () => {
+    if (!this.envelope || this.envelope.dataState.kind !== 'spatial_tiled') return
+    this.completeTiledSourceTransition()
+    this.handleTiledSourceRendered()
+  }
+
+  private readonly handleValueRangeRendered = () => {
+    if (!this.envelope || this.envelope.dataState.kind !== 'spatial_tiled') return
+    this.updateAccessibleTiledFeatures(this.envelope)
+  }
+
   private readonly handleZoom = () => { this.syncTiledPrecisionVisibility() }
+
+  private readonly handleAccessibleTableToggle = () => { this.updateOverlayLayout() }
 
   private syncTiledPrecisionVisibility(): void {
     if (this.envelope?.dataState.kind !== 'spatial_tiled' || !this.tiledSourceID) return
@@ -684,14 +912,31 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private readonly handleSourceData = (event: { sourceId?: string; isSourceLoaded?: boolean; sourceDataType?: string }) => {
-    if (event.sourceId !== this.tiledSourceID || !event.isSourceLoaded || !tiledSourceDataReady(event.sourceDataType, event.isSourceLoaded) || !this.envelope) return
+    if (!this.envelope || !tiledSourceEventReady(event, this.tiledSourceID)) return
+    this.completeTiledSourceTransition()
+    this.map.triggerRepaint()
     this.hideMapError()
-    if (this.tiledSourceTransitioning) {
-      this.tiledSourceTransitioning = false
-      this.tiledRawVisible = undefined
-    }
+    this.map.once('render', this.handleTiledSourceRendered)
+  }
+
+  private readonly handleTiledSourceRendered = () => {
+    if (!this.envelope || this.envelope.dataState.kind !== 'spatial_tiled') return
     this.syncTiledPrecisionVisibility()
-    this.updateAccessibleTiledFeatures(this.envelope)
+    const features = this.queryRenderedTiledFeatures()
+    // A content event may represent only one of several requested tiles. Keep
+    // the explicit loading state until a non-empty governed dataset has at
+    // least one rendered feature, so viewers never see a false final blank.
+    if (features.length === 0 && (this.envelope.dataState.cardinality.count ?? 0) > 0) return
+    this.hideMapLoading()
+    this.selectionControl?.update(this.envelope, mapInteractionOptions(this.envelope, features, this.selectableLayerIDs))
+    this.renderAccessibleData(this.envelope, mapAccessibleRenderedFeatures(this.envelope, features, 100, this.context), true)
+  }
+
+  private completeTiledSourceTransition(): void {
+    if (!this.tiledSourceTransitioning) return
+    this.tiledSourceTransitioning = false
+    this.tiledRawVisible = undefined
+    this.syncTiledPrecisionVisibility()
   }
 
   private hideTiledLayersForSourceTransition(): void {
@@ -708,6 +953,7 @@ class MapLibreHandle implements RendererHandle {
       return
     }
     this.hideTiledLayersForSourceTransition()
+    this.showMapLoading('Loading map data…')
     try {
       source.setTiles([vectorTileTemplateURL(this.envelope.dataState.tileURL, location.href)])
     } catch {
@@ -718,6 +964,7 @@ class MapLibreHandle implements RendererHandle {
   }
 
   private showMapError(): void {
+		this.hideMapLoading()
 		this.mapError.setAttribute('role', 'alert')
     if (this.mapError.childElementCount === 0) {
       const message = document.createElement('div')
@@ -734,6 +981,15 @@ class MapLibreHandle implements RendererHandle {
     this.mapError.hidden = true
 		this.mapError.removeAttribute('role')
     this.mapError.replaceChildren()
+  }
+
+  private showMapLoading(message: string): void {
+    this.mapLoading.textContent = message
+    this.mapLoading.hidden = false
+  }
+
+  private hideMapLoading(): void {
+    this.mapLoading.hidden = true
   }
 
   private async loadGeometry(asset: VisualizationGeometryAsset): Promise<FeatureCollection> {
@@ -777,9 +1033,8 @@ export function tiledSourceLifecycle(transition: 'stable' | 'replace', sourceUpd
   return transition === 'replace' ? 'waiting' : 'stable'
 }
 
-/** Only MapLibre's idle source event proves replacement content is settled. */
-export function tiledSourceDataReady(sourceDataType: string | undefined, isSourceLoaded: boolean): boolean {
-  return sourceDataType === 'idle' && isSourceLoaded
+export function tiledSourceEventReady(event: { sourceId?: string; isSourceLoaded?: boolean; sourceDataType?: string }, sourceID: string | undefined): boolean {
+  return event.sourceId === sourceID && (event.sourceDataType === 'content' || event.isSourceLoaded === true)
 }
 
 export function tiledPrecisionLayerFamily(transitioning: boolean, zoom: number, rawMinimumZoom: number): TiledPrecisionLayerFamily {
@@ -819,6 +1074,18 @@ export function tiledLayerPaintUpdates(envelope: VisualizationEnvelope, sourceID
 		}
 	}
 	return updates
+}
+
+function rangeInput(label: string, range: MapValueRange, value: number): HTMLInputElement {
+  const input = document.createElement('input')
+  input.type = 'range'
+  input.className = 'lv-map-range-input'
+  input.min = String(range.minimum)
+  input.max = String(range.maximum)
+  input.step = String(range.step)
+  input.value = String(value)
+  input.setAttribute('aria-label', label)
+  return input
 }
 
 function mapHomeCamera(value: unknown): MapHomeCamera | undefined {

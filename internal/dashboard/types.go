@@ -458,9 +458,9 @@ func (f Filters) ApplyInteraction(command InteractionCommand) Filters {
 	return f
 }
 
-// ApplySpatialInteraction stores one canonical geometry per source visual and
-// interaction. Replacing a spatial selection moves it to the end of the stable
-// selection order; clearing it cannot affect selections owned by other maps.
+// ApplySpatialInteraction appends canonical geometries for one source visual
+// and interaction. Clear removes that source's complete additive selection
+// without affecting selections owned by other maps.
 func (f Filters) ApplySpatialInteraction(command SpatialSelectionCommand) Filters {
 	f = f.WithDefaults()
 	if command.VisualID == "" || command.InteractionID == "" || (command.Action != "set" && command.Action != "clear") {
@@ -473,7 +473,7 @@ func (f Filters) ApplySpatialInteraction(command SpatialSelectionCommand) Filter
 		if selection.Order > maxOrder {
 			maxOrder = selection.Order
 		}
-		if selection.VisualID == command.VisualID && selection.InteractionID == command.InteractionID {
+		if command.Action == "clear" && selection.VisualID == command.VisualID && selection.InteractionID == command.InteractionID {
 			continue
 		}
 		next = append(next, selection)

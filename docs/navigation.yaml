@@ -535,6 +535,16 @@ sections:
             type: explanation
             summary: Follow routing, query execution, and streamed UI updates.
             source: articles/architecture/runtime.md
+          - slug: architecture/postgresql-authority-reconciliation
+            title: PostgreSQL authority reconciliation
+            type: explanation
+            summary: Understand the reconciled PostgreSQL ownership, transaction, role, and compatibility boundaries.
+            source: articles/architecture/postgresql-authority-reconciliation.md
+          - slug: architecture/semantic-attribute-registry
+            title: Semantic attribute registry and control plane
+            type: explanation
+            summary: Understand typed semantic attribute identity, ownership, lifecycle, and compatibility boundaries.
+            source: articles/architecture/semantic-attribute-registry.md
           - slug: architecture/arrow-optimization-evidence
             title: Evidence-gated Arrow optimization
             type: explanation

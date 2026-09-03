@@ -8,7 +8,8 @@ import {
 export type InteractionOption = Readonly<{
   key: string
   label: string
-  command: OptimisticInteractionCommand
+  command?: OptimisticInteractionCommand
+  refinement?: Readonly<{ center: readonly [number, number]; zoom: number }>
   selected: boolean
 }>
 
@@ -82,13 +83,24 @@ export function interactionOptions(envelope: VisualizationEnvelope): Interaction
     const key = commandIdentityKey(command)
     if (unique.has(key)) continue
     const label = command.mappings.map((mapping) => mapping.label || interactionSelectionLabel(mapping.value)).filter(Boolean).join(' · ')
-    const selected = envelope.selection.some(({ datum }) => {
-      if (datum.dataset !== datasetID || datum.dataRevision !== envelope.dataRevision) return false
-      return interaction.mappings.every((mapping, index) => Object.is(datum.identity[mapping.source.field], command.mappings[index]?.value))
-    })
+    const selected = interactionCommandSelected(envelope, command)
     unique.set(key, { key, label: label || 'Unlabeled value', command, selected })
   }
   return [...unique.values()]
+}
+
+export function interactionCommandSelected(
+  envelope: VisualizationEnvelope,
+  command: Pick<OptimisticInteractionCommand, 'mappings'>,
+): boolean {
+  const interaction = envelope.spec.interactions.find((candidate) => candidate.kind === 'select')
+  if (!interaction || interaction.mappings.length !== command.mappings.length) return false
+  return envelope.selection.some(({ datum }) => {
+    if (datum.dataRevision !== envelope.dataRevision) return false
+    return interaction.mappings.every((mapping, index) =>
+      datum.dataset === mapping.source.dataset
+      && Object.is(datum.identity[mapping.source.field], command.mappings[index]?.value))
+  })
 }
 
 export function commandIdentityKey(command: Pick<OptimisticInteractionCommand, 'mappings'>): string {

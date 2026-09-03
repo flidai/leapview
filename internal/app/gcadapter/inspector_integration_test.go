@@ -29,7 +29,7 @@ func integrationContract(t *testing.T, dataPath string) *ducklake.PoolContract {
 	for _, name := range ducklake.SharedPoolConformanceChecks {
 		checks = append(checks, physicalpool.EvidenceCheck{ID: name, Passed: true, ObservationDigest: testDigest([]byte(name))})
 	}
-	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: filepath.Dir(dataPath), StorageNamespace: filepath.Base(dataPath), IsolationBoundary: "gc-test", RetentionAuthority: "gc-test", Compatibility: tuple})
+	pool, err := physicalpool.NewPhysicalPool(physicalpool.PoolIdentity{StorageLocation: filepath.Dir(dataPath), StorageNamespace: filepath.Base(dataPath), EncryptionDomain: "gc-test", IsolationBoundary: "gc-test", RetentionAuthority: "gc-test", Compatibility: tuple})
 	if err != nil {
 		t.Fatal(err)
 	}

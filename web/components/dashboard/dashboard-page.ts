@@ -579,6 +579,8 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
 
 		.ask-visual {
 			display: inline-flex;
+			flex: 0 0 auto;
+			min-width: max-content;
 			height: var(--lv-button-height-xs, var(--control-xsmall-size));
 			min-height: var(--lv-button-height-xs, var(--control-xsmall-size));
 			align-items: center;
@@ -1623,9 +1625,7 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     const selections = this.optimisticSelections ?? this.interactionSelections
     const spatialSelections = this.optimisticSpatialSelections ?? this.spatialSelections
     const spatialSelection = [...spatialSelections].reverse().find((selection) => selection.visualID === visual.visualID)
-    const highlights = this.optimisticSelections !== null || this.optimisticSpatialSelections !== null
-      ? visualizationHighlightStates(visual, visualMap, selections, spatialSelections)
-      : visual.highlights
+    const highlights = visualizationHighlightStates(visual, visualMap, selections, spatialSelections)
     return {
       ...visual,
       selection: visualizationSelectionEntries(visual, selections),
@@ -1794,8 +1794,14 @@ class LeapViewDashboardPage extends DatastarLit(LitElement) {
     if (command.action === 'set' && (!command.geometry || command.geometry.kind !== command.gesture)) return
 
     const current = [...(this.optimisticSpatialSelections ?? this.spatialSelections)]
-      .filter((selection) => selection.visualID !== command.visualID || selection.interactionID !== command.interactionID)
-    if (command.action === 'set' && command.geometry) current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
+    if (command.action === 'clear') {
+      for (let index = current.length - 1; index >= 0; index--) {
+        const selection = current[index]!
+        if (selection.visualID === command.visualID && selection.interactionID === command.interactionID) current.splice(index, 1)
+      }
+    } else if (command.geometry) {
+      current.push({ visualID: command.visualID, interactionID: command.interactionID, geometry: command.geometry })
+    }
     this.optimisticController.setSpatialSelections(current, this.status.generation)
   }
 

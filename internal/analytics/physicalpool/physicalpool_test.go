@@ -26,6 +26,7 @@ func testPool(t *testing.T) PhysicalPool {
 		StorageNamespace:    "tenant-a",
 		Region:              "us-east-1",
 		Tenant:              "tenant-a",
+		EncryptionDomain:    "encryption-a",
 		IsolationBoundary:   "target-a",
 		EncryptionKeyRef:    "kms:key-1",
 		CredentialReference: "credential:warehouse",
@@ -42,13 +43,22 @@ func testPool(t *testing.T) PhysicalPool {
 func TestPhysicalPoolIdentityIsCanonicalAndNonSecret(t *testing.T) {
 	left := testPool(t)
 	right, err := NewPhysicalPool(PoolIdentity{
-		StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", Region: "us-east-1", Tenant: "tenant-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1", CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention", RetentionPolicy: RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600}, Compatibility: testCompatibility(),
+		StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", Region: "us-east-1", Tenant: "tenant-a", EncryptionDomain: "encryption-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1", CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention", RetentionPolicy: RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600}, Compatibility: testCompatibility(),
 	})
 	if err != nil {
 		t.Fatalf("new equivalent pool: %v", err)
 	}
 	if left.ID != right.ID || left.IdentityDigest() != right.IdentityDigest() {
 		t.Fatalf("equivalent pools differ: %q/%q", left.ID, right.ID)
+	}
+	differentEncryptionDomain := left.Identity
+	differentEncryptionDomain.EncryptionDomain = "encryption-b"
+	differentPool, err := NewPhysicalPool(differentEncryptionDomain)
+	if err != nil {
+		t.Fatalf("new pool in different encryption domain: %v", err)
+	}
+	if differentPool.ID == left.ID {
+		t.Fatal("different encryption domain retained the same physical-pool identity")
 	}
 	canonicalPath := left.Identity
 	canonicalPath.StorageLocation = "S3://WAREHOUSE/"
@@ -58,14 +68,14 @@ func TestPhysicalPoolIdentityIsCanonicalAndNonSecret(t *testing.T) {
 	}
 	upgrade := testCompatibility()
 	upgrade.DuckDBRuntime, upgrade.DuckLakeExtension, upgrade.CatalogFormat = "duckdb:1.6.0", "ducklake:0.4.0", "ducklake-catalog:v2"
-	upgraded, err := NewPhysicalPool(PoolIdentity{StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", Region: "us-east-1", Tenant: "tenant-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1", CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention", RetentionPolicy: RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600}, Compatibility: upgrade})
+	upgraded, err := NewPhysicalPool(PoolIdentity{StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", Region: "us-east-1", Tenant: "tenant-a", EncryptionDomain: "encryption-a", IsolationBoundary: "target-a", EncryptionKeyRef: "kms:key-1", CredentialReference: "credential:warehouse", RetentionAuthority: "target-a-retention", RetentionPolicy: RetentionPolicy{ReaderGracePeriodSeconds: 300, OrphanGracePeriodSeconds: 3600}, Compatibility: upgrade})
 	if err != nil || upgraded.ID != left.ID {
 		t.Fatalf("runtime upgrade changed stable pool identity: %q/%v", upgraded.ID, err)
 	}
 	if strings.Contains(left.CanonicalIdentity(), "secret-value") {
 		t.Fatal("canonical identity contains a secret value")
 	}
-	if _, err := NewPhysicalPool(PoolIdentity{StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", IsolationBoundary: "target-a", RetentionAuthority: "target-a-retention", Compatibility: testCompatibility(), CredentialReference: "secret-value"}); err != nil {
+	if _, err := NewPhysicalPool(PoolIdentity{StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", EncryptionDomain: "encryption-a", IsolationBoundary: "target-a", RetentionAuthority: "target-a-retention", Compatibility: testCompatibility(), CredentialReference: "secret-value"}); err != nil {
 		t.Fatalf("credential references are non-secret metadata and should be accepted: %v", err)
 	}
 }
@@ -229,7 +239,7 @@ func TestZeroCopyRejectsCrossTargetBasePool(t *testing.T) {
 }
 
 func TestValidationFailsClosedWithoutLeakingValues(t *testing.T) {
-	_, err := NewPhysicalPool(PoolIdentity{StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", IsolationBoundary: "target-a", RetentionAuthority: "target-a-retention", Compatibility: Compatibility{DuckDBRuntime: "duckdb:1.5.4"}})
+	_, err := NewPhysicalPool(PoolIdentity{StorageLocation: "s3://warehouse", StorageNamespace: "tenant-a", EncryptionDomain: "encryption-a", IsolationBoundary: "target-a", RetentionAuthority: "target-a-retention", Compatibility: Compatibility{DuckDBRuntime: "duckdb:1.5.4"}})
 	if err == nil {
 		t.Fatal("expected invalid tuple error")
 	}

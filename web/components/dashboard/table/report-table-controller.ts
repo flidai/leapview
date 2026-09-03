@@ -94,14 +94,14 @@ export class ReportTableColumnController {
     const configuredWidth = Number(column.width)
     if (Number.isFinite(configuredWidth) && configuredWidth > 0) return configuredWidth
     const widths: Record<string, number> = {
-      order_id: 160,
-      purchase_date: 126,
-      status: 106,
+      order_id: 320,
+      purchase_date: 150,
+      status: 120,
       state: 78,
-      category: 210,
-      revenue: 114,
-      review_score: 104,
-      delivery_days: 108,
+      category: 300,
+      revenue: 126,
+      review_score: 140,
+      delivery_days: 140,
     }
     if (widths[column.key]) return widths[column.key]
     if (column.align === 'right') return 114
@@ -109,7 +109,9 @@ export class ReportTableColumnController {
   }
 
   minSize(column: TableColumn): number {
-    return column.key === 'order_id' || column.key === 'category' ? 160 : 64
+    if (column.key === 'order_id') return 220
+    if (column.key === 'category') return 160
+    return 80
   }
 
   pixelWidth(column: TableColumn): number {

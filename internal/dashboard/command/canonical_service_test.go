@@ -199,7 +199,7 @@ func TestPrepareVisualWindowValidatesTypedIdentityAndCoordinates(t *testing.T) {
 
 func TestPrepareSelectUsesAuthoritativeSelectionsAndExplicitTargetsOnly(t *testing.T) {
 	definition := testDashboardDefinition()
-	authoritative := dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "existing", InteractionKind: "interaction-0"}}, ServingStateID: "serving-test", CompiledState: &dashboardfilter.State{}, DataRevisions: map[string]int64{"chart": 1}}.WithDefaults()
+	authoritative := dashboard.Filters{Selections: []dashboard.InteractionSelection{{SourceKind: "visual", SourceID: "existing", InteractionKind: "interaction-0"}}, ServingStateID: "serving-test", CompiledState: &dashboardfilter.State{}, DataRevisions: map[string]int64{"chart": 1, "orders": 7}}.WithDefaults()
 	command := stampInteractionCommand(definition, authoritative, dashboard.InteractionCommand{SourceKind: "visual", SourceID: "chart", InteractionKind: "interaction-0", Action: "set", Mappings: []dashboard.InteractionCommandMapping{{Field: "state", Value: "RJ"}}})
 	prepared, err := (Service{Metrics: canonicalCommandFixture(t)}).PrepareSelect(Request{DashboardID: "dash", PageID: "overview", InteractionCommand: command}, authoritative)
 	if err != nil {
@@ -210,6 +210,9 @@ func TestPrepareSelectUsesAuthoritativeSelectionsAndExplicitTargetsOnly(t *testi
 	}
 	if len(prepared.Plan.Targets) != 1 || prepared.Plan.Targets[0].Kind != TargetWindow || prepared.Plan.Targets[0].ID != "orders" {
 		t.Fatalf("targets = %#v", prepared.Plan.Targets)
+	}
+	if prepared.Plan.Targets[0].WindowRequest.ResetVersion != 8 {
+		t.Fatalf("table reset version = %d, want 8", prepared.Plan.Targets[0].WindowRequest.ResetVersion)
 	}
 }
 

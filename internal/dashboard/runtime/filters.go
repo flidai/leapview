@@ -154,6 +154,11 @@ func (s *FilterService) semanticFilters(ctx context.Context, runtime *modelRunti
 			result = append(result, reportdef.QueryFilter{Groups: groups})
 		}
 	}
+	type spatialSelectionGroup struct {
+		groups []reportdef.QueryFilterGroup
+	}
+	spatialGroups := []spatialSelectionGroup{}
+	spatialGroupIndexes := map[string]int{}
 	for _, selection := range filters.SpatialSelections {
 		if selection.VisualID == "" || selection.InteractionID == "" || selection.Geometry.Value == nil {
 			continue
@@ -169,7 +174,28 @@ func (s *FilterService) semanticFilters(ctx context.Context, runtime *modelRunti
 		if err != nil {
 			return nil, fmt.Errorf("spatial selection source visual %q: %w", selection.VisualID, err)
 		}
-		result = append(result, reportdef.QueryFilter{Spatial: &spatial})
+		key := selection.VisualID + "\x00" + selection.InteractionID
+		index, ok := spatialGroupIndexes[key]
+		if !ok {
+			index = len(spatialGroups)
+			spatialGroupIndexes[key] = index
+			spatialGroups = append(spatialGroups, spatialSelectionGroup{})
+		}
+		spatialGroups[index].groups = append(spatialGroups[index].groups, reportdef.QueryFilterGroup{
+			Filters: []reportdef.QueryFilter{{Spatial: &spatial}},
+		})
+	}
+	for _, selectionGroup := range spatialGroups {
+		switch len(selectionGroup.groups) {
+		case 0:
+			continue
+		case 1:
+			result = append(result, selectionGroup.groups[0].Filters...)
+		default:
+			// Multiple geometries drawn on the same map are one additive
+			// selection: a row matches when it lies in any selected area.
+			result = append(result, reportdef.QueryFilter{Groups: selectionGroup.groups})
+		}
 	}
 	return result, nil
 }

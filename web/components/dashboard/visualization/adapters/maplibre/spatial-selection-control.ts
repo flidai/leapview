@@ -7,6 +7,7 @@ type Dispatch = (command: ReturnType<typeof spatialSelectionCommand>) => void
 export class MapSpatialSelectionControl {
   readonly element: HTMLDivElement
   private readonly overlay: SVGSVGElement
+  private readonly canonicalGroup: SVGGElement
   private readonly path: SVGPathElement
   private envelope?: VisualizationEnvelope
   private interactionID = ''
@@ -18,27 +19,31 @@ export class MapSpatialSelectionControl {
   private restoreDragPan = false
   private suppressClick = false
 
-  constructor(private readonly map: MapLibreMap, private readonly frame: HTMLElement, private readonly dispatch: Dispatch) {
+  constructor(
+    private readonly map: MapLibreMap,
+    private readonly frame: HTMLElement,
+    private readonly dispatch: Dispatch,
+    private readonly onStateChange: () => void = () => undefined,
+  ) {
     this.element = document.createElement('div')
+    this.element.dataset.mapSpatialSelectionControl = ''
     this.element.setAttribute('role', 'toolbar')
-    this.element.setAttribute('aria-label', 'Spatial map selection')
-    this.element.style.cssText = 'position:absolute;z-index:5;left:10px;top:50px;display:flex;gap:3px;padding:3px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:color-mix(in srgb,var(--lv-bg-panel,#fff) 96%,transparent);box-shadow:0 1px 3px rgba(31,35,40,.16)'
+    this.element.setAttribute('aria-label', 'Additive spatial map selection')
+    this.element.style.cssText = 'position:absolute;z-index:5;left:10px;top:50px;display:flex;gap:3px;padding:3px;border:1px solid var(--lv-line-default,#d0d7de);border-radius:6px;background:var(--lv-bg-panel,#fff);box-shadow:0 1px 3px rgba(31,35,40,.16)'
     this.overlay = document.createElementNS('http://www.w3.org/2000/svg', 'svg')
     this.overlay.setAttribute('aria-hidden', 'true')
     this.overlay.style.cssText = 'position:absolute;z-index:4;inset:0;width:100%;height:100%;pointer-events:none'
-    this.path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
-    this.path.setAttribute('fill', 'color-mix(in srgb,var(--lv-accent-emphasis,#0969da) 18%,transparent)')
-    this.path.setAttribute('stroke', 'var(--lv-accent-emphasis,#0969da)')
-    this.path.setAttribute('stroke-width', '2')
-    this.path.setAttribute('stroke-dasharray', '5 3')
-    this.path.setAttribute('vector-effect', 'non-scaling-stroke')
-    this.overlay.append(this.path)
+    this.canonicalGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g')
+    this.canonicalGroup.setAttribute('data-map-spatial-selection-geometries', '')
+    this.path = spatialSelectionPath()
+    this.overlay.append(this.canonicalGroup, this.path)
     this.frame.append(this.overlay)
     this.map.getCanvas().addEventListener('pointerdown', this.handlePointerDown, true)
     this.map.getCanvas().addEventListener('pointermove', this.handlePointerMove, true)
     this.map.getCanvas().addEventListener('pointerup', this.handlePointerUp, true)
     this.map.getCanvas().addEventListener('pointercancel', this.handlePointerCancel, true)
     this.map.on('move', this.renderCanonicalGeometry)
+    document.addEventListener('keydown', this.handleKeyDown)
   }
 
   update(envelope: VisualizationEnvelope): void {
@@ -66,6 +71,33 @@ export class MapSpatialSelectionControl {
     return value
   }
 
+  get availableGestures(): readonly VisualizationSpatialSelectionGesture[] { return [...this.gestureButtons.keys()] }
+
+  get activeGesture(): VisualizationSpatialSelectionGesture | undefined { return this.active }
+
+  get selectedAreaCount(): number { return canonicalSpatialSelectionGeometries(this.envelope, this.interactionID).length }
+
+  toggleGesture(gesture: VisualizationSpatialSelectionGesture): void {
+    if (!this.gestureButtons.has(gesture)) return
+    this.finishPointer()
+    this.setActive(this.active === gesture ? undefined : gesture)
+    this.renderControlState()
+    this.renderCanonicalGeometry()
+    this.onStateChange()
+  }
+
+  clearSelections(): void {
+    const envelope = this.envelope
+    const gesture = this.active ?? canonicalSpatialSelectionGeometries(envelope, this.interactionID).at(-1)?.kind ?? 'box'
+    this.deactivate()
+    if (envelope && canonicalSpatialSelectionGeometries(envelope, this.interactionID).length > 0) this.dispatch(spatialSelectionCommand(envelope, this.interactionID, gesture))
+    this.onStateChange()
+  }
+
+  setEmbedded(embedded: boolean): void {
+    this.element.style.display = embedded ? 'none' : 'flex'
+  }
+
   dispose(): void {
     this.finishPointer()
     this.map.getCanvas().removeEventListener('pointerdown', this.handlePointerDown, true)
@@ -73,8 +105,21 @@ export class MapSpatialSelectionControl {
     this.map.getCanvas().removeEventListener('pointerup', this.handlePointerUp, true)
     this.map.getCanvas().removeEventListener('pointercancel', this.handlePointerCancel, true)
     this.map.off('move', this.renderCanonicalGeometry)
+    document.removeEventListener('keydown', this.handleKeyDown)
     this.overlay.remove()
     this.element.remove()
+  }
+
+  setSuppressed(suppressed: boolean): void {
+    if (suppressed) this.deactivate()
+    this.element.style.display = suppressed ? 'none' : 'flex'
+  }
+
+  deactivate(): void {
+    this.finishPointer()
+    this.setActive(undefined)
+    this.renderControlState()
+    this.renderCanonicalGeometry()
   }
 
   private ensureControls(gestures: readonly VisualizationSpatialSelectionGesture[]): void {
@@ -90,22 +135,20 @@ export class MapSpatialSelectionControl {
     const button = document.createElement('button')
     button.type = 'button'
     button.textContent = gesture[0].toUpperCase() + gesture.slice(1)
-    button.setAttribute('aria-label', `Select map data with ${gesture}`)
+    button.setAttribute('aria-label', `Add map area with ${gesture}`)
     button.addEventListener('click', (event) => {
       event.stopPropagation()
-      this.setActive(this.active === gesture ? undefined : gesture)
-      this.renderControlState()
+      this.toggleGesture(gesture)
     })
     return button
   }
 
   private clearButton(): HTMLButtonElement {
     const button = document.createElement('button')
-    button.type = 'button'; button.textContent = 'Clear'; button.setAttribute('aria-label', 'Clear spatial map selection')
+    button.type = 'button'; button.textContent = 'Clear'; button.setAttribute('aria-label', 'Clear all spatial map selections')
     button.addEventListener('click', (event) => {
       event.stopPropagation()
-      if (!this.envelope || !this.envelope.spatialSelection) return
-      this.dispatch(spatialSelectionCommand(this.envelope, this.interactionID, this.active ?? 'box'))
+      this.clearSelections()
     })
     return button
   }
@@ -117,7 +160,9 @@ export class MapSpatialSelectionControl {
       button.style.cssText = this.buttonStyle(active)
     }
     if (this.clearControl) {
-      this.clearControl.disabled = !this.envelope?.spatialSelection
+      const selectionCount = canonicalSpatialSelectionGeometries(this.envelope, this.interactionID).length
+      this.clearControl.disabled = !this.active && selectionCount === 0
+      this.clearControl.title = selectionCount > 0 ? `Clear ${selectionCount} selected map ${selectionCount === 1 ? 'area' : 'areas'}` : 'Clear map selections'
       this.clearControl.style.cssText = this.buttonStyle(false)
     }
   }
@@ -162,7 +207,9 @@ export class MapSpatialSelectionControl {
     event.preventDefault(); event.stopPropagation()
     this.suppressClick = true
     this.finishPointer()
-    if (geometry) this.dispatch(spatialSelectionCommand(this.envelope, this.interactionID, this.active, geometry))
+    const gesture = this.active
+    this.renderControlState()
+    if (geometry) this.dispatch(spatialSelectionCommand(this.envelope, this.interactionID, gesture, geometry))
     this.renderCanonicalGeometry()
   }
 
@@ -171,6 +218,13 @@ export class MapSpatialSelectionControl {
     event.preventDefault(); event.stopPropagation()
     this.finishPointer()
     this.renderCanonicalGeometry()
+  }
+
+  private readonly handleKeyDown = (event: KeyboardEvent): void => {
+    if (event.key !== 'Escape' || !this.active) return
+    event.preventDefault()
+    this.deactivate()
+    this.onStateChange()
   }
 
   private finishPointer(): void {
@@ -201,8 +255,13 @@ export class MapSpatialSelectionControl {
 
   private readonly renderCanonicalGeometry = (): void => {
     if (this.pointerID !== undefined) return
-    const geometry = this.envelope?.spatialSelection?.geometry
-    this.path.setAttribute('d', geometry ? this.projectGeometry(geometry) : '')
+    this.path.setAttribute('d', '')
+    const paths = canonicalSpatialSelectionGeometries(this.envelope, this.interactionID).map((geometry) => {
+      const path = spatialSelectionPath()
+      path.setAttribute('d', this.projectGeometry(geometry))
+      return path
+    })
+    this.canonicalGroup.replaceChildren(...paths)
   }
 
   private projectGeometry(geometry: VisualizationSpatialSelectionGeometry): string {
@@ -223,6 +282,37 @@ export class MapSpatialSelectionControl {
     const edge = this.map.project([Math.min(180, geometry.center.longitude + longitudeDelta), geometry.center.latitude])
     return circlePath(center.x, center.y, Math.abs(edge.x - center.x))
   }
+}
+
+export function canonicalSpatialSelectionGeometries(
+  envelope: VisualizationEnvelope | undefined,
+  interactionID: string,
+): VisualizationSpatialSelectionGeometry[] {
+  if (!envelope) return []
+  const geometries = (envelope.highlights ?? [])
+    .filter((highlight) => highlight.sourceVisualID === envelope.visualID
+      && highlight.interactionID === interactionID
+      && highlight.spatialGeometry)
+    .map((highlight) => highlight.spatialGeometry!)
+  const latest = envelope.spatialSelection
+  if (latest?.interactionID === interactionID) geometries.push(latest.geometry)
+  const seen = new Set<string>()
+  return geometries.filter((geometry) => {
+    const identity = JSON.stringify(geometry)
+    if (seen.has(identity)) return false
+    seen.add(identity)
+    return true
+  })
+}
+
+function spatialSelectionPath(): SVGPathElement {
+  const path = document.createElementNS('http://www.w3.org/2000/svg', 'path')
+  path.setAttribute('fill', 'color-mix(in srgb,var(--lv-accent-emphasis,#0969da) 18%,transparent)')
+  path.setAttribute('stroke', 'var(--lv-accent-emphasis,#0969da)')
+  path.setAttribute('stroke-width', '2')
+  path.setAttribute('stroke-dasharray', '5 3')
+  path.setAttribute('vector-effect', 'non-scaling-stroke')
+  return path
 }
 
 function distance(left: ScreenPoint, right: ScreenPoint): number { return Math.hypot(right.x - left.x, right.y - left.y) }

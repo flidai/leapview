@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "exceptions": [
+    {
+      "path": "internal/platform/architecture/architecture_test.go",
+      "kind": "cohesive-architecture-contract",
+      "owner": "platform-architecture",
+      "reason": "The suite is a single fail-closed repository architecture contract whose shared scanners and policy fixtures must be reviewed together.",
+      "reviewedAt": "2026-09-01",
+      "reviewBy": "2027-03-01",
+      "maximumLines": 4555
+    }
+  ]
+}

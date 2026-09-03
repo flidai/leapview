@@ -34,12 +34,32 @@ export type RendererContext = Readonly<{
   }>
 }>
 
+export const primerCategoricalPalette = Object.freeze([
+  { name: 'blue', token: '--data-blue-color-emphasis', fallback: '#006edb' },
+  { name: 'orange', token: '--data-orange-color-emphasis', fallback: '#eb670f' },
+  { name: 'green', token: '--data-green-color-emphasis', fallback: '#30a147' },
+  { name: 'pink', token: '--data-pink-color-emphasis', fallback: '#ce2c85' },
+  { name: 'brown', token: '--data-brown-color-emphasis', fallback: '#856d4c' },
+  { name: 'plum', token: '--data-plum-color-emphasis', fallback: '#a830e8' },
+  { name: 'teal', token: '--data-teal-color-emphasis', fallback: '#179b9b' },
+  { name: 'yellow', token: '--data-yellow-color-emphasis', fallback: '#b88700' },
+  { name: 'red', token: '--data-red-color-emphasis', fallback: '#df0c24' },
+  { name: 'gray', token: '--data-gray-color-emphasis', fallback: '#808fa3' },
+  { name: 'olive', token: '--data-olive-color-emphasis', fallback: '#64762d' },
+  { name: 'pine', token: '--data-pine-color-emphasis', fallback: '#167e53' },
+  { name: 'auburn', token: '--data-auburn-color-emphasis', fallback: '#9d615c' },
+  { name: 'lemon', token: '--data-lemon-color-emphasis', fallback: '#866e04' },
+  { name: 'purple', token: '--data-purple-color-emphasis', fallback: '#894ceb' },
+  { name: 'coral', token: '--data-coral-color-emphasis', fallback: '#d43511' },
+  { name: 'lime', token: '--data-lime-color-emphasis', fallback: '#527a29' },
+] as const)
+
 export const defaultRendererContext: RendererContext = Object.freeze({
   locale: 'en-US', theme: 'light', reducedMotion: true, devicePixelRatio: 1, fontFamily: 'system-ui',
   colors: Object.freeze({
     foreground: '#24292f', muted: '#57606a', grid: '#d8dee4', surface: '#ffffff', accent: '#0969da',
     success: '#1a7f37', attention: '#9a6700', danger: '#cf222e',
-    data: Object.freeze(['#006edb', '#eb670f', '#30a147', '#ce2c85', '#856d4c', '#a830e8', '#179b9b', '#b88700', '#df0c24', '#808fa3', '#64762d', '#167e53', '#9d615c', '#866e04', '#894ceb', '#d43511', '#527a29']),
+    data: Object.freeze(primerCategoricalPalette.map(({ fallback }) => fallback)),
   }),
 })
 

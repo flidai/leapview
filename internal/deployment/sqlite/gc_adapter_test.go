@@ -109,7 +109,7 @@ func TestQuarantineRootReactivatesRetiredHold(t *testing.T) {
 	}
 	defer store.Close()
 	pool := "sha256:" + strings.Repeat("a", 64)
-	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO physical_pools (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,isolation_boundary,retention_authority,retention_policy_json) VALUES (?,?,?,?,?,?,?,?,?)`, pool, pool, "s3://quarantine", "q", "s3", "names-v1", "q", "q", `{}`); err != nil {
+	if _, err := store.SQLDB().ExecContext(ctx, `INSERT INTO physical_pools (id,identity_digest,storage_location,storage_namespace,storage_implementation,object_naming_contract,encryption_domain,isolation_boundary,retention_authority,retention_policy_json) VALUES (?,?,?,?,?,?,?,?,?,?)`, pool, pool, "s3://quarantine", "q", "s3", "names-v1", "q", "q", "q", `{}`); err != nil {
 		t.Fatal(err)
 	}
 	repo := NewRepositoryWithHooks(store.SQLDB(), ActivationHooks{})

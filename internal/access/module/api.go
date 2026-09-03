@@ -93,6 +93,38 @@ func (m *Module) DispatchAPIGenOperation(operationID string, w http.ResponseWrit
 		m.handler.AddGroupMember(w, r)
 	case "removeGroupMember":
 		m.handler.RemoveGroupMember(w, r)
+	case "listGroupSemanticAttributeAssignments":
+		m.handler.ListGroupSemanticAttributeAssignments(w, r)
+	case "removeGroupSemanticAttributeAssignment":
+		m.handler.RemoveGroupSemanticAttributeAssignment(w, r)
+	case "upsertGroupSemanticAttributeAssignment":
+		m.handler.UpsertGroupSemanticAttributeAssignment(w, r)
+	case "listPrincipalSemanticAttributeAssignments":
+		m.handler.ListPrincipalSemanticAttributeAssignments(w, r)
+	case "removePrincipalSemanticAttributeAssignment":
+		m.handler.RemovePrincipalSemanticAttributeAssignment(w, r)
+	case "upsertPrincipalSemanticAttributeAssignment":
+		m.handler.UpsertPrincipalSemanticAttributeAssignment(w, r)
+	case "listSemanticAttributeDefinitions":
+		m.handler.ListSemanticAttributeDefinitions(w, r)
+	case "registerSemanticAttribute":
+		m.handler.RegisterSemanticAttribute(w, r)
+	case "getSemanticAttributeDefinition":
+		m.handler.GetSemanticAttributeDefinition(w, r)
+	case "updateSemanticAttributeMetadata":
+		m.handler.UpdateSemanticAttributeMetadata(w, r)
+	case "listSemanticAttributeClaimMappings":
+		m.handler.ListSemanticAttributeClaimMappings(w, r)
+	case "upsertSemanticAttributeClaimMapping":
+		m.handler.UpsertSemanticAttributeClaimMapping(w, r)
+	case "removeSemanticAttributeClaimMapping":
+		m.handler.RemoveSemanticAttributeClaimMapping(w, r)
+	case "disableSemanticAttribute":
+		m.handler.DisableSemanticAttribute(w, r)
+	case "previewSemanticAttributeImpact":
+		m.handler.PreviewSemanticAttributeImpact(w, r)
+	case "restoreSemanticAttribute":
+		m.handler.RestoreSemanticAttribute(w, r)
 	case "listAuditEvents", "listPlatformAuditEvents":
 		m.handler.ListAuditEvents(w, r)
 	default:

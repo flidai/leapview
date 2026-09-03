@@ -483,6 +483,55 @@ test('ECharts normalizes stacks and preserves series order and color identity ac
   expect(automaticFiltered.series[0].itemStyle.color).toBe(automaticProcessing)
 })
 
+test('ECharts uses governed static colors for category series and their legends', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.spec.conditionalFormatting = [{
+    id: 'status-colors', target: 'series_color', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'field', source: { dataset: 'primary', field: 'series' },
+      values: {
+        delivered: { color: 'data_1', icon: 'circle' },
+        processing: { color: 'data_6', icon: 'circle' },
+      },
+      nullStyle: { color: 'neutral', icon: 'square' },
+      defaultStyle: { color: 'neutral', icon: 'square' },
+    },
+  }]
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.series.map((series: any) => [series.name, series.itemStyle.color])).toEqual([
+    ['delivered', defaultRendererContext.colors.data[0]],
+    ['processing', defaultRendererContext.colors.data[5]],
+  ])
+
+  envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.filter((row: unknown[]) => row[1] === 'processing')
+  const filtered = echartsOption(envelope, defaultRendererContext) as any
+  expect(filtered.series[0].itemStyle.color).toBe(defaultRendererContext.colors.data[5])
+})
+
+test('ECharts condenses crowded category-series charts without overlapping labels or legends', () => {
+  const envelope = cartesianSeriesFixture() as any
+  envelope.spec.mark = 'column'
+  envelope.spec.presentation.stacked = false
+  envelope.spec.presentation.stacking = 'none'
+  const states = ['MG', 'CE', 'GO', 'MT', 'PE', 'RJ', 'RS', 'AP']
+  const statuses = ['approved', 'canceled', 'created', 'delivered', 'invoiced', 'processing', 'shipped', 'unavailable']
+  envelope.dataState.datasets[0].rows = states.flatMap((state: string, stateIndex: number) =>
+    statuses.map((status: string, statusIndex: number) => [state, status, (stateIndex + 1) * (statusIndex + 1)]),
+  )
+
+  const option = echartsOption(envelope, defaultRendererContext) as any
+  expect(option.legend).toMatchObject({ type: 'scroll', orient: 'horizontal', left: 8, right: 8, height: 24, bottom: 0 })
+  expect(option.grid).toMatchObject({ left: 12, right: 16, top: 16, bottom: 44, containLabel: true })
+  expect(option.yAxis).toMatchObject({ splitNumber: 4, axisLabel: { hideOverlap: true } })
+  expect(option.series).toHaveLength(8)
+  expect(option.series.every((series: any) => series.label.show === false)).toBe(true)
+
+  const compact = echartsOption(cartesianSeriesFixture(), defaultRendererContext) as any
+  expect(compact.legend.type).toBeUndefined()
+  expect(compact.series.every((series: any) => series.label.show === true)).toBe(true)
+})
+
 test('ECharts normalizes multi-metric percent stacks without changing raw tooltip values', () => {
   const envelope = cartesianFixture('area', ['label', 'revenue', 'cost']) as any
   envelope.spec.presentation.stacked = false
@@ -743,8 +792,8 @@ test('ECharts incremental plans commit data synchronously, preserve interaction 
   } as any
 
   const data = echartsUpdatePlan(Change.Data, option)
-  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'visualMap', 'graphic'] })
-  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
+  expect(data.settings).toEqual({ notMerge: false, lazyUpdate: false, replaceMerge: ['dataset', 'series', 'legend', 'visualMap', 'graphic'] })
+  expect(data.option).toEqual({ dataset: option.dataset, series: option.series, legend: option.legend, visualMap: [], graphic: [], xAxis: option.xAxis, yAxis: option.yAxis })
 
   const selection = echartsUpdatePlan(Change.Selection, option)
   expect(selection.settings.replaceMerge).toEqual(['dataset', 'visualMap'])
@@ -986,15 +1035,21 @@ test('ECharts gives donuts legible renderer defaults without changing their cate
   expect(option.series[0].label.formatter({ value: ['Category 1', 1] })).toBe('Category 1: 1')
   expect(option.series[0].labelLine.show).toBe(true)
   expect(option.series[0].minShowLabelAngle).toBe(3)
-  expect(option.graphic[0].style.text).toBe('Total\n171')
+  expect(option.graphic[0].style).toMatchObject({
+    text: '{centerValue|171}\n{centerLabel|Total}',
+    rich: {
+      centerValue: { fontSize: 18, fontWeight: 600, lineHeight: 22 },
+      centerLabel: { fontSize: 13, fontWeight: 500, lineHeight: 18 },
+    },
+  })
   expect(option.aria).toMatchObject({ enabled: true, decal: { show: true } })
   expect(option.aria.description).toContain('donut')
-  expect(proportionalCenterText(envelope, defaultRendererContext, ['Category 1', 1])).toBe('Category 1\n1')
+  expect(proportionalCenterText(envelope, defaultRendererContext, ['Category 1', 1])).toBe('{centerValue|1}\n{centerLabel|Category 1}')
 
   envelope.dataState.datasets[0].rows = envelope.dataState.datasets[0].rows.slice(0, 2)
   const filtered = echartsOption(envelope, defaultRendererContext) as any
   const update = echartsUpdatePlan(Change.Data, filtered)
-  expect(update.option.graphic[0].style.text).toBe('Total\n3')
+  expect(update.option.graphic[0].style.text).toBe('{centerValue|3}\n{centerLabel|Total}')
   expect(update.option.aria.decal.show).toBe(false)
 })
 
@@ -1026,6 +1081,52 @@ test('ECharts preserves proportional category colors when filtering changes row 
   expect(reorderedColor({ value: ['delivered', 90] })).toBe(delivered)
   expect(reorderedColor({ value: ['shipped', 8] })).toBe(shipped)
   expect(new Set(defaultRendererContext.colors.data).size).toBe(17)
+})
+
+test('ECharts honors governed proportional category colors across filtering', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.dataState.datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2], ['unavailable', 1]]
+  envelope.spec.conditionalFormatting = [{
+    id: 'status-colors', target: 'series_color', field: { dataset: 'primary', field: 'value' },
+    rule: {
+      kind: 'field', source: { dataset: 'primary', field: 'label' },
+      values: {
+        delivered: { color: 'data_1', icon: 'circle' },
+        shipped: { color: 'data_2', icon: 'arrow_up' },
+        canceled: { color: 'data_3', icon: 'warning' },
+        unavailable: { color: 'data_4', icon: 'warning' },
+      },
+      nullStyle: { color: 'neutral', icon: 'square' },
+      defaultStyle: { color: 'neutral', icon: 'square' },
+    },
+  }]
+
+  const color = (echartsOption(envelope, defaultRendererContext) as any).series[0].itemStyle.color
+  expect(color({ value: ['delivered', 90] })).toBe(defaultRendererContext.colors.data[0])
+  expect(color({ value: ['shipped', 8] })).toBe(defaultRendererContext.colors.data[1])
+  expect(color({ value: ['canceled', 2] })).toBe(defaultRendererContext.colors.data[2])
+  expect(color({ value: ['unavailable', 1] })).toBe(defaultRendererContext.colors.data[3])
+
+  envelope.dataState.datasets[0].rows = [['shipped', 8]]
+  const filteredColor = (echartsOption(envelope, defaultRendererContext) as any).series[0].itemStyle.color
+  expect(filteredColor({ value: ['shipped', 8] })).toBe(defaultRendererContext.colors.data[1])
+})
+
+test('ECharts category colors do not depend on fresh-load query completion order', () => {
+  const envelope = proportionalFixture('donut') as any
+  envelope.spec.datasets[0].fields[0].sourceRef = 'orders.status'
+  envelope.dataState.datasets[0].rows = [['delivered', 90], ['shipped', 8], ['canceled', 2]]
+  const reordered = structuredClone(envelope)
+  reordered.dataState.datasets[0].rows.reverse()
+
+  const firstRegistry = new CategoryColorRegistry()
+  const firstColor = (echartsOption(envelope, defaultRendererContext, firstRegistry) as any).series[0].itemStyle.color
+  const secondRegistry = new CategoryColorRegistry()
+  const secondColor = (echartsOption(reordered, defaultRendererContext, secondRegistry) as any).series[0].itemStyle.color
+
+  for (const category of ['delivered', 'shipped', 'canceled']) {
+    expect(firstColor({ value: [category, 1] })).toBe(secondColor({ value: [category, 1] }))
+  }
 })
 
 test('ECharts translates proportional legend categories into governed selections', () => {

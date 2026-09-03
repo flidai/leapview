@@ -84,4 +84,9 @@ test('optimistic cross-highlights follow only explicit highlight edges and prese
     selections,
     [],
   )).toEqual([])
+
+  expect(visualizationHighlightStates(spatialSource, { map: spatialSource }, [], [
+    { visualID: 'map', interactionID: 'area', geometry },
+    { visualID: 'map', interactionID: 'area', geometry: { kind: 'radius', center: { longitude: -46, latitude: -23 }, radiusMeters: 10_000 } },
+  ]).map((highlight) => highlight.spatialGeometry?.kind)).toEqual(['box', 'radius'])
 })

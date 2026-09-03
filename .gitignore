@@ -38,6 +38,11 @@ internal/platform/db/db.go
 internal/platform/db/models.go
 internal/platform/db/*.sql.go
 internal/*/internal/db/
+internal/access/postgres/internal/db/
+internal/platform/postgres/internal/db/
+internal/platform/bootstrap/postgres/internal/db/
+internal/analytics/physicalpool/postgres/internal/db/
+internal/analytics/ducklake/postgres/internal/db/
 internal/platform/**/sqlite/*db/
 docs/visuals/examples.gen.json
 web/generated/

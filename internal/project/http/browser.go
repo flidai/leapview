@@ -376,7 +376,11 @@ func (h *BrowserHandler) Explore(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 		return
 	}
 	catalog := h.navigationCatalog(r)
-	page, explorer, ok := h.dataExplorerSignals(w, r)
+	// The document request only renders the shell.  The canonical updates
+	// stream owns the first analytical execution so a deep link cannot execute
+	// the same exploration once during HTML rendering and again during signal
+	// bootstrap.
+	page, explorer, ok := h.dataExplorerSignalsForURL(w, r, false)
 	if !ok {
 		return
 	}
@@ -673,7 +677,7 @@ func (h *BrowserHandler) Updates(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 	case "data":
 		surface := r.URL.Query().Get("surface")
 		if surface == "explore" {
-			page, explorer, ok := h.dataExplorerSignals(w, r)
+			page, explorer, ok := h.dataExplorerSignalsForURL(w, r, true)
 			if !ok {
 				return
 			}
@@ -1495,16 +1499,15 @@ func projectAreaType(area string) string {
 	}
 }
 
-func (h *BrowserHandler) dataExplorerSignals(w stdhttp.ResponseWriter, r *stdhttp.Request) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
-	command := projectsignals.DataExplorerCommand{
-		ObjectKey: projectsignals.Optional(strings.TrimSpace(r.URL.Query().Get("object"))),
-		Mode:      projectsignals.Optional(strings.TrimSpace(r.URL.Query().Get("mode"))),
-		Limit:     dataExplorerDefaultLimit, Count: dataExplorerDefaultLimit, Block: projectsignals.Pointer("all"),
-	}
-	return h.dataExplorerSignalsForCommand(w, r, command)
+func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, true, false)
 }
 
-func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+func (h *BrowserHandler) dataExplorerSignalsForRestoredCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
+	return h.dataExplorerSignalsForCommandWithOptions(w, r, command, executeQuery, true)
+}
+
+func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.ResponseWriter, r *stdhttp.Request, command projectsignals.DataExplorerCommand, executeQuery, strictURLState bool) (projectsignals.DataExplorerPageSignal, projectsignals.DataExplorerSignal, bool) {
 	command = normalizeDataExplorerCommand(command)
 	project := h.navigationCatalog(r).Project
 	page := projectsignals.DataExplorerPageSignal{Kind: projectsignals.RouteKindData, Title: "Data Explorer", Description: projectsignals.Optional("Explore governed semantic data."), Tabs: []projectsignals.ResourceTabSignal{}, Context: projectsignals.DataExplorerContextSignal{Active: true, Environment: h.Environment, ProjectID: project.ID, ProjectTitle: projectsignals.Optional(project.Title)}}
@@ -1534,6 +1537,13 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 	}
 	projection := BuildDataExplorerProjection(assets, definition, exploreCommand, compiledModels)
+	if strictURLState && projectsignals.ValueOrZero(command.Mode) == "explore" {
+		modelID := strings.TrimSpace(projectsignals.ValueOrZero(projection.Command.ModelID))
+		if err := validateRestoredDataExploreState(exploreCommand, projection, definition.SemanticModels[modelID], compiledModels); err != nil {
+			stdhttp.Error(w, "invalid exploration URL state: "+err.Error(), stdhttp.StatusBadRequest)
+			return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
+		}
+	}
 	explorer.Objects = projection.Objects
 	explorer.Explore.Models = projection.Models
 	explorer.Explore.SelectedModel = projection.SelectedModel
@@ -1543,7 +1553,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 	exploreCommand = projection.Command
 	explorer.Explore.Command = exploreCommand
 	explorer.Command.Explore = &exploreCommand
-	if projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
+	if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) == "explore" {
 		projectID, err := h.boundProject(r.Context())
 		if err != nil {
 			stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
@@ -1583,7 +1593,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommand(w stdhttp.ResponseWriter,
 				stdhttp.Error(w, stdhttp.StatusText(stdhttp.StatusServiceUnavailable), stdhttp.StatusServiceUnavailable)
 				return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
 			}
-			if projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
+			if executeQuery && projectsignals.ValueOrZero(explorer.Command.Mode) != "explore" {
 				explorer.Preview = dataExplorerPreview(r.Context(), h.QueryExecutor, projectID, object, explorer.Command)
 			}
 			break

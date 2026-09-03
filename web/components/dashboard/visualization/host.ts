@@ -6,7 +6,7 @@ import '../../shared/loading-spinner'
 import { visualActionStyles } from '../visual-action-styles'
 import { visualMenuIcon } from '../visual-menu-icons'
 import type { VisualActionDetail } from '../visual-modal'
-import { defaultRendererContext, normalizeRendererLocale, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
+import { defaultRendererContext, normalizeRendererLocale, primerCategoricalPalette, VisualizationController, validateEnvelopeBoundary, type RendererContext } from './host-controller'
 import { visualizationRegistry } from './registry'
 import { adapterObservation } from './telemetry'
 import { resolveVisualizationMetadata } from './metadata'
@@ -33,6 +33,9 @@ export class VisualizationHost extends LitElement {
     .surface.headerless { grid-template-rows: minmax(0, 1fr); }
     .renderer-stage { position: relative; min-width: 0; min-height: 0; overflow: hidden; background: var(--lv-chart-surface); }
     .renderer { display: block; width: 100%; height: 100%; min-width: 0; min-height: 0; overflow: hidden; }
+    /* Map data is a secondary, space-intensive disclosure. Keep compact map
+       cards focused on the map and expose the disclosure in visual focus mode. */
+    :host(:not([slot='focus-visual'])) [data-map-data-table] { display: none !important; }
     .lv-kpi-card {
       position: relative;
       display: grid;
@@ -72,6 +75,12 @@ export class VisualizationHost extends LitElement {
       font: var(--lv-type-body-compact);
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    .lv-visualization-note.lv-kpi-highlight {
+      display: -webkit-box;
+      -webkit-box-orient: vertical;
+      -webkit-line-clamp: 2;
+      white-space: normal;
     }
     .lv-kpi-comparison {
       display: flex;
@@ -207,6 +216,16 @@ export class VisualizationHost extends LitElement {
       inset: var(--base-size-6) var(--base-size-8) auto auto;
       z-index: var(--zIndex-sticky);
     }
+    .headerless-actions[data-table-actions] {
+      inset-inline-end: calc(
+        var(--base-size-8)
+        + var(--control-medium-size)
+        + var(--base-size-4)
+        + var(--control-medium-size)
+        + var(--base-size-4)
+        + var(--base-size-2)
+      );
+    }
     h2 {
       min-width: 0;
       margin: 0;
@@ -307,7 +326,7 @@ export class VisualizationHost extends LitElement {
             <button class="icon-action" type="button" data-visualization-expand data-visualization-id=${this.envelope?.visualID ?? ''} aria-label=${`Expand ${header}`} title=${`Expand ${header}`} @click=${this.expand}>${visualMenuIcon('focus')}</button>
           </div>
         </header>
-      ` : html`<div class="headerless-actions"><slot name="agent-action"></slot></div>`}
+      ` : html`<div class="headerless-actions" ?data-table-actions=${this.envelope?.spec.kind === 'table'}><slot name="agent-action"></slot></div>`}
       <div class="renderer-stage" aria-busy=${String(this.applying)}>
         <div class="renderer" role="group" aria-label=${metadata?.title ?? 'Visualization'} aria-describedby="visualization-fallback" aria-busy=${String(this.applying)} aria-hidden=${String(!this.presented)} ?inert=${!this.presented} @lv-map-observation=${this.forwardAdapterObservation}></div>
         ${showInitialLoading ? html`<div class="initial-loading" data-visualization-loading role="status" aria-live="polite">
@@ -423,10 +442,7 @@ export class VisualizationHost extends LitElement {
         success: color('--lv-fg-success', defaultRendererContext.colors.success),
         attention: color('--lv-fg-warning', defaultRendererContext.colors.attention),
         danger: color('--lv-fg-danger', defaultRendererContext.colors.danger),
-        data: [
-          'blue', 'orange', 'green', 'pink', 'brown', 'plum', 'teal', 'yellow', 'red',
-          'gray', 'olive', 'pine', 'auburn', 'lemon', 'purple', 'coral', 'lime',
-        ].map((name, index) => color(`--data-${name}-color-emphasis`, defaultRendererContext.colors.data[index]!)),
+        data: primerCategoricalPalette.map(({ token }, index) => color(token, defaultRendererContext.colors.data[index]!)),
       },
     }
   }

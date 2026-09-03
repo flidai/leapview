@@ -153,7 +153,7 @@ func (s candidateMinIOObjectStore) Open(ctx context.Context, key string) (io.Rea
 func candidateMinIOPoolContract(t *testing.T, bucket, prefix string) *ducklake.PoolContract {
 	t.Helper()
 	tuple := physicalpool.Compatibility{DuckDBRuntime: "duckdb:v1.5.4", DuckLakeExtension: "ducklake:d318a545", CatalogFormat: "ducklake:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
-	identity := physicalpool.PoolIdentity{StorageLocation: "s3://" + bucket, StorageNamespace: prefix, Region: "us-east-1", IsolationBoundary: "candidate-minio", RetentionAuthority: "candidate-minio", Compatibility: tuple}
+	identity := physicalpool.PoolIdentity{StorageLocation: "s3://" + bucket, StorageNamespace: prefix, Region: "us-east-1", EncryptionDomain: "candidate-minio", IsolationBoundary: "candidate-minio", RetentionAuthority: "candidate-minio", Compatibility: tuple}
 	pool, err := physicalpool.NewPhysicalPool(identity)
 	if err != nil {
 		t.Fatal(err)

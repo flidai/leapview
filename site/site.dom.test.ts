@@ -1411,9 +1411,9 @@ test('map documentation renders fitted, attributed canvases without adapter erro
       }
     }))).toEqual([
       { summary: 'View map data (27 rows)', columns: 2, rows: 27 },
-      { summary: 'View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 35 total coordinates)', columns: 6, rows: 0 },
-      { summary: 'View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 35 total coordinates)', columns: 5, rows: 0 },
-      { summary: 'View visible map data (0 visible features: 0 raw points, 0 aggregate cells; 35 total coordinates)', columns: 4, rows: 0 },
+      { summary: 'View map data (0 features)', columns: 6, rows: 0 },
+      { summary: 'View map data (0 features)', columns: 5, rows: 0 },
+      { summary: 'View map data (0 features)', columns: 4, rows: 0 },
       { summary: 'View map data (27 rows)', columns: 2, rows: 27 },
       { summary: 'View map data (35 rows)', columns: 2, rows: 35 },
     ])
@@ -2446,13 +2446,17 @@ test('visual showcase renders every supported visual type', async () => {
     expect(Math.abs(regular.height - pivot.height)).toBeLessThanOrEqual(1)
     expect(matrix.width).toBeGreaterThanOrEqual(tableLayout.gridWidth - 1)
     expect(matrix.top).toBeGreaterThan(pivot.top + pivot.height)
-    expect(tableLayout.cards.every((card) => card.overflow <= 1)).toBe(true)
+    // Every table variant deliberately preserves readable business-field widths
+    // and scrolls horizontally when its authored columns exceed the card.
+    expect(regular.overflow).toBeGreaterThan(1)
+    expect(matrix.overflow).toBeGreaterThan(1)
+    expect(pivot.overflow).toBeGreaterThan(1)
     expect(pivot.dataGap).toBeLessThanOrEqual(1)
     expect(regular.classes).toContain('centered')
     expect(regular.classes).toContain('narrow')
     expect(matrix.classes).toContain('wide')
     expect(pivot.classes).toContain('centered')
-    expect(tableLayout.matrixOverflow).toBeLessThanOrEqual(1)
+    expect(tableLayout.matrixOverflow).toBe(matrix.overflow)
     expect(tableLayout.compactCards).toBe(2)
     expect(tableLayout.compactDataGaps.every((gap) => gap <= 8)).toBe(true)
     const catalog = await page.locator('lv-site-visual-showcase').evaluate((element) =>

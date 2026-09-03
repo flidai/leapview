@@ -182,6 +182,7 @@ export function legend(position: string, context: RendererContext, scroll = fals
     show: true,
     ...(scroll ? {
       type: 'scroll',
+      ...(position === 'left' || position === 'right' ? { top: 8, bottom: 8, width: 24 } : { left: 8, right: 8, height: 24 }),
       pageIconColor: context.colors.foreground,
       pageIconInactiveColor: context.colors.grid,
       pageTextStyle: { color: context.colors.muted, fontFamily: context.fontFamily },

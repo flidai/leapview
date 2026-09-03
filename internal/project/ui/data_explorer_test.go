@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"net/url"
+	"reflect"
 	"testing"
 
 	catalog "github.com/flidai/leapview/internal/project/navigation"
@@ -27,6 +29,31 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	}
 	if signals["agent"] == nil || signals["agentVisuals"] == nil {
 		t.Fatalf("agent bootstrap = %#v", signals)
+	}
+}
+
+func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
+		ModelID: uisignals.Pointer("semantic:sales"), DatasetID: uisignals.Pointer("orders"),
+		Dimensions: []string{"orders.month"}, Metrics: []string{"revenue"},
+		Filters: []uisignals.DataExploreFilterSignal{{Field: "orders.state", Operator: "equals", Values: []string{"paid"}}},
+		Sort:    []uisignals.DataExploreSortSignal{{Field: "revenue", Direction: "desc"}},
+		Time:    &uisignals.DataExploreTimeSignal{Field: "orders.created_at", Grain: "month"}, Limit: 250,
+		RequestSeq: 81, ResetVersion: 10,
+	}}
+	updates, err := url.Parse(dataExplorerUpdatesURL(command))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := updates.Query()
+	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" || values.Get("v") != "1" {
+		t.Fatalf("routing values = %#v", values)
+	}
+	if !reflect.DeepEqual(values["dimension"], []string{"orders.month"}) || !reflect.DeepEqual(values["metric"], []string{"revenue"}) || values.Get("limit") != "250" {
+		t.Fatalf("exploration values = %#v", values)
+	}
+	if values.Has("requestSeq") || values.Has("resetVersion") {
+		t.Fatalf("runtime state leaked into updates URL: %#v", values)
 	}
 }
 

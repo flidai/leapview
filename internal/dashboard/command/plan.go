@@ -76,6 +76,7 @@ func (s Service) PrepareFilterState(request Request, authoritative dashboard.Fil
 	if err != nil {
 		return PreparedRefresh{}, err
 	}
+	targets = resetWindowTargets(targets, filters)
 	return PreparedRefresh{
 		Filters: filters, Plan: RefreshPlan{Command: "filter_change", Targets: targets},
 	}, nil
@@ -98,6 +99,7 @@ func (s Service) PrepareSelect(request Request, authoritative dashboard.Filters)
 	if err != nil {
 		return PreparedRefresh{}, err
 	}
+	targets = resetWindowTargets(targets, filters)
 	return PreparedRefresh{Filters: filters, Plan: RefreshPlan{Command: "select", Targets: targets}}, nil
 }
 
@@ -115,6 +117,7 @@ func (s Service) PrepareSpatialSelect(request Request, authoritative dashboard.F
 	if err != nil {
 		return PreparedRefresh{}, err
 	}
+	targets = resetWindowTargets(targets, filters)
 	return PreparedRefresh{Filters: filters, Plan: RefreshPlan{Command: "spatial_select", Targets: targets}}, nil
 }
 
@@ -157,7 +160,33 @@ func (s Service) PrepareClearSelection(request Request, authoritative dashboard.
 	}
 	filters.Selections = []dashboard.InteractionSelection{}
 	filters.SpatialSelections = []dashboard.SpatialInteractionSelection{}
+	targets = resetWindowTargets(targets, filters)
 	return PreparedRefresh{Filters: filters, Plan: RefreshPlan{Command: "clear_selection", Targets: targets}}, nil
+}
+
+// Filter-driven refreshes must start a new table window generation. Reusing a
+// reset version leaves deep-scroll requests pending against a newly filtered
+// result set, so the client can remain on an invalid offset and show loading
+// indefinitely. The target's authoritative data revision gives each refresh a
+// monotonic generation without trusting client-owned window state.
+func resetWindowTargets(targets []Target, filters dashboard.Filters) []Target {
+	for index := range targets {
+		if targets[index].Kind != TargetWindow {
+			continue
+		}
+		revision := filters.DataRevisions[targets[index].ID]
+		if revision < 0 {
+			revision = 0
+		}
+		if revision >= int64(math.MaxInt) {
+			revision = int64(math.MaxInt - 1)
+		}
+		targets[index].WindowRequest.ResetVersion = max(
+			targets[index].WindowRequest.ResetVersion,
+			int(revision)+1,
+		)
+	}
+	return targets
 }
 
 func (s Service) PrepareInitial(request Request, initial dashboard.Filters) (PreparedRefresh, error) {
