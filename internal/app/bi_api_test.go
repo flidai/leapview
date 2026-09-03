@@ -234,7 +234,7 @@ func TestBIAPIDashboardVisualDataSurface(t *testing.T) {
 	}
 }
 
-func TestSemanticAPIQueryAuditIncludesProject(t *testing.T) {
+func TestSemanticAPIQueryAuditUsesInstanceBoundary(t *testing.T) {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(testStore(t), assemblyConfig{}))
 	req := newPublicAPIRequest(http.MethodPost, "/api/v1/semantic-models/test/query", strings.NewReader(`{"dimensions":[{"field":"orders.status","alias":"status"}],"metrics":[{"field":"order_count"}],"limit":1}`))
 	req.Header.Set("Accept", "application/json")
@@ -264,15 +264,22 @@ func TestSemanticAPIQueryAuditIncludesProject(t *testing.T) {
 		t.Fatalf("query event stored result row values: %s", event.QueryJSON)
 	}
 
-	listReq := newPublicAPIRequest(http.MethodGet, "/api/v1/projects/project:test/query-events?search=req_api_project&limit=10", nil)
+	listReq := newPublicAPIRequest(http.MethodGet, "/api/v1/query-events?search=req_api_project&limit=10", nil)
 	listReq.Header.Set("Accept", "application/json")
 	listRec := httptest.NewRecorder()
 	server.Routes().ServeHTTP(listRec, listReq)
 	if listRec.Code != http.StatusOK {
 		t.Fatalf("query events status=%d body=%s", listRec.Code, listRec.Body.String())
 	}
-	if !strings.Contains(listRec.Body.String(), `"requestId":"req_api_project"`) || !strings.Contains(listRec.Body.String(), `"projectId":"project:test"`) {
-		t.Fatalf("query events endpoint did not return project-scoped event: %s", listRec.Body.String())
+	if !strings.Contains(listRec.Body.String(), `"requestId":"req_api_project"`) || strings.Contains(listRec.Body.String(), `"projectId"`) {
+		t.Fatalf("query events endpoint did not return an instance-scoped event: %s", listRec.Body.String())
+	}
+
+	legacyReq := newPublicAPIRequest(http.MethodGet, "/api/v1/projects/project:test/query-events", nil)
+	legacyRec := httptest.NewRecorder()
+	server.Routes().ServeHTTP(legacyRec, legacyReq)
+	if legacyRec.Code != http.StatusNotFound {
+		t.Fatalf("legacy project-scoped query event route status=%d body=%s", legacyRec.Code, legacyRec.Body.String())
 	}
 }
 

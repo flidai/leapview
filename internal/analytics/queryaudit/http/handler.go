@@ -1,8 +1,11 @@
 package http
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,15 +13,14 @@ import (
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
 	api "github.com/flidai/leapview/internal/platform/http/model"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	"github.com/go-chi/chi/v5"
 )
 
 type ReaderProvider func() (queryaudit.Reader, error)
-type ProjectIDNormalizer func(string) projectgraph.ResourceID
+type ProjectIDResolver func(context.Context) (projectgraph.ResourceID, error)
 
 type Handler struct {
 	Reader    ReaderProvider
-	ProjectID ProjectIDNormalizer
+	ProjectID ProjectIDResolver
 }
 
 func (h Handler) ListQueryEvents(w http.ResponseWriter, r *http.Request) {
@@ -36,8 +38,13 @@ func (h Handler) ListQueryEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	cursorTime, cursorID := decodeCursor(r.URL.Query().Get("pageToken"))
+	projectID, err := h.projectID(r.Context())
+	if err != nil {
+		writeJSONError(w, err, http.StatusServiceUnavailable)
+		return
+	}
 	rows, err := repo.ListQueryEvents(r.Context(), queryaudit.Filter{
-		ProjectID:    h.projectID(chi.URLParam(r, "project")),
+		ProjectID:    projectID,
 		PrincipalID:  r.URL.Query().Get("principal"),
 		PrincipalIDs: cleanValues(r.URL.Query()["principal"]),
 		Surface:      r.URL.Query().Get("surface"),
@@ -80,11 +87,18 @@ func (h Handler) repository() (queryaudit.Reader, error) {
 	return h.Reader()
 }
 
-func (h Handler) projectID(value string) projectgraph.ResourceID {
+func (h Handler) projectID(ctx context.Context) (projectgraph.ResourceID, error) {
 	if h.ProjectID == nil {
-		return projectgraph.ResourceID(strings.TrimSpace(value))
+		return "", errors.New("active instance project is unavailable")
 	}
-	return h.ProjectID(value)
+	projectID, err := h.ProjectID(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := projectID.Validate(); err != nil {
+		return "", fmt.Errorf("active instance project: %w", err)
+	}
+	return projectID, nil
 }
 
 func eventDTO(row queryaudit.Event) map[string]any {
@@ -95,8 +109,11 @@ func eventDTO(row queryaudit.Event) map[string]any {
 	if query == nil {
 		query = map[string]any{}
 	}
+	// Project identity remains internal serving/audit scope. The instance-bound
+	// API must not re-expose it through the stored query metadata payload.
+	delete(query, "projectId")
 	return map[string]any{
-		"id": row.ID, "projectId": row.ProjectID.String(), "principalId": emptyToNil(row.PrincipalID),
+		"id": row.ID, "principalId": emptyToNil(row.PrincipalID),
 		"surface": row.Surface, "operation": row.Operation, "queryKind": row.QueryKind,
 		"modelId": row.ModelID, "target": row.Target, "status": row.Status,
 		"objectType": row.ObjectType, "objectId": row.ObjectID, "requestId": row.RequestID,

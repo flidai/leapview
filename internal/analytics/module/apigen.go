@@ -14,7 +14,7 @@ import (
 
 type QueryAuditAPIGenConfig struct {
 	Reader    func() (queryaudit.Reader, error)
-	ProjectID func(string) projectgraph.ResourceID
+	ProjectID func(context.Context) (projectgraph.ResourceID, error)
 }
 
 type AnalyticsAPIGenConfig struct {
@@ -30,14 +30,13 @@ type analyticsAPIGenDispatcher struct {
 func newAnalyticsAPIGenDispatcher(config AnalyticsAPIGenConfig) *analyticsAPIGenDispatcher {
 	return &analyticsAPIGenDispatcher{queryEvents: queryaudithttp.Handler{
 		Reader:    queryaudithttp.ReaderProvider(config.QueryAudit.Reader),
-		ProjectID: queryaudithttp.ProjectIDNormalizer(config.QueryAudit.ProjectID),
+		ProjectID: queryaudithttp.ProjectIDResolver(config.QueryAudit.ProjectID),
 	}, connections: connectionBindingAPIHandler{config: config.Connections}}
 }
 
 func (d *analyticsAPIGenDispatcher) ListQueryEvents(
 	w http.ResponseWriter,
 	r *http.Request,
-	_ string,
 	params analyticsgen.GenListQueryEventsParams,
 ) {
 	d.queryEvents.ListQueryEvents(w, r)

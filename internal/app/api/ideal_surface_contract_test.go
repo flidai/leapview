@@ -234,7 +234,7 @@ func TestCapabilitiesUseCanonicalEnums(t *testing.T) {
 func TestInstanceBoundaryResponsesHideProjectIdentity(t *testing.T) {
 	spec := managedDataOpenAPISpec(t)
 	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")
-	for _, name := range []string{"AuditEventResponse", "AuthoringSessionResponse", "DashboardPublicationResponse", "GrantResponse", "DataPolicyResponse", "EffectiveCapabilityListResponse"} {
+	for _, name := range []string{"AuditEventResponse", "QueryEventResponse", "AuthoringSessionResponse", "DashboardPublicationResponse", "GrantResponse", "DataPolicyResponse", "EffectiveCapabilityListResponse"} {
 		properties := openAPIMap(t, openAPISchema(t, schemas, name), "properties")
 		if _, ok := properties["projectId"]; ok {
 			t.Errorf("instance-bound response %s exposes projectId", name)
