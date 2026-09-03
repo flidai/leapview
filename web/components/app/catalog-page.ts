@@ -63,7 +63,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       }
     }
 
-    .catalog-create-draft { display: inline-flex; align-items: center; min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
+    .catalog-create-draft { display: inline-flex; align-items: center; gap: var(--base-size-6); min-height: var(--control-medium-size); padding: 0 var(--base-size-12); border: var(--lv-border-default); border-radius: var(--lv-radius-default); color: var(--lv-button-fg-rest); background: var(--lv-button-bg-rest); cursor: pointer; font: var(--lv-type-body-compact); }
+    .catalog-create-draft svg { display: block; flex: 0 0 auto; }
     .catalog-create-draft:hover { background: var(--lv-button-bg-hover, var(--lv-bg-control-hover)); }
     .catalog-create-draft:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
 
@@ -230,7 +231,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const models = this.createDraftModels()
     return html`
       <section aria-label="LeapView dashboard catalog">
-        ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>New dashboard</a>` : undefined)}
+        ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>${lucideIcon(lucideIconByCanonicalName('plus'), { size: 16, strokeWidth: 2 })}<span>New dashboard</span></a>` : undefined)}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
           ${this.renderCatalogTab('favorites', 'Favorites')}
