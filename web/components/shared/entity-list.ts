@@ -86,7 +86,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar'
+  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar' | 'popularity'
 }
 
 export type EntityListFilter = {
@@ -654,7 +654,7 @@ const entityListStyles = `
     white-space: nowrap;
   }
 
-  .entity-list-cell.is-person-avatar {
+  .entity-list-cell.is-hover-indicator {
     overflow: visible;
   }
 
@@ -676,7 +676,8 @@ const entityListStyles = `
     text-overflow: ellipsis;
   }
 
-  .entity-list-person-avatar {
+  .entity-list-person-avatar,
+  .entity-list-popularity {
     position: relative;
     display: inline-flex;
     align-items: center;
@@ -692,7 +693,19 @@ const entityListStyles = `
     --lv-user-avatar-size: var(--base-size-20);
   }
 
-  .entity-list-person-tooltip {
+  .entity-list-popularity {
+    width: var(--base-size-20);
+    height: var(--base-size-20);
+    justify-content: center;
+    color: var(--fgColor-disabled);
+  }
+
+  .entity-list-popularity svg {
+    width: var(--base-size-16);
+    height: var(--base-size-16);
+  }
+
+  .entity-list-hover-tooltip {
     position: absolute;
     z-index: var(--z-index-dropdown);
     top: calc(100% + var(--base-size-8));
@@ -716,8 +729,10 @@ const entityListStyles = `
     transition: opacity var(--motion-transition-stateChange);
   }
 
-  .entity-list-person-avatar:hover .entity-list-person-tooltip,
-  .entity-list-person-avatar:focus .entity-list-person-tooltip {
+  .entity-list-person-avatar:hover .entity-list-hover-tooltip,
+  .entity-list-person-avatar:focus .entity-list-hover-tooltip,
+  .entity-list-popularity:hover .entity-list-hover-tooltip,
+  .entity-list-popularity:focus .entity-list-hover-tooltip {
     visibility: visible;
     opacity: 1;
   }
@@ -1141,7 +1156,7 @@ class EntityList extends LitElement {
       ? badges.map((badge) => badge.label).join(', ')
       : item.columnTitles?.[column.id] ?? String(value ?? '')
     return html`
-      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' ? 'is-person-avatar' : ''}`} title=${column.render === 'person-avatar' ? '' : title}>
+      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' || column.render === 'popularity' ? 'is-hover-indicator' : ''}`} title=${column.render === 'person-avatar' || column.render === 'popularity' ? '' : title}>
         ${column.render === 'badges'
           ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
@@ -1164,6 +1179,8 @@ class EntityList extends LitElement {
                 ? this.renderPerson(item, column.id, value)
                 : column.render === 'person-avatar'
                   ? this.renderPersonAvatar(item, column.id, value)
+                  : column.render === 'popularity'
+                    ? this.renderPopularity(item, column.id, value, title)
               : (value == null || value === '' ? '—' : value)}
       </td>
     `
@@ -1189,10 +1206,22 @@ class EntityList extends LitElement {
     return html`
       <span class="entity-list-person-avatar" role="group" aria-label=${name} aria-describedby=${tooltipID} tabindex="0">
         <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
-        <span class="entity-list-person-tooltip" id=${tooltipID} role="tooltip">
+        <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">
           <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
           <span>${name}</span>
         </span>
+      </span>
+    `
+  }
+
+  private renderPopularity(item: EntityListItem, columnID: string, value: string | number | undefined, title: string) {
+    const level = value === 'high' || value === 'medium' || value === 'low' ? value : ''
+    const label = title || 'No popularity data yet'
+    const tooltipID = `entity-popularity-${item.id}-${columnID}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    return html`
+      <span class=${`entity-list-popularity entity-list-badge-popularity${level ? ` is-${level}` : ''}`} role="group" aria-label=${label} aria-describedby=${tooltipID} tabindex="0">
+        ${lucideIcon(ChartNoAxesColumnIncreasing, { size: 16, strokeWidth: 2 })}
+        <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">${label}</span>
       </span>
     `
   }

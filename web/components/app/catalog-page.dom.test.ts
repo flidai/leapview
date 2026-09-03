@@ -316,17 +316,17 @@ for (const viewport of [
           dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
           owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label') ?? '—'),
           ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
-          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
-          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
-          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.getAttribute('title')),
-          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim()),
+          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim()),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.getAttribute('title')),
+          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[5]?.textContent?.trim()),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
-          popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
-          popularityLevels: rows.map((row) => row.querySelector('.entity-list-badge')?.classList.contains('is-high') ? 'high' : row.querySelector('.entity-list-badge')?.classList.contains('is-medium') ? 'medium' : row.querySelector('.entity-list-badge')?.classList.contains('is-low') ? 'low' : ''),
+          popularityLabels: rows.map((row) => row.querySelector('.entity-list-popularity')?.getAttribute('aria-label') ?? ''),
+          popularityLevels: rows.map((row) => row.querySelector('.entity-list-popularity')?.classList.contains('is-high') ? 'high' : row.querySelector('.entity-list-popularity')?.classList.contains('is-medium') ? 'medium' : row.querySelector('.entity-list-popularity')?.classList.contains('is-low') ? 'low' : ''),
           popularityColoredBars: rows.slice(0, 3).map((row) => {
-            const paths = Array.from(row.querySelectorAll('.entity-list-badge path'))
-            const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-badge path')[2]).stroke
+            const paths = Array.from(row.querySelectorAll('.entity-list-popularity path'))
+            const mutedStroke = getComputedStyle(rows[2].querySelectorAll('.entity-list-popularity path')[2]).stroke
             return paths.filter((path) => getComputedStyle(path).stroke !== mutedStroke).length
           }),
           iconsAreFramed: rows.every((row) => row.querySelector('.entity-list-icon')?.classList.contains('is-framed')),
@@ -352,7 +352,7 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptionCount: 0,
-        headers: ['Dashboard', 'Data model', 'Owner', 'Status', 'Updated', 'Last opened', 'Actions'],
+        headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'],
         dataModels: ['Olist', 'Operations', 'Inventory', 'Customers'],
         owners: ['Analytics', 'Operations', 'Supply chain', '—'],
         statuses: ['Published', 'Published', 'Published', 'Published'],
@@ -362,7 +362,7 @@ for (const viewport of [
         ownerAvatars: [true, true, true, false],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
-        popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', ''],
+        popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', 'No popularity data yet'],
         popularityLevels: ['high', 'medium', 'low', ''],
         popularityColoredBars: [3, 2, 1],
         iconsAreFramed: true,
@@ -522,7 +522,7 @@ test('My dashboards removes the redundant owner column', async () => {
       await element.updateComplete
       return Array.from(element.shadowRoot.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
     })
-    expect(headers).toEqual(['Dashboard', 'Data model', 'Status', 'Updated', 'Last opened', 'Actions'])
+    expect(headers).toEqual(['Dashboard', 'Data model', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'])
   } finally {
     await page.close()
   }
@@ -546,7 +546,7 @@ test('data model is a dedicated sortable column instead of dashboard subtitle me
     })
 
     expect(state).toEqual({
-      headers: ['Dashboard', 'Data model', 'Owner', 'Status', 'Updated', 'Last opened', 'Actions'],
+      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'],
       models: ['Olist', 'Operations', 'Inventory', 'Customers'],
       subtitles: ['', '', '', ''],
       sortable: true,
@@ -607,7 +607,7 @@ test('dashboard owners render as compact accessible avatars with hover labels', 
       const list = element.shadowRoot.querySelector('lv-entity-list') as any
       const ownerCell = list.querySelector('tbody tr.entity-list-table-row')?.querySelectorAll('.entity-list-cell')[1] as HTMLElement
       const owner = ownerCell.querySelector('.entity-list-person-avatar') as HTMLElement
-      const tooltip = owner?.querySelector('.entity-list-person-tooltip') as HTMLElement
+      const tooltip = owner?.querySelector('.entity-list-hover-tooltip') as HTMLElement
       return {
         cellTitle: ownerCell.title,
         label: owner?.getAttribute('aria-label'),
@@ -627,6 +627,44 @@ test('dashboard owners render as compact accessible avatars with hover labels', 
       hovered: true,
       tooltipText: 'Analytics',
       tooltipVisibleOnHover: 'visible',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard titles use regular emphasis and popularity has a dedicated hoverable column', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+    })
+    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-popularity').first().hover()
+    const state = await page.locator('lv-catalog-page').evaluate((element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
+      const firstPopularity = rows[0].querySelector('.entity-list-popularity') as HTMLElement
+      const missingPopularity = rows[3].querySelector('.entity-list-popularity') as HTMLElement
+      return {
+        headers: Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim()),
+        titleWeight: getComputedStyle(rows[0].querySelector('.entity-list-title') as HTMLElement).fontWeight,
+        firstLabel: firstPopularity?.getAttribute('aria-label'),
+        firstTooltip: firstPopularity?.querySelector('.entity-list-hover-tooltip')?.textContent?.trim(),
+        firstTooltipVisibility: getComputedStyle(firstPopularity?.querySelector('.entity-list-hover-tooltip') as HTMLElement).visibility,
+        missingLabel: missingPopularity?.getAttribute('aria-label'),
+      }
+    })
+
+    expect(state).toEqual({
+      headers: ['Dashboard', 'Data model', 'Owner', 'Popularity', 'Status', 'Updated', 'Last opened', 'Actions'],
+      titleWeight: '400',
+      firstLabel: 'High popularity — top 10% in the last 30 days',
+      firstTooltip: 'High popularity — top 10% in the last 30 days',
+      firstTooltipVisibility: 'visible',
+      missingLabel: 'No popularity data yet',
     })
   } finally {
     await page.close()
@@ -667,7 +705,7 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
         activeFilters: root.querySelector('.catalog-filter-count')?.textContent?.trim(),
         dataModels: Array.from(list.querySelectorAll('.entity-list-cell:first-of-type')).map((model: Element) => model.textContent?.trim()),
         featured: Array.from(list.querySelectorAll('.entity-list-badge-featured')).map((badge: Element) => badge.textContent?.trim()),
-        popularity: Array.from(list.querySelectorAll('.entity-list-badge-popularity')).map((badge: Element) => badge.textContent?.trim()),
+        popularity: Array.from(list.querySelectorAll('.entity-list-popularity')).map((badge: Element) => badge.getAttribute('aria-label')),
         hasRedundantFavoritesFilter: Array.from(root.querySelectorAll('.catalog-filter-check')).some((label: Element) => label.textContent?.includes('Favorites only')),
       }
     })
@@ -679,7 +717,7 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
       activeFilters: '1',
       dataModels: ['Operations'],
       featured: ['Featured'],
-      popularity: ['Top 20%'],
+      popularity: ['Medium popularity — top 20% in the last 30 days'],
       hasRedundantFavoritesFilter: false,
     })
   } finally {
@@ -746,8 +784,8 @@ test('Last opened uses persisted personal activity with an exact timestamp toolt
       await list.updateComplete
       return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
         title: row.querySelector('.entity-list-title')?.textContent?.trim(),
-        value: row.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim(),
-        tooltip: row.querySelectorAll('.entity-list-cell')[4]?.getAttribute('title'),
+        value: row.querySelectorAll('.entity-list-cell')[5]?.textContent?.trim(),
+        tooltip: row.querySelectorAll('.entity-list-cell')[5]?.getAttribute('title'),
       }))
     })
 
@@ -862,7 +900,7 @@ test('updated dates include the year when it differs from the current year', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const updated = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim(),
+      element.shadowRoot.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim(),
     )
 
     expect(await updated()).toBe('Aug 12, 2026')
