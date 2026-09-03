@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	platformbootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	projectpostgres "github.com/flidai/leapview/internal/project/postgres"
 	"github.com/flidai/leapview/internal/servingstate"
 )
@@ -26,6 +27,44 @@ import (
 type postgresTargetLookupFake struct {
 	target deployment.DeliveryTarget
 	err    error
+}
+
+func TestPostgresLifecycleNamedPoolsIncludesOnlyRetainedServingPools(t *testing.T) {
+	lifecycle := &postgresControlPlaneLifecycle{
+		pools: &platformpostgres.ControlPlanePools{
+			Migrator:    &platformpostgres.Pool{},
+			Runtime:     &platformpostgres.Pool{},
+			Maintenance: &platformpostgres.Pool{},
+			Readonly:    &platformpostgres.Pool{},
+		},
+		ducklake:            &platformpostgres.Pool{},
+		ducklakeMaintenance: &platformpostgres.Pool{},
+	}
+
+	got := lifecycle.NamedPools()
+	if len(got) != 5 {
+		t.Fatalf("named serving pools = %d, want 5", len(got))
+	}
+	want := []string{
+		platformpostgres.ControlRuntimePoolName,
+		platformpostgres.ControlMaintenancePoolName,
+		platformpostgres.DuckLakeRuntimePoolName,
+		platformpostgres.DuckLakeMaintenancePoolName,
+		platformpostgres.ControlReadonlyPoolName,
+	}
+	for i, name := range want {
+		if got[i].Name != name {
+			t.Fatalf("pool %d name = %q, want %q", i, got[i].Name, name)
+		}
+		if got[i].Pool == nil {
+			t.Fatalf("pool %d (%q) is nil", i, name)
+		}
+	}
+	for _, pool := range got {
+		if pool.Name == "" || pool.Name == "migrator" {
+			t.Fatalf("unexpected telemetry pool name %q", pool.Name)
+		}
+	}
 }
 
 func (f postgresTargetLookupFake) ResolveDeliveryTarget(context.Context, string) (deployment.DeliveryTarget, error) {

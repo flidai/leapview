@@ -274,6 +274,25 @@ func (l *postgresControlPlaneLifecycle) DuckLakeMaintenancePool() *platformpostg
 	return l.ducklakeMaintenance
 }
 
+// NamedPools returns the serving pools that production composition exposes to
+// application telemetry. The one-shot migrator is intentionally omitted; it
+// is closed before serving starts and must not appear as a retained pool.
+func (l *postgresControlPlaneLifecycle) NamedPools() []platformpostgres.NamedPool {
+	if l == nil || l.pools == nil {
+		return nil
+	}
+	result := []platformpostgres.NamedPool{
+		{Name: platformpostgres.ControlRuntimePoolName, Pool: l.pools.Runtime},
+		{Name: platformpostgres.ControlMaintenancePoolName, Pool: l.pools.Maintenance},
+		{Name: platformpostgres.DuckLakeRuntimePoolName, Pool: l.ducklake},
+		{Name: platformpostgres.DuckLakeMaintenancePoolName, Pool: l.ducklakeMaintenance},
+	}
+	if l.pools.Readonly != nil {
+		result = append(result, platformpostgres.NamedPool{Name: platformpostgres.ControlReadonlyPoolName, Pool: l.pools.Readonly})
+	}
+	return result
+}
+
 // Stop closes all serving pools and is idempotent.  It deliberately accepts a
 // context to satisfy app.Lifecycle; pgxpool close itself is synchronous and
 // does not require a cancellation path.

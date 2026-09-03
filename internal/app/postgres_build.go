@@ -47,6 +47,7 @@ import (
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
 	platformlifecycle "github.com/flidai/leapview/internal/platform/lifecycle"
 	platformobjectstore "github.com/flidai/leapview/internal/platform/objectstore"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	projectbundle "github.com/flidai/leapview/internal/project/bundle"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -961,6 +962,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 	if err != nil {
 		return fail(err)
 	}
+	platform.telemetry.Register(platformpostgres.NewPoolMetricsCollector(bootstrap.NamedPools()...))
 	handler := Routes(routes, runtimeServices, platform, policy)
 
 	// Start/stop ordering is explicit: the bootstrap wrapper starts first and
