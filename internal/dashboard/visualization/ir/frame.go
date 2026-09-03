@@ -776,7 +776,7 @@ func validateConditionalFormatting(spec VisualizationSpec, base VisualizationSpe
 
 func specSupportsConditionalFormatting(spec VisualizationSpec) bool {
 	switch value := spec.Value.(type) {
-	case *PointVisualizationSpec:
+	case *PointVisualizationSpec, *ProportionalVisualizationSpec:
 		return true
 	case *CartesianVisualizationSpec:
 		switch value.Mark {

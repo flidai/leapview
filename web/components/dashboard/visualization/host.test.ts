@@ -1,7 +1,16 @@
 import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope } from '../../../generated/visualization'
-import { Change, currentVisualizationSchemaVersion, defaultRendererContext, RendererRegistry, VisualizationController, type RendererHandle } from './host-controller'
+import { Change, currentVisualizationSchemaVersion, defaultRendererContext, primerCategoricalPalette, RendererRegistry, VisualizationController, type RendererHandle } from './host-controller'
+
+test('categorical palette preserves the established Primer token order', () => {
+  expect(primerCategoricalPalette.map(({ name }) => name)).toEqual([
+    'blue', 'orange', 'green', 'pink', 'brown', 'plum', 'teal', 'yellow', 'red',
+    'gray', 'olive', 'pine', 'auburn', 'lemon', 'purple', 'coral', 'lime',
+  ])
+  expect(primerCategoricalPalette.every(({ token }) => token.startsWith('--data-') && token.endsWith('-color-emphasis'))).toBe(true)
+  expect(defaultRendererContext.colors.data).toEqual(primerCategoricalPalette.map(({ fallback }) => fallback))
+})
 
 function envelope(dataRevision: number, specRevision = 'sha256:spec', rendererID = 'test'): VisualizationEnvelope {
   return {

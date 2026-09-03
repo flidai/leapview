@@ -424,6 +424,24 @@ spec:
       description: Breaks down orders by lifecycle status.
       presentation:
         type: proportional
+        conditionalFormatting:
+        - id: order-status-colors
+          target: series_color
+          field: order_count
+          rule:
+            kind: field
+            source: order_status
+            values:
+              approved: {color: data_8, icon: circle}
+              canceled: {color: data_3, icon: warning}
+              created: {color: data_7, icon: square}
+              delivered: {color: data_1, icon: circle}
+              invoiced: {color: data_5, icon: diamond}
+              processing: {color: data_6, icon: circle}
+              shipped: {color: data_2, icon: arrow_up}
+              unavailable: {color: data_4, icon: warning}
+            nullStyle: {color: neutral, icon: square}
+            defaultStyle: {color: neutral, icon: square}
       interactions:
       - type: selection
         mode: multiple
@@ -455,6 +473,24 @@ spec:
       presentation:
         type: cartesian
         stacking: normal
+        conditionalFormatting:
+        - id: order-status-colors
+          target: series_color
+          field: order_count
+          rule:
+            kind: field
+            source: order_status
+            values:
+              approved: {color: data_8, icon: circle}
+              canceled: {color: data_3, icon: warning}
+              created: {color: data_7, icon: square}
+              delivered: {color: data_1, icon: circle}
+              invoiced: {color: data_5, icon: diamond}
+              processing: {color: data_6, icon: circle}
+              shipped: {color: data_2, icon: arrow_up}
+              unavailable: {color: data_4, icon: warning}
+            nullStyle: {color: neutral, icon: square}
+            defaultStyle: {color: neutral, icon: square}
       interactions:
       - type: selection
         mode: multiple
@@ -556,6 +592,25 @@ spec:
         interaction matrix.
       presentation:
         type: cartesian
+        stacking: normal
+        conditionalFormatting:
+        - id: order-status-colors
+          target: series_color
+          field: order_count
+          rule:
+            kind: field
+            source: order_status
+            values:
+              approved: {color: data_8, icon: circle}
+              canceled: {color: data_3, icon: warning}
+              created: {color: data_7, icon: square}
+              delivered: {color: data_1, icon: circle}
+              invoiced: {color: data_5, icon: diamond}
+              processing: {color: data_6, icon: circle}
+              shipped: {color: data_2, icon: arrow_up}
+              unavailable: {color: data_4, icon: warning}
+            nullStyle: {color: neutral, icon: square}
+            defaultStyle: {color: neutral, icon: square}
     status_delivery_flow:
       type: sankey
       query:
@@ -647,8 +702,8 @@ spec:
           direction: desc
         limit: 27
       title: Interaction source by state
-      description: Select a state to exercise explicit filter, highlight, and none
-        edges.
+      description: Select a state to filter the order details and status donut while
+        highlighting the related KPI, chart, and point map.
       presentation:
         type: geographic
         theme: light
@@ -678,12 +733,11 @@ spec:
           label: state
         targets:
         - orders_table
+        - orders
         highlightTargets:
         - state_status_column
         - customer_point_map
         - total_orders
-        noneTargets:
-        - orders
     status_delivery_graph:
       type: graph
       query:
@@ -1463,6 +1517,7 @@ spec:
       description: Clusters real Olist ZIP-prefix centroids sized by order volume.
       presentation:
         type: geographic
+        labelDensity: normal
         controls:
           zoom: true
           reset: true
@@ -1470,6 +1525,7 @@ spec:
         layers:
         - id: customers
           kind: point
+          position: below_labels
           latitude: latitude
           longitude: longitude
           value: order_count
@@ -2322,7 +2378,7 @@ spec:
         column: 6
         row: 1
         columnSpan: 3
-        rowSpan: 3
+        rowSpan: 2
       type: visual
       visual: total_orders
     - id: interaction-none
@@ -2336,9 +2392,9 @@ spec:
     - id: interaction-faceted
       placement:
         column: 6
-        row: 4
+        row: 3
         columnSpan: 3
-        rowSpan: 4
+        rowSpan: 5
       type: visual
       visual: state_status_column
     - id: interaction-target-map
@@ -2357,8 +2413,8 @@ spec:
         rowSpan: 7
       type: visual
       visual: orders_table
-    description: One governed state selection demonstrates filter, highlight, and
-      none edges across ECharts, MapLibre, TanStack, and KPI targets.
+    description: One governed state selection filters the order details and status
+      donut while highlighting the related chart, map, and KPI targets.
   - id: kpi
     title: KPI
     components:

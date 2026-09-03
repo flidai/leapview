@@ -478,10 +478,12 @@ class ReportCanvas extends LitElement {
   }
 
   render() {
+    const inverseScale = this.scale > 0 ? 1 / this.scale : 1
     const style = [
       `--report-canvas-width:${this.contentWidth}`,
       `--report-canvas-height:${this.contentHeight}`,
       `--report-canvas-scale:${this.scale}`,
+      `--report-canvas-inverse-scale:${inverseScale}`,
     ].join(';')
 
     return html`
