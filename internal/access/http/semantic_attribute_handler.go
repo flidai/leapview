@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	stdhttp "net/http"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -379,33 +380,47 @@ func (h Handler) PreviewSemanticAttributeImpact(w stdhttp.ResponseWriter, r *std
 		writeSemanticAttributeError(w, err)
 		return
 	}
-	if _, err := semanticAttributeValues(definition, input.Values); err != nil {
-		writeSemanticAttributeError(w, invalidSemanticAttributeRequest(err))
+	if input.Values == nil {
+		writeSemanticAttributeError(w, invalidSemanticAttributeRequest(errors.New("values is required")))
 		return
 	}
-	rows, err := reader.SemanticAttributeAssignments(r.Context(), access.SemanticAttributeAssignmentFilter{DefinitionID: definition.ID})
-	if err != nil {
+	var requestedValues []string
+	if len(input.Values) > 0 {
+		decodedValues, err := semanticAttributeValues(definition, input.Values)
+		if err != nil {
+			writeSemanticAttributeError(w, invalidSemanticAttributeRequest(err))
+			return
+		}
+		requestedValues, _, err = access.CanonicalSemanticAttributeValues(definition, decodedValues)
+		if err != nil {
+			writeSemanticAttributeError(w, invalidSemanticAttributeRequest(err))
+			return
+		}
+	}
+	current, err := findSemanticAttributeAssignment(r, reader, definition.ID, subject)
+	if err != nil && !errors.Is(err, errSemanticAttributeAssignmentMissing) {
 		writeSemanticAttributeError(w, err)
 		return
 	}
+	changed := current.ID != ""
+	if len(input.Values) > 0 {
+		changed = current.ID == "" || !slices.Equal(current.CanonicalValues, requestedValues)
+	}
 	principalCount, groupCount := int32(0), int32(0)
-	for _, row := range rows {
-		if row.Tombstoned {
-			continue
-		}
-		if row.Subject.Kind == access.SubjectKindPrincipal {
-			principalCount++
-		}
-		if row.Subject.Kind == access.SubjectKindGroup {
-			groupCount++
+	if changed {
+		if subject.Kind == access.SubjectKindPrincipal {
+			principalCount = 1
+		} else {
+			groupCount = 1
 		}
 	}
 	warnings := []string{}
-	if subject.Kind == access.SubjectKindPrincipal && principalCount == 0 {
-		warnings = append(warnings, "no active assignments are currently affected")
-	}
-	if subject.Kind == access.SubjectKindGroup && groupCount == 0 {
-		warnings = append(warnings, "no active assignments are currently affected")
+	if !changed {
+		if current.ID == "" {
+			warnings = append(warnings, "no active assignments are currently affected")
+		} else {
+			warnings = append(warnings, "requested assignment is already in the requested state")
+		}
 	}
 	writeJSON(w, stdhttp.StatusOK, map[string]any{"attributeName": name, "targetKind": string(kind), "targetId": subject.ID, "affectedPrincipalCount": principalCount, "affectedGroupCount": groupCount, "warnings": warnings})
 }
@@ -428,10 +443,25 @@ func (h Handler) semanticAttributeMutationContext(r *stdhttp.Request) access.Sem
 	return access.SemanticAttributeMutationContext{ActorPrincipalID: h.currentPrincipalID(r), RequestID: requestIDFromRequest(r), CorrelationID: correlationIDFromRequest(r)}
 }
 
+var semanticAttributeOperationAuditActions = map[string]string{
+	"registerSemanticAttribute":                  access.SemanticAttributeAuditActionRegister,
+	"updateSemanticAttributeMetadata":            access.SemanticAttributeAuditActionMetadataUpdate,
+	"disableSemanticAttribute":                   access.SemanticAttributeAuditActionDisable,
+	"restoreSemanticAttribute":                   access.SemanticAttributeAuditActionEnable,
+	"upsertPrincipalSemanticAttributeAssignment": access.SemanticAttributeAuditActionAssignmentSet,
+	"removePrincipalSemanticAttributeAssignment": access.SemanticAttributeAuditActionAssignmentTombstone,
+	"upsertGroupSemanticAttributeAssignment":     access.SemanticAttributeAuditActionAssignmentSet,
+	"removeGroupSemanticAttributeAssignment":     access.SemanticAttributeAuditActionAssignmentTombstone,
+	"upsertSemanticAttributeClaimMapping":        access.SemanticAttributeAuditActionClaimMappingSet,
+	"removeSemanticAttributeClaimMapping":        access.SemanticAttributeAuditActionClaimMappingTombstone,
+}
+
 // Domain semantic-control methods own their audit transaction. The executor
 // wrapper is still required for generated API invocations so the transport
 // command guard observes successful execution without opening a second
-// repository transaction around an already transactional domain call.
+// repository transaction around an already transactional domain call. The
+// contract action is checked here so a TypeSpec drift cannot silently report a
+// different event than the repository appends.
 func executeSemanticAttributeMutation(r *stdhttp.Request, repo access.Repository, operation accessgen.GenCommandOperationID, mutation func() error) error {
 	if _, generated := apigencommand.OperationID(r.Context()); !generated {
 		return mutation()
@@ -441,7 +471,12 @@ func executeSemanticAttributeMutation(r *stdhttp.Request, repo access.Repository
 		return err
 	}
 	return executor.Execute(r.Context(), operation.APIGenOperationID(), apigencommand.Execution{
-		Transactional: func(context.Context, apigencommand.Contract) error { return mutation() },
+		Transactional: func(_ context.Context, contract apigencommand.Contract) error {
+			if durableAction := semanticAttributeOperationAuditActions[operation.APIGenOperationID()]; durableAction != "" && contract.AuditAction != durableAction {
+				return fmt.Errorf("generated audit action %q does not match semantic attribute durable action %q", contract.AuditAction, durableAction)
+			}
+			return mutation()
+		},
 	})
 }
 

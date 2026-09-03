@@ -73,6 +73,47 @@ func (v staticControlVerifier) Verify(context.Context, []byte) (trustedclaims.Ve
 	return v.claims, nil
 }
 
+func TestEffectiveSemanticAttributeAssignmentsRejectsEnvelopeSubjectMismatch(t *testing.T) {
+	now := time.Now().UTC()
+	envelope, err := trustedclaims.Verify(t.Context(), trustedclaims.NewRawEvidence(trustedclaims.SourceOIDC, []byte("signed")), staticControlVerifier{
+		source: trustedclaims.SourceOIDC,
+		claims: trustedclaims.VerifiedClaims{
+			Provider: "corp", Issuer: "https://issuer.example", Audience: "dashboard", Subject: controlSubjectID,
+			IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), TokenFingerprint: "sha256:" + strings.Repeat("a", 64),
+		},
+	}, trustedclaims.VerifyOptions{Now: now})
+	if err != nil {
+		t.Fatalf("verify test envelope: %v", err)
+	}
+
+	// The identity binding is checked before any database access, so a
+	// mismatched envelope cannot contribute claims to another principal.
+	repo := &Repository{}
+	_, err = repo.EffectiveSemanticAttributeAssignments(t.Context(), access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlOwnerID}, envelope)
+	if !errors.Is(err, trustedclaims.ErrInvalidEvidence) {
+		t.Fatalf("mismatched envelope subject error = %v, want invalid evidence", err)
+	}
+}
+
+func hasEffectiveSemanticAttribute(rows []access.EffectiveSemanticAttribute, definitionID string, values []string) bool {
+	for _, row := range rows {
+		if row.DefinitionID != definitionID || len(row.CanonicalValues) != len(values) {
+			continue
+		}
+		match := true
+		for i := range values {
+			if row.CanonicalValues[i] != values[i] {
+				match = false
+				break
+			}
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
 func TestSemanticAttributeControlAuditProjectionOmitsValues(t *testing.T) {
 	assignment := access.SemanticAttributeAssignment{
 		ID: "assignment-1", DefinitionID: "definition-1", DefinitionName: "region",
@@ -176,6 +217,35 @@ func TestSemanticAttributeControlPostgreSQL18LifecycleAndTrust(t *testing.T) {
 	if err != nil || groupAssignment.AssignmentVersion != 1 {
 		t.Fatalf("create group assignment = %#v, err=%v", groupAssignment, err)
 	}
+	groupOnlyDefinition, err := repo.RegisterSemanticAttribute(ctx, access.RegisterSemanticAttributeInput{
+		Name: "group_region", Type: semanticvalue.TypeString, Shape: access.SemanticAttributeScalar,
+		Metadata: access.SemanticAttributeMetadata{Owner: access.SemanticAttributeOwner{Kind: access.SemanticAttributeOwnerInstance}}, Mutation: mutation,
+	})
+	if err != nil {
+		t.Fatalf("register group-only definition: %v", err)
+	}
+	if _, err := repo.SetSemanticAttributeAssignment(ctx, access.SemanticAttributeAssignmentInput{
+		DefinitionID: groupOnlyDefinition.ID, Subject: access.SubjectRef{Kind: access.SubjectKindGroup, ID: controlGroupID}, Values: "north", Mutation: mutation,
+	}); err != nil {
+		t.Fatalf("create group-only assignment: %v", err)
+	}
+	resolvedWithGroup, err := repo.EffectiveDirectSemanticAttributeAssignments(ctx, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID})
+	if err != nil {
+		t.Fatalf("resolve active group assignment: %v", err)
+	}
+	if !hasEffectiveSemanticAttribute(resolvedWithGroup, groupOnlyDefinition.ID, []string{"north"}) {
+		t.Fatalf("active group assignment missing from resolution: %#v", resolvedWithGroup)
+	}
+	if _, err := db.admin.Exec(ctx, `UPDATE access.access_group SET revoked_at=clock_timestamp() WHERE id=$1::uuid`, controlGroupID); err != nil {
+		t.Fatalf("revoke group: %v", err)
+	}
+	resolvedWithoutGroup, err := repo.EffectiveDirectSemanticAttributeAssignments(ctx, access.SubjectRef{Kind: access.SubjectKindPrincipal, ID: controlSubjectID})
+	if err != nil {
+		t.Fatalf("resolve revoked group assignment: %v", err)
+	}
+	if hasEffectiveSemanticAttribute(resolvedWithoutGroup, groupOnlyDefinition.ID, []string{"north"}) {
+		t.Fatalf("revoked group assignment contributed to resolution: %#v", resolvedWithoutGroup)
+	}
 	if _, err := repo.SetSemanticAttributeAssignment(ctx, access.SemanticAttributeAssignmentInput{
 		DefinitionID: definition.ID, Subject: assignment.Subject, Values: []string{"north"}, ExpectedVersion: 1, Mutation: mutation,
 	}); !errors.Is(err, access.ErrSemanticAttributeAssignmentConflict) {
@@ -204,7 +274,7 @@ func TestSemanticAttributeControlPostgreSQL18LifecycleAndTrust(t *testing.T) {
 	now := time.Now().UTC()
 	envelope, err := trustedclaims.Verify(ctx, trustedclaims.NewRawEvidence(trustedclaims.SourceOIDC, []byte("signed")), staticControlVerifier{
 		source: trustedclaims.SourceOIDC,
-		claims: trustedclaims.VerifiedClaims{Provider: "corp", Issuer: "https://issuer.example", Audience: "dashboard", Subject: "subject-1", IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), TokenFingerprint: "sha256:" + strings.Repeat("a", 64), Claims: []trustedclaims.Claim{{Name: claimName, Value: []string{"east"}}}},
+		claims: trustedclaims.VerifiedClaims{Provider: "corp", Issuer: "https://issuer.example", Audience: "dashboard", Subject: controlSubjectID, IssuedAt: now.Add(-time.Minute), ExpiresAt: now.Add(time.Minute), TokenFingerprint: "sha256:" + strings.Repeat("a", 64), Claims: []trustedclaims.Claim{{Name: claimName, Value: []string{"east"}}}},
 	}, trustedclaims.VerifyOptions{Now: now})
 	if err != nil {
 		t.Fatalf("verify test envelope: %v", err)

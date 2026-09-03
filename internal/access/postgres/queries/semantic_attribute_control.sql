@@ -168,7 +168,10 @@ RETURNING mapping_id::text AS mapping_id, source_kind, provider, issuer, audienc
           created_at::text AS created_at, updated_at::text AS updated_at;
 
 -- name: ListPrincipalSemanticAttributeGroups :many
-SELECT group_id::text AS group_id
-FROM access.principal_group
-WHERE principal_id = sqlc.arg(principal_id)::uuid AND revoked_at IS NULL
-ORDER BY group_id;
+SELECT pg.group_id::text AS group_id
+FROM access.principal_group pg
+JOIN access.access_group g ON g.id = pg.group_id
+WHERE pg.principal_id = sqlc.arg(principal_id)::uuid
+  AND pg.revoked_at IS NULL
+  AND g.revoked_at IS NULL
+ORDER BY pg.group_id;

@@ -10592,18 +10592,32 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
+              - name: assignmentVersion
                 sensitivity: internal
-              - name: targetId
+              - name: controlDigest
+                sensitivity: internal
+              - name: controlRevision
+                sensitivity: internal
+              - name: definitionId
+                sensitivity: internal
+              - name: definitionName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: subjectId
                 sensitivity: pii
-              - name: targetKind
+              - name: subjectKind
+                sensitivity: internal
+              - name: tombstoned
+                sensitivity: internal
+              - name: valueCount
                 sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeAssignmentAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.group_assignment_removed
+          success_action: semantic_attribute.assignment.tombstone
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -10920,18 +10934,32 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
+              - name: assignmentVersion
                 sensitivity: internal
-              - name: targetId
+              - name: controlDigest
+                sensitivity: internal
+              - name: controlRevision
+                sensitivity: internal
+              - name: definitionId
+                sensitivity: internal
+              - name: definitionName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: subjectId
                 sensitivity: pii
-              - name: targetKind
+              - name: subjectKind
+                sensitivity: internal
+              - name: tombstoned
+                sensitivity: internal
+              - name: valueCount
                 sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeAssignmentAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.group_assignment_upserted
+          success_action: semantic_attribute.assignment.set
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -20970,18 +20998,32 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
+              - name: assignmentVersion
                 sensitivity: internal
-              - name: targetId
+              - name: controlDigest
+                sensitivity: internal
+              - name: controlRevision
+                sensitivity: internal
+              - name: definitionId
+                sensitivity: internal
+              - name: definitionName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: subjectId
                 sensitivity: pii
-              - name: targetKind
+              - name: subjectKind
+                sensitivity: internal
+              - name: tombstoned
+                sensitivity: internal
+              - name: valueCount
                 sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeAssignmentAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.principal_assignment_removed
+          success_action: semantic_attribute.assignment.tombstone
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -21298,18 +21340,32 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
+              - name: assignmentVersion
                 sensitivity: internal
-              - name: targetId
+              - name: controlDigest
+                sensitivity: internal
+              - name: controlRevision
+                sensitivity: internal
+              - name: definitionId
+                sensitivity: internal
+              - name: definitionName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: subjectId
                 sensitivity: pii
-              - name: targetKind
+              - name: subjectKind
+                sensitivity: internal
+              - name: tombstoned
+                sensitivity: internal
+              - name: valueCount
                 sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeAssignmentAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.principal_assignment_upserted
+          success_action: semantic_attribute.assignment.set
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -59585,18 +59641,30 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
-                sensitivity: internal
               - name: definitionVersion
                 sensitivity: internal
-              - name: lifecycle
+              - name: lifecycleState
                 sensitivity: public
+              - name: ownerId
+                sensitivity: pii
+              - name: ownerKind
+                sensitivity: internal
+              - name: profile
+                sensitivity: internal
+              - name: registryDigest
+                sensitivity: internal
+              - name: registryRevision
+                sensitivity: internal
+              - name: shape
+                sensitivity: internal
+              - name: type
+                sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeDefinitionAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.registered
+          success_action: semantic_attribute.register
         authz_mode: authenticated
         failures:
           - code: SEMANTIC_ATTRIBUTE_CONFLICT
@@ -60175,18 +60243,30 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
-                sensitivity: internal
               - name: definitionVersion
                 sensitivity: internal
-              - name: lifecycle
+              - name: lifecycleState
                 sensitivity: public
+              - name: ownerId
+                sensitivity: pii
+              - name: ownerKind
+                sensitivity: internal
+              - name: profile
+                sensitivity: internal
+              - name: registryDigest
+                sensitivity: internal
+              - name: registryRevision
+                sensitivity: internal
+              - name: shape
+                sensitivity: internal
+              - name: type
+                sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeDefinitionAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.metadata_updated
+          success_action: semantic_attribute.metadata_update
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -60792,20 +60872,36 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
+              - name: audience
                 sensitivity: internal
               - name: claim
                 sensitivity: public
+              - name: controlDigest
+                sensitivity: internal
+              - name: controlRevision
+                sensitivity: internal
+              - name: definitionId
+                sensitivity: internal
+              - name: definitionName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: issuer
+                sensitivity: internal
+              - name: mappingVersion
+                sensitivity: internal
               - name: provider
                 sensitivity: public
               - name: sourceKind
                 sensitivity: public
+              - name: tombstoned
+                sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeClaimMappingAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.claim_mapping_upserted
+          success_action: semantic_attribute.claim_mapping.set
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -61092,20 +61188,36 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
+              - name: audience
                 sensitivity: internal
               - name: claim
                 sensitivity: public
+              - name: controlDigest
+                sensitivity: internal
+              - name: controlRevision
+                sensitivity: internal
+              - name: definitionId
+                sensitivity: internal
+              - name: definitionName
+                sensitivity: internal
+              - name: definitionVersion
+                sensitivity: internal
+              - name: issuer
+                sensitivity: internal
+              - name: mappingVersion
+                sensitivity: internal
               - name: provider
                 sensitivity: public
               - name: sourceKind
                 sensitivity: public
+              - name: tombstoned
+                sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeClaimMappingAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.claim_mapping_removed
+          success_action: semantic_attribute.claim_mapping.tombstone
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -61408,18 +61520,30 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
-                sensitivity: internal
               - name: definitionVersion
                 sensitivity: internal
-              - name: lifecycle
+              - name: lifecycleState
                 sensitivity: public
+              - name: ownerId
+                sensitivity: pii
+              - name: ownerKind
+                sensitivity: internal
+              - name: profile
+                sensitivity: internal
+              - name: registryDigest
+                sensitivity: internal
+              - name: registryRevision
+                sensitivity: internal
+              - name: shape
+                sensitivity: internal
+              - name: type
+                sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeDefinitionAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.disabled
+          success_action: semantic_attribute.disable
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -62005,18 +62129,30 @@ paths:
           guarantee: transactional
           payload:
             fields:
-              - name: attributeName
-                sensitivity: internal
               - name: definitionVersion
                 sensitivity: internal
-              - name: lifecycle
+              - name: lifecycleState
                 sensitivity: public
+              - name: ownerId
+                sensitivity: pii
+              - name: ownerKind
+                sensitivity: internal
+              - name: profile
+                sensitivity: internal
+              - name: registryDigest
+                sensitivity: internal
+              - name: registryRevision
+                sensitivity: internal
+              - name: shape
+                sensitivity: internal
+              - name: type
+                sensitivity: internal
             retention: security
             schema:
               ref: SemanticAttributeDefinitionAuditPayload
             schema_version: 1
           required: true
-          success_action: semantic_attribute.restored
+          success_action: semantic_attribute.enable
         authz_mode: authenticated
         concurrency: if-match
         failures:
@@ -87122,23 +87258,62 @@ components:
     SemanticAttributeAssignmentAuditPayload:
       type: object
       required:
-        - attributeName
-        - targetKind
-        - targetId
+        - definitionId
+        - definitionName
+        - subjectKind
+        - subjectId
+        - definitionVersion
+        - assignmentVersion
+        - controlRevision
+        - valueCount
+        - tombstoned
+        - controlDigest
       properties:
-        attributeName:
+        definitionId:
           type: string
           example: example
-        targetKind:
+        definitionName:
           type: string
           example: example
-        targetId:
+        subjectKind:
+          type: string
+          example: example
+        subjectId:
+          type: string
+          example: example
+        definitionVersion:
+          type: integer
+          format: int64
+          example: 1
+        assignmentVersion:
+          type: integer
+          format: int64
+          example: 1
+        controlRevision:
+          type: integer
+          format: int64
+          example: 1
+        valueCount:
+          type: integer
+          format: int32
+          example: 1
+        tombstoned:
+          type: boolean
+          example: true
+        controlDigest:
           type: string
           example: example
       example:
-        attributeName: example
-        targetId: example
-        targetKind: example
+        assignmentVersion: 1
+        controlDigest: example
+        controlRevision: 1
+        definitionId: example
+        definitionName: example
+        definitionVersion: 1
+        subjectId: example
+        subjectKind: example
+        tombstoned: true
+        valueCount: 1
     SemanticAttributeAssignmentListResponse:
       type: object
       required:
@@ -87298,28 +87473,71 @@ components:
     SemanticAttributeClaimMappingAuditPayload:
       type: object
       required:
-        - attributeName
         - sourceKind
         - provider
+        - issuer
+        - audience
         - claim
+        - definitionId
+        - definitionName
+        - definitionVersion
+        - mappingVersion
+        - controlRevision
+        - tombstoned
+        - controlDigest
       properties:
-        attributeName:
-          type: string
-          example: example
         sourceKind:
           type: string
           example: example
         provider:
           type: string
           example: example
+        issuer:
+          type: string
+          example: example
+        audience:
+          type: string
+          example: example
         claim:
           type: string
           example: example
+        definitionId:
+          type: string
+          example: example
+        definitionName:
+          type: string
+          example: example
+        definitionVersion:
+          type: integer
+          format: int64
+          example: 1
+        mappingVersion:
+          type: integer
+          format: int64
+          example: 1
+        controlRevision:
+          type: integer
+          format: int64
+          example: 1
+        tombstoned:
+          type: boolean
+          example: true
+        controlDigest:
+          type: string
+          example: example
       example:
-        attributeName: example
+        audience: example
         claim: example
+        controlDigest: example
+        controlRevision: 1
+        definitionId: example
+        definitionName: example
+        definitionVersion: 1
+        issuer: example
+        mappingVersion: 1
         provider: example
         sourceKind: example
+        tombstoned: true
     SemanticAttributeClaimMappingListResponse:
       type: object
       required:
@@ -87468,24 +87686,55 @@ components:
     SemanticAttributeDefinitionAuditPayload:
       type: object
       required:
-        - attributeName
-        - lifecycle
+        - profile
+        - type
+        - shape
         - definitionVersion
+        - registryRevision
+        - registryDigest
+        - ownerKind
+        - ownerId
+        - lifecycleState
       properties:
-        attributeName:
+        profile:
           type: string
           example: example
-        lifecycle:
+        type:
+          type: string
+          example: example
+        shape:
           type: string
           example: example
         definitionVersion:
           type: integer
           format: int64
           example: 1
+        registryRevision:
+          type: integer
+          format: int64
+          example: 1
+        registryDigest:
+          type: string
+          example: example
+        ownerKind:
+          type: string
+          example: example
+        ownerId:
+          type: string
+          example: example
+        lifecycleState:
+          type: string
+          example: example
       example:
-        attributeName: example
         definitionVersion: 1
-        lifecycle: example
+        lifecycleState: example
+        ownerId: example
+        ownerKind: example
+        profile: example
+        registryDigest: example
+        registryRevision: 1
+        shape: example
+        type: example
     SemanticAttributeDefinitionListResponse:
       type: object
       required:

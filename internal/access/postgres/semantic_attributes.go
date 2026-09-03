@@ -176,7 +176,7 @@ func (r *Repository) RegisterSemanticAttribute(ctx context.Context, input access
 			if result.Type != input.Type || result.Shape != input.Shape {
 				return access.AuditEventInput{}, fmt.Errorf("%w: %s is registered as %s/%s", access.ErrSemanticAttributeConflict, input.Name, result.Type, result.Shape)
 			}
-			return semanticAttributeAuditEvent(input.Mutation, actorID, "semantic_attribute.register_replay", result, locked.RegistryRevision, locked.RegistryDigest), nil
+			return semanticAttributeAuditEvent(input.Mutation, actorID, access.SemanticAttributeAuditActionRegisterReplay, result, locked.RegistryRevision, locked.RegistryDigest), nil
 		}
 		if !errors.Is(err, pgx.ErrNoRows) {
 			return access.AuditEventInput{}, fmt.Errorf("read semantic attribute definition: %w", err)
@@ -203,7 +203,7 @@ func (r *Repository) RegisterSemanticAttribute(ctx context.Context, input access
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}
-		return semanticAttributeAuditEvent(input.Mutation, actorID, "semantic_attribute.register", result, registry.RegistryRevision, registry.RegistryDigest), nil
+		return semanticAttributeAuditEvent(input.Mutation, actorID, access.SemanticAttributeAuditActionRegister, result, registry.RegistryRevision, registry.RegistryDigest), nil
 	})
 	return result, err
 }
@@ -252,7 +252,7 @@ func (r *Repository) UpdateSemanticAttributeMetadataExpected(ctx context.Context
 			}
 		}
 		if reflect.DeepEqual(result.Metadata, metadata) {
-			return semanticAttributeAuditEvent(input.Mutation, actorID, "semantic_attribute.metadata_replay", result, locked.RegistryRevision, locked.RegistryDigest), nil
+			return semanticAttributeAuditEvent(input.Mutation, actorID, access.SemanticAttributeAuditActionMetadataReplay, result, locked.RegistryRevision, locked.RegistryDigest), nil
 		}
 		updated, err := queries.UpdateSemanticAttributeDefinitionMetadata(ctx, accessdb.UpdateSemanticAttributeDefinitionMetadataParams{
 			OwnerKind: string(metadata.Owner.Kind), OwnerID: metadata.Owner.ID,
@@ -270,7 +270,7 @@ func (r *Repository) UpdateSemanticAttributeMetadataExpected(ctx context.Context
 		if err != nil {
 			return access.AuditEventInput{}, err
 		}
-		return semanticAttributeAuditEvent(input.Mutation, actorID, "semantic_attribute.metadata_update", result, registry.RegistryRevision, registry.RegistryDigest), nil
+		return semanticAttributeAuditEvent(input.Mutation, actorID, access.SemanticAttributeAuditActionMetadataUpdate, result, registry.RegistryRevision, registry.RegistryDigest), nil
 	})
 	return result, err
 }
@@ -309,9 +309,9 @@ func (r *Repository) SetSemanticAttributeEnabledExpected(ctx context.Context, na
 		if expectedVersion > 0 && result.DefinitionVersion != expectedVersion {
 			return access.AuditEventInput{}, fmt.Errorf("%w: semantic attribute %s expected version %d, current %d", access.ErrSemanticAttributeConflict, name, expectedVersion, result.DefinitionVersion)
 		}
-		action := "semantic_attribute.disable"
+		action := access.SemanticAttributeAuditActionDisable
 		if enabled {
-			action = "semantic_attribute.enable"
+			action = access.SemanticAttributeAuditActionEnable
 		}
 		if result.Enabled == enabled {
 			return semanticAttributeAuditEvent(mutation, actorID, action+"_replay", result, locked.RegistryRevision, locked.RegistryDigest), nil

@@ -3,6 +3,7 @@ package http
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -242,6 +243,82 @@ func TestSemanticAttributeHTTPRejectsMixedValuesAndInvalidOwner(t *testing.T) {
 	handler.RegisterSemanticAttribute(response, owner)
 	if response.Code != http.StatusBadRequest {
 		t.Fatalf("owner status=%d body=%s", response.Code, response.Body.String())
+	}
+}
+
+func TestSemanticAttributeHTTPRegisterLocationUsesCanonicalAPIPath(t *testing.T) {
+	repo := semanticAttributeHTTPRepository()
+	request := semanticAttributeRequest(http.MethodPost, "/api/v1/semantic-attributes", `{"name":"cost_center","type":"String","shape":"scalar","metadata":{"ownerKind":"instance","displayName":"Cost center","description":"Cost center"}}`)
+	response := httptest.NewRecorder()
+	semanticAttributeHTTPHandler(repo, true).RegisterSemanticAttribute(response, request)
+	if response.Code != http.StatusCreated {
+		t.Fatalf("register status=%d body=%s", response.Code, response.Body.String())
+	}
+	if got := response.Header().Get("Location"); got != "/api/v1/semantic-attributes/cost_center" {
+		t.Fatalf("register Location=%q", got)
+	}
+}
+
+func TestSemanticAttributeHTTPPreviewUsesRequestedAssignmentDelta(t *testing.T) {
+	tests := []struct {
+		name            string
+		assignmentValue string
+		requestedValues string
+		targetKind      access.SubjectKind
+		targetID        string
+		principalCount  int32
+		groupCount      int32
+	}{
+		{name: "add", requestedValues: `[{"type":"String","stringValue":"us"}]`, principalCount: 1},
+		{name: "no-op", assignmentValue: "us", requestedValues: `[{"type":"String","stringValue":"us"}]`},
+		{name: "change", assignmentValue: "us", requestedValues: `[{"type":"String","stringValue":"eu"}]`, principalCount: 1},
+		{name: "remove", assignmentValue: "us", requestedValues: `[]`, principalCount: 1},
+		{name: "group change", assignmentValue: "us", requestedValues: `[{"type":"String","stringValue":"eu"}]`, targetKind: access.SubjectKindGroup, groupCount: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			repo := semanticAttributeHTTPRepository()
+			targetKind, targetID := test.targetKind, test.targetID
+			if targetKind == "" {
+				targetKind = access.SubjectKindPrincipal
+			}
+			if targetID == "" {
+				targetID = string(targetKind) + "-1"
+			}
+			if test.assignmentValue != "" {
+				values, digest, err := access.CanonicalSemanticAttributeValues(repo.definition, test.assignmentValue)
+				if err != nil {
+					t.Fatal(err)
+				}
+				repo.assignment = access.SemanticAttributeAssignment{ID: "assignment-1", DefinitionID: repo.definition.ID, DefinitionName: repo.definition.Name, Subject: access.SubjectRef{Kind: targetKind, ID: targetID}, Type: repo.definition.Type, Shape: repo.definition.Shape, CanonicalValues: values, ValueDigest: digest, AssignmentVersion: 1}
+			}
+			request := semanticAttributeRequest(http.MethodPost, "/api/v1/semantic-attributes/region/impact-preview", `{"targetKind":"`+string(targetKind)+`","targetId":"`+targetID+`","values":`+test.requestedValues+`}`, "attribute", "region")
+			response := httptest.NewRecorder()
+			semanticAttributeHTTPHandler(repo, true).PreviewSemanticAttributeImpact(response, request)
+			if response.Code != http.StatusOK {
+				t.Fatalf("preview status=%d body=%s", response.Code, response.Body.String())
+			}
+			var body struct {
+				AffectedPrincipalCount int32 `json:"affectedPrincipalCount"`
+				AffectedGroupCount     int32 `json:"affectedGroupCount"`
+			}
+			if err := json.NewDecoder(response.Body).Decode(&body); err != nil {
+				t.Fatal(err)
+			}
+			if body.AffectedPrincipalCount != test.principalCount || body.AffectedGroupCount != test.groupCount {
+				t.Fatalf("preview counts = (%d, %d), want (%d, %d)", body.AffectedPrincipalCount, body.AffectedGroupCount, test.principalCount, test.groupCount)
+			}
+		})
+	}
+}
+
+func TestSemanticAttributeHTTPPreviewRequiresValues(t *testing.T) {
+	repo := semanticAttributeHTTPRepository()
+	request := semanticAttributeRequest(http.MethodPost, "/api/v1/semantic-attributes/region/impact-preview", `{"targetKind":"principal","targetId":"principal-1"}`, "attribute", "region")
+	response := httptest.NewRecorder()
+	semanticAttributeHTTPHandler(repo, true).PreviewSemanticAttributeImpact(response, request)
+	if response.Code != http.StatusBadRequest {
+		t.Fatalf("preview omitted values status=%d body=%s", response.Code, response.Body.String())
 	}
 }
 

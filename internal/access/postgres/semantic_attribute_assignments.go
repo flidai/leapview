@@ -66,7 +66,7 @@ func (r *Repository) setSemanticAttributeAssignmentCore(ctx context.Context, db 
 			return access.SemanticAttributeAssignment{}, access.AuditEventInput{}, fmt.Errorf("%w: expected %d, current %d", access.ErrSemanticAttributeAssignmentConflict, input.ExpectedVersion, current.AssignmentVersion)
 		}
 		if current.ValueDigest == digest && reflect.DeepEqual(current.CanonicalValues, values) {
-			return current, semanticAttributeControlAudit(input.Mutation, "semantic_attribute.assignment.replay", current, state), nil
+			return current, semanticAttributeControlAudit(input.Mutation, access.SemanticAttributeAuditActionAssignmentReplay, current, state), nil
 		}
 		updated, updateErr := queries.UpdateSemanticAttributeAssignment(ctx, accessdb.UpdateSemanticAttributeAssignmentParams{CanonicalValues: values, ValueDigest: digest, AssignmentID: mustPGUUID(current.ID), ExpectedVersion: input.ExpectedVersion})
 		if updateErr != nil {
@@ -80,7 +80,7 @@ func (r *Repository) setSemanticAttributeAssignmentCore(ctx context.Context, db 
 		if advanceErr != nil {
 			return access.SemanticAttributeAssignment{}, access.AuditEventInput{}, advanceErr
 		}
-		return result, semanticAttributeControlAudit(input.Mutation, "semantic_attribute.assignment.set", result, next), nil
+		return result, semanticAttributeControlAudit(input.Mutation, access.SemanticAttributeAuditActionAssignmentSet, result, next), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return access.SemanticAttributeAssignment{}, access.AuditEventInput{}, err
@@ -101,7 +101,7 @@ func (r *Repository) setSemanticAttributeAssignmentCore(ctx context.Context, db 
 	if err != nil {
 		return access.SemanticAttributeAssignment{}, access.AuditEventInput{}, err
 	}
-	return result, semanticAttributeControlAudit(input.Mutation, "semantic_attribute.assignment.set", result, next), nil
+	return result, semanticAttributeControlAudit(input.Mutation, access.SemanticAttributeAuditActionAssignmentSet, result, next), nil
 }
 
 func assignmentFromActive(row accessdb.GetActiveSemanticAttributeAssignmentRow) access.SemanticAttributeAssignment {
@@ -178,7 +178,7 @@ func tombstoneSemanticAttributeAssignmentCore(ctx context.Context, db DBTX, id s
 	if err != nil {
 		return access.SemanticAttributeAssignment{}, access.AuditEventInput{}, err
 	}
-	return result, semanticAttributeControlAudit(mutation, "semantic_attribute.assignment.tombstone", result, next), nil
+	return result, semanticAttributeControlAudit(mutation, access.SemanticAttributeAuditActionAssignmentTombstone, result, next), nil
 }
 
 func TombstoneSemanticAttributeAssignmentTx(ctx context.Context, tx Tx, id string, expected int64, mutation access.SemanticAttributeMutationContext) (access.SemanticAttributeAssignment, error) {

@@ -63,7 +63,7 @@ func (r *Repository) setTrustedClaimMappingCore(ctx context.Context, db DBTX, in
 		if input.ExpectedVersion != current.MappingVersion {
 			return access.TrustedClaimMapping{}, access.AuditEventInput{}, fmt.Errorf("%w: expected %d, current %d", access.ErrSemanticAttributeMappingConflict, input.ExpectedVersion, current.MappingVersion)
 		}
-		return current, semanticAttributeMappingAudit(input.Mutation, "semantic_attribute.claim_mapping.replay", current, state), nil
+		return current, semanticAttributeMappingAudit(input.Mutation, access.SemanticAttributeAuditActionClaimMappingReplay, current, state), nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
 		return access.TrustedClaimMapping{}, access.AuditEventInput{}, err
@@ -84,7 +84,7 @@ func (r *Repository) setTrustedClaimMappingCore(ctx context.Context, db DBTX, in
 	if err != nil {
 		return access.TrustedClaimMapping{}, access.AuditEventInput{}, err
 	}
-	return result, semanticAttributeMappingAudit(input.Mutation, "semantic_attribute.claim_mapping.set", result, next), nil
+	return result, semanticAttributeMappingAudit(input.Mutation, access.SemanticAttributeAuditActionClaimMappingSet, result, next), nil
 }
 
 func (r *Repository) SetTrustedClaimMapping(ctx context.Context, input access.TrustedClaimMappingInput) (result access.TrustedClaimMapping, err error) {
@@ -152,7 +152,7 @@ func tombstoneTrustedClaimMappingCore(ctx context.Context, db DBTX, id string, e
 	if err != nil {
 		return access.TrustedClaimMapping{}, access.AuditEventInput{}, err
 	}
-	return result, semanticAttributeMappingAudit(mutation, "semantic_attribute.claim_mapping.tombstone", result, next), nil
+	return result, semanticAttributeMappingAudit(mutation, access.SemanticAttributeAuditActionClaimMappingTombstone, result, next), nil
 }
 
 func TombstoneTrustedClaimMappingTx(ctx context.Context, tx Tx, id string, expected int64, mutation access.SemanticAttributeMutationContext) (access.TrustedClaimMapping, error) {
@@ -201,6 +201,15 @@ func (r *Repository) EffectiveDirectSemanticAttributeAssignments(ctx context.Con
 func (r *Repository) EffectiveSemanticAttributeAssignments(ctx context.Context, subject access.SubjectRef, envelope trustedclaims.Envelope) ([]access.EffectiveSemanticAttribute, error) {
 	if !envelope.Valid() {
 		return nil, fmt.Errorf("%w: trusted claim envelope is invalid", trustedclaims.ErrInvalidEvidence)
+	}
+	if err := access.ValidateSemanticAttributeSubject(subject); err != nil {
+		return nil, err
+	}
+	if subject.Kind != access.SubjectKindPrincipal {
+		return nil, fmt.Errorf("%w: trusted claims require a principal subject", trustedclaims.ErrInvalidEvidence)
+	}
+	if envelope.Subject() != subject.ID {
+		return nil, fmt.Errorf("%w: trusted claim subject does not match requested principal", trustedclaims.ErrInvalidEvidence)
 	}
 	now := time.Now().UTC()
 	if now.Before(envelope.NotBefore()) {

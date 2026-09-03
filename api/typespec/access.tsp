@@ -1173,6 +1173,8 @@ model SemanticAttributeClaimMappingListResponse {
 model SemanticAttributeImpactPreviewRequest {
   targetKind: SemanticAttributeAssignmentTargetKindValue;
   targetId: string;
+  // An empty values array previews removal of the active assignment. A
+  // non-empty array previews adding or changing the target's assignment.
   values: SemanticAttributeValue[];
 }
 
@@ -1200,36 +1202,80 @@ model SemanticAttributeAssignmentNotFoundFailure {}
 @apigen.failureDefinition(#{ kind: "not_found", statusCode: 404, code: "SEMANTIC_ATTRIBUTE_CLAIM_MAPPING_NOT_FOUND", publicDetail: "Semantic attribute claim mapping was not found." })
 model SemanticAttributeClaimMappingNotFoundFailure {}
 
+// These payloads mirror the repository's durable audit metadata projections.
+// Assignment values and value digests are intentionally absent.
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model SemanticAttributeDefinitionAuditPayload {
   @apigen.auditInternal
-  attributeName: string;
-  @apigen.auditPublic
-  lifecycle: string;
+  profile: string;
+  @apigen.auditInternal
+  type: string;
+  @apigen.auditInternal
+  shape: string;
   @apigen.auditInternal
   definitionVersion: int64;
+  @apigen.auditInternal
+  registryRevision: int64;
+  @apigen.auditInternal
+  registryDigest: string;
+  @apigen.auditInternal
+  ownerKind: string;
+  @apigen.auditPii
+  ownerId: string;
+  @apigen.auditPublic
+  lifecycleState: string;
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model SemanticAttributeAssignmentAuditPayload {
   @apigen.auditInternal
-  attributeName: string;
+  definitionId: string;
   @apigen.auditInternal
-  targetKind: string;
+  definitionName: string;
+  @apigen.auditInternal
+  subjectKind: string;
   @apigen.auditPii
-  targetId: string;
+  subjectId: string;
+  @apigen.auditInternal
+  definitionVersion: int64;
+  @apigen.auditInternal
+  assignmentVersion: int64;
+  @apigen.auditInternal
+  controlRevision: int64;
+  @apigen.auditInternal
+  valueCount: int32;
+  @apigen.auditInternal
+  tombstoned: boolean;
+  @apigen.auditInternal
+  controlDigest: string;
 }
 
 @apigen.auditSchema(#{ schemaVersion: 1, retention: "security" })
 model SemanticAttributeClaimMappingAuditPayload {
-  @apigen.auditInternal
-  attributeName: string;
   @apigen.auditPublic
   sourceKind: string;
   @apigen.auditPublic
   provider: string;
+  @apigen.auditInternal
+  issuer: string;
+  @apigen.auditInternal
+  audience: string;
   @apigen.auditPublic
   claim: string;
+  @apigen.auditInternal
+  definitionId: string;
+  @apigen.auditInternal
+  definitionName: string;
+  @apigen.auditInternal
+  definitionVersion: int64;
+  @apigen.auditInternal
+  mappingVersion: int64;
+  @apigen.auditInternal
+  controlRevision: int64;
+  @apigen.auditInternal
+  tombstoned: boolean;
+  @apigen.auditInternal
+  controlDigest: string;
 }
 
 alias ListSemanticAttributeDefinitionsOK = OkJson<SemanticAttributeDefinitionListResponse>;
@@ -1253,7 +1299,10 @@ interface SemanticAttributeDefinitions {
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.registered" })
+  // The repository's durable audit event is semantic_attribute.register.
+  // Replays use a distinct durable replay action but retain this canonical
+  // operation action in the generated contract.
+  @apigen.command(#{ auditAction: "semantic_attribute.register" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeConflictFailure)
   @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
@@ -1270,7 +1319,7 @@ interface SemanticAttributeDefinitions {
   @patch
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.metadata_updated" })
+  @apigen.command(#{ auditAction: "semantic_attribute.metadata_update" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
@@ -1280,7 +1329,7 @@ interface SemanticAttributeDefinitions {
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.disabled" })
+  @apigen.command(#{ auditAction: "semantic_attribute.disable" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
   disableSemanticAttribute(@path @apigen.target attribute: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): GetSemanticAttributeDefinitionOK | CommonErrors;
@@ -1289,7 +1338,7 @@ interface SemanticAttributeDefinitions {
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.restored" })
+  @apigen.command(#{ auditAction: "semantic_attribute.enable" })
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeDefinitionAuditPayload)
   restoreSemanticAttribute(@path @apigen.target attribute: string, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("If-Match") ifMatch: string): GetSemanticAttributeDefinitionOK | CommonErrors;
@@ -1309,7 +1358,7 @@ interface PrincipalSemanticAttributeAssignments {
   @put
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.principal_assignment_upserted" })
+  @apigen.command(#{ auditAction: "semantic_attribute.assignment.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
@@ -1319,7 +1368,7 @@ interface PrincipalSemanticAttributeAssignments {
   @delete
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.principal_assignment_removed" })
+  @apigen.command(#{ auditAction: "semantic_attribute.assignment.tombstone" })
   @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
   removePrincipalSemanticAttributeAssignment(@path @apigen.target principal: string, @path attribute: string, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;
@@ -1339,7 +1388,7 @@ interface GroupSemanticAttributeAssignments {
   @put
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.group_assignment_upserted" })
+  @apigen.command(#{ auditAction: "semantic_attribute.assignment.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
@@ -1349,7 +1398,7 @@ interface GroupSemanticAttributeAssignments {
   @delete
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.group_assignment_removed" })
+  @apigen.command(#{ auditAction: "semantic_attribute.assignment.tombstone" })
   @apigen.failsWith(SemanticAttributeAssignmentNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeAssignmentAuditPayload)
   removeGroupSemanticAttributeAssignment(@path @apigen.target group: string, @path attribute: string, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;
@@ -1368,7 +1417,7 @@ interface SemanticAttributeClaimMappings {
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping_upserted" })
+  @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping.set" })
   @apigen.failsWith(SemanticAttributeInvalidFailure)
   @apigen.failsWith(SemanticAttributeNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeClaimMappingAuditPayload)
@@ -1378,7 +1427,7 @@ interface SemanticAttributeClaimMappings {
   @delete
   @apigen.authz(#{ mode: "authenticated" })
   @extension("x-leapview-object-scope", "platform")
-  @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping_removed" })
+  @apigen.command(#{ auditAction: "semantic_attribute.claim_mapping.tombstone" })
   @apigen.failsWith(SemanticAttributeClaimMappingNotFoundFailure)
   @apigen.auditPayload(SemanticAttributeClaimMappingAuditPayload)
   removeSemanticAttributeClaimMapping(@path @apigen.target attribute: string, @path mapping: string, @header("If-Match") ifMatch: string): EmptyResponse | CommonErrors;

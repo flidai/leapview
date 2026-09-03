@@ -3,6 +3,7 @@ package http
 import (
 	"errors"
 	stdhttp "net/http"
+	"net/url"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
@@ -113,7 +114,7 @@ func (h Handler) RegisterSemanticAttribute(w stdhttp.ResponseWriter, r *stdhttp.
 		writeSemanticAttributeError(w, err)
 		return
 	}
-	w.Header().Set("Location", "/semantic-attributes/"+row.Name)
+	w.Header().Set("Location", "/api/v1/semantic-attributes/"+url.PathEscape(row.Name))
 	w.Header().Set("ETag", semanticAttributeDefinitionETag(row))
 	writeJSON(w, stdhttp.StatusCreated, semanticAttributeDefinitionDTO(row))
 }
