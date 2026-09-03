@@ -313,12 +313,13 @@ for (const viewport of [
           titles: rows.map((row) => row.querySelector('.entity-list-title')?.textContent?.trim()),
           descriptionCount: rows.filter((row) => row.querySelector('.entity-list-description')).length,
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
-          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
-          ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[0]?.querySelector('lv-user-avatar'))),
-          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
-          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
-          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.getAttribute('title')),
-          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
+          dataModels: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+          owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
+          ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
+          statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.getAttribute('title')),
+          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim()),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-badge')?.getAttribute('aria-label') ?? ''),
@@ -351,7 +352,8 @@ for (const viewport of [
         hrefs: ['/dashboards/executive-sales', '/dashboards/operations-health', '/dashboards/inventory-risk', '/dashboards/customer-detail'],
         titles: ['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'],
         descriptionCount: 0,
-        headers: ['Dashboard', 'Owner', 'Status', 'Updated', 'Last opened', 'Actions'],
+        headers: ['Dashboard', 'Data model', 'Owner', 'Status', 'Updated', 'Last opened', 'Actions'],
+        dataModels: ['Olist', 'Operations', 'Inventory', 'Customers'],
         owners: ['Analytics', 'Operations', 'Supply chain', '—'],
         statuses: ['Published', 'Published', 'Published', 'Published'],
         updated: ['Aug 12', 'Aug 11', 'Aug 10', '—'],
@@ -520,7 +522,35 @@ test('My dashboards removes the redundant owner column', async () => {
       await element.updateComplete
       return Array.from(element.shadowRoot.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim())
     })
-    expect(headers).toEqual(['Dashboard', 'Status', 'Updated', 'Last opened', 'Actions'])
+    expect(headers).toEqual(['Dashboard', 'Data model', 'Status', 'Updated', 'Last opened', 'Actions'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('data model is a dedicated sortable column instead of dashboard subtitle metadata', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const rows = Array.from(list.querySelectorAll('tbody tr.entity-list-table-row')) as HTMLTableRowElement[]
+      return {
+        headers: Array.from(list.querySelectorAll('thead th')).map((header: Element) => header.textContent?.trim()),
+        models: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+        subtitles: rows.map((row) => row.querySelector('.entity-list-meta')?.textContent?.trim() ?? ''),
+        sortable: Boolean(list.querySelector('button[aria-label="Sort by Data model"]')),
+      }
+    })
+
+    expect(state).toEqual({
+      headers: ['Dashboard', 'Data model', 'Owner', 'Status', 'Updated', 'Last opened', 'Actions'],
+      models: ['Olist', 'Operations', 'Inventory', 'Customers'],
+      subtitles: ['', '', '', ''],
+      sortable: true,
+    })
   } finally {
     await page.close()
   }
@@ -540,7 +570,7 @@ test('owned dashboards use the signed-in display name and avatar instead of You'
           : dashboard),
       } })
       await element.updateComplete
-      const cell = element.shadowRoot.querySelector('.entity-list-cell') as HTMLElement
+      const cell = element.shadowRoot.querySelectorAll('.entity-list-cell')[1] as HTMLElement
       const avatar = cell.querySelector('lv-user-avatar') as any
       return {
         text: cell.textContent?.trim(),
@@ -593,7 +623,7 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
         models: Array.from(model.options).map((option) => option.textContent?.trim()),
         visible: Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim()),
         activeFilters: root.querySelector('.catalog-filter-count')?.textContent?.trim(),
-        sources: Array.from(list.querySelectorAll('.entity-list-meta')).map((source: Element) => source.textContent?.trim()),
+        dataModels: Array.from(list.querySelectorAll('.entity-list-cell:first-of-type')).map((model: Element) => model.textContent?.trim()),
         featured: Array.from(list.querySelectorAll('.entity-list-badge-featured')).map((badge: Element) => badge.textContent?.trim()),
         popularity: Array.from(list.querySelectorAll('.entity-list-badge-popularity')).map((badge: Element) => badge.textContent?.trim()),
         hasRedundantFavoritesFilter: Array.from(root.querySelectorAll('.catalog-filter-check')).some((label: Element) => label.textContent?.includes('Favorites only')),
@@ -605,7 +635,7 @@ test('catalog discovery keeps source, sorting, and filters in one compact toolba
       models: ['All data models', 'Customers', 'Inventory', 'Olist', 'Operations'],
       visible: ['Operations Health'],
       activeFilters: '1',
-      sources: ['Operations model'],
+      dataModels: ['Operations'],
       featured: ['Featured'],
       popularity: ['Top 20%'],
       hasRedundantFavoritesFilter: false,
@@ -674,8 +704,8 @@ test('Last opened uses persisted personal activity with an exact timestamp toolt
       await list.updateComplete
       return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
         title: row.querySelector('.entity-list-title')?.textContent?.trim(),
-        value: row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim(),
-        tooltip: row.querySelectorAll('.entity-list-cell')[3]?.getAttribute('title'),
+        value: row.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim(),
+        tooltip: row.querySelectorAll('.entity-list-cell')[4]?.getAttribute('title'),
       }))
     })
 
@@ -790,7 +820,7 @@ test('updated dates include the year when it differs from the current year', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const updated = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim(),
+      element.shadowRoot.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim(),
     )
 
     expect(await updated()).toBe('Aug 12, 2026')

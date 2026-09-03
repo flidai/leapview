@@ -346,7 +346,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             id: dashboard.id,
             dashboardId: dashboard.dashboardId,
             title: dashboard.title,
-            meta: semanticModelLabel(dashboard.semanticModel),
             href: dashboard.href,
             icon: 'dashboard',
             favorite: this.favoriteDashboardIDs.includes(dashboard.id),
@@ -365,6 +364,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconTreatment: 'framed' as const,
             actions: [{ label: `More actions for ${dashboard.title}`, action: 'open-dashboard-menu', icon: 'more' as const }],
             columns: {
+              dataModel: semanticModelTitle(dashboard.semanticModel),
               owner: owner.name || '—',
               status: dashboardStatusLabel(dashboard.status),
               updated: formatCompactDate(dashboard.updatedAt || dashboard.lastRefreshedAt),
@@ -372,6 +372,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             },
             people: owner.name ? { owner } : undefined,
             sortValues: {
+              dataModel: semanticModelTitle(dashboard.semanticModel),
               owner: owner.name,
               status: dashboardStatusRank(dashboard.status),
               updated: dashboard.updatedAt || dashboard.lastRefreshedAt || '',
@@ -404,19 +405,21 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private catalogColumns() {
     if (this.catalogScope === 'mine') {
       return [
-        { id: 'name', label: 'Dashboard', width: '41%' },
-        { id: 'status', label: 'Status', width: '22%', render: 'quiet-status' as const },
-        { id: 'updated', label: 'Updated', width: '16%' },
-        { id: 'lastOpened', label: 'Last opened', width: '16%' },
+        { id: 'name', label: 'Dashboard', width: '36%' },
+        { id: 'dataModel', label: 'Data model', width: '18%' },
+        { id: 'status', label: 'Status', width: '19%', render: 'quiet-status' as const },
+        { id: 'updated', label: 'Updated', width: '11%' },
+        { id: 'lastOpened', label: 'Last opened', width: '11%' },
         { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
       ]
     }
     return [
-      { id: 'name', label: 'Dashboard', width: '29%' },
-      { id: 'owner', label: 'Owner', width: '17%', render: 'person' as const },
-      { id: 'status', label: 'Status', width: '21%', render: 'quiet-status' as const },
-      { id: 'updated', label: 'Updated', width: '13%' },
-      { id: 'lastOpened', label: 'Last opened', width: '15%' },
+      { id: 'name', label: 'Dashboard', width: '28%' },
+      { id: 'dataModel', label: 'Data model', width: '14%' },
+      { id: 'owner', label: 'Owner', width: '16%', render: 'person' as const },
+      { id: 'status', label: 'Status', width: '16%', render: 'quiet-status' as const },
+      { id: 'updated', label: 'Updated', width: '10%' },
+      { id: 'lastOpened', label: 'Last opened', width: '11%' },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
     ]
   }
