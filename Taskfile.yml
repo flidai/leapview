@@ -370,6 +370,17 @@ tasks:
     cmds:
       - go test -p 1 -tags=duckdb_arrow ./internal/analytics/resultcache ./internal/analytics/materialize -run '^$' -bench '^BenchmarkCacheCutover' -benchmem -benchtime=500ms -count=10 -cpu=1
 
+  bench:cache:admission:quick:
+    desc: Smoke-test the FAI-535 LRU and frequency-aware admission comparison
+    cmds:
+      - go test -p 1 ./internal/analytics/resultcache -run '^TestAdmissionWorkload' -bench '^BenchmarkCacheAdmissionWorkload$' -benchmem -benchtime=100ms -count=3 -cpu=1
+
+  bench:cache:admission:full:
+    desc: Capture comparison-grade FAI-535 cache admission evidence
+    cmds:
+      - go test -p 1 ./internal/analytics/resultcache -run '^TestAdmissionWorkload' -bench '^BenchmarkCacheAdmissionWorkload/lru$' -benchmem -benchtime=500ms -count=10 -cpu=1
+      - go test -p 1 ./internal/analytics/resultcache -run '^TestAdmissionWorkload' -bench '^BenchmarkCacheAdmissionWorkload/frequency_aware$' -benchmem -benchtime=500ms -count=10 -cpu=1
+
   bench:datastar-bridge:
     desc: Benchmark legacy, Ignition, and DatastarLit bridges in Chromium
     deps:

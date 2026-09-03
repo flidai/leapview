@@ -194,6 +194,64 @@ These are rollout gates, not new cache semantics or alerting rules. Persistent
 production alerts and any threshold adjustment require separately reviewed
 operational evidence.
 
+### Frequency-aware cache admission evaluation
+
+FAI-535 evaluates whether a frequency-aware admission guard should protect
+frequently reused dashboard results from bursts of one-off, high-cardinality
+queries. The evaluation does not change the production cache. LeapView keeps
+its exact synchronous stores, LRU eviction, Arrow ownership, per-runtime and
+node budgets, cutover lifecycle, and existing store outcomes.
+
+The repository-owned workload calibrates its LRU model against the production
+`resultcache.Pool`, then compares that model with an admission-only candidate
+using a bounded, aging four-row frequency sketch. Both lanes retain the same
+LRU victim order so the workload isolates admission rather than also claiming
+sampled-LFU behavior. The fixed trace warms two eight-visual dashboard bundles
+in separate runtime scopes, interleaves 5,120 unique requests of four different
+sizes, and reloads both dashboards twice after every burst. A cache hit has a
+fixed 0.2 ms modeled cost; KPI and chart misses have fixed 35 ms and 90 ms
+costs. The p95 result is therefore a deterministic workload model, not an
+end-to-end wall-clock measurement.
+
+Run the bounded smoke check with:
+
+```sh
+task bench:cache:admission:quick
+```
+
+Capture ten 500 ms samples at one logical CPU with:
+
+```sh
+task bench:cache:admission:full
+```
+
+The initial comparison was captured on Linux amd64 with Go 1.25.14 and one
+logical AMD EPYC-Rome CPU. Both lanes executed the same 7,936-request trace.
+
+| Measure | Exact LRU | Frequency-aware model | Interpretation |
+| --- | ---: | ---: | --- |
+| Hit rate | 19.15% | 35.28% | +16.13 percentage points on the fixed trace |
+| Byte-hit rate | 10.95% | 20.16% | +9.21 percentage points on the fixed trace |
+| Modeled p95 initial dashboard latency | 610.0 ms | 1.6 ms | Hot dashboard bundles survive the one-off bursts |
+| Admission rejections per trace | 0 | 4,763 | Rejections are confined to the evaluation model |
+| Bounded policy counters | 0 B | 2,048 B | Fixed by the configured node-entry bound |
+| Mean model elapsed time over ten samples | 5.969 ms/op | 6.107 ms/op | Candidate mean is 2.3% higher, but elapsed ranges overlap; no CPU regression is claimed |
+| Model allocated bytes | 1,232,964 B/op | 620,662 B/op | The model avoids transient list-entry churn for rejected inserts |
+| Model allocations | 40,077 allocs/op | 26,818 allocs/op | The model avoids transient list-entry churn for rejected inserts |
+
+The decision is **not to adopt the policy in production from this evidence**.
+The trace demonstrates that frequency-aware admission can protect hot bundles
+under the targeted adversarial workload, and a separate cold-only trace checks
+that equal-frequency requests preserve LRU retention. It does not measure real
+dashboard latency, process CPU time, process RSS, Arrow allocation, or the
+production pool's concurrent overhead. It also does not qualify production
+frequency accounting for coalesced waiters and second-chance lookups, stable
+Arrow versus generation-byte entries, cross-scope node pressure, invalidation,
+or serving-generation cutover. A production proposal must resolve those
+semantics and repeat the comparison through the real concurrent pool before it
+can add a rejection outcome or change retention behavior. Until then, this
+benchmark is evidence for the hypothesis only, not a rollout gate.
+
 ## Structured logs
 
 Collect structured application logs from the service output. Preserve timestamp, severity, operation, route, status, duration, principal where safe, project, environment, request/correlation ID, deployment ID, revision digest, and refresh generation when available.
