@@ -43,7 +43,7 @@ func validatePublicationCommandAuditContracts() error {
 		command := generated.Command
 		if command.AuthzMode != "authenticated" || generated.AuthzMode != command.AuthzMode ||
 			!command.Audit.Required || command.Audit.SuccessAction == "" || command.Target == nil ||
-			command.Audit.Guarantee != "transactional" || command.Target.Type != "project" || command.Target.Parameter != "project" {
+			command.Audit.Guarantee != "transactional" || command.Target.Type != "publication" || command.Target.Parameter != "publication" {
 			return fmt.Errorf("dashboard publication operation %q has an invalid generated command audit contract", operationID)
 		}
 	}

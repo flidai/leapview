@@ -898,15 +898,43 @@ func TestAPIGenRoutesCoverHeadlessAPINotUITransports(t *testing.T) {
 		"/api/v1/principals",
 		"/api/v1/principals/{principal}",
 		"/api/v1/principals/{principal}/password-reset",
-		"/api/v1/projects/{project}/roles",
+		"/api/v1/roles",
+		"/api/v1/effective-capabilities",
+		"/api/v1/authorization-checks",
 		"/api/v1/groups",
 		"/api/v1/groups/{group}",
 		"/api/v1/groups/{group}/members",
 		"/api/v1/groups/{group}/members/{principal}",
-		"/api/v1/projects/{project}/audit-events",
+		"/api/v1/access/audit-events",
+		"/api/v1/audit-events",
+		"/api/v1/grants",
+		"/api/v1/grants/{grant}",
+		"/api/v1/data-policies",
+		"/api/v1/data-policies/{policy}",
+		"/api/v1/dashboard-publications",
+		"/api/v1/dashboard-publications/{publication}",
+		"/api/v1/dashboard-publications/{publication}/suspend",
+		"/api/v1/dashboard-publications/{publication}/resume",
+		"/api/v1/dashboard-publications/{publication}/rotate",
 	} {
 		if _, ok := paths[path]; !ok {
 			t.Fatalf("generated OpenAPI missing path %s", path)
+		}
+	}
+	for _, path := range []string{
+		"/api/v1/projects/{project}/roles",
+		"/api/v1/projects/{project}/effective-capabilities",
+		"/api/v1/projects/{project}/authorization-checks",
+		"/api/v1/projects/{project}/grants",
+		"/api/v1/projects/{project}/grants/{grant}",
+		"/api/v1/projects/{project}/data-policies",
+		"/api/v1/projects/{project}/data-policies/{policy}",
+		"/api/v1/projects/{project}/audit-events",
+		"/api/v1/projects/{project}/dashboard-publications",
+		"/api/v1/projects/{project}/dashboard-publications/{publication}",
+	} {
+		if _, ok := paths[path]; ok {
+			t.Fatalf("instance-scoped API retained legacy project path %s", path)
 		}
 	}
 
@@ -981,6 +1009,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 		"listAgentEvents":                  true,
 		"listAgentMessages":                true,
 		"listAgentRuns":                    true,
+		"listAuditEvents":                  true,
 		"listCurrentAPITokens":             true,
 		"listCurrentAuthoringSessions":     true,
 		"listCurrentEffectiveCapabilities": true,
@@ -1360,7 +1389,7 @@ func TestAPIGenListOperationsUseStandardEnvelope(t *testing.T) {
 	}{
 		{"/api/v1/dashboards", "get"},
 		{"/api/v1/projects/{project}/connections", "get"},
-		{"/api/v1/projects/{project}/audit-events", "get"},
+		{"/api/v1/access/audit-events", "get"},
 		{"/api/v1/projects/{project}/refresh-runs", "get"},
 		{"/api/v1/projects/{project}/releases", "get"},
 		{"/api/v1/projects/{project}/deployments", "get"},

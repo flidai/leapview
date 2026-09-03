@@ -284,6 +284,48 @@ func TestAPIGenServerBoundResourceRouteUsesActiveProject(t *testing.T) {
 	}
 }
 
+func TestAPIGenInstanceControlRouteUsesActiveProjectInternally(t *testing.T) {
+	const principalID = "principal_alice"
+	projectID := projectgraph.ResourceID("project_demo")
+	identity, snapshot := apigenSnapshot(t, principalID, "", projectID, projectgraph.KindProject, true, false)
+	module := browserGuardModule(browserGuardRepository{}, Principal{ID: principalID}, true)
+	module.SetCurrentEffectiveCapabilities(func(context.Context, string) ([]access.Capability, error) {
+		subject, err := access.NewSubjectRef(access.SubjectKindPrincipal, principalID)
+		if err != nil {
+			return nil, err
+		}
+		return snapshot.EffectiveCapabilities([]access.SubjectRef{subject})
+	})
+	contract := APIGenOperationContract{
+		OperationID: "deleteGrant", Method: http.MethodDelete,
+		Path: "/api/v1/grants/{grant}", Protected: true, AuthzMode: "privilege",
+		Command: &APIGenCommandContract{
+			AuthzMode: "privilege", Privilege: "PROJECT_ADMIN",
+			Target: &APIGenCommandTarget{Parameter: "grant", Type: "grant"},
+		},
+		Extensions: map[string]any{apiGenObjectScopeExtension: "instance"},
+	}
+	authorizer, err := module.APIGenAuthorizer(
+		apigenRuntimeFake{project: projectID, lease: apigenLeaseFake{identity: identity, snapshot: snapshot}},
+		map[string]APIGenOperationContract{"deleteGrant": contract},
+		APIGenResourceResolvers{Project: apigenResolver("project", projectgraph.KindProject)},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handler, ok := authorizer.Protect("deleteGrant", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	if !ok || handler == nil {
+		t.Fatal("instance control operation was not protected")
+	}
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, apigenRequest(http.MethodDelete, "/api/v1/grants/grant_sales", map[string]string{"grant": "grant_sales"}))
+	if recorder.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want %d", recorder.Code, http.StatusNoContent)
+	}
+}
+
 func TestAPIGenResourceAuthorizationAttenuatesAndRevokesBearerTokens(t *testing.T) {
 	store, err := platform.Open(t.Context(), filepath.Join(t.TempDir(), "access.db"))
 	if err != nil {

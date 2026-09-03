@@ -114,7 +114,7 @@ func TestAPICommandCallUsesGeneratedContract(t *testing.T) {
 
 func TestAPICommandInvokesGrantOperation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/projects/sales/grants" {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/v1/grants" {
 			t.Fatalf("request = %s %s", r.Method, r.URL.Path)
 		}
 		if got := r.Header.Get("X-LeapView-Client"); got != "cli" {
@@ -141,7 +141,6 @@ func TestAPICommandInvokesGrantOperation(t *testing.T) {
 			"call", "createGrant",
 			"--target", server.URL,
 			"--token", "token",
-			"--path", "project=sales",
 			"--body-json", `{"resourceKind":"dashboard","resourceId":"dashboard:executive","subjectType":"principal","subjectId":"principal-viewer","capability":"RESOURCE_READ"}`,
 			"--idempotency-key", "grant-commit-a",
 		})

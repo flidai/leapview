@@ -20,11 +20,11 @@ type APIGenHandler interface {
 	CreateDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenCreateDashboardAuthoringDraftHeaders)
 	ForkDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenForkDashboardAuthoringDraftHeaders)
 	ExportDashboardAuthoringSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
-	ListDashboardPublications(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	GetDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	ResumeDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, string, dashboardgen.GenResumeDashboardPublicationHeaders)
-	RotateDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, string, dashboardgen.GenRotateDashboardPublicationHeaders)
-	SuspendDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, string, dashboardgen.GenSuspendDashboardPublicationHeaders)
+	ListDashboardPublications(stdhttp.ResponseWriter, *stdhttp.Request)
+	GetDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	ResumeDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenResumeDashboardPublicationHeaders)
+	RotateDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenRotateDashboardPublicationHeaders)
+	SuspendDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenSuspendDashboardPublicationHeaders)
 	ListDashboards(stdhttp.ResponseWriter, *stdhttp.Request, dashboardgen.GenListDashboardsParams)
 	GetDashboard(stdhttp.ResponseWriter, *stdhttp.Request, string)
 	UpdateDashboardAppearance(stdhttp.ResponseWriter, *stdhttp.Request, string)
@@ -85,20 +85,20 @@ func (d *APIGenDispatcher) ExportDashboardAuthoringSource(w stdhttp.ResponseWrit
 	d.handler.ExportDashboardAuthoringSource(w, r, project, kind, dashboard)
 }
 
-func (d *APIGenDispatcher) ListDashboardPublications(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
-	d.handler.ListDashboardPublications(w, r, project)
+func (d *APIGenDispatcher) ListDashboardPublications(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.ListDashboardPublications(w, r)
 }
-func (d *APIGenDispatcher) GetDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string) {
-	d.handler.GetDashboardPublication(w, r, project, publication)
+func (d *APIGenDispatcher) GetDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, publication string) {
+	d.handler.GetDashboardPublication(w, r, publication)
 }
-func (d *APIGenDispatcher) ResumeDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string, headers dashboardgen.GenResumeDashboardPublicationHeaders) {
-	d.handler.ResumeDashboardPublication(w, r, project, publication, headers)
+func (d *APIGenDispatcher) ResumeDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, publication string, headers dashboardgen.GenResumeDashboardPublicationHeaders) {
+	d.handler.ResumeDashboardPublication(w, r, publication, headers)
 }
-func (d *APIGenDispatcher) RotateDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string, headers dashboardgen.GenRotateDashboardPublicationHeaders) {
-	d.handler.RotateDashboardPublication(w, r, project, publication, headers)
+func (d *APIGenDispatcher) RotateDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, publication string, headers dashboardgen.GenRotateDashboardPublicationHeaders) {
+	d.handler.RotateDashboardPublication(w, r, publication, headers)
 }
-func (d *APIGenDispatcher) SuspendDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, project, publication string, headers dashboardgen.GenSuspendDashboardPublicationHeaders) {
-	d.handler.SuspendDashboardPublication(w, r, project, publication, headers)
+func (d *APIGenDispatcher) SuspendDashboardPublication(w stdhttp.ResponseWriter, r *stdhttp.Request, publication string, headers dashboardgen.GenSuspendDashboardPublicationHeaders) {
+	d.handler.SuspendDashboardPublication(w, r, publication, headers)
 }
 func (d *APIGenDispatcher) ListDashboards(w stdhttp.ResponseWriter, r *stdhttp.Request, params dashboardgen.GenListDashboardsParams) {
 	d.handler.ListDashboards(w, r, params)

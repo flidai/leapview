@@ -76,6 +76,9 @@ func TestCurrentAuthoringSessionListMarksTheBearerSession(t *testing.T) {
 	if response.Code != stdhttp.StatusOK {
 		t.Fatalf("response = %d body=%s", response.Code, response.Body.String())
 	}
+	if strings.Contains(response.Body.String(), `"projectId"`) {
+		t.Fatalf("authoring session response exposed internal project identity: %s", response.Body.String())
+	}
 	var body struct {
 		Items []struct {
 			ID      string `json:"id"`

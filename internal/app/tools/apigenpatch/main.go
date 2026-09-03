@@ -85,13 +85,13 @@ func replaceGeneratedPolicy(source, old, desired string) (string, error) {
 	return strings.Replace(source, old, desired, 1), nil
 }
 
-// applyAccessResourceKindPolicy qualifies ResourceKind in APIGen's generated
+// applyAccessResourceKindPolicy qualifies AccessResourceKind in APIGen's generated
 // request parameter structs. The schema alias is generated in request_models,
 // while the server generator currently emits the unqualified identifier.
 func applyAccessResourceKindPolicy(source []byte) ([]byte, error) {
 	text := string(source)
-	const old = "*ResourceKind"
-	const desired = "*GenSchemaResourceKind"
+	const old = "*AccessResourceKind"
+	const desired = "*GenSchemaAccessResourceKind"
 	oldCount := strings.Count(text, old)
 	desiredCount := strings.Count(text, desired)
 	switch {

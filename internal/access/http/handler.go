@@ -318,7 +318,21 @@ func sessionDTOFor(row access.Session, current string) map[string]any {
 }
 func sessionDTO(row access.Session) map[string]any { return sessionDTOFor(row, "") }
 func auditEventDTO(row access.AuditEvent) map[string]any {
-	return map[string]any{"id": row.ID, "principalId": emptyToNil(row.PrincipalID), "action": row.Action, "resourceKind": row.ResourceKind, "resourceId": row.ResourceID, "capability": emptyToNil(string(row.Capability)), "status": row.Status, "requestId": emptyToNil(row.RequestID), "correlationId": emptyToNil(row.CorrelationID), "metadata": json.RawMessage(row.MetadataJSON), "createdAt": row.CreatedAt}
+	return map[string]any{"id": row.ID, "principalId": emptyToNil(row.PrincipalID), "action": row.Action, "resourceKind": row.ResourceKind, "resourceId": row.ResourceID, "capability": emptyToNil(string(row.Capability)), "status": row.Status, "requestId": emptyToNil(row.RequestID), "correlationId": emptyToNil(row.CorrelationID), "metadata": publicAuditMetadata(row.MetadataJSON), "createdAt": row.CreatedAt}
+}
+
+func publicAuditMetadata(raw string) json.RawMessage {
+	var value map[string]any
+	if err := json.Unmarshal([]byte(raw), &value); err != nil || value == nil {
+		return json.RawMessage(`{}`)
+	}
+	delete(value, "projectId")
+	delete(value, "project_id")
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage(`{}`)
+	}
+	return json.RawMessage(encoded)
 }
 
 func auditInput(r *stdhttp.Request, action, principalID, resourceKind, resourceID string, capability access.Capability, status string, metadata map[string]any) access.AuditEventInput {

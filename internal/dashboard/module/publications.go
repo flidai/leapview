@@ -56,7 +56,7 @@ func (m *Module) MutatePublicationWithInvocation(ctx context.Context, projectID,
 	if err != nil {
 		return publication.Publication{}, err
 	}
-	ctx, err = beginGeneratedPublicationInvocation(ctx, action, parsedProjectID, invocation)
+	ctx, err = beginGeneratedPublicationInvocation(ctx, action, name, invocation)
 	if err != nil {
 		return publication.Publication{}, err
 	}
@@ -91,7 +91,7 @@ func (m *Module) completePublicationCommand(ctx context.Context, operationID str
 	})
 }
 
-func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, projectID projectgraph.ResourceID, invocation publication.CommandInvocation) (context.Context, error) {
+func beginGeneratedPublicationInvocation(ctx context.Context, action publication.Action, name string, invocation publication.CommandInvocation) (context.Context, error) {
 	operationID, ok := publicationOperationID(action)
 	if !ok {
 		return ctx, publication.ErrConflict
@@ -99,23 +99,22 @@ func beginGeneratedPublicationInvocation(ctx context.Context, action publication
 	if claimed := strings.TrimSpace(invocation.OperationID); claimed != "" && claimed != operationID.APIGenOperationID() {
 		return ctx, apigencommand.ErrOperationMismatch
 	}
-	projectIDString := projectID.String()
 	switch action {
 	case publication.ActionSuspend:
 		started, _, err := dashboardgen.BeginGenSuspendDashboardPublicationCommand(ctx, dashboardgen.GenSuspendDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Publication: strings.TrimSpace(name), IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionResume:
 		started, _, err := dashboardgen.BeginGenResumeDashboardPublicationCommand(ctx, dashboardgen.GenResumeDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Publication: strings.TrimSpace(name), IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
 	case publication.ActionRotate:
 		started, _, err := dashboardgen.BeginGenRotateDashboardPublicationCommand(ctx, dashboardgen.GenRotateDashboardPublicationCommandInvocation{
-			Surface: apigencommand.Surface(invocation.Surface), Project: projectIDString, IdempotencyKey: invocation.IdempotencyKey,
+			Surface: apigencommand.Surface(invocation.Surface), Publication: strings.TrimSpace(name), IdempotencyKey: invocation.IdempotencyKey,
 			RequestID: invocation.RequestID, CorrelationID: invocation.CorrelationID,
 		})
 		return started, err
@@ -142,14 +141,14 @@ func (m *Module) PublicationDTO(row publication.Publication) dashboardapi.Public
 	return m.dashboardPublicationDTO(row)
 }
 
-func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Request, projectID string) {
+func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Request) {
 	if m == nil || m.publications == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATIONS_NOT_AVAILABLE", "Dashboard publications are not available", nil)
 		return
 	}
-	parsedProjectID, err := projectgraph.NewResourceID(strings.TrimSpace(projectID))
+	parsedProjectID, err := m.activeProjectID(r.Context())
 	if err != nil {
-		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ACTIVE_PROJECT_UNAVAILABLE", "The active serving project could not be resolved", nil)
 		return
 	}
 	rows, err := m.publications.List(r.Context(), parsedProjectID)
@@ -172,8 +171,8 @@ func (m *Module) ListDashboardPublications(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, dashboardapi.PublicationListResponse{Items: items})
 }
 
-func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
-	row, ok := m.dashboardPublication(w, r, projectID, name)
+func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request, name string) {
+	row, ok := m.dashboardPublication(w, r, name)
 	if !ok {
 		return
 	}
@@ -189,19 +188,19 @@ func (m *Module) GetDashboardPublication(w http.ResponseWriter, r *http.Request,
 	writeJSON(w, http.StatusOK, m.dashboardPublicationDTO(row))
 }
 
-func (m *Module) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
-	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionSuspend)
+func (m *Module) SuspendDashboardPublication(w http.ResponseWriter, r *http.Request, name string) {
+	m.mutateDashboardPublication(w, r, name, publication.ActionSuspend)
 }
 
-func (m *Module) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
-	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionResume)
+func (m *Module) ResumeDashboardPublication(w http.ResponseWriter, r *http.Request, name string) {
+	m.mutateDashboardPublication(w, r, name, publication.ActionResume)
 }
 
-func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) {
-	m.mutateDashboardPublication(w, r, projectID, name, publication.ActionRotate)
+func (m *Module) RotateDashboardPublication(w http.ResponseWriter, r *http.Request, name string) {
+	m.mutateDashboardPublication(w, r, name, publication.ActionRotate)
 }
 
-func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string, action publication.Action) {
+func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Request, name string, action publication.Action) {
 	operationID, operationKnown := publicationOperationID(action)
 	if !operationKnown {
 		apitransport.WriteProblem(w, r, http.StatusInternalServerError, "PUBLICATION_COMMAND_UNKNOWN", "Dashboard publication command is unknown", nil)
@@ -218,7 +217,7 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 		m.writePublicationMutation(w, r, operationID, publication.Publication{}, errPublicationCommandAuditUnavailable)
 		return
 	}
-	row, ok := m.dashboardPublication(w, r, projectID, name)
+	row, ok := m.dashboardPublication(w, r, name)
 	if !ok {
 		return
 	}
@@ -235,11 +234,7 @@ func (m *Module) mutateDashboardPublication(w http.ResponseWriter, r *http.Reque
 	if m.currentActor != nil {
 		actor = m.currentActor(r)
 	}
-	parsedProjectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(projectID))
-	if parseErr != nil {
-		m.writePublicationMutation(w, r, operationID, publication.Publication{}, parseErr)
-		return
-	}
+	parsedProjectID := row.ProjectID
 	// The API command guard has already begun the generated invocation on the
 	// request context. Starting a nested invocation here would mark only the
 	// child state complete and cause the outer guard to reject the response.
@@ -280,14 +275,14 @@ func (m *Module) authorizeDashboardPublication(r *http.Request, projectID, dashb
 	return m.handler.AuthorizeListResource(r.Context(), principalID, resource, capability)
 }
 
-func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, projectID, name string) (publication.Publication, bool) {
+func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, name string) (publication.Publication, bool) {
 	if m == nil || m.publications == nil {
 		apitransport.WriteProblem(w, r, http.StatusNotFound, "PUBLICATION_NOT_FOUND", "Dashboard publication not found", nil)
 		return publication.Publication{}, false
 	}
-	parsedProjectID, parseErr := projectgraph.NewResourceID(strings.TrimSpace(projectID))
-	if parseErr != nil {
-		apitransport.WriteProblem(w, r, http.StatusBadRequest, "INVALID_PROJECT", "Project identity is invalid", nil)
+	parsedProjectID, resolveErr := m.activeProjectID(r.Context())
+	if resolveErr != nil {
+		apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "ACTIVE_PROJECT_UNAVAILABLE", "The active serving project could not be resolved", nil)
 		return publication.Publication{}, false
 	}
 	row, err := m.publications.Get(r.Context(), parsedProjectID, name)
@@ -300,6 +295,29 @@ func (m *Module) dashboardPublication(w http.ResponseWriter, r *http.Request, pr
 		return publication.Publication{}, false
 	}
 	return row, true
+}
+
+// activeProjectID resolves the lease-bound serving scope for instance control
+// APIs. Project identity is retained internally for storage and authorization,
+// but never selected by a public route parameter.
+func (m *Module) activeProjectID(ctx context.Context) (projectgraph.ResourceID, error) {
+	if m == nil {
+		return "", errors.New("dashboard module is unavailable")
+	}
+	if m.handler.ResolveProjectID != nil {
+		projectID, err := m.handler.ResolveProjectID(ctx)
+		if err != nil {
+			return "", err
+		}
+		if err := projectID.Validate(); err != nil {
+			return "", err
+		}
+		return projectID, nil
+	}
+	if err := m.handler.ProjectID.Validate(); err != nil {
+		return "", err
+	}
+	return m.handler.ProjectID, nil
 }
 
 func (m *Module) writePublicationMutation(w http.ResponseWriter, r *http.Request, operationID dashboardgen.GenCommandOperationID, row publication.Publication, err error) {
@@ -321,7 +339,7 @@ func (m *Module) dashboardPublicationDTO(row publication.Publication) dashboarda
 	embedURL := m.absolutePublicURL(embedPath)
 	iframe := `<iframe src="` + html.EscapeString(embedURL) + `" title="` + html.EscapeString(row.Name) + `" loading="lazy" sandbox="allow-scripts allow-same-origin" referrerpolicy="no-referrer"></iframe>`
 	dto := dashboardapi.PublicationResponse{
-		Name: row.Name, ProjectID: row.ProjectID.String(), Dashboard: row.Dashboard,
+		Name: row.Name, Dashboard: row.Dashboard,
 		DefaultPage: row.DefaultPage, Status: dashboardapi.PublicationStatus(row.Status()), Configured: row.Configured,
 		AllowedOrigins: append([]string(nil), row.AllowedOrigins...), PublicURL: publicURL, EmbedURL: embedURL, IFrameSnippet: iframe,
 		CreatedAt: row.CreatedAt, UpdatedAt: row.UpdatedAt,

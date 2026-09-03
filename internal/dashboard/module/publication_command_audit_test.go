@@ -68,7 +68,7 @@ func TestPublicationCommandContractRequiresTransactionalAudit(t *testing.T) {
 }
 
 func TestBeginGeneratedPublicationInvocationRejectsMissingIdempotency(t *testing.T) {
-	ctx, err := beginGeneratedPublicationInvocation(context.Background(), publication.ActionSuspend, projectgraph.ResourceID("project_1"), publication.CommandInvocation{
+	ctx, err := beginGeneratedPublicationInvocation(context.Background(), publication.ActionSuspend, "executive", publication.CommandInvocation{
 		Surface: string(apigencommand.SurfaceUI),
 	})
 	if !errors.Is(err, apigencommand.ErrIdempotencyRequired) {

@@ -59,6 +59,16 @@ func TestRunAuditedMutationRejectsRepositoryWithoutTransactionBeforeMutation(t *
 	}
 }
 
+func TestPublicAuditMetadataExcludesInternalProjectIdentity(t *testing.T) {
+	got := string(publicAuditMetadata(`{"allowed":"visible","projectId":"project:secret","project_id":"project:legacy"}`))
+	if got != `{"allowed":"visible"}` {
+		t.Fatalf("public audit metadata = %s", got)
+	}
+	if got := string(publicAuditMetadata(`not-json`)); got != `{}` {
+		t.Fatalf("malformed public audit metadata = %s", got)
+	}
+}
+
 func TestCreatePrincipalAuditsDuplicateRejectionSeparately(t *testing.T) {
 	ctx := t.Context()
 	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "access.db"))

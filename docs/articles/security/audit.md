@@ -20,16 +20,17 @@ Not every request is an administrative audit event. Query events provide filters
 
 ## Query the API
 
-The generated [Audit API](/docs/api/audit) exposes project-scoped endpoints:
+The generated [Audit API](/docs/api/audit) exposes an instance-scoped administrative
+audit endpoint and a project-scoped query audit endpoint:
 
 ```text
-GET /api/v1/projects/{project}/audit-events
+GET /api/v1/access/audit-events
 GET /api/v1/projects/{project}/query-events
 ```
 
 Use bounded time ranges and pagination. Filter by actor/action/target for administrative changes or principal/surface/operation/status for queries. Record the request time and page tokens when exporting an investigation set so the collection process can be repeated.
 
-Audit access requires its own privilege. Restrict it to security and operational roles that need the relevant project visibility. Query text and target metadata can reveal sensitive business context even when row data is absent.
+Audit access requires its own privilege. Restrict it to security and operational roles that need the relevant instance or project visibility. Query text and target metadata can reveal sensitive business context even when row data is absent.
 
 ## Monitor durable delivery
 

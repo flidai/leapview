@@ -40,8 +40,20 @@ func TestIdealV1Surface(t *testing.T) {
 		"/api/v1/projects/{project}/refresh-runs/{run}/cancel":                                     {"post"},
 		"/api/v1/agent/conversations/{conversation}/runs":                                          {"get", "post"},
 		"/api/v1/agent/conversations/{conversation}/runs/{run}/cancel":                             {"post"},
-		"/api/v1/projects/{project}/grants/{grant}":                                                {"get", "patch", "delete"},
-		"/api/v1/projects/{project}/data-policies/{policy}":                                        {"get", "patch", "delete"},
+		"/api/v1/roles":                                        {"get"},
+		"/api/v1/effective-capabilities":                       {"get"},
+		"/api/v1/authorization-checks":                         {"post"},
+		"/api/v1/grants":                                       {"get", "post"},
+		"/api/v1/grants/{grant}":                               {"get", "patch", "delete"},
+		"/api/v1/data-policies":                                {"get", "post"},
+		"/api/v1/data-policies/{policy}":                       {"get", "patch", "delete"},
+		"/api/v1/access/audit-events":                          {"get"},
+		"/api/v1/audit-events":                                 {"get"},
+		"/api/v1/dashboard-publications":                       {"get"},
+		"/api/v1/dashboard-publications/{publication}":         {"get"},
+		"/api/v1/dashboard-publications/{publication}/suspend": {"post"},
+		"/api/v1/dashboard-publications/{publication}/resume":  {"post"},
+		"/api/v1/dashboard-publications/{publication}/rotate":  {"post"},
 	}
 	for path, methods := range required {
 		for _, method := range methods {
@@ -219,6 +231,18 @@ func TestCapabilitiesUseCanonicalEnums(t *testing.T) {
 	assertEnum(t, openAPISchema(t, schemas, "VisualizationSpecKind"), "cartesian", "point", "proportional", "hierarchy", "polar", "table", "matrix", "pivot", "kpi", "geographic")
 }
 
+func TestInstanceBoundaryResponsesHideProjectIdentity(t *testing.T) {
+	spec := managedDataOpenAPISpec(t)
+	schemas := openAPIMap(t, openAPIMap(t, spec, "components"), "schemas")
+	for _, name := range []string{"AuditEventResponse", "AuthoringSessionResponse", "DashboardPublicationResponse", "GrantResponse", "DataPolicyResponse", "EffectiveCapabilityListResponse"} {
+		properties := openAPIMap(t, openAPISchema(t, schemas, name), "properties")
+		if _, ok := properties["projectId"]; ok {
+			t.Errorf("instance-bound response %s exposes projectId", name)
+		}
+	}
+	assertEnum(t, openAPISchema(t, schemas, "AccessResourceKind"), "connection", "source", "model", "semantic_model", "pipeline", "dashboard")
+}
+
 func operationHasResponseMedia(operation map[string]any, status, media string) bool {
 	responses, _ := operation["responses"].(map[string]any)
 	response, _ := responses[status].(map[string]any)
@@ -279,8 +303,8 @@ func TestIdealAPIUsesBoundedInputsAndBodylessDeletes(t *testing.T) {
 		"/api/v1/me/sessions/{session}",
 		"/api/v1/service-principals/{servicePrincipal}",
 		"/api/v1/groups/{group}",
-		"/api/v1/projects/{project}/grants/{grant}",
-		"/api/v1/projects/{project}/data-policies/{policy}",
+		"/api/v1/grants/{grant}",
+		"/api/v1/data-policies/{policy}",
 	} {
 		op := openAPIOperation(t, paths, path, "delete")
 		responses := openAPIMap(t, op, "responses")

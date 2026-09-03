@@ -2325,16 +2325,16 @@ test('generated API outlines keep operations and omit repeated operation details
     expect(visibleOutlineLabels).not.toContain('Request body')
     expect(visibleOutlineLabels).not.toContain('Responses')
 
-    const listProjectRoles = article.locator('h3#list-project-roles')
-    const listProjectRolesDetail = listProjectRoles.locator('xpath=following-sibling::h4[1]')
-    await listProjectRolesDetail.evaluate((heading) => {
+		const listRoles = article.locator('h3#list-roles')
+		const listRolesDetail = listRoles.locator('xpath=following-sibling::h4[1]')
+		await listRolesDetail.evaluate((heading) => {
       document.documentElement.style.scrollBehavior = 'auto'
       window.scrollTo({ top: heading.getBoundingClientRect().top + window.scrollY - window.innerHeight * 0.2 })
     })
     await page.waitForFunction(() => {
       const toc = document.querySelector<HTMLElement>('lv-site-article-toc')
       const active = toc?.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
-      return active?.textContent?.trim() === 'List project roles' && active.getClientRects().length > 0 && toc.scrollTop > 0
+			return active?.textContent?.trim() === 'List instance roles' && active.getClientRects().length > 0 && toc.scrollTop > 0
     })
     const activeOutline = await toc.evaluate((element) => {
       const active = element.shadowRoot?.querySelector<HTMLAnchorElement>('a.active')
@@ -2347,7 +2347,7 @@ test('generated API outlines keep operations and omit repeated operation details
         visible: activeRect.top >= hostRect.top && activeRect.bottom <= hostRect.bottom,
       }
     })
-    expect(activeOutline.label).toBe('List project roles')
+		expect(activeOutline.label).toBe('List instance roles')
     expect(activeOutline.scrollTop).toBeGreaterThan(0)
     expect(activeOutline.visible).toBe(true)
   } finally {

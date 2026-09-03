@@ -49,11 +49,11 @@ func TestAccessServerResourceKindPolicy(t *testing.T) {
 		t.Fatal(err)
 	}
 	source := string(data)
-	if got := strings.Count(source, "*ResourceKind"); got != 0 {
-		t.Fatalf("generated access server still contains %d unqualified ResourceKind parameters", got)
+	if got := strings.Count(source, "*AccessResourceKind"); got != 0 {
+		t.Fatalf("generated access server still contains %d unqualified AccessResourceKind parameters", got)
 	}
-	if got := strings.Count(source, "*GenSchemaResourceKind"); got != 3 {
-		t.Fatalf("generated access server has %d qualified ResourceKind parameters, want 3", got)
+	if got := strings.Count(source, "*GenSchemaAccessResourceKind"); got != 3 {
+		t.Fatalf("generated access server has %d qualified AccessResourceKind parameters, want 3", got)
 	}
 }
 
@@ -71,7 +71,7 @@ func TestAccessServerResourceKindPolicyPatchIsIdempotentAndFailsClosed(t *testin
 		t.Fatal(err)
 	}
 	if string(first) != string(second) {
-		t.Fatal("access ResourceKind policy patch is not idempotent")
+		t.Fatal("access AccessResourceKind policy patch is not idempotent")
 	}
 	if _, err := applyAccessResourceKindPolicy([]byte("package gen\n")); err == nil {
 		t.Fatal("generator shape change was silently accepted")

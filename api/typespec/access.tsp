@@ -283,8 +283,6 @@ model DeviceAuthorizationDecidedAuditPayload {
   clientId: string;
   @apigen.auditInternal
   targetId: string;
-  @apigen.auditInternal
-  projectId: ResourceId;
   @apigen.auditPublic
   capabilities: Capability[];
   @apigen.auditPublic
@@ -299,8 +297,6 @@ model AuthoringSessionRevokedAuditPayload {
   clientId: string;
   @apigen.auditInternal
   targetId: string;
-  @apigen.auditInternal
-  projectId: ResourceId;
   @apigen.auditPublic
   capabilities: Capability[];
 }
@@ -394,7 +390,7 @@ model GrantAuditPayload {
   @apigen.auditInternal
   resourceId: ResourceId;
   @apigen.auditPublic
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   @apigen.auditPublic
   environment: string;
   @apigen.auditPii
@@ -412,13 +408,13 @@ model DataPolicyAuditPayload {
   @apigen.auditInternal
   resourceId: ResourceId;
   @apigen.auditPublic
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   @apigen.auditPublic
   policyType: string;
 }
 
 model GrantRequest {
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   resourceId: ResourceId;
   subjectType: string;
   subjectId: string;
@@ -428,13 +424,13 @@ model GrantRequest {
 model GrantResponse {
   id: string;
   resourceId: ResourceId;
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   subjectType: string;
   subjectId: string;
   capability: Capability;
   inherited?: boolean;
   parentId?: string;
-  parentResourceKind?: ResourceKind;
+  parentResourceKind?: AccessResourceKind;
   parentResourceId?: ResourceId;
   createdAt: utcDateTime;
 }
@@ -445,7 +441,7 @@ model GrantListResponse {
 }
 
 model DataPolicyRequest {
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   resourceId: ResourceId;
   subjectType?: string;
   subjectId?: string;
@@ -456,7 +452,7 @@ model DataPolicyRequest {
 model DataPolicyResponse {
   id: string;
   resourceId: ResourceId;
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   subjectType?: string;
   subjectId?: string;
   policyType: string;
@@ -472,7 +468,7 @@ model DataPolicyListResponse {
 
 model EffectiveCapabilityListResponse {
   resourceId: ResourceId;
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   capabilities: Capability[];
   effectiveGrants: AuthorizationDecisionResponse[];
 }
@@ -482,7 +478,7 @@ model AuthorizationDecisionResponse {
   allowed?: boolean;
   capability: Capability;
   reason: string;
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   resourceId?: ResourceId;
   grantId?: string;
   grantResourceId?: ResourceId;
@@ -495,7 +491,7 @@ model AuthorizationDecisionResponse {
 
 model AuthorizationCheckRequest {
   capability: Capability;
-  resourceKind: ResourceKind;
+  resourceKind: AccessResourceKind;
   resourceId: ResourceId;
 }
 
@@ -518,7 +514,6 @@ model AuthoringSessionResponse {
   current: boolean;
   clientId: string;
   targetId: string;
-  projectId: ResourceId;
   capabilities: Capability[];
   createdAt: utcDateTime;
   lastUsedAt?: utcDateTime;
@@ -888,44 +883,55 @@ interface Groups {
   addGroupMember(@path @apigen.target group: string, @path principal: string): AddGroupMemberOK | CommonErrors;
 }
 
-alias ListProjectRolesOK = OkJson<RoleListResponse>;
+// Access control resources are bound to the active instance. Project is an
+// internal serving-state identity, not a public control-plane resource.
+enum AccessResourceKind {
+  connection;
+  sourceKind: "source";
+  modelKind: "model";
+  semanticModel: "semantic_model";
+  pipelineKind: "pipeline";
+  dashboardKind: "dashboard";
+}
+
+alias ListRolesOK = OkJson<RoleListResponse>;
 
 @tag("Access")
-@summary("List project roles")
-@route("/projects/{project}/roles")
+@summary("List instance roles")
+@route("/roles")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-@extension("x-leapview-object-scope", "project")
-op listProjectRoles(@path project: ResourceId, @query limit?: ListLimit, @query pageToken?: PageToken): ListProjectRolesOK | CommonErrors;
+@extension("x-leapview-object-scope", "instance")
+op listRoles(@query limit?: ListLimit, @query pageToken?: PageToken): ListRolesOK | CommonErrors;
 
 alias ListEffectiveCapabilitiesOK = OkJson<EffectiveCapabilityListResponse>;
 
 @tag("Access")
 @summary("List effective capabilities")
-@route("/projects/{project}/effective-capabilities")
+@route("/effective-capabilities")
 @get
 @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-@extension("x-leapview-object-scope", "project")
-op listEffectiveCapabilities(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
+@extension("x-leapview-object-scope", "instance")
+op listEffectiveCapabilities(@query resourceKind?: AccessResourceKind, @query resourceId?: ResourceId): ListEffectiveCapabilitiesOK | CommonErrors;
 
 alias ListGrantsOK = OkJson<GrantListResponse>;
 alias CreateGrantCreated = CreatedJson<GrantResponse>;
 
 @tag("Access")
-@route("/projects/{project}/grants")
+@route("/grants")
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface Grants {
   @summary("List grants")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  listGrants(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
+  @extension("x-leapview-object-scope", "instance")
+  listGrants(@query resourceKind?: AccessResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListGrantsOK | CommonErrors;
 
   @summary("Create a grant")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.grant.create")
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.ui("instance.access.grant.create")
   @apigen.command(#{
     auditAction: "grant.created",
     failures: #[
@@ -933,20 +939,20 @@ interface Grants {
     ],
   })
   @apigen.auditPayload(GrantAuditPayload)
-  createGrant(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
+  createGrant(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: GrantRequest): CreateGrantCreated | CommonErrors;
 
   @summary("Get a resource capability grant")
   @route("/{grant}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  getGrant(@path project: ResourceId, @path grant: string): OkJson<GrantResponse> | CommonErrors;
+  @extension("x-leapview-object-scope", "instance")
+  getGrant(@path grant: string): OkJson<GrantResponse> | CommonErrors;
 
   @summary("Update a resource capability grant")
   @route("/{grant}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "grant.updated",
     failures: #[
@@ -955,37 +961,37 @@ interface Grants {
   })
   @apigen.failsWith(GrantNotFoundFailure)
   @apigen.auditPayload(GrantAuditPayload)
-  updateGrant(@path @apigen.target project: ResourceId, @path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
+  updateGrant(@path grant: string, @header("If-Match") ifMatch: string, @body body: GrantRequest): OkJson<GrantResponse> | CommonErrors;
 
   @summary("Delete a grant")
   @route("/{grant}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  @apigen.ui("project.access.grant.delete")
+  @extension("x-leapview-object-scope", "instance")
+  @apigen.ui("instance.access.grant.delete")
   @apigen.command(#{ auditAction: "grant.deleted" })
   @apigen.failsWith(GrantNotFoundFailure)
   @apigen.auditPayload(GrantAuditPayload)
-  deleteGrant(@path @apigen.target project: ResourceId, @path grant: string): EmptyResponse | CommonErrors;
+  deleteGrant(@path grant: string): EmptyResponse | CommonErrors;
 }
 
 alias ListDataPoliciesOK = OkJson<DataPolicyListResponse>;
 alias CreateDataPolicyCreated = CreatedJson<DataPolicyResponse>;
 
 @tag("Access")
-@route("/projects/{project}/data-policies")
+@route("/data-policies")
 @apigen.commandDefaults(#{ guarantee: "transactional" })
 interface DataPolicies {
   @summary("List data policies")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  listDataPolicies(@path project: ResourceId, @query resourceKind?: ResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
+  @extension("x-leapview-object-scope", "instance")
+  listDataPolicies(@query resourceKind?: AccessResourceKind, @query resourceId?: ResourceId, @query includeInherited?: boolean, @query limit?: ListLimit, @query pageToken?: PageToken): ListDataPoliciesOK | CommonErrors;
 
   @summary("Create a data policy")
   @post
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "data_policy.created",
     failures: #[
@@ -993,20 +999,20 @@ interface DataPolicies {
     ],
   })
   @apigen.auditPayload(DataPolicyAuditPayload)
-  createDataPolicy(@path project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DataPolicyRequest): CreateDataPolicyCreated | CommonErrors;
+  createDataPolicy(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DataPolicyRequest): CreateDataPolicyCreated | CommonErrors;
 
   @summary("Get a data policy")
   @route("/{policy}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
-  getDataPolicy(@path project: ResourceId, @path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
+  @extension("x-leapview-object-scope", "instance")
+  getDataPolicy(@path policy: string): OkJson<DataPolicyResponse> | CommonErrors;
 
   @summary("Update a data policy")
   @route("/{policy}")
   @patch
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{
     auditAction: "data_policy.updated",
     failures: #[
@@ -1015,23 +1021,23 @@ interface DataPolicies {
   })
   @apigen.failsWith(DataPolicyNotFoundFailure)
   @apigen.auditPayload(DataPolicyAuditPayload)
-  updateDataPolicy(@path @apigen.target project: ResourceId, @path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
+  updateDataPolicy(@path policy: string, @header("If-Match") ifMatch: string, @body body: DataPolicyRequest): OkJson<DataPolicyResponse> | CommonErrors;
 
   @summary("Delete a data policy")
   @route("/{policy}")
   @delete
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })
-  @extension("x-leapview-object-scope", "project")
+  @extension("x-leapview-object-scope", "instance")
   @apigen.command(#{ auditAction: "data_policy.deleted" })
   @apigen.failsWith(DataPolicyNotFoundFailure)
   @apigen.auditPayload(DataPolicyAuditPayload)
-  deleteDataPolicy(@path @apigen.target project: ResourceId, @path policy: string): EmptyResponse | CommonErrors;
+  deleteDataPolicy(@path policy: string): EmptyResponse | CommonErrors;
 }
 
 @tag("Access")
 @summary("Check multiple authorization decisions")
-@route("/projects/{project}/authorization-checks")
+@route("/authorization-checks")
 @post
 @apigen.authz(#{ mode: "authenticated" })
 @apigen.query
-op checkAuthorizationBatch(@path project: ResourceId, @body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;
+op checkAuthorizationBatch(@body body: AuthorizationBatchCheckRequest): OkJson<AuthorizationBatchCheckResponse> | CommonErrors;

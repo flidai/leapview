@@ -126,7 +126,7 @@ func authoringSessionDTO(session access.AuthoringSession, current bool) map[stri
 	}
 	response := map[string]any{
 		"id": session.ID, "kind": session.Kind, "current": current, "clientId": session.ClientID,
-		"targetId": session.Scope.TargetID, "projectId": session.Scope.ProjectID.String(),
+		"targetId":     session.Scope.TargetID,
 		"capabilities": capabilities, "createdAt": session.CreatedAt.UTC().Format(time.RFC3339),
 		"expiresAt": session.ExpiresAt.UTC().Format(time.RFC3339),
 	}

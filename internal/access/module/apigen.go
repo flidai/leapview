@@ -774,7 +774,7 @@ func apiGenScope(contract APIGenOperationContract) (string, bool) {
 		return "", false
 	}
 	switch scope {
-	case "dashboard", "semantic-model", "connection", "project", "platform", "principal":
+	case "dashboard", "semantic-model", "connection", "project", "instance", "platform", "principal":
 		return scope, true
 	default:
 		return "", false
@@ -787,6 +787,18 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 		scope, scopeOK := apiGenScope(contract)
 		if !scopeOK {
 			return nil, false
+		}
+		if scope == "instance" {
+			switch target.Type {
+			case "grant", "policy":
+				definition, ok := a.scopes["project"]
+				if !ok || definition.resolver == nil || !strings.Contains(contract.Path, "{"+target.Parameter+"}") {
+					return nil, false
+				}
+				return instanceControlResourceResolver(), true
+			default:
+				return nil, false
+			}
 		}
 		switch target.Type {
 		case "dashboard", "semantic-model", "connection", "project":
@@ -817,11 +829,35 @@ func (a *APIGenAuthorizer) resourceResolverForContract(contract APIGenOperationC
 	if scope == "" {
 		return nil, true
 	}
-	definition, ok := a.scopes[scope]
-	if !ok || definition.resolver == nil || !strings.Contains(contract.Path, "{"+definition.pathParameter+"}") {
+	internalScope := scope
+	if scope == "instance" {
+		// Instance-scoped control APIs authorize against the active bundle's
+		// internal root until the control-plane role store no longer needs that
+		// compatibility projection. The public contract never exposes it.
+		internalScope = "project"
+	}
+	definition, ok := a.scopes[internalScope]
+	if !ok || definition.resolver == nil {
 		return nil, false
 	}
+	// Instance control routes retain project capability semantics while the
+	// active serving project is resolved internally. They intentionally have no
+	// public {project} selector, so bind the project resource directly rather
+	// than requiring a route parameter.
+	if scope == "instance" {
+		return instanceControlResourceResolver(), true
+	}
 	return a.boundResourceResolver(definition, strings.Contains(contract.Path, "{project}")), true
+}
+
+func instanceControlResourceResolver() APIGenResourceResolver {
+	return func(_ *http.Request, active projectgraph.ResourceID) []access.ResourceRef {
+		resource, err := access.NewResourceRef(active, projectgraph.KindProject)
+		if err != nil {
+			return nil
+		}
+		return []access.ResourceRef{resource}
+	}
 }
 
 func (a *APIGenAuthorizer) boundResourceResolver(definition apiGenResourceScope, assertProject bool) APIGenResourceResolver {
