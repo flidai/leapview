@@ -39,10 +39,10 @@ automation, without making dbt a LeapView runtime dependency.
 
 dbt and LeapView have adjacent but different responsibilities. dbt transforms
 source data into tested warehouse relations and business-facing marts. LeapView
-connects to data products, optionally materializes project-owned serving Models,
-and defines the governed semantic and presentation layers. Treating a dbt
-manifest as either physical data or a second semantic authority would blur that
-boundary.
+connects to those data products, applies bounded consumer-side serving
+adaptation through required Models, and defines the governed semantic and
+presentation layers. Treating a dbt manifest as either physical data or a
+second semantic authority would blur that boundary.
 
 The earlier proposal made a dbt-specific immutable release envelope, correlated
 artifacts, Parquet export, and target-owned ingestion mandatory. That design can
@@ -72,12 +72,14 @@ LeapView Connection -> Source -> Model -> SemanticModel -> Dashboard
 
 The boundary has three rules:
 
-1. **dbt owns transformation.** It builds and tests warehouse relations.
-2. **LeapView owns BI serving.** It owns serving materialization, semantics,
-   access, querying, and presentation.
-3. **The warehouse contract connects them.** A relation or immutable object
-   location, its schema, grain, and freshness are the required integration.
-   dbt artifacts are optional authoring and provenance inputs.
+1. **dbt owns upstream and domain transformation.** It builds and tests
+   warehouse relations.
+2. **LeapView owns BI serving.** It owns bounded serving adaptation,
+   materialization, semantics, access, querying, and presentation.
+3. **The warehouse contract connects them.** A stable, target-resolved relation
+   or object location, its schema, grain, freshness, and publication state are
+   the required integration. dbt artifacts are optional authoring and
+   provenance inputs.
 
 This is a tight developer experience over a loose runtime coupling.
 
@@ -86,12 +88,12 @@ This is a tight developer experience over a loose runtime coupling.
 - Let a dbt-built warehouse connect through the same Connection, Source, Model,
   SemanticModel, and Dashboard graph as any other producer.
 - Keep dbt responsible for compilation, execution, packages, credentials,
-  transformations, tests, and warehouse materialization.
+  upstream and domain transformations, tests, and warehouse materialization.
 - Keep LeapView usable when dbt is absent, replaced, unavailable, or upgraded.
 - Avoid duplicating business logic or physical data solely to create friendly BI
   labels.
-- Let LeapView materialize data when doing so provides serving isolation,
-  performance, validation, atomic activation, or rollback value.
+- Keep LeapView Models focused on serving contracts and bounded adaptation,
+  with physical materialization controlled by LeapView's compiler and runtime.
 - Make dbt metadata import an adoption accelerator without making generated
   artifacts the runtime source of truth.
 - Support a simple local dbt-duckdb showcase and an honest production workflow
@@ -139,10 +141,10 @@ other producers, so it should not be designed as dbt compatibility.
 ### Integrate at the warehouse contract boundary
 
 dbt builds a relation or versioned object set. LeapView declares it as a Source,
-validates the expected input, optionally materializes a thin serving Model, and
-builds its own SemanticModel. Optional dbt metadata tooling can scaffold or
-check those authored resources, but serving never requires the dbt repository
-or artifacts.
+validates the expected input, materializes the required thin serving Model under
+compiler and runtime policy, and builds its own SemanticModel. Optional dbt
+metadata tooling can scaffold or check those authored resources, but serving
+never requires the dbt repository or artifacts.
 
 ## Decision outcome
 
@@ -152,6 +154,32 @@ them through its ordinary project resource graph and target-owned connection
 bindings. There is no dbt-specific serving path and no mandatory dbt release
 envelope.
 
+### Published dataset contract
+
+The handoff from dbt to LeapView is a **published dataset contract**. It
+consists of:
+
+- a stable, target-resolved locator assembled from the portable Source location
+  and the target-bound Connection;
+- the expected schema and compatibility policy;
+- the producer-declared keys and grain that LeapView's Model will validate;
+- freshness, revision, or watermark information when the consumer requires it;
+  and
+- evidence that the intended producer publication completed before a consuming
+  refresh begins.
+
+Publication-complete evidence may be successful orchestration, a committed
+warehouse transaction, an atomic namespace or view swap, or completion of an
+immutable versioned object location. This decision does not require a new
+marker, envelope, or dbt artifact. The evidence has meaning only under the
+selected connector and producer protocol; a successful dbt command alone does
+not prove that a separate asynchronous publication completed.
+
+The baseline contract does not require every dataset to have an immutable
+revision. A mutable relation is valid when the producer's consistency guarantee
+is sufficient. A coordinated snapshot or versioned location becomes mandatory
+only when consumers require cross-relation consistency or reproducibility.
+
 ### Runtime and ownership boundary
 
 The required runtime integration is:
@@ -159,15 +187,16 @@ The required runtime integration is:
 - a LeapView Connection bound by the target to the warehouse or object store;
 - a Source identifying a dbt-produced relation or exact object location and
   declaring LeapView's expected input schema and freshness;
-- a Model when LeapView needs a project-owned serving transformation or
-  materialized snapshot;
+- a required Model forming the Project-local serving contract over that Source;
 - a SemanticModel defining dimensions, relationships, measures, metrics,
   labels, formatting, and access behavior; and
 - Dashboards and governed queries over that SemanticModel.
 
-dbt execution completes before LeapView refresh or deployment begins. LeapView
-does not compile the dbt project, resolve packages, execute macros, own dbt
-credentials, or require a dbt process while serving queries.
+A refresh intended to consume a new dbt output begins only after that output is
+successfully published. Serving and deployments or refreshes unrelated to that
+publication remain independent of dbt. LeapView does not compile the dbt
+project, resolve packages, execute macros, own dbt credentials, or require a dbt
+process while serving queries.
 
 A dbt model contract and successful dbt tests are producer evidence. They do
 not replace LeapView's Source compatibility checks, Model output contract,
@@ -175,7 +204,25 @@ quality checks, or candidate qualification. Conversely, LeapView does not
 repeat upstream transformation tests merely to claim dbt integration. Each
 system validates the contract it owns.
 
-### Thin LeapView Models
+### Contract enforcement
+
+[ADR-0010](0010-adopt-strict-typed-data-resource-contracts.md) remains the
+normative authority for Source and Model validation. The following is a
+non-normative summary included only to explain the dbt handoff:
+
+- an inferred Source schema records observation without claiming a field
+  contract;
+- compatible and strict Source schema mismatches block candidate activation;
+- declared freshness is evaluated during deployment or refresh, with
+  `warningAfter` admitting a warning and `errorAfter` blocking activation;
+- Model fields form an exact output contract checked before activation;
+- entity and grain declarations imply the required identity checks; and
+- Model checks warn or block according to their declared severity.
+
+This ADR does not redefine those modes, thresholds, or outcomes. A change to
+their enforcement belongs in ADR-0010 or a decision that explicitly amends it.
+
+### Required, thin LeapView Models
 
 A LeapView Model over a dbt mart should be thin and intentional. Appropriate
 uses include:
@@ -183,7 +230,8 @@ uses include:
 - projecting a stable, narrower BI-serving schema;
 - casting or normalizing values at the consumer boundary;
 - adapting an unstable or opaque producer identifier;
-- enforcing the grain, entity, and output contract LeapView will serve;
+- declaring and validating the grain, entities, and output contract LeapView
+  will serve;
 - materializing expensive reads for interactive performance;
 - isolating dashboards from warehouse availability or concurrent mutation; and
 - participating in LeapView's candidate validation, atomic activation, and
@@ -196,10 +244,32 @@ identifiers; SemanticModel dimensions and metrics supply user-facing labels,
 descriptions, and formatting. A SQL alias is appropriate when it creates a
 clearer durable semantic identifier, not merely title casing.
 
+A Model may project, rename, cast, or normalize fields without taking ownership
+of upstream business logic. Aggregation, deduplication, or joining that creates
+a different business grain from a dbt mart is upstream or domain transformation
+and normally belongs in dbt. The general LeapView Model contract remains usable
+without dbt; this restriction defines ownership for the dbt integration path.
+
 A Source may feed a SemanticModel only through the Model boundary required by
-the ordinary LeapView graph. A pass-through Model is acceptable when its value
-is the explicit serving contract and materialized lifecycle rather than another
-business transformation.
+the ordinary LeapView graph. A direct-source or pass-through Model is acceptable
+when its value is the explicit serving contract rather than another business
+transformation. Physical materialization remains compiler and runtime policy as
+defined by ADR-0010; it is not an optional authored switch.
+
+### Security boundary
+
+The target resolves a least-privilege Source credential that is read-only
+whenever the connector can enforce that mode. LeapView-owned DuckLake serving
+state uses a separate target-owned write scope; a Source credential does not
+gain write authority over either the producer system or LeapView's physical
+pool merely because the Model materializes its data.
+
+LeapView SemanticModel access rules govern consumption after materialization.
+If a restriction must prevent the LeapView service itself from reading or
+copying sensitive rows or columns, the producer must enforce it before the
+handoff through a restricted relation, view, export, or source identity. A
+downstream semantic access rule is not an ingestion filter or a substitute for
+upstream minimization.
 
 ### Optional dbt metadata integration
 
@@ -227,6 +297,19 @@ repository revision remain provenance. They do not replace Project UID,
 resource UID, contract identity, Source location, or generation identity.
 LeapView deployment and serving continue to work when no dbt artifacts are
 provided.
+
+### dbt Semantic Layer and MetricFlow
+
+Importing or querying dbt Semantic Layer and MetricFlow definitions is out of
+scope for v1. LeapView SemanticModel remains the only semantic and access-policy
+authority. A v1 metadata importer may observe that these dbt resources exist,
+but it does not silently create or reconcile LeapView metrics from them.
+
+A future semantic-import profile requires a separate decision defining identity
+mapping, supported behavior, conflict resolution, version compatibility,
+provenance, access-policy ownership, and whether imported definitions remain
+linked or become reviewed LeapView source. Supporting dbt physical models does
+not imply dbt Semantic Layer compatibility.
 
 ### Repository and Project topology
 
@@ -258,8 +341,24 @@ corresponding LeapView target binding selects the intended physical boundary.
 An external Source observes its configured relation or object at discovery and
 refresh time. A successful LeapView Model refresh materializes and validates
 replacement serving state before activation; a failed refresh leaves the
-previous state active. This is sufficient for the baseline BI serving lifecycle
-without claiming that an external mutable relation is itself immutable.
+previous state active. Atomic candidate activation makes the captured LeapView
+state internally coherent, but it does not make upstream observations atomic.
+
+The integration therefore distinguishes two consistency levels:
+
+- **Ordinary relation consistency:** candidate construction reads each Source
+  under the selected connector's guarantees. LeapView makes no additional
+  point-in-time guarantee across several upstream relations. Once the required
+  Models are materialized, the candidate activates atomically and serving reads
+  that one LeapView state.
+- **Coordinated dataset consistency:** when several marts must represent the
+  same producer publication, the producer must expose a connector-supported
+  read-consistent snapshot or transaction, an atomic namespace or view swap, or
+  one immutable versioned object location containing the complete selected set.
+  LeapView starts the consuming refresh only after that publication completes.
+
+These levels describe the producer and connector contract; they do not create a
+dbt-specific release envelope.
 
 Teams requiring reproducible file refresh should publish versioned Azure Blob
 or ADLS keys or prefixes and update the Source location through a reviewed
@@ -283,15 +382,15 @@ production:
 2. Locally, dbt-duckdb materializes those marts and a post-build export writes
    the selected serving inputs to Parquet.
 3. LeapView reaches the output through an ordinary Connection and Source,
-   validates the input boundary, and materializes a thin Model where useful.
+   validates the input boundary, and materializes the required thin Model.
 4. A LeapView SemanticModel supplies readable labels, governed metrics,
    relationships, formatting, and policy behavior to a Dashboard.
 5. The repository can be used without dbt metadata import by declaring the same
    resources explicitly.
 6. In production, GitHub Actions runs the same dbt build against source data in
-   Azure storage, publishes the selected marts to a versioned Azure Blob or ADLS
-   prefix, and then triggers the normal LeapView plan, refresh, and activation
-   path.
+   Azure storage, publishes the complete selected mart set to a versioned Azure
+   Blob or ADLS prefix, and then triggers the normal LeapView plan, refresh, and
+   activation path only after publication completes.
 
 The demonstration must show that a failed dbt build never triggers LeapView,
 and that a failed LeapView contract check or Model refresh leaves the previous
@@ -322,10 +421,10 @@ the producer, and versioned object paths remain an operational producer
 contract. Customers requiring exact data promotion need the future generic
 immutable external-dataset capability.
 
-Materializing a thin LeapView Model can duplicate data and add refresh latency.
-Teams should accept that cost only for serving performance, isolation,
-validation, or lifecycle benefits. Direct or minimally transformed use remains
-appropriate when the warehouse already provides a stable, performant mart.
+Materializing a thin LeapView Model duplicates data and adds refresh latency.
+The required Model boundary still provides a stable serving contract; its
+definition should remain a direct-source projection or minimal adaptation when
+the warehouse already provides a stable, performant mart.
 
 ## Confirmation
 
@@ -338,6 +437,9 @@ appropriate when the warehouse already provides a stable, performant mart.
 - Production workflow tests prove GitHub Actions triggers LeapView only after a
   successful dbt build and publication to the configured warehouse relation or
   versioned Azure location.
+- Consistency fixtures prove ordinary multi-Source refreshes make no unsupported
+  upstream snapshot claim, while a coordinated showcase consumes only a
+  completed snapshot, atomic swap, or complete immutable versioned location.
 - Contract fixtures prove producer schema drift, incompatible types, invalid
   grain, and Model quality failures stop candidate activation while the prior
   serving state remains active.
@@ -349,6 +451,11 @@ appropriate when the warehouse already provides a stable, performant mart.
   of authored LeapView semantics.
 - Architecture tests prove serving and refresh paths never require dbt
   binaries, repositories, manifests, run results, or dbt credentials.
+- Security tests prove Source access is read-only where supported, serving-state
+  writes use a separate scope, and semantic restrictions are not represented as
+  pre-ingestion enforcement.
+- Metadata fixtures prove dbt Semantic Layer and MetricFlow resources do not
+  silently become LeapView semantic definitions in v1.
 - Project tests prove every SemanticModel dataset resolves to a Model in the
   same Project candidate and generation, including when the producing dbt
   project uses upstream packages or dbt Mesh dependencies.
