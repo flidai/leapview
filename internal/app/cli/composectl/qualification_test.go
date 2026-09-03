@@ -1208,6 +1208,29 @@ func TestQualificationRecoveryClientUsesPublicTarget(t *testing.T) {
 	}
 }
 
+func TestQualificationRecoveryClientArgumentsSortInjectedEnvironment(t *testing.T) {
+	got := qualificationClientExecArgumentsWithEnv(
+		"recovery-client",
+		"publisher-secret",
+		"https://localhost:43127",
+		map[string]string{"Z_TEST": "z", "A_TEST": "a"},
+		"leapview", "data", "sync",
+	)
+	want := []string{
+		"exec",
+		"--env", "LEAPVIEW_API_TOKEN=publisher-secret",
+		"--env", "LEAPVIEW_TARGET=https://localhost:43127",
+		"--env", "LEAPVIEW_HOME=/client-home",
+		"--env", "A_TEST=a",
+		"--env", "Z_TEST=z",
+		"recovery-client",
+		"leapview", "data", "sync",
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("client arguments = %v, want %v", got, want)
+	}
+}
+
 func TestQualificationClientParsesTypedCLIResults(t *testing.T) {
 	candidate, err := parseQualificationCandidate(fmt.Sprintf(
 		`{"schemaVersion":1,"candidateId":"cand_1","revision":7,"targetId":"target_1",`+

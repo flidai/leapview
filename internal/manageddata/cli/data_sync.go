@@ -20,6 +20,7 @@ import (
 	"github.com/flidai/leapview/internal/manageddata"
 	manageddataapi "github.com/flidai/leapview/internal/manageddata/api"
 	"github.com/flidai/leapview/internal/manageddata/localplan"
+	"github.com/flidai/leapview/internal/manageddata/qualificationbarrier"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/spf13/cobra"
 )
@@ -305,7 +306,7 @@ func transferManagedDataFile(ctx context.Context, client *managedDataCLIClient, 
 		if upload.Negotiation.Tus == nil || upload.Negotiation.S3Multipart != nil {
 			return fmt.Errorf("invalid tus negotiation for %q", file.Path)
 		}
-		return uploadManagedDataTus(ctx, client, request.Root, file, *upload.Negotiation.Tus)
+		return uploadManagedDataTusForProject(ctx, client, request.Root, request.ProjectID, file, *upload.Negotiation.Tus)
 	case manageddataapi.ManagedDataUploadProtocolS3Multipart:
 		if upload.Negotiation.S3Multipart == nil || upload.Negotiation.Tus != nil {
 			return fmt.Errorf("invalid S3 multipart negotiation for %q", file.Path)
@@ -317,6 +318,10 @@ func transferManagedDataFile(ctx context.Context, client *managedDataCLIClient, 
 }
 
 func uploadManagedDataTus(ctx context.Context, client *managedDataCLIClient, root string, expected manageddata.File, negotiation manageddataapi.ManagedDataTusUploadNegotiation) error {
+	return uploadManagedDataTusForProject(ctx, client, root, "", expected, negotiation)
+}
+
+func uploadManagedDataTusForProject(ctx context.Context, client *managedDataCLIClient, root, projectID string, expected manageddata.File, negotiation manageddataapi.ManagedDataTusUploadNegotiation) error {
 	endpoint, err := sameOriginUploadURL(client.target, negotiation.Endpoint, negotiation.UploadId)
 	if err != nil {
 		return fmt.Errorf("invalid tus negotiation for %q", expected.Path)
@@ -351,6 +356,9 @@ func uploadManagedDataTus(ctx context.Context, client *managedDataCLIClient, roo
 			failures = 0
 			if newOffset == expected.Size {
 				return verifySourceFile(ctx, root, expected)
+			}
+			if err := qualificationbarrier.WaitAfterPartialTusPatch(ctx, projectID); err != nil {
+				return err
 			}
 			continue
 		}
