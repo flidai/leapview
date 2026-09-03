@@ -317,9 +317,9 @@ for (const viewport of [
           owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.querySelector('.entity-list-person-avatar')?.getAttribute('aria-label') ?? '—'),
           ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[1]?.querySelector('lv-user-avatar'))),
           statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[3]?.textContent?.trim()),
-          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim()),
-          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.getAttribute('title')),
-          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[5]?.textContent?.trim()),
+          updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
+          updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[4]?.querySelector('.entity-list-datetime')?.getAttribute('aria-label') ?? ''),
+          lastOpened: rows.map((row) => row.querySelectorAll('.entity-list-cell')[5]?.querySelector('.entity-list-datetime-value')?.textContent?.trim() ?? '—'),
           listBackground: getComputedStyle(list).backgroundColor,
           hasIcons: rows.every((row) => Boolean(row.querySelector('.entity-list-icon svg'))),
           popularityLabels: rows.map((row) => row.querySelector('.entity-list-popularity')?.getAttribute('aria-label') ?? ''),
@@ -767,7 +767,7 @@ test('dashboard favorites persist and rank first while recently viewed remains a
   }
 })
 
-test('Last opened uses persisted personal activity with an exact timestamp tooltip', async () => {
+test('date columns reveal exact localized date and time on hover and focus', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
@@ -784,14 +784,36 @@ test('Last opened uses persisted personal activity with an exact timestamp toolt
       await list.updateComplete
       return Array.from(list.querySelectorAll('tbody tr')).map((row: Element) => ({
         title: row.querySelector('.entity-list-title')?.textContent?.trim(),
-        value: row.querySelectorAll('.entity-list-cell')[5]?.textContent?.trim(),
-        tooltip: row.querySelectorAll('.entity-list-cell')[5]?.getAttribute('title'),
+        updated: row.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
+        updatedLabel: row.querySelector('.entity-list-datetime[data-column="updated"]')?.getAttribute('aria-label'),
+        lastOpened: row.querySelector('.entity-list-datetime[data-column="lastOpened"] .entity-list-datetime-value')?.textContent?.trim(),
+        lastOpenedLabel: row.querySelector('.entity-list-datetime[data-column="lastOpened"]')?.getAttribute('aria-label'),
       }))
     })
 
-    expect(state[0]).toEqual({ title: 'Executive Sales Dashboard', value: 'Aug 12', tooltip: expect.stringContaining('Aug 12, 2026') })
-    expect(state[1]).toEqual({ title: 'Operations Health', value: 'Dec 31, 2025', tooltip: expect.stringContaining('Dec 31, 2025') })
-    expect(state[2].value).toBe('—')
+    expect(state[0]).toEqual({
+      title: 'Executive Sales Dashboard',
+      updated: 'Aug 12',
+      updatedLabel: expect.stringContaining('Updated: Aug 12, 2026, 9:42 AM'),
+      lastOpened: 'Aug 12',
+      lastOpenedLabel: expect.stringContaining('Last opened: Aug 12, 2026, 8:15 AM'),
+    })
+    expect(state[1]).toEqual({
+      title: 'Operations Health',
+      updated: 'Aug 11',
+      updatedLabel: expect.stringContaining('Updated: Aug 11, 2026'),
+      lastOpened: 'Dec 31, 2025',
+      lastOpenedLabel: expect.stringContaining('Last opened: Dec 31, 2025'),
+    })
+    expect(state[2].lastOpened).toBeUndefined()
+
+    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"]').first().hover()
+    const visibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="updated"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
+    expect(visibility).toBe('visible')
+    await page.mouse.move(0, 0)
+    await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"]').first().focus()
+    const focusVisibility = await page.locator('lv-catalog-page').locator('lv-entity-list').locator('.entity-list-datetime[data-column="lastOpened"] .entity-list-hover-tooltip').first().evaluate((tooltip) => getComputedStyle(tooltip).visibility)
+    expect(focusVisibility).toBe('visible')
   } finally {
     await page.close()
   }
@@ -900,7 +922,7 @@ test('updated dates include the year when it differs from the current year', asy
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
     const updated = () => page.locator('lv-catalog-page').evaluate((element: any) =>
-      element.shadowRoot.querySelectorAll('.entity-list-cell')[4]?.textContent?.trim(),
+      element.shadowRoot.querySelector('.entity-list-datetime[data-column="updated"] .entity-list-datetime-value')?.textContent?.trim(),
     )
 
     expect(await updated()).toBe('Aug 12, 2026')

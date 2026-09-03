@@ -407,8 +407,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         { id: 'dataModel', label: 'Data model', width: '16%' },
         { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
         { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
-        { id: 'updated', label: 'Updated', width: '9%' },
-        { id: 'lastOpened', label: 'Last opened', width: '11%' },
+        { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
+        { id: 'lastOpened', label: 'Last opened', width: '11%', render: 'datetime' as const },
         { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
       ]
     }
@@ -418,8 +418,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       { id: 'owner', label: 'Owner', width: '8%', render: 'person-avatar' as const },
       { id: 'popularity', label: 'Popularity', width: '9%', render: 'popularity' as const },
       { id: 'status', label: 'Status', width: '16%', render: 'quiet-status' as const },
-      { id: 'updated', label: 'Updated', width: '9%' },
-      { id: 'lastOpened', label: 'Last opened', width: '12%' },
+      { id: 'updated', label: 'Updated', width: '9%', render: 'datetime' as const },
+      { id: 'lastOpened', label: 'Last opened', width: '12%', render: 'datetime' as const },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
     ]
   }

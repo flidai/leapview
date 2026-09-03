@@ -86,7 +86,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar' | 'popularity'
+  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person' | 'person-avatar' | 'popularity' | 'datetime'
 }
 
 export type EntityListFilter = {
@@ -677,14 +677,17 @@ const entityListStyles = `
   }
 
   .entity-list-person-avatar,
-  .entity-list-popularity {
+  .entity-list-popularity,
+  .entity-list-datetime {
     position: relative;
     display: inline-flex;
     align-items: center;
     border-radius: var(--lv-radius-full);
   }
 
-  .entity-list-person-avatar:focus-visible {
+  .entity-list-person-avatar:focus-visible,
+  .entity-list-popularity:focus-visible,
+  .entity-list-datetime:focus-visible {
     outline: var(--focus-outline);
     outline-offset: var(--focus-outline-offset);
   }
@@ -703,6 +706,11 @@ const entityListStyles = `
   .entity-list-popularity svg {
     width: var(--base-size-16);
     height: var(--base-size-16);
+  }
+
+  .entity-list-datetime {
+    color: var(--lv-fg-muted);
+    white-space: nowrap;
   }
 
   .entity-list-hover-tooltip {
@@ -732,7 +740,9 @@ const entityListStyles = `
   .entity-list-person-avatar:hover .entity-list-hover-tooltip,
   .entity-list-person-avatar:focus .entity-list-hover-tooltip,
   .entity-list-popularity:hover .entity-list-hover-tooltip,
-  .entity-list-popularity:focus .entity-list-hover-tooltip {
+  .entity-list-popularity:focus .entity-list-hover-tooltip,
+  .entity-list-datetime:hover .entity-list-hover-tooltip,
+  .entity-list-datetime:focus .entity-list-hover-tooltip {
     visibility: visible;
     opacity: 1;
   }
@@ -1156,7 +1166,7 @@ class EntityList extends LitElement {
       ? badges.map((badge) => badge.label).join(', ')
       : item.columnTitles?.[column.id] ?? String(value ?? '')
     return html`
-      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' || column.render === 'popularity' ? 'is-hover-indicator' : ''}`} title=${column.render === 'person-avatar' || column.render === 'popularity' ? '' : title}>
+      <td class=${`entity-list-cell ${column.align === 'right' ? 'is-right' : ''} ${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? 'is-hover-indicator' : ''}`} title=${column.render === 'person-avatar' || column.render === 'popularity' || column.render === 'datetime' ? '' : title}>
         ${column.render === 'badges'
           ? (badges.length ? badges.map((badge) => this.renderBadge(badge)) : html`
               <span class="entity-list-badge-empty" role="img" aria-label="No popularity data">—</span>
@@ -1181,6 +1191,8 @@ class EntityList extends LitElement {
                   ? this.renderPersonAvatar(item, column.id, value)
                   : column.render === 'popularity'
                     ? this.renderPopularity(item, column.id, value, title)
+                    : column.render === 'datetime'
+                      ? this.renderDateTime(item, column, value, title)
               : (value == null || value === '' ? '—' : value)}
       </td>
     `
@@ -1223,6 +1235,26 @@ class EntityList extends LitElement {
         ${lucideIcon(ChartNoAxesColumnIncreasing, { size: 16, strokeWidth: 2 })}
         <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">${label}</span>
       </span>
+    `
+  }
+
+  private renderDateTime(item: EntityListItem, column: EntityListColumn, value: string | number | undefined, title: string) {
+    const display = String(value ?? '').trim()
+    if (!display || display === '—' || !title) return '—'
+    const tooltipID = `entity-datetime-${item.id}-${column.id}`.replace(/[^A-Za-z0-9_-]/g, '-')
+    const dateTime = String(item.sortValues?.[column.id] ?? '').trim()
+    return html`
+      <time
+        class="entity-list-datetime"
+        data-column=${column.id}
+        datetime=${dateTime || nothing}
+        aria-label=${`${column.label}: ${title}`}
+        aria-describedby=${tooltipID}
+        tabindex="0"
+      >
+        <span class="entity-list-datetime-value">${display}</span>
+        <span class="entity-list-hover-tooltip" id=${tooltipID} role="tooltip">${title}</span>
+      </time>
     `
   }
 
