@@ -177,14 +177,28 @@ spec:
       requiredAccessGrants: [canViewPII]
 ```
 
-### Attribute ownership and matching
+### Attribute ownership, stewardship, and matching
 
-The instance control plane owns the attribute registry, trusted SAML/OIDC and
-embed-claim mappings, group and principal assignments, and the resulting
-attribute values. SCIM may provision users and groups but does not define the
-authorization meaning of an attribute. Analytics YAML may reference only a
-canonical attribute name; it cannot declare values, identities, assignments,
-or claim-extraction rules.
+The instance access control plane owns the typed attribute registry, direct
+principal/group assignments, trusted claim-mapping records, and resulting
+effective values. `owner_kind`/`owner_id` on a registry definition is
+stewardship metadata, not an access grant or an administrator role. Assignment
+targets and trusted source identities are separate from definition ownership.
+SCIM may provision users and groups but does not define the authorization
+meaning of an attribute. Analytics YAML may reference only a canonical
+attribute name; it cannot declare values, identities, assignments, or
+claim-extraction rules.
+
+FAI-637's PostgreSQL control state is split deliberately: the definition
+registry has `(profile, registry_revision, registry_digest)` identity, while
+assignments and mappings have an independent
+`(profile, control_revision, control_digest)` identity. Definitions describe
+name/type/shape/lifecycle; assignments bind canonical values to subjects;
+mappings bind an exact source/provider/issuer/audience/claim to a definition
+without persisting a claim value. Direct principal and active-group
+assignments and claims from the opaque `trustedclaims.Envelope` may be resolved
+together. A
+source conflict is an error, never an implicit precedence decision.
 
 The initial value types are typed scalar and homogeneous list values supported
 by the semantic field vocabulary. A scalar attribute satisfies an access grant
@@ -206,14 +220,36 @@ attribute type must be compatible with the dimension datatype. Missing, empty,
 invalid, or incompatible values deny the query; no wildcard, administrator
 bypass, or implicit unfiltered fallback exists.
 
-The control plane rejects deletion or type mutation of an attribute referenced
-by an active or retained rollback generation. It may explicitly disable the
-attribute as an audited emergency revocation; dependent semantic objects then
-fail closed, become unhealthy, and invalidate affected caches. This is not a
-semantic-evaluator bypass. Break-glass access is absent from this profile and
-would require a separate control-plane security ADR.
+The control plane rejects deletion or type mutation at the registry identity
+boundary. Generation-reference retention checks and dependent semantic-object
+invalidation are required future integrations, not evidence supplied by
+FAI-637. It may explicitly disable the attribute as an audited emergency
+revocation; consumers must then fail closed. This is not a semantic-evaluator
+bypass. Break-glass access is absent from this profile and would require a
+separate control-plane security ADR.
 
 ### Enforcement boundary
+
+#### Control-plane administration boundary
+
+Registry, assignment, mapping, impact-preview, and semantic-attribute audit
+operations are platform-admin operations. Authentication first resolves the
+canonical principal. The request then checks the durable instance-wide
+platform role through `RequestPlatformAdmin`/`IsPlatformAdmin`; a project
+authorization snapshot cannot create that role. Request credentials can only
+attenuate it: a session with no API credential inherits the role, an authoring
+credential is denied, an API token with nil capabilities inherits, an explicit
+empty capability list denies, and a non-empty capability list must include
+`PROJECT_ADMIN`. A credential for a different principal denies. The explicit
+development bypass is limited to non-production configuration. Repository or
+role-check failure fails closed.
+
+This is the administration gate for the control-plane state. It does not make
+an administrator an unconditional semantic-consumer bypass; semantic
+authorization is a separate, still-pending planner integration.
+
+The following grant/filter rules are the decided target boundary. They are not
+evidence that FAI-637 has already migrated each consumer.
 
 Access grants control both discovery and execution. A denied dataset or member
 is absent from the authorization-filtered catalog and is rejected if addressed
@@ -243,6 +279,39 @@ semantic generation, and trusted-attribute version participate in query and
 result-cache identity. Durable audit records identify the policy inputs and
 outcome without recording unrestricted sensitive attribute values.
 
+#### Control-plane lifecycle state machines
+
+The durable control-plane rows use explicit, forward-only state transitions:
+
+```text
+Definition:
+  absent --register(v1)--> active
+  active --metadata/disable (version +1)--> active/disabled
+  disabled --metadata/restore (version +1)--> disabled/active
+  active or disabled --delete or identity/type/shape/profile rewrite--> reject
+
+Assignment:
+  absent --set(expected=0, v1)--> active
+  active --set(expected=current, values changed, version +1)--> active
+  active --remove(expected=current, version +1)--> tombstoned
+  tombstoned --set--> new active incarnation (new ID, version 1)
+
+Trusted claim mapping:
+  absent --set(expected=0, v1)--> active
+  active --same identity replay--> active (no state advance)
+  active --remove(expected=current, version +1)--> tombstoned
+  tombstoned --set--> new mapping incarnation (old row retained)
+  active or tombstoned --in-place identity rewrite/restore--> reject
+```
+
+Definition changes lock and advance the registry singleton; assignment and
+mapping changes lock and advance the independent control singleton. Expected
+versions are checked at transport and repository boundaries, stale versions
+are conflicts, and database-owned timestamps/tombstones plus immutable IDs and
+types prevent silent rewrites. Top-level mutations couple the state change,
+digest advancement, and audit append in one transaction; explicit transaction
+helpers preserve the same rule for callers that own the transaction.
+
 ### Deliberate initial limits
 
 The initial contract does not include arbitrary access predicates, SQL row
@@ -261,6 +330,44 @@ conformance specification under profile `leapview.semantic-access/v1`.
 Normative changes to its shape, canonicalization, evaluation, planner,
 discovery, cache, or compatibility behavior require a new profile; new policy
 concepts, targets, bypasses, precedence, or masking require another ADR.
+
+### FAI-637 implementation boundary
+
+ADR-0017 remains **Implementation: pending**. FAI-637 implements the
+access-owned PostgreSQL control-plane slice: the profile-qualified definition
+registry, direct principal/group assignment rows, trusted claim-mapping rows,
+their lifecycle/version/digest/audit invariants, typed value ingress, a
+source-bound trusted-claim verifier boundary, effective direct/group
+resolution behind the opaque `trustedclaims.Envelope` boundary, and
+platform-admin management endpoints. It does
+not yet implement the SemanticModel policy compiler, planner security barrier,
+catalog or query enforcement, semantic generation references, cache/event
+invalidation, or ordinary semantic consumer integration.
+
+The source names SAML, OIDC, embed, and service token are accepted as closed
+mapping/verifier vocabulary only. FAI-637 does not claim an OIDC, SAML, embed,
+or service-consumer adapter. The current effective-value resolver's claim
+input is the opaque `trustedclaims.Envelope` boundary; wiring a real provider
+through the verifier and into a principal authorization context remains
+pending.
+
+### Immediate invalidation identity
+
+FAI-637 establishes, but does not yet consume, durable invalidation inputs.
+The future authorization-sensitive identity is the tuple
+`(instance, semantic generation, principal, registry profile/revision/digest,
+control profile/revision/digest, effective attribute-set digest, normalized
+semantic-policy identity)`. The effective attribute-set digest is an ordered
+projection of definition ID/version/type/shape, canonical value digest, and
+source; raw values and raw provider claims are excluded. Runtime trusted input
+also binds its credential/token fingerprint and validity interval.
+
+A committed definition change invalidates by registry identity. A committed
+assignment or mapping change invalidates by control identity and, where known,
+affected definition and subject. A digest mismatch is an immediate,
+conservative invalidation signal, never permission to continue with stale
+state. Cache/event propagation and consumer use of this identity remain
+pending, so this ADR does not claim completed LIF qualification.
 
 Policy diffs report compatibility and security impact separately. The profile
 matrix makes tightening changes such as adding a required grant or access
@@ -283,11 +390,13 @@ entitlement tables, time-dependent policy, and masked values are not available
 through v1 authoring and require modeled data, control-plane attributes, or a
 future explicit decision.
 
-The control plane must gain a typed, versioned attribute registry and trusted
-claim-mapping lifecycle. Candidate preparation must prove that every referenced
-attribute exists and is type-compatible without embedding instance values in
-portable artifacts. Attribute changes must invalidate affected authorization
-and result caches promptly and generate durable audit evidence.
+FAI-637 supplies a typed, versioned attribute registry, direct assignment and
+trusted claim-mapping lifecycle, typed ingress, durable revision/digest
+identities, and transactional audit evidence. Candidate preparation must still
+prove that every referenced attribute exists and is type-compatible without
+embedding instance values in portable artifacts. Consumer integration must
+invalidate affected authorization and result caches promptly using the
+identity above; that propagation is not implemented by FAI-637.
 
 Removing Source and Model policy targets means every consumer-visible query
 must pass through SemanticModel. Any raw Source or Model preview remains an
@@ -300,8 +409,10 @@ its own governed consumption contract rather than reuse of internal resources.
 - TypeSpec is the sole public structural authority for `accessGrants`,
   `requiredAccessGrants`, and `accessFilters`; generated JSON Schema, Go DTOs,
   documentation, and browser types contain the same closed contract.
-- The authoring registry rejects standalone `DataPolicy` resources and rejects
-  access-policy fields on every resource other than SemanticModel.
+- The accepted authoring contract rejects standalone `DataPolicy` resources and
+  rejects access-policy fields on every resource other than SemanticModel. The
+  current FAI-637 slice does not claim that the existing legacy compiler and
+  consumer paths have completed this migration.
 - Schema and compiler fixtures cover the normative cases in the semantic
   access-policy conformance specification, including unknown fields, dangling
   grants, incompatible attributes, unbound dimensions, and prohibited identity
@@ -320,12 +431,14 @@ its own governed consumption contract rather than reuse of internal resources.
 - Compatibility fixtures cover every normative policy-change matrix row and
   prove tightening, widening, and indeterminate results trigger the required
   version and approval behavior.
-- Registry lifecycle tests reject referenced attribute deletion and type
-  mutation, prove explicit disablement fails closed, and prove no administrator
-  or break-glass bypass exists in semantic consumers.
-- Cache tests prove principals with different effective policies cannot share
-  authorization-sensitive results and that attribute-version changes
-  invalidate affected entries.
+- Registry/control tests reject identity/type mutation, prove explicit
+  disablement and tombstone lifecycle behavior, and prove platform-admin
+  request attenuation. Generation-reference retention, dependent-consumer
+  invalidation, and administrator/break-glass behavior in semantic consumers
+  remain pending.
+- Cache tests must prove principals with different effective policies cannot
+  share authorization-sensitive results and that registry/control identity
+  changes invalidate affected entries; those consumer tests remain pending.
 - Audit tests prove grant evaluation and row-filter application are attributable
   to the principal, semantic generation, attribute version, and policy identity
   without leaking unrestricted attribute values.
