@@ -502,43 +502,20 @@
     {
       "description": "The production public URL must be an HTTPS origin without a path, query, fragment, or credentials.",
       "if": {
-        "allOf": [
-          {
-            "properties": {
-              "LEAPVIEW_PRODUCTION": {
-                "enum": [
-                  "1",
-                  "t",
-                  "T",
-                  "true",
-                  "TRUE",
-                  "True"
-                ]
-              }
-            },
-            "required": [
-              "LEAPVIEW_PRODUCTION"
+        "properties": {
+          "LEAPVIEW_PRODUCTION": {
+            "enum": [
+              "1",
+              "t",
+              "T",
+              "true",
+              "TRUE",
+              "True"
             ]
-          },
-          {
-            "not": {
-              "properties": {
-                "LEAPVIEW_EVALUATION_MODE": {
-                  "enum": [
-                    "1",
-                    "t",
-                    "T",
-                    "true",
-                    "TRUE",
-                    "True"
-                  ]
-                }
-              },
-              "required": [
-                "LEAPVIEW_EVALUATION_MODE"
-              ]
-            }
           }
+        },
+        "required": [
+          "LEAPVIEW_PRODUCTION"
         ]
       },
       "then": {
@@ -801,25 +778,6 @@
                 "LEAPVIEW_API_TOKEN_ONLY_AUTH"
               ]
             }
-          },
-          {
-            "not": {
-              "properties": {
-                "LEAPVIEW_EVALUATION_MODE": {
-                  "enum": [
-                    "1",
-                    "t",
-                    "T",
-                    "true",
-                    "TRUE",
-                    "True"
-                  ]
-                }
-              },
-              "required": [
-                "LEAPVIEW_EVALUATION_MODE"
-              ]
-            }
           }
         ]
       },
@@ -841,224 +799,6 @@
         ]
       },
       "x-error-message": "production browser auth requires LEAPVIEW_COOKIE_SECURE=true"
-    },
-    {
-      "description": "Evaluation mode uses the production serving-state runtime.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_EVALUATION_MODE": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_EVALUATION_MODE"
-        ]
-      },
-      "then": {
-        "properties": {
-          "LEAPVIEW_PRODUCTION": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_PRODUCTION"
-        ]
-      },
-      "x-error-message": "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_PRODUCTION=true"
-    },
-    {
-      "description": "Evaluation state is isolated in the evaluation environment.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_EVALUATION_MODE": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_EVALUATION_MODE"
-        ]
-      },
-      "then": {
-        "properties": {
-          "LEAPVIEW_ENVIRONMENT": {
-            "const": "evaluation"
-          }
-        },
-        "required": [
-          "LEAPVIEW_ENVIRONMENT"
-        ]
-      },
-      "x-error-message": "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_ENVIRONMENT=evaluation"
-    },
-    {
-      "description": "Evaluation mode requires an unavoidable local sign-in.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_EVALUATION_MODE": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_EVALUATION_MODE"
-        ]
-      },
-      "then": {
-        "properties": {
-          "LEAPVIEW_LOCAL_AUTH": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_LOCAL_AUTH"
-        ]
-      },
-      "x-error-message": "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_LOCAL_AUTH=true"
-    },
-    {
-      "description": "Evaluation mode permits plain HTTP only for a loopback origin.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_EVALUATION_MODE": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_EVALUATION_MODE"
-        ]
-      },
-      "then": {
-        "properties": {
-          "LEAPVIEW_PUBLIC_URL": {
-            "pattern": "^http://(?:localhost|127(?:\\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3}|\\[::1\\])(?::[0-9]+)?/?$"
-          }
-        },
-        "required": [
-          "LEAPVIEW_PUBLIC_URL"
-        ]
-      },
-      "x-error-message": "LEAPVIEW_EVALUATION_MODE requires a loopback http LEAPVIEW_PUBLIC_URL origin"
-    },
-    {
-      "description": "Evaluation mode uses a localhost HTTP session cookie.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_EVALUATION_MODE": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_EVALUATION_MODE"
-        ]
-      },
-      "then": {
-        "not": {
-          "properties": {
-            "LEAPVIEW_COOKIE_SECURE": {
-              "enum": [
-                "1",
-                "t",
-                "T",
-                "true",
-                "TRUE",
-                "True"
-              ]
-            }
-          },
-          "required": [
-            "LEAPVIEW_COOKIE_SECURE"
-          ]
-        }
-      },
-      "x-error-message": "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_COOKIE_SECURE=false"
-    },
-    {
-      "description": "Evaluation mode must not trust forwarding headers.",
-      "if": {
-        "properties": {
-          "LEAPVIEW_EVALUATION_MODE": {
-            "enum": [
-              "1",
-              "t",
-              "T",
-              "true",
-              "TRUE",
-              "True"
-            ]
-          }
-        },
-        "required": [
-          "LEAPVIEW_EVALUATION_MODE"
-        ]
-      },
-      "then": {
-        "not": {
-          "properties": {
-            "LEAPVIEW_TRUST_PROXY_HEADERS": {
-              "enum": [
-                "1",
-                "t",
-                "T",
-                "true",
-                "TRUE",
-                "True"
-              ]
-            }
-          },
-          "required": [
-            "LEAPVIEW_TRUST_PROXY_HEADERS"
-          ]
-        }
-      },
-      "x-error-message": "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_TRUST_PROXY_HEADERS=false"
     },
     {
       "description": "The production OIDC issuer must use HTTPS.",
@@ -2494,14 +2234,6 @@
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve,admin"
-    },
-    "LEAPVIEW_EVALUATION_MODE": {
-      "default": "false",
-      "description": "Enable the disposable loopback-only evaluation profile; never use for production deployment.",
-      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "evaluate,serve,admin"
     },
     "LEAPVIEW_HEALTHCHECK_URL": {
       "description": "Explicit readiness URL used by the healthcheck command.",

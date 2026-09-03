@@ -517,39 +517,6 @@ func TestValidateProductionAuthRejectsMissingOrInsecurePublicURL(t *testing.T) {
 	}
 }
 
-func TestValidateProductionEvaluationModeAllowsOnlyLoopbackHTTP(t *testing.T) {
-	cfg := Config{
-		Production:         true,
-		EvaluationMode:     true,
-		Environment:        "evaluation",
-		LocalAuth:          true,
-		CookieSecureRaw:    "false",
-		PublicURL:          "http://localhost:8080",
-		CSRFKey:            "0123456789abcdef0123456789abcdef",
-		MetricsBearerToken: "0123456789abcdef0123456789abcdef",
-	}
-	cfg = withAnalyticalTestDefaults(cfg)
-	if err := cfg.ValidateProductionAuth(); err != nil {
-		t.Fatalf("loopback evaluation configuration rejected: %v", err)
-	}
-
-	for name, mutate := range map[string]func(*Config){
-		"external HTTP origin": func(c *Config) { c.PublicURL = "http://evaluation.example.com" },
-		"wrong environment":    func(c *Config) { c.Environment = "prod" },
-		"missing local auth":   func(c *Config) { c.LocalAuth = false },
-		"secure cookie":        func(c *Config) { c.CookieSecureRaw = "true" },
-		"trusted proxy":        func(c *Config) { c.TrustProxyHeaders = true },
-	} {
-		t.Run(name, func(t *testing.T) {
-			invalid := cfg
-			mutate(&invalid)
-			if err := invalid.ValidateProductionAuth(); err == nil {
-				t.Fatalf("invalid evaluation configuration accepted: %#v", invalid)
-			}
-		})
-	}
-}
-
 func TestValidateProductionAuthRejectsInsecureExternalMCPOAuthIssuer(t *testing.T) {
 	cfg := Config{
 		Production: true, APITokenOnlyAuth: true, PublicURL: "https://leapview.example.com",

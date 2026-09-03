@@ -21,14 +21,14 @@ import (
 )
 
 // Initialize performs bootstrap through the native PostgreSQL access
-// authority. Local and evaluation targets do not expose this operation.
+// authority. Non-production targets do not expose this operation.
 func (o Operations) Initialize(ctx context.Context, request adminoffline.InitializeRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
+	if !cfg.Production {
 		return ErrNativeAdminUnavailable
 	}
 	// Match the offline service's admission checks before opening a native
@@ -94,7 +94,7 @@ func (o Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
+	if !cfg.Production {
 		return ErrNativeAdminUnavailable
 	}
 	accessConfig, err := productionAccessConfig(cfg)

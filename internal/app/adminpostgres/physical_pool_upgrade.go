@@ -48,7 +48,7 @@ func (o Operations) UpgradePhysicalPoolCatalog(ctx context.Context, request admi
 		MigrationID: request.MigrationID, PhysicalPoolID: pool.ID.String(), CatalogID: "ducklake:" + pool.ID.String(),
 		CatalogSchemaVersion: request.CatalogSchemaVersion, RecoveryDecision: request.RecoveryDecision,
 	}
-	if !cfg.Production || cfg.EvaluationMode {
+	if !cfg.Production {
 		return ErrNativeCatalogUpgradeUnavailable
 	}
 	if !request.Apply {

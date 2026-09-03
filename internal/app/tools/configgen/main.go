@@ -299,8 +299,6 @@ func predicateSchema(predicate configspec.Predicate) any {
 		return map[string]any{"required": []string{predicate.Name}, "properties": map[string]any{predicate.Name: map[string]any{"pattern": "^https://[^/]+"}}}
 	case configspec.PredicateHTTPSOrigin:
 		return map[string]any{"required": []string{predicate.Name}, "properties": map[string]any{predicate.Name: map[string]any{"pattern": `^https://[^/@?#]+/?$`}}}
-	case configspec.PredicateLoopbackHTTPOrigin:
-		return map[string]any{"required": []string{predicate.Name}, "properties": map[string]any{predicate.Name: map[string]any{"pattern": `^http://(?:localhost|127(?:\.(?:25[0-5]|2[0-4][0-9]|1?[0-9]{1,2})){3}|\[::1\])(?::[0-9]+)?/?$`}}}
 	case configspec.PredicateSlug:
 		return map[string]any{"properties": map[string]any{predicate.Name: map[string]any{"maxLength": 64, "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"}}}
 	case configspec.PredicateEquals:

@@ -21,7 +21,6 @@ func Build(ctx context.Context, cfg config.Config) (*Application, error) {
 // authority graph.
 func BuildProduction(ctx context.Context, cfg config.Config) (*Application, error) {
 	cfg.Production = true
-	cfg.EvaluationMode = false
 	// Preserve the PostgreSQL admission error as the first production failure,
 	// then enforce the complete serving security contract before migrations or
 	// any other database side effect can occur.

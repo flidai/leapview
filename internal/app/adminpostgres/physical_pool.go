@@ -26,15 +26,15 @@ import (
 const assumeControlOwnerSQL = `SET LOCAL ROLE leapview_control_owner`
 
 // BootstrapPhysicalPool admits one physical pool through native PostgreSQL
-// and PostgreSQL-backed DuckLake authorities. Local and evaluation targets do
-// not expose this operation.
+// and PostgreSQL-backed DuckLake authorities. Non-production targets do not
+// expose this operation.
 func (o Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffline.PhysicalPoolBootstrapRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
+	if !cfg.Production {
 		return ErrNativeAdminUnavailable
 	}
 	pool, compatibilityDigest, err := validatePhysicalPoolBootstrap(request)

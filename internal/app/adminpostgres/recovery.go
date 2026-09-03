@@ -245,7 +245,7 @@ func (o Operations) openRecoveryMaintenance(ctx context.Context) (MaintenancePoo
 	if err != nil {
 		return nil, func() {}, err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
+	if !cfg.Production {
 		return nil, func() {}, ErrNativeMaintenanceUnavailable
 	}
 	if err := cfg.ValidatePostgresProduction(); err != nil {

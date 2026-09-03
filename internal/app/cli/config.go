@@ -25,7 +25,7 @@ func configCommand() *cobra.Command {
 			if err := cfg.Validate(config.ProfileServe); err != nil {
 				return err
 			}
-			if cfg.Production && !cfg.EvaluationMode {
+			if cfg.Production {
 				if err := cfg.ValidatePostgresProduction(); err != nil {
 					return err
 				}

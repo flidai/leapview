@@ -5,7 +5,6 @@ package configspec
 
 import (
 	"fmt"
-	"net"
 	"net/url"
 	"sort"
 	"strings"
@@ -169,7 +168,6 @@ var settings = []Setting{
 	{Name: "LEAPVIEW_WORKLOAD_MAINTENANCE_QUEUE_TIMEOUT", Field: "WorkloadMaintenanceQueueTimeout", Type: TypeDuration, Default: "0s", Category: "workload", Scope: "serve", Description: "Maximum time maintenance may wait; zero means no wait.", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_WORKLOAD_MAINTENANCE_EXECUTION_TIMEOUT", Field: "WorkloadMaintenanceExecutionTimeout", Type: TypeDuration, Default: "30m", Category: "workload", Scope: "serve", Description: "Maximum execution time for maintenance work.", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_ENVIRONMENT", Field: "Environment", Type: TypeString, Category: "server", Scope: "serve,admin", Description: "Single serving environment permanently bound to this LeapView instance.", Example: "prod", Runtime: true, Lifecycle: "supported", Commented: true},
-	{Name: "LEAPVIEW_EVALUATION_MODE", Field: "EvaluationMode", Type: TypeBool, Default: "false", Category: "server", Scope: "evaluate,serve,admin", Description: "Enable the disposable loopback-only evaluation profile; never use for production deployment.", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_DUCKDB_NODE_MEMORY_MAX_BYTES", Field: "DuckDBNodeMemoryMaxBytes", Type: TypeInt64, Default: "2684354560", Category: "analytics", Scope: "serve", Description: "Memory limit for the process-owned DuckDB instance.", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_DUCKDB_NODE_TEMP_MAX_BYTES", Field: "DuckDBNodeTempMaxBytes", Type: TypeInt64, Default: "10737418240", Category: "analytics", Scope: "serve", Description: "Temporary-storage limit for the process-owned DuckDB instance.", Runtime: true, Lifecycle: "supported", Commented: true},
 	{Name: "LEAPVIEW_DUCKDB_NODE_MAX_THREADS", Field: "DuckDBNodeMaxThreads", Type: TypeInt, Default: "5", Category: "analytics", Scope: "serve", Description: "Execution-thread limit shared by all work in the process-owned DuckDB instance.", Runtime: true, Lifecycle: "supported", Commented: true},
@@ -286,20 +284,19 @@ var settings = []Setting{
 type PredicateKind string
 
 const (
-	PredicateAll                PredicateKind = "all"
-	PredicateAny                PredicateKind = "any"
-	PredicateNot                PredicateKind = "not"
-	PredicatePresent            PredicateKind = "present"
-	PredicateTrue               PredicateKind = "true"
-	PredicateMinLength          PredicateKind = "min_length"
-	PredicateHTTPSURL           PredicateKind = "https_url"
-	PredicateHTTPSOrigin        PredicateKind = "https_origin"
-	PredicateLoopbackHTTPOrigin PredicateKind = "loopback_http_origin"
-	PredicateSlug               PredicateKind = "route_slug"
-	PredicateEquals             PredicateKind = "equals"
-	PredicateOneOf              PredicateKind = "one_of"
-	PredicatePositive           PredicateKind = "positive"
-	PredicateAtLeast            PredicateKind = "at_least_setting"
+	PredicateAll         PredicateKind = "all"
+	PredicateAny         PredicateKind = "any"
+	PredicateNot         PredicateKind = "not"
+	PredicatePresent     PredicateKind = "present"
+	PredicateTrue        PredicateKind = "true"
+	PredicateMinLength   PredicateKind = "min_length"
+	PredicateHTTPSURL    PredicateKind = "https_url"
+	PredicateHTTPSOrigin PredicateKind = "https_origin"
+	PredicateSlug        PredicateKind = "route_slug"
+	PredicateEquals      PredicateKind = "equals"
+	PredicateOneOf       PredicateKind = "one_of"
+	PredicatePositive    PredicateKind = "positive"
+	PredicateAtLeast     PredicateKind = "at_least_setting"
 )
 
 type Predicate struct {
@@ -324,10 +321,7 @@ func MinLength(name string, minimum int) Predicate {
 }
 func HTTPSURL(name string) Predicate    { return Predicate{Kind: PredicateHTTPSURL, Name: name} }
 func HTTPSOrigin(name string) Predicate { return Predicate{Kind: PredicateHTTPSOrigin, Name: name} }
-func LoopbackHTTPOrigin(name string) Predicate {
-	return Predicate{Kind: PredicateLoopbackHTTPOrigin, Name: name}
-}
-func RouteSlug(name string) Predicate { return Predicate{Kind: PredicateSlug, Name: name} }
+func RouteSlug(name string) Predicate   { return Predicate{Kind: PredicateSlug, Name: name} }
 func Equals(name, value string) Predicate {
 	return Predicate{Kind: PredicateEquals, Name: name, Value: value}
 }
@@ -351,7 +345,6 @@ func Rules() []Rule { return append([]Rule(nil), rules...) }
 
 var (
 	production        = True("LEAPVIEW_PRODUCTION")
-	evaluation        = True("LEAPVIEW_EVALUATION_MODE")
 	oidcAny           = Any(Present("LEAPVIEW_OIDC_ISSUER_URL"), Present("LEAPVIEW_OIDC_CLIENT_ID"), Present("LEAPVIEW_OIDC_CLIENT_SECRET"), Present("LEAPVIEW_OIDC_CALLBACK_URL"), Present("LEAPVIEW_OIDC_SCOPES"))
 	oidcComplete      = All(Present("LEAPVIEW_OIDC_ISSUER_URL"), Present("LEAPVIEW_OIDC_CLIENT_ID"), Present("LEAPVIEW_OIDC_CLIENT_SECRET"), Present("LEAPVIEW_OIDC_CALLBACK_URL"))
 	azureAny          = Any(Present("LEAPVIEW_AZURE_CLIENT_ID"), Present("LEAPVIEW_AZURE_CLIENT_SECRET"), Present("LEAPVIEW_AZURE_CALLBACK_URL"), Present("LEAPVIEW_AZURE_TENANT"))
@@ -375,16 +368,10 @@ var rules = []Rule{
 	{ID: "production-csrf-key", Description: "Production requires a CSRF key with at least 32 characters.", When: production, Assert: MinLength("LEAPVIEW_CSRF_KEY", 32), Message: "production serve requires LEAPVIEW_CSRF_KEY with at least 32 characters"},
 	{ID: "production-metrics-token", Description: "Production requires a metrics bearer token with at least 32 characters.", When: production, Assert: MinLength("LEAPVIEW_METRICS_BEARER_TOKEN", 32), Message: "production metrics scraping requires LEAPVIEW_METRICS_BEARER_TOKEN with at least 32 characters"},
 	{ID: "production-public-url", Description: "Production requires a canonical public URL.", When: production, Assert: Present("LEAPVIEW_PUBLIC_URL"), Message: "production serve requires LEAPVIEW_PUBLIC_URL"},
-	{ID: "production-public-url-https", Description: "The production public URL must be an HTTPS origin without a path, query, fragment, or credentials.", When: All(production, Not(evaluation)), Assert: HTTPSOrigin("LEAPVIEW_PUBLIC_URL"), Message: "production serve requires LEAPVIEW_PUBLIC_URL to be an https origin"},
+	{ID: "production-public-url-https", Description: "The production public URL must be an HTTPS origin without a path, query, fragment, or credentials.", When: production, Assert: HTTPSOrigin("LEAPVIEW_PUBLIC_URL"), Message: "production serve requires LEAPVIEW_PUBLIC_URL to be an https origin"},
 	{ID: "production-mcp-oauth-issuer-https", Description: "An external production MCP OAuth issuer must use HTTPS.", When: All(production, Present("LEAPVIEW_MCP_OAUTH_ISSUER_URL")), Assert: HTTPSURL("LEAPVIEW_MCP_OAUTH_ISSUER_URL"), Message: "production serve requires LEAPVIEW_MCP_OAUTH_ISSUER_URL to be an https URL"},
 	{ID: "production-allowed-host", Description: "Production derives an allowed host from its public URL, explicit hosts, or a browser-auth callback host.", When: production, Assert: Any(Present("LEAPVIEW_PUBLIC_URL"), Present("LEAPVIEW_ALLOWED_HOSTS"), Present("LEAPVIEW_OIDC_CALLBACK_URL"), Present("LEAPVIEW_AZURE_CALLBACK_URL")), Message: "production serve requires LEAPVIEW_PUBLIC_URL, LEAPVIEW_ALLOWED_HOSTS, or an OIDC/Azure callback URL host"},
-	{ID: "production-secure-cookie", Description: "Production browser authentication requires secure cookies unless API-token-only mode is also enabled.", When: All(production, browserAuth, Not(True("LEAPVIEW_API_TOKEN_ONLY_AUTH")), Not(evaluation)), Assert: True("LEAPVIEW_COOKIE_SECURE"), Message: "production browser auth requires LEAPVIEW_COOKIE_SECURE=true"},
-	{ID: "evaluation-production", Description: "Evaluation mode uses the production serving-state runtime.", When: evaluation, Assert: production, Message: "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_PRODUCTION=true"},
-	{ID: "evaluation-environment", Description: "Evaluation state is isolated in the evaluation environment.", When: evaluation, Assert: Equals("LEAPVIEW_ENVIRONMENT", "evaluation"), Message: "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_ENVIRONMENT=evaluation"},
-	{ID: "evaluation-local-auth", Description: "Evaluation mode requires an unavoidable local sign-in.", When: evaluation, Assert: True("LEAPVIEW_LOCAL_AUTH"), Message: "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_LOCAL_AUTH=true"},
-	{ID: "evaluation-loopback-origin", Description: "Evaluation mode permits plain HTTP only for a loopback origin.", When: evaluation, Assert: LoopbackHTTPOrigin("LEAPVIEW_PUBLIC_URL"), Message: "LEAPVIEW_EVALUATION_MODE requires a loopback http LEAPVIEW_PUBLIC_URL origin"},
-	{ID: "evaluation-insecure-cookie", Description: "Evaluation mode uses a localhost HTTP session cookie.", When: evaluation, Assert: Not(True("LEAPVIEW_COOKIE_SECURE")), Message: "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_COOKIE_SECURE=false"},
-	{ID: "evaluation-no-proxy", Description: "Evaluation mode must not trust forwarding headers.", When: evaluation, Assert: Not(True("LEAPVIEW_TRUST_PROXY_HEADERS")), Message: "LEAPVIEW_EVALUATION_MODE requires LEAPVIEW_TRUST_PROXY_HEADERS=false"},
+	{ID: "production-secure-cookie", Description: "Production browser authentication requires secure cookies unless API-token-only mode is also enabled.", When: All(production, browserAuth, Not(True("LEAPVIEW_API_TOKEN_ONLY_AUTH"))), Assert: True("LEAPVIEW_COOKIE_SECURE"), Message: "production browser auth requires LEAPVIEW_COOKIE_SECURE=true"},
 	{ID: "production-oidc-issuer-https", Description: "The production OIDC issuer must use HTTPS.", When: All(production, oidcComplete), Assert: HTTPSURL("LEAPVIEW_OIDC_ISSUER_URL"), Message: "production serve requires LEAPVIEW_OIDC_ISSUER_URL to be an https URL"},
 	{ID: "production-oidc-callback-https", Description: "The production OIDC callback must use HTTPS.", When: All(production, oidcComplete), Assert: HTTPSURL("LEAPVIEW_OIDC_CALLBACK_URL"), Message: "production serve requires LEAPVIEW_OIDC_CALLBACK_URL to be an https URL"},
 	{ID: "production-oidc-provider-slug", Description: "The OIDC provider identifier must be route-safe.", When: All(production, oidcComplete), Assert: RouteSlug("LEAPVIEW_OIDC_PROVIDER_ID"), Message: "LEAPVIEW_OIDC_PROVIDER_ID must be a route-safe slug containing only letters, numbers, dots, underscores, or dashes"},
@@ -481,19 +468,6 @@ func (p Predicate) Evaluate(values map[string]any) bool {
 		parsed, err := url.Parse(strings.TrimSpace(value))
 		return err == nil && parsed.Scheme == "https" && parsed.Host != "" && parsed.User == nil &&
 			(parsed.Path == "" || parsed.Path == "/") && parsed.RawQuery == "" && parsed.Fragment == ""
-	case PredicateLoopbackHTTPOrigin:
-		value, _ := values[p.Name].(string)
-		parsed, err := url.Parse(strings.TrimSpace(value))
-		if err != nil || parsed.Scheme != "http" || parsed.Host == "" || parsed.User != nil ||
-			(parsed.Path != "" && parsed.Path != "/") || parsed.RawQuery != "" || parsed.Fragment != "" {
-			return false
-		}
-		host := parsed.Hostname()
-		if strings.EqualFold(host, "localhost") {
-			return true
-		}
-		ip := net.ParseIP(host)
-		return ip != nil && ip.IsLoopback()
 	case PredicateSlug:
 		return routeSlug(values[p.Name])
 	case PredicateEquals:

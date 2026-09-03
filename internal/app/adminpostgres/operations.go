@@ -164,9 +164,7 @@ func New(dependencies Dependencies) Operations {
 }
 
 // ErrNativeMaintenanceUnavailable indicates that the native PostgreSQL
-// maintenance command is not available on a local SQLite/evaluation target.
-// Those targets no longer expose the retired cross-domain SQLite retention
-// implementation.
+// maintenance command is unavailable outside the production target.
 var ErrNativeMaintenanceUnavailable = errors.New("native PostgreSQL admin maintenance is unavailable outside production")
 
 // ErrNativeAdminUnavailable indicates that a PostgreSQL-native Admin
@@ -184,7 +182,7 @@ func (o Operations) Maintenance(ctx context.Context, request admincli.Maintenanc
 	if err != nil {
 		return err
 	}
-	if !cfg.Production || cfg.EvaluationMode {
+	if !cfg.Production {
 		return ErrNativeMaintenanceUnavailable
 	}
 	if err := cfg.ValidatePostgresProduction(); err != nil {
