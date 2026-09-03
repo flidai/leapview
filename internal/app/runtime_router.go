@@ -54,7 +54,6 @@ import (
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/flidai/leapview/pkg/pagestream"
 	"github.com/go-chi/chi/v5"
-	"github.com/prometheus/client_golang/prometheus"
 )
 
 type QueryMetrics = dashboardmodule.Metrics
@@ -159,8 +158,6 @@ func (r *runtimeServices) resolveProjectID(ctx context.Context) (projectgraph.Re
 type platformServices struct {
 	asyncJobs               jobs.Repository
 	jobModule               *jobsmodule.Module
-	auditDispatcher         *access.AuditDispatcher
-	auditOutbox             access.AuditOutboxStatsReader
 	auth                    *accessmodule.Auth
 	assets                  staticasset.Resolver
 	buildIdentity           buildinfo.Identity
@@ -191,24 +188,18 @@ type httpPolicy struct {
 }
 
 type persistenceInputs struct {
-	agentSettings                agentmodule.Settings
-	agentPersistence             *agentmodule.Persistence
-	servingStateRepo             servingStateRepository
-	refreshServingStateMutations refreshmodule.ServingStateRepository
-	accessRepo                   access.Repository
-	auditRecorder                access.AuditIntentRecorder
+	agentSettings    agentmodule.Settings
+	agentPersistence *agentmodule.Persistence
+	servingStateRepo servingStateRepository
+	accessRepo       access.Repository
 	// refreshPersistence is the complete capability-owned refresh authority.
-	// Native composition injects this opaque bundle; SQLite is constructed
-	// explicitly by configureRefreshModule only for development callers.
+	// Native composition injects this opaque bundle.
 	refreshPersistence *refreshmodule.Persistence
-	// requireNativePersistence makes partial native graphs fail closed without
-	// classifying a caller-supplied (possibly SQLite-backed) jobs module as a
-	// PostgreSQL authority.
+	// requireNativePersistence makes partial native graphs fail closed.
 	requireNativePersistence bool
 	product                  *adminmodule.ProductService
 	productStatus            adminmodule.ProductStatus
 	dashboardPersistence     *dashboardmodule.NativePersistence
-	dashboardSQLite          *dashboardmodule.SQLitePersistence
 	requireNativeDashboard   bool
 }
 
@@ -267,20 +258,14 @@ func newCompositionSurfaces(
 }
 
 type dataAssemblyInputs struct {
-	AuditRuntime     *auditRuntime
 	PlatformHealth   platformHealth
-	RecoveryMetrics  prometheus.Collector
 	ServingStateRepo servingStateRepository
-	// RefreshServingStateMutations is the explicit legacy SQLite mutation
-	// authority for candidate/activation refresh flows. Native PostgreSQL
-	// composition leaves this nil and uses canonical delivery instead.
-	RefreshServingStateMutations refreshmodule.ServingStateRepository
-	AccessRepo                   access.Repository
-	APIIdempotency               idempotency.Store
-	CursorSigning                cursorsigning.Initializer
+	AccessRepo       access.Repository
+	APIIdempotency   idempotency.Store
+	CursorSigning    cursorsigning.Initializer
 	// BypassDurableIdempotency is an explicit production composition escape
 	// hatch for commands whose domain transaction owns exact replay semantics.
-	// Local/evaluation SQLite composition leaves this unset.
+	// Development composition leaves this unset.
 	BypassDurableIdempotency map[string]struct{}
 	// ReclaimExpiredIdempotency is the explicit operation-ID allowlist for
 	// commands whose complete mutation path is durably reentrant. It must stay
@@ -290,21 +275,18 @@ type dataAssemblyInputs struct {
 	// the selected dashboard authority.
 	DashboardPublicationReconciler dashboardPublicationActivationReconciler
 	// DashboardPersistence is the complete native PostgreSQL dashboard
-	// authority bundle. It is mutually exclusive with DashboardSQLite.
+	// authority bundle.
 	DashboardPersistence *dashboardmodule.NativePersistence
-	// DashboardSQLite is the explicit local/evaluation dashboard authority.
-	// It is mutually exclusive with DashboardPersistence.
-	DashboardSQLite *dashboardmodule.SQLitePersistence
 	// RefreshPersistence is the complete native PostgreSQL refresh authority.
 	// It is opaque at this composition boundary so the router cannot assemble
-	// a partial run/schedule/publication bundle or silently fall back to SQLite.
+	// a partial run/schedule/publication bundle.
 	RefreshPersistence *refreshmodule.Persistence
 	// RequireNativeDashboard selects the fail-closed native dashboard path.
 	// When enabled, the persistence bundle, authoring repository/application,
 	// and publication reconciler must all be supplied.
 	RequireNativeDashboard bool
 	// RequireExplicitAPIProtocol prevents a production assembly from silently
-	// selecting the process-local or SQLite protocol implementations.
+	// selecting process-local protocol implementations.
 	RequireExplicitAPIProtocol bool
 	// AdditionalWorkers are optional capability-owned lifecycle workers. They
 	// join the same bounded worker group and stop before runtime/resources.
@@ -315,8 +297,8 @@ type capabilityAssemblyInputs struct {
 	ReleaseModule *releasemodule.Module
 	JobModule     *jobsmodule.Module
 	// AgentPersistence is the graph-owned native agent authority. The router
-	// passes it through opaquely to agentmodule.Build; it must never infer a
-	// SQLite persistence from a missing Database in production.
+	// passes it through opaquely to agentmodule.Build; production must provide
+	// the complete native authority.
 	AgentPersistence  *agentmodule.Persistence
 	AccessModule      *accessmodule.Module
 	Agent             *agentmodule.Service
@@ -521,40 +503,11 @@ func validateQueryAuthorizationDependencies(metrics QueryMetrics, required bool,
 	return nil
 }
 
-// dashboardNativeInputsPresent identifies any native dashboard authority in
-// the assembly bag. A partial native bundle must never silently fall back to
-// the legacy SQLite dashboard path.
-func dashboardNativeInputsPresent(data dataAssemblyInputs) bool {
-	return data.RequireNativeDashboard || data.DashboardPersistence != nil
-}
-
-// nativePersistenceInputsPresent identifies a clean-slate PostgreSQL
-// composition. Native capability bundles are opaque and therefore cannot be
-// inspected here; their presence is sufficient to select the fail-closed
-// admission path. A partial native graph must not silently construct a
-// stateless or SQLite refresh/agent module.
-func nativePersistenceInputsPresent(data dataAssemblyInputs, capabilities capabilityAssemblyInputs) bool {
-	return dashboardNativeInputsPresent(data)
-}
-
 func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capabilityAssemblyInputs, runtimeConfig runtimeAssemblyInputs) error {
-	native := nativePersistenceInputsPresent(data, capabilities)
-	if native && (data.AuditRuntime != nil || data.DashboardSQLite != nil) {
-		return errors.New("native runtime composition rejects SQLite authorities")
-	}
-	if native && data.RefreshServingStateMutations != nil {
-		return errors.New("native runtime composition rejects legacy SQLite refresh serving-state mutations")
-	}
 	if !runtimeConfig.Production {
 		return nil
 	}
-	if data.AuditRuntime != nil || data.DashboardSQLite != nil {
-		return errors.New("production runtime composition rejects SQLite authorities")
-	}
-	if data.RefreshServingStateMutations != nil {
-		return errors.New("production runtime composition rejects legacy SQLite refresh serving-state mutations")
-	}
-	if !dashboardNativeInputsPresent(data) {
+	if !data.RequireNativeDashboard {
 		return errors.New("production runtime composition requires native dashboard persistence")
 	}
 	if !data.RequireExplicitAPIProtocol {
@@ -578,17 +531,10 @@ func validateProductionRuntimeInputs(data dataAssemblyInputs, capabilities capab
 // validateDashboardAssemblyInputs is the runtime-router admission gate for
 // native dashboard composition. The native path is deliberately all-or-
 // nothing: it requires the complete opaque persistence bundle, the exact
-// authoring repository/application pair, and the native activation
-// reconciler, while rejecting every database/sql (SQLite) input.
+// authoring repository/application pair, and the native activation reconciler.
 func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capabilityAssemblyInputs) error {
-	if !dashboardNativeInputsPresent(data) {
+	if !data.RequireNativeDashboard {
 		return nil
-	}
-	if data.DashboardSQLite != nil {
-		return errors.New("native dashboard composition rejects SQLite persistence")
-	}
-	if data.AuditRuntime != nil {
-		return errors.New("native dashboard composition rejects the legacy SQLite audit runtime")
 	}
 	if data.DashboardPersistence == nil {
 		return errors.New("native dashboard composition requires a dashboard persistence bundle")
@@ -606,8 +552,8 @@ func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capab
 }
 
 // nativeDeliveryComposition reports whether the deployment config selects the
-// clean-slate delivery authority. Production is always native; explicit local
-// and evaluation composition remains on the legacy SQLite reader.
+// clean-slate delivery authority. Production is always native; profile-only
+// composition may continue to use its topology-neutral reader.
 func nativeDeliveryComposition(config deploymentmodule.Config, production bool) bool {
 	return production || config.NativeDeliveryMutations != nil || config.NativeDeliveryPublication != nil ||
 		config.NativeDeliveryApproval != nil || config.NativeDeliveryReader != nil || config.NativeDeliveryEvents != nil ||
@@ -624,8 +570,7 @@ func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production b
 	if config.NativeDeliveryReader == nil {
 		return errors.New("native delivery composition requires a native delivery authorization reader")
 	}
-	if config.DeliveryReader != nil || config.DeliveryMutations != nil || config.DeliveryCandidateBuilder != nil ||
-		config.CanonicalDeliveryAdapter != nil || config.API.Releases != nil {
+	if config.DeliveryReader != nil || config.DeliveryMutations != nil || config.API.Releases != nil {
 		return errors.New("native delivery composition rejects legacy delivery/release projections")
 	}
 	return nil
@@ -652,7 +597,7 @@ func buildApplicationSurfaces(
 	if data.RequireNativeDashboard && data.RefreshPersistence == nil {
 		return nil, nil, nil, nil, errors.New("native composition requires refresh persistence")
 	}
-	requireNativeDashboard := dashboardNativeInputsPresent(data)
+	requireNativeDashboard := data.RequireNativeDashboard
 	telemetry := observability.New()
 	dashboardTelemetry := dashboardmodule.NewTelemetry(telemetry.Registry())
 	if capabilities.AnalyticsModule != nil {
@@ -716,20 +661,15 @@ func buildApplicationSurfaces(
 	}
 	servingStateRepo := data.ServingStateRepo
 	routes, runtime, platform, policy := newCompositionSurfaces(metrics, runtimeConfig.Assets, telemetry, dashboardTelemetry)
-	audit := data.AuditRuntime
-	if audit != nil && (audit.recorder == nil || audit.delivery == nil || audit.stats == nil || audit.operator == nil) {
-		return fail(errors.New("durable audit runtime facets are unavailable"))
-	}
 	runtime.runtimeHostModule = runtimeConfig.RuntimeHost
 	runtime.dashboardPublicationReconciler = data.DashboardPublicationReconciler
 	platform.requireActiveDeployment = runtimeConfig.RequireActiveDeployment
 	persistence := persistenceInputs{}
 	persistence.agentPersistence = capabilities.AgentPersistence
 	persistence.dashboardPersistence = data.DashboardPersistence
-	persistence.dashboardSQLite = data.DashboardSQLite
 	persistence.refreshPersistence = data.RefreshPersistence
 	persistence.requireNativeDashboard = requireNativeDashboard
-	persistence.requireNativePersistence = nativePersistenceInputsPresent(data, capabilities)
+	persistence.requireNativePersistence = runtimeConfig.Production || data.RequireNativeDashboard
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
@@ -785,48 +725,23 @@ func buildApplicationSurfaces(
 	runtime.workloads = controller
 	runtime.projectID = runtimeConfig.ProjectID
 	runtime.projectIDResolver = runtimeConfig.ProjectIDResolver
-	// Persistence is capability-owned in production. A nil SQLite database is
-	// therefore not evidence that the runtime is stateless: native graph
-	// bundles and pre-built job modules are durable authorities too.
-	runtime.persistenceConfigured = data.AccessRepo != nil || data.AuditRuntime != nil || data.RefreshPersistence != nil ||
-		capabilities.JobModule != nil || nativePersistenceInputsPresent(data, capabilities)
+	// Persistence is capability-owned in production. Native graph bundles and
+	// pre-built job modules are durable authorities too.
+	runtime.persistenceConfigured = data.AccessRepo != nil || data.RefreshPersistence != nil ||
+		capabilities.JobModule != nil || requireNativeDashboard
 	runtime.platformHealth = data.PlatformHealth
 	persistence.agentSettings = workflow.AgentSettings
-	if audit != nil {
-		persistence.auditRecorder = audit.recorder
-	}
 	persistence.product = capabilities.Product
 	routes.product = capabilities.Product
 	persistence.productStatus = capabilities.ProductStatus
 	// The composition root owns persistence selection and supplies the complete
-	// jobs module. Runtime routing never infers SQLite from a raw database.
+	// jobs module. Runtime routing never infers a persistence implementation.
 	platform.jobModule = capabilities.JobModule
 	if platform.jobModule != nil {
 		// Avoid storing a typed nil *jobsmodule.Module in the jobs.Repository
 		// interface. Persistence-free development and test compositions rely on
 		// a genuinely nil queue to skip durable handler registration.
 		platform.asyncJobs = platform.jobModule
-	}
-	if audit != nil {
-		if data.RecoveryMetrics != nil {
-			telemetry.Register(data.RecoveryMetrics)
-		}
-		if platform.jobModule == nil {
-			return fail(errors.New("SQLite composition requires an explicit platform jobs module"))
-		}
-		platform.asyncJobs = platform.jobModule
-		// Access audit intents share the platform SQL database. Inject the narrow
-		// delivery and observability facets into lifecycle consumers.
-		platform.auditOutbox = audit.stats
-		auditDispatcher, err := access.NewAuditDispatcher(access.AuditDispatcherConfig{
-			Store:  audit.delivery,
-			Logger: platform.logger,
-		})
-		if err != nil {
-			return fail(fmt.Errorf("build access audit dispatcher: %w", err))
-		}
-		platform.auditDispatcher = auditDispatcher
-		platform.telemetry.Register(newAuditOutboxCollector(platform.auditOutbox))
 	}
 	if platform.apiProtocol == nil {
 		if err := configureAPIProtocol(routes, runtime, platform, policy, ctx, apiProtocolPersistence{
@@ -839,7 +754,6 @@ func buildApplicationSurfaces(
 		}
 	}
 	persistence.servingStateRepo = servingStateRepo
-	persistence.refreshServingStateMutations = data.RefreshServingStateMutations
 	moduleWorkflow.managedDataValidation = workflow.ManagedDataValidation
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
@@ -889,9 +803,6 @@ func buildApplicationSurfaces(
 		projectAssetVersions = reader
 	}
 	var dashboardAppearances projecthttp.DashboardAppearanceStore
-	if data.DashboardSQLite != nil {
-		dashboardAppearances = data.DashboardSQLite.AppearanceStore()
-	}
 	routes.projectBrowser = &projecthttp.BrowserHandler{
 		Graph: capabilities.ProjectGraph, AssetVersions: projectAssetVersions, PhysicalCatalog: projectPhysicalCatalog,
 		SourceSchemas:           activeSourceSchemaEvidenceSource{releases: capabilities.ReleaseModule, targetID: runtimeConfig.InstanceID},
@@ -968,9 +879,6 @@ func buildApplicationSurfaces(
 	if err := validateDeliveryAssemblyInputs(moduleWorkflow.deploymentConfig, runtimeConfig.Production); err != nil {
 		return fail(err)
 	}
-	if nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production) && data.RefreshServingStateMutations != nil {
-		return fail(errors.New("native delivery composition rejects legacy SQLite refresh serving-state mutations"))
-	}
 	platform.nativeDelivery = nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production)
 	policy.managedDataTus = httpConfig.ManagedDataTus
 	storage.jobLeaseTimeout = httpConfig.JobLeaseTimeout
@@ -1032,7 +940,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	if runtime.analyticsModule != nil {
 		administration, err := runtime.analyticsModule.NewConnectionAdministration(
 			analyticsmodule.ConnectionAdministrationConfig{
-				AuditIntentRecorder: persistence.auditRecorder, RequireAuditIntent: persistence.auditRecorder != nil,
 				EnsureScope: func(ctx context.Context, scope analyticsmodule.ConnectionBindingScope) error {
 					projectID, err := runtime.resolveProjectID(ctx)
 					if err != nil {
@@ -1223,13 +1130,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			principal, ok := routes.accessModule.CurrentPrincipal(r)
 			return deploymentmodule.Principal{ID: principal.ID}, ok
 		}
-		config.CandidateAudit = func(ctx context.Context, event deploymentmodule.CandidateEvent) error {
-			return recordAccessAudit(ctx, routes.accessModule, access.AuditEventInput{
-				PrincipalID: event.PrincipalID,
-				Action:      event.Action, ResourceKind: "project", ResourceID: event.ProjectID.String(),
-				Capability: access.CapabilityProjectAdmin, Status: string(event.Status), MetadataJSON: event.MetadataJSON,
-			})
-		}
 		config.CandidateSourceAudit = candidateSourceAuditRecorder(routes.accessModule)
 		config.CandidateSourceBlobAudit = candidateSourceAuditRecorder(routes.accessModule)
 		config.Jobs = deploymentmodule.JobConfig{
@@ -1242,7 +1142,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Events: platform.asyncJobs,
 			Logger: platform.logger,
 		}
-		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Workflow: platform.jobModule, Committer: platform.jobModule}
+		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Committer: platform.jobModule}
 		if !nativeDeliveryComposition(config, runtimeConfig.Production) {
 			if routes.releaseModule != nil {
 				apiConfig.Releases = routes.releaseModule.DeploymentLinkage()
@@ -1257,51 +1157,34 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				return (platform.auth == nil || platform.auth.DevBypass()) && actor == accessmodule.LocalDeveloperPrincipal().ID
 			},
 		}
-		priorAfterActivated := config.AfterActivated
-		if config.Persistence != nil {
-			// Native activation commits the durable PostgreSQL pointer first. The
-			// job is not complete until the exact sealed generation is attached
-			// and the dashboard projections are reconciled. A failure is retried;
-			// coordinator replay makes the control transition idempotent.
-			config.Jobs.ReconcileActivation = func(ctx context.Context, row apiadapter.Deployment) error {
-				projectID, err := projectgraph.NewResourceID(row.Project)
-				if err != nil || strings.TrimSpace(row.GenerationID) == "" {
-					return errors.New("native activation returned an invalid serving identity")
-				}
-				activated := deployment.Deployment{
-					ID: row.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: row.Environment, GenerationID: row.GenerationID},
-					ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest,
-					Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
-					ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
-				}
-				if runtime.runtimeHostModule == nil {
-					return errors.New("native activation runtime host is unavailable")
-				}
-				if err := runtime.runtimeHostModule.ReconcileSealed(ctx, servingstate.ID(row.GenerationID)); err != nil {
-					return fmt.Errorf("reconcile native activated runtime: %w", err)
-				}
-				if priorAfterActivated != nil {
-					priorAfterActivated(ctx, activated)
-				}
-				if runtime.dashboardPublicationReconciler == nil {
-					return errors.New("native dashboard publication reconciler is unavailable")
-				}
-				if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
-					return fmt.Errorf("reconcile native dashboard publications: %w", err)
-				}
-				return nil
+		// Native activation commits the durable PostgreSQL pointer first. The
+		// job is not complete until the exact sealed generation is attached and
+		// dashboard projections are reconciled. A failure is retried; coordinator
+		// replay makes the control transition idempotent.
+		config.Jobs.ReconcileActivation = func(ctx context.Context, row apiadapter.Deployment) error {
+			projectID, err := projectgraph.NewResourceID(row.Project)
+			if err != nil || strings.TrimSpace(row.GenerationID) == "" {
+				return errors.New("native activation returned an invalid serving identity")
 			}
-		} else {
-			config.AfterActivated = func(ctx context.Context, activated deployment.Deployment) {
-				if priorAfterActivated != nil {
-					priorAfterActivated(ctx, activated)
-				}
-				if runtime.dashboardPublicationReconciler != nil {
-					if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
-						logDashboardPublicationReconciliationFailure(platform.logger, err, activated.ServingIdentity.GenerationID)
-					}
-				}
+			activated := deployment.Deployment{
+				ID: row.ID, ServingIdentity: projectgraph.ServingIdentity{ProjectID: projectID, Environment: row.Environment, GenerationID: row.GenerationID},
+				ArtifactDigest: row.ArtifactDigest, PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest,
+				Status: deployment.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
+				ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
 			}
+			if runtime.runtimeHostModule == nil {
+				return errors.New("native activation runtime host is unavailable")
+			}
+			if err := runtime.runtimeHostModule.ReconcileSealed(ctx, servingstate.ID(row.GenerationID)); err != nil {
+				return fmt.Errorf("reconcile native activated runtime: %w", err)
+			}
+			if runtime.dashboardPublicationReconciler == nil {
+				return errors.New("native dashboard publication reconciler is unavailable")
+			}
+			if err := runtime.dashboardPublicationReconciler.Reconcile(ctx, persistence.servingStateRepo, activated); err != nil {
+				return fmt.Errorf("reconcile native dashboard publications: %w", err)
+			}
+			return nil
 		}
 		var err error
 		routes.deploymentModule, err = deploymentmodule.Build(ctx, config)
@@ -1326,14 +1209,10 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 					}
 					return dashboardAppearanceResolver(definitionReader, appearanceStore)(ctx, projectID, dashboardID)
 				}
-			} else if persistence.dashboardSQLite != nil {
-				appearanceStore = persistence.dashboardSQLite.AppearanceStore()
-				resolveDashboardAppearance = dashboardAppearanceResolver(definitionReader, appearanceStore)
 			}
 		}
 		var err error
 		routes.dashboardModule, err = dashboardmodule.Build(ctx, dashboardmodule.Config{
-			SQLitePersistence:        persistence.dashboardSQLite,
 			NativePersistence:        persistence.dashboardPersistence,
 			RequireNativePersistence: persistence.requireNativeDashboard,
 			RequireAuthoring:         persistence.requireNativeDashboard,
@@ -1477,8 +1356,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	}
 	if routes.projectBrowser != nil && persistence.requireNativeDashboard {
 		// Native dashboard Build selects the opaque PostgreSQL appearance
-		// authority. Project Browser must consume that same store rather than
-		// constructing an implicit fallback repository for an absent native authority.
+		// authority. Project Browser must consume that same store.
 		if routes.dashboardModule == nil || routes.dashboardModule.AppearanceStore() == nil {
 			return errors.New("native dashboard composition requires a dashboard appearance store")
 		}
@@ -2031,11 +1909,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		},
 		"deliveryStartup": runtimeConfig.DeliveryStartup,
 	}
-	if platform.auditOutbox != nil {
-		healthChecks["auditOutbox"] = func(ctx context.Context) error {
-			return auditOutboxReadiness(ctx, platform.auditOutbox)
-		}
-	}
 	platform.health = newHealth(healthConfig{
 		Platform: func(ctx context.Context) error {
 			if runtime.platformHealth == nil {
@@ -2092,11 +1965,6 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		RequireActiveDeployment: platform.requireActiveDeployment,
 	})
 	workerComponents := make([]platformlifecycle.Component, 0, 5+len(additionalWorkers))
-	if platform.auditDispatcher != nil {
-		// Start the dispatcher before audit producers and stop it after them, so
-		// shutdown does not strand intents emitted while workers are draining.
-		workerComponents = append(workerComponents, platformlifecycle.Component{Start: platform.auditDispatcher.Start, Stop: platform.auditDispatcher.Stop})
-	}
 	workerComponents = append(workerComponents,
 		platformlifecycle.Component{Start: routes.refreshModule.Start, Stop: routes.refreshModule.Stop},
 		platformlifecycle.Component{
