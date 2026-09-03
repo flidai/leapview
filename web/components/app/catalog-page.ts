@@ -352,12 +352,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             favoriteLabel: this.favoriteDashboardIDs.includes(dashboard.id) ? `Remove ${dashboard.title} from favorites` : `Add ${dashboard.title} to favorites`,
             badges: [
               ...(dashboard.featured ? [{ icon: 'featured' as const, label: 'Featured dashboard', text: 'Featured' }] : []),
-              ...(dashboard.popularity ? [{
-                icon: 'popularity' as const,
-                level: dashboard.popularity,
-                label: popularityLabel(dashboard.popularity),
-                text: popularityPercentile(dashboard.popularity),
-              }] : []),
             ],
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
@@ -366,6 +360,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             columns: {
               dataModel: semanticModelTitle(dashboard.semanticModel),
               owner: owner.name || '—',
+              popularity: dashboard.popularity ?? '',
               status: dashboardStatusLabel(dashboard.status),
               updated: formatCompactDate(dashboard.updatedAt || dashboard.lastRefreshedAt),
               lastOpened: formatCompactDate(lastOpenedAt),
@@ -374,11 +369,13 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             sortValues: {
               dataModel: semanticModelTitle(dashboard.semanticModel),
               owner: owner.name,
+              popularity: popularityRank(dashboard.popularity),
               status: dashboardStatusRank(dashboard.status),
               updated: dashboard.updatedAt || dashboard.lastRefreshedAt || '',
               lastOpened: lastOpenedAt || '',
             },
             columnTitles: {
+              popularity: dashboard.popularity ? popularityLabel(dashboard.popularity) : 'No popularity data yet',
               status: dashboardStatusDescription(dashboard.status),
               updated: formatExactTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
               lastOpened: formatExactTime(lastOpenedAt),
@@ -390,6 +387,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           active-filter=${page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
           empty-text=${this.catalogEmptyText()}
+          title-emphasis="normal"
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
           @lv-entity-list-row-action=${this.handleDashboardRowAction}
@@ -405,21 +403,23 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   private catalogColumns() {
     if (this.catalogScope === 'mine') {
       return [
-        { id: 'name', label: 'Dashboard', width: '36%' },
-        { id: 'dataModel', label: 'Data model', width: '18%' },
-        { id: 'status', label: 'Status', width: '19%', render: 'quiet-status' as const },
-        { id: 'updated', label: 'Updated', width: '11%' },
+        { id: 'name', label: 'Dashboard', width: '32%' },
+        { id: 'dataModel', label: 'Data model', width: '16%' },
+        { id: 'popularity', label: 'Popularity', width: '10%', render: 'popularity' as const },
+        { id: 'status', label: 'Status', width: '17%', render: 'quiet-status' as const },
+        { id: 'updated', label: 'Updated', width: '9%' },
         { id: 'lastOpened', label: 'Last opened', width: '11%' },
         { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
       ]
     }
     return [
-      { id: 'name', label: 'Dashboard', width: '34%' },
-      { id: 'dataModel', label: 'Data model', width: '14%' },
+      { id: 'name', label: 'Dashboard', width: '29%' },
+      { id: 'dataModel', label: 'Data model', width: '12%' },
       { id: 'owner', label: 'Owner', width: '8%', render: 'person-avatar' as const },
-      { id: 'status', label: 'Status', width: '18%', render: 'quiet-status' as const },
-      { id: 'updated', label: 'Updated', width: '10%' },
-      { id: 'lastOpened', label: 'Last opened', width: '11%' },
+      { id: 'popularity', label: 'Popularity', width: '9%', render: 'popularity' as const },
+      { id: 'status', label: 'Status', width: '16%', render: 'quiet-status' as const },
+      { id: 'updated', label: 'Updated', width: '9%' },
+      { id: 'lastOpened', label: 'Last opened', width: '12%' },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
     ]
   }
