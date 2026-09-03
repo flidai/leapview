@@ -185,7 +185,6 @@ CREATE TABLE IF NOT EXISTS project.source_sync_plan (
     expires_at                 timestamptz NOT NULL,
     created_at                 timestamptz NOT NULL DEFAULT clock_timestamp(),
     committed_at               timestamptz,
-    UNIQUE (project_id, storage_security_domain, owner_id, candidate_key, request_digest),
     CHECK (project_id = btrim(project_id) AND octet_length(project_id) BETWEEN 1 AND 255),
     CHECK (storage_security_domain = btrim(storage_security_domain) AND octet_length(storage_security_domain) BETWEEN 1 AND 255),
     CHECK (owner_id = btrim(owner_id) AND octet_length(owner_id) BETWEEN 1 AND 255),

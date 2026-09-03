@@ -351,6 +351,54 @@ func TestSourcePlanRollbackAndValidation(t *testing.T) {
 	}
 }
 
+func TestSourceSyncPlanAllowsDistinctPlansForSameRequest(t *testing.T) {
+	db := sourceTestDB(t)
+	r := New(db)
+	entries := []SourceSyncPlanEntryInput{{Path: "leapview.yaml", Digest: sourceTestDigest("a"), SizeBytes: 1}}
+	input := SyncPlanInput{
+		PlanID: uuid.New(), OperationID: uuid.New(), ProjectID: "project:source-plans",
+		StorageSecurityDomain: "runtime", OwnerID: "owner-1", CandidateKey: "default",
+		SourceDigest: sourceDigest("project:source-plans", "leapview.yaml", snapshotEntries(entries)),
+		ProjectFile:  "leapview.yaml", RequestDigest: sourceTestDigest("b"),
+		ExpiresAt: time.Now().Add(2 * time.Minute), Entries: entries,
+	}
+	create := func(in SyncPlanInput) SyncPlan {
+		t.Helper()
+		tx, err := db.Begin(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		plan, err := r.CreateSyncPlanTx(t.Context(), tx, in)
+		if err != nil {
+			_ = tx.Rollback(t.Context())
+			t.Fatal(err)
+		}
+		if err := tx.Commit(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		return plan
+	}
+
+	first := create(input)
+	secondInput := input
+	secondInput.PlanID = uuid.New()
+	secondInput.OperationID = uuid.New()
+	second := create(secondInput)
+	if second.PlanID == first.PlanID || second.OperationID == first.OperationID {
+		t.Fatalf("distinct source plans reused identity: first=%#v second=%#v", first, second)
+	}
+	if second.SourceDigest != first.SourceDigest || second.RequestDigest != first.RequestDigest || len(second.Entries) != len(first.Entries) {
+		t.Fatalf("same source request changed across independent plans: first=%#v second=%#v", first, second)
+	}
+	var count int
+	if err := db.QueryRow(t.Context(), `SELECT count(*) FROM project.source_sync_plan WHERE project_id=$1 AND request_digest=$2`, input.ProjectID, input.RequestDigest).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 2 {
+		t.Fatalf("same-request source plans=%d, want 2", count)
+	}
+}
+
 func TestSourceSchemaRoleBoundaryAndImmutableRows(t *testing.T) {
 	h := postgrestest.Start(t)
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "source-runtime", Login: true})

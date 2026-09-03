@@ -253,6 +253,7 @@ func TestCandidateSynchronizationIdempotencyKeysBindExpectedPredecessor(t *testi
 	if _, err := transport.Commit(t.Context(), request); err != nil {
 		t.Fatal(err)
 	}
+	baselineRequest := request
 	request.ExpectedArtifactDigest =
 		"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
 	if _, err := transport.Plan(t.Context(), request); err != nil {
@@ -282,6 +283,21 @@ func TestCandidateSynchronizationIdempotencyKeysBindExpectedPredecessor(t *testi
 	}
 	if firstCommitKey == secondCommitKey {
 		t.Fatalf("commit idempotency key did not bind expected predecessor: %q", firstCommitKey)
+	}
+	secondGeneric := &candidateSyncTransportStub{}
+	secondTransport := newCandidateSynchronizationTransport(
+		deploymentgen.NewGenClient(secondGeneric),
+	)
+	secondPlan, err := secondTransport.Plan(t.Context(), baselineRequest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	baselineRequest.PlanID = secondPlan.PlanID
+	if _, err := secondTransport.Commit(t.Context(), baselineRequest); err != nil {
+		t.Fatal(err)
+	}
+	if got := secondGeneric.requests[1].Headers.Get("Idempotency-Key"); got != firstCommitKey {
+		t.Fatalf("identical commit changed idempotency key across transport instances: %q != %q", got, firstCommitKey)
 	}
 }
 
@@ -359,6 +375,76 @@ func TestNativeDeliveryKeysAreStableAcrossTransportInstances(t *testing.T) {
 		firstStub.nativePlanKey != secondStub.nativePlanKey ||
 		firstStub.nativeBuildKey != secondStub.nativeBuildKey {
 		t.Fatalf("native idempotency keys differ: first plan=%q build=%q second plan=%q build=%q", firstStub.nativePlanKey, firstStub.nativeBuildKey, secondStub.nativePlanKey, secondStub.nativeBuildKey)
+	}
+}
+
+func TestSourceSynchronizationKeysAreStableAcrossTransportInstances(t *testing.T) {
+	_, source := nativeDeliverySyncRequestForTest()
+	base := projectdevloop.SynchronizationPlanRequest{
+		ProjectID:      "finance",
+		ProjectFile:    "leapview.yaml",
+		ArtifactDigest: source,
+		SourceOnly:     true,
+		CandidateKey:   "native",
+		Artifacts: []projectdevloop.ArtifactReference{{
+			Path: "leapview.yaml", Digest: "sha256:41cf6794ba4200b839c53531555f0f3998df4cbb01a4d5cb0b94e3ca5e23947d", SizeBytes: 6,
+		}},
+		SourceRevision: &projectdevloop.SourceRevision{
+			Revision: "rev-a", Repository: "https://code.example/finance", Ref: "refs/heads/main", ChangeID: "change-a",
+		},
+	}
+	run := func(request projectdevloop.SynchronizationPlanRequest) (string, string) {
+		t.Helper()
+		stub := &nativeDeliveryTransportStub{sourceDigest: source}
+		transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(stub))
+		plan, err := transport.Plan(t.Context(), request)
+		require.NoError(t, err)
+		request.PlanID = plan.PlanID
+		if _, err := transport.RetainSource(t.Context(), request); err != nil {
+			t.Fatal(err)
+		}
+		var planKey, retainKey string
+		for _, recorded := range stub.requests {
+			switch recorded.OperationID {
+			case deploymentgen.GenOperationPlanProjectCandidateSynchronization:
+				planKey = recorded.Headers.Get("Idempotency-Key")
+			case deploymentgen.GenOperationRetainProjectCandidateSource:
+				retainKey = recorded.Headers.Get("Idempotency-Key")
+			}
+		}
+		if planKey == "" || retainKey == "" {
+			t.Fatalf("source synchronization keys were not recorded: plan=%q retain=%q", planKey, retainKey)
+		}
+		return planKey, retainKey
+	}
+
+	firstPlanKey, firstRetainKey := run(base)
+	secondPlanKey, secondRetainKey := run(base)
+	if firstPlanKey != secondPlanKey || firstRetainKey != secondRetainKey {
+		t.Fatalf("source synchronization keys changed across transport instances: plan %q/%q retain %q/%q", firstPlanKey, secondPlanKey, firstRetainKey, secondRetainKey)
+	}
+
+	changedCandidate := base
+	changedCandidate.CandidateKey = "other"
+	changedPlanKey, changedRetainKey := run(changedCandidate)
+	if changedPlanKey == firstPlanKey || changedRetainKey == firstRetainKey {
+		t.Fatal("candidate key change reused source synchronization identity")
+	}
+
+	changedRequest := base
+	changedRequest.ProjectFile = "other.yaml"
+	changedPlanKey, changedRetainKey = run(changedRequest)
+	if changedPlanKey == firstPlanKey || changedRetainKey == firstRetainKey {
+		t.Fatal("source request change reused source synchronization identity")
+	}
+
+	changedRevision := base
+	revision := *base.SourceRevision
+	revision.Revision = "rev-b"
+	changedRevision.SourceRevision = &revision
+	changedPlanKey, changedRetainKey = run(changedRevision)
+	if changedPlanKey == firstPlanKey || changedRetainKey == firstRetainKey {
+		t.Fatal("source revision change reused source synchronization identity")
 	}
 }
 

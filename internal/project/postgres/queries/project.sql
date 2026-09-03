@@ -29,7 +29,7 @@ INSERT INTO project.source_sync_plan
     (plan_id, operation_id, project_id, storage_security_domain, owner_id,
      candidate_key, source_digest, project_file, request_digest, expires_at)
 VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
-ON CONFLICT (operation_id) DO NOTHING;
+ON CONFLICT DO NOTHING;
 
 -- name: GetSourceSyncPlan :one
 SELECT plan_id, operation_id, project_id, storage_security_domain, owner_id,

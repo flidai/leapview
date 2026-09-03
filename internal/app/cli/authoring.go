@@ -14,7 +14,6 @@ import (
 	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/platform/cliapi"
 	"github.com/flidai/leapview/internal/platform/digest"
-	apitransport "github.com/flidai/leapview/internal/platform/http/transport"
 	projectcli "github.com/flidai/leapview/internal/project/cli"
 	projectdevloop "github.com/flidai/leapview/internal/project/devloop"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -25,7 +24,6 @@ import (
 type candidateSynchronizationTransport struct {
 	client          *deploymentgen.GenClient
 	principalClient *accessgen.GenClient
-	sessionID       string
 	canonicalOrigin string
 }
 
@@ -137,7 +135,7 @@ func newCandidateSynchronizationTransport(
 	client *deploymentgen.GenClient,
 ) *candidateSynchronizationTransport {
 	return &candidateSynchronizationTransport{
-		client: client, sessionID: apitransport.NewRequestID(),
+		client: client,
 	}
 }
 
@@ -150,7 +148,7 @@ func (transport *candidateSynchronizationTransport) Plan(
 	}
 	body := candidateSynchronizationBody(request)
 	idempotencyKey, err := candidateSynchronizationIdempotencyKey(
-		"candidate-plan", request.ProjectID.String(), transport.sessionID, body,
+		"candidate-plan", request.ProjectID.String(), "", body,
 	)
 	if err != nil {
 		return projectdevloop.SynchronizationPlan{}, err
@@ -217,7 +215,7 @@ func (transport *candidateSynchronizationTransport) Commit(
 	}
 	body := candidateSynchronizationBody(request)
 	idempotencyKey, err := candidateSynchronizationIdempotencyKey(
-		"candidate-sync", request.ProjectID.String(), transport.sessionID, body,
+		"candidate-sync", request.ProjectID.String(), request.PlanID, body,
 	)
 	if err != nil {
 		return projectdevloop.Candidate{}, err
@@ -432,7 +430,7 @@ func (transport *candidateSynchronizationTransport) RetainSource(
 		return projectdevloop.RetainedSource{}, fmt.Errorf("candidate synchronization client is not configured")
 	}
 	body := candidateSynchronizationBody(request)
-	idempotencyKey, err := candidateSynchronizationIdempotencyKey("source-retain", request.ProjectID.String(), transport.sessionID, body)
+	idempotencyKey, err := candidateSynchronizationIdempotencyKey("source-retain", request.ProjectID.String(), request.PlanID, body)
 	if err != nil {
 		return projectdevloop.RetainedSource{}, err
 	}
@@ -526,7 +524,7 @@ func candidateSynchronizationBody(
 func candidateSynchronizationIdempotencyKey(
 	kind,
 	projectID,
-	sessionID string,
+	planID string,
 	body deploymentgen.CandidateSynchronizationRequest,
 ) (string, error) {
 	encoded, err := json.Marshal(body)
@@ -536,7 +534,7 @@ func candidateSynchronizationIdempotencyKey(
 	return deploymentIdempotencyKey(
 		kind,
 		projectID,
-		sessionID,
+		planID,
 		string(encoded),
 	), nil
 }
