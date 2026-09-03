@@ -6,6 +6,9 @@ Decision date: 2026-09-02
 
 Implementation: pending
 
+Amended by: [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md),
+dbt mapping and external-source examples only
+
 Deciders: LeapView maintainers
 
 Supersedes: none
@@ -20,7 +23,7 @@ Related: [ADR-0007](0007-adopt-plan-driven-project-delivery.md);
 [ADR-0009](0009-separate-control-and-physical-transactions.md);
 [ADR-0015](0015-adopt-durable-audit-and-compliance-controls.md);
 [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md);
-[ADR-0019](0019-integrate-dbt-through-immutable-build-releases.md);
+[ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md);
 [Project namespace conformance](specifications/project-namespace-conformance.md);
 [dbt projects](https://docs.getdbt.com/docs/build/projects);
 [dbt project dependencies](https://docs.getdbt.com/docs/mesh/govern/project-dependencies);

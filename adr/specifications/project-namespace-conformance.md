@@ -17,7 +17,7 @@ Related decisions:
 [ADR-0009](../0009-separate-control-and-physical-transactions.md),
 [ADR-0016](../0016-adopt-standards-aligned-data-contracts-and-interchange.md),
 [ADR-0017](../0017-adopt-a-looker-aligned-semantic-access-contract.md), and
-[ADR-0019](../0019-integrate-dbt-through-immutable-build-releases.md)
+[ADR-0019](../0019-integrate-dbt-at-the-warehouse-contract-boundary.md)
 
 ## Purpose
 
@@ -222,11 +222,12 @@ names, and physical relation names must not replace durable identity.
 - **SEM-02:** Every Model used by one SemanticModel must belong to the same
   immutable generation selected for query planning. Runtime resolution must not
   consult another Project's active pointer or catalog.
-- **SEM-03:** A Model generated from a dbt release is Project-local and follows
-  the same semantic reference, authorization, lineage, cache, and generation
-  rules as an authored Model.
+- **SEM-03:** A Model consuming a dbt-produced Source is Project-local and
+  follows the same semantic reference, authorization, lineage, cache, and
+  generation rules as every other authored Model. Optional dbt scaffolding does
+  not create a separate runtime resource kind.
 - **SEM-04:** Cross-dbt-project dependencies must be resolved and materialized
-  by the producing consumer dbt project before ADR-0019's immutable release
+  by the producing consumer dbt project before ADR-0019's warehouse contract
   boundary. LeapView does not reproduce dbt Mesh resolution while compiling or
   serving a SemanticModel.
 - **SEM-05:** Hosting several Projects in a future control-plane process must
@@ -253,8 +254,9 @@ names, and physical relation names must not replace durable identity.
   publication, import-lock, or same-process zero-copy variants under this
   profile.
 - **XPR-03:** Teams may share data through an ordinary external Source with an
-  explicit data identity, an ADR-0019 immutable dbt release, or reusable source
-  packages resolved into one closed bundle before compilation.
+  explicit data identity or through reusable source packages resolved into one
+  closed bundle before compilation. The producer may be dbt or any other
+  transformation system.
 - **XPR-04:** Those mechanisms must not create a live runtime dependency on
   another LeapView Project or make another Project's catalog the serving
   authority.
@@ -274,17 +276,17 @@ names, and physical relation names must not replace durable identity.
 - **DBT-03:** LeapView SemanticModels and Dashboards may live beside the dbt
   project in conventional directories and deploy without `kind: Project` or a
   Project manifest.
-- **DBT-04:** Different environment releases are selected by explicit target
-  binding and immutable dbt release evidence under ADR-0019, not by mutating
-  the LeapView Project identity.
+- **DBT-04:** Environment-specific dbt relations or versioned object locations
+  are selected through explicit target Connection bindings and Source
+  configuration under ADR-0019, not by mutating LeapView Project identity.
 - **DBT-05:** The producer dbt project may depend on upstream dbt projects
-  through packages or dbt Mesh. Its completed release is still the one
-  consumer-owned input to LeapView; upstream projects do not become LeapView
+  through packages or dbt Mesh. It materializes the consumer-owned warehouse
+  outputs before LeapView refresh; upstream projects do not become LeapView
   Project references.
-- **DBT-06:** Profile v1 must reject a deployment request containing several
-  independently published dbt releases. A future multi-release profile must
-  define deterministic identity and collision handling and bind the complete
-  release set into one atomic plan before candidate construction.
+- **DBT-06:** A LeapView Project may consume several ordinary Sources produced
+  by independently operated systems when they all resolve into the same closed
+  candidate. Producer or repository cardinality does not create live
+  cross-Project semantic references.
 
 ## Failure behavior
 
@@ -302,7 +304,7 @@ names, and physical relation names must not replace durable identity.
 | SemanticModel dataset names a Model in another Project         | Compile failure without foreign metadata disclosure                                      |
 | Resource reference names another Project                       | Compile failure without foreign metadata disclosure                                      |
 | Source uses `projectOutput` or another native Project import   | Schema or compile rejection                                                              |
-| Deployment contains several independent dbt releases           | Profile rejection before resource mapping                                                |
+| Optional dbt metadata is absent                                 | Continue through explicitly authored Connection, Source, and Model resources             |
 | Rollback names another environment or Project                  | Reject and require deployment to the intended target                                     |
 
 ## Evidence and conformance gates
