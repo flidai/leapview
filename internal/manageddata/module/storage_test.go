@@ -191,6 +191,25 @@ func allowAllConnectionAuthorization(context.Context, string, string, string, ac
 	return true, nil
 }
 
+func TestSetAuthorizeConnectionUpdatesModuleEventAuthorization(t *testing.T) {
+	module := &Module{}
+	called := false
+	module.SetAuthorizeConnection(func(_ context.Context, principalID, projectID, connectionID string, capability access.Capability) (bool, error) {
+		called = true
+		if principalID != "principal:test" || projectID != "project:test" || connectionID != "connection:test" || capability != access.CapabilityResourceRead {
+			t.Fatalf("unexpected authorization tuple %q %q %q %q", principalID, projectID, connectionID, capability)
+		}
+		return true, nil
+	})
+	if module.authorizeConnection == nil {
+		t.Fatal("module event authorizer was not installed")
+	}
+	allowed, err := module.authorizeConnection(t.Context(), "principal:test", "project:test", "connection:test", access.CapabilityResourceRead)
+	if err != nil || !allowed || !called {
+		t.Fatalf("module event authorization allowed=%v called=%v error=%v", allowed, called, err)
+	}
+}
+
 func TestNewManagedDataStorageLocal(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "managed")
 	services, err := newManagedDataStorage(context.Background(), ProductConfig{

@@ -487,8 +487,16 @@ func (m *Module) HTTP() *manageddatahttp.Handler {
 }
 
 func (m *Module) SetAuthorizeConnection(authorizer ConnectionAuthorizer) {
-	if m != nil && m.handler != nil {
-		m.handler.SetAuthorizeConnection(manageddatahttp.ConnectionAuthorizer(authorizer))
+	if m == nil {
+		return
+	}
+	converted := manageddatahttp.ConnectionAuthorizer(authorizer)
+	// Upload-session event methods are implemented directly on Module, while
+	// the remaining managed-data API is delegated to handler. Late composition
+	// wiring must update both surfaces so they enforce the same authorization.
+	m.authorizeConnection = converted
+	if m.handler != nil {
+		m.handler.SetAuthorizeConnection(converted)
 	}
 }
 
