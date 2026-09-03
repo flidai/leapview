@@ -61,6 +61,27 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			}
 		}
 	}
+	axisIsNumeric := func(axis visualizationir.VisualizationCartesianAxis) bool {
+		if axis == visualizationir.VisualizationCartesianAxisSecondaryY {
+			return true
+		}
+		var ref visualizationir.VisualizationFieldRef
+		if cartesian != nil {
+			if axis == visualizationir.VisualizationCartesianAxisX {
+				ref = cartesian.X
+			} else if len(cartesian.Y) > 0 {
+				ref = cartesian.Y[0]
+			}
+		} else if point != nil {
+			if axis == visualizationir.VisualizationCartesianAxisX {
+				ref = point.X
+			} else {
+				ref = point.Y
+			}
+		}
+		field, ok := primaryVisualizationField(*primary, ref.Field)
+		return ok && dashboardNumericField(field)
+	}
 
 	lowerAxes := func() (*[]visualizationir.VisualizationAxisConfiguration, error) {
 		if axes == nil {
@@ -82,6 +103,9 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			}
 			if err := validateDashboardAxisEnums(authoredAxis, path); err != nil {
 				return nil, err
+			}
+			if authoredAxis.DisplayUnits != nil && !axisIsNumeric(authoredAxis.ID) {
+				return nil, fmt.Errorf("%s.displayUnits requires a numeric axis", path)
 			}
 			if authoredAxis.Minimum != nil && !finiteDashboardFloat(*authoredAxis.Minimum) {
 				return nil, fmt.Errorf("%s.minimum must be finite", path)
@@ -199,6 +223,9 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			if err := validateAxisValue(value, line.Axis, path+".value"); err != nil {
 				return nil, err
 			}
+			if !validDashboardTone(line.Tone) {
+				return nil, fmt.Errorf("%s.tone has unsupported tone %q", path, line.Tone)
+			}
 			out[index] = visualizationir.VisualizationReferenceLine{ID: line.ID, Axis: line.Axis, Value: value.value, Label: line.Label, Tone: line.Tone}
 		}
 		return &out, nil
@@ -238,6 +265,9 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 					return nil, fmt.Errorf("%s.from must be less than %s.to", path, path)
 				}
 			}
+			if !validDashboardTone(band.Tone) {
+				return nil, fmt.Errorf("%s.tone has unsupported tone %q", path, band.Tone)
+			}
 			out[index] = visualizationir.VisualizationReferenceBand{ID: band.ID, Axis: band.Axis, From: from.value, To: to.value, Label: band.Label, Tone: band.Tone}
 		}
 		return &out, nil
@@ -261,6 +291,9 @@ func lowerCanonicalDecisionContext(spec *visualizationir.VisualizationSpec, auth
 			value, err := lowerValue(annotation.Value, path+".value")
 			if err != nil {
 				return nil, err
+			}
+			if !validDashboardTone(annotation.Tone) {
+				return nil, fmt.Errorf("%s.tone has unsupported tone %q", path, annotation.Tone)
 			}
 			out[index] = visualizationir.VisualizationEventAnnotation{ID: annotation.ID, Axis: annotation.Axis, Value: value.value, Label: annotation.Label, Description: annotation.Description, Tone: annotation.Tone}
 		}
@@ -341,5 +374,26 @@ func validateDashboardAxisEnums(axis document.DashboardAxisConfiguration, path s
 	default:
 		return fmt.Errorf("%s.tickDensity has unsupported density %q", path, axis.TickDensity)
 	}
+	if axis.DisplayUnits != nil && !validDashboardDisplayUnits(*axis.DisplayUnits) {
+		return fmt.Errorf("%s.displayUnits has unsupported value %q", path, *axis.DisplayUnits)
+	}
 	return nil
+}
+
+func validDashboardDisplayUnits(units visualizationir.VisualizationDisplayUnits) bool {
+	switch units {
+	case visualizationir.VisualizationDisplayUnitsAuto, visualizationir.VisualizationDisplayUnitsNone, visualizationir.VisualizationDisplayUnitsThousands, visualizationir.VisualizationDisplayUnitsMillions, visualizationir.VisualizationDisplayUnitsBillions, visualizationir.VisualizationDisplayUnitsTrillions:
+		return true
+	default:
+		return false
+	}
+}
+
+func validDashboardTone(tone visualizationir.VisualizationTone) bool {
+	switch tone {
+	case visualizationir.VisualizationToneNeutral, visualizationir.VisualizationToneInk, visualizationir.VisualizationToneSuccess, visualizationir.VisualizationToneWarning, visualizationir.VisualizationToneDanger:
+		return true
+	default:
+		return false
+	}
 }

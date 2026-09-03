@@ -407,6 +407,12 @@ test('ECharts translation preserves combo series marks and axes', () => {
   expect(option.series[0].markLine.data[0].id).toBe('reference-line:primary-target')
   expect(option.series[1].markLine.data[0].id).toBe('reference-line:secondary-target')
   expect(option.series[1].markArea.data[0][0].id).toBe('reference-band:secondary-range')
+  const horizontal = structuredClone(base) as any
+  horizontal.spec.presentation.orientation = 'horizontal'
+  const horizontalOption = echartsOption(horizontal) as any
+  expect(horizontalOption.xAxis).toHaveLength(2)
+  expect(horizontalOption.series.map((series: any) => series.xAxisIndex)).toEqual([0, 1])
+  expect(horizontalOption.series[1].markLine.data[0]).toMatchObject({ id: 'reference-line:secondary-target', xAxis: 2 })
   const reordered = structuredClone(base) as any
   reordered.dataState.datasets[0].rows.reverse()
   const reorderedOption = echartsOption(reordered) as any

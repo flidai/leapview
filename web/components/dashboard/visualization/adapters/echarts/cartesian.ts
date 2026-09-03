@@ -137,7 +137,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   }
   const split = splitCartesianSeries(envelope, context, categoryColors)
   if (split) {
-    const secondary = split.series.some((item) => item.yAxisIndex === 1)
+    const secondary = split.series.some((item) => (horizontal ? item.xAxisIndex : item.yAxisIndex) === 1)
     const primaryAxis = axis(envelope, spec.y[0]!, 'value', context, 'primary_y', spec.y)
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
     if (split.scrollLegend) {
@@ -149,7 +149,8 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     }
     return {
       dataset: split.datasets, grid: cartesianGrid(spec), legend: legend(spec.presentation.legend, context, split.scrollLegend), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
-      yAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
+      yAxis: horizontal ? axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x') : secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
+      ...(horizontal ? { xAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis } : {}),
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
     }
   }
@@ -178,7 +179,7 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
       : chartLabel(envelope, value, spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)
     return {
       id: seriesID(value.dataset, value.field), type: cartesianSeriesType(mark), name: fieldLabel(envelope, value),
-      yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
+      ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
       encode: horizontal ? { x: normalizedField ?? value.field, y: spec.x.field } : { x: spec.x.field, y: normalizedField ?? value.field },
       smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none', symbolSize: spec.presentation.symbolSize,
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
@@ -195,9 +196,11 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
   return {
     ...axes,
     ...(normalized ? { dataset: { id: `dataset:${normalized.datasetID}`, source: normalized.source } } : {}),
-    yAxis: hasSecondaryComboAxis
-      ? [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)]
-      : yAxis,
+    ...(hasSecondaryComboAxis
+      ? horizontal
+        ? { xAxis: [xAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
+        : { yAxis: [yAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', values)] }
+      : {}),
     legend: legend(spec.presentation.legend, context), dataZoom,
     series: [...series, ...interactionHitSeries(envelope, spec, series)],
   }
@@ -307,7 +310,10 @@ export function applyDecisionContext(envelope: VisualizationEnvelope, context: R
   const series = Array.isArray(option.series) ? option.series : []
   const candidates = series.filter((candidate: EChartsTranslation) => !candidate.silent && !String(candidate.id ?? '').startsWith('series:interaction-hit:'))
   for (const secondary of [false, true]) {
-    const owner = candidates.find((candidate: EChartsTranslation) => secondary ? candidate.yAxisIndex === 1 : candidate.yAxisIndex !== 1)
+    const owner = candidates.find((candidate: EChartsTranslation) => {
+      const axisIndex = coordinate('primary_y') === 'xAxis' ? candidate.xAxisIndex : candidate.yAxisIndex
+      return secondary ? axisIndex === 1 : axisIndex !== 1
+    })
     if (!owner) continue
     const lines = markLines.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
     const areas = markAreas.filter((item) => (item.axis === 'secondary_y') === secondary).map((item) => item.data)
@@ -472,6 +478,7 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
 function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[]; scrollLegend: boolean } | undefined {
   const spec = envelope.spec
   if (spec.kind !== 'cartesian' || !spec.series || spec.y.length !== 1 || envelope.dataState.kind !== 'inline') return undefined
+  const horizontal = spec.presentation.orientation === 'horizontal' || spec.mark === 'bar'
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === spec.series?.dataset)
   const seriesIndex = dataset?.columns.indexOf(spec.series.field) ?? -1
   if (!dataset || seriesIndex < 0) return undefined
@@ -511,8 +518,9 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
       ?? conditionalCategoryColor(envelope, valueRef, spec.series!, value, 'series_color', context)
     const markColor = governedSeriesColor ?? fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context))
     return {
-      id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark), yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
-      encode: { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
+      id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark),
+      ...(horizontal ? { xAxisIndex: combo?.axis === 'secondary' ? 1 : 0 } : { yAxisIndex: combo?.axis === 'secondary' ? 1 : 0 }),
+      encode: horizontal ? { x: normalized?.dimension ?? spec.y[0]?.field, y: spec.x.field } : { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
       stack: stack === 'none' ? undefined : stack, areaStyle: spec.presentation.area || mark === 'area' ? {} : undefined,
       itemStyle: {
         color: markColor,
