@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -138,6 +139,53 @@ func TestRetryCreatesOneNewRequestForTheSameImmutableRelease(t *testing.T) {
 		coordinator.created.Evidence.PlanDigest != targetRelease.Provenance.PlanDigest ||
 		coordinator.created.Evidence.ReleaseDigest != targetRelease.Provenance.Digest {
 		t.Fatalf("retry request = %#v", coordinator.created)
+	}
+}
+
+func TestRetryPreservesRestoreEvidenceFromImmutableReleaseCandidate(t *testing.T) {
+	now := time.Date(2026, 7, 29, 12, 0, 0, 0, time.UTC)
+	module := testCandidateModuleWithClock(t, "principal_1", func() time.Time { return now }, time.Hour)
+	restore := &deployment.RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"orders"}, Reason: "approved recovery"}
+	started, err := module.candidates.Start(t.Context(), deployment.StartCandidateRequest{
+		ProjectID: "project", OwnerID: "principal_1", ArtifactDigest: "sha256:" + strings.Repeat("d", 64), Restore: restore,
+	})
+	require.NoError(t, err)
+	// Retry evidence remains available after the private preview lifetime; the
+	// restore intent itself is immutable for the durable candidate row.
+	now = now.Add(2 * time.Hour)
+	targetRelease := publishTestReleaseForCandidate(t, started.Candidate.ID, started.Candidate.Revision, started.Candidate.OwnerID)
+	coordinator := &publishCoordinatorStub{rows: map[string]apiadapter.Deployment{
+		"deployment_failed": {ID: "deployment_failed", Project: "project", Environment: "prod", Status: apiadapter.StatusFailed},
+	}}
+	module.handler = deploymenthttp.NewHandler(deploymenthttp.Options{
+		Coordinator: coordinator, InstanceEnvironment: "prod",
+		CurrentPrincipal: func(*http.Request) (deploymenthttp.Principal, bool) {
+			return deploymenthttp.Principal{ID: "principal_1"}, true
+		},
+	})
+	module.instanceID = "lvinst_prod"
+	module.jobs = JobConfig{Coordinator: coordinator}
+	module.api = APIConfig{Releases: &publishReleaseStub{
+		targetRelease: targetRelease, deployments: map[string]string{"deployment_failed": targetRelease.ID},
+	}}
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/api/v1/projects/project/deployments/deployment_failed/retry", nil)
+	module.RetryDeployment(recorder, request, "project", "deployment_failed", "retry-restore-1")
+
+	if recorder.Code != http.StatusAccepted {
+		t.Fatalf("status = %d, body = %s", recorder.Code, recorder.Body.String())
+	}
+	if coordinator.created.Evidence.Restore == nil || coordinator.created.Evidence.Restore.Reason != restore.Reason || !reflect.DeepEqual(coordinator.created.Evidence.Restore.AuthoredIDs, restore.AuthoredIDs) {
+		t.Fatalf("retry restore evidence = %#v", coordinator.created.Evidence.Restore)
+	}
+}
+
+func TestProtectedRetryFailsClosedWithoutCandidateRestoreEvidence(t *testing.T) {
+	module := &Module{protected: true}
+	_, err := module.restoreIntentForRetry(t.Context(), "project", publishTestRelease(t))
+	if !errors.Is(err, deployment.ErrCandidateUnavailable) {
+		t.Fatalf("missing candidate restore evidence error = %v, want candidate unavailable", err)
 	}
 }
 
@@ -325,6 +373,10 @@ func TestPublishProjectCandidateRejectsStaleClientRevision(t *testing.T) {
 }
 
 func publishTestRelease(t *testing.T) release.Release {
+	return publishTestReleaseForCandidate(t, "candidate_1", 4, "author_1")
+}
+
+func publishTestReleaseForCandidate(t *testing.T, candidateID string, candidateRevision int64, ownerID string) release.Release {
 	t.Helper()
 	artifactDigest := "sha256:" + strings.Repeat("a", 64)
 	projectDigest := "sha256:" + strings.Repeat("b", 64)
@@ -339,7 +391,7 @@ func publishTestRelease(t *testing.T) release.Release {
 			ContentDigest: artifactDigest, CompilerVersion: "test", SchemaVersion: 1,
 		},
 		Candidate: release.CandidateProvenance{
-			ID: "candidate_1", Revision: 4, OwnerID: "author_1",
+			ID: candidateID, Revision: candidateRevision, OwnerID: ownerID,
 		},
 		SourceRevision: &release.SourceRevisionProvenance{
 			Revision:   "commit-a",

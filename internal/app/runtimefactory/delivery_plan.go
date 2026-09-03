@@ -336,6 +336,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 	request := deployment.DeliveryPlanRequest{
 		ID: "plan-" + input.Candidate.ID, ActorID: input.OwnerID, TargetID: input.Candidate.TargetID, ProjectID: input.ProjectID.String(), Environment: input.Candidate.Scope.Environment,
 		Operation: operation, SourceDigest: input.ArtifactDigest,
+		Restore:    input.Candidate.Restore,
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: input.ArtifactDigest, MaterializationDigest: materializationDigest, CompilerDigest: compilerDigest, ExecutableDigest: planDigest("leapview-executable:" + runtimeVersion), DependencyDigest: planDigest("leapview-dependencies:" + runtimeVersion), ConfigDigest: configDigest, BindingDigest: bindingDigest, RuntimeDigest: runtimeDigest, CapabilityDigest: bindingDigest, DataInputs: dataInputs},
 		Provenance: deployment.DeliveryProvenance{Repository: sourceRepository(input), SourceRevision: sourceRevision(input), Builder: "leapview", BuildDefinition: artifacts.Artifact.CompilerVersion, AttestationDigest: input.Source.SourceAttestationDigest},
 		Governance: deployment.DeliveryGovernance{PolicyDigest: artifacts.AuthorizationFingerprint, AuthorizationDigest: artifacts.AuthorizationFingerprint, QualificationDigest: qualificationDigest, ExpiresAt: func() time.Time {

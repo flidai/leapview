@@ -104,6 +104,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != ActivationTransitionReferencesRevision {
 		t.Fatalf("activation transition references schema revision = %d, want %d", revision, ActivationTransitionReferencesRevision)
 	}
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, IdentityRestoreTransitionMigrationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != IdentityRestoreTransitionRevision {
+		t.Fatalf("identity restore transition schema revision = %d, want %d", revision, IdentityRestoreTransitionRevision)
+	}
 	var nullable string
 	if err := db.QueryRow(ctx, `
 		SELECT is_nullable
@@ -127,17 +133,74 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if durableCheckCount != 1 {
 		t.Fatalf("durable reference evidence check constraints = %d, want 1", durableCheckCount)
 	}
-	var canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition bool
+	if err := db.QueryRow(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'project'
+		  AND table_name = 'identity_activation_transition'
+		  AND column_name = 'approved_authored_ids_json'`).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "NO" {
+		t.Fatalf("approved restore evidence nullability = %q, want NO", nullable)
+	}
+	var operationCheckDefinition string
+	if err := db.QueryRow(ctx, `
+		SELECT pg_get_constraintdef(oid)
+		FROM pg_constraint
+		WHERE conrelid = 'project.identity_activation_transition'::regclass
+		  AND conname = 'identity_activation_transition_operation_check'`).Scan(&operationCheckDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(operationCheckDefinition, "restore") {
+		t.Fatalf("identity transition operation constraint = %q, want restore", operationCheckDefinition)
+	}
+	var approvedCheckCount int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_constraint
+		WHERE conrelid = 'project.identity_activation_transition'::regclass
+		  AND conname = 'identity_activation_transition_approved_authored_ids_json_check'`).Scan(&approvedCheckCount); err != nil {
+		t.Fatal(err)
+	}
+	if approvedCheckCount != 1 {
+		t.Fatalf("approved restore evidence check constraints = %d, want 1", approvedCheckCount)
+	}
+	var canonical, unsorted, duplicate bool
+	if err := db.QueryRow(ctx, `
+		SELECT project.identity_restore_authored_ids_canonical($1),
+		       project.identity_restore_authored_ids_canonical($2),
+		       project.identity_restore_authored_ids_canonical($3)`,
+		`["alpha","zeta"]`, `["zeta","alpha"]`, `["alpha","alpha"]`).
+		Scan(&canonical, &unsorted, &duplicate); err != nil {
+		t.Fatal(err)
+	}
+	if !canonical || unsorted || duplicate {
+		t.Fatalf("canonical restore ID validation = valid:%t unsorted:%t duplicate:%t", canonical, unsorted, duplicate)
+	}
+	var publicationIndexDefinition string
+	if err := db.QueryRow(ctx, `
+		SELECT indexdef
+		FROM pg_indexes
+		WHERE schemaname = 'project'
+		  AND indexname = 'identity_activation_transition_publish_bundle_idx'`).Scan(&publicationIndexDefinition); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(publicationIndexDefinition, "restore") {
+		t.Fatalf("publication transition bundle index = %q, want restore", publicationIndexDefinition)
+	}
+	var canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition, canExecuteCanonical bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'project.contract_publication', 'UPDATE'),
-		       has_table_privilege('leapview_control_runtime', 'project.identity_activation_transition', 'DELETE')`).
-		Scan(&canUpdateAudit, &canUpdateRevision, &canUpdatePublication, &canDeleteTransition); err != nil {
+		       has_table_privilege('leapview_control_runtime', 'project.identity_activation_transition', 'DELETE'),
+		       has_function_privilege('leapview_control_runtime', 'project.identity_restore_authored_ids_canonical(text)', 'EXECUTE')`).
+		Scan(&canUpdateAudit, &canUpdateRevision, &canUpdatePublication, &canDeleteTransition, &canExecuteCanonical); err != nil {
 		t.Fatal(err)
 	}
-	if canUpdateAudit || canUpdateRevision || canUpdatePublication || canDeleteTransition {
-		t.Fatalf("runtime mutation grants leaked: audit update=%t revision update=%t contract publication update=%t transition delete=%t", canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition)
+	if canUpdateAudit || canUpdateRevision || canUpdatePublication || canDeleteTransition || !canExecuteCanonical {
+		t.Fatalf("runtime grants: audit update=%t revision update=%t contract publication update=%t transition delete=%t canonical execute=%t", canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition, canExecuteCanonical)
 	}
 	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, BaselineRevision); err == nil {
 		t.Fatal("schema revision append-only trigger did not reject an update")

@@ -175,7 +175,7 @@ func (service *CandidateRuntimeService) Prepare(ctx context.Context, request Can
 	}
 	candidate := request.Candidate
 	generation := request.Generation
-	if candidate.Status != CandidatePreparing || candidate.ID == "" || candidate.OwnerID == "" || candidate.TargetID == "" || candidate.Scope.Validate() != nil || candidate.Scope.Environment == "" || candidate.ExpiresAt.IsZero() || request.AuthorizationFingerprint == "" {
+	if candidate.Validate() != nil || candidate.Status != CandidatePreparing || candidate.ID == "" || candidate.OwnerID == "" || candidate.TargetID == "" || candidate.Scope.Validate() != nil || candidate.Scope.Environment == "" || candidate.ExpiresAt.IsZero() || request.AuthorizationFingerprint == "" {
 		return CandidateRuntimeReceipt{}, ErrCandidateInvalid
 	}
 	rawArtifact, rawDataRevision := generation.ArtifactDigest, generation.DataRevision

@@ -3,6 +3,7 @@ package deployment
 import (
 	"encoding/json"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -95,6 +96,37 @@ func TestDeliveryPlanSeparatesExecutionFromProvenance(t *testing.T) {
 	}
 	if executionChanged.ExecutionDigest == plan.ExecutionDigest {
 		t.Fatal("result-affecting binding change preserved execution identity")
+	}
+}
+
+func TestDeliveryPlanRestoreIntentBindsExistingCanonicalIdentity(t *testing.T) {
+	base := deliveryTestPlan(t)
+	base.Restore = &RestoreIntent{AuthoredIDs: []graph.ResourceID{"orders", "customers"}, Reason: "approved recovery"}
+	withRestore, err := NewDeliveryPlan(base)
+	if err != nil {
+		t.Fatalf("new restore plan: %v", err)
+	}
+	if withRestore.Restore == nil || withRestore.Evidence.Restore == nil {
+		t.Fatalf("restore intent was not mirrored into plan evidence: %#v", withRestore)
+	}
+	if got, want := withRestore.Restore.AuthoredIDs, []graph.ResourceID{"customers", "orders"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("restore IDs = %#v, want %#v", got, want)
+	}
+	if withRestore.Digest == deliveryTestPlan(t).Digest {
+		t.Fatal("restore intent did not change the existing canonical plan digest")
+	}
+	if !withRestore.SameCanonicalIntent(withRestore) {
+		t.Fatal("canonical restore plan is not idempotent with itself")
+	}
+
+	changed := base
+	changed.Restore = &RestoreIntent{AuthoredIDs: []graph.ResourceID{"customers", "orders"}, Reason: "different approved recovery"}
+	changed, err = NewDeliveryPlan(changed)
+	if err != nil {
+		t.Fatalf("new changed restore plan: %v", err)
+	}
+	if withRestore.Digest == changed.Digest || withRestore.SameCanonicalIntent(changed) {
+		t.Fatal("changed restore intent was accepted as the same canonical plan")
 	}
 }
 

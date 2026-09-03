@@ -142,9 +142,9 @@ INSERT INTO project_candidates (
   id, project_id, target_id, environment, owner_principal_id, candidate_key,
   base_generation, artifact_digest, provenance_digest, status, failure_reason,
   expires_at, created_at, updated_at, ready_at, cancelled_at,
-  expired_at, revision
+  expired_at, revision, restore_authored_ids_json, restore_reason
 )
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
 
 -- name: GetProjectCandidate :one
 SELECT *

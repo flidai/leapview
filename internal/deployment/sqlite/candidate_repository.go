@@ -3,8 +3,10 @@ package sqlite
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -107,7 +109,11 @@ func (r *Repository) startCandidate(ctx context.Context, candidate deployment.Ca
 	if count >= int64(maxActivePerOwner) {
 		return deployment.Candidate{}, false, deployment.ErrCandidateQuota
 	}
-	if err := queries.CreateProjectCandidate(ctx, candidateCreateParams(candidate)); err != nil {
+	createParams, err := candidateCreateParams(candidate)
+	if err != nil {
+		return deployment.Candidate{}, false, err
+	}
+	if err := queries.CreateProjectCandidate(ctx, createParams); err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "constraint") {
 			return deployment.Candidate{}, false, fmt.Errorf("%w: active candidate already exists", deployment.ErrCandidateConflict)
 		}
@@ -213,7 +219,11 @@ func (r *Repository) ExpireCandidates(ctx context.Context, targetID string, now 
 	})
 }
 
-func candidateCreateParams(candidate deployment.Candidate) platformdb.CreateProjectCandidateParams {
+func candidateCreateParams(candidate deployment.Candidate) (platformdb.CreateProjectCandidateParams, error) {
+	restoreIDs, err := restoreAuthoredIDsJSON(candidate.Restore)
+	if err != nil {
+		return platformdb.CreateProjectCandidateParams{}, err
+	}
 	return platformdb.CreateProjectCandidateParams{
 		ID: candidate.ID, ProjectID: candidate.Scope.ProjectID.String(), TargetID: candidate.TargetID,
 		Environment: candidate.Scope.Environment, OwnerPrincipalID: candidate.OwnerID,
@@ -224,11 +234,16 @@ func candidateCreateParams(candidate deployment.Candidate) platformdb.CreateProj
 		ExpiresAt: formatCandidateTime(candidate.ExpiresAt), CreatedAt: formatCandidateTime(candidate.CreatedAt),
 		UpdatedAt: formatCandidateTime(candidate.UpdatedAt), ReadyAt: nullableCandidateTime(candidate.ReadyAt),
 		CancelledAt: nullableCandidateTime(candidate.CancelledAt), ExpiredAt: nullableCandidateTime(candidate.ExpiredAt),
-		Revision: candidate.Revision,
-	}
+		Revision: candidate.Revision, RestoreAuthoredIdsJson: restoreIDs,
+		RestoreReason: candidateRestoreReason(candidate.Restore),
+	}, nil
 }
 
 func mapCandidate(row platformdb.ProjectCandidate) (deployment.Candidate, error) {
+	restore, err := restoreIntentFromRow(row.RestoreAuthoredIdsJson, row.RestoreReason)
+	if err != nil {
+		return deployment.Candidate{}, err
+	}
 	projectID, err := projectgraph.NewResourceID(row.ProjectID)
 	if err != nil {
 		return deployment.Candidate{}, fmt.Errorf("parse candidate project: %w", err)
@@ -267,7 +282,7 @@ func mapCandidate(row platformdb.ProjectCandidate) (deployment.Candidate, error)
 		ProvenanceDigest: row.ProvenanceDigest,
 		Status:           deployment.CandidateStatus(row.Status), FailureReason: row.FailureReason,
 		ExpiresAt: expiresAt, CreatedAt: createdAt, UpdatedAt: updatedAt, ReadyAt: readyAt,
-		CancelledAt: cancelledAt, ExpiredAt: expiredAt, Revision: row.Revision,
+		CancelledAt: cancelledAt, ExpiredAt: expiredAt, Revision: row.Revision, Restore: restore,
 	}
 	if err := candidate.Validate(); err != nil {
 		return deployment.Candidate{}, err
@@ -275,11 +290,47 @@ func mapCandidate(row platformdb.ProjectCandidate) (deployment.Candidate, error)
 	return candidate, nil
 }
 
+func restoreAuthoredIDsJSON(intent *deployment.RestoreIntent) (string, error) {
+	if intent == nil {
+		return "[]", nil
+	}
+	normalized, err := deployment.NormalizeRestoreIntent(intent)
+	if err != nil {
+		return "", err
+	}
+	encoded, err := json.Marshal(normalized.AuthoredIDs)
+	if err != nil {
+		return "", fmt.Errorf("encode restore authored IDs: %w", err)
+	}
+	return string(encoded), nil
+}
+
+func candidateRestoreReason(intent *deployment.RestoreIntent) string {
+	if intent == nil {
+		return ""
+	}
+	return intent.Reason
+}
+
+func restoreIntentFromRow(encoded, reason string) (*deployment.RestoreIntent, error) {
+	if encoded == "" {
+		encoded = "[]"
+	}
+	var ids []projectgraph.ResourceID
+	if err := json.Unmarshal([]byte(encoded), &ids); err != nil {
+		return nil, fmt.Errorf("decode restore authored IDs: %w", err)
+	}
+	if len(ids) == 0 && reason == "" {
+		return nil, nil
+	}
+	return deployment.NormalizeRestoreIntent(&deployment.RestoreIntent{AuthoredIDs: ids, Reason: reason})
+}
+
 func sameCandidateStart(existing, candidate deployment.Candidate) bool {
 	return existing.Scope.ProjectID == candidate.Scope.ProjectID && existing.TargetID == candidate.TargetID &&
 		existing.Scope.Environment == candidate.Scope.Environment && existing.Scope.BaseGenerationID == candidate.Scope.BaseGenerationID && existing.OwnerID == candidate.OwnerID &&
 		existing.Key == candidate.Key &&
-		existing.ArtifactDigest == candidate.ArtifactDigest
+		existing.ArtifactDigest == candidate.ArtifactDigest && reflect.DeepEqual(existing.Restore, candidate.Restore)
 }
 
 func formatCandidateTime(value time.Time) string {

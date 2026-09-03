@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-09-01
 
-Implementation: in progress (controlled FAI-617 identity integration)
+Implementation: in progress (controlled FAI-617/FAI-663 identity integration)
 
 Deciders: LeapView maintainers
 
@@ -390,11 +390,19 @@ identity coordinator is the durable fence and the sealed operation is its
 delivery commit. Production composition performs read-only identity admission
 during candidate planning, persists the immutable transition at readiness,
 routes both canonical and worker publication paths through that fence, and
-reports in-flight transitions as not ready after restart. Live PostgreSQL
-end-to-end qualification remains environment-dependent. Explicit restore is
-not yet reachable from candidate admission (FAI-663), complete control-store
-reference migration remains FAI-616 work, and FAI-648/649's transitional
-DataPolicy removal and semantic access migration remain outside this layer.
+reports in-flight transitions as not ready after restart. FAI-663 adds an
+explicit, restore-only intent with exact authored IDs and a required reason to
+candidate start and direct canonical plan creation before readiness;
+canonicalization, existing plan evidence/digests, durable candidate
+persistence, and canonical Build carry that intent without adding a second hash
+or approval authority. Ordinary candidate publication cannot add restore data.
+Publication consumes that immutable intent through the existing sealed
+activation path; FAI-663 intentionally adds no parallel restore endpoint or
+approval system. Live control-store reference reconciliation remains FAI-616
+work. Live PostgreSQL end-to-end qualification was not run because Docker is
+unavailable in the validation environment, and
+FAI-648/649's transitional DataPolicy removal and semantic access migration
+remain outside this layer.
 
 The linked data-contract versioning conformance specification owns the exact
 collision, tombstone, restore, rollback, and projection requirements.
@@ -781,10 +789,17 @@ qualified.
   FAI-616 and are not represented as complete here.
 - **IMPLEMENTED, qualification incomplete (FAI-617/FAI-663):** identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
   instance-qualified authored identities across source-root and file moves,
-  kind-change rejection, tombstone
-  non-reuse, rollback identity, and durable references that cannot silently
-  rebind. The ledger primitive supports explicit restore, but the real candidate
-  restore operation remains FAI-663 work.
+  kind-change rejection, tombstone non-reuse, rollback identity, and durable
+  references that cannot silently rebind. FAI-663 adds the exact authored-ID
+  and required-reason restore intent to candidate start and direct canonical
+  plan creation, canonicalizes and persists it immutably, binds it to the
+  existing plan evidence and digest, and propagates it into canonical Build;
+  ordinary candidate publication has no restore input. Publication consumes
+  the immutable intent through the existing sealed activation path; no second
+  restore endpoint or approval authority is introduced. Focused domain,
+  module, API, and SQLite restart/idempotency tests validate this path. Live
+  control-store reconciliation remains FAI-616 work; live PostgreSQL process
+  qualification was not run because Docker is unavailable.
 - **IMPLEMENTED, qualification incomplete (FAI-617):** transition evidence fixtures prove that legacy Grant and
   DashboardPublication references are projected from the retained compiler
   manifest and graph, preserve expected target kinds, exclude Project targets,

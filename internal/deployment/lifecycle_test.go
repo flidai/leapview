@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -68,7 +69,7 @@ func TestDeliveryLifecyclePreviewIsReadOnly(t *testing.T) {
 	}
 	lifecycle := &DeliveryLifecycle{Targets: lifecycleTarget{state: DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod", TargetRevision: 3, ActiveGenerationID: "generation-3"}}, Store: store, Now: func() time.Time { return now }}
 	d := lifecycleDigest
-	plan, err := lifecycle.Preview(t.Context(), DeliveryPlanRequest{ID: "plan-preview", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: DeliveryOperationCodeChange, SourceDigest: d('a'), Execution: DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('b'), ExecutableDigest: d('c'), DependencyDigest: d('d'), ConfigDigest: d('e'), BindingDigest: d('f'), RuntimeDigest: d('0'), CapabilityDigest: d('1')}, Provenance: DeliveryProvenance{Builder: "test"}, Governance: DeliveryGovernance{PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('4'), ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: true}, Evidence: DeliveryPlanEvidence{ImpactStatement: "no graph impact", PhysicalWorkStatement: "no physical work", ReuseStatement: "no reuse", Qualification: DeliveryQualificationEvidence{Policy: "protected", Steps: []DeliveryQualificationStep{{ID: "contracts", Kind: "contract", Description: "run contracts", Required: true, Blocking: true}}}, StalePolicy: DeliveryStalePolicy{Mode: "reject"}, Rollback: DeliveryRollbackEvidence{Class: DeliveryRollbackSafe}}, PipelinePlan: &pipelinePlan})
+	plan, err := lifecycle.Preview(t.Context(), DeliveryPlanRequest{ID: "plan-preview", TargetID: "target", ProjectID: "project", Environment: "prod", Operation: DeliveryOperationCodeChange, SourceDigest: d('a'), Restore: &RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"orders", "customers"}, Reason: "approved recovery"}, Execution: DeliveryExecutionInputs{SourceArtifactDigest: d('a'), CompilerDigest: d('b'), ExecutableDigest: d('c'), DependencyDigest: d('d'), ConfigDigest: d('e'), BindingDigest: d('f'), RuntimeDigest: d('0'), CapabilityDigest: d('1')}, Provenance: DeliveryProvenance{Builder: "test"}, Governance: DeliveryGovernance{PolicyDigest: d('2'), AuthorizationDigest: d('3'), QualificationDigest: d('4'), ExpiresAt: now.Add(time.Hour), ObservedInputsAllowed: true}, Evidence: DeliveryPlanEvidence{ImpactStatement: "no graph impact", PhysicalWorkStatement: "no physical work", ReuseStatement: "no reuse", Qualification: DeliveryQualificationEvidence{Policy: "protected", Steps: []DeliveryQualificationStep{{ID: "contracts", Kind: "contract", Description: "run contracts", Required: true, Blocking: true}}}, StalePolicy: DeliveryStalePolicy{Mode: "reject"}, Rollback: DeliveryRollbackEvidence{Class: DeliveryRollbackSafe}}, PipelinePlan: &pipelinePlan})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -77,6 +78,9 @@ func TestDeliveryLifecyclePreviewIsReadOnly(t *testing.T) {
 	}
 	if plan.PipelinePlan == nil || plan.PipelinePlan.Digest != pipelinePlan.Digest || plan.Evidence.PipelinePlan == nil || plan.Evidence.PipelinePlan.Digest != pipelinePlan.Digest {
 		t.Fatalf("pipeline plan was not preserved: plan=%#v evidence=%#v", plan.PipelinePlan, plan.Evidence.PipelinePlan)
+	}
+	if plan.Restore == nil || !reflect.DeepEqual(plan.Restore.AuthoredIDs, []projectgraph.ResourceID{"customers", "orders"}) || plan.Restore.Reason != "approved recovery" || plan.Evidence.Restore == nil {
+		t.Fatalf("restore intent was not preserved: plan=%#v evidence=%#v", plan.Restore, plan.Evidence.Restore)
 	}
 	if store.created != 0 {
 		t.Fatalf("preview persisted %d plans", store.created)

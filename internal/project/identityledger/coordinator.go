@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"strings"
 	"unicode/utf8"
+
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 var (
@@ -27,6 +29,7 @@ type TransitionRepository interface {
 	AdvanceTransition(context.Context, string, string, TransitionPhase, TransitionPhase, string) (Transition, error)
 	Plan(context.Context, Candidate) (Plan, error)
 	Activate(context.Context, Candidate) (Plan, error)
+	RestoreAndActivate(context.Context, Restore) (Plan, error)
 	Rollback(context.Context, Rollback) (Plan, error)
 }
 
@@ -105,8 +108,13 @@ func (c *Coordinator) resume(ctx context.Context, repository TransitionRepositor
 			if planErr != nil {
 				return transition, planErr
 			}
-			if transition.Operation == OperationPublish {
+			switch transition.Operation {
+			case OperationPublish:
 				if planErr := rejectBlockingOutcomes(plan); planErr != nil {
+					return transition, planErr
+				}
+			case OperationRestore:
+				if planErr := rejectRestoreBlockingOutcomes(plan, transition.ApprovedAuthoredIDs); planErr != nil {
 					return transition, planErr
 				}
 			}
@@ -129,8 +137,13 @@ func (c *Coordinator) resume(ctx context.Context, repository TransitionRepositor
 			if err != nil {
 				return transition, err
 			}
-			if transition.Operation == OperationPublish {
+			switch transition.Operation {
+			case OperationPublish:
 				if err := rejectBlockingOutcomes(plan); err != nil {
+					return transition, err
+				}
+			case OperationRestore:
+				if err := rejectRestoreBlockingOutcomes(plan, transition.ApprovedAuthoredIDs); err != nil {
 					return transition, err
 				}
 			}
@@ -148,11 +161,18 @@ func (c *Coordinator) resume(ctx context.Context, repository TransitionRepositor
 			if plan.ObservedBundleID != transition.ExpectedBundleID {
 				return transition, fmt.Errorf("%w: transition %q expected observed bundle %q, found %q", ErrActivationConflict, transition.TransitionID, transition.ExpectedBundleID, plan.ObservedBundleID)
 			}
-			if transition.Operation == OperationPublish {
+			switch transition.Operation {
+			case OperationPublish:
 				if _, err := repository.Activate(ctx, candidate); err != nil {
 					return transition, err
 				}
-			} else {
+			case OperationRestore:
+				if _, err := repository.RestoreAndActivate(ctx, Restore{
+					Candidate: candidate, AuthoredIDs: append([]projectgraph.ResourceID(nil), transition.ApprovedAuthoredIDs...), Reason: transition.Reason,
+				}); err != nil {
+					return transition, err
+				}
+			default:
 				if _, err := repository.Rollback(ctx, Rollback{
 					InstanceID:       transition.InstanceID,
 					BundleID:         transition.BundleID,
@@ -232,6 +252,47 @@ func rejectBlockingOutcomes(plan Plan) error {
 			return fmt.Errorf("%w: transition candidate resource %q: %s", ErrKindConflict, outcome.AuthoredID, outcome.Detail)
 		case OutcomeRestoreRequired:
 			return fmt.Errorf("%w: transition candidate resource %q: %s", ErrRestoreRequired, outcome.AuthoredID, outcome.Detail)
+		}
+	}
+	return nil
+}
+
+// Restore transitions may explicitly approve tombstoned identities, but the
+// approval set must exactly match the restore-required plan outcomes and an
+// immutable kind collision remains a hard failure. RestoreAndActivate repeats
+// the same membership and lifecycle checks under its transaction lock.
+func rejectRestoreBlockingOutcomes(plan Plan, approvedAuthoredIDs []projectgraph.ResourceID) error {
+	approved, err := NormalizeApprovedAuthoredIDs(approvedAuthoredIDs)
+	if err != nil {
+		return err
+	}
+	approvedSet := make(map[projectgraph.ResourceID]struct{}, len(approved))
+	for _, id := range approved {
+		approvedSet[id] = struct{}{}
+	}
+	neededSet := make(map[projectgraph.ResourceID]struct{})
+	for _, outcome := range plan.Outcomes {
+		switch outcome.Outcome {
+		case OutcomeCollision:
+			return fmt.Errorf("%w: transition candidate resource %q: %s", ErrKindConflict, outcome.AuthoredID, outcome.Detail)
+		case OutcomeRestoreRequired:
+			neededSet[outcome.AuthoredID] = struct{}{}
+		}
+	}
+	if len(neededSet) == 0 {
+		return fmt.Errorf("%w: restore transition has no tombstoned candidate identities", ErrRestoreRequired)
+	}
+	if len(approvedSet) != len(neededSet) {
+		return fmt.Errorf("%w: restore approval set does not exactly match candidate tombstones", ErrRestoreRequired)
+	}
+	for id := range neededSet {
+		if _, ok := approvedSet[id]; !ok {
+			return fmt.Errorf("%w: candidate tombstone %q is not approved", ErrRestoreRequired, id)
+		}
+	}
+	for id := range approvedSet {
+		if _, ok := neededSet[id]; !ok {
+			return fmt.Errorf("%w: approved authored ID %q is not a candidate tombstone", ErrRestoreRequired, id)
 		}
 	}
 	return nil

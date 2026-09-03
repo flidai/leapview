@@ -2,6 +2,7 @@ package deployment
 
 import (
 	"fmt"
+	"reflect"
 	"time"
 
 	"github.com/flidai/leapview/internal/project/graph"
@@ -41,13 +42,17 @@ type DeliveryPlan struct {
 	Governance         DeliveryGovernance      `json:"governance"`
 	Evidence           DeliveryPlanEvidence    `json:"evidence"`
 	PipelinePlan       *PipelinePlan           `json:"pipelinePlan,omitempty"`
-	ExecutionDigest    string                  `json:"executionDigest"`
-	ProvenanceDigest   string                  `json:"provenanceDigest"`
-	GovernanceDigest   string                  `json:"governanceDigest"`
-	EvidenceDigest     string                  `json:"evidenceDigest"`
-	Digest             string                  `json:"digest"`
-	Status             DeliveryPlanStatus      `json:"status"`
-	CreatedAt          time.Time               `json:"createdAt"`
+	// Restore is the exact, immutable identity-activation intent carried by
+	// this plan. It is also mirrored into Evidence so the existing evidence
+	// JSON persistence and digest bind the intent without a new hash authority.
+	Restore          *RestoreIntent     `json:"restore,omitempty"`
+	ExecutionDigest  string             `json:"executionDigest"`
+	ProvenanceDigest string             `json:"provenanceDigest"`
+	GovernanceDigest string             `json:"governanceDigest"`
+	EvidenceDigest   string             `json:"evidenceDigest"`
+	Digest           string             `json:"digest"`
+	Status           DeliveryPlanStatus `json:"status"`
+	CreatedAt        time.Time          `json:"createdAt"`
 }
 
 // NewDeliveryPlan validates and computes all canonical identity digests. The
@@ -61,6 +66,22 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 	}
 	plan.Status = DeliveryPlanPlanned
 	plan.CreatedAt = plan.CreatedAt.UTC()
+	restore, err := NormalizeRestoreIntent(plan.Restore)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	evidenceRestore, err := NormalizeRestoreIntent(plan.Evidence.Restore)
+	if err != nil {
+		return DeliveryPlan{}, err
+	}
+	if restore != nil && evidenceRestore != nil && !reflect.DeepEqual(restore, evidenceRestore) {
+		return DeliveryPlan{}, fmt.Errorf("%w: plan and evidence restore intents differ", ErrDeliveryConflict)
+	}
+	if restore == nil {
+		restore = evidenceRestore
+	}
+	plan.Restore = restore
+	plan.Evidence.Restore = restore
 	for i := range plan.Execution.DataInputs {
 		plan.Execution.DataInputs[i] = plan.Execution.DataInputs[i].canonical()
 	}
@@ -82,7 +103,6 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 	if err := plan.validateWithoutDigests(); err != nil {
 		return DeliveryPlan{}, err
 	}
-	var err error
 	if plan.ExecutionDigest, err = plan.Execution.ExecutionDigest(); err != nil {
 		return DeliveryPlan{}, err
 	}
@@ -100,7 +120,7 @@ func NewDeliveryPlan(plan DeliveryPlan) (DeliveryPlan, error) {
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
-		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
+		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan), Restore: plan.Restore,
 	})
 	if err != nil {
 		return DeliveryPlan{}, err
@@ -126,6 +146,7 @@ type deliveryPlanCanonical struct {
 	GovernanceDigest   string                `json:"governanceDigest"`
 	EvidenceDigest     string                `json:"evidenceDigest"`
 	PipelinePlanDigest string                `json:"pipelinePlanDigest,omitempty"`
+	Restore            *RestoreIntent        `json:"restore,omitempty"`
 }
 
 func pipelinePlanDigest(plan *PipelinePlan) string {
@@ -183,6 +204,14 @@ func (plan DeliveryPlan) validateWithoutDigests() error {
 	}
 	if err := plan.Evidence.Validate(); err != nil {
 		return err
+	}
+	restore, err := NormalizeRestoreIntent(plan.Restore)
+	if err != nil || !reflect.DeepEqual(plan.Restore, restore) {
+		return fmt.Errorf("%w: restore intent is not canonical", ErrDeliveryInvalid)
+	}
+	evidenceRestore, err := NormalizeRestoreIntent(plan.Evidence.Restore)
+	if err != nil || !reflect.DeepEqual(plan.Evidence.Restore, evidenceRestore) || !reflect.DeepEqual(plan.Restore, evidenceRestore) {
+		return fmt.Errorf("%w: plan and evidence restore intents differ", ErrDeliveryConflict)
 	}
 	if plan.PipelinePlan != nil {
 		if err := plan.PipelinePlan.Validate(); err != nil {
@@ -244,7 +273,7 @@ func (plan DeliveryPlan) Validate() error {
 		Operation: plan.Operation, SourceDigest: plan.SourceDigest, BaseGenerationID: plan.BaseGenerationID,
 		BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest,
 		ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest,
-		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan),
+		PipelinePlanDigest: pipelinePlanDigest(plan.PipelinePlan), Restore: plan.Restore,
 	})
 	if err != nil || expectedPlan != plan.Digest {
 		return fmt.Errorf("%w: plan digest does not match canonical inputs", ErrDeliveryConflict)
@@ -264,6 +293,9 @@ func (plan DeliveryPlan) SameCanonicalIntent(other DeliveryPlan) bool {
 		plan.Environment != other.Environment || plan.Operation != other.Operation ||
 		plan.SourceDigest != other.SourceDigest || plan.BaseGenerationID != other.BaseGenerationID ||
 		plan.BaseTargetRevision != other.BaseTargetRevision {
+		return false
+	}
+	if !reflect.DeepEqual(plan.Restore, other.Restore) {
 		return false
 	}
 	if plan.ExecutionDigest != other.ExecutionDigest || plan.ProvenanceDigest != other.ProvenanceDigest ||

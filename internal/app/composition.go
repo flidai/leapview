@@ -1554,6 +1554,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 					ExpectedBaseGenerationID: input.Candidate.Scope.BaseGenerationID,
 					ActorID:                  input.Candidate.OwnerID,
 					Artifacts:                artifacts,
+					Restore:                  input.Candidate.Restore,
 				}); err != nil {
 					return deployment.DeliveryPlan{}, fmt.Errorf("admit candidate identity: %w", err)
 				}
@@ -1702,17 +1703,25 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return deployment.Candidate{}, fmt.Errorf("retained candidate provenance changed")
 			}
 			if identityAuthority.Repository != nil {
-				if _, err := PrepareIdentityPublishTransition(readyCtx, identityAuthority.Repository, IdentityPublishPreparationInput{
+				identityInput := IdentityPublishPreparationInput{
 					IdentityCandidateInput: IdentityCandidateInput{
 						InstanceID:               instanceID,
 						ExpectedBaseGenerationID: input.Candidate.Scope.BaseGenerationID,
 						ActorID:                  input.Candidate.OwnerID,
 						Artifacts:                artifacts,
+						Restore:                  input.Candidate.Restore,
 					},
 					CandidateID: input.Candidate.ID,
 					Reason:      "candidate ready",
-				}); err != nil {
-					return deployment.Candidate{}, fmt.Errorf("prepare identity publish transition: %w", err)
+				}
+				var prepareErr error
+				if input.Candidate.Restore != nil {
+					_, prepareErr = PrepareIdentityRestoreTransition(readyCtx, identityAuthority.Repository, identityInput)
+				} else {
+					_, prepareErr = PrepareIdentityPublishTransition(readyCtx, identityAuthority.Repository, identityInput)
+				}
+				if prepareErr != nil {
+					return deployment.Candidate{}, fmt.Errorf("prepare identity transition: %w", prepareErr)
 				}
 			}
 			input.Candidate.Status = deployment.CandidateReady

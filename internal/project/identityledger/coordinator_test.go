@@ -16,6 +16,7 @@ type coordinatorFake struct {
 	outcomes     []Outcome
 	events       []string
 	activate     []Candidate
+	restores     []Restore
 	rollbacks    []Rollback
 	plans        []Candidate
 	advanceError error
@@ -65,6 +66,13 @@ func (f *coordinatorFake) Activate(_ context.Context, candidate Candidate) (Plan
 	return Plan{InstanceID: candidate.InstanceID, ObservedBundleID: candidate.ExpectedBundleID, CandidateBundleID: candidate.BundleID}, nil
 }
 
+func (f *coordinatorFake) RestoreAndActivate(_ context.Context, request Restore) (Plan, error) {
+	f.events = append(f.events, "restore")
+	f.restores = append(f.restores, request)
+	f.observed = request.Candidate.BundleID
+	return Plan{InstanceID: request.Candidate.InstanceID, ObservedBundleID: request.Candidate.ExpectedBundleID, CandidateBundleID: request.Candidate.BundleID}, nil
+}
+
 func (f *coordinatorFake) Rollback(_ context.Context, request Rollback) (Plan, error) {
 	f.events = append(f.events, "rollback")
 	f.rollbacks = append(f.rollbacks, request)
@@ -73,12 +81,16 @@ func (f *coordinatorFake) Rollback(_ context.Context, request Rollback) (Plan, e
 }
 
 func coordinatorTestTransition(operation TransitionOperation) Transition {
-	return Transition{
+	transition := Transition{
 		TransitionID: "transition-1", Operation: operation, InstanceID: "instance-1",
 		CandidateID: "candidate-1", BundleID: "bundle-next", ExpectedBundleID: "bundle-current",
 		ActorID: "actor-1", Reason: "coordinator test", GraphDigest: "sha256:" + strings.Repeat("a", 64),
 		Resources: []Resource{{AuthoredID: "orders", Kind: projectgraph.KindSource}},
 	}
+	if operation == OperationRestore {
+		transition.ApprovedAuthoredIDs = []projectgraph.ResourceID{"orders"}
+	}
+	return transition
 }
 
 func TestCoordinatorTransitionCases(t *testing.T) {
@@ -93,6 +105,7 @@ func TestCoordinatorTransitionCases(t *testing.T) {
 		wantPhase        TransitionPhase
 		wantCommitCalls  int
 		wantActivate     int
+		wantRestore      int
 		wantRollback     int
 		wantAdvanceError string
 		wantEvents       []string
@@ -107,6 +120,12 @@ func TestCoordinatorTransitionCases(t *testing.T) {
 			outcomes:  []Outcome{{AuthoredID: "orders", Kind: projectgraph.KindSource, Outcome: OutcomeRestoreRequired}},
 			wantPhase: PhaseCompleted, wantCommitCalls: 1, wantRollback: 1,
 			wantEvents: []string{"prepare", "load", "plan", "advance:prepared->identity_pending", "plan", "rollback", "advance:identity_pending->identity_active", "plan", "delivery", "advance:identity_active->delivery_active", "advance:delivery_active->completed"},
+		},
+		{
+			name: "explicit restore", operation: OperationRestore, observed: "bundle-current",
+			outcomes:  []Outcome{{AuthoredID: "orders", Kind: projectgraph.KindSource, Outcome: OutcomeRestoreRequired}},
+			wantPhase: PhaseCompleted, wantCommitCalls: 1, wantRestore: 1,
+			wantEvents: []string{"prepare", "load", "plan", "advance:prepared->identity_pending", "plan", "restore", "advance:identity_pending->identity_active", "plan", "delivery", "advance:identity_active->delivery_active", "advance:delivery_active->completed"},
 		},
 		{
 			name: "publish collision rejection", operation: OperationPublish, observed: "bundle-current",
@@ -171,8 +190,8 @@ func TestCoordinatorTransitionCases(t *testing.T) {
 			if got.Phase != test.wantPhase {
 				t.Fatalf("phase = %q, want %q", got.Phase, test.wantPhase)
 			}
-			if commitCalls != test.wantCommitCalls || len(fake.activate) != test.wantActivate || len(fake.rollbacks) != test.wantRollback {
-				t.Fatalf("calls delivery=%d activate=%d rollback=%d", commitCalls, len(fake.activate), len(fake.rollbacks))
+			if commitCalls != test.wantCommitCalls || len(fake.activate) != test.wantActivate || len(fake.restores) != test.wantRestore || len(fake.rollbacks) != test.wantRollback {
+				t.Fatalf("calls delivery=%d activate=%d restore=%d rollback=%d", commitCalls, len(fake.activate), len(fake.restores), len(fake.rollbacks))
 			}
 			if !reflect.DeepEqual(fake.events, test.wantEvents) {
 				t.Fatalf("events = %#v, want %#v", fake.events, test.wantEvents)
@@ -183,9 +202,50 @@ func TestCoordinatorTransitionCases(t *testing.T) {
 					t.Fatalf("rollback request = %#v, does not match exact transition %#v", request, input)
 				}
 			}
+			if test.operation == OperationRestore && len(fake.restores) == 1 {
+				request := fake.restores[0]
+				if request.Candidate.InstanceID != input.InstanceID || request.Candidate.BundleID != input.BundleID || request.Candidate.ExpectedBundleID != input.ExpectedBundleID || request.Candidate.ActorID != input.ActorID || request.Reason != input.Reason || !reflect.DeepEqual(request.AuthoredIDs, input.ApprovedAuthoredIDs) {
+					t.Fatalf("restore request = %#v, does not match exact transition %#v", request, input)
+				}
+			}
 		})
 	}
 
+}
+
+func TestRestorePreviewRequiresExactTombstoneApprovalSet(t *testing.T) {
+	basePlan := Plan{Outcomes: []Outcome{
+		{AuthoredID: "orders", Kind: projectgraph.KindSource, Outcome: OutcomeRestoreRequired},
+		{AuthoredID: "customers", Kind: projectgraph.KindSource, Outcome: OutcomeRestoreRequired},
+		{AuthoredID: "active-model", Kind: projectgraph.KindModel, Outcome: OutcomeUpdated},
+	}}
+	tests := []struct {
+		name     string
+		plan     Plan
+		approved []projectgraph.ResourceID
+		wantErr  error
+	}{
+		{name: "exact", plan: basePlan, approved: []projectgraph.ResourceID{"customers", "orders"}},
+		{name: "missing tombstone", plan: basePlan, approved: []projectgraph.ResourceID{"orders"}, wantErr: ErrRestoreRequired},
+		{name: "active extra", plan: basePlan, approved: []projectgraph.ResourceID{"customers", "orders", "active-model"}, wantErr: ErrRestoreRequired},
+		{name: "unknown extra", plan: basePlan, approved: []projectgraph.ResourceID{"customers", "orders", "not-in-candidate"}, wantErr: ErrRestoreRequired},
+		{name: "collision", plan: Plan{Outcomes: []Outcome{{AuthoredID: "orders", Kind: projectgraph.KindModel, Outcome: OutcomeCollision, Detail: "immutable kind"}}}, approved: []projectgraph.ResourceID{"orders"}, wantErr: ErrKindConflict},
+		{name: "no tombstones", plan: Plan{Outcomes: []Outcome{{AuthoredID: "active-model", Kind: projectgraph.KindModel, Outcome: OutcomeUpdated}}}, approved: []projectgraph.ResourceID{"active-model"}, wantErr: ErrRestoreRequired},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			err := rejectRestoreBlockingOutcomes(test.plan, test.approved)
+			if test.wantErr == nil {
+				if err != nil {
+					t.Fatalf("restore preview error = %v", err)
+				}
+				return
+			}
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("restore preview error = %v, want %v", err, test.wantErr)
+			}
+		})
+	}
 }
 
 func TestCoordinatorDeliveryFailureRecordsAndResumes(t *testing.T) {
@@ -215,6 +275,32 @@ func TestCoordinatorDeliveryFailureRecordsAndResumes(t *testing.T) {
 	}
 	if second.Phase != PhaseCompleted || second.Error != "" || secondCalls != 1 {
 		t.Fatalf("resumed transition=%#v calls=%d", second, secondCalls)
+	}
+}
+
+func TestCoordinatorRestoreResumesFromDurableIdentityActivePhase(t *testing.T) {
+	input := coordinatorTestTransition(OperationRestore)
+	fake := &coordinatorFake{
+		observed: input.ExpectedBundleID,
+		outcomes: []Outcome{{AuthoredID: "orders", Kind: projectgraph.KindSource, Outcome: OutcomeRestoreRequired}},
+	}
+	coordinator := NewCoordinator(fake)
+	failure := errors.New("delivery unavailable")
+	first, err := coordinator.Run(t.Context(), input, func(context.Context) error {
+		return failure
+	})
+	if !errors.Is(err, failure) || first.Phase != PhaseIdentityActive {
+		t.Fatalf("first restore attempt transition=%#v error=%v", first, err)
+	}
+	if len(fake.restores) != 1 {
+		t.Fatalf("first restore attempt restore calls=%d, want 1", len(fake.restores))
+	}
+	second, err := coordinator.Run(t.Context(), input, func(context.Context) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Phase != PhaseCompleted || len(fake.restores) != 1 {
+		t.Fatalf("resumed restore transition=%#v restore calls=%d", second, len(fake.restores))
 	}
 }
 

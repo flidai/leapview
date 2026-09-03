@@ -2,6 +2,7 @@ package identityledger
 
 import (
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -63,6 +64,47 @@ func TestNormalizeReferencesRequiresInstanceIdentityEvenWhenEmpty(t *testing.T) 
 	}
 	if _, err := NormalizeReferences(" instance-1", nil); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("non-canonical instance reference evidence error = %v, want ErrInvalidInput", err)
+	}
+}
+
+func TestNormalizeRestoreTransitionSortsAndSerializesApprovedIDs(t *testing.T) {
+	transition, err := NormalizeTransition(Transition{
+		TransitionID: "restore-transition", Operation: OperationRestore, InstanceID: "instance-1",
+		CandidateID: "candidate-1", BundleID: "bundle-1", ExpectedBundleID: "bundle-0", ActorID: "actor-1",
+		Reason: "reviewed restore", GraphDigest: "sha256:" + strings.Repeat("a", 64),
+		Resources:           []Resource{{AuthoredID: "orders", Kind: projectgraph.KindSource}},
+		ApprovedAuthoredIDs: []projectgraph.ResourceID{"zeta", "alpha"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []projectgraph.ResourceID{"alpha", "zeta"}; !reflect.DeepEqual(transition.ApprovedAuthoredIDs, want) {
+		t.Fatalf("approved restore IDs = %#v, want %#v", transition.ApprovedAuthoredIDs, want)
+	}
+	encoded, err := ApprovedAuthoredIDsJSON([]projectgraph.ResourceID{"zeta", "alpha"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) != `["alpha","zeta"]` {
+		t.Fatalf("approved restore IDs JSON = %s", encoded)
+	}
+
+	for name, input := range map[string]Transition{
+		"missing IDs": {
+			TransitionID: "restore-missing", Operation: OperationRestore, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "bundle-1", ActorID: "actor-1", Reason: "reviewed restore", GraphDigest: "sha256:" + strings.Repeat("a", 64), Resources: []Resource{{AuthoredID: "orders", Kind: projectgraph.KindSource}},
+		},
+		"duplicate IDs": {
+			TransitionID: "restore-duplicate", Operation: OperationRestore, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "bundle-1", ActorID: "actor-1", Reason: "reviewed restore", GraphDigest: "sha256:" + strings.Repeat("a", 64), Resources: []Resource{{AuthoredID: "orders", Kind: projectgraph.KindSource}}, ApprovedAuthoredIDs: []projectgraph.ResourceID{"orders", "orders"},
+		},
+		"publish IDs": {
+			TransitionID: "publish-IDs", Operation: OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "bundle-1", ActorID: "actor-1", Reason: "ordinary publish", GraphDigest: "sha256:" + strings.Repeat("a", 64), Resources: []Resource{{AuthoredID: "orders", Kind: projectgraph.KindSource}}, ApprovedAuthoredIDs: []projectgraph.ResourceID{"orders"},
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			if _, err := NormalizeTransition(input); !errors.Is(err, ErrInvalidInput) && !errors.Is(err, ErrDuplicateAuthoredID) && !errors.Is(err, ErrInvalidTransition) {
+				t.Fatalf("error = %v, want restore validation error", err)
+			}
+		})
 	}
 }
 

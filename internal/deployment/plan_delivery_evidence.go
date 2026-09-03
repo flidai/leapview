@@ -234,6 +234,9 @@ type DeliveryPlanEvidence struct {
 	// rows can persist the immutable refresh selection without a migration.
 	// DeliveryPlan mirrors this pointer as the execution-facing contract.
 	PipelinePlan *PipelinePlan `json:"pipelinePlan,omitempty"`
+	// Restore is mirrored from DeliveryPlan so existing evidence JSON
+	// persistence retains the exact identity-activation intent.
+	Restore *RestoreIntent `json:"restore,omitempty"`
 }
 
 func canonicalTextList(values []string) []string {
@@ -300,6 +303,12 @@ func (e DeliveryPlanEvidence) canonical() DeliveryPlanEvidence {
 		canonical := e.PipelinePlan.Canonical()
 		e.PipelinePlan = &canonical
 	}
+	if e.Restore != nil {
+		canonical, err := NormalizeRestoreIntent(e.Restore)
+		if err == nil {
+			e.Restore = canonical
+		}
+	}
 	return e
 }
 
@@ -307,6 +316,9 @@ func (e DeliveryPlanEvidence) Validate() error {
 	e = e.canonical()
 	if strings.TrimSpace(e.ImpactStatement) == "" || strings.TrimSpace(e.PhysicalWorkStatement) == "" || strings.TrimSpace(e.ReuseStatement) == "" {
 		return fmt.Errorf("%w: impact, physical-work, and reuse statements are required", ErrDeliveryInvalid)
+	}
+	if _, err := NormalizeRestoreIntent(e.Restore); err != nil {
+		return err
 	}
 	for _, group := range [][]DeliveryImpactResource{e.GraphImpact.Added, e.GraphImpact.Removed, e.GraphImpact.DirectlyModified, e.GraphImpact.IndirectlyAffected} {
 		for _, item := range group {

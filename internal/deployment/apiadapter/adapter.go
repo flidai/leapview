@@ -47,18 +47,19 @@ type CreateRequest struct {
 // generation submitted for publication. Resolved credentials and provider
 // references are deliberately excluded.
 type PublishEvidence struct {
-	ReleaseDigest            string `json:"releaseDigest"`
-	ArtifactContentDigest    string `json:"artifactContentDigest"`
-	ArtifactProvenanceDigest string `json:"artifactProvenanceDigest"`
-	PlanDigest               string `json:"planDigest"`
-	CandidateID              string `json:"candidateId"`
-	CandidateRevision        int64  `json:"candidateRevision"`
-	TargetID                 string `json:"targetId"`
-	Environment              string `json:"environment"`
-	GenerationID             string `json:"generationId"`
-	BaseGenerationID         string `json:"baseGenerationId,omitempty"`
-	RuntimeVersion           string `json:"runtimeVersion"`
-	PolicyDigest             string `json:"policyDigest"`
+	ReleaseDigest            string                    `json:"releaseDigest"`
+	ArtifactContentDigest    string                    `json:"artifactContentDigest"`
+	ArtifactProvenanceDigest string                    `json:"artifactProvenanceDigest"`
+	PlanDigest               string                    `json:"planDigest"`
+	CandidateID              string                    `json:"candidateId"`
+	CandidateRevision        int64                     `json:"candidateRevision"`
+	TargetID                 string                    `json:"targetId"`
+	Environment              string                    `json:"environment"`
+	GenerationID             string                    `json:"generationId"`
+	BaseGenerationID         string                    `json:"baseGenerationId,omitempty"`
+	RuntimeVersion           string                    `json:"runtimeVersion"`
+	PolicyDigest             string                    `json:"policyDigest"`
+	Restore                  *deployment.RestoreIntent `json:"restore,omitempty"`
 }
 
 type Scope struct {
@@ -209,6 +210,13 @@ func normalizePublishEvidence(evidence *PublishEvidence) error {
 	}
 	if platformdigest.ValidateSHA256Identity(evidence.ReleaseDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.ArtifactContentDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.ArtifactProvenanceDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PlanDigest) != nil || platformdigest.ValidateSHA256Identity(evidence.PolicyDigest) != nil || evidence.CandidateID == "" || evidence.CandidateRevision < 1 || evidence.TargetID == "" || evidence.Environment == "" || evidence.GenerationID == "" || evidence.RuntimeVersion == "" {
 		return fmt.Errorf("%w: immutable publish evidence is incomplete", ErrInvalid)
+	}
+	if evidence.Restore != nil {
+		normalized, err := deployment.NormalizeRestoreIntent(evidence.Restore)
+		if err != nil {
+			return fmt.Errorf("%w: restore evidence: %v", ErrInvalid, err)
+		}
+		evidence.Restore = normalized
 	}
 	return nil
 }

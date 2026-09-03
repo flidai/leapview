@@ -24,6 +24,7 @@ type Outcome = ledger.Outcome
 type OutcomeKind = ledger.OutcomeKind
 type Plan = ledger.Plan
 type Resource = ledger.Resource
+type Restore = ledger.Restore
 type Rollback = ledger.Rollback
 type Transition = ledger.Transition
 type TransitionOperation = ledger.TransitionOperation
@@ -32,6 +33,7 @@ type TransitionPhase = ledger.TransitionPhase
 const (
 	OperationPublish  = ledger.OperationPublish
 	OperationRollback = ledger.OperationRollback
+	OperationRestore  = ledger.OperationRestore
 
 	PhasePrepared        = ledger.PhasePrepared
 	PhaseIdentityPending = ledger.PhaseIdentityPending
@@ -40,6 +42,7 @@ const (
 	PhaseCompleted       = ledger.PhaseCompleted
 
 	OutcomeCollision       = ledger.OutcomeCollision
+	OutcomeRestored        = ledger.OutcomeRestored
 	OutcomeRestoreRequired = ledger.OutcomeRestoreRequired
 
 	ReferenceOwnerKindGrant                = ledger.ReferenceOwnerKindGrant
@@ -47,11 +50,13 @@ const (
 )
 
 var (
-	ErrActivationConflict = ledger.ErrActivationConflict
-	ErrKindConflict       = ledger.ErrKindConflict
-	ErrPhaseConflict      = ledger.ErrPhaseConflict
-	ErrRestoreRequired    = ledger.ErrRestoreRequired
-	ErrTransitionConflict = ledger.ErrTransitionConflict
+	ErrActivationConflict  = ledger.ErrActivationConflict
+	ErrDuplicateAuthoredID = ledger.ErrDuplicateAuthoredID
+	ErrInvalidInput        = ledger.ErrInvalidInput
+	ErrKindConflict        = ledger.ErrKindConflict
+	ErrPhaseConflict       = ledger.ErrPhaseConflict
+	ErrRestoreRequired     = ledger.ErrRestoreRequired
+	ErrTransitionConflict  = ledger.ErrTransitionConflict
 )
 
 // TransitionRepository is the narrow durable transition contract consumed by
@@ -62,6 +67,7 @@ type TransitionRepository interface {
 	AdvanceTransition(context.Context, string, string, TransitionPhase, TransitionPhase, string) (Transition, error)
 	Plan(context.Context, Candidate) (Plan, error)
 	Activate(context.Context, Candidate) (Plan, error)
+	RestoreAndActivate(context.Context, Restore) (Plan, error)
 	Rollback(context.Context, Rollback) (Plan, error)
 }
 

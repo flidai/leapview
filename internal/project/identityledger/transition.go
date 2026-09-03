@@ -18,6 +18,7 @@ type TransitionOperation string
 const (
 	OperationPublish  TransitionOperation = "publish"
 	OperationRollback TransitionOperation = "rollback"
+	OperationRestore  TransitionOperation = "restore"
 )
 
 // TransitionPhase is the monotonic state of an activation transition.
@@ -39,8 +40,9 @@ var (
 )
 
 // Transition is the immutable input and mutable progress record for one
-// publish or rollback. Resources and GraphDigest are persisted together so
-// a retry cannot silently change the authored evidence behind a transition.
+// publish, explicit restore, or rollback. Resources, approved restore IDs, and
+// GraphDigest are persisted together so a retry cannot silently change the
+// authored evidence behind a transition.
 type Transition struct {
 	TransitionID     string
 	Operation        TransitionOperation
@@ -52,13 +54,16 @@ type Transition struct {
 	Reason           string
 	Resources        []Resource
 	References       []DurableReference
-	GraphDigest      string
-	Phase            TransitionPhase
-	Error            string
-	PreparedAt       time.Time
-	PhaseAt          time.Time
-	UpdatedAt        time.Time
-	CompletedAt      *time.Time
+	// ApprovedAuthoredIDs is immutable approval evidence for an explicit
+	// restore. It must be empty for ordinary publish and rollback transitions.
+	ApprovedAuthoredIDs []projectgraph.ResourceID
+	GraphDigest         string
+	Phase               TransitionPhase
+	Error               string
+	PreparedAt          time.Time
+	PhaseAt             time.Time
+	UpdatedAt           time.Time
+	CompletedAt         *time.Time
 }
 
 // NormalizeTransition validates immutable transition input, stable-sorts its
@@ -67,7 +72,7 @@ func NormalizeTransition(transition Transition) (Transition, error) {
 	if err := validateToken("transition id", transition.TransitionID); err != nil {
 		return Transition{}, err
 	}
-	if transition.Operation != OperationPublish && transition.Operation != OperationRollback {
+	if transition.Operation != OperationPublish && transition.Operation != OperationRollback && transition.Operation != OperationRestore {
 		return Transition{}, fmt.Errorf("%w: operation %q", ErrInvalidInput, transition.Operation)
 	}
 	if err := validateToken("instance id", transition.InstanceID); err != nil {
@@ -89,6 +94,20 @@ func NormalizeTransition(transition Transition) (Transition, error) {
 	}
 	if strings.TrimSpace(transition.Reason) != transition.Reason || len(transition.Reason) > 2048 {
 		return Transition{}, fmt.Errorf("%w: reason", ErrInvalidInput)
+	}
+	approvedAuthoredIDs, err := NormalizeApprovedAuthoredIDs(transition.ApprovedAuthoredIDs)
+	if err != nil {
+		return Transition{}, err
+	}
+	if transition.Operation == OperationRestore {
+		if len(approvedAuthoredIDs) == 0 {
+			return Transition{}, fmt.Errorf("%w: restore approved authored IDs are required", ErrInvalidInput)
+		}
+		if strings.TrimSpace(transition.Reason) == "" {
+			return Transition{}, fmt.Errorf("%w: restore reason is required", ErrInvalidInput)
+		}
+	} else if len(approvedAuthoredIDs) > 0 {
+		return Transition{}, fmt.Errorf("%w: approved authored IDs only valid for restore transitions", ErrInvalidTransition)
 	}
 	resources, err := NormalizeResources(transition.Resources)
 	if err != nil {
@@ -112,7 +131,44 @@ func NormalizeTransition(transition Transition) (Transition, error) {
 	}
 	transition.Resources = resources
 	transition.References = references
+	transition.ApprovedAuthoredIDs = approvedAuthoredIDs
 	return transition, nil
+}
+
+// NormalizeApprovedAuthoredIDs validates and stable-sorts the exact identity
+// IDs approved for an explicit restore. An empty input is valid here so the
+// ordinary publish/rollback representation serializes deterministically as [].
+func NormalizeApprovedAuthoredIDs(ids []projectgraph.ResourceID) ([]projectgraph.ResourceID, error) {
+	result := append([]projectgraph.ResourceID(nil), ids...)
+	seen := make(map[projectgraph.ResourceID]struct{}, len(result))
+	for _, id := range result {
+		if err := id.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: restore authored id: %v", ErrInvalidInput, err)
+		}
+		if _, duplicate := seen[id]; duplicate {
+			return nil, fmt.Errorf("%w %q", ErrDuplicateAuthoredID, id)
+		}
+		seen[id] = struct{}{}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i] < result[j] })
+	return result, nil
+}
+
+// ApprovedAuthoredIDsJSON returns the stable JSON representation persisted in
+// the transition journal. Empty evidence is encoded as [] rather than null.
+func ApprovedAuthoredIDsJSON(ids []projectgraph.ResourceID) ([]byte, error) {
+	normalized, err := NormalizeApprovedAuthoredIDs(ids)
+	if err != nil {
+		return nil, err
+	}
+	if normalized == nil {
+		normalized = []projectgraph.ResourceID{}
+	}
+	encoded, err := json.Marshal(normalized)
+	if err != nil {
+		return nil, fmt.Errorf("marshal approved restore authored IDs: %w", err)
+	}
+	return encoded, nil
 }
 
 // NormalizeReferences validates immutable reference bindings and returns a
@@ -228,6 +284,11 @@ func SameTransitionEvidence(left, right Transition) bool {
 	leftReferences, leftErr := ReferenceEvidenceJSON(left.InstanceID, left.References)
 	rightReferences, rightErr := ReferenceEvidenceJSON(right.InstanceID, right.References)
 	if leftErr != nil || rightErr != nil || string(leftReferences) != string(rightReferences) {
+		return false
+	}
+	leftApproved, leftErr := ApprovedAuthoredIDsJSON(left.ApprovedAuthoredIDs)
+	rightApproved, rightErr := ApprovedAuthoredIDsJSON(right.ApprovedAuthoredIDs)
+	if leftErr != nil || rightErr != nil || string(leftApproved) != string(rightApproved) {
 		return false
 	}
 	return true

@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"time"
 
@@ -78,6 +79,21 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	if intent.ProjectID.Validate() != nil || intent.PrincipalID == "" || sourceOwnerID == "" || intent.TargetID == "" || intent.SourceDigest == "" || intent.SourceAttestationDigest == "" {
 		return deployment.DeliveryPlan{}, fmt.Errorf("%w: delivery plan intent is incomplete", deployment.ErrDeliveryInvalid)
 	}
+	restore, err := deployment.NormalizeRestoreIntent(intent.Restore)
+	if err != nil {
+		return deployment.DeliveryPlan{}, err
+	}
+	intent.Restore = restore
+	operation := intent.Operation
+	if operation == "" {
+		operation = deployment.DeliveryOperationCodeChange
+	}
+	if operation != deployment.DeliveryOperationCodeChange && operation != deployment.DeliveryOperationRestatement && operation != deployment.DeliveryOperationBindingChange && operation != deployment.DeliveryOperationPolicyChange {
+		return deployment.DeliveryPlan{}, fmt.Errorf("%w: unsupported delivery operation %q", deployment.ErrDeliveryInvalid, operation)
+	}
+	if intent.Restore != nil && operation != deployment.DeliveryOperationCodeChange {
+		return deployment.DeliveryPlan{}, fmt.Errorf("%w: identity restore is valid only for code-change publication", deployment.ErrDeliveryInvalid)
+	}
 	source, err := reader.SnapshotAttestation(ctx, project.CandidateSourceScope{ProjectID: intent.ProjectID, OwnerID: sourceOwnerID}, intent.SourceDigest, intent.SourceAttestationDigest)
 	if err != nil {
 		return deployment.DeliveryPlan{}, fmt.Errorf("verify retained source attestation: %w", err)
@@ -87,13 +103,6 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	}
 	if strings.TrimSpace(idempotencyKey) == "" {
 		return deployment.DeliveryPlan{}, fmt.Errorf("idempotency key is required")
-	}
-	operation := intent.Operation
-	if operation == "" {
-		operation = deployment.DeliveryOperationCodeChange
-	}
-	if operation != deployment.DeliveryOperationCodeChange && operation != deployment.DeliveryOperationRestatement && operation != deployment.DeliveryOperationBindingChange && operation != deployment.DeliveryOperationPolicyChange {
-		return deployment.DeliveryPlan{}, fmt.Errorf("%w: unsupported delivery operation %q", deployment.ErrDeliveryInvalid, operation)
 	}
 	inspector, inspectOK := m.Artifacts.(candidateArtifactInspector)
 	if !inspectOK || m.Plan == nil {
@@ -113,7 +122,7 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 		if intent.PipelinePlan != nil {
 			intentPipelineDigest = intent.PipelinePlan.Digest
 		}
-		if existing.TargetID != intent.TargetID || existing.ProjectID != intent.ProjectID || existing.Environment != intent.Environment || existing.Operation != operation || existing.SourceDigest != intent.SourceDigest || existing.ActorID != intent.PrincipalID || existing.SourceOwnerID != sourceOwnerID || existing.Provenance.AttestationDigest != intent.SourceAttestationDigest || existingPipelineDigest != intentPipelineDigest {
+		if existing.TargetID != intent.TargetID || existing.ProjectID != intent.ProjectID || existing.Environment != intent.Environment || existing.Operation != operation || existing.SourceDigest != intent.SourceDigest || existing.ActorID != intent.PrincipalID || existing.SourceOwnerID != sourceOwnerID || existing.Provenance.AttestationDigest != intent.SourceAttestationDigest || existingPipelineDigest != intentPipelineDigest || !reflect.DeepEqual(existing.Restore, intent.Restore) {
 			return deployment.DeliveryPlan{}, fmt.Errorf("%w: idempotency key is bound to a different immutable plan", deployment.ErrDeliveryConflict)
 		}
 		return existing, nil
@@ -124,7 +133,7 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	if m.Lifecycle.Now != nil {
 		now = m.Lifecycle.Now().UTC()
 	}
-	candidate := deployment.Candidate{ID: strings.TrimPrefix(planID, "plan-"), Key: planID, TargetID: intent.TargetID, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Scope: deployment.CandidateScope{ProjectID: intent.ProjectID, Environment: intent.Environment, BaseGenerationID: target.ActiveGenerationID}, Revision: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
+	candidate := deployment.Candidate{ID: strings.TrimPrefix(planID, "plan-"), Key: planID, TargetID: intent.TargetID, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Restore: intent.Restore, Scope: deployment.CandidateScope{ProjectID: intent.ProjectID, Environment: intent.Environment, BaseGenerationID: target.ActiveGenerationID}, Revision: 1, CreatedAt: now, UpdatedAt: now, ExpiresAt: now.Add(time.Hour)}
 	inspected, err := inspector.InspectCandidateArtifacts(ctx, release.CandidateArtifactRequest{CandidateID: planID, Scope: candidate.Scope, OwnerID: sourceOwnerID, ArtifactDigest: intent.SourceDigest, Source: source})
 	if err != nil {
 		return deployment.DeliveryPlan{}, err
@@ -135,6 +144,14 @@ func (m *CanonicalDeliveryMutations) CreatePlan(ctx context.Context, intent Deli
 	}
 	planned.ActorID = intent.PrincipalID
 	planned.SourceOwnerID = sourceOwnerID
+	if planned.Restore != nil && !reflect.DeepEqual(planned.Restore, intent.Restore) {
+		return deployment.DeliveryPlan{}, fmt.Errorf("%w: compiler plan restore intent differs from request", deployment.ErrDeliveryConflict)
+	}
+	planned.Restore = intent.Restore
+	planned, err = deployment.NewDeliveryPlan(planned)
+	if err != nil {
+		return deployment.DeliveryPlan{}, err
+	}
 	if planned.ID != planID || planned.Provenance.AttestationDigest != intent.SourceAttestationDigest {
 		return deployment.DeliveryPlan{}, fmt.Errorf("compiler plan omitted source attestation binding")
 	}
@@ -177,6 +194,7 @@ func (m *CanonicalDeliveryMutations) BuildPlan(ctx context.Context, projectID, p
 	candidate, err := deployment.NewCandidate(deployment.CandidateStartInput{
 		ID: candidateID, Key: candidateID, TargetID: plan.TargetID, OwnerID: plan.SourceOwnerID,
 		ArtifactDigest: plan.SourceDigest,
+		Restore:        plan.Restore,
 		Scope:          deployment.CandidateScope{ProjectID: plan.ProjectID, Environment: plan.Environment, BaseGenerationID: plan.BaseGenerationID},
 		Now:            now, ExpiresAt: now.Add(time.Hour),
 	})
@@ -335,7 +353,7 @@ func (m *CanonicalDeliveryMutations) verifyPlanEvidence(ctx context.Context, pla
 	if plan.PipelinePlan != nil {
 		planPipelineDigest = plan.PipelinePlan.Digest
 	}
-	if expected.Operation != plan.Operation || expected.SourceDigest != plan.SourceDigest || expected.ExecutionDigest != plan.ExecutionDigest || expected.ProvenanceDigest != plan.ProvenanceDigest || expected.GovernanceDigest != plan.GovernanceDigest || expected.EvidenceDigest != plan.EvidenceDigest || expectedPipelineDigest != planPipelineDigest {
+	if expected.Operation != plan.Operation || expected.SourceDigest != plan.SourceDigest || expected.ExecutionDigest != plan.ExecutionDigest || expected.ProvenanceDigest != plan.ProvenanceDigest || expected.GovernanceDigest != plan.GovernanceDigest || expected.EvidenceDigest != plan.EvidenceDigest || expectedPipelineDigest != planPipelineDigest || !reflect.DeepEqual(expected.Restore, plan.Restore) {
 		return fmt.Errorf("%w: inspected compiler evidence differs from durable plan", deployment.ErrDeliveryConflict)
 	}
 	return nil
@@ -418,7 +436,7 @@ func resolveLegacyCandidatePlan(
 	}
 	planID := "plan-" + input.Candidate.ID
 	if existing, readErr := store.PlanByID(ctx, planID); readErr == nil {
-		if existing.ID != planID || existing.ProjectID != input.ProjectID || existing.TargetID != input.Candidate.TargetID || existing.Environment != input.Candidate.Scope.Environment || existing.SourceDigest != input.ArtifactDigest || existing.Provenance.AttestationDigest != input.Source.SourceAttestationDigest || (input.Operation != "" && existing.Operation != input.Operation) {
+		if existing.ID != planID || existing.ProjectID != input.ProjectID || existing.TargetID != input.Candidate.TargetID || existing.Environment != input.Candidate.Scope.Environment || existing.SourceDigest != input.ArtifactDigest || existing.Provenance.AttestationDigest != input.Source.SourceAttestationDigest || (input.Operation != "" && existing.Operation != input.Operation) || !reflect.DeepEqual(existing.Restore, input.Candidate.Restore) {
 			return deployment.DeliveryPlan{}, fmt.Errorf("%w: persisted legacy plan does not match candidate scope", deployment.ErrDeliveryConflict)
 		}
 		return existing, nil

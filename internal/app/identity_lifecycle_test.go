@@ -31,6 +31,8 @@ type identityLifecycleRepositoryFake struct {
 	references      []identityledger.DurableReference
 	referenceResult identityledger.DurableReference
 	activatedActor  string
+	restoreCalls    int
+	restoredIDs     []projectgraph.ResourceID
 }
 
 func (f *identityLifecycleRepositoryFake) ReconcileReferences(_ context.Context, instanceID string, references []identityledger.DurableReference) ([]identityledger.DurableReference, error) {
@@ -104,6 +106,14 @@ func (f *identityLifecycleRepositoryFake) Activate(_ context.Context, candidate 
 	return identityledger.Plan{InstanceID: candidate.InstanceID, ObservedBundleID: candidate.ExpectedBundleID, CandidateBundleID: candidate.BundleID}, nil
 }
 
+func (f *identityLifecycleRepositoryFake) RestoreAndActivate(_ context.Context, request identityledger.Restore) (identityledger.Plan, error) {
+	f.event("restore")
+	f.restoreCalls++
+	f.restoredIDs = append([]projectgraph.ResourceID(nil), request.AuthoredIDs...)
+	f.observed = request.Candidate.BundleID
+	return identityledger.Plan{InstanceID: request.Candidate.InstanceID, ObservedBundleID: request.Candidate.BundleID, CandidateBundleID: request.Candidate.BundleID}, nil
+}
+
 func (f *identityLifecycleRepositoryFake) Rollback(_ context.Context, request identityledger.Rollback) (identityledger.Plan, error) {
 	f.event("rollback")
 	f.observed = request.BundleID
@@ -121,23 +131,60 @@ func (f *identityLifecycleRepositoryFake) BundlePublishTransition(_ context.Cont
 }
 
 type identityLifecycleSealedFake struct {
-	publishResult  deployment.PublicationIntent
-	rollbackResult deployment.RollbackResult
-	publishErr     error
-	rollbackErr    error
-	publishCalls   int
-	rollbackCalls  int
-	publishActor   string
-	events         *[]string
+	publishResult        deployment.PublicationIntent
+	rollbackResult       deployment.RollbackResult
+	publishErr           error
+	rollbackErr          error
+	publishCalls         int
+	rollbackCalls        int
+	publishActor         string
+	publishCommitCalls   int
+	publicationCommitted bool
+	events               *[]string
 }
 
-func (f *identityLifecycleSealedFake) Publish(_ context.Context, request sealedcontrol.PublishRequest) (deployment.PublicationIntent, error) {
-	f.publishCalls++
+type identityLifecycleBasicSealedFake struct{}
+
+func (identityLifecycleBasicSealedFake) Publish(context.Context, sealedcontrol.PublishRequest) (deployment.PublicationIntent, error) {
+	return deployment.PublicationIntent{}, nil
+}
+
+func (identityLifecycleBasicSealedFake) Rollback(context.Context, sealedcontrol.RollbackRequest) (deployment.RollbackResult, error) {
+	return deployment.RollbackResult{}, nil
+}
+
+func (f *identityLifecycleSealedFake) Publish(ctx context.Context, request sealedcontrol.PublishRequest) (deployment.PublicationIntent, error) {
+	return f.PublishWithActivation(ctx, request, nil)
+}
+
+func (f *identityLifecycleSealedFake) PublishWithActivation(ctx context.Context, request sealedcontrol.PublishRequest, activate sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error) {
 	f.publishActor = request.ActorID
+	if f.events != nil {
+		*f.events = append(*f.events, "sealed-preflight")
+	}
+	if f.publishErr != nil {
+		f.publishCalls++
+		return f.publishResult, f.publishErr
+	}
+	if activate != nil {
+		if err := activate(ctx, func() error {
+			if !f.publicationCommitted {
+				f.publishCommitCalls++
+				f.publicationCommitted = true
+				if f.events != nil {
+					*f.events = append(*f.events, "sealed-commit")
+				}
+			}
+			return nil
+		}); err != nil {
+			return f.publishResult, err
+		}
+	}
+	f.publishCalls++
 	if f.events != nil {
 		*f.events = append(*f.events, "sealed-publish")
 	}
-	return f.publishResult, f.publishErr
+	return f.publishResult, nil
 }
 
 func (f *identityLifecycleSealedFake) Rollback(_ context.Context, _ sealedcontrol.RollbackRequest) (deployment.RollbackResult, error) {
@@ -205,6 +252,68 @@ func TestPrepareIdentityPublishTransitionPlansBeforePreparingAndRejectsBlockingO
 				t.Fatalf("transition = %#v", transition)
 			}
 		})
+	}
+}
+
+func TestPlanIdentityCandidateRequiresExactRestoreTombstones(t *testing.T) {
+	graph := identityLifecycleGraph(t)
+	artifacts := release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{Identity: projectgraph.ServingIdentity{ProjectID: graph.ProjectID(), GenerationID: "generation-next"}}, Compiler: release.CandidateCompilerEvidence{Graph: graph}}
+	restoreOutcome := []identityledger.Outcome{
+		{AuthoredID: "model_orders", Kind: projectgraph.KindModel, Outcome: identityledger.OutcomeRestoreRequired, Detail: "model is tombstoned"},
+		{AuthoredID: "source_orders", Kind: projectgraph.KindSource, Outcome: identityledger.OutcomeRestoreRequired, Detail: "source is tombstoned"},
+	}
+	for _, test := range []struct {
+		name       string
+		restoreIDs []projectgraph.ResourceID
+		wantErr    error
+	}{
+		{name: "missing tombstone", restoreIDs: []projectgraph.ResourceID{"source_orders"}, wantErr: identityledger.ErrRestoreRequired},
+		{name: "extra identity", restoreIDs: []projectgraph.ResourceID{"model_orders", "source_orders", "unknown"}, wantErr: ErrIdentityLifecycleInvalid},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			repository := &identityLifecycleRepositoryFake{observed: "generation-current", outcomes: restoreOutcome}
+			_, _, err := PlanIdentityCandidate(t.Context(), repository, IdentityCandidateInput{
+				InstanceID: "instance-1", ExpectedBaseGenerationID: "generation-current", ActorID: "actor-1", Artifacts: artifacts,
+				Restore: &deployment.RestoreIntent{AuthoredIDs: test.restoreIDs, Reason: "approved restore"},
+			})
+			if !errors.Is(err, test.wantErr) {
+				t.Fatalf("error = %v, want %v", err, test.wantErr)
+			}
+		})
+	}
+
+	repository := &identityLifecycleRepositoryFake{observed: "generation-current", outcomes: restoreOutcome}
+	if _, _, err := PlanIdentityCandidate(t.Context(), repository, IdentityCandidateInput{
+		InstanceID: "instance-1", ExpectedBaseGenerationID: "generation-current", ActorID: "actor-1", Artifacts: artifacts,
+		Restore: &deployment.RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"source_orders", "model_orders"}, Reason: "approved restore"},
+	}); err != nil {
+		t.Fatalf("exact restore admission error = %v", err)
+	}
+}
+
+func TestPrepareIdentityRestoreTransitionCarriesExactAuthorization(t *testing.T) {
+	graph := identityLifecycleGraph(t)
+	artifacts := release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{Identity: projectgraph.ServingIdentity{ProjectID: graph.ProjectID(), GenerationID: "generation-next"}}, Compiler: release.CandidateCompilerEvidence{Graph: graph}}
+	events := []string{}
+	repository := &identityLifecycleRepositoryFake{
+		observed: "generation-current", events: &events,
+		outcomes: []identityledger.Outcome{{AuthoredID: "source_orders", Kind: projectgraph.KindSource, Outcome: identityledger.OutcomeRestoreRequired, Detail: "source is tombstoned"}},
+	}
+	transition, err := PrepareIdentityRestoreTransition(t.Context(), repository, IdentityPublishPreparationInput{
+		IdentityCandidateInput: IdentityCandidateInput{
+			InstanceID: "instance-1", ExpectedBaseGenerationID: "generation-current", ActorID: "actor-1", Artifacts: artifacts,
+			Restore: &deployment.RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"source_orders"}, Reason: "approved restore"},
+		},
+		CandidateID: "candidate-1", Reason: "ignored for restore",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.Operation != identityledger.OperationRestore || transition.TransitionID != "identity-restore:candidate-1" || transition.Reason != "approved restore" || !reflect.DeepEqual(transition.ApprovedAuthoredIDs, []projectgraph.ResourceID{"source_orders"}) {
+		t.Fatalf("restore transition = %#v", transition)
+	}
+	if !reflect.DeepEqual(events, []string{"plan", "prepare"}) {
+		t.Fatalf("events = %#v, want plan, prepare", events)
 	}
 }
 
@@ -300,7 +409,7 @@ func TestProjectIdentityReferencesRejectsMissingAndOversizedBindings(t *testing.
 	}
 }
 
-func TestIdentitySealedCoordinatorPublishesThroughIdentityBeforeSealedAndOnce(t *testing.T) {
+func TestIdentitySealedCoordinatorPublishesAfterSealedPreflightBeforeTargetCommit(t *testing.T) {
 	graph := identityLifecycleGraph(t)
 	events := []string{}
 	published := identityledger.Transition{TransitionID: "identity-publish:candidate-1", Operation: identityledger.OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next", ExpectedBundleID: "generation-current", ActorID: "actor-1", GraphDigest: graph.Digest(), Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}}, References: []identityledger.DurableReference{{InstanceID: "instance-1", ReferenceID: "grant:reader", OwnerAuthoredID: "reader", OwnerKind: "grant", TargetAuthoredID: "source_orders", ExpectedKind: projectgraph.KindSource}}}
@@ -317,11 +426,105 @@ func TestIdentitySealedCoordinatorPublishesThroughIdentityBeforeSealedAndOnce(t 
 	if got.ID != "publication-1" || sealed.publishCalls != 1 {
 		t.Fatalf("publication = %#v, sealed calls = %d", got, sealed.publishCalls)
 	}
-	if indexOfIdentityEvent(events, "activate") > indexOfIdentityEvent(events, "sealed-publish") {
-		t.Fatalf("sealed publication was not behind identity activation: %#v", events)
+	if indexOfIdentityEvent(events, "sealed-preflight") > indexOfIdentityEvent(events, "activate") || indexOfIdentityEvent(events, "activate") > indexOfIdentityEvent(events, "sealed-commit") {
+		t.Fatalf("identity activation was not nested after sealed preflight and before target commit: %#v", events)
 	}
 	if indexOfIdentityEvent(events, "references") > indexOfIdentityEvent(events, "sealed-publish") {
 		t.Fatalf("sealed publication ran before durable references: %#v", events)
+	}
+}
+
+func TestIdentitySealedCoordinatorRestoreApprovalPrecedesIdentityMutation(t *testing.T) {
+	graph := identityLifecycleGraph(t)
+	restore := identityledger.Transition{
+		TransitionID: "identity-restore:candidate-1", Operation: identityledger.OperationRestore,
+		InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next",
+		ExpectedBundleID: "generation-current", ActorID: "candidate-owner", Reason: "approved restore",
+		ApprovedAuthoredIDs: []projectgraph.ResourceID{"source_orders"}, GraphDigest: graph.Digest(),
+		Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}},
+		Phase:     identityledger.PhasePrepared,
+	}
+	repository := &identityLifecycleRepositoryFake{
+		transition: restore, published: restore, observed: "generation-current",
+		outcomes: []identityledger.Outcome{{AuthoredID: "source_orders", Kind: projectgraph.KindSource, Outcome: identityledger.OutcomeRestoreRequired}},
+	}
+	sealed := &identityLifecycleSealedFake{publishErr: errors.New("approval required")}
+	coordinator, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: sealed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Publish(t.Context(), identityLifecyclePublishRequest("generation-current")); !errors.Is(err, sealed.publishErr) {
+		t.Fatalf("missing approval error = %v, want %v", err, sealed.publishErr)
+	}
+	if repository.restoreCalls != 0 {
+		t.Fatalf("restore calls = %d, want no identity mutation before approval", repository.restoreCalls)
+	}
+}
+
+func TestIdentitySealedCoordinatorApprovedRestoreCommitsOnceAndReplays(t *testing.T) {
+	graph := identityLifecycleGraph(t)
+	restore := identityledger.Transition{
+		TransitionID: "identity-restore:candidate-1", Operation: identityledger.OperationRestore,
+		InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next",
+		ExpectedBundleID: "generation-current", ActorID: "candidate-owner", Reason: "approved restore",
+		ApprovedAuthoredIDs: []projectgraph.ResourceID{"source_orders"}, GraphDigest: graph.Digest(),
+		Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}},
+		Phase:     identityledger.PhasePrepared,
+	}
+	repository := &identityLifecycleRepositoryFake{
+		transition: restore, published: restore, observed: "generation-current",
+		outcomes: []identityledger.Outcome{{AuthoredID: "source_orders", Kind: projectgraph.KindSource, Outcome: identityledger.OutcomeRestoreRequired}},
+	}
+	sealed := &identityLifecycleSealedFake{publishResult: deployment.PublicationIntent{ID: "publication-1"}}
+	coordinator, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: sealed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtimeActivations := 0
+	activate := func(ctx context.Context, commit func() error) error {
+		runtimeActivations++
+		return commit()
+	}
+	if _, err := coordinator.PublishWithActivation(t.Context(), identityLifecyclePublishRequest("generation-current"), activate); err != nil {
+		t.Fatal(err)
+	}
+	if repository.restoreCalls != 1 || !reflect.DeepEqual(repository.restoredIDs, []projectgraph.ResourceID{"source_orders"}) || sealed.publishCommitCalls != 1 || runtimeActivations != 1 {
+		t.Fatalf("first restore calls: restore=%d ids=%#v target=%d runtime=%d", repository.restoreCalls, repository.restoredIDs, sealed.publishCommitCalls, runtimeActivations)
+	}
+	// A restart/retry sees the completed identity transition. It must rerun
+	// runtime reconciliation against sealedcontrol's no-op committed callback,
+	// without invoking RestoreAndActivate a second time.
+	runtimeActivations = 0
+	if _, err := coordinator.PublishWithActivation(t.Context(), identityLifecyclePublishRequest("generation-current"), activate); err != nil {
+		t.Fatal(err)
+	}
+	if repository.restoreCalls != 1 || sealed.publishCommitCalls != 1 || runtimeActivations != 1 {
+		t.Fatalf("replay calls: restore=%d target=%d runtime=%d", repository.restoreCalls, sealed.publishCommitCalls, runtimeActivations)
+	}
+}
+
+func TestIdentitySealedCoordinatorOrdinaryPublishStillRejectsTombstones(t *testing.T) {
+	graph := identityLifecycleGraph(t)
+	published := identityledger.Transition{
+		TransitionID: "identity-publish:candidate-1", Operation: identityledger.OperationPublish,
+		InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next",
+		ExpectedBundleID: "generation-current", ActorID: "candidate-owner", GraphDigest: graph.Digest(),
+		Resources: []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}}, Phase: identityledger.PhasePrepared,
+	}
+	repository := &identityLifecycleRepositoryFake{
+		transition: published, published: published, observed: "generation-current",
+		outcomes: []identityledger.Outcome{{AuthoredID: "source_orders", Kind: projectgraph.KindSource, Outcome: identityledger.OutcomeRestoreRequired}},
+	}
+	sealed := &identityLifecycleSealedFake{publishResult: deployment.PublicationIntent{ID: "publication-1"}}
+	coordinator, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: sealed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := coordinator.Publish(t.Context(), identityLifecyclePublishRequest("generation-current")); !errors.Is(err, identityledger.ErrRestoreRequired) {
+		t.Fatalf("ordinary publish error = %v, want restore required", err)
+	}
+	if sealed.publishCommitCalls != 0 || repository.restoreCalls != 0 {
+		t.Fatalf("ordinary publish mutated target/identity: target=%d restore=%d", sealed.publishCommitCalls, repository.restoreCalls)
 	}
 }
 
@@ -428,12 +631,34 @@ func TestIdentityRollbackTransitionRequiresCompletedPublishEvidence(t *testing.T
 	}
 }
 
+func TestIdentityRollbackTransitionAcceptsCompletedRestoreEvidence(t *testing.T) {
+	published := identityledger.Transition{
+		TransitionID: "identity-restore:candidate-1", Operation: identityledger.OperationRestore,
+		InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-old",
+		ExpectedBundleID: "generation-current", ActorID: "candidate-owner", Reason: "reviewed restore",
+		ApprovedAuthoredIDs: []projectgraph.ResourceID{"source_orders"},
+		Resources:           []identityledger.Resource{{AuthoredID: "source_orders", Kind: projectgraph.KindSource}},
+		GraphDigest:         identityLifecycleGraph(t).Digest(), Phase: identityledger.PhaseCompleted,
+	}
+	request := identityLifecycleRollbackRequest("generation-current", published.BundleID)
+	transition, err := IdentityRollbackTransition(request, published)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if transition.Operation != identityledger.OperationRollback || transition.BundleID != published.BundleID || transition.GraphDigest != published.GraphDigest {
+		t.Fatalf("rollback transition = %#v", transition)
+	}
+}
+
 func TestIdentitySealedCoordinatorFailsClosedWhenEvidenceOrDeliveryUnavailable(t *testing.T) {
 	if _, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Sealed: &identityLifecycleSealedFake{}}); !errors.Is(err, ErrIdentityLifecycleUnavailable) {
 		t.Fatalf("missing repository error = %v", err)
 	}
 	graph := identityLifecycleGraph(t)
 	repository := &identityLifecycleRepositoryFake{published: identityledger.Transition{Operation: identityledger.OperationPublish, InstanceID: "instance-1", CandidateID: "candidate-1", BundleID: "generation-next", GraphDigest: graph.Digest()}}
+	if _, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: identityLifecycleBasicSealedFake{}}); !errors.Is(err, ErrIdentityLifecycleUnavailable) {
+		t.Fatalf("missing sealed activation callback error = %v", err)
+	}
 	sealed := &identityLifecycleSealedFake{}
 	coordinator, err := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{InstanceID: "instance-1", Transitions: repository, Sealed: sealed})
 	if err != nil {

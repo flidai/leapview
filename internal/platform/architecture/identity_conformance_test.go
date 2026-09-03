@@ -48,11 +48,10 @@ func TestFAI617ProductionIdentityAuthorityBoundary(t *testing.T) {
 }
 
 // TestFAI617CanonicalLifecycleHasNoIdentityBypass makes the two canonical
-// delivery operations auditable in source. The app lifecycle must load
-// durable publish evidence and pass the sealed operation only as the delivery
-// commit after identityledger.Coordinator has fenced the transition. Direct
-// sealed calls are confined to the small helper methods used by those commit
-// callbacks.
+// delivery operations auditable in source. Forward publication must enter the
+// identity coordinator from sealedcontrol's post-approval activation callback,
+// and rollback must retain the identity-first recovery fence established by
+// FAI-617.
 func TestFAI617CanonicalLifecycleHasNoIdentityBypass(t *testing.T) {
 	root := repoRoot(t)
 	path := filepath.Join(root, "internal", "app", "identity_lifecycle.go")
@@ -63,8 +62,10 @@ func TestFAI617CanonicalLifecycleHasNoIdentityBypass(t *testing.T) {
 	source := string(body)
 	for _, required := range []string{
 		`c.publish.BundlePublishTransition(ctx, c.instanceID, request.Generation.ID)`,
-		`_, runErr := c.identity.Run(ctx, transition, func(commitCtx context.Context) error {`,
-		`publication, err = c.publishSealed(commitCtx, request, activate)`,
+		`return c.publishSealed(ctx, request, func(sealedCtx context.Context, targetCommit func() error) error {`,
+		`run, runErr := c.identity.Run(sealedCtx, transition, func(commitCtx context.Context) error {`,
+		`return activate(commitCtx, targetCommit)`,
+		`return targetCommit()`,
 		`c.published.PublishedBundleTransition(ctx, c.instanceID, request.Request.GenerationID)`,
 		`transition, err := IdentityRollbackTransition(request, published)`,
 		`result, err = c.rollbackSealed(commitCtx, request, activate)`,
@@ -73,11 +74,51 @@ func TestFAI617CanonicalLifecycleHasNoIdentityBypass(t *testing.T) {
 			t.Errorf("canonical identity lifecycle is missing fenced operation %q", required)
 		}
 	}
-	if strings.Count(source, `c.sealed.Publish(ctx, request)`) != 1 {
-		t.Error("sealed publish must be called only by the identity lifecycle delivery helper")
+	if strings.Contains(source, `c.sealed.Publish(ctx, request)`) {
+		t.Error("forward publication bypasses the sealed post-approval activation callback")
 	}
 	if strings.Count(source, `c.sealed.Rollback(ctx, request)`) != 1 {
 		t.Error("sealed rollback must be called only by the identity lifecycle delivery helper")
+	}
+}
+
+// TestFAI663RestoreReusesIdentityApprovalAndDigestAuthorities prevents the
+// explicit restore path from growing a standalone mutation API, approval
+// store, or hashing implementation. Restore evidence is carried by the
+// existing candidate and delivery-plan contracts and executed by the existing
+// identity/sealed coordinators.
+func TestFAI663RestoreReusesIdentityApprovalAndDigestAuthorities(t *testing.T) {
+	root := repoRoot(t)
+	required := map[string][]string{
+		"internal/app/identity_lifecycle.go": {
+			`PrepareIdentityRestoreTransition`,
+			`identityledger.OperationRestore`,
+			`c.publishSealed(ctx, request, func(sealedCtx context.Context, targetCommit func() error) error {`,
+		},
+		"internal/deployment/plan_delivery_plan.go": {
+			`*RestoreIntent`,
+			`canonicalJSONDigest(deliveryPlanCanonical{`,
+		},
+		"internal/project/identityledger/coordinator.go": {
+			`repository.RestoreAndActivate(ctx, Restore{`,
+		},
+	}
+	for relative, fragments := range required {
+		body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := string(body)
+		for _, fragment := range fragments {
+			if !strings.Contains(source, fragment) {
+				t.Errorf("%s is missing FAI-663 authority reuse %q", relative, fragment)
+			}
+		}
+		for _, forbidden := range []string{`"crypto/sha256"`, `"crypto/sha512"`, "sha256.Sum", "sha512.Sum"} {
+			if strings.Contains(source, forbidden) {
+				t.Errorf("%s introduces a restore-specific hashing authority %q", relative, forbidden)
+			}
+		}
 	}
 }
 

@@ -39,6 +39,9 @@ var activationTransitionJournalSQL string
 //go:embed 005_identity_activation_transition_references.sql
 var activationTransitionReferencesSQL string
 
+//go:embed 006_identity_restore_transition.sql
+var identityRestoreTransitionSQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -63,6 +66,12 @@ const ActivationTransitionJournalMigrationID = "004_identity_activation_transiti
 const ActivationTransitionReferencesRevision int64 = 5
 
 const ActivationTransitionReferencesMigrationID = "005_identity_activation_transition_references"
+
+// IdentityRestoreTransitionRevision adds the explicit FAI-663 restore
+// operation and its immutable approved authored-ID evidence.
+const IdentityRestoreTransitionRevision int64 = 6
+
+const IdentityRestoreTransitionMigrationID = "006_identity_restore_transition"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -105,6 +114,13 @@ func ActivationTransitionReferencesChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func IdentityRestoreTransitionSQL() string { return identityRestoreTransitionSQL }
+
+func IdentityRestoreTransitionChecksum() string {
+	sum := sha256.Sum256([]byte(identityRestoreTransitionSQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
@@ -135,6 +151,7 @@ func Apply(ctx context.Context, tx Tx) error {
 		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
 		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, activationTransitionJournalSQL, ActivationTransitionJournalChecksum()},
 		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, activationTransitionReferencesSQL, ActivationTransitionReferencesChecksum()},
+		{IdentityRestoreTransitionRevision, IdentityRestoreTransitionMigrationID, identityRestoreTransitionSQL, IdentityRestoreTransitionChecksum()},
 	}
 	for _, migration := range migrations {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {

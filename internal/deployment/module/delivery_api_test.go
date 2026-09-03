@@ -8,6 +8,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -145,6 +146,7 @@ func TestDeliveryPlanPreviewExposesImmutableReviewEvidence(t *testing.T) {
 	plan := deployment.DeliveryPlan{
 		ID: "plan-1", ProjectID: projectID, TargetID: "target-1", Environment: "prod",
 		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: "sha256:" + strings.Repeat("a", 64),
+		Restore:         &deployment.RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"orders", "customers"}, Reason: "approved recovery"},
 		ExecutionDigest: "sha256:" + strings.Repeat("b", 64), ProvenanceDigest: "sha256:" + strings.Repeat("c", 64),
 		GovernanceDigest: "sha256:" + strings.Repeat("d", 64), EvidenceDigest: "sha256:" + strings.Repeat("e", 64),
 		Digest: "sha256:" + strings.Repeat("f", 64), Status: deployment.DeliveryPlanPlanned,
@@ -172,6 +174,9 @@ func TestDeliveryPlanPreviewExposesImmutableReviewEvidence(t *testing.T) {
 		response.Evidence.PlannedInputs[0].Revision == nil || *response.Evidence.PlannedInputs[0].Revision != "rev-7" ||
 		len(response.Evidence.QualificationSteps) != 1 || response.Evidence.RollbackClass == nil || string(*response.Evidence.RollbackClass) != "rollback_safe" {
 		t.Fatalf("plan review evidence = %#v", response.Evidence)
+	}
+	if response.Restore == nil || response.Restore.Reason != "approved recovery" || !reflect.DeepEqual(response.Restore.AuthoredIds, []string{"orders", "customers"}) {
+		t.Fatalf("plan restore response = %#v", response.Restore)
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {

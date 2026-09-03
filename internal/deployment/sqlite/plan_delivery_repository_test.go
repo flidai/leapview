@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -147,6 +148,7 @@ func TestDeliveryRepositoryRoundTripsPipelinePlanIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	plan.Restore = &deployment.RestoreIntent{AuthoredIDs: []graph.ResourceID{"orders", "customers"}, Reason: "approved recovery"}
 	plan.PipelinePlan = &pipelinePlan
 	plan, err = deployment.NewDeliveryPlan(plan)
 	if err != nil {
@@ -158,12 +160,22 @@ func TestDeliveryRepositoryRoundTripsPipelinePlanIdentity(t *testing.T) {
 	if _, err := repo.CreatePlan(t.Context(), plan); err != nil {
 		t.Fatal(err)
 	}
+	var evidenceJSON string
+	if err := store.SQLDB().QueryRowContext(t.Context(), `SELECT evidence_json FROM delivery_plans WHERE id = ?`, plan.ID).Scan(&evidenceJSON); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(evidenceJSON, `"restore"`) || !strings.Contains(evidenceJSON, "approved recovery") {
+		t.Fatalf("persisted plan evidence omitted restore intent: %s", evidenceJSON)
+	}
 	roundTrip, err := repo.PlanByID(t.Context(), plan.ID)
 	if err != nil {
 		t.Fatalf("read pipeline delivery plan: %v", err)
 	}
 	if roundTrip.PipelinePlan == nil || roundTrip.PipelinePlan.Digest != pipelinePlan.Digest || roundTrip.Digest != plan.Digest {
 		t.Fatalf("pipeline plan round trip = %#v, want digest %s", roundTrip.PipelinePlan, pipelinePlan.Digest)
+	}
+	if roundTrip.Restore == nil || !reflect.DeepEqual(roundTrip.Restore.AuthoredIDs, []graph.ResourceID{"customers", "orders"}) || roundTrip.Restore.Reason != "approved recovery" {
+		t.Fatalf("restore plan round trip = %#v", roundTrip.Restore)
 	}
 }
 

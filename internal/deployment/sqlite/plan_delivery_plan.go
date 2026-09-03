@@ -180,6 +180,7 @@ func deliveryPlanByIDTx(ctx context.Context, q deploydb.DBTX, id string) (deploy
 		if err := json.Unmarshal([]byte(row.EvidenceJson), &plan.Evidence); err != nil {
 			return deployment.DeliveryPlan{}, err
 		}
+		plan.Restore = plan.Evidence.Restore
 		if plan.Evidence.PipelinePlan != nil {
 			pipelinePlan := plan.Evidence.PipelinePlan.Canonical()
 			plan.PipelinePlan = &pipelinePlan

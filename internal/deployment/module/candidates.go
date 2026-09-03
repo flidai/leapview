@@ -153,6 +153,13 @@ func (m *Module) StartProjectCandidate(w http.ResponseWriter, r *http.Request, p
 	if body.CandidateKey != nil {
 		startRequest.Key = *body.CandidateKey
 	}
+	if body.Restore != nil {
+		ids := make([]projectgraph.ResourceID, len(body.Restore.AuthoredIDs))
+		for i, id := range body.Restore.AuthoredIDs {
+			ids[i] = projectgraph.ResourceID(id)
+		}
+		startRequest.Restore = &deployment.RestoreIntent{AuthoredIDs: ids, Reason: body.Restore.Reason}
+	}
 	result, err := m.candidates.Start(r.Context(), startRequest)
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, deploymentgen.GenCommandOperationStartProjectCandidate(), err)
@@ -359,6 +366,7 @@ func (m *Module) PublishProjectCandidate(
 			idempotencyKey,
 			"",
 			true,
+			candidate.Restore,
 		)
 		return
 	}
@@ -370,6 +378,7 @@ func (m *Module) PublishProjectCandidate(
 		published.ID,
 		idempotencyKey,
 		"",
+		candidate.Restore,
 	)
 }
 
@@ -457,6 +466,13 @@ func (m *Module) candidateResponse(candidate deployment.Candidate, resumed bool)
 	}
 	if resumed {
 		response.Resumed = &resumed
+	}
+	if candidate.Restore != nil {
+		ids := make([]string, len(candidate.Restore.AuthoredIDs))
+		for i, id := range candidate.Restore.AuthoredIDs {
+			ids[i] = id.String()
+		}
+		response.Restore = &deploymentapi.CandidateRestoreIntent{AuthoredIDs: ids, Reason: candidate.Restore.Reason}
 	}
 	return response
 }

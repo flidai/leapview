@@ -139,6 +139,14 @@ enum DeploymentApprovalStatus {
 model CandidateStartRequest {
   artifactDigest: string;
   candidateKey?: string;
+  // Restore is an explicit, audited candidate-start intent. It is immutable
+  // for the lifetime of the candidate.
+  restore?: CandidateRestoreIntent;
+}
+
+model CandidateRestoreIntent {
+  authoredIds: ResourceId[];
+  reason: string;
 }
 
 model CandidateArtifactRequest {
@@ -218,6 +226,7 @@ model CandidateResponse {
   updatedAt: utcDateTime;
   revision: int64;
   resumed?: boolean;
+  restore?: CandidateRestoreIntent;
 }
 
 model DeploymentCreateRequest {
@@ -376,6 +385,7 @@ model DeliveryPlanPreviewResponse {
   status: DeliveryPlanStatus;
   expiresAt: utcDateTime;
   createdAt: utcDateTime;
+  restore?: CandidateRestoreIntent;
   evidence: DeliveryPlanEvidenceView;
 }
 
@@ -590,6 +600,9 @@ model DeliveryPlanRequest {
   sourceDigest: string;
   // Opaque target-issued source attestation selected during retention.
   sourceAttestationDigest: string;
+  // Optional explicit identity restore intent. The canonical plan persists
+  // this exact request before Build; ordinary publication cannot add it.
+  restore?: CandidateRestoreIntent;
   // Target-owned policy, bindings, qualification, and current CAS fence are
   // resolved by the server. Callers submit intent, never internal evidence.
 }

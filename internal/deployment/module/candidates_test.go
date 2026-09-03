@@ -594,6 +594,31 @@ func TestCandidateAPIStartsResumesUpdatesAndCancelsOwnedSession(t *testing.T) {
 	}
 }
 
+func TestCandidateAPIExposesRestoreIntentAndRejectsRestoreOnPublish(t *testing.T) {
+	module := testCandidateModule(t, "principal_1")
+	digest := "sha256:" + strings.Repeat("a", 64)
+	started := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidates", `{"artifactDigest":"`+digest+`","restore":{"authoredIds":["orders","customers"],"reason":"approved recovery"}}`, func(w http.ResponseWriter, r *http.Request) {
+		module.StartProjectCandidate(w, r, "finance", "restore-start")
+	})
+	if started.Code != http.StatusCreated {
+		t.Fatalf("restore start status = %d body=%s", started.Code, started.Body.String())
+	}
+	var response candidateAPIResponse
+	decodeCandidateResponse(t, started, &response)
+	if response.Restore == nil || response.Restore.Reason != "approved recovery" || strings.Join(response.Restore.AuthoredIDs, ",") != "customers,orders" {
+		t.Fatalf("restore response = %#v", response.Restore)
+	}
+
+	// Candidate publish has no restore field in its closed request contract;
+	// DecodeBody must reject an attempt to smuggle one through publication.
+	publish := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidates/"+response.ID+"/publish", `{"expectedRevision":1,"provenanceDigest":"sha256:`+strings.Repeat("b", 64)+`","targetId":"lvinst_prod","restore":{"authoredIds":["orders"],"reason":"smuggle"}}`, func(w http.ResponseWriter, r *http.Request) {
+		module.PublishProjectCandidate(w, r, "finance", response.ID, "publish-restore")
+	})
+	if publish.Code != http.StatusBadRequest || !strings.Contains(publish.Body.String(), "INVALID_JSON") {
+		t.Fatalf("restore publish smuggling response = %d %s", publish.Code, publish.Body.String())
+	}
+}
+
 func TestCandidateAPIConcealsForeignOwnershipAndMapsValidation(t *testing.T) {
 	owner := testCandidateModule(t, "principal_1")
 	digest := "sha256:" + strings.Repeat("a", 64)
@@ -794,15 +819,21 @@ func callCandidateAPI(t *testing.T, method, target, body string, handler http.Ha
 }
 
 type candidateAPIResponse struct {
-	ID               string `json:"id"`
-	CandidateKey     string `json:"candidateKey"`
-	BaseGeneration   string `json:"baseGeneration"`
-	ArtifactDigest   string `json:"artifactDigest"`
-	ProvenanceDigest string `json:"provenanceDigest"`
-	Status           string `json:"status"`
-	PreviewURL       string `json:"previewUrl"`
-	Revision         int64  `json:"revision"`
-	Resumed          bool   `json:"resumed"`
+	ID               string                       `json:"id"`
+	CandidateKey     string                       `json:"candidateKey"`
+	BaseGeneration   string                       `json:"baseGeneration"`
+	ArtifactDigest   string                       `json:"artifactDigest"`
+	ProvenanceDigest string                       `json:"provenanceDigest"`
+	Status           string                       `json:"status"`
+	PreviewURL       string                       `json:"previewUrl"`
+	Revision         int64                        `json:"revision"`
+	Resumed          bool                         `json:"resumed"`
+	Restore          *candidateRestoreAPIResponse `json:"restore"`
+}
+
+type candidateRestoreAPIResponse struct {
+	AuthoredIDs []string `json:"authoredIds"`
+	Reason      string   `json:"reason"`
 }
 
 func decodeCandidateResponse(t *testing.T, response *httptest.ResponseRecorder, target *candidateAPIResponse) {

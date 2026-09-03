@@ -29405,6 +29405,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -29701,6 +29705,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -30392,6 +30400,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -31409,6 +31421,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -31660,6 +31676,10 @@ paths:
             example:
               artifactDigest: example
               candidateKey: example
+              restore:
+                authoredIds:
+                  - example
+                reason: example
       x-apigen-operation-kind: command
       x-apigen-command:
         audit:
@@ -31762,6 +31782,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -32057,6 +32081,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -32414,6 +32442,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -33200,6 +33232,10 @@ paths:
                 previewUrl: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 resumed: true
                 revision: 1
                 status: preparing
@@ -38659,6 +38695,10 @@ paths:
                 planDigest: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 sourceAttestationDigest: example
                 sourceDigest: example
                 status: planned
@@ -38908,6 +38948,10 @@ paths:
               $ref: '#/components/schemas/DeliveryPlanRequest'
             example:
               operation: code_change
+              restore:
+                authoredIds:
+                  - example
+                reason: example
               sourceAttestationDigest: example
               sourceDigest: example
               targetId: example
@@ -41012,6 +41056,10 @@ paths:
                 planDigest: example
                 projectId: example
                 provenanceDigest: example
+                restore:
+                  authoredIds:
+                    - example
+                  reason: example
                 sourceAttestationDigest: example
                 sourceDigest: example
                 status: planned
@@ -64289,6 +64337,8 @@ components:
         resumed:
           type: boolean
           example: true
+        restore:
+          $ref: '#/components/schemas/CandidateRestoreIntent'
       example:
         artifactDigest: example
         baseGeneration: example
@@ -64302,11 +64352,37 @@ components:
         previewUrl: example
         projectId: example
         provenanceDigest: example
+        restore:
+          authoredIds:
+            - example
+          reason: example
         resumed: true
         revision: 1
         status: preparing
         targetId: example
         updatedAt: "2026-01-02T15:04:05Z"
+    CandidateRestoreIntent:
+      type: object
+      required:
+        - authoredIds
+        - reason
+      properties:
+        authoredIds:
+          type: array
+          items:
+            type: string
+            minLength: 1
+            maxLength: 200
+            pattern: ^[A-Za-z0-9][A-Za-z0-9_.:-]*$
+          example:
+            - example
+        reason:
+          type: string
+          example: example
+      example:
+        authoredIds:
+          - example
+        reason: example
     CandidateSourceArtifact:
       type: object
       required:
@@ -64468,9 +64544,15 @@ components:
         candidateKey:
           type: string
           example: example
+        restore:
+          $ref: '#/components/schemas/CandidateRestoreIntent'
       example:
         artifactDigest: example
         candidateKey: example
+        restore:
+          authoredIds:
+            - example
+          reason: example
     CandidateStatus:
       type: string
       enum:
@@ -74401,6 +74483,8 @@ components:
           type: string
           format: date-time
           example: "2026-01-02T15:04:05Z"
+        restore:
+          $ref: '#/components/schemas/CandidateRestoreIntent'
         evidence:
           $ref: '#/components/schemas/DeliveryPlanEvidenceView'
       example:
@@ -74452,6 +74536,10 @@ components:
         planDigest: example
         projectId: example
         provenanceDigest: example
+        restore:
+          authoredIds:
+            - example
+          reason: example
         sourceAttestationDigest: example
         sourceDigest: example
         status: planned
@@ -74475,8 +74563,14 @@ components:
         sourceAttestationDigest:
           type: string
           example: example
+        restore:
+          $ref: '#/components/schemas/CandidateRestoreIntent'
       example:
         operation: code_change
+        restore:
+          authoredIds:
+            - example
+          reason: example
         sourceAttestationDigest: example
         sourceDigest: example
         targetId: example

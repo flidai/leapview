@@ -114,6 +114,79 @@ func TestPrepareTransitionChangedGraphResourcesOrBundleConflicts(t *testing.T) {
 	}
 }
 
+func TestPrepareRestoreTransitionPersistsSortedApprovedIDsAndRejectsAlteredReplay(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx := t.Context()
+	input := testTransition("instance-restore-transition", "transition-restore-transition", "bundle-restore-transition")
+	input.Operation = identityledger.OperationRestore
+	input.ApprovedAuthoredIDs = []projectgraph.ResourceID{"zeta", "alpha"}
+
+	prepared, err := repo.PrepareTransition(ctx, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantIDs := []projectgraph.ResourceID{"alpha", "zeta"}
+	if !reflect.DeepEqual(prepared.ApprovedAuthoredIDs, wantIDs) {
+		t.Fatalf("prepared approved restore IDs = %#v, want %#v", prepared.ApprovedAuthoredIDs, wantIDs)
+	}
+	loaded, err := repo.LoadTransition(ctx, input.InstanceID, input.TransitionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(loaded.ApprovedAuthoredIDs, wantIDs) {
+		t.Fatalf("loaded approved restore IDs = %#v, want %#v", loaded.ApprovedAuthoredIDs, wantIDs)
+	}
+	altered := input
+	altered.ApprovedAuthoredIDs = []projectgraph.ResourceID{"alpha", "changed"}
+	if _, err := repo.PrepareTransition(ctx, altered); !errors.Is(err, identityledger.ErrTransitionConflict) {
+		t.Fatalf("altered restore approval replay error = %v, want transition conflict", err)
+	}
+}
+
+func TestRestoreBundleTransitionLookupSupportsCompletionAndReplay(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx := t.Context()
+	input := testTransition("instance-restore-lookup", "transition-restore-lookup", "bundle-restore-lookup")
+	input.Operation = identityledger.OperationRestore
+	input.ApprovedAuthoredIDs = []projectgraph.ResourceID{"orders"}
+	if _, err := repo.PrepareTransition(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := repo.BundlePublishTransition(ctx, input.InstanceID, input.BundleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Operation != identityledger.OperationRestore || !reflect.DeepEqual(prepared.ApprovedAuthoredIDs, input.ApprovedAuthoredIDs) {
+		t.Fatalf("restore bundle lookup = %#v", prepared)
+	}
+	if _, err := repo.PublishedBundleTransition(ctx, input.InstanceID, input.BundleID); !errors.Is(err, identityledger.ErrTransitionNotFound) {
+		t.Fatalf("incomplete restore evidence error = %v, want not found", err)
+	}
+	for _, step := range [][2]identityledger.TransitionPhase{
+		{identityledger.PhasePrepared, identityledger.PhaseIdentityPending},
+		{identityledger.PhaseIdentityPending, identityledger.PhaseIdentityActive},
+		{identityledger.PhaseIdentityActive, identityledger.PhaseDeliveryActive},
+		{identityledger.PhaseDeliveryActive, identityledger.PhaseCompleted},
+	} {
+		if _, err := repo.AdvanceTransition(ctx, input.InstanceID, input.TransitionID, step[0], step[1], ""); err != nil {
+			t.Fatalf("advance restore %s -> %s: %v", step[0], step[1], err)
+		}
+	}
+	completed, err := repo.PublishedBundleTransition(ctx, input.InstanceID, input.BundleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Operation != identityledger.OperationRestore || completed.Phase != identityledger.PhaseCompleted {
+		t.Fatalf("completed restore evidence = %#v", completed)
+	}
+
+	duplicate := input
+	duplicate.TransitionID = "transition-restore-lookup-duplicate"
+	if _, err := repo.PrepareTransition(ctx, duplicate); !errors.Is(err, identityledger.ErrTransitionConflict) {
+		t.Fatalf("duplicate restore bundle error = %v, want transition conflict", err)
+	}
+}
+
 func TestPrepareTransitionIDIsScopedToInstance(t *testing.T) {
 	repo, _ := newLedgerDatabase(t)
 	ctx := t.Context()
@@ -303,6 +376,18 @@ func TestTransitionJournalDatabaseRejectsImmutableUpdateDeleteAndTruncate(t *tes
 		WHERE instance_id='instance-immutable' AND transition_id='transition-immutable'`); err == nil {
 		t.Fatal("database accepted immutable transition parameter update")
 	}
+	restore := testTransition("instance-immutable-restore", "transition-immutable-restore", "bundle-immutable-restore")
+	restore.Operation = identityledger.OperationRestore
+	restore.ApprovedAuthoredIDs = []projectgraph.ResourceID{"orders"}
+	if _, err := repo.PrepareTransition(ctx, restore); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+		UPDATE project.identity_activation_transition
+		SET approved_authored_ids_json='["changed"]'
+		WHERE instance_id='instance-immutable-restore' AND transition_id='transition-immutable-restore'`); err == nil {
+		t.Fatal("database accepted immutable approved restore IDs update")
+	}
 	if _, err := admin.Exec(ctx, `
 		DELETE FROM project.identity_activation_transition
 		WHERE instance_id='instance-immutable' AND transition_id='transition-immutable'`); err == nil {
@@ -327,9 +412,9 @@ func TestTransitionJournalRejectsAdvancedInsert(t *testing.T) {
 	_, err := admin.Exec(ctx, `
 		INSERT INTO project.identity_activation_transition
 		    (instance_id, transition_id, operation, candidate_id, bundle_id, expected_bundle_id,
-		     actor_id, reason, authored_resources_json, durable_references_json, graph_digest, phase)
+		     actor_id, reason, authored_resources_json, durable_references_json, approved_authored_ids_json, graph_digest, phase)
 		VALUES ('instance-insert-guard', 'transition-insert-guard', 'publish', 'candidate-insert',
-		        'bundle-insert', 'base-insert', 'actor-insert', 'direct insert', '[]', '[]',
+		        'bundle-insert', 'base-insert', 'actor-insert', 'direct insert', '[]', '[]', '[]',
 		        'sha256:' || repeat('a', 64), 'identity_active')`)
 	if err == nil {
 		t.Fatal("database accepted an advanced activation transition insert")
@@ -365,7 +450,8 @@ func assertTransitionEvidence(t *testing.T, got, want identityledger.Transition)
 	if got.TransitionID != want.TransitionID || got.Operation != want.Operation || got.InstanceID != want.InstanceID ||
 		got.CandidateID != want.CandidateID || got.BundleID != want.BundleID || got.ExpectedBundleID != want.ExpectedBundleID ||
 		got.ActorID != want.ActorID || got.Reason != want.Reason || got.GraphDigest != want.GraphDigest ||
-		!reflect.DeepEqual(got.Resources, want.Resources) || !reflect.DeepEqual(got.References, want.References) {
+		!reflect.DeepEqual(got.Resources, want.Resources) || !reflect.DeepEqual(got.References, want.References) ||
+		!reflect.DeepEqual(got.ApprovedAuthoredIDs, want.ApprovedAuthoredIDs) {
 		t.Fatalf("transition evidence = %#v, want %#v", got, want)
 	}
 }

@@ -74,3 +74,14 @@ func TestRestoreAuthorizationIsExactAndKindSafe(t *testing.T) {
 		t.Fatalf("kind-change restore error = %v", err)
 	}
 }
+
+func TestRestoreReasonMustBeCanonicalBeforeDatabaseAccess(t *testing.T) {
+	request := identityledger.Restore{
+		Candidate:   identityledger.Candidate{InstanceID: "instance-1", BundleID: "bundle-2", ExpectedBundleID: "bundle-1"},
+		AuthoredIDs: []projectgraph.ResourceID{"orders"},
+		Reason:      " padded reason ",
+	}
+	if _, err := (&Repository{}).RestoreAndActivate(t.Context(), request); !errors.Is(err, identityledger.ErrInvalidInput) {
+		t.Fatalf("padded restore reason error = %v, want invalid input", err)
+	}
+}

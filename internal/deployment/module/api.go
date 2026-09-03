@@ -88,11 +88,11 @@ func (m *Module) CreateDeployment(w http.ResponseWriter, r *http.Request, projec
 	m.createDeployment(w, r, deploymentgen.GenCommandOperationCreateDeployment(), project, body.ReleaseID, idempotencyKey, "")
 }
 
-func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string) {
-	m.createDeploymentWithBootstrap(w, r, operationID, project, releaseID, idempotencyKey, rollbackOf, false)
+func (m *Module) createDeployment(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string, restore ...*deployment.RestoreIntent) {
+	m.createDeploymentWithBootstrap(w, r, operationID, project, releaseID, idempotencyKey, rollbackOf, false, restore...)
 }
 
-func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string, bootstrap bool) {
+func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Request, operationID deploymentgen.GenCommandOperationID, project, releaseID, idempotencyKey, rollbackOf string, bootstrap bool, restore ...*deployment.RestoreIntent) {
 	operationIDValue := operationID.APIGenOperationID()
 	execution, err := m.execution(operationIDValue)
 	if err != nil {
@@ -130,10 +130,19 @@ func (m *Module) createDeploymentWithBootstrap(w http.ResponseWriter, r *http.Re
 		m.writeCommandFailure(w, r, operationID, apigenfailure.New("release_not_ready", "Only ready releases can be deployed"))
 		return
 	}
-	evidence, err := publishEvidence(
+	var restoreIntent *deployment.RestoreIntent
+	if len(restore) > 1 {
+		m.writeCommandFailure(w, r, operationID, deployment.ErrCandidateInvalid)
+		return
+	}
+	if len(restore) == 1 {
+		restoreIntent = restore[0]
+	}
+	evidence, err := publishEvidenceWithRestore(
 		targetRelease,
 		m.instanceID,
 		m.handlerEnvironment(),
+		restoreIntent,
 	)
 	if err != nil {
 		m.writeCommandFailure(w, r, operationID, err)
@@ -273,6 +282,15 @@ func publishEvidence(
 	instanceID,
 	environment string,
 ) (apiadapter.PublishEvidence, error) {
+	return publishEvidenceWithRestore(targetRelease, instanceID, environment, nil)
+}
+
+func publishEvidenceWithRestore(
+	targetRelease release.Release,
+	instanceID,
+	environment string,
+	restore *deployment.RestoreIntent,
+) (apiadapter.PublishEvidence, error) {
 	if instanceID != strings.TrimSpace(instanceID) || environment != strings.TrimSpace(environment) || targetRelease.Provenance == nil || targetRelease.ServingIdentity.ProjectID == "" || targetRelease.ProjectDigest == "" || targetRelease.ProjectDigest != targetRelease.Provenance.Artifact.ProjectDigest || targetRelease.Provenance.Plan.TargetID != instanceID || targetRelease.Provenance.Plan.Identity != targetRelease.ServingIdentity || targetRelease.Provenance.Plan.Identity.Environment != environment {
 		return apiadapter.PublishEvidence{}, fmt.Errorf(
 			"%w: release provenance does not belong to this target",
@@ -302,6 +320,7 @@ func publishEvidence(
 		BaseGenerationID:         baseGenerationID(targetRelease.Provenance.Plan.BaseIdentity),
 		RuntimeVersion:           targetRelease.Provenance.Plan.RuntimeVersion,
 		PolicyDigest:             targetRelease.Provenance.Plan.PolicyDigest,
+		Restore:                  restore,
 	}, nil
 }
 
@@ -478,7 +497,42 @@ func (m *Module) RetryDeployment(
 		)
 		return
 	}
-	m.createDeployment(w, r, deploymentgen.GenCommandOperationRetryDeployment(), project, releaseID, idempotencyKey, rollbackOf)
+	targetRelease, err := m.getRelease(r.Context(), project, releaseID)
+	if err != nil {
+		m.writeCommandFailure(w, r, operationID, err)
+		return
+	}
+	restore, err := m.restoreIntentForRetry(r.Context(), project, targetRelease)
+	if err != nil {
+		m.writeCommandFailure(w, r, operationID, err)
+		return
+	}
+	m.createDeployment(w, r, deploymentgen.GenCommandOperationRetryDeployment(), project, releaseID, idempotencyKey, rollbackOf, restore)
+}
+
+func (m *Module) restoreIntentForRetry(ctx context.Context, project string, targetRelease release.Release) (*deployment.RestoreIntent, error) {
+	if targetRelease.Provenance == nil {
+		return nil, fmt.Errorf("%w: retry release provenance is required", deployment.ErrConflict)
+	}
+	if m.candidates == nil {
+		if m.protected {
+			return nil, fmt.Errorf("%w: candidate restore evidence is unavailable", deployment.ErrCandidateUnavailable)
+		}
+		return nil, nil
+	}
+	projectID, err := projectgraph.NewResourceID(project)
+	if err != nil {
+		return nil, err
+	}
+	candidate, err := m.candidates.Evidence(ctx, projectID, targetRelease.Provenance.Candidate.ID)
+	if err != nil {
+		return nil, err
+	}
+	provenanceCandidate := targetRelease.Provenance.Candidate
+	if candidate.ID != provenanceCandidate.ID || candidate.OwnerID != provenanceCandidate.OwnerID || candidate.Scope.ProjectID != targetRelease.ServingIdentity.ProjectID || candidate.Scope.Environment != targetRelease.ServingIdentity.Environment {
+		return nil, fmt.Errorf("%w: retry candidate evidence differs from immutable release", deployment.ErrConflict)
+	}
+	return deployment.NormalizeRestoreIntent(candidate.Restore)
 }
 
 func (m *Module) RollbackDeployment(w http.ResponseWriter, r *http.Request, project, deploymentID, idempotencyKey string) {

@@ -220,6 +220,45 @@ func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
 	}
 }
 
+func TestRestoreAndActivateRejectsMissingDuplicateActiveAndWrongKindIDs(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx := t.Context()
+	base := candidate("instance-restore-validation", "bundle-1", "",
+		resource("orders", projectgraph.KindSource),
+	)
+	if _, err := repo.Activate(ctx, base); err != nil {
+		t.Fatal(err)
+	}
+
+	request := identityledger.Restore{
+		Candidate: candidate("instance-restore-validation", "bundle-missing", "bundle-1", resource("orders", projectgraph.KindSource)),
+		Reason:    "reviewed restore",
+	}
+	if _, err := repo.RestoreAndActivate(ctx, request); !errors.Is(err, identityledger.ErrInvalidInput) {
+		t.Fatalf("missing restore IDs error = %v, want invalid input", err)
+	}
+	request.AuthoredIDs = []projectgraph.ResourceID{"orders", "orders"}
+	if _, err := repo.RestoreAndActivate(ctx, request); !errors.Is(err, identityledger.ErrDuplicateAuthoredID) {
+		t.Fatalf("duplicate restore IDs error = %v, want duplicate authored ID", err)
+	}
+	request.AuthoredIDs = []projectgraph.ResourceID{"orders"}
+	if _, err := repo.RestoreAndActivate(ctx, request); !errors.Is(err, identityledger.ErrRestoreRequired) {
+		t.Fatalf("active restore ID error = %v, want restore required", err)
+	}
+
+	if _, err := repo.Activate(ctx, candidate("instance-restore-validation", "bundle-2", "bundle-1", resource("customers", projectgraph.KindSource))); err != nil {
+		t.Fatal(err)
+	}
+	wrongKind := identityledger.Restore{
+		Candidate:   candidate("instance-restore-validation", "bundle-wrong-kind", "bundle-2", resource("orders", projectgraph.KindModel)),
+		AuthoredIDs: []projectgraph.ResourceID{"orders"},
+		Reason:      "reviewed restore",
+	}
+	if _, err := repo.RestoreAndActivate(ctx, wrongKind); !errors.Is(err, identityledger.ErrKindConflict) {
+		t.Fatalf("wrong-kind restore ID error = %v, want kind conflict", err)
+	}
+}
+
 func TestIdentityLedgerPostgreSQLReferenceReconciliationConflictsAndRetries(t *testing.T) {
 	repo, _ := newLedgerDatabase(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)

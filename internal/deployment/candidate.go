@@ -2,6 +2,8 @@ package deployment
 
 import (
 	"fmt"
+	"reflect"
+	"sort"
 	"strings"
 	"time"
 
@@ -48,6 +50,16 @@ type Candidate struct {
 	CancelledAt      time.Time
 	ExpiredAt        time.Time
 	Revision         int64
+	// Restore is an explicit candidate-start intent. It is immutable after
+	// creation and consumed by the identity activation boundary.
+	Restore *RestoreIntent
+}
+
+// RestoreIntent identifies the exact authored identities an audited restore
+// is permitted to reactivate. A nil intent means ordinary publication.
+type RestoreIntent struct {
+	AuthoredIDs []projectgraph.ResourceID
+	Reason      string
 }
 
 type CandidateStartInput struct {
@@ -59,6 +71,7 @@ type CandidateStartInput struct {
 	ArtifactDigest string
 	ExpiresAt      time.Time
 	Now            time.Time
+	Restore        *RestoreIntent
 }
 
 type CandidateScope = projectgraph.CandidateScope
@@ -73,6 +86,10 @@ type CandidateAccessScope struct {
 }
 
 func (candidate Candidate) Validate() error {
+	restore, restoreErr := NormalizeRestoreIntent(candidate.Restore)
+	if restoreErr != nil || !reflect.DeepEqual(candidate.Restore, restore) {
+		return fmt.Errorf("%w: restore intent is not canonical", ErrCandidateInvalid)
+	}
 	if !canonicalCandidateLiteral(candidate.ID, false) ||
 		!canonicalCandidateKey(candidate.Key) ||
 		!canonicalCandidateLiteral(candidate.TargetID, false) ||
@@ -135,10 +152,43 @@ func NewCandidate(input CandidateStartInput) (Candidate, error) {
 		ArtifactDigest: input.ArtifactDigest, Status: CandidatePreparing,
 		ExpiresAt: input.ExpiresAt, CreatedAt: input.Now, UpdatedAt: input.Now, Revision: 1,
 	}
+	restore, err := NormalizeRestoreIntent(input.Restore)
+	if err != nil {
+		return Candidate{}, err
+	}
+	candidate.Restore = restore
 	if err := candidate.Validate(); err != nil {
 		return Candidate{}, err
 	}
 	return candidate, nil
+}
+
+// NormalizeRestoreIntent returns the canonical immutable restore intent. A
+// nil intent is the ordinary candidate path; an explicit intent requires at
+// least one valid authored ID and a non-empty bounded reason.
+func NormalizeRestoreIntent(intent *RestoreIntent) (*RestoreIntent, error) {
+	if intent == nil {
+		return nil, nil
+	}
+	if strings.TrimSpace(intent.Reason) != intent.Reason || intent.Reason == "" || len(intent.Reason) > 2048 {
+		return nil, fmt.Errorf("%w: restore reason is required and must be canonical", ErrCandidateInvalid)
+	}
+	ids := append([]projectgraph.ResourceID(nil), intent.AuthoredIDs...)
+	if len(ids) == 0 {
+		return nil, fmt.Errorf("%w: restore authored IDs are required", ErrCandidateInvalid)
+	}
+	seen := make(map[projectgraph.ResourceID]struct{}, len(ids))
+	for _, id := range ids {
+		if err := id.Validate(); err != nil {
+			return nil, fmt.Errorf("%w: restore authored ID: %v", ErrCandidateInvalid, err)
+		}
+		if _, exists := seen[id]; exists {
+			return nil, fmt.Errorf("%w: duplicate restore authored ID %q", ErrCandidateInvalid, id)
+		}
+		seen[id] = struct{}{}
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	return &RestoreIntent{AuthoredIDs: ids, Reason: intent.Reason}, nil
 }
 
 func normalizeCandidateKey(value string) string {

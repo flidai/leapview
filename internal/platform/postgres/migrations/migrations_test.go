@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 10 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() {
+	if len(recorder.sqls) != 12 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -208,6 +208,30 @@ func TestActivationTransitionReferencesMigrationAddsEvidenceAndInsertFence(t *te
 	}
 }
 
+func TestIdentityRestoreTransitionMigrationAddsApprovedEvidence(t *testing.T) {
+	sql := IdentityRestoreTransitionSQL()
+	for _, marker := range []string{
+		"ADD COLUMN IF NOT EXISTS approved_authored_ids_json text",
+		"SET approved_authored_ids_json = '[]'",
+		"ALTER COLUMN approved_authored_ids_json SET NOT NULL",
+		"identity_activation_transition_approved_authored_ids_json_check",
+		"operation IN ('publish', 'rollback', 'restore')",
+		"identity_activation_transition_restore_ids_check",
+		"identity_restore_authored_ids_canonical",
+		"identity_activation_transition_approved_authored_ids_canonical_check",
+		"jsonb_typeof(item) <> 'string'",
+		`authored_id COLLATE "C" <= previous_id COLLATE "C"`,
+		"identity_activation_transition_publish_bundle_idx",
+		"WHERE operation IN ('publish', 'restore')",
+		"NEW.approved_authored_ids_json IS DISTINCT FROM OLD.approved_authored_ids_json",
+		"activation transition must be inserted in prepared state",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("identity restore transition migration missing %q", marker)
+		}
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -224,6 +248,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		ActivationTransitionReferencesRevision: {
 			revision: ActivationTransitionReferencesRevision, migrationID: ActivationTransitionReferencesMigrationID, checksum: ActivationTransitionReferencesChecksum(),
+		},
+		IdentityRestoreTransitionRevision: {
+			revision: IdentityRestoreTransitionRevision, migrationID: IdentityRestoreTransitionMigrationID, checksum: IdentityRestoreTransitionChecksum(),
 		},
 	}
 }

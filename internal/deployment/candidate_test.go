@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/stretchr/testify/require"
 )
 
@@ -140,6 +141,35 @@ func TestCandidateRejectsInvalidIdentityDigestAndExpiry(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			if _, err := NewCandidate(input); err == nil {
 				t.Fatal("NewCandidate() succeeded")
+			}
+		})
+	}
+}
+
+func TestCandidateRestoreIntentIsExplicitCanonicalAndImmutable(t *testing.T) {
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	digest := "sha256:" + strings.Repeat("a", 64)
+	candidate, err := NewCandidate(CandidateStartInput{
+		ID: "cand_restore", TargetID: "lvinst_prod", OwnerID: "principal_1",
+		Scope:          CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "generation_7"},
+		ArtifactDigest: digest, Restore: &RestoreIntent{
+			AuthoredIDs: []projectgraph.ResourceID{"orders", "customers"}, Reason: "recover approved identities",
+		}, ExpiresAt: now.Add(time.Hour), Now: now,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []projectgraph.ResourceID{"customers", "orders"}, candidate.Restore.AuthoredIDs)
+	require.Equal(t, "recover approved identities", candidate.Restore.Reason)
+
+	for name, intent := range map[string]*RestoreIntent{
+		"missing ids":    {Reason: "reason"},
+		"missing reason": {AuthoredIDs: []projectgraph.ResourceID{"orders"}},
+		"duplicate id":   {AuthoredIDs: []projectgraph.ResourceID{"orders", "orders"}, Reason: "reason"},
+		"reason alias":   {AuthoredIDs: []projectgraph.ResourceID{"orders"}, Reason: " reason"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			input := CandidateStartInput{ID: "cand_restore", TargetID: "lvinst_prod", OwnerID: "principal_1", Scope: CandidateScope{ProjectID: "finance", Environment: "prod", BaseGenerationID: "generation_7"}, ArtifactDigest: digest, Restore: intent, ExpiresAt: now.Add(time.Hour), Now: now}
+			if _, err := NewCandidate(input); !errors.Is(err, ErrCandidateInvalid) {
+				t.Fatalf("NewCandidate() error = %v, want ErrCandidateInvalid", err)
 			}
 		})
 	}

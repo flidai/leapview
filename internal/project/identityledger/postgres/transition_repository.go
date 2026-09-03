@@ -33,6 +33,10 @@ func (r *Repository) PrepareTransition(ctx context.Context, input identityledger
 	if err != nil {
 		return identityledger.Transition{}, err
 	}
+	approvedAuthoredIDsJSON, err := identityledger.ApprovedAuthoredIDsJSON(transition.ApprovedAuthoredIDs)
+	if err != nil {
+		return identityledger.Transition{}, err
+	}
 	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
 	if err != nil {
 		return identityledger.Transition{}, fmt.Errorf("begin activation transition prepare: %w", err)
@@ -41,12 +45,12 @@ func (r *Repository) PrepareTransition(ctx context.Context, input identityledger
 	_, err = tx.Exec(ctx, `
 		INSERT INTO project.identity_activation_transition
 		(instance_id, transition_id, operation, candidate_id, bundle_id, expected_bundle_id,
-		 actor_id, reason, authored_resources_json, durable_references_json, graph_digest)
-		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+		 actor_id, reason, authored_resources_json, durable_references_json, approved_authored_ids_json, graph_digest)
+		VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)
 		ON CONFLICT (instance_id, transition_id) DO NOTHING`,
 		transition.InstanceID, transition.TransitionID, string(transition.Operation), transition.CandidateID,
 		transition.BundleID, transition.ExpectedBundleID, transition.ActorID,
-		transition.Reason, string(resourcesJSON), string(referencesJSON), transition.GraphDigest)
+		transition.Reason, string(resourcesJSON), string(referencesJSON), string(approvedAuthoredIDsJSON), transition.GraphDigest)
 	if err != nil {
 		return identityledger.Transition{}, mapTransitionWriteError("prepare activation transition", identityledger.ErrTransitionConflict, err)
 	}
@@ -86,16 +90,16 @@ func (r *Repository) LoadTransition(ctx context.Context, instanceID, transitionI
 	return transition, nil
 }
 
-// BundlePublishTransition returns the immutable publish-transition evidence
-// prepared for a bundle. The publication path uses it to start or resume that
-// exact transition.
+// BundlePublishTransition returns the immutable publication-transition evidence
+// prepared for a bundle. Both ordinary publish and explicit restore use this
+// lookup to start or resume that exact transition.
 func (r *Repository) BundlePublishTransition(ctx context.Context, instanceID, bundleID string) (identityledger.Transition, error) {
 	return r.bundlePublishTransition(ctx, instanceID, bundleID, false)
 }
 
-// PublishedBundleTransition returns only completed publish evidence. Rollback
-// reuses this evidence instead of reconstructing a graph digest or accepting a
-// candidate that never completed target publication.
+// PublishedBundleTransition returns only completed publication evidence.
+// Rollback reuses this evidence instead of reconstructing a graph digest or
+// accepting a candidate that never completed target publication.
 func (r *Repository) PublishedBundleTransition(ctx context.Context, instanceID, bundleID string) (identityledger.Transition, error) {
 	return r.bundlePublishTransition(ctx, instanceID, bundleID, true)
 }
@@ -114,10 +118,10 @@ func (r *Repository) bundlePublishTransition(ctx context.Context, instanceID, bu
 	defer func() { _ = tx.Rollback(ctx) }()
 	query := `
 		SELECT transition_id, operation, instance_id, candidate_id, bundle_id, expected_bundle_id,
-		       actor_id, reason, authored_resources_json, durable_references_json, graph_digest, phase,
+		       actor_id, reason, authored_resources_json, durable_references_json, approved_authored_ids_json, graph_digest, phase,
 		       phase_error, prepared_at, phase_at, updated_at, completed_at
 		FROM project.identity_activation_transition
-		WHERE instance_id=$1 AND bundle_id=$2 AND operation='publish'`
+		WHERE instance_id=$1 AND bundle_id=$2 AND operation IN ('publish', 'restore')`
 	if completed {
 		query += " AND phase='completed'"
 	}
@@ -158,7 +162,7 @@ func (r *Repository) listTransitions(ctx context.Context, instanceID, predicate,
 	defer func() { _ = tx.Rollback(ctx) }()
 	query := `
 		SELECT transition_id, operation, instance_id, candidate_id, bundle_id, expected_bundle_id,
-		       actor_id, reason, authored_resources_json, durable_references_json, graph_digest, phase,
+		       actor_id, reason, authored_resources_json, durable_references_json, approved_authored_ids_json, graph_digest, phase,
 		       phase_error, prepared_at, phase_at, updated_at, completed_at
 		FROM project.identity_activation_transition
 		WHERE instance_id=$1 AND ` + predicate + `
@@ -219,7 +223,7 @@ func (r *Repository) AdvanceTransitionPhase(ctx context.Context, instanceID, tra
 		SET phase=$3, phase_error=$4, phase_at=clock_timestamp(), updated_at=clock_timestamp(), %s
 		WHERE instance_id=$1 AND transition_id=$2 AND phase=$5
 		RETURNING transition_id, operation, instance_id, candidate_id, bundle_id, expected_bundle_id,
-		          actor_id, reason, authored_resources_json, durable_references_json, graph_digest, phase,
+		          actor_id, reason, authored_resources_json, durable_references_json, approved_authored_ids_json, graph_digest, phase,
 		          phase_error, prepared_at, phase_at, updated_at, completed_at`, completedAtExpr)
 	row := tx.QueryRow(ctx, query, instanceID, transitionID, string(nextPhase), phaseError, string(expectedPhase))
 	transition, err := scanTransition(row)
@@ -261,7 +265,7 @@ func (r *Repository) AdvanceTransition(ctx context.Context, instanceID, transiti
 func readTransition(ctx context.Context, tx pgx.Tx, instanceID, transitionID string, forUpdate bool) (identityledger.Transition, error) {
 	query := `
 		SELECT transition_id, operation, instance_id, candidate_id, bundle_id, expected_bundle_id,
-		       actor_id, reason, authored_resources_json, durable_references_json, graph_digest, phase,
+		       actor_id, reason, authored_resources_json, durable_references_json, approved_authored_ids_json, graph_digest, phase,
 		       phase_error, prepared_at, phase_at, updated_at, completed_at
 		FROM project.identity_activation_transition WHERE instance_id=$1 AND transition_id=$2`
 	if forUpdate {
@@ -281,10 +285,10 @@ type transitionScanner interface{ Scan(...any) error }
 
 func scanTransition(row transitionScanner) (identityledger.Transition, error) {
 	var transition identityledger.Transition
-	var operation, resourcesJSON, referencesJSON, phase string
+	var operation, resourcesJSON, referencesJSON, approvedAuthoredIDsJSON, phase string
 	if err := row.Scan(
 		&transition.TransitionID, &operation, &transition.InstanceID, &transition.CandidateID, &transition.BundleID,
-		&transition.ExpectedBundleID, &transition.ActorID, &transition.Reason, &resourcesJSON, &referencesJSON,
+		&transition.ExpectedBundleID, &transition.ActorID, &transition.Reason, &resourcesJSON, &referencesJSON, &approvedAuthoredIDsJSON,
 		&transition.GraphDigest, &phase, &transition.Error, &transition.PreparedAt,
 		&transition.PhaseAt, &transition.UpdatedAt, &transition.CompletedAt,
 	); err != nil {
@@ -318,6 +322,9 @@ func scanTransition(row transitionScanner) (identityledger.Transition, error) {
 			OwnerAuthoredID: item.OwnerAuthoredID, OwnerKind: item.OwnerKind,
 			TargetAuthoredID: projectgraph.ResourceID(item.TargetAuthoredID), ExpectedKind: projectgraph.Kind(item.ExpectedKind),
 		}
+	}
+	if err := json.Unmarshal([]byte(approvedAuthoredIDsJSON), &transition.ApprovedAuthoredIDs); err != nil {
+		return identityledger.Transition{}, fmt.Errorf("decode approved restore authored IDs: %w", err)
 	}
 	transition.Operation = identityledger.TransitionOperation(operation)
 	transition.Phase = identityledger.TransitionPhase(phase)

@@ -60,6 +60,30 @@ func TestCandidateRepositoryPersistsResumeAndOptimisticReplacementAcrossRestart(
 	}
 }
 
+func TestCandidateRepositoryPersistsRestoreIntentAcrossRestartAndKeepsItImmutable(t *testing.T) {
+	ctx, db, repository := testRepository(t)
+	insertCandidatePrincipal(t, ctx, db, "principal_1")
+	now := time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC)
+	candidate := candidateRecord(t, now, "cand_restore", "finance", "principal_1", "sha256:"+strings.Repeat("a", 64))
+	candidate.Restore = &deployment.RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"orders", "customers"}, Reason: "approved recovery"}
+	// Candidate records normally arrive through NewCandidate; validate the
+	// fixture after attaching the intent so the repository sees canonical data.
+	normalized, err := deployment.NormalizeRestoreIntent(candidate.Restore)
+	require.NoError(t, err)
+	candidate.Restore = normalized
+	created, resumed, err := repository.StartCandidate(ctx, candidate, 4)
+	require.NoError(t, err)
+	require.False(t, resumed)
+	restarted := NewRepositoryWithHooks(db, ActivationHooks{})
+	loaded, err := restarted.CandidateByID(ctx, created.ID)
+	require.NoError(t, err)
+	require.Equal(t, candidate.Restore, loaded.Restore)
+
+	if _, err := db.ExecContext(ctx, `UPDATE project_candidates SET restore_reason = 'tampered' WHERE id = ?`, candidate.ID); err == nil {
+		t.Fatal("restore intent mutation unexpectedly succeeded")
+	}
+}
+
 func TestCandidateRepositoryIsolatesActiveSessionsByCandidateKey(t *testing.T) {
 	ctx, db, repository := testRepository(t)
 	insertCandidatePrincipal(t, ctx, db, "principal_1")

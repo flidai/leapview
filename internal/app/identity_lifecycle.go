@@ -37,6 +37,10 @@ type IdentityCandidateInput struct {
 	ExpectedBaseGenerationID string
 	ActorID                  string
 	Artifacts                release.CandidateArtifactSet
+	// Restore is the immutable candidate-owned authorization for reactivating
+	// tombstoned identities. It is admission evidence only; activation is
+	// deferred until the sealed publication has passed its approval fence.
+	Restore *deployment.RestoreIntent
 }
 
 // BuildIdentityCandidate constructs the ledger candidate for the serving
@@ -92,7 +96,7 @@ func PlanIdentityCandidate(
 	if err != nil {
 		return identityledger.Candidate{}, identityledger.Plan{}, fmt.Errorf("plan identity candidate: %w", err)
 	}
-	if err := validateIdentityPlan(candidate, plan); err != nil {
+	if err := validateIdentityPlan(candidate, plan, input.Restore); err != nil {
 		return identityledger.Candidate{}, identityledger.Plan{}, err
 	}
 	return candidate, plan, nil
@@ -106,6 +110,33 @@ func PrepareIdentityPublishTransition(
 	ctx context.Context,
 	repository identityledger.TransitionRepository,
 	input IdentityPublishPreparationInput,
+) (identityledger.Transition, error) {
+	if input.Restore != nil {
+		return identityledger.Transition{}, fmt.Errorf("%w: restore candidates require PrepareIdentityRestoreTransition", ErrIdentityLifecycleInvalid)
+	}
+	return prepareIdentityTransition(ctx, repository, input, identityledger.OperationPublish)
+}
+
+// PrepareIdentityRestoreTransition plans the exact candidate against durable
+// identity history and records the explicit restore authorization as
+// immutable transition evidence. The transition is still only prepared here;
+// RestoreAndActivate is deferred to the sealed publication commit fence.
+func PrepareIdentityRestoreTransition(
+	ctx context.Context,
+	repository identityledger.TransitionRepository,
+	input IdentityPublishPreparationInput,
+) (identityledger.Transition, error) {
+	if input.Restore == nil {
+		return identityledger.Transition{}, fmt.Errorf("%w: restore intent is required", ErrIdentityLifecycleInvalid)
+	}
+	return prepareIdentityTransition(ctx, repository, input, identityledger.OperationRestore)
+}
+
+func prepareIdentityTransition(
+	ctx context.Context,
+	repository identityledger.TransitionRepository,
+	input IdentityPublishPreparationInput,
+	operation identityledger.TransitionOperation,
 ) (identityledger.Transition, error) {
 	if repository == nil {
 		return identityledger.Transition{}, fmt.Errorf("%w: %w", ErrIdentityLifecycleUnavailable, ErrIdentityLifecycleInvalid)
@@ -121,32 +152,43 @@ func PrepareIdentityPublishTransition(
 	if err != nil {
 		return identityledger.Transition{}, err
 	}
-	transitionID, err := IdentityPublishTransitionID(input.CandidateID)
+	transitionID, err := identityTransitionID(input.CandidateID, operation)
 	if err != nil {
 		return identityledger.Transition{}, err
 	}
+	reason := input.Reason
+	var approvedAuthoredIDs []projectgraph.ResourceID
+	if operation == identityledger.OperationRestore {
+		restore, restoreErr := deployment.NormalizeRestoreIntent(input.Restore)
+		if restoreErr != nil {
+			return identityledger.Transition{}, fmt.Errorf("%w: restore intent: %w", ErrIdentityLifecycleInvalid, restoreErr)
+		}
+		reason = restore.Reason
+		approvedAuthoredIDs = append([]projectgraph.ResourceID(nil), restore.AuthoredIDs...)
+	}
 	transition := identityledger.Transition{
-		TransitionID:     transitionID,
-		Operation:        identityledger.OperationPublish,
-		InstanceID:       candidate.InstanceID,
-		CandidateID:      input.CandidateID,
-		BundleID:         candidate.BundleID,
-		ExpectedBundleID: candidate.ExpectedBundleID,
-		ActorID:          candidate.ActorID,
-		Reason:           input.Reason,
-		Resources:        append([]identityledger.Resource(nil), candidate.Resources...),
-		References:       references,
-		GraphDigest:      input.Artifacts.Compiler.Graph.Digest(),
+		TransitionID:        transitionID,
+		Operation:           operation,
+		InstanceID:          candidate.InstanceID,
+		CandidateID:         input.CandidateID,
+		BundleID:            candidate.BundleID,
+		ExpectedBundleID:    candidate.ExpectedBundleID,
+		ActorID:             candidate.ActorID,
+		Reason:              reason,
+		Resources:           append([]identityledger.Resource(nil), candidate.Resources...),
+		References:          references,
+		ApprovedAuthoredIDs: approvedAuthoredIDs,
+		GraphDigest:         input.Artifacts.Compiler.Graph.Digest(),
 	}
 	if err := identityledger.ValidateTransition(transition); err != nil {
-		return identityledger.Transition{}, fmt.Errorf("%w: publish transition: %w", ErrIdentityLifecycleInvalid, err)
+		return identityledger.Transition{}, fmt.Errorf("%w: %s transition: %w", ErrIdentityLifecycleInvalid, operation, err)
 	}
 	prepared, err := repository.PrepareTransition(ctx, transition)
 	if err != nil {
-		return identityledger.Transition{}, fmt.Errorf("prepare identity publish transition: %w", err)
+		return identityledger.Transition{}, fmt.Errorf("prepare identity %s transition: %w", operation, err)
 	}
 	if !identityledger.SameTransitionEvidence(prepared, transition) {
-		return identityledger.Transition{}, fmt.Errorf("%w: prepared publish transition evidence changed", identityledger.ErrTransitionConflict)
+		return identityledger.Transition{}, fmt.Errorf("%w: prepared %s transition evidence changed", identityledger.ErrTransitionConflict, operation)
 	}
 	return prepared, nil
 }
@@ -220,10 +262,28 @@ func ProjectIdentityReferences(instanceID string, artifacts release.CandidateArt
 // immutable transition evidence; they are never rehashed or replaced by this
 // application boundary.
 func IdentityPublishTransitionID(candidateID string) (string, error) {
+	return identityTransitionID(candidateID, identityledger.OperationPublish)
+}
+
+// IdentityRestoreTransitionID derives the stable transition identity for an
+// explicit restore. It is separate from publish so changing the candidate's
+// restore authorization cannot replay an ordinary publication row.
+func IdentityRestoreTransitionID(candidateID string) (string, error) {
+	return identityTransitionID(candidateID, identityledger.OperationRestore)
+}
+
+func identityTransitionID(candidateID string, operation identityledger.TransitionOperation) (string, error) {
 	if err := validateIdentityCandidateID(candidateID); err != nil {
 		return "", err
 	}
-	return "identity-publish:" + candidateID, nil
+	switch operation {
+	case identityledger.OperationPublish:
+		return "identity-publish:" + candidateID, nil
+	case identityledger.OperationRestore:
+		return "identity-restore:" + candidateID, nil
+	default:
+		return "", fmt.Errorf("%w: unsupported transition operation %q", ErrIdentityLifecycleInvalid, operation)
+	}
 }
 
 func validateIdentityCandidateID(value string) error {
@@ -233,19 +293,45 @@ func validateIdentityCandidateID(value string) error {
 	return nil
 }
 
-func validateIdentityPlan(candidate identityledger.Candidate, plan identityledger.Plan) error {
+func validateIdentityPlan(candidate identityledger.Candidate, plan identityledger.Plan, restore *deployment.RestoreIntent) error {
 	if plan.InstanceID != candidate.InstanceID || plan.CandidateBundleID != candidate.BundleID {
 		return fmt.Errorf("%w: identity plan does not bind candidate %q", ErrIdentityLifecycleInvalid, candidate.BundleID)
 	}
 	if plan.ObservedBundleID != candidate.ExpectedBundleID {
 		return fmt.Errorf("%w: candidate expected active bundle %q, found %q", identityledger.ErrActivationConflict, candidate.ExpectedBundleID, plan.ObservedBundleID)
 	}
+	restoreRequired := make(map[projectgraph.ResourceID]identityledger.Outcome)
+	var restoreRequiredOutcomes []identityledger.Outcome
 	for _, outcome := range plan.Outcomes {
 		switch outcome.Outcome {
 		case identityledger.OutcomeCollision:
 			return fmt.Errorf("%w: identity candidate resource %q: %s", identityledger.ErrKindConflict, outcome.AuthoredID, outcome.Detail)
 		case identityledger.OutcomeRestoreRequired:
+			restoreRequired[outcome.AuthoredID] = outcome
+			restoreRequiredOutcomes = append(restoreRequiredOutcomes, outcome)
+		}
+	}
+	if restore == nil {
+		for _, outcome := range restoreRequiredOutcomes {
 			return fmt.Errorf("%w: identity candidate resource %q: %s", identityledger.ErrRestoreRequired, outcome.AuthoredID, outcome.Detail)
+		}
+		return nil
+	}
+	normalized, err := deployment.NormalizeRestoreIntent(restore)
+	if err != nil {
+		return fmt.Errorf("%w: restore intent: %w", ErrIdentityLifecycleInvalid, err)
+	}
+	approved := make(map[projectgraph.ResourceID]struct{}, len(normalized.AuthoredIDs))
+	for _, authoredID := range normalized.AuthoredIDs {
+		if _, exists := restoreRequired[authoredID]; !exists {
+			return fmt.Errorf("%w: restore intent includes non-tombstoned candidate resource %q", ErrIdentityLifecycleInvalid, authoredID)
+		}
+		approved[authoredID] = struct{}{}
+	}
+	for _, outcome := range restoreRequiredOutcomes {
+		authoredID := outcome.AuthoredID
+		if _, exists := approved[authoredID]; !exists {
+			return fmt.Errorf("%w: restore intent omits tombstoned candidate resource %q: %s", identityledger.ErrRestoreRequired, authoredID, outcome.Detail)
 		}
 	}
 	return nil
@@ -265,6 +351,11 @@ type PublishIdentityTransitionReader interface {
 
 type identityReferenceReconciler interface {
 	ReconcileReferences(context.Context, string, []identityledger.DurableReference) ([]identityledger.DurableReference, error)
+}
+
+type identitySealedPublicationCoordinator interface {
+	deploymentmodule.SealedCoordinator
+	PublishWithActivation(context.Context, sealedcontrol.PublishRequest, sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error)
 }
 
 // IdentitySealedCoordinatorConfig wires identity durability around the
@@ -302,6 +393,9 @@ func NewIdentitySealedCoordinator(config IdentitySealedCoordinatorConfig) (*Iden
 	if strings.TrimSpace(config.InstanceID) == "" || config.Transitions == nil || config.Sealed == nil {
 		return nil, fmt.Errorf("%w: instance, identity repository, and sealed coordinator are required", ErrIdentityLifecycleUnavailable)
 	}
+	if _, ok := config.Sealed.(identitySealedPublicationCoordinator); !ok {
+		return nil, fmt.Errorf("%w: sealed publication activation coordinator is required", ErrIdentityLifecycleUnavailable)
+	}
 	publish := config.PublishTransitions
 	if publish == nil {
 		var ok bool
@@ -332,15 +426,20 @@ func NewIdentitySealedCoordinator(config IdentitySealedCoordinatorConfig) (*Iden
 	}, nil
 }
 
-// Publish runs identity activation first and invokes the existing sealed
-// publication as the delivery commit. A completed identity retry calls the
-// idempotent sealed operation once to recover its durable result.
+// Publish invokes the existing sealed publication and lets its final
+// PublicationActivation callback run the identity transition. This keeps
+// authorization, durable pending-publication creation, approval, and seal
+// verification ahead of identity activation for both ordinary publishes and
+// explicit restores.
 func (c *IdentitySealedCoordinator) Publish(ctx context.Context, request sealedcontrol.PublishRequest) (deployment.PublicationIntent, error) {
 	return c.PublishWithActivation(ctx, request, nil)
 }
 
 // PublishWithActivation preserves sealedcontrol's runtime activation hook for
-// callers that use it, while identityledger still owns the delivery ordering.
+// callers that use it. The identity coordinator is nested inside the sealed
+// coordinator's callback, so a missing approval cannot mutate the identity
+// ledger. The callback still places reference reconciliation and identity
+// activation before runtime preparation and the target CAS.
 func (c *IdentitySealedCoordinator) PublishWithActivation(ctx context.Context, request sealedcontrol.PublishRequest, activate sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error) {
 	if err := c.validate(); err != nil {
 		return deployment.PublicationIntent{}, err
@@ -355,28 +454,33 @@ func (c *IdentitySealedCoordinator) PublishWithActivation(ctx context.Context, r
 	if err := validatePublishBinding(c.instanceID, transition, request); err != nil {
 		return deployment.PublicationIntent{}, err
 	}
-	var publication deployment.PublicationIntent
-	_, runErr := c.identity.Run(ctx, transition, func(commitCtx context.Context) error {
-		if err := c.registerReferences(commitCtx, transition.References); err != nil {
-			return err
+	return c.publishSealed(ctx, request, func(sealedCtx context.Context, targetCommit func() error) error {
+		commitInvoked := false
+		run, runErr := c.identity.Run(sealedCtx, transition, func(commitCtx context.Context) error {
+			if err := c.registerReferences(commitCtx, transition.References); err != nil {
+				return err
+			}
+			commitInvoked = true
+			if activate != nil {
+				return activate(commitCtx, targetCommit)
+			}
+			return targetCommit()
+		})
+		if runErr != nil {
+			return runErr
 		}
-		var err error
-		publication, err = c.publishSealed(commitCtx, request, activate)
-		return err
+		if run.Phase == identityledger.PhaseCompleted && !commitInvoked {
+			// A committed sealed retry still supplies a no-op target commit
+			// callback. Coordinator.Run intentionally skips delivery for a
+			// completed identity transition, but sealedcontrol requires its
+			// callback protocol to be satisfied exactly once.
+			if activate != nil {
+				return activate(sealedCtx, targetCommit)
+			}
+			return targetCommit()
+		}
+		return nil
 	})
-	if runErr != nil {
-		return publication, runErr
-	}
-	if publication.ID == "" {
-		// Coordinator.Run intentionally does not invoke delivery for a completed
-		// transition. Reconcile the existing sealed result by its own idempotent
-		// request identity; this is still behind the completed identity fence.
-		publication, err = c.publishSealed(ctx, request, activate)
-		if err != nil {
-			return publication, err
-		}
-	}
-	return publication, nil
 }
 
 // Rollback loads the original published transition and reuses its graph
@@ -427,14 +531,14 @@ func (c *IdentitySealedCoordinator) RollbackWithActivation(ctx context.Context, 
 // compiler graph data. The published transition is the sole source for
 // CandidateID, BundleID, GraphDigest, and authored-resource evidence.
 func IdentityRollbackTransition(request sealedcontrol.RollbackRequest, published identityledger.Transition) (identityledger.Transition, error) {
-	if published.Operation != identityledger.OperationPublish || published.Phase != identityledger.PhaseCompleted {
-		return identityledger.Transition{}, fmt.Errorf("%w: rollback source is not a completed publish transition", identityledger.ErrTransitionConflict)
+	if (published.Operation != identityledger.OperationPublish && published.Operation != identityledger.OperationRestore) || published.Phase != identityledger.PhaseCompleted {
+		return identityledger.Transition{}, fmt.Errorf("%w: rollback source is not a completed publication transition", identityledger.ErrTransitionConflict)
 	}
 	if published.InstanceID == "" || published.BundleID == "" || published.CandidateID == "" {
-		return identityledger.Transition{}, fmt.Errorf("%w: original publish transition is incomplete", ErrIdentityLifecycleInvalid)
+		return identityledger.Transition{}, fmt.Errorf("%w: original publication transition is incomplete", ErrIdentityLifecycleInvalid)
 	}
 	if request.Request.CandidateID != published.CandidateID || request.Request.GenerationID != published.BundleID {
-		return identityledger.Transition{}, fmt.Errorf("%w: rollback request does not bind original publish evidence", identityledger.ErrTransitionConflict)
+		return identityledger.Transition{}, fmt.Errorf("%w: rollback request does not bind original publication evidence", identityledger.ErrTransitionConflict)
 	}
 	actor := request.ActorID
 	if actor == "" {
@@ -503,15 +607,11 @@ func (c *IdentitySealedCoordinator) registerReferences(ctx context.Context, refe
 }
 
 func (c *IdentitySealedCoordinator) publishSealed(ctx context.Context, request sealedcontrol.PublishRequest, activate sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error) {
-	if activate != nil {
-		if coordinator, ok := c.sealed.(interface {
-			PublishWithActivation(context.Context, sealedcontrol.PublishRequest, sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error)
-		}); ok {
-			return coordinator.PublishWithActivation(ctx, request, activate)
-		}
+	coordinator, ok := c.sealed.(identitySealedPublicationCoordinator)
+	if !ok {
 		return deployment.PublicationIntent{}, fmt.Errorf("%w: sealed coordinator does not support activation", ErrIdentityLifecycleInvalid)
 	}
-	return c.sealed.Publish(ctx, request)
+	return coordinator.PublishWithActivation(ctx, request, activate)
 }
 
 func (c *IdentitySealedCoordinator) rollbackSealed(ctx context.Context, request sealedcontrol.RollbackRequest, activate sealedcontrol.PublicationActivation) (deployment.RollbackResult, error) {
@@ -527,7 +627,7 @@ func (c *IdentitySealedCoordinator) rollbackSealed(ctx context.Context, request 
 }
 
 func validatePublishBinding(instanceID string, transition identityledger.Transition, request sealedcontrol.PublishRequest) error {
-	if transition.Operation != identityledger.OperationPublish || transition.BundleID != request.Generation.ID || transition.CandidateID != request.Generation.CandidateID || transition.InstanceID != instanceID {
+	if (transition.Operation != identityledger.OperationPublish && transition.Operation != identityledger.OperationRestore) || transition.BundleID != request.Generation.ID || transition.CandidateID != request.Generation.CandidateID || transition.InstanceID != instanceID {
 		return fmt.Errorf("%w: sealed publication does not bind original identity transition", identityledger.ErrTransitionConflict)
 	}
 	if request.Publication.ExpectedBaseGenerationID != transition.ExpectedBundleID {

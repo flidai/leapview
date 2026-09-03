@@ -71,21 +71,19 @@ func (r *Repository) Activate(ctx context.Context, candidate identityledger.Cand
 // identities in a candidate. Approved IDs must exist in the candidate and must
 // retain their immutable kind.
 func (r *Repository) RestoreAndActivate(ctx context.Context, request identityledger.Restore) (identityledger.Plan, error) {
-	if strings.TrimSpace(request.Reason) == "" || len(request.Reason) > 2048 {
+	if request.Reason != strings.TrimSpace(request.Reason) || request.Reason == "" || len(request.Reason) > 2048 {
 		return identityledger.Plan{}, fmt.Errorf("%w: restore reason", identityledger.ErrInvalidInput)
 	}
-	approved := make(map[projectgraph.ResourceID]struct{}, len(request.AuthoredIDs))
-	for _, id := range request.AuthoredIDs {
-		if err := id.Validate(); err != nil {
-			return identityledger.Plan{}, fmt.Errorf("%w: restore authored id: %v", identityledger.ErrInvalidInput, err)
-		}
-		if _, duplicate := approved[id]; duplicate {
-			return identityledger.Plan{}, fmt.Errorf("%w %q", identityledger.ErrDuplicateAuthoredID, id)
-		}
-		approved[id] = struct{}{}
+	approvedIDs, err := identityledger.NormalizeApprovedAuthoredIDs(request.AuthoredIDs)
+	if err != nil {
+		return identityledger.Plan{}, err
 	}
-	if len(approved) == 0 {
+	if len(approvedIDs) == 0 {
 		return identityledger.Plan{}, fmt.Errorf("%w: restore IDs are required", identityledger.ErrInvalidInput)
+	}
+	approved := make(map[projectgraph.ResourceID]struct{}, len(approvedIDs))
+	for _, id := range approvedIDs {
+		approved[id] = struct{}{}
 	}
 	plan, err := r.activate(ctx, request.Candidate, approved, request.Reason, false)
 	return plan, mapSerializationError("identity restore", err)

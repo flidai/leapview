@@ -84,6 +84,7 @@ type StartCandidateRequest struct {
 	OwnerID        string
 	ArtifactDigest string
 	Key            string
+	Restore        *RestoreIntent
 }
 
 type CandidateStartResult struct {
@@ -161,7 +162,7 @@ func (service *CandidateService) Start(ctx context.Context, request StartCandida
 	candidate, err := NewCandidate(CandidateStartInput{
 		ID: id, TargetID: service.targetID,
 		OwnerID: request.OwnerID, Scope: CandidateScope{ProjectID: baseScope.ProjectID, Environment: baseScope.Environment, BaseGenerationID: baseScope.BaseGenerationID}, ArtifactDigest: request.ArtifactDigest,
-		Key: request.Key, ExpiresAt: now.Add(service.lifetime), Now: now,
+		Key: request.Key, Restore: request.Restore, ExpiresAt: now.Add(service.lifetime), Now: now,
 	})
 	if err != nil {
 		return CandidateStartResult{}, err
@@ -277,6 +278,21 @@ func (service *CandidateService) Review(
 	projectID projectgraph.ResourceID,
 	candidateID string,
 ) (Candidate, error) {
+	candidate, err := service.Evidence(ctx, projectID, candidateID)
+	if err != nil {
+		return Candidate{}, err
+	}
+	return service.expireOnRead(ctx, candidate)
+}
+
+// Evidence returns the exact durable candidate without applying the preview
+// expiry transition. Publication retry uses it to recover immutable restore
+// evidence even after the candidate's interactive lifetime has elapsed.
+func (service *CandidateService) Evidence(
+	ctx context.Context,
+	projectID projectgraph.ResourceID,
+	candidateID string,
+) (Candidate, error) {
 	if projectID.Validate() != nil || candidateID == "" || candidateID != strings.TrimSpace(candidateID) {
 		return Candidate{}, ErrCandidateInvalid
 	}
@@ -291,7 +307,7 @@ func (service *CandidateService) Review(
 		candidate.Scope.ProjectID != projectID {
 		return Candidate{}, ErrCandidateNotFound
 	}
-	return service.expireOnRead(ctx, candidate)
+	return candidate, nil
 }
 
 func (service *CandidateService) ReplaceArtifact(ctx context.Context, scope CandidateAccessScope, expectedDigest, nextDigest string) (Candidate, error) {

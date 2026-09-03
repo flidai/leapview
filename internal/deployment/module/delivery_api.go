@@ -120,6 +120,7 @@ type DeliveryPlanIntent struct {
 	Operation               deployment.DeliveryOperationKind
 	SourceDigest            string
 	SourceAttestationDigest string
+	Restore                 *deployment.RestoreIntent
 	PipelinePlan            *deployment.PipelinePlan
 }
 
@@ -128,7 +129,15 @@ func decodePlanIntent(project, environment, principalID string, body deploymentg
 	if err != nil {
 		return DeliveryPlanIntent{}, fmt.Errorf("%w: project", deployment.ErrDeliveryInvalid)
 	}
-	return DeliveryPlanIntent{ProjectID: projectID, PrincipalID: principalID, SourceOwnerID: principalID, Environment: environment, TargetID: body.TargetId, Operation: deployment.DeliveryOperationKind(body.Operation), SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest}, nil
+	var restore *deployment.RestoreIntent
+	if body.Restore != nil {
+		ids := make([]projectgraph.ResourceID, len(body.Restore.AuthoredIds))
+		for i, id := range body.Restore.AuthoredIds {
+			ids[i] = projectgraph.ResourceID(id)
+		}
+		restore = &deployment.RestoreIntent{AuthoredIDs: ids, Reason: body.Restore.Reason}
+	}
+	return DeliveryPlanIntent{ProjectID: projectID, PrincipalID: principalID, SourceOwnerID: principalID, Environment: environment, TargetID: body.TargetId, Operation: deployment.DeliveryOperationKind(body.Operation), SourceDigest: body.SourceDigest, SourceAttestationDigest: body.SourceAttestationDigest, Restore: restore}, nil
 }
 
 func (m *Module) deliveryReadReady(w http.ResponseWriter, r *http.Request, project string) bool {
@@ -212,7 +221,21 @@ func (m *Module) deliveryMutationReady(w http.ResponseWriter, r *http.Request) b
 
 func planPreviewResponse(plan deployment.DeliveryPlan) deploymentgen.DeliveryPlanPreviewResponse {
 	e := deployment.RedactedDeliveryPlanEvidence(plan)
-	return deploymentgen.DeliveryPlanPreviewResponse{Id: plan.ID, ProjectId: plan.ProjectID.String(), TargetId: plan.TargetID, Environment: plan.Environment, Operation: deploymentgen.DeliveryOperationKind(plan.Operation), SourceDigest: plan.SourceDigest, SourceAttestationDigest: plan.Provenance.AttestationDigest, BaseGenerationId: optionalText(plan.BaseGenerationID), BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest, ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest, PlanDigest: plan.Digest, Status: deploymentgen.DeliveryPlanStatus(plan.Status), ExpiresAt: isoTime(plan.Governance.ExpiresAt), CreatedAt: isoTime(plan.CreatedAt), Evidence: deliveryPlanEvidenceView(e)}
+	response := deploymentgen.DeliveryPlanPreviewResponse{Id: plan.ID, ProjectId: plan.ProjectID.String(), TargetId: plan.TargetID, Environment: plan.Environment, Operation: deploymentgen.DeliveryOperationKind(plan.Operation), SourceDigest: plan.SourceDigest, SourceAttestationDigest: plan.Provenance.AttestationDigest, BaseTargetRevision: plan.BaseTargetRevision, ExecutionDigest: plan.ExecutionDigest, ProvenanceDigest: plan.ProvenanceDigest, GovernanceDigest: plan.GovernanceDigest, EvidenceDigest: plan.EvidenceDigest, PlanDigest: plan.Digest, Status: deploymentgen.DeliveryPlanStatus(plan.Status), ExpiresAt: isoTime(plan.Governance.ExpiresAt), CreatedAt: isoTime(plan.CreatedAt), Evidence: deliveryPlanEvidenceView(e)}
+	response.BaseGenerationId = optionalText(plan.BaseGenerationID)
+	response.Restore = deliveryRestoreIntentView(plan.Restore)
+	return response
+}
+
+func deliveryRestoreIntentView(intent *deployment.RestoreIntent) *deploymentgen.CandidateRestoreIntent {
+	if intent == nil {
+		return nil
+	}
+	ids := make([]string, len(intent.AuthoredIDs))
+	for i, id := range intent.AuthoredIDs {
+		ids[i] = id.String()
+	}
+	return &deploymentgen.CandidateRestoreIntent{AuthoredIds: ids, Reason: intent.Reason}
 }
 
 func deliveryPlanEvidenceView(e deployment.DeliveryPlanEvidenceView) deploymentgen.DeliveryPlanEvidenceView {
@@ -652,6 +675,7 @@ func (m *Module) GetDeliveryPlanPreview(w http.ResponseWriter, r *http.Request, 
 		PlanDigest: plan.Digest, Status: deploymentgen.DeliveryPlanStatus(plan.Status), ExpiresAt: isoTime(plan.Governance.ExpiresAt), CreatedAt: isoTime(plan.CreatedAt), Evidence: evidenceView,
 	}
 	response.BaseGenerationId = optionalText(plan.BaseGenerationID)
+	response.Restore = deliveryRestoreIntentView(plan.Restore)
 	apitransport.WriteJSON(w, http.StatusOK, response)
 }
 

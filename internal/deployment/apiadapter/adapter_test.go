@@ -38,6 +38,18 @@ func TestCreateRequestDigestBindsImmutablePublishEvidence(t *testing.T) {
 	require.NotEqual(t, firstService.created.RequestDigest, secondService.created.RequestDigest)
 }
 
+func TestCreateRequestDigestBindsCanonicalRestoreIntent(t *testing.T) {
+	base := CreateRequest{Project: "project", Environment: "prod", GenerationID: "generation_2", ArtifactDigest: "sha256:" + strings.Repeat("a", 64), Actor: "principal", IdempotencyKey: "publish-restore", ReleaseID: "release_1", Evidence: PublishEvidence{
+		ReleaseDigest: "sha256:" + strings.Repeat("e", 64), ArtifactContentDigest: "sha256:" + strings.Repeat("a", 64), ArtifactProvenanceDigest: "sha256:" + strings.Repeat("f", 64), PlanDigest: "sha256:" + strings.Repeat("b", 64), CandidateID: "candidate_1", CandidateRevision: 7, TargetID: "target_prod", Environment: "prod", GenerationID: "generation_2", RuntimeVersion: "v1.2.3", PolicyDigest: "sha256:" + strings.Repeat("c", 64), Restore: &deployment.RestoreIntent{AuthoredIDs: []projectgraph.ResourceID{"orders"}, Reason: "approved recovery"},
+	}}
+	first, err := RequestDigest(base)
+	require.NoError(t, err)
+	base.Evidence.Restore.Reason = "different approved recovery"
+	second, err := RequestDigest(base)
+	require.NoError(t, err)
+	require.NotEqual(t, first, second)
+}
+
 func TestCreateRejectsIncompleteImmutablePublishEvidence(t *testing.T) {
 	adapter, err := New(&fakeService{})
 	require.NoError(t, err)
