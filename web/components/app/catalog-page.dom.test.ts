@@ -436,7 +436,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
         dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
           ...dashboard,
           catalogScope: index === 0 ? 'mine' : dashboard.catalogScope,
-          href: index === 0 ? '/dashboards/executive-sales/edit?draft=draft-one' : dashboard.href,
+          href: index === 0 ? '/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone' : dashboard.href,
         })),
       } })
       await element.updateComplete
@@ -448,6 +448,8 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
       await element.updateComplete
       const menu = root.querySelector('[role="menu"]') as HTMLElement
       const menuLabels = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item: Element) => item.textContent?.trim())
+      const rowHref = list.querySelector('.entity-list-identity')?.getAttribute('href')
+      const editHref = menu.querySelector('a[role="menuitem"]')?.getAttribute('href')
       ;(menu.querySelector('[data-action="details"]') as HTMLButtonElement).click()
       await element.updateComplete
       const drawer = root.querySelector('.catalog-details-drawer') as HTMLElement
@@ -459,6 +461,8 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
       await new Promise<void>((resolve) => queueMicrotask(resolve))
       return {
         menuLabels,
+        rowHref,
+        editHref,
         title,
         description,
         details,
@@ -468,6 +472,8 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
     })
 
     expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Archive'])
+    expect(state.rowHref).toBe('/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone')
+    expect(state.editHref).toBe('/dashboards/executive-sales/edit?draft=draft-one')
     expect(state.title).toBe('Executive Sales Dashboard')
     expect(state.description).toBe('Fixture report')
     expect(state.details).toEqual(expect.arrayContaining(['Data model', 'Olist model', 'Owner', 'Analytics', 'Status', 'Published', 'Pages', '1']))

@@ -75,6 +75,7 @@ type Dashboard struct {
 	Owner           string                    `json:"owner,omitempty"`
 	DraftID         authoring.DraftID         `json:"draftId,omitempty"`
 	PageCount       int                       `json:"pageCount"`
+	FirstPageID     string                    `json:"-"`
 	Tags            []string                  `json:"tags,omitempty"`
 	Featured        bool                      `json:"featured,omitempty"`
 	ServingIdentity graph.ServingIdentity     `json:"servingIdentity,omitempty"`
@@ -480,6 +481,9 @@ func (s *Service) enrichInstanceItem(ctx context.Context, projectID graph.Resour
 	}
 	item.Featured = revision.Document.Metadata.Featured != nil && *revision.Document.Metadata.Featured
 	item.PageCount = len(revision.Document.Spec.Pages)
+	if len(revision.Document.Spec.Pages) > 0 {
+		item.FirstPageID = strings.TrimSpace(revision.Document.Spec.Pages[0].ID)
+	}
 	item.Revision.CreatedAt = revision.CreatedAt
 	return nil
 }
