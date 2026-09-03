@@ -881,12 +881,33 @@ func (r *Repository) EnvironmentPointer(ctx context.Context, c projectgraph.Reso
 	return p, nil
 }
 
-// ActiveEnvironmentPointer returns the durable environment pointer used by
-// the managed-data API. Production serving additionally validates immutable
-// generation bindings through the resolver; keeping this method on the
-// native repository preserves the capability-owned API adapter contract.
+// ActiveEnvironmentPointer derives the public active revision from the
+// canonical delivery active pointer and its immutable managed-data binding.
+// The mutable environment pointer remains a planning input and is not
+// evidence that a revision is serving.
 func (r *Repository) ActiveEnvironmentPointer(ctx context.Context, c projectgraph.ResourceID, e manageddata.Environment) (manageddata.EnvironmentPointer, error) {
-	return r.EnvironmentPointer(ctx, c, e)
+	db, err := requireDB(r)
+	if err != nil {
+		return manageddata.EnvironmentPointer{}, err
+	}
+	normalized, err := manageddata.NormalizeEnvironment(string(e))
+	if err != nil {
+		return manageddata.EnvironmentPointer{}, err
+	}
+	row, err := manageddb.New(db).GetActiveManagedDataServingPointer(contextOrBackground(ctx), manageddb.GetActiveManagedDataServingPointerParams{
+		CollectionID: c.String(), Environment: string(normalized),
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return manageddata.EnvironmentPointer{}, ErrNotFound
+	}
+	if err != nil {
+		return manageddata.EnvironmentPointer{}, err
+	}
+	return manageddata.EnvironmentPointer{
+		CollectionID: projectgraph.ResourceID(row.CollectionID), Environment: manageddata.Environment(row.Environment),
+		RevisionID: manageddata.RevisionID(row.RevisionID), DeploymentID: row.DeploymentID,
+		Generation: row.Generation, UpdatedBy: row.UpdatedBy, UpdatedAt: formatTime(row.UpdatedAt.Time),
+	}, nil
 }
 func (r *Repository) InstallEnvironmentPointerTx(ctx context.Context, tx Tx, p manageddata.EnvironmentPointer) error {
 	if tx == nil || !p.CollectionID.Valid() || p.RevisionID == "" || p.DeploymentID == "" || p.Generation < 1 {

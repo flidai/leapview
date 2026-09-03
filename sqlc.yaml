@@ -327,7 +327,9 @@ sql:
 
   - engine: "postgresql"
     queries: "internal/manageddata/postgres/queries"
-    schema: "internal/manageddata/postgres/schema.sql"
+    schema:
+      - "internal/manageddata/postgres/schema.sql"
+      - "internal/deployment/postgres/schema.sql"
     gen:
       go:
         package: "db"

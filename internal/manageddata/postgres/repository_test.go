@@ -743,6 +743,117 @@ func TestPostgresAuditIntentMutationsAtomicReplayAndRollback(t *testing.T) {
 	}
 }
 
+func TestActiveEnvironmentPointerUsesCanonicalDeliveryGenerationBinding(t *testing.T) {
+	p, _, db, _ := openManagedDataTestPool(t)
+	ctx := t.Context()
+	admin, err := pgxpool.New(ctx, db.AdminURL())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(admin.Close)
+
+	// Keep this fixture intentionally narrow: the production query only relies
+	// on the delivery target/generation/publication/active-pointer evidence.
+	// The full delivery schema is owned by the deployment capability.
+	for _, statement := range []string{`
+CREATE SCHEMA delivery`, `
+CREATE TABLE delivery.delivery_target (
+  target_id text PRIMARY KEY,
+  project_id text NOT NULL,
+  environment text NOT NULL,
+  target_revision bigint NOT NULL,
+  updated_at timestamptz NOT NULL
+)`, `
+CREATE TABLE delivery.delivery_generation (
+  generation_id uuid PRIMARY KEY,
+  target_id text NOT NULL REFERENCES delivery.delivery_target(target_id)
+)`, `
+CREATE TABLE delivery.delivery_publication (
+  publication_id uuid PRIMARY KEY,
+  target_id text NOT NULL,
+  generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),
+  state text NOT NULL
+)`, `
+CREATE TABLE delivery.delivery_active_pointer (
+  target_id text PRIMARY KEY REFERENCES delivery.delivery_target(target_id),
+  generation_id uuid NOT NULL REFERENCES delivery.delivery_generation(generation_id),
+  publication_id uuid NOT NULL REFERENCES delivery.delivery_publication(publication_id)
+)
+`, `GRANT USAGE ON SCHEMA delivery TO leapview_control_runtime`, `GRANT SELECT ON ALL TABLES IN SCHEMA delivery TO leapview_control_runtime`} {
+		if _, err := admin.Exec(ctx, statement); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	const digestA = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const digestB = "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	if _, err := admin.Exec(ctx, `
+INSERT INTO managed_data.collection(collection_id, project_id, connection_id, name, request_digest)
+VALUES ('collection_orders', 'project_demo', 'connection_orders', 'Orders', $1);
+`, digestA); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+INSERT INTO managed_data.revision(revision_id, collection_id, sequence, digest, status, manifest, file_count, size_bytes, ready_at)
+VALUES ('revision_active', 'collection_orders', 1, $1, 'pending', '{"files":[]}'::jsonb, 0, 0, NULL),
+       ('revision_planning', 'collection_orders', 2, $2, 'pending', '{"files":[]}'::jsonb, 0, 0, NULL);
+`, digestA, digestB); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `UPDATE managed_data.revision SET status = 'ready', ready_at = clock_timestamp()
+ WHERE revision_id IN ('revision_active', 'revision_planning')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+INSERT INTO managed_data.environment_pointer(collection_id, environment, revision_id, revision_digest, deployment_id, generation, updated_by)
+VALUES ('collection_orders', 'prod', 'revision_planning', $1, 'legacy-deployment', 99, 'planner')
+		`, digestB); err != nil {
+		t.Fatal(err)
+	}
+
+	const generationID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
+	const publicationID = "bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb"
+	if _, err := admin.Exec(ctx, `
+INSERT INTO delivery.delivery_target(target_id, project_id, environment, target_revision, updated_at)
+VALUES ('target-prod', 'project_demo', 'prod', 7, '2026-01-02T00:00:00Z')
+	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+INSERT INTO delivery.delivery_generation(generation_id, target_id)
+VALUES ($1::uuid, 'target-prod')
+`, generationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+INSERT INTO delivery.delivery_publication(publication_id, target_id, generation_id, state)
+VALUES ($2::uuid, 'target-prod', $1::uuid, 'committed')
+`, generationID, publicationID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := admin.Exec(ctx, `
+INSERT INTO delivery.delivery_active_pointer(target_id, generation_id, publication_id)
+VALUES ('target-prod', $1::uuid, $2::uuid);
+	`, generationID, publicationID); err != nil {
+		t.Fatal(err)
+	}
+
+	r := New(p)
+	identity := projectgraph.ServingIdentity{ProjectID: "project_demo", Environment: "prod", GenerationID: generationID}
+	if err := r.InstallServingStateBindings(ctx, identity, []manageddata.ServingStateBinding{{
+		Identity: identity, CollectionID: "collection_orders", RevisionID: "revision_active",
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	pointer, err := r.ActiveEnvironmentPointer(ctx, "collection_orders", "prod")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pointer.CollectionID != "collection_orders" || pointer.Environment != "prod" || pointer.RevisionID != "revision_active" || pointer.DeploymentID != publicationID || pointer.Generation != 7 || pointer.UpdatedBy != "" || pointer.UpdatedAt != "2026-01-02T00:00:00Z" {
+		t.Fatalf("active pointer = %#v", pointer)
+	}
+}
+
 // Keep pgx imported in this package's tests to make the intended native
 // transaction surface explicit and catch accidental database/sql adapters.
 var _ pgx.Tx

@@ -230,6 +230,38 @@ SELECT collection_id, environment, revision_id, revision_digest,
 FROM managed_data.environment_pointer
 WHERE collection_id = sqlc.arg(collection_id) AND environment = sqlc.arg(environment);
 
+-- name: GetActiveManagedDataServingPointer :one
+-- The mutable environment pointer is a planning input only.  Public serving
+-- state is derived from the canonical delivery active pointer, its committed
+-- publication, and the immutable managed-data binding for that generation.
+SELECT collection.collection_id,
+       target.environment,
+       binding.revision_id,
+       publication.publication_id::text AS deployment_id,
+       target.target_revision AS generation,
+       ''::text AS updated_by,
+       target.updated_at
+FROM managed_data.collection AS collection
+JOIN delivery.delivery_target AS target
+  ON target.project_id = collection.project_id
+ AND target.environment = sqlc.arg(environment)
+JOIN delivery.delivery_active_pointer AS active
+  ON active.target_id = target.target_id
+JOIN delivery.delivery_generation AS generation
+  ON generation.generation_id = active.generation_id
+ AND generation.target_id = target.target_id
+JOIN delivery.delivery_publication AS publication
+  ON publication.publication_id = active.publication_id
+ AND publication.target_id = target.target_id
+ AND publication.generation_id = active.generation_id
+ AND publication.state = 'committed'
+JOIN managed_data.binding AS binding
+  ON binding.project_id = target.project_id
+ AND binding.environment = target.environment
+ AND binding.generation_id = active.generation_id::text
+ AND binding.collection_id = collection.collection_id
+WHERE collection.collection_id = sqlc.arg(collection_id);
+
 -- name: UpsertEnvironmentPointer :execresult
 INSERT INTO managed_data.environment_pointer
     (collection_id, environment, revision_id, revision_digest, deployment_id, generation, updated_by)
