@@ -37,6 +37,18 @@ RETURNING definition_id::text AS definition_id, name, value_type, value_shape,
           COALESCE(disabled_at::text, '')::text AS disabled_at,
           created_at::text AS created_at, updated_at::text AS updated_at;
 
+-- name: SemanticAttributePrincipalOwnerExists :one
+SELECT EXISTS (
+    SELECT 1 FROM access.principal
+    WHERE id = sqlc.arg(owner_id)::uuid AND revoked_at IS NULL
+);
+
+-- name: SemanticAttributeGroupOwnerExists :one
+SELECT EXISTS (
+    SELECT 1 FROM access.access_group
+    WHERE id = sqlc.arg(owner_id)::uuid AND revoked_at IS NULL
+);
+
 -- name: GetSemanticAttributeDefinition :one
 SELECT definition_id::text AS definition_id, name, value_type, value_shape,
        profile, definition_version, owner_kind, COALESCE(owner_id::text, '')::text AS owner_id, display_name,
@@ -71,11 +83,16 @@ SELECT definition_id::text AS definition_id, name, value_type, value_shape,
        COALESCE(disabled_at::text, '')::text AS disabled_at,
        created_at::text AS created_at, updated_at::text AS updated_at
 FROM access.semantic_attribute_definition
-WHERE sqlc.arg(search_query)::text = ''
+WHERE (sqlc.arg(search_query)::text = ''
    OR strpos(lower(name), lower(sqlc.arg(search_query)::text)) > 0
    OR strpos(lower(display_name), lower(sqlc.arg(search_query)::text)) > 0
-   OR strpos(lower(description), lower(sqlc.arg(search_query)::text)) > 0
-ORDER BY name
+   OR strpos(lower(description), lower(sqlc.arg(search_query)::text)) > 0)
+  AND (sqlc.arg(owner_kind)::text = '' OR owner_kind = sqlc.arg(owner_kind)::text)
+  AND (sqlc.arg(after_name)::text = ''
+       OR name > sqlc.arg(after_name)::text
+       OR (name = sqlc.arg(after_name)::text
+           AND definition_id > NULLIF(sqlc.arg(after_definition_id)::text, '')::uuid))
+ORDER BY name, definition_id
 LIMIT sqlc.arg(page_size)::int;
 
 -- name: UpdateSemanticAttributeDefinitionMetadata :one
@@ -88,6 +105,7 @@ SET owner_kind = sqlc.arg(owner_kind)::text,
     definition_version = definition_version + 1,
     updated_at = clock_timestamp()
 WHERE name = sqlc.arg(name)::text
+  AND (sqlc.arg(expected_version)::bigint <= 0 OR definition_version = sqlc.arg(expected_version)::bigint)
   AND (owner_kind, owner_id, display_name, description, documentation_url)
       IS DISTINCT FROM
       (sqlc.arg(owner_kind)::text, NULLIF(sqlc.arg(owner_id)::text, '')::uuid,
@@ -106,6 +124,7 @@ SET enabled = sqlc.arg(enabled)::boolean,
     definition_version = definition_version + 1,
     updated_at = clock_timestamp()
 WHERE name = sqlc.arg(name)::text
+  AND (sqlc.arg(expected_version)::bigint <= 0 OR definition_version = sqlc.arg(expected_version)::bigint)
   AND enabled <> sqlc.arg(enabled)::boolean
 RETURNING definition_id::text AS definition_id, name, value_type, value_shape,
           profile, definition_version, owner_kind, COALESCE(owner_id::text, '')::text AS owner_id, display_name,
