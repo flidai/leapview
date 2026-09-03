@@ -12,7 +12,7 @@ import (
 )
 
 func TestLocalSQLiteCompositionUsesSQLiteBootstrapPersistence(t *testing.T) {
-	contents, err := os.ReadFile("composition.go")
+	contents, err := os.ReadFile("local_composition.go")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,7 +45,7 @@ func TestLocalSQLiteCompositionUsesExplicitSQLiteAuditStore(t *testing.T) {
 }
 
 func TestLocalSQLiteCompositionUsesExplicitAPIProtocolAuthorities(t *testing.T) {
-	contents, err := os.ReadFile("composition.go")
+	contents, err := os.ReadFile("local_composition.go")
 	if err != nil {
 		t.Fatal(err)
 	}

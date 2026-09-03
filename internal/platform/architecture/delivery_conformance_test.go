@@ -17,9 +17,9 @@ import (
 // as adversarial inputs without making them reachable.
 func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	root := repoRoot(t)
-	// build.go dispatches production to postgres_build.go. The legacy
-	// composition.go path is intentionally excluded: it remains the explicit
-	// SQLite development/evaluation fixture used by local tests.
+	// build.go dispatches production to postgres_build.go. The
+	// local_composition.go path is intentionally excluded: it remains the
+	// explicit SQLite development/evaluation fixture used by local tests.
 	productionRoots := []string{
 		"internal/deployment", "internal/app/runtimefactory", "internal/app/build.go", "internal/app/postgres_build.go",
 		"internal/analytics/candidatecatalog", "internal/analytics/sealedcatalog",
@@ -187,7 +187,7 @@ func TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors(t *testing.T) {
 
 	// Keep the explicit local/evaluation branch visible and admissible: this
 	// test must not turn a guarded SQLite fixture into a production ban.
-	local, err := os.ReadFile(filepath.Join(root, "internal/app/composition.go"))
+	local, err := os.ReadFile(filepath.Join(root, "internal/app/local_composition.go"))
 	if err != nil {
 		t.Fatal(err)
 	}

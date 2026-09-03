@@ -1955,7 +1955,7 @@ func TestRequestRuntimeDoesNotRetainConstructionDependencies(t *testing.T) {
 
 func TestAppDoesNotConstructRepositoriesFromSQLDB(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
-		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && strings.Contains(file.body, ".SQLDB()") {
+		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && file.path != "internal/app/local_composition.go" && strings.Contains(file.body, ".SQLDB()") {
 			t.Errorf("%s constructs adapters from platform.Store; capability modules must receive construction ownership", file.path)
 		}
 	}
@@ -4529,6 +4529,7 @@ func isSQLDBAllowedFile(file goFile) bool {
 	if file.pkgDir == "internal/app" {
 		switch file.path {
 		case "internal/app/build.go",
+			"internal/app/local_composition.go",
 			"internal/app/server.go",
 			"internal/app/publishes.go",
 			"internal/app/refresh_runs.go",
