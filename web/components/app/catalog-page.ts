@@ -1,6 +1,6 @@
 import { LitElement, css, html } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import type { CatalogPageSignal } from '../../generated/signals'
+import type { CatalogPageSignal, ChromeSignal } from '../../generated/signals'
 import { DatastarLit } from '../shared/datastar-lit'
 import { checkSignalContract } from '../shared/signal-contract'
 import { pageHeaderStyles, renderPageHeader } from '../shared/page-header'
@@ -36,7 +36,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @state() private actionMenu: { dashboardID: string, top: number, left: number } | null = null
   @state() private detailsDashboardID = ''
   @state() private copyLinkMessage = ''
-  private freshnessTimer: number | undefined
   private autoOpenChecked = false
   private createDraftTrigger: HTMLAnchorElement | null = null
   private actionMenuTrigger: HTMLElement | null = null
@@ -287,13 +286,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   override connectedCallback(): void {
     super.connectedCallback()
 	this.reloadDiscoveryPreferences()
-	this.freshnessTimer = window.setInterval(() => this.requestUpdate(), 60_000)
     window.addEventListener('keydown', this.handleGlobalKeydown)
   }
 
   override disconnectedCallback(): void {
-	if (this.freshnessTimer !== undefined) window.clearInterval(this.freshnessTimer)
-	this.freshnessTimer = undefined
     window.removeEventListener('keydown', this.handleGlobalKeydown)
     super.disconnectedCallback()
   }
@@ -323,6 +319,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     return this.signal<CatalogPageSignal | null>('page', null)
   }
 
+  get chrome(): ChromeSignal | null {
+    return this.signal<ChromeSignal | null>('chrome', null)
+  }
+
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
@@ -340,6 +340,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         <lv-entity-list
           .items=${dashboards.map((dashboard) => {
             const appearance = { icon: dashboard.appearanceIcon || 'layout-dashboard', color: dashboard.appearanceColor || 'purple' }
+            const owner = this.dashboardOwner(dashboard)
             return ({
             id: dashboard.id,
             dashboardId: dashboard.dashboardId,
@@ -363,12 +364,13 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             iconTreatment: 'framed' as const,
             actions: [{ label: `More actions for ${dashboard.title}`, action: 'open-dashboard-menu', icon: 'more' as const }],
             columns: {
-              owner: dashboard.owner || '—',
+              owner: owner.name || '—',
               status: dashboardStatusLabel(dashboard.status),
-              updated: formatRelativeTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
+              updated: formatCompactDate(dashboard.updatedAt || dashboard.lastRefreshedAt),
             },
+            people: owner.name ? { owner } : undefined,
             sortValues: {
-              owner: dashboard.owner || '',
+              owner: owner.name,
               status: dashboardStatusRank(dashboard.status),
               updated: dashboard.updatedAt || dashboard.lastRefreshedAt || '',
             },
@@ -405,11 +407,20 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     }
     return [
       { id: 'name', label: 'Dashboard', width: '43%' },
-      { id: 'owner', label: 'Owner', width: '15%' },
+      { id: 'owner', label: 'Owner', width: '15%', render: 'person' as const },
       { id: 'status', label: 'Status', width: '19%', render: 'status' as const },
       { id: 'updated', label: 'Updated', width: '18%' },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
     ]
+  }
+
+  private dashboardOwner(dashboard: CatalogDashboard): { name: string, imageUrl?: string } {
+    const owner = dashboard.owner?.trim() ?? ''
+    if (owner !== 'You') return { name: owner }
+    return {
+      name: this.chrome?.sidebar.userName?.trim() || 'Current user',
+      imageUrl: this.chrome?.sidebar.userAvatarUrl,
+    }
   }
 
   private renderDashboardActionMenu(dashboards: CatalogDashboard[]) {
@@ -459,9 +470,9 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           ${dashboard.description ? html`<p class="catalog-details-description">${dashboard.description}</p>` : ''}
           <dl class="catalog-details-list">
             <dt>Data model</dt><dd>${semanticModelLabel(dashboard.semanticModel)}</dd>
-            <dt>Owner</dt><dd>${dashboard.owner || '—'}</dd>
+            <dt>Owner</dt><dd>${this.dashboardOwner(dashboard).name || '—'}</dd>
             <dt>Status</dt><dd>${dashboardStatusLabel(dashboard.status)}</dd>
-            <dt>Updated</dt><dd title=${formatExactTime(updated)}>${formatRelativeTime(updated)}</dd>
+            <dt>Updated</dt><dd>${formatExactTime(updated) || '—'}</dd>
             <dt>Pages</dt><dd>${dashboard.pageCount}</dd>
             <dt>Popularity</dt><dd>${dashboard.popularity ? popularityPercentile(dashboard.popularity) : 'Not enough data'}</dd>
             <dt>Source</dt><dd>${dashboard.catalogScope === 'managed' ? 'Managed by Analytics' : 'Created in LeapView'}</dd>
@@ -852,21 +863,13 @@ function writeStorage(key: string, value: unknown): void {
   }
 }
 
-function formatRelativeTime(value: string | undefined): string {
+function formatCompactDate(value: string | undefined): string {
   if (!value) return '—'
   const refreshedAt = new Date(value)
   if (Number.isNaN(refreshedAt.getTime())) return '—'
-  const elapsed = Date.now() - refreshedAt.getTime()
-  if (elapsed < 0) return formatRefreshedDate(refreshedAt)
-  const minutes = Math.floor(elapsed / 60_000)
-  if (minutes < 1) return 'Just now'
-  if (minutes < 60) return `${minutes} min ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours} hr ago`
-  if (hours < 48) return 'Yesterday'
-  const days = Math.floor(hours / 24)
-  if (days < 7) return `${days} days ago`
-  return formatRefreshedDate(refreshedAt)
+  const options: Intl.DateTimeFormatOptions = { month: 'short', day: 'numeric' }
+  if (refreshedAt.getFullYear() !== new Date().getFullYear()) options.year = 'numeric'
+  return new Intl.DateTimeFormat(undefined, options).format(refreshedAt)
 }
 
 function formatExactTime(value: string | undefined): string {
@@ -890,8 +893,4 @@ function dashboardStatusRank(value: CatalogPageSignal['dashboards'][number]['sta
     case 'private_draft': return 2
     default: return 1
   }
-}
-
-function formatRefreshedDate(value: Date): string {
-  return new Intl.DateTimeFormat(undefined, { dateStyle: 'medium' }).format(value)
 }

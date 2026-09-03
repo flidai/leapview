@@ -58,6 +58,7 @@ export type EntityListItem = {
   group?: string
   columns?: Record<string, string | number>
   columnTitles?: Record<string, string>
+  people?: Record<string, { name: string, imageUrl?: string }>
   sortValues?: Record<string, string | number>
   badges?: EntityListBadge[]
   favorite?: boolean
@@ -85,7 +86,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges' | 'actions' | 'status'
+  render?: 'badges' | 'actions' | 'status' | 'person'
 }
 
 export type EntityListFilter = {
@@ -653,6 +654,24 @@ const entityListStyles = `
     white-space: nowrap;
   }
 
+  .entity-list-person {
+    display: inline-flex;
+    min-width: 0;
+    max-width: 100%;
+    align-items: center;
+    gap: var(--base-size-8);
+    color: var(--lv-fg-default);
+  }
+
+  .entity-list-person lv-user-avatar {
+    --lv-user-avatar-size: var(--base-size-20);
+  }
+
+  .entity-list-person-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
   .entity-list-status {
     display: inline-flex;
     align-items: center;
@@ -1076,8 +1095,22 @@ class EntityList extends LitElement {
 	              `)}</span>`
             : column.render === 'status'
               ? this.renderStatus(value)
+              : column.render === 'person'
+                ? this.renderPerson(item, column.id, value)
               : (value == null || value === '' ? '—' : value)}
       </td>
+    `
+  }
+
+  private renderPerson(item: EntityListItem, columnID: string, value: string | number | undefined) {
+    const person = item.people?.[columnID]
+    const name = person?.name.trim() || String(value ?? '').trim()
+    if (!name || name === '—') return '—'
+    return html`
+      <span class="entity-list-person">
+        <lv-user-avatar .name=${name} .imageUrl=${person?.imageUrl ?? ''} aria-hidden="true"></lv-user-avatar>
+        <span class="entity-list-person-name">${name}</span>
+      </span>
     `
   }
 
