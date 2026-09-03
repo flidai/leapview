@@ -120,7 +120,7 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 			modelObject = object
 		}
 	}
-	if modelObject.Key != "model:model:orders:semantic:sales:orders" || modelObject.ResourceID != "model:orders" || modelObject.SemanticModelID == nil || *modelObject.SemanticModelID != "semantic:sales" || projectsignals.ValueOrZero(modelObject.DatasetID) != "orders" {
+	if modelObject.Key != "model:[12:model:orders][14:semantic:sales][6:orders]" || modelObject.ResourceID != "model:orders" || modelObject.SemanticModelID == nil || *modelObject.SemanticModelID != "semantic:sales" || projectsignals.ValueOrZero(modelObject.DatasetID) != "orders" {
 		t.Fatalf("model object = %#v, want binding identity key and backing model resource", modelObject)
 	}
 	if modelObject.ColumnCount != 2 || modelObject.Columns == nil || len(*modelObject.Columns) != 2 {
@@ -182,8 +182,8 @@ func TestBuildDataExplorerProjectionKeysEachSemanticDatasetBinding(t *testing.T)
 		t.Fatalf("objects = %#v / %#v, want one object per dataset alias", first.Objects, second.Objects)
 	}
 	wantKeys := []string{
-		"model:model:orders:semantic:sales:order_history",
-		"model:model:orders:semantic:sales:orders",
+		"model:[12:model:orders][14:semantic:sales][13:order_history]",
+		"model:[12:model:orders][14:semantic:sales][6:orders]",
 	}
 	for index, wantKey := range wantKeys {
 		left, right := first.Objects[index], second.Objects[index]
@@ -219,6 +219,42 @@ func TestBuildDataExplorerProjectionKeysEachSemanticDatasetBinding(t *testing.T)
 		if !found {
 			t.Fatalf("no object found for dataset alias %q", datasetID)
 		}
+	}
+}
+
+func TestExplorerModelObjectKeyIsUnambiguousForColonBearingIDs(t *testing.T) {
+	cases := []struct {
+		name            string
+		modelID         string
+		semanticModelID string
+		datasetID       string
+		want            string
+	}{
+		{name: "model and semantic boundary", modelID: "model:a:b", semanticModelID: "semantic", datasetID: "dataset", want: "model:[9:model:a:b][8:semantic][7:dataset]"},
+		{name: "semantic and model boundary", modelID: "model:a", semanticModelID: "b:semantic", datasetID: "dataset", want: "model:[7:model:a][10:b:semantic][7:dataset]"},
+		{name: "semantic and dataset boundary", modelID: "model", semanticModelID: "a:b", datasetID: "c", want: "model:[5:model][3:a:b][1:c]"},
+		{name: "dataset and semantic boundary", modelID: "model", semanticModelID: "a", datasetID: "b:c", want: "model:[5:model][1:a][3:b:c]"},
+	}
+	keys := make(map[string]string, len(cases))
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got := explorerModelObjectKey(test.modelID, test.semanticModelID, test.datasetID)
+			if got != test.want {
+				t.Fatalf("key = %q, want length-prefixed key %q", got, test.want)
+			}
+			if previous, exists := keys[got]; exists {
+				t.Fatalf("key %q collides with %s", got, previous)
+			}
+			keys[got] = test.name
+		})
+	}
+	bound := explorerModelObjectKey("model:a", "semantic", "dataset")
+	unbound := explorerModelObjectKey("7:model:a:8:semantic:7:dataset", "", "ignored")
+	if bound == unbound {
+		t.Fatalf("bound key %q collides with preserved unbound key %q", bound, unbound)
+	}
+	if got := explorerModelObjectKey("model:orders", "", "ignored"); got != "model:model:orders" {
+		t.Fatalf("unbound model key = %q, want preserved fallback %q", got, "model:model:orders")
 	}
 }
 

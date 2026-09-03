@@ -587,6 +587,24 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-medium);
     }
 
+    .object-label {
+      min-width: 0;
+    }
+
+    .object-label small {
+      display: block;
+      overflow: hidden;
+      color: var(--lv-fg-muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-normal);
+    }
+
+    .object-button.is-selected .object-label small {
+      color: var(--lv-fg-accent);
+    }
+
     .column-list {
       display: grid;
       gap: var(--base-size-2);
@@ -1597,7 +1615,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           >
             <span class="chevron object-expand" title="Expand columns" aria-label="Expand columns">${lucideIcon(ChevronRight, { size: 13 })}</span>
             <span aria-hidden="true">${lucideIcon(iconForLayer(object.layer), { size: 14 })}</span>
-            <strong title=${`${object.columnCount || 0} columns`}>${label(displayTitle)}</strong>
+            <span class="object-label">
+              <strong title=${`${object.columnCount || 0} columns`}>${label(displayTitle)}</strong>
+              ${object.datasetId ? html`<small>${label(object.datasetId)}</small>` : nothing}
+            </span>
           </summary>
           <div class="column-list" aria-label=${`${object.title} fields`}>
             ${fields.map((field) => {

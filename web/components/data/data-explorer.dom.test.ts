@@ -237,7 +237,8 @@ test('data explorer renders object browser and emits preview commands', async ()
         tabs: Array.from(root.querySelectorAll('.object-tab')).map((tab) => tab.textContent?.trim()),
         selectedColumns: Array.from(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.querySelectorAll('.column-item .field-button > span:nth-child(3)') ?? []).map((item) => item.textContent?.trim()),
         selectedFieldStates: Array.from(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.querySelectorAll('.column-item .field-button') ?? []).map((item) => item.getAttribute('aria-pressed')),
-        selectedNodeText: root.querySelector('.object-button.is-selected')?.textContent?.replace(/\s+/g, ' ').trim(),
+        selectedNodeText: root.querySelector('.object-button.is-selected .object-label strong')?.textContent?.trim(),
+        selectedNodeSubtitle: root.querySelector('.object-button.is-selected .object-label small')?.textContent?.trim(),
         selectedNodeExpandedByDefault,
         rowClickExpanded,
         expandClickExpanded,
@@ -284,6 +285,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.selectedFieldStates).toEqual(['true', 'true'])
     expect(state.selectedNodeText).not.toContain('olist · orders')
     expect(state.selectedNodeText).toBe('orders')
+    expect(state.selectedNodeSubtitle).toBe('orders')
     expect(state.selectedNodeExpandedByDefault).toBe(false)
     expect(state.rowClickExpanded).toBe(false)
     expect(state.expandClickExpanded).toBe(true)
@@ -315,6 +317,64 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.commands.some((command) => command.visibleColumns?.length === 1 && command.visibleColumns[0] === 'order_id')).toBe(true)
     expect(state.commands.some((command) => command.objectKey === 'model:model:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
     expect(state.commands.some((command) => command.block && command.start > 0 && command.count === 100 && command.requestSeq > 0)).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('data explorer distinguishes same-title aliases with dataset subtitles', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const aliases = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const objects = [
+        {
+          key: 'model:[12:model:orders][14:semantic:sales][13:order_history]', resourceId: 'model:orders', layer: 'model',
+          semanticModelId: 'semantic:sales', datasetId: 'order_history', title: 'Orders', columnCount: 1,
+          columns: [{ key: 'status', label: 'Status', type: 'string' }],
+        },
+        {
+          key: 'model:[12:model:orders][14:semantic:sales][6:orders]', resourceId: 'model:orders', layer: 'model',
+          semanticModelId: 'semantic:sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
+          columns: [{ key: 'status', label: 'Status', type: 'string' }],
+        },
+      ]
+      const exploreCommand = {
+        semanticModelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [],
+        limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {},
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects, selectedKey: objects[0].key, selectedObject: objects[0],
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'browse', objectKey: objects[0].key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: {
+            command: exploreCommand, semanticModels: [{ id: 'semantic:sales', title: 'Sales', datasets: [] }], datasets: [], fields: [],
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
+          },
+          warnings: [],
+        },
+      })
+      document.body.append(element)
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      return Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>('.object-button') ?? []).map((button) => ({
+        title: button.querySelector('.object-label strong')?.textContent?.trim(),
+        subtitle: button.querySelector('.object-label small')?.textContent?.trim(),
+      }))
+    })
+
+    expect(aliases).toEqual([
+      { title: 'semantic:sales.Orders', subtitle: 'order_history' },
+      { title: 'semantic:sales.Orders', subtitle: 'orders' },
+    ])
   } finally {
     await page.close()
   }

@@ -8,6 +8,7 @@ package http
 import (
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
@@ -591,7 +592,9 @@ func explorerModelObject(asset projectview.DevelopAssetView, table semanticmodel
 // Model. A semantic model may expose the same Model through multiple dataset
 // aliases, so the backing resource ID alone is not a sufficient selection key.
 // Keep the components in canonical identity order and leave ResourceID
-// untouched on the signal for query authorization and detail navigation.
+// untouched on the signal for query authorization and detail navigation. Bound
+// components are length-prefixed because resource IDs may contain colons; the
+// bracketed form also stays distinct from the unbound model fallback.
 func explorerModelObjectKey(modelID, semanticModelID, datasetID string) string {
 	modelID = strings.TrimSpace(modelID)
 	semanticModelID = strings.TrimSpace(semanticModelID)
@@ -599,7 +602,19 @@ func explorerModelObjectKey(modelID, semanticModelID, datasetID string) string {
 	if semanticModelID == "" {
 		return "model:" + modelID
 	}
-	return "model:" + modelID + ":" + semanticModelID + ":" + datasetID
+	parts := []string{modelID, semanticModelID, datasetID}
+	var key strings.Builder
+	key.WriteString("model:[")
+	for index, part := range parts {
+		if index > 0 {
+			key.WriteString("][")
+		}
+		key.WriteString(strconv.Itoa(len(part)))
+		key.WriteByte(':')
+		key.WriteString(part)
+	}
+	key.WriteByte(']')
+	return key.String()
 }
 
 func explorerSourceColumns(source semanticmodel.Source) []projectsignals.DataPreviewColumnSignal {
