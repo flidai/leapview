@@ -236,6 +236,11 @@ test('ECharts translates semantic axes and decision context from the current fra
   const decimalStrings = echartsOption(envelope, context) as any
   expect(decimalStrings.series[0].markLine.data[1].yAxis).toBe('9007199254740994.25')
   expect(decimalStrings.series[0].markArea.data[0].map((item: any) => item.yAxis)).toEqual(['9007199254740993.125', '9007199254740995.375'])
+
+  envelope.dataState.datasets[0].rows = []
+  const empty = echartsOption(envelope, context) as any
+  expect(empty.series[0].markLine.data.map((item: any) => item.id)).toEqual(['reference-line:target', 'event-annotation:launch'])
+  expect(empty.series[0].markArea).toBeUndefined()
 })
 
 test('ECharts applies governed row formatting with theme colors and redundant cues', () => {
