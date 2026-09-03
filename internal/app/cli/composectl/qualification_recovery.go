@@ -48,6 +48,8 @@ type qualificationRecoveryOptions struct {
 	ProjectDataToken     string
 	RecoveryControlToken string
 	MetricsToken         string
+	AuthorPrincipalID    string
+	ReviewerPrincipalID  string
 	ContainerID          string
 	ComposeProject       string
 	ProjectID            string
@@ -139,6 +141,8 @@ func (c *Controller) runQualificationRecovery(
 		"project data token":     options.ProjectDataToken,
 		"recovery control token": options.RecoveryControlToken,
 		"metrics token":          options.MetricsToken,
+		"author principal id":    options.AuthorPrincipalID,
+		"reviewer principal id":  options.ReviewerPrincipalID,
 		"container":              options.ContainerID,
 		"Compose project":        options.ComposeProject,
 		"project":                options.ProjectID,
@@ -147,6 +151,14 @@ func (c *Controller) runQualificationRecovery(
 	} {
 		if strings.TrimSpace(value) == "" {
 			return report, fmt.Errorf("recovery qualification %s is required", label)
+		}
+	}
+	for label, value := range map[string]string{
+		"author principal":   options.AuthorPrincipalID,
+		"reviewer principal": options.ReviewerPrincipalID,
+	} {
+		if err := validateQualificationNativeUUID(value, label); err != nil {
+			return report, fmt.Errorf("recovery qualification %s: %w", label, err)
 		}
 	}
 	appEnv, err := os.ReadFile(filepath.Join(options.BundleRoot, appEnvName))
@@ -763,7 +775,13 @@ func (c *Controller) prepareQualificationRecoveryData(
 		if err := copyQualificationTree(sourceProject, target); err != nil {
 			return err
 		}
-		if err := rewriteQualificationRecoveryProject(target, variant.title, variant.alias); err != nil {
+		if err := rewriteQualificationRecoveryProject(
+			target,
+			variant.title,
+			variant.alias,
+			options.AuthorPrincipalID,
+			options.ReviewerPrincipalID,
+		); err != nil {
 			return err
 		}
 	}
@@ -794,7 +812,13 @@ func (c *Controller) prepareQualificationRecoveryData(
 	return nil
 }
 
-func rewriteQualificationRecoveryProject(root, title, modelAlias string) error {
+func rewriteQualificationRecoveryProject(
+	root string,
+	title string,
+	modelAlias string,
+	authorPrincipalID string,
+	reviewerPrincipalID string,
+) error {
 	projectPath := filepath.Join(root, "leapview.yaml")
 	projectContents, err := os.ReadFile(projectPath)
 	if err != nil {
@@ -807,6 +831,9 @@ func rewriteQualificationRecoveryProject(root, title, modelAlias string) error {
 	projectContents = bytes.Replace(projectContents, projectName, []byte("name: "+title), 1)
 	if err := os.WriteFile(projectPath, projectContents, 0o600); err != nil {
 		return err
+	}
+	if err := configureQualificationPrincipals(projectPath, authorPrincipalID, reviewerPrincipalID); err != nil {
+		return fmt.Errorf("configure recovery principals: %w", err)
 	}
 
 	// The recovery journey must exercise a real native build on both sides of

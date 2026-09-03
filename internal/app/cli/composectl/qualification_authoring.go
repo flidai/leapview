@@ -49,6 +49,8 @@ type qualificationCredentials struct {
 	ProjectDataToken      string `json:"projectDataToken,omitempty"`
 	RecoveryControlToken  string `json:"recoveryControlToken,omitempty"`
 	AuditToken            string `json:"auditToken,omitempty"`
+	AuthorPrincipalID     string `json:"authorPrincipalId,omitempty"`
+	ReviewerPrincipalID   string `json:"reviewerPrincipalId,omitempty"`
 	QualificationPassword string `json:"qualificationPassword"`
 }
 
@@ -311,6 +313,9 @@ func (c *Controller) runQualificationAuthoring(
 	if !administrator.Authenticated || administrator.Principal.Id == "" {
 		return report, fmt.Errorf("administrator sign-in returned no durable principal")
 	}
+	if err := validateQualificationNativeUUID(administrator.Principal.Id, "administrator principal"); err != nil {
+		return report, err
+	}
 	var authenticated struct {
 		Authenticated bool `json:"authenticated"`
 	}
@@ -328,6 +333,9 @@ func (c *Controller) runQualificationAuthoring(
 	}
 	if reviewer.Principal.Id == "" || reviewer.TemporaryPassword == "" {
 		return report, fmt.Errorf("reviewer creation returned incomplete credentials")
+	}
+	if err := validateQualificationNativeUUID(reviewer.Principal.Id, "reviewer principal"); err != nil {
+		return report, err
 	}
 	var administratorToken qualificationBrowserToken
 	if err := browserWorker.CallContext(ctx, "issueAdministratorToken", map[string]any{
@@ -519,6 +527,8 @@ func (c *Controller) runQualificationAuthoring(
 	credentials.ProjectDataToken = projectDataToken
 	credentials.RecoveryControlToken = reviewerToken.AccessToken
 	credentials.AuditToken = auditToken
+	credentials.AuthorPrincipalID = administrator.Principal.Id
+	credentials.ReviewerPrincipalID = reviewer.Principal.Id
 	if err := writeQualificationJSON(options.CredentialsFile, credentials); err != nil {
 		return report, fmt.Errorf("persist qualification scoped credentials: %w", err)
 	}
