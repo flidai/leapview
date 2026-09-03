@@ -24,11 +24,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-models' }) createDraftModelsJSON = ''
   @property({ attribute: 'create-draft-csrf-token' }) createDraftCSRFToken = ''
   @property({ attribute: 'create-draft-idempotency-key' }) createDraftIdempotencyKey = ''
-  @state() private catalogScope: 'all' | 'mine' | 'shared' = 'all'
+  @state() private catalogScope: 'all' | 'favorites' | 'mine' = 'all'
   @state() private catalogSort: CatalogSort = 'recommended'
   @state() private catalogModel = 'all'
   @state() private catalogStatus = 'all'
-  @state() private catalogFavoritesOnly = false
   @state() private catalogFeaturedOnly = false
   @state() private favoriteDashboardIDs: string[] = []
   @state() private recentDashboardIDs: Record<string, string> = {}
@@ -234,8 +233,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
         ${renderPageHeader(page.title, '', '', this.createDraftHref ? html`<a class="catalog-create-draft" href=${this.createDraftHref} aria-haspopup="dialog" aria-controls="catalog-create-draft-dialog" @click=${this.handleCreateDraftTrigger}>New dashboard</a>` : undefined)}
         <nav class="catalog-tabs" aria-label="Dashboard views" role="tablist">
           ${this.renderCatalogTab('all', 'All dashboards')}
+          ${this.renderCatalogTab('favorites', 'Favorites')}
           ${this.renderCatalogTab('mine', 'My dashboards')}
-          ${this.renderCatalogTab('shared', 'Shared with me')}
         </nav>
         <lv-entity-list
           .items=${dashboards.map((dashboard) => {
@@ -286,7 +285,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           initial-query=${page.listQuery ?? ''}
           active-filter=${page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
-          empty-text=${this.activeCatalogFilterCount() ? 'No dashboards match these filters.' : this.catalogScope === 'all' ? 'No dashboards are available.' : 'No dashboards in this view.'}
+          empty-text=${this.catalogEmptyText()}
           @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
           @lv-entity-list-item-activate=${this.recordDashboardOpen}
         ></lv-entity-list>
@@ -323,7 +322,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               <option value="unpublished_changes">Unpublished changes</option>
             </select>
           </label>
-          <label class="catalog-filter-check"><input type="checkbox" .checked=${this.catalogFavoritesOnly} @change=${this.changeCatalogFavoritesOnly}> Favorites only</label>
           ${hasFeatured ? html`<label class="catalog-filter-check"><input type="checkbox" .checked=${this.catalogFeaturedOnly} @change=${this.changeCatalogFeaturedOnly}> Featured only</label>` : ''}
           ${activeFilters ? html`<div class="catalog-filter-actions"><button type="button" @click=${this.clearCatalogFilters}>Clear filters</button></div>` : ''}
         </div>
@@ -340,10 +338,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
 
   private visibleDashboards(dashboards: CatalogDashboard[]): CatalogDashboard[] {
     const filtered = dashboards.filter((dashboard) => {
-      if (this.catalogScope !== 'all' && dashboard.catalogScope !== this.catalogScope) return false
+      if (this.catalogScope === 'mine' && dashboard.catalogScope !== 'mine') return false
+      if (this.catalogScope === 'favorites' && !this.favoriteDashboardIDs.includes(dashboard.id)) return false
       if (this.catalogModel !== 'all' && dashboard.semanticModel !== this.catalogModel) return false
       if (this.catalogStatus !== 'all' && dashboard.status !== this.catalogStatus) return false
-      if (this.catalogFavoritesOnly && !this.favoriteDashboardIDs.includes(dashboard.id)) return false
       if (this.catalogFeaturedOnly && !dashboard.featured) return false
       return true
     })
@@ -393,19 +391,24 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private activeCatalogFilterCount(): number {
-    return Number(this.catalogModel !== 'all') + Number(this.catalogStatus !== 'all') + Number(this.catalogFavoritesOnly) + Number(this.catalogFeaturedOnly)
+    return Number(this.catalogModel !== 'all') + Number(this.catalogStatus !== 'all') + Number(this.catalogFeaturedOnly)
   }
 
   private changeCatalogSort = (event: Event): void => { this.catalogSort = (event.currentTarget as HTMLSelectElement).value as CatalogSort }
   private changeCatalogModel = (event: Event): void => { this.catalogModel = (event.currentTarget as HTMLSelectElement).value }
   private changeCatalogStatus = (event: Event): void => { this.catalogStatus = (event.currentTarget as HTMLSelectElement).value }
-  private changeCatalogFavoritesOnly = (event: Event): void => { this.catalogFavoritesOnly = (event.currentTarget as HTMLInputElement).checked }
   private changeCatalogFeaturedOnly = (event: Event): void => { this.catalogFeaturedOnly = (event.currentTarget as HTMLInputElement).checked }
   private clearCatalogFilters = (): void => {
     this.catalogModel = 'all'
     this.catalogStatus = 'all'
-    this.catalogFavoritesOnly = false
     this.catalogFeaturedOnly = false
+  }
+
+  private catalogEmptyText(): string {
+    if (this.activeCatalogFilterCount()) return 'No dashboards match these filters.'
+    if (this.catalogScope === 'favorites') return 'No favorite dashboards yet.'
+    if (this.catalogScope === 'mine') return 'You have not created any dashboards yet.'
+    return 'No dashboards are available.'
   }
 
   private renderCreateDraftDialog(models: CreateDraftModel[]) {
@@ -506,7 +509,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     if (event.target === event.currentTarget) this.closeCreateDraft()
   }
 
-  private renderCatalogTab(scope: 'all' | 'mine' | 'shared', label: string) {
+  private renderCatalogTab(scope: 'all' | 'favorites' | 'mine', label: string) {
     return html`<button class="catalog-tab" type="button" role="tab" aria-selected=${String(this.catalogScope === scope)} @click=${() => { this.catalogScope = scope }}>${label}</button>`
   }
 }
