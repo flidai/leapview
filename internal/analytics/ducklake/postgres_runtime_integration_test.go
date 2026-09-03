@@ -22,9 +22,13 @@ import (
 func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	ctx := context.Background()
 	h := postgrestest.StartTLS(t)
-	owner := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_owner", Password: "ducklake-owner-secret", Login: true})
+	owner := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_owner"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_migrator", Password: "ducklake-migrator-secret", Login: true})
+	runtime := h.EnsureRole(t, postgrestest.Role{Name: "ducklake_runtime", Password: "ducklake-runtime-secret", Login: true})
+	h.GrantRole(t, owner, migrator)
 	db := h.NewDatabase(t, "ducklake_runtime_test")
-	h.GrantDatabase(t, db.Name, owner, "CONNECT", "CREATE", "TEMPORARY")
+	h.GrantDatabase(t, db.Name, migrator, "CONNECT", "CREATE", "TEMPORARY")
+	h.GrantDatabase(t, db.Name, runtime, "CONNECT")
 
 	dataPath := filepath.Join(t.TempDir(), "data")
 	contract := fixturePoolContractFor(t, "local", dataPath)
@@ -35,31 +39,24 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = admin.Close() })
-	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA \""+metadataSchema+"\" AUTHORIZATION \""+owner.Name+"\""); err != nil {
+	if _, err := admin.ExecContext(ctx, "REVOKE ALL ON DATABASE \""+db.Name+"\" FROM PUBLIC"); err != nil {
 		t.Fatal(err)
 	}
-
-	parsed, err := url.Parse(postgresTLSURL(t, db.URL(owner)))
-	if err != nil {
+	if _, err := admin.ExecContext(ctx, "REVOKE ALL ON SCHEMA public FROM PUBLIC"); err != nil {
 		t.Fatal(err)
 	}
-	port, _ := strconv.Atoi(parsed.Port())
-	password, _ := parsed.User.Password()
-	bootstrap := func(ctx context.Context, execer driver.ExecerContext) error {
-		if _, err := execer.ExecContext(ctx, "INSTALL postgres_scanner FROM core", nil); err != nil {
-			return err
-		}
-		if _, err := execer.ExecContext(ctx, "LOAD postgres_scanner", nil); err != nil {
-			return err
-		}
-		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET leapview_pg (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'require')", parsed.Hostname(), port, parsed.Path[1:], parsed.User.Username(), password)
-		_, err := execer.ExecContext(ctx, statement, nil)
-		return err
+	if _, err := admin.ExecContext(ctx, "CREATE SCHEMA \""+metadataSchema+"\" AUTHORIZATION \""+migrator.Name+"\""); err != nil {
+		t.Fatal(err)
 	}
-	credentialBootstrap := bootstrap
+	if _, err := admin.ExecContext(ctx, "GRANT USAGE, CREATE ON SCHEMA \""+metadataSchema+"\" TO \""+migrator.Name+"\""); err != nil {
+		t.Fatal(err)
+	}
 	extensionAdmission := runtimeExtensionAdmission(t)
-	initialize := PostgresCatalogConfig{PhysicalPoolID: poolID, DuckLakeSecret: "leapview_lake", PostgresSecret: "leapview_pg", MetadataSchema: metadataSchema, DataPath: dataPath, Mode: PostgresCatalogInitialize}
-	env, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &initialize, CredentialBootstrap: credentialBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
+	initialize := PostgresCatalogConfig{PhysicalPoolID: poolID, DuckLakeSecret: "leapview_lake", PostgresSecret: "leapview_pg_migrator", MetadataSchema: metadataSchema, DataPath: dataPath, Mode: PostgresCatalogInitialize}
+	// Only the dedicated catalog migrator may initialize DuckLake metadata;
+	// the per-pool schema is owned by that migrator, as in production.
+	bootstrap := postgresCatalogCredentialBootstrap(t, db, migrator, initialize.PostgresSecret)
+	env, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &initialize, CredentialBootstrap: bootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
 	if err != nil {
 		if extensionUnavailable(err) || !postgrestest.Required() {
 			t.Skipf("PostgreSQL DuckLake extension unavailable: %v", err)
@@ -105,13 +102,69 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	}
 	_ = env.Close()
 
+	migratorDB, err := sql.Open("pgx", postgresTLSURL(t, db.URL(migrator)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = migratorDB.Close() })
+	for _, statement := range []string{
+		"ALTER DEFAULT PRIVILEGES FOR ROLE \"" + migrator.Name + "\" IN SCHEMA \"" + metadataSchema + "\" GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO \"" + runtime.Name + "\"",
+		"ALTER DEFAULT PRIVILEGES FOR ROLE \"" + migrator.Name + "\" IN SCHEMA \"" + metadataSchema + "\" GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO \"" + runtime.Name + "\"",
+	} {
+		if _, err := migratorDB.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("provision runtime default metadata privileges: %v", err)
+		}
+	}
+
+	// Runtime receives only the metadata USAGE/DML required by ordinary
+	// DuckLake attaches. It has no database/schema CREATE capability; catalog
+	// schema changes remain owner/migrator operations.
+	for _, statement := range []string{
+		"GRANT USAGE ON SCHEMA \"" + metadataSchema + "\" TO \"" + runtime.Name + "\"",
+		"GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA \"" + metadataSchema + "\" TO \"" + runtime.Name + "\"",
+		"GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA \"" + metadataSchema + "\" TO \"" + runtime.Name + "\"",
+	} {
+		if _, err := admin.ExecContext(ctx, statement); err != nil {
+			t.Fatalf("provision runtime metadata privileges: %v", err)
+		}
+	}
+	runtimeDB, err := sql.Open("pgx", postgresTLSURL(t, db.URL(runtime)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = runtimeDB.Close() })
+	var currentUser, currentDatabase string
+	var schemaUsage, schemaCreate, databaseCreate bool
+	if err := runtimeDB.QueryRowContext(ctx, `SELECT current_user, current_database(), has_schema_privilege(current_user, $1, 'USAGE'), has_schema_privilege(current_user, $1, 'CREATE'), has_database_privilege(current_user, current_database(), 'CREATE')`, metadataSchema).Scan(&currentUser, &currentDatabase, &schemaUsage, &schemaCreate, &databaseCreate); err != nil {
+		t.Fatal(err)
+	}
+	if currentUser != runtime.Name || currentDatabase != db.Name {
+		t.Fatalf("runtime PostgreSQL identity user=%q database=%q, want %q/%q", currentUser, currentDatabase, runtime.Name, db.Name)
+	}
+	if !schemaUsage || schemaCreate || databaseCreate {
+		t.Fatalf("runtime PostgreSQL privileges usage=%v schema_create=%v database_create=%v", schemaUsage, schemaCreate, databaseCreate)
+	}
+	for _, role := range []postgrestest.Role{owner, migrator} {
+		if _, err := runtimeDB.ExecContext(ctx, "SET ROLE \""+role.Name+"\""); err == nil {
+			t.Fatalf("runtime role unexpectedly assumed PostgreSQL role %q", role.Name)
+		}
+	}
+	if _, err := runtimeDB.ExecContext(ctx, "CREATE SCHEMA \""+metadataSchema+"_forbidden\""); err == nil {
+		t.Fatal("runtime role unexpectedly created a PostgreSQL schema")
+	}
+	if _, err := runtimeDB.ExecContext(ctx, "CREATE TABLE \""+metadataSchema+"\".runtime_forbidden(id BIGINT)"); err == nil {
+		t.Fatal("runtime role unexpectedly created a catalog table")
+	}
+
 	requestDigest := digestForRuntimeTest("request")
 	planDigest := digestForRuntimeTest("plan")
 	marker := CommitMarker{SchemaVersion: CommitMarkerSchemaVersion, DeliveryID: "delivery", GenerationID: "generation", AttemptID: "attempt", LeaseEpoch: 1, RequestDigest: requestDigest, PlanDigest: planDigest, Project: "project", Environment: "prod", PhysicalPoolID: poolID}
 	writer := initialize
 	writer.Mode = PostgresCatalogWriter
 	writer.DataPath = ""
-	writerEnv, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &writer, CommitMarker: &marker, CredentialBootstrap: credentialBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
+	writer.PostgresSecret = "leapview_pg_runtime"
+	runtimeBootstrap := postgresCatalogCredentialBootstrap(t, db, runtime, writer.PostgresSecret)
+	writerEnv, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &writer, CommitMarker: &marker, CredentialBootstrap: runtimeBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -131,7 +184,7 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	_ = writerEnv.Close()
 	// A fresh DuckDB session has no connection-local last_committed_snapshot;
 	// reconciliation must scan persistent commit_extra_info by exact marker.
-	writerRestart, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &writer, CommitMarker: &marker, CredentialBootstrap: credentialBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
+	writerRestart, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &writer, CommitMarker: &marker, CredentialBootstrap: runtimeBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +206,7 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	serving := writer
 	serving.Mode = PostgresCatalogServing
 	serving.SnapshotVersion = snapshot
-	servingEnv, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &serving, CredentialBootstrap: credentialBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
+	servingEnv, err := Open(ctx, Config{RootDir: t.TempDir(), PoolContract: contract, PhysicalPoolID: poolID, PostgresCatalog: &serving, CredentialBootstrap: runtimeBootstrap, ExtensionAdmission: extensionAdmission, MaxConnections: 2})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -195,6 +248,30 @@ func TestPostgresDuckLakeRuntimeLifecycle(t *testing.T) {
 	}
 	if _, err := servingEnv.Commit(ctx, "forbidden", nil, func(*sql.Tx) error { return nil }); err != ErrReadOnlyEnvironment {
 		t.Fatalf("serving commit error=%v, want read-only", err)
+	}
+}
+
+func postgresCatalogCredentialBootstrap(t *testing.T, database *postgrestest.Database, role postgrestest.Role, secretName string) CredentialBootstrap {
+	t.Helper()
+	parsed, err := url.Parse(postgresTLSURL(t, database.URL(role)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	port, err := strconv.Atoi(parsed.Port())
+	if err != nil {
+		t.Fatal(err)
+	}
+	password, _ := parsed.User.Password()
+	return func(ctx context.Context, execer driver.ExecerContext) error {
+		if _, err := execer.ExecContext(ctx, "INSTALL postgres_scanner FROM core", nil); err != nil {
+			return err
+		}
+		if _, err := execer.ExecContext(ctx, "LOAD postgres_scanner", nil); err != nil {
+			return err
+		}
+		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE 'require')", quoteCatalogIdentifier(secretName), sqlLiteral(parsed.Hostname()), port, sqlLiteral(parsed.Path[1:]), sqlLiteral(parsed.User.Username()), sqlLiteral(password))
+		_, err := execer.ExecContext(ctx, statement, nil)
+		return err
 	}
 }
 
