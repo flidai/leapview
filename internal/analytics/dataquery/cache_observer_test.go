@@ -42,7 +42,7 @@ func TestTypedCacheObserverUsesFixedContract(t *testing.T) {
 		string(CacheAdmissionReasonPlanningFailed), string(CacheAdmissionReasonCanceled),
 		string(CacheAdmissionReasonDependencyUnavailable),
 		string(CacheAdmissionReasonDependencyInvalid), string(CacheAdmissionReasonPolicyInvalid),
-		string(CacheAdmissionReasonPartitionInvalid),
+		string(CacheAdmissionReasonPartitionInvalid), string(CacheAdmissionReasonNonDeterministic),
 	})
 	assertUniqueCacheLabels(t, []string{
 		string(CacheLookupMissColdStart), string(CacheLookupMissAbsentEntry), string(CacheLookupMissQueryMismatch),

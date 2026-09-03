@@ -113,7 +113,7 @@ func (p *Planner) PlanRows(request RowRequest) (Plan, error) {
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
@@ -208,7 +208,7 @@ func (p *Planner) PlanRawValues(request RawValueRequest) (Plan, error) {
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil
 }
 
 func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
@@ -227,7 +227,7 @@ func (p *Planner) PlanCount(request CountRequest) (Plan, error) {
 	if irErr != nil {
 		return Plan{}, fmt.Errorf("render count plan IR: %w", irErr)
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, IR: irGraph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, IR: irGraph}, nil
 }
 
 type columnMaskSet map[string]masking.Kind

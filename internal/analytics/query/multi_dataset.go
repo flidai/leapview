@@ -121,7 +121,7 @@ func (p *Planner) renderAggregatePlanIR(request Request, resolved aggregateResol
 	for _, column := range rendered.Columns {
 		columnSet[column] = true
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode,
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, Mode: mode,
 		Datasets: append([]string{}, resolved.Datasets...), StitchDimensions: stitchDimensions,
 		PhysicalDependencies: uniqueStrings(append(append([]string(nil), lineage.Datasets...), lineage.PhysicalFields...)),
 		RelationshipPaths:    lineage.RelationshipPaths, EffectiveOrdering: effectiveOrderSorts(request.Sort, columnSet), IR: irGraph}, nil

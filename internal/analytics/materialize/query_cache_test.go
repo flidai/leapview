@@ -1112,6 +1112,57 @@ func TestRuntimeBundleCacheMixedHitExecutesOnlyLoneMiss(t *testing.T) {
 	}))
 }
 
+func TestRuntimeBundleVolatileBranchDoesNotSuppressDeterministicSiblingCache(t *testing.T) {
+	database := &bundleCountingDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{
+			Name: "sales",
+			Tables: map[string]semanticmodel.Table{
+				"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"id": {Type: "number", Datatype: semanticmodel.DataTypeInteger}}},
+				"events": {
+					Execution:  semanticmodel.ExecutionDefinition{SQL: "SELECT now() AS id"},
+					Dimensions: map[string]semanticmodel.MetricDimension{"id": {Type: "number", Datatype: semanticmodel.DataTypeInteger}},
+				},
+			},
+			Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+				"orders": {Model: "orders_model"},
+				"events": {Model: "events_model"},
+			},
+			Metrics: map[string]semanticmodel.Metric{
+				"order_count": {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}, Empty: "zero"},
+				"event_count": {Type: "aggregate", Dataset: "events", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "events.id"}, Empty: "zero"},
+			},
+		},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	base := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales", Kind: dataquery.KindSemanticAggregate,
+	}
+	requests := []dataquery.BundleRequest{
+		{ID: "orders", Query: base},
+		{ID: "events", Query: base},
+	}
+	requests[0].Query.Target = "orders"
+	requests[0].Query.Metrics = []dataquery.Field{{Field: "order_count", Alias: "value"}}
+	requests[1].Query.Target = "events"
+	requests[1].Query.Metrics = []dataquery.Field{{Field: "event_count", Alias: "value"}}
+
+	first, err := runtime.ExecuteDataQueryBundle(context.Background(), requests)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheMiss, first.Results["orders"].CacheOutcome)
+	require.Equal(t, dataquery.CacheMiss, first.Results["events"].CacheOutcome)
+	require.Equal(t, 1, runtime.queryCache.scope.Stats().Entries)
+
+	second, err := runtime.ExecuteDataQueryBundle(context.Background(), requests)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheHit, second.Results["orders"].CacheOutcome)
+	require.Equal(t, dataquery.CacheMiss, second.Results["events"].CacheOutcome)
+	require.Equal(t, int32(2), database.queries.Load())
+	require.Equal(t, 1, runtime.queryCache.scope.Stats().Entries)
+}
+
 func TestRuntimeBundleLookupErrorFlushesEarlierBranchObservations(t *testing.T) {
 	runtime := bundleCacheRuntime(t, &bundleCountingDatabase{})
 	observations := []dataquery.CacheObservation{}

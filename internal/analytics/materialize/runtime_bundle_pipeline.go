@@ -191,6 +191,13 @@ func (r *Runtime) resolveBundleCache(ctx context.Context, governed governedBundl
 			out.misses = append(out.misses, branch)
 			continue
 		}
+		if !plan.Plan.Deterministic || !dependencyProjectionCacheDeterministic(r.model, projection) {
+			// Branch projections preserve independent cache admission even when
+			// another branch in the shared physical statement is volatile.
+			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: dataquery.CacheAdmissionReasonNonDeterministic, started: cacheStarted}
+			out.misses = append(out.misses, branch)
+			continue
+		}
 		dependency, reusable := r.dependencyForProjection(projection)
 		if !reusable {
 			out.slots[branch.ID] = bundleCacheSlot{decision: dataquery.CacheAdmissionBypassed, admissionReason: dataquery.CacheAdmissionReasonDependencyUnavailable, started: cacheStarted}

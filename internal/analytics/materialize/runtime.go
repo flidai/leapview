@@ -820,6 +820,46 @@ func dashboardQueryResultCacheable(request dataquery.Query) bool {
 	}
 }
 
+// planCacheDeterministic is the query-specific cache admission guard. A
+// planner-produced deterministic PlanIR is necessary but not sufficient when
+// one of its participating model tables is backed by authored SQL: the
+// resulting relation revision is not currently represented in the shared
+// query-result identity. Resolve every participating dataset through the
+// validated semantic model and fail closed when that mapping is incomplete.
+func planCacheDeterministic(model *semanticmodel.Model, plan semanticquery.Plan) bool {
+	if model == nil || !plan.Deterministic {
+		return false
+	}
+	projection, err := plan.ResultDependencies()
+	if err != nil {
+		return false
+	}
+	return dependencyProjectionCacheDeterministic(model, projection)
+}
+
+func dependencyProjectionCacheDeterministic(model *semanticmodel.Model, projection semanticquery.DependencyProjection) bool {
+	if model == nil || len(projection.Datasets) == 0 {
+		return false
+	}
+	for _, dataset := range projection.Datasets {
+		spec, ok := model.Datasets[dataset]
+		if !ok || strings.TrimSpace(spec.Model) == "" {
+			return false
+		}
+		table, ok := model.Tables[dataset]
+		if !ok {
+			return false
+		}
+		if table.ModelName != "" && table.ModelName != spec.Model {
+			return false
+		}
+		if strings.TrimSpace(table.Execution.SQL) != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (r *Runtime) ClearQueryCache() {
 	if r != nil && r.queryCache != nil {
 		r.queryCache.clear()

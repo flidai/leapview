@@ -493,6 +493,163 @@ func TestRuntimeNonCacheableQueryRetainsCurrentPlanSQL(t *testing.T) {
 	}))
 }
 
+func TestRuntimeNonDeterministicPlanBypassesLookupStoreAndCoalescing(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
+		Kind: dataquery.KindModelTableRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "id", Alias: "id"}}, Limit: 1,
+	}
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		observations = append(observations, observation)
+	})
+	for range 2 {
+		result, err := runtime.ExecuteDataQuery(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+	}
+	require.Equal(t, int32(2), database.queries.Load())
+	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission &&
+			observation.Decision == dataquery.CacheAdmissionBypassed &&
+			observation.AdmissionReason == dataquery.CacheAdmissionReasonNonDeterministic
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup || observation.Phase == dataquery.CacheObservationStore
+	}))
+}
+
+func TestRuntimeVolatileModelBypassesResultReuse(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {
+				Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT now() AS id"},
+				Columns:   map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+			},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
+		Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	observations := []dataquery.CacheObservation{}
+	ctx := dataquery.WithCacheObserver(context.Background(), func(observation dataquery.CacheObservation) {
+		observations = append(observations, observation)
+	})
+	for range 2 {
+		result, err := runtime.ExecuteDataQuery(ctx, request)
+		require.NoError(t, err)
+		require.Equal(t, dataquery.CacheMiss, result.CacheOutcome)
+	}
+	require.Equal(t, int32(2), database.queries.Load())
+	require.Zero(t, runtime.queryCache.scope.Stats().Entries)
+	require.Equal(t, 2, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationAdmission &&
+			observation.Decision == dataquery.CacheAdmissionBypassed &&
+			observation.AdmissionReason == dataquery.CacheAdmissionReasonNonDeterministic
+	}))
+	require.Zero(t, countCacheObservations(observations, func(observation dataquery.CacheObservation) bool {
+		return observation.Phase == dataquery.CacheObservationLookup || observation.Phase == dataquery.CacheObservationStore
+	}))
+}
+
+func TestRuntimeUnrelatedVolatileModelTableDoesNotSuppressCache(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {ModelName: "orders_model", Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+			"events": {
+				ModelName: "events_model",
+				Execution: semanticmodel.ExecutionDefinition{SQL: "SELECT now() AS id"},
+				Columns:   map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}},
+			},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders": {Model: "orders_model"}, "events": {Model: "events_model"},
+		}},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
+		Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	}
+	for range 2 {
+		result, err := runtime.ExecuteDataQuery(context.Background(), request)
+		require.NoError(t, err)
+		if result.CacheOutcome != dataquery.CacheMiss && result.CacheOutcome != dataquery.CacheHit {
+			t.Fatalf("unexpected cache outcome %q", result.CacheOutcome)
+		}
+	}
+	require.Equal(t, int32(1), database.queries.Load())
+	require.Equal(t, 1, runtime.queryCache.scope.Stats().Entries)
+}
+
+func TestRuntimeDerivedMetricRemainsCacheable(t *testing.T) {
+	database := &countingCacheRuntimeDatabase{}
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{
+			Name: "sales", Tables: map[string]semanticmodel.Table{
+				"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+			},
+			Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}},
+			Metrics: map[string]semanticmodel.Metric{
+				"order_count":  {Type: "aggregate", Dataset: "orders", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders.id"}},
+				"double_count": {Type: "derived", Expression: "${order_count} * 2"},
+			},
+		},
+		db: database, queryCache: newQueryResultCache(256),
+	})
+	request := dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardAggregate,
+		EffectivePolicyFingerprint: materializeTestDigest('9'), ModelID: "sales",
+		Kind: dataquery.KindSemanticAggregate, Target: "orders",
+		Metrics: []dataquery.Field{{Field: "double_count", Alias: "value"}},
+	}
+	first, err := runtime.ExecuteDataQuery(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheMiss, first.CacheOutcome)
+	second, err := runtime.ExecuteDataQuery(context.Background(), request)
+	require.NoError(t, err)
+	require.Equal(t, dataquery.CacheHit, second.CacheOutcome)
+	require.Equal(t, int32(1), database.queries.Load())
+}
+
+func TestPlanCacheDeterministicFailsClosedForMissingDatasetMapping(t *testing.T) {
+	runtime := activatedCacheRuntime(t, &Runtime{
+		modelID: "sales",
+		model: &semanticmodel.Model{Name: "sales", Tables: map[string]semanticmodel.Table{
+			"orders": {Columns: map[string]semanticmodel.ModelColumn{"id": {Name: "id", Datatype: semanticmodel.DataTypeInteger}}},
+		}, Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}}},
+		db: cacheRuntimeDatabase{}, queryCache: newQueryResultCache(256),
+	})
+	planned, err := runtime.planOwnedArrowQuery(dataquery.Query{
+		Surface: dataquery.SurfaceDashboard, Operation: dataquery.OperationDashboardRows,
+		ModelID: "sales", Kind: dataquery.KindSemanticRows, Target: "orders",
+		Fields: []dataquery.Field{{Field: "orders.id", Alias: "id"}}, Limit: 1,
+	})
+	require.NoError(t, err)
+	delete(runtime.model.Datasets, "orders")
+	require.False(t, planCacheDeterministic(runtime.model, planned.plan))
+}
+
 func TestRuntimeInvalidPolicyEvidenceBypassesResultReuse(t *testing.T) {
 	database := &countingCacheRuntimeDatabase{}
 	runtime := activatedCacheRuntime(t, &Runtime{

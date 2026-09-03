@@ -112,7 +112,7 @@ func (p *Planner) renderBundlePlanIR(requests []BundleRequest, resolutions []agg
 		mode = "multi_dataset"
 	}
 	return BundlePlan{Plan: Plan{
-		SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode,
+		SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, Mode: mode,
 		Datasets: datasets, PhysicalDependencies: uniqueStrings(append(append([]string(nil), lineage.Datasets...), lineage.PhysicalFields...)),
 		RelationshipPaths: lineage.RelationshipPaths, IR: irGraph,
 	}, Branches: branches}, nil

@@ -36,7 +36,7 @@ func renderSpatialEnvelopePlan(graph *planir.Graph, envelope planir.SpatialEnvel
 	if err != nil {
 		return Plan{}, fmt.Errorf("derive spatial envelope dependencies: %w", err)
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode, Datasets: deps.Datasets, PhysicalDependencies: deps.PhysicalFields, RelationshipPaths: deps.RelationshipPaths, IR: graph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, Mode: mode, Datasets: deps.Datasets, PhysicalDependencies: deps.PhysicalFields, RelationshipPaths: deps.RelationshipPaths, IR: graph}, nil
 }
 
 func renderAnalyticalEnvelopePlan(graph *planir.Graph, envelope planir.AnalyticalEnvelope, mode string) (Plan, error) {
@@ -57,5 +57,5 @@ func renderAnalyticalEnvelopePlan(graph *planir.Graph, envelope planir.Analytica
 	if err != nil {
 		return Plan{}, fmt.Errorf("derive analytical envelope dependencies: %w", err)
 	}
-	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Mode: mode, Datasets: deps.Datasets, PhysicalDependencies: deps.PhysicalFields, RelationshipPaths: deps.RelationshipPaths, IR: graph}, nil
+	return Plan{SQL: rendered.SQL, Args: rendered.Args, Columns: rendered.Columns, Deterministic: true, Mode: mode, Datasets: deps.Datasets, PhysicalDependencies: deps.PhysicalFields, RelationshipPaths: deps.RelationshipPaths, IR: graph}, nil
 }

@@ -58,6 +58,12 @@ func (r *Runtime) executeGovernedDataQueryArrow(ctx context.Context, request dat
 		case planErr != nil:
 			admissionReason = dataquery.CacheAdmissionReasonPlanningFailed
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionRejected, admissionReason)
+		case !planCacheDeterministic(r.model, planned.plan):
+			// Opaque or volatile plans, and plans whose participating datasets
+			// cannot be resolved to safe materialized tables, carry no positive
+			// cache-admission evidence.
+			admissionReason = dataquery.CacheAdmissionReasonNonDeterministic
+			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
 		case !planned.reusable:
 			admissionReason = dataquery.CacheAdmissionReasonDependencyUnavailable
 			observeQueryCacheAdmission(ctx, dataquery.CacheAdmissionBypassed, admissionReason)
