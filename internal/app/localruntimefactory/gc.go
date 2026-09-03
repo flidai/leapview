@@ -1,4 +1,4 @@
-package runtimefactory
+package localruntimefactory
 
 import (
 	"context"
@@ -35,10 +35,10 @@ type SQLiteGCRunConfig struct {
 }
 
 // RunSQLiteGC resolves the currently active delivery root for an explicitly
-// local development/evaluation target and runs
-// one global mark-and-sweep pass for its admitted physical pool. A missing
-// active generation is a normal pre-deployment no-op; all storage and catalog
-// errors are returned for degraded health and retry.
+// local development/evaluation target and runs one global mark-and-sweep pass
+// for its admitted physical pool. A missing active generation is a normal
+// pre-deployment no-op; all storage and catalog errors are returned for
+// degraded health and retry.
 func RunSQLiteGC(ctx context.Context, config SQLiteGCRunConfig) error {
 	if config.Database == nil || config.TargetID == "" || config.Environment == "" || config.OwnerID == "" || config.HolderID == "" {
 		return fmt.Errorf("SQLite GC database, target, scope, and holder are required")

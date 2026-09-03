@@ -33,6 +33,7 @@ import (
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	localruntimefactory "github.com/flidai/leapview/internal/app/localruntimefactory"
 	"github.com/flidai/leapview/internal/app/poolcompatibility"
 	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
@@ -988,7 +989,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			if err != nil {
 				return fmt.Errorf("resolve physical-pool GC project: %w", err)
 			}
-			return appruntimefactory.RunSQLiteGC(gcCtx, appruntimefactory.SQLiteGCRunConfig{
+			return localruntimefactory.RunSQLiteGC(gcCtx, localruntimefactory.SQLiteGCRunConfig{
 				Database: store.SQLDB(), TargetID: instanceID, ProjectID: gcProjectID.String(), Environment: string(environment), OwnerID: instanceID, HolderID: instanceID,
 				StagingRoot:   filepath.Join(cfg.RuntimeDir(), "gc"),
 				PoolS3:        gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
@@ -1001,14 +1002,14 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 	}
 	{
 		var factoryErr error
-		servingFactory, factoryErr = appruntimefactory.NewSQLiteSealedFactory(appruntimefactory.SQLiteSealedFactoryConfig{
+		servingFactory, factoryErr = localruntimefactory.NewSQLiteSealedFactory(localruntimefactory.SQLiteSealedFactoryConfig{
 			Database: store.SQLDB(), TargetID: instanceID, CatalogObjectRoot: cfg.ArtifactDir(),
 			DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), LeaseHolder: instanceID,
 			ProjectRuntimeFactory: analyticsModule.ProjectRuntimeFactoryForEnvironment,
 			DashboardMaxRows:      cfg.QueryResultMaxRows, DashboardMaxBytes: cfg.QueryResultMaxBytes,
 			PoolS3:             gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply},
 			ActivationEvidence: activeRuntimeEvidence,
-			Authorize: func(ctx context.Context, evidence appruntimefactory.SealedAuthorizationInput) error {
+			Authorize: func(ctx context.Context, evidence localruntimefactory.SealedAuthorizationInput) error {
 				if err := ctx.Err(); err != nil {
 					return err
 				}
@@ -1161,7 +1162,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 		// process available for administration but makes candidate sync fail
 		// closed with ErrCandidateUnavailable.
 		deliveryRepository := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
-		deliveryLifecycle, lifecycleErr := deployment.NewDeliveryLifecycle(appruntimefactory.BootstrapTargetResolver{
+		deliveryLifecycle, lifecycleErr := deployment.NewDeliveryLifecycle(localruntimefactory.BootstrapTargetResolver{
 			Resolver: deliveryRepository, TargetID: instanceID, ProjectID: projectID.String(), Environment: string(environment),
 			ProjectIDResolver: func(resolveCtx context.Context) (string, error) {
 				claimed, found, err := readClaim(resolveCtx)
@@ -1243,7 +1244,7 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 			} else {
 				poolContract = &ducklake.PoolContract{Pool: admission.Pool, Tuple: admission.Pool.Compatibility, Admission: admission.Admission, Evidence: admission.Evidence}
 				poolS3 := gcadapter.S3Config{Region: cfg.ManagedDataS3Region, AccessKeyID: cfg.ManagedDataS3AccessKeyID, SecretAccessKey: cfg.ManagedDataS3SecretAccessKey, SessionToken: cfg.ManagedDataS3SessionToken, Endpoint: cfg.ManagedDataS3Endpoint, PathStyle: cfg.ManagedDataS3PathStyle, ExtensionAdmission: extensionSupply}
-				poolStore, poolErr = appruntimefactory.NewCatalogObjectStore(ctx, poolContract, poolS3)
+				poolStore, poolErr = localruntimefactory.NewCatalogObjectStore(ctx, poolContract, poolS3)
 				if poolErr == nil {
 					poolCredentialBootstrap, poolErr = gcadapter.NewPoolCredentialBootstrap(poolContract, poolS3)
 				}
@@ -1395,14 +1396,14 @@ func buildLocalSQLiteRuntime(ctx context.Context, cfg config.Config, production 
 				if generation.CatalogDigest != seal.CatalogDigest || generation.PhysicalPoolID != poolContract.Pool.ID.String() || generation.CompatibilityDigest != seal.CompatibilityDigest || baseCandidate.Status != deployment.DeliveryCandidateReady || baseCandidate.ServingStateID != generation.ServingStateID || baseCandidate.ServingArtifactID != generation.ServingArtifactID || baseCandidate.ServingArtifactDigest != generation.ServingArtifactDigest {
 					return nil, fmt.Errorf("active sealed base does not match configured physical pool")
 				}
-				return &candidatecatalog.SealedArtifact{ObjectKey: seal.ObjectKey, Digest: seal.CatalogDigest, SizeBytes: seal.ObjectSize, PhysicalPoolID: seal.PhysicalPoolID, Compatibility: poolContract.Tuple, Reader: candidatecatalog.ObjectReader{Store: appruntimefactory.CandidateObjectStore{Store: poolStore}, Key: seal.ObjectKey}}, nil
+				return &candidatecatalog.SealedArtifact{ObjectKey: seal.ObjectKey, Digest: seal.CatalogDigest, SizeBytes: seal.ObjectSize, PhysicalPoolID: seal.PhysicalPoolID, Compatibility: poolContract.Tuple, Reader: candidatecatalog.ObjectReader{Store: localruntimefactory.CandidateObjectStore{Store: poolStore}, Key: seal.ObjectKey}}, nil
 			}
 		}
 		var verifyLease candidatecatalog.LeaseVerifier
 		if poolErr == nil && poolContract != nil {
-			verifyLease = appruntimefactory.SQLiteWriterLeaseVerifier(deliveryRepository)
+			verifyLease = localruntimefactory.SQLiteWriterLeaseVerifier(deliveryRepository)
 		}
-		buildFactory := appruntimefactory.BuildRequestFactory(appruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ExtensionAdmission: extensionSupply, CredentialBootstrap: poolCredentialBootstrap, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: appruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore, ExtensionAdmission: extensionSupply, CredentialBootstrap: poolCredentialBootstrap}, VerifyLease: verifyLease, RuntimeVersion: identity.Version + ":" + identity.Revision})
+		buildFactory := localruntimefactory.BuildRequestFactory(localruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ExtensionAdmission: extensionSupply, CredentialBootstrap: poolCredentialBootstrap, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: localruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore, ExtensionAdmission: extensionSupply, CredentialBootstrap: poolCredentialBootstrap}, VerifyLease: verifyLease, RuntimeVersion: identity.Version + ":" + identity.Revision})
 		planCandidate := func(planCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryPlan, error) {
 			var reuse *deployment.DeliveryReuseInput
 			if input.Candidate.Scope.BaseGenerationID != "" {

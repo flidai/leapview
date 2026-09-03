@@ -1,13 +1,10 @@
 package runtimefactory
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboarddocument "github.com/flidai/leapview/internal/dashboard/document"
@@ -358,75 +355,6 @@ func TestCandidatePlanEmitsRelationScopedReuseDecisions(t *testing.T) {
 	}
 }
 
-func TestRestatementPlanUsesExplicitCandidateLevelFullRefresh(t *testing.T) {
-	projectID := projectgraph.ResourceID("project_delivery")
-	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_restatement")
-	if err != nil {
-		t.Fatal(err)
-	}
-	artifacts := release.CandidateArtifactSet{
-		Artifact:                 release.ProjectArtifactProvenance{SourceDigest: deliveryPlanDigest('a'), ProjectDigest: deliveryPlanDigest('b'), CompilerVersion: "compiler:v1", SchemaVersion: 1},
-		AuthorizationFingerprint: deliveryPlanDigest('c'),
-		Generation:               release.CandidateGenerationArtifact{Identity: identity, DataRevision: "sources:revision", DataMode: release.GenerationDataRefreshSources, Deterministic: true},
-		Compiler:                 release.CandidateCompilerEvidence{Plan: projectcompiler.ProjectPlan{Project: "project_delivery"}, RelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')}, BaseRelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')}},
-	}
-	input := deployment.DeliveryCandidateBuildInput{ProjectID: projectID, OwnerID: "owner_1", ArtifactDigest: artifacts.Artifact.SourceDigest, Operation: deployment.DeliveryOperationRestatement, Candidate: deployment.Candidate{ID: "candidate_restatement", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}}}
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), &deployment.DeliveryReuseInput{
-		BaseExecutionDigest: deliveryPlanDigest('1'), CatalogDigest: deliveryPlanDigest('2'), BaseCatalogDigest: deliveryPlanDigest('2'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('3'), BaseCompatibilityDigest: deliveryPlanDigest('3'), Deterministic: true,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(request.Evidence.Reuse) != 1 || request.Evidence.Reuse[0].ResourceID != input.Candidate.ID || request.Evidence.Reuse[0].Reusable || request.Evidence.Reuse[0].RetainBase {
-		t.Fatalf("restatement reuse evidence = %#v, want explicit candidate-level full refresh", request.Evidence.Reuse)
-	}
-	plan := &deployment.DeliveryPlan{Operation: deployment.DeliveryOperationRestatement, Evidence: request.Evidence}
-	if err := validateReuseEvidenceCoverage(plan, artifacts, input.Candidate.ID); err != nil {
-		t.Fatalf("restatement candidate-level evidence rejected: %v", err)
-	}
-}
-
-func TestRestatementPlanEvidenceAcceptsStablePlanIdentityDuringPhysicalBuild(t *testing.T) {
-	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{
-		RelationExecution: map[string]string{"model_orders": deliveryPlanDigest('1')},
-	}}
-	plan := &deployment.DeliveryPlan{
-		ID:        "plan-planning-candidate",
-		Operation: deployment.DeliveryOperationRestatement,
-		Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{
-			ResourceID: "planning-candidate",
-			Reason:     "operation requires explicit full materialization",
-		}}},
-	}
-	if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-physical-build"); err != nil {
-		t.Fatalf("durable restatement plan identity rejected during physical build: %v", err)
-	}
-	plan.Evidence.Reuse[0].Reusable = true
-	if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-physical-build"); err == nil {
-		t.Fatal("durable restatement plan identity retained a base")
-	}
-}
-
-func TestCandidateRunnerForcesRestatementRefreshFromReuseBase(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-			baseCalled = true
-			return nil, errors.New("restatement base resolver must not run")
-		}},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate-restatement"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	plan := deployment.DeliveryPlan{Operation: deployment.DeliveryOperationRestatement, BaseGenerationID: "generation-1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate-restatement", Reason: "operation requires explicit full materialization"}}}}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan})
-	if err == nil || !strings.Contains(err.Error(), "remains reuse_base") || baseCalled {
-		t.Fatalf("restatement artifact mismatch: err=%v baseCalled=%v", err, baseCalled)
-	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataReuseBase {
-		t.Fatalf("restatement data mode mutated to %q", runner.artifacts.Generation.DataMode)
-	}
-}
-
 func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 	projectID := projectgraph.ResourceID("project_delivery")
 	identity, err := projectgraph.NewServingIdentity(projectID, "prod", "candidate_policy_only")
@@ -590,114 +518,6 @@ func dashboardPhysicalArtifact(t *testing.T, dashboardTitle string, accessVarian
 		t.Fatal(err)
 	}
 	return artifact
-}
-
-func TestReuseEvidenceCoverageRequiresExactCurrentRelations(t *testing.T) {
-	artifacts := release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{RelationExecution: map[string]string{
-		"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('2'),
-	}}}
-	valid := func(ids ...string) *deployment.DeliveryPlan {
-		decisions := make([]deployment.DeliveryReuseDecision, len(ids))
-		for i, id := range ids {
-			decisions[i] = deployment.DeliveryReuseDecision{ResourceID: id, Reusable: true}
-		}
-		return &deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: decisions}}
-	}
-	for name, plan := range map[string]*deployment.DeliveryPlan{
-		"missing":   valid("model_orders"),
-		"unknown":   valid("model_orders", "model_regions"),
-		"duplicate": valid("model_orders", "model_orders"),
-	} {
-		if err := validateReuseEvidenceCoverage(plan, artifacts, "candidate-1"); err == nil {
-			t.Errorf("%s relation evidence unexpectedly accepted", name)
-		}
-	}
-	if err := validateReuseEvidenceCoverage(valid("model_orders", "model_customers"), artifacts, "candidate-1"); err != nil {
-		t.Fatalf("exact relation evidence rejected: %v", err)
-	}
-	if err := validateReuseEvidenceCoverage(&deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "other", Reusable: true}}}}, release.CandidateArtifactSet{}, "candidate-1"); err == nil {
-		t.Fatal("candidate-level evidence accepted wrong resource ID")
-	}
-}
-
-func TestCandidateRunnerRejectsPartialRelationEvidenceBeforeBase(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-			baseCalled = true
-			return nil, errors.New("base resolver must not run")
-		}},
-		input: deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate-1"}},
-		artifacts: release.CandidateArtifactSet{Compiler: release.CandidateCompilerEvidence{RelationExecution: map[string]string{
-			"model_orders": deliveryPlanDigest('1'), "model_customers": deliveryPlanDigest('2'),
-		}}},
-	}
-	plan := deployment.DeliveryPlan{BaseGenerationID: "generation-1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "model_orders", Reusable: true}}}}
-	if _, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan}); err == nil || baseCalled {
-		t.Fatalf("partial relation evidence err=%v baseCalled=%v", err, baseCalled)
-	}
-}
-
-func TestCandidateRunnerRebuildsWhenReuseDecisionMismatches(t *testing.T) {
-	basePlan := deployment.DeliveryPlan{Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate_1", Reusable: false, Reason: "catalog compatibility identity changed"}}}}
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{
-			Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-				baseCalled = true
-				return nil, nil
-			},
-		},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: basePlan})
-	if err == nil || baseCalled {
-		t.Fatalf("mismatching reuse decision err=%v baseCalled=%v", err, baseCalled)
-	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataReuseBase {
-		t.Fatalf("mismatching reuse decision mutated data mode to %q", runner.artifacts.Generation.DataMode)
-	}
-}
-
-func TestCandidateRunnerUsesBaseForExactReuseDecision(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{
-			Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-				baseCalled = true
-				return nil, errors.New("base resolver reached")
-			},
-		},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	plan := deployment.DeliveryPlan{BaseGenerationID: "generation_1", Evidence: deployment.DeliveryPlanEvidence{Reuse: []deployment.DeliveryReuseDecision{{ResourceID: "candidate_1", Reusable: true, Reason: "exact identity"}}}}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: plan})
-	if err == nil || !strings.Contains(err.Error(), "base resolver reached") || !baseCalled {
-		t.Fatalf("exact reuse err=%v baseCalled=%v", err, baseCalled)
-	}
-}
-
-func TestCandidateRunnerMissingReuseDecisionRebuilds(t *testing.T) {
-	baseCalled := false
-	runner := &candidateCatalogRunner{
-		config: CandidateCatalogRunnerConfig{
-			Base: func(context.Context, deployment.DeliveryBuildInput) (*candidatecatalog.SealedArtifact, error) {
-				baseCalled = true
-				return nil, errors.New("base resolver must not run")
-			},
-		},
-		input:     deployment.DeliveryCandidateBuildInput{Candidate: deployment.Candidate{ID: "candidate_1"}},
-		artifacts: release.CandidateArtifactSet{Generation: release.CandidateGenerationArtifact{DataMode: release.GenerationDataReuseBase}},
-	}
-	_, err := runner.Construct(context.Background(), deployment.DeliveryBuildInput{Plan: deployment.DeliveryPlan{BaseGenerationID: "generation_1"}})
-	if err == nil || baseCalled {
-		t.Fatalf("missing reuse decision err=%v baseCalled=%v", err, baseCalled)
-	}
-	if runner.artifacts.Generation.DataMode != release.GenerationDataReuseBase {
-		t.Fatalf("missing reuse decision mutated data mode to %q", runner.artifacts.Generation.DataMode)
-	}
 }
 
 func deliveryPlanDigest(char byte) string { return "sha256:" + strings.Repeat(string(char), 64) }

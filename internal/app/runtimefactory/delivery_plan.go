@@ -211,6 +211,13 @@ func materializationIdentity(artifacts release.CandidateArtifactSet) (string, er
 	return planDigest(string(encoded)), nil
 }
 
+// MaterializationIdentity exposes the canonical physical-projection identity
+// to the local candidate runner without exposing that runner's persistence
+// adapters through this package.
+func MaterializationIdentity(artifacts release.CandidateArtifactSet) (string, error) {
+	return materializationIdentity(artifacts)
+}
+
 // CandidateDeliveryPolicy is resolved by the target owner at composition
 // time. Planning must not invent approval, rollback, or retention claims.
 type CandidateDeliveryPolicy struct {

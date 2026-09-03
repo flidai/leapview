@@ -1,4 +1,4 @@
-package runtimefactory
+package localruntimefactory
 
 import (
 	"strings"

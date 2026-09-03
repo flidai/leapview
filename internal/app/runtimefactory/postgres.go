@@ -141,8 +141,8 @@ type PostgresServingAuthorizationInput struct {
 }
 
 // NewPostgresSealedFactory builds the production serving runtime whose DuckLake
-// catalog is PostgreSQL-backed. NewSQLiteSealedFactory is reserved
-// for development/evaluation composition and is never a production fallback.
+// catalog is PostgreSQL-backed. Local development/evaluation composition lives
+// in the localruntimefactory package and is never a production fallback.
 func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.RuntimeFactory {
 	return postgresSealedFactory{
 		base:    servingStateRuntimeFactory{duckDBDir: config.Base.DuckDBDir, runtimeDir: config.Base.RuntimeDir, activationEvidence: config.Base.ActivationEvidence, servingArtifacts: config.ServingArtifacts},

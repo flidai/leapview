@@ -1,4 +1,4 @@
-package runtimefactory
+package localruntimefactory
 
 import (
 	"context"
@@ -12,6 +12,7 @@ import (
 	analyticsgates "github.com/flidai/leapview/internal/analytics/gates"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/gcadapter"
+	appruntimefactory "github.com/flidai/leapview/internal/app/runtimefactory"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/release"
 )
@@ -25,7 +26,7 @@ func TestNewCatalogObjectStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) 
 
 func TestNewL3ObjectStoreS3RequiresTargetKeysBeforeAWSConfig(t *testing.T) {
 	contract := deliveryCredentialTestContract(t)
-	if _, err := NewL3ObjectStore(context.Background(), contract, gcadapter.S3Config{}); err == nil || !strings.Contains(err.Error(), "target-owned S3 access") {
+	if _, err := appruntimefactory.NewL3ObjectStore(context.Background(), contract, gcadapter.S3Config{}); err == nil || !strings.Contains(err.Error(), "target-owned S3 access") {
 		t.Fatalf("missing L3 S3 credentials error = %v", err)
 	}
 }
