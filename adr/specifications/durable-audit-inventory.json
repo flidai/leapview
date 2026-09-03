@@ -82,9 +82,9 @@
       "events": ["dashboard_authoring.draft_created", "dashboard_authoring.command_executed", "dashboard_authoring.draft_forked"],
       "guarantee": "transactional",
       "failureBehavior": "The authoring mutation and durable audit intent commit together; failure to persist the intent rolls back the mutation.",
-      "implementation": ["internal/dashboard/http/authoring_api.go", "internal/dashboard/authoring/sqlite/repository.go", "internal/dashboard/authoring/audit.go"],
+      "implementation": ["internal/dashboard/http/authoring_api.go", "internal/dashboard/authoring/postgres/repository.go", "internal/dashboard/authoring/audit.go"],
       "contractSources": ["api/typespec/dashboard_authoring.tsp"],
-      "evidence": ["internal/dashboard/authoring/sqlite/audit_intent_test.go", "internal/dashboard/http/authoring_api_test.go"]
+      "evidence": ["internal/dashboard/authoring/postgres/repository_test.go", "internal/dashboard/http/authoring_api_test.go"]
     },
     {
       "id": "dashboard.publication-command",
@@ -93,9 +93,9 @@
       "events": ["dashboard publication lifecycle"],
       "guarantee": "transactional",
       "failureBehavior": "Publication state and its durable audit intent commit together; failure to persist either aborts the command.",
-      "implementation": ["internal/dashboard/module/publications.go", "internal/dashboard/publication/sqlite/repository.go", "internal/dashboard/publication/command.go"],
+      "implementation": ["internal/dashboard/module/publications.go", "internal/dashboard/publication/postgres/repository.go", "internal/dashboard/publication/command.go"],
       "contractSources": ["api/typespec/dashboard_publications.tsp"],
-      "evidence": ["internal/dashboard/publication/sqlite/repository_test.go", "internal/dashboard/module/publication_command_audit_test.go"]
+      "evidence": ["internal/dashboard/publication/postgres/repository_test.go", "internal/dashboard/module/publication_command_audit_test.go"]
     },
     {
       "id": "dashboard.data-access",
@@ -127,9 +127,9 @@
       "events": ["connection.binding.created", "connection.binding.updated", "connection.binding.enabled", "connection.binding.disabled"],
       "guarantee": "transactional",
       "failureBehavior": "Binding state and its durable audit intent commit together; audit failure rolls the binding mutation back.",
-      "implementation": ["internal/analytics/connectionbinding/administration_audit.go", "internal/analytics/connectionbinding/administration.go", "internal/analytics/sqlite/connection_binding.go"],
+      "implementation": ["internal/analytics/connectionbinding/administration_audit.go", "internal/analytics/connectionbinding/administration.go", "internal/analytics/connectionbinding/postgres/repository.go"],
       "contractSources": ["api/typespec/connection_bindings.tsp"],
-      "evidence": ["internal/analytics/connectionbinding/audit_intent_test.go", "internal/analytics/sqlite/connection_binding_test.go"]
+      "evidence": ["internal/analytics/connectionbinding/audit_intent_test.go", "internal/analytics/connectionbinding/postgres/repository_test.go"]
     },
     {
       "id": "connection.credential-rotation",
@@ -153,7 +153,7 @@
         "best-effort": ["agent configuration update and tool observations"]
       },
       "failureBehavior": "Conversation and run mutations fail closed when the durable audit intent cannot commit; configuration and tool observations preserve their result and log a redacted failure.",
-      "implementation": ["internal/agent/http/command_audit.go", "internal/agent/module/command_audit.go", "internal/agent/sqlite/repository.go"],
+      "implementation": ["internal/agent/http/command_audit.go", "internal/agent/module/command_audit.go", "internal/agent/postgres/repository.go"],
       "contractSources": ["api/typespec/agent.tsp"],
       "evidence": ["internal/agent/http/command_audit_test.go", "internal/agent/module/command_audit_test.go"]
     },
@@ -164,9 +164,9 @@
       "events": ["managed-data upload-session and S3 multipart lifecycle"],
       "guarantee": "transactional",
       "failureBehavior": "Managed-data and multipart state transitions commit with their durable audit intent; audit failure rolls the transition back and payloads exclude file and credential secrets.",
-      "implementation": ["internal/manageddata/http/command_audit.go", "internal/manageddata/module/command_audit.go", "internal/manageddata/sqlite/repository.go"],
+      "implementation": ["internal/manageddata/http/command_audit.go", "internal/manageddata/module/command_audit.go", "internal/manageddata/postgres/repository.go"],
       "contractSources": ["api/typespec/managed_data.tsp", "api/typespec/upload_s3_multipart.tsp"],
-      "evidence": ["internal/manageddata/module/command_audit_test.go", "internal/manageddata/sqlite/repository_test.go"]
+      "evidence": ["internal/manageddata/module/command_audit_test.go", "internal/manageddata/postgres/repository_test.go"]
     },
     {
       "id": "deployment.commands",
@@ -190,9 +190,9 @@
       "events": ["release.created", "release.artifact_uploaded", "release.validating"],
       "guarantee": "transactional",
       "failureBehavior": "Release create, artifact upload, and finalization state commit with their durable audit intent; audit failure rolls the transition back.",
-      "implementation": ["internal/release/module/api.go", "internal/release/service.go", "internal/release/sqlite/repository.go"],
+      "implementation": ["internal/release/module/api.go", "internal/release/service.go", "internal/release/postgres/repository.go"],
       "contractSources": ["api/typespec/releases.tsp"],
-      "evidence": ["internal/release/sqlite/repository_test.go", "internal/release/module/operation_contracts_test.go"]
+      "evidence": ["internal/release/postgres/repository_test.go", "internal/release/module/operation_contracts_test.go"]
     },
     {
       "id": "refresh.commands",
@@ -205,7 +205,7 @@
         "best-effort": ["terminal execution observations"]
       },
       "failureBehavior": "The durable run lifecycle is authoritative; audit verification or terminal observation failures are logged and do not fabricate a run result.",
-      "implementation": ["internal/refresh/module/api.go", "internal/refresh/sqlite/runs.go"],
+      "implementation": ["internal/refresh/module/api.go", "internal/refresh/postgres/repository.go"],
       "contractSources": ["api/typespec/refresh_runs.tsp"],
       "evidence": ["internal/refresh/module/operation_contracts_test.go", "internal/refresh/module/module_test.go"]
     },
