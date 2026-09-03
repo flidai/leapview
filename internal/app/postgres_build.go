@@ -25,6 +25,7 @@ import (
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
+	"github.com/flidai/leapview/internal/app/desktopdiscovery"
 	appobjectstore "github.com/flidai/leapview/internal/app/objectstore"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	projectsource "github.com/flidai/leapview/internal/app/projectsource"
@@ -843,6 +844,9 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		}
 		return nil
 	}
+	rateLimits := apihttpmiddleware.ProductionRateLimitConfig()
+	rateLimits.Enabled = cfg.RateLimitingEnabled()
+	rateLimits.UseRealIP = cfg.RateLimitingUsesRealIP()
 	routes, runtimeServices, platform, policy, err := buildApplicationSurfaces(ctx, dashboardmodule.NewRuntimeMetrics(dashboardmodule.RuntimeMetricsOptions{Provider: runtimeHost.Provider(), ProjectID: projectID, PublishedCompilationReader: authoring.PublishedCompilationReader()}), dataAssemblyInputs{PlatformHealth: bootstrap.RuntimePool(), ServingStateRepo: graph.ServingState, AccessRepo: accessBundle.Repository, APIIdempotency: graph.Idempotency, CursorSigning: graph.CursorSigning, BypassDurableIdempotency: map[string]struct{}{refreshmodule.CreateRefreshRunOperationID: {}, refreshmodule.CancelRefreshRunOperationID: {}}, DashboardPublicationReconciler: reconciler, DashboardPersistence: graph.DashboardPersistence, RefreshPersistence: &refreshPersistence, RequireNativeDashboard: true, RequireExplicitAPIProtocol: true, AdditionalWorkers: []platformlifecycle.Component{{Start: duckLakeRetention.Start, Stop: duckLakeRetention.Stop}}}, capabilityAssemblyInputs{ReleaseModule: release, JobModule: workloadBundle.Jobs, AgentPersistence: graph.AgentPersistence, AccessModule: accessBundle.Module, ManagedDataModule: managedData, AnalyticsModule: analytics, Authoring: authoring, DashboardAssets: dashboardAssets, Product: product, ProductStatus: productAdministrationStatus(cfg, instanceID, publicURL, string(environment), buildinfo.Current()), ProjectCatalog: projectCatalogService, ProjectGraph: projectmodule.NewActiveServingStateGraphReader(runtimeHost.Provider(), graph.ServingState)}, workflowAssemblyInputs{AgentSettings: graph.Settings, AgentConfig: agentmodule.ModelConfig{APIKey: cfg.AgentAPIKey, BaseURL: cfg.AgentBaseURL, Model: cfg.AgentModel}, Auth: accessBundle.Module.Auth(), Reloader: runtimeHost, Workload: workloadBundle.Controller, ManagedDataValidation: managedData.BindingValidation(), ManagedDataResolver: managedResolver, DeploymentConfig: deploymentConfig, ServingArtifacts: nativeProjectSource.Objects, RefreshPipelineClock: refreshmodule.NewRealClock(), EnableRefreshDispatcher: true, RefreshTargetRevision: resolveRefreshTargetRevision, RefreshSourceDigest: resolveRefreshSourceDigest, CanonicalRefreshExecutor: nativeRefreshExecutor.Execute, CanonicalCompletionCoordinator: canonicalCompletionCoordinator, CanonicalResultReconciler: canonicalResultReconciler, PublishedVersion: appdeploymentpostgres.NewNativePublishedDataVersionResolver(nativeDeliveryReader, instanceID)}, runtimeAssemblyInputs{RuntimeHost: runtimeHost, Production: true, DeliveryTargetReader: targetReader, ProjectID: projectID, ProjectIDResolver: currentProject, ServingSnapshotResolver: func(ctx context.Context) (string, error) {
 		lease, err := runtimeHost.Acquire(ctx)
 		if err != nil {
@@ -850,7 +854,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		}
 		defer lease.Release()
 		return lease.Identity().GenerationID, nil
-	}, DuckLakeCatalogPath: "", DuckLakeDataPath: "", DefaultEnvironment: string(environment), Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: true, SealedServing: true, DeliveryStartup: deliveryStartup}, httpAssemblyInputs{PublicURL: publicURL, RateLimits: apihttpmiddleware.ProductionRateLimitConfig(), SecurityHeaders: apihttpmiddleware.SecurityHeaders(true), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
+	}, DuckLakeCatalogPath: "", DuckLakeDataPath: "", DefaultEnvironment: string(environment), SCIMBearerToken: cfg.SCIMBearerToken, MetricsBearerToken: cfg.MetricsBearerToken, Assets: assets, InstanceID: instanceID, AllowedHosts: allowedHosts, RequireActiveDeployment: false, RequireQueryAuthorization: true, SealedServing: true, DeliveryStartup: deliveryStartup}, httpAssemblyInputs{PublicURL: publicURL, DesktopDiscovery: desktopdiscovery.Config{CanonicalOrigin: publicURL, InstanceID: instanceID, DisplayName: "LeapView", ServerVersion: assets.Version(), AllowLoopbackHTTP: false}, RateLimits: rateLimits, SecurityHeaders: apihttpmiddleware.SecurityHeaders(cfg.HSTSEnabled(cookieSecure)), RequestLogging: cfg.RequestLoggingEnabled(), Logger: slog.Default(), JobLeaseTimeout: cfg.RefreshJobLeaseTimeout, ManagedDataTus: managedData.TusHandler()})
 	if err != nil {
 		return fail(err)
 	}
