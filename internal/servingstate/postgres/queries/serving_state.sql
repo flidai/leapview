@@ -90,10 +90,15 @@ SELECT b.generation_id::text, b.project_id, b.environment, b.artifact_id,
        b.artifact_metadata_digest, b.manifest_json::text, b.project_digest,
        b.access_policy_json::text, b.dashboard_publications_json::text,
        b.dashboard_appearances_json::text, b.size_bytes, b.created_by,
-       b.created_at, s.ducklake_snapshot_id
+       b.created_at, s.ducklake_snapshot_id, p.committed_at
 FROM serving_state.bundle b
 JOIN delivery.delivery_generation g ON g.generation_id = b.generation_id
 JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
+LEFT JOIN delivery.delivery_active_pointer ap
+  ON ap.target_id = g.target_id AND ap.generation_id = g.generation_id
+LEFT JOIN delivery.delivery_publication p
+  ON p.publication_id = ap.publication_id
+ AND p.target_id = ap.target_id AND p.generation_id = ap.generation_id
 WHERE b.generation_id = $1::uuid;
 
 -- name: GetActiveBundle :one
@@ -103,13 +108,17 @@ SELECT b.generation_id::text, b.project_id, b.environment, b.artifact_id,
        b.artifact_metadata_digest, b.manifest_json::text, b.project_digest,
        b.access_policy_json::text, b.dashboard_publications_json::text,
        b.dashboard_appearances_json::text, b.size_bytes, b.created_by,
-       b.created_at, s.ducklake_snapshot_id
+       b.created_at, s.ducklake_snapshot_id, p.committed_at
 FROM delivery.delivery_active_pointer ap
 JOIN delivery.delivery_target t ON t.target_id = ap.target_id
 JOIN delivery.delivery_generation g ON g.generation_id = ap.generation_id
 JOIN delivery.delivery_snapshot_seal s ON s.seal_id = g.snapshot_seal_id
+JOIN delivery.delivery_publication p
+  ON p.publication_id = ap.publication_id
+ AND p.target_id = ap.target_id AND p.generation_id = ap.generation_id
 JOIN serving_state.bundle b ON b.generation_id = g.generation_id
-WHERE t.project_id = $1 AND t.environment = $2;
+WHERE t.project_id = $1 AND t.environment = $2
+  AND p.state = 'committed' AND p.committed_at IS NOT NULL;
 
 -- name: InsertBundle :execrows
 INSERT INTO serving_state.bundle (

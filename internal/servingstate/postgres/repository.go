@@ -61,7 +61,7 @@ type Bundle struct {
 	ManifestJSON, ProjectDigest, AccessPolicyJSON, DashboardPublicationsJSON, DashboardAppearancesJSON string
 	SizeBytes                                                                                          int64
 	DuckLakeSnapshotID                                                                                 int64
-	CreatedBy, CreatedAt                                                                               string
+	CreatedBy, CreatedAt, ActivatedAt                                                                  string
 }
 
 type GenerationBundleInput struct {
@@ -409,7 +409,11 @@ func bundleFromGetRow(row servingdb.GetBundleRow) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
+	bundle := Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}
+	if row.CommittedAt.Valid {
+		bundle.ActivatedAt = row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)
+	}
+	return bundle, nil
 }
 
 func bundleFromActiveRow(row servingdb.GetActiveBundleRow) (Bundle, error) {
@@ -417,10 +421,10 @@ func bundleFromActiveRow(row servingdb.GetActiveBundleRow) (Bundle, error) {
 	if err != nil {
 		return Bundle{}, err
 	}
-	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
+	return Bundle{GenerationID: row.BGenerationID, ProjectID: pid, Environment: servingstate.Environment(row.Environment), ArtifactID: row.ArtifactID, ArtifactDigest: row.ArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, ArtifactFormat: row.ArtifactFormat, ArtifactLocator: row.ArtifactLocator, StorageSecurityDomain: row.StorageSecurityDomain, ArtifactContentType: row.ArtifactContentType, ArtifactMetadataDigest: row.ArtifactMetadataDigest, ManifestJSON: row.BManifestJson, ProjectDigest: row.ProjectDigest, AccessPolicyJSON: row.BAccessPolicyJson, DashboardPublicationsJSON: row.BDashboardPublicationsJson, DashboardAppearancesJSON: row.BDashboardAppearancesJson, SizeBytes: row.SizeBytes, DuckLakeSnapshotID: row.DucklakeSnapshotID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt.Time.UTC().Format(time.RFC3339Nano), ActivatedAt: row.CommittedAt.Time.UTC().Format(time.RFC3339Nano)}, nil
 }
 func bundleToState(b Bundle, status servingstate.Status) servingstate.State {
-	return servingstate.State{ID: servingstate.ID(b.GenerationID), ProjectID: b.ProjectID, Environment: b.Environment, Status: status, Source: servingstate.SourcePublish, Digest: b.ArtifactDigest, ManifestJSON: b.ManifestJSON, ProjectDigest: b.ProjectDigest, AccessPolicyJSON: b.AccessPolicyJSON, DashboardPublicationsJSON: b.DashboardPublicationsJSON, DashboardAppearancesJSON: b.DashboardAppearancesJSON, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, DuckLakeSnapshotID: b.DuckLakeSnapshotID}
+	return servingstate.State{ID: servingstate.ID(b.GenerationID), ProjectID: b.ProjectID, Environment: b.Environment, Status: status, Source: servingstate.SourcePublish, Digest: b.ArtifactDigest, ManifestJSON: b.ManifestJSON, ProjectDigest: b.ProjectDigest, AccessPolicyJSON: b.AccessPolicyJSON, DashboardPublicationsJSON: b.DashboardPublicationsJSON, DashboardAppearancesJSON: b.DashboardAppearancesJSON, CreatedBy: b.CreatedBy, CreatedAt: b.CreatedAt, ActivatedAt: b.ActivatedAt, DuckLakeSnapshotID: b.DuckLakeSnapshotID}
 }
 func bundleArtifact(b Bundle) servingstate.Artifact {
 	return servingstate.Artifact{ID: b.ArtifactID, ServingStateID: servingstate.ID(b.GenerationID), Digest: b.ArtifactDigest, Format: b.ArtifactFormat, Locator: b.ArtifactLocator, StorageSecurityDomain: b.StorageSecurityDomain, ContentType: b.ArtifactContentType, MetadataDigest: b.ArtifactMetadataDigest, ManifestJSON: b.ManifestJSON, SizeBytes: b.SizeBytes, CreatedAt: b.CreatedAt}

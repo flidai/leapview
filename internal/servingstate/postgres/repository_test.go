@@ -94,7 +94,7 @@ func seedGenerationEnvironment(t *testing.T, admin *pgxpool.Pool, generation, ta
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = admin.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,generation_id,target_id,state,actor_id,committed_at) VALUES($1::uuid,$2::uuid,$3,'committed','test',clock_timestamp())`, publication, generation, target)
+	_, err = admin.Exec(ctx, `INSERT INTO delivery.delivery_publication(publication_id,generation_id,target_id,state,actor_id,committed_at) VALUES($1::uuid,$2::uuid,$3,'committed','test','2026-01-02T03:04:05Z'::timestamptz)`, publication, generation, target)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -415,6 +415,13 @@ func TestAdmitGenerationBundleAndActiveRead(t *testing.T) {
 	}
 	if state.ID != servingstate.ID(generation) || artifact.ID != "artifact-"+strings.Repeat("a", 64) || artifact.Path != "" || artifact.Locator != input.ArtifactLocator || artifact.StorageSecurityDomain != "runtime" || artifact.ContentType != "application/gzip" || artifact.MetadataDigest != input.ArtifactMetadataDigest {
 		t.Fatalf("active=%#v %#v", state, artifact)
+	}
+	if activatedAt, err := time.Parse(time.RFC3339Nano, state.ActivatedAt); err != nil || !activatedAt.Equal(time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)) {
+		t.Fatalf("active serving state activation time = %q, %v", state.ActivatedAt, err)
+	}
+	byID, err := r.ByID(t.Context(), servingstate.ID(generation))
+	if err != nil || byID.Status != servingstate.StatusActive || byID.ActivatedAt != state.ActivatedAt {
+		t.Fatalf("active serving state by id = %#v, %v", byID, err)
 	}
 	tx, err = pool.Begin(t.Context())
 	if err != nil {
