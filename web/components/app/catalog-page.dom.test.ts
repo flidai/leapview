@@ -703,15 +703,22 @@ test('dashboard lifecycle statuses use distinct semantic icons and tones', async
         className: status.className,
         label: status.textContent?.trim(),
         icon: status.querySelector('.entity-list-status-icon')?.innerHTML,
+        iconWidth: Math.round(status.querySelector('.entity-list-status-icon svg')?.getBoundingClientRect().width ?? 0),
+        fontWeight: getComputedStyle(status).fontWeight,
+        title: status.closest('td')?.getAttribute('title'),
       }))
     })
 
     expect(state.map(({ label, className }) => ({ label, className }))).toEqual([
-      { label: 'Published', className: 'entity-list-status is-success' },
-      { label: 'Private draft', className: 'entity-list-status is-muted' },
-      { label: 'Unpublished changes', className: 'entity-list-status is-attention' },
-      { label: 'Published', className: 'entity-list-status is-success' },
+      { label: 'Published', className: 'entity-list-status is-success is-quiet' },
+      { label: 'Draft', className: 'entity-list-status is-muted is-quiet' },
+      { label: 'Changes pending', className: 'entity-list-status is-attention is-quiet' },
+      { label: 'Published', className: 'entity-list-status is-success is-quiet' },
     ])
+    expect(state.every(({ fontWeight }) => fontWeight === '400')).toBe(true)
+    expect(state.every(({ iconWidth }) => iconWidth === 14)).toBe(true)
+    expect(state[1].title).toContain('Private draft')
+    expect(state[2].title).toContain('Unpublished changes')
     expect(state[1].icon).toContain('cx="12" cy="16" r="1"')
     expect(state[2].icon).toContain('M14.364 13.634')
     expect(state[0].icon).not.toEqual(state[1].icon)

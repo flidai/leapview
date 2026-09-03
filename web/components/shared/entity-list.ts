@@ -86,7 +86,7 @@ export type EntityListColumn = {
   width?: string
   align?: 'left' | 'right'
   sortable?: boolean
-  render?: 'badges' | 'actions' | 'status' | 'person'
+  render?: 'badges' | 'actions' | 'status' | 'quiet-status' | 'person'
 }
 
 export type EntityListFilter = {
@@ -701,6 +701,21 @@ const entityListStyles = `
   .entity-list-status.is-danger .entity-list-status-icon { color: var(--lv-fg-danger); }
   .entity-list-status.is-attention .entity-list-status-icon { color: var(--lv-fg-warning); }
 
+  .entity-list-status.is-quiet {
+    gap: var(--base-size-4);
+    color: var(--lv-fg-muted);
+    font: var(--lv-type-body-compact);
+    font-weight: var(--base-text-weight-normal);
+  }
+
+  .entity-list-status.is-quiet.is-attention { color: var(--lv-fg-default); }
+
+  .entity-list-status.is-quiet .entity-list-status-icon,
+  .entity-list-status.is-quiet .entity-list-status-icon svg {
+    width: calc(var(--base-size-16) - var(--borderWidth-thick));
+    height: calc(var(--base-size-16) - var(--borderWidth-thick));
+  }
+
   .entity-list.is-compact {
     gap: var(--base-size-8);
   }
@@ -1093,8 +1108,8 @@ class EntityList extends LitElement {
                   aria-haspopup=${action.icon === 'more' ? 'menu' : nothing}
                 >${lucideIcon(entityActionIcon(action.icon), { size: 15, strokeWidth: 2 })}</button>
 	              `)}</span>`
-            : column.render === 'status'
-              ? this.renderStatus(value)
+            : column.render === 'status' || column.render === 'quiet-status'
+              ? this.renderStatus(value, column.render === 'quiet-status')
               : column.render === 'person'
                 ? this.renderPerson(item, column.id, value)
               : (value == null || value === '' ? '—' : value)}
@@ -1152,12 +1167,12 @@ class EntityList extends LitElement {
     }))
   }
 
-  private renderStatus(value: string | number | undefined) {
+  private renderStatus(value: string | number | undefined, quiet = false) {
     const label = value == null || value === '' ? '—' : String(value)
     const status = entityStatusPresentation(label)
     return html`
-      <span class=${`entity-list-status is-${status.tone}`}>
-        <span class="entity-list-status-icon" aria-hidden="true">${lucideIcon(status.icon, { size: 16, strokeWidth: 2 })}</span>
+      <span class=${`entity-list-status is-${status.tone}${quiet ? ' is-quiet' : ''}`}>
+        <span class="entity-list-status-icon" aria-hidden="true">${lucideIcon(status.icon, { size: quiet ? 14 : 16, strokeWidth: 2 })}</span>
         <span>${label}</span>
       </span>
     `
@@ -1287,8 +1302,10 @@ function entityStatusPresentation(label: string): { icon: IconNode, tone: 'succe
     case 'published':
       return { icon: CheckCircle2, tone: 'success' }
     case 'private draft':
+    case 'draft':
       return { icon: LockKeyhole, tone: 'muted' }
     case 'unpublished changes':
+    case 'changes pending':
       return { icon: FilePenLine, tone: 'attention' }
     case 'failed':
     case 'cancelled':
