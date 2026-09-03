@@ -25,6 +25,7 @@ Promote the same reviewed project commit and managed revision identities through
 ## Run and recover the service
 
 - Use [Health and observability](/docs/guides/operate/observability) for readiness, metrics, logs, refresh activity, query events, and synthetic verification.
+- Use [PostgreSQL operations and high availability](/docs/guides/operate/postgresql-operations) for pool alerts, provider telemetry, maintenance fencing, and failover validation.
 - Use [Backup and restore](/docs/guides/operate/backup-restore) to coordinate provider-native recovery points; LeapView does not create a production backup archive.
 - Use [Delivery reachability and recovery boundaries](/docs/guides/operate/delivery-recovery) when an immutable delivery root needs investigation or recovery.
 - Use [Operational troubleshooting](/docs/guides/operate/troubleshooting) to locate failures across infrastructure, active data, semantic modeling, and dashboard behavior.

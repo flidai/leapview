@@ -254,6 +254,11 @@ sections:
         type: how-to
         summary: Monitor health, query activity, refreshes, and deployments.
         source: articles/operate/observability.md
+      - slug: guides/operate/postgresql-operations
+        title: PostgreSQL operations and high availability
+        type: how-to
+        summary: Operate named PostgreSQL pools, provider-managed HA, maintenance, and failover validation.
+        source: articles/operate/postgresql-operations.md
       - slug: guides/operate/backup-restore
         title: Backup and restore
         type: how-to

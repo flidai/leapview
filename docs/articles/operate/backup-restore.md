@@ -22,9 +22,10 @@ retain the encryption keys and secret-manager procedures needed to restore
 them.
 
 LeapView does not provide a product-owned local SQLite/file archive that can be
-used as a PostgreSQL target backup. A complete production procedure for
-PostgreSQL PITR and DuckLake/object-store recovery requires a separate native
-runbook and ADR; until that exists, do not claim that a local archive or copied
+used as a PostgreSQL target backup. Follow [PostgreSQL operations and high
+availability](/docs/guides/operate/postgresql-operations) for the provider
+ownership boundary, alert conditions, maintenance fencing, credential
+rotation, and failover checks. Do not claim that a local archive or copied
 Parquet files are a supported restore artifact.
 
 ## Restore and verify

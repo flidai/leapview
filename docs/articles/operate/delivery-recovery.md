@@ -33,11 +33,11 @@ provider's native snapshot, versioning, replication, or restore mechanism.
 Those recovery points must be mutually consistent with the target metadata.
 
 LeapView does not currently provide a product-owned local SQLite/file archive or
-an offline delivery-repair workflow for a PostgreSQL target. A complete
-production recovery procedure requires a separate native PostgreSQL,
-DuckLake, and object-storage runbook and ADR. Until that exists, leave
-readiness failed when authority or physical closure cannot be proved and
-escalate with the captured evidence.
+an offline delivery-repair workflow for a PostgreSQL target. Use [PostgreSQL
+operations and high availability](/docs/guides/operate/postgresql-operations)
+for provider ownership, capacity gates, maintenance fencing, and failover
+validation. Leave readiness failed when authority or physical closure cannot
+be proved and escalate with the captured evidence.
 
 ## Verify after recovery
 
