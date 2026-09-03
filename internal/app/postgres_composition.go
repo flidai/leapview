@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sync"
 
+	ducklakecatalog "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/app/postgresducklake"
@@ -20,11 +21,12 @@ import (
 // readiness is tied to the exact connections retained by the process rather
 // than to migration success.
 type postgresControlPlaneLifecycle struct {
-	pools               *platformpostgres.ControlPlanePools
-	ducklake            *platformpostgres.Pool
-	ducklakeMaintenance *platformpostgres.Pool
-	stop                sync.Once
-	err                 error
+	pools                  *platformpostgres.ControlPlanePools
+	ducklake               *platformpostgres.Pool
+	ducklakeMaintenance    *platformpostgres.Pool
+	ducklakeMetadataSchema string
+	stop                   sync.Once
+	err                    error
 }
 
 func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgresControlPlaneLifecycle, error) {
@@ -139,7 +141,10 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("PostgreSQL DuckLake maintenance database %q differs from runtime database %q", ducklakeMaintenanceDatabase, ducklakeDatabase)
 	}
-	return &postgresControlPlaneLifecycle{pools: pools, ducklake: ducklake, ducklakeMaintenance: ducklakeMaintenance}, nil
+	return &postgresControlPlaneLifecycle{
+		pools: pools, ducklake: ducklake, ducklakeMaintenance: ducklakeMaintenance,
+		ducklakeMetadataSchema: ducklakecatalog.MetadataSchemaForPool(cfg.DeliveryPhysicalPoolID),
+	}, nil
 }
 
 // validatePostgresDuckLakeRuntimeIdentity is the production admission seam
@@ -218,16 +223,31 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 	if err := postgresbaseline.Verify(ctx, l.pools.Runtime); err != nil {
 		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
 	}
+	if err := postgresbaseline.VerifyControlRuntimeAdmission(ctx, l.pools.Runtime); err != nil {
+		return fmt.Errorf("verify PostgreSQL control runtime admission: %w", err)
+	}
+	if err := postgresbaseline.VerifyControlMaintenanceAdmission(ctx, l.pools.Maintenance); err != nil {
+		return fmt.Errorf("verify PostgreSQL control maintenance admission: %w", err)
+	}
 	if l.pools.Readonly != nil {
 		if err := l.pools.Readonly.Ping(ctx); err != nil {
 			return fmt.Errorf("ping PostgreSQL control readonly pool: %w", err)
+		}
+		if err := postgresbaseline.VerifyControlReadonlyAdmission(ctx, l.pools.Readonly); err != nil {
+			return fmt.Errorf("verify PostgreSQL control readonly admission: %w", err)
 		}
 	}
 	if err := l.ducklake.Ping(ctx); err != nil {
 		return fmt.Errorf("ping PostgreSQL DuckLake runtime pool: %w", err)
 	}
+	if err := postgresbaseline.VerifyDuckLakeAdmission(ctx, l.ducklake, l.ducklakeMetadataSchema); err != nil {
+		return fmt.Errorf("verify PostgreSQL DuckLake runtime admission: %w", err)
+	}
 	if err := l.ducklakeMaintenance.Ping(ctx); err != nil {
 		return fmt.Errorf("ping PostgreSQL DuckLake maintenance pool: %w", err)
+	}
+	if err := postgresbaseline.VerifyDuckLakeAdmission(ctx, l.ducklakeMaintenance, l.ducklakeMetadataSchema); err != nil {
+		return fmt.Errorf("verify PostgreSQL DuckLake maintenance admission: %w", err)
 	}
 	return nil
 }

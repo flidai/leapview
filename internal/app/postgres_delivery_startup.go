@@ -42,6 +42,8 @@ type postgresDeliveryStartupPhysicalPools interface {
 // validation evidence.
 type postgresDeliveryStartupRecoverySets interface {
 	ReadExact(context.Context, string) (recoveryset.RecoverySet, error)
+	ValidationAttempt(context.Context, string) (recoveryset.ValidationAttempt, error)
+	ValidationResult(context.Context, string) (recoveryset.ValidationResult, error)
 }
 
 type postgresDeliveryStartupCheckConfig struct {
@@ -117,6 +119,13 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 			}
 			if set.Status != recoveryset.StatusPublished {
 				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetNotPublished)
+			}
+			code, validationErr := postgresDeliveryStartupRecoveryValidation(ctx, config.Recovery, set)
+			if validationErr != nil {
+				return fmt.Errorf("delivery startup recovery validation: %w", validationErr)
+			}
+			if code != "" {
+				return postgresDeliveryStartupDiagnostics(config.TargetID, code)
 			}
 			selectedRecovery = &set
 		}
@@ -308,6 +317,62 @@ func postgresDeliveryStartupSealComplete(seal appdeploymentpostgres.StartupSnaps
 		seal.ArtifactRoot == generation.ArtifactRoot &&
 		strings.TrimSpace(seal.ArtifactRootDigest) != "" &&
 		seal.ArtifactRootDigest == generation.ArtifactRootDigest
+}
+
+// postgresDeliveryStartupRecoveryValidation proves that the published
+// frontier points at one exact, immutable validation attempt and its matching
+// result. Both rows are read by the attempt ID persisted on the frontier; no
+// latest/current selector is ever consulted. Validation evidence is treated as
+// control-plane data, so only stable diagnostic codes cross the readiness
+// boundary.
+func postgresDeliveryStartupRecoveryValidation(
+	ctx context.Context,
+	authority postgresDeliveryStartupRecoverySets,
+	set recoveryset.RecoverySet,
+) (deployment.DeliveryStartupDiagnosticCode, error) {
+	attemptID := strings.TrimSpace(set.PublishedValidationAttemptID)
+	if attemptID == "" {
+		return deployment.DeliveryStartupRecoverySetValidationMissing, nil
+	}
+	attempt, err := authority.ValidationAttempt(ctx, attemptID)
+	if err != nil {
+		if errors.Is(err, recoveryset.ErrNotFound) || postgresDeliveryStartupNotFound(err) {
+			return deployment.DeliveryStartupRecoverySetValidationMissing, nil
+		}
+		if errors.Is(err, recoveryset.ErrInvalid) {
+			return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+		}
+		return "", err
+	}
+	if attempt.AttemptID != attemptID || attempt.SetID != set.ID || attempt.FenceEpoch != set.FenceEpoch {
+		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+	}
+	if attempt.Status != recoveryset.ValidationPassed {
+		return deployment.DeliveryStartupRecoverySetValidationNotPassed, nil
+	}
+	if err := attempt.Validate(); err != nil {
+		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+	}
+	if attempt.ResultDigest == "" {
+		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+	}
+	result, err := authority.ValidationResult(ctx, attemptID)
+	if err != nil {
+		if errors.Is(err, recoveryset.ErrNotFound) || postgresDeliveryStartupNotFound(err) {
+			return deployment.DeliveryStartupRecoverySetValidationMissing, nil
+		}
+		if errors.Is(err, recoveryset.ErrInvalid) {
+			return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+		}
+		return "", err
+	}
+	if result.AttemptID != attemptID || result.ResultDigest != attempt.ResultDigest {
+		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+	}
+	if err := result.Validate(); err != nil {
+		return deployment.DeliveryStartupRecoverySetValidationMismatch, nil
+	}
+	return "", nil
 }
 
 // postgresDeliveryStartupRecoveryMismatch compares an explicitly selected

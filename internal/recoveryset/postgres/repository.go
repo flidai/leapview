@@ -75,6 +75,9 @@ func (r *Repository) Create(ctx context.Context, set recoveryset.RecoverySet) (r
 	if err != nil {
 		return recoveryset.RecoverySet{}, err
 	}
+	if normalized.Status != recoveryset.StatusPrepared || normalized.PublishedValidationAttemptID != "" {
+		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
+	}
 	digest, err := normalized.Digest()
 	if err != nil {
 		return recoveryset.RecoverySet{}, err
@@ -117,6 +120,9 @@ func (r *Repository) CreateTx(ctx context.Context, tx Tx, set recoveryset.Recove
 	n, err := set.Normalize()
 	if err != nil {
 		return recoveryset.RecoverySet{}, err
+	}
+	if n.Status != recoveryset.StatusPrepared || n.PublishedValidationAttemptID != "" {
+		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
 	}
 	n.FrontierDigest, err = n.Digest()
 	if err != nil {
@@ -207,7 +213,7 @@ func readExact(ctx context.Context, db DBTX, setID string) (recoveryset.Recovery
 	if len(points) != int(row.ExpectedClusterPoints) || len(roots) != int(row.ExpectedObjectRoots) {
 		return recoveryset.RecoverySet{}, fmt.Errorf("%w: recovery-set child evidence is incomplete", recoveryset.ErrInvalid)
 	}
-	out := recoveryset.RecoverySet{ID: row.SetID, SchemaVersion: row.SchemaVersion, Delivery: recoveryset.DeliveryPointer{TargetID: row.TargetID, GenerationID: row.GenerationID, PublicationID: row.PublicationID, TargetRevision: row.TargetRevision}, Serving: recoveryset.SnapshotSeal{SealID: row.SnapshotSealID, PhysicalPoolID: row.PhysicalPoolID, TenantDomain: row.TenantDomain, Region: row.Region, EncryptionDomain: row.EncryptionDomain, ObjectNamespace: row.ObjectNamespace, CatalogDatabase: row.CatalogDatabase, CatalogID: row.CatalogID, CatalogUUID: row.CatalogUuid, CatalogVersion: row.CatalogVersion, DuckLakeSnapshotID: row.DucklakeSnapshotID, RelationNamespace: row.RelationNamespace, RelationManifestDigest: row.RelationManifestDigest, ClosureDigest: row.ClosureDigest, ObjectRoot: row.ObjectRoot, ObjectRootDigest: row.ObjectRootDigest, ArtifactRoot: row.ArtifactRoot, ArtifactRootDigest: row.ArtifactRootDigest, ServingArtifactID: row.ServingArtifactID, ServingArtifactDigest: row.ServingArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, RequestDigest: row.RequestDigest, PlanDigest: row.PlanDigest, CompatibilityDigest: row.CompatibilityDigest, DuckDBVersion: row.DuckdbVersion, RuntimeVersion: row.RuntimeVersion, DuckLakeExtensionVersion: row.DucklakeExtensionVersion, DuckLakeSpecVersion: row.DucklakeSpecVersion, CatalogSchemaVersion: row.CatalogSchemaVersion}, Catalog: recoveryset.CatalogCommit{CatalogID: row.CatalogID, CatalogDatabase: row.CatalogDatabase, CatalogUUID: row.CatalogUuid, CatalogVersion: row.CatalogVersion, SnapshotID: row.DucklakeSnapshotID}, Compatibility: recoveryset.CompatibilityTuple{DuckDBRuntime: row.DuckdbRuntime, DuckLakeExtension: row.DucklakeExtension, CatalogFormat: row.CatalogFormat, StorageImplementation: row.StorageImplementation, ObjectNamingContract: row.ObjectNamingContract}, FenceEpoch: row.FenceEpoch, AuditIdentity: row.AuditIdentity, Status: recoveryset.Status(row.Status), CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, FrontierDigest: row.FrontierDigest}
+	out := recoveryset.RecoverySet{ID: row.SetID, SchemaVersion: row.SchemaVersion, Delivery: recoveryset.DeliveryPointer{TargetID: row.TargetID, GenerationID: row.GenerationID, PublicationID: row.PublicationID, TargetRevision: row.TargetRevision}, Serving: recoveryset.SnapshotSeal{SealID: row.SnapshotSealID, PhysicalPoolID: row.PhysicalPoolID, TenantDomain: row.TenantDomain, Region: row.Region, EncryptionDomain: row.EncryptionDomain, ObjectNamespace: row.ObjectNamespace, CatalogDatabase: row.CatalogDatabase, CatalogID: row.CatalogID, CatalogUUID: row.CatalogUuid, CatalogVersion: row.CatalogVersion, DuckLakeSnapshotID: row.DucklakeSnapshotID, RelationNamespace: row.RelationNamespace, RelationManifestDigest: row.RelationManifestDigest, ClosureDigest: row.ClosureDigest, ObjectRoot: row.ObjectRoot, ObjectRootDigest: row.ObjectRootDigest, ArtifactRoot: row.ArtifactRoot, ArtifactRootDigest: row.ArtifactRootDigest, ServingArtifactID: row.ServingArtifactID, ServingArtifactDigest: row.ServingArtifactDigest, CompiledGraphDigest: row.CompiledGraphDigest, CompiledConfigDigest: row.CompiledConfigDigest, SecurityDomainFingerprint: row.SecurityDomainFingerprint, RequestDigest: row.RequestDigest, PlanDigest: row.PlanDigest, CompatibilityDigest: row.CompatibilityDigest, DuckDBVersion: row.DuckdbVersion, RuntimeVersion: row.RuntimeVersion, DuckLakeExtensionVersion: row.DucklakeExtensionVersion, DuckLakeSpecVersion: row.DucklakeSpecVersion, CatalogSchemaVersion: row.CatalogSchemaVersion}, Catalog: recoveryset.CatalogCommit{CatalogID: row.CatalogID, CatalogDatabase: row.CatalogDatabase, CatalogUUID: row.CatalogUuid, CatalogVersion: row.CatalogVersion, SnapshotID: row.DucklakeSnapshotID}, Compatibility: recoveryset.CompatibilityTuple{DuckDBRuntime: row.DuckdbRuntime, DuckLakeExtension: row.DucklakeExtension, CatalogFormat: row.CatalogFormat, StorageImplementation: row.StorageImplementation, ObjectNamingContract: row.ObjectNamingContract}, FenceEpoch: row.FenceEpoch, AuditIdentity: row.AuditIdentity, Status: recoveryset.Status(row.Status), PublishedValidationAttemptID: row.PublishedValidationAttemptID, CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, FrontierDigest: row.FrontierDigest}
 	for _, p := range points {
 		out.ClusterPoints = append(out.ClusterPoints, recoveryset.ClusterRecoveryPoint{DatabaseRole: recoveryset.DatabaseRole(p.DatabaseRole), ClusterIdentity: p.ClusterIdentity, DatabaseIdentity: p.DatabaseIdentity, RecoveryIdentity: p.RecoveryIdentity})
 	}
@@ -223,12 +229,13 @@ func readExact(ctx context.Context, db DBTX, setID string) (recoveryset.Recovery
 // Publish transitions prepared→published under the exact fence epoch. A
 // replay by the same publisher returns the existing row; a stale or foreign
 // fence is rejected without changing the frontier.
-func (r *Repository) Publish(ctx context.Context, setID, publisher string, fenceEpoch int64) (recoveryset.RecoverySet, error) {
-	if r == nil || r.db == nil || !isCanonicalUUID(setID) || publisher == "" || fenceEpoch <= 0 {
+func (r *Repository) Publish(ctx context.Context, setID, publisher string, fenceEpoch int64, validationAttemptID string) (recoveryset.RecoverySet, error) {
+	if r == nil || r.db == nil || !isCanonicalUUID(setID) || publisher == "" || fenceEpoch <= 0 || !isCanonicalUUID(validationAttemptID) {
 		return recoveryset.RecoverySet{}, recoveryset.ErrInvalid
 	}
 	id, _ := uuid.Parse(setID)
-	row, err := recoverydb.New(r.db).PublishRecoverySet(ctx, recoverydb.PublishRecoverySetParams{SetID: pgtype.UUID{Bytes: id, Valid: true}, PublishedBy: &publisher, FenceEpoch: fenceEpoch})
+	validationID, _ := uuid.Parse(validationAttemptID)
+	row, err := recoverydb.New(r.db).PublishRecoverySet(ctx, recoverydb.PublishRecoverySetParams{SetID: pgtype.UUID{Bytes: id, Valid: true}, PublishedBy: &publisher, FenceEpoch: fenceEpoch, ValidationAttemptID: pgtype.UUID{Bytes: validationID, Valid: true}})
 	if errors.Is(err, pgx.ErrNoRows) {
 		return recoveryset.RecoverySet{}, recoveryset.ErrFenced
 	}

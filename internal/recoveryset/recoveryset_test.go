@@ -49,6 +49,15 @@ func TestRecoverySetValidateStrictBindings(t *testing.T) {
 	if err := s.Validate(); err == nil {
 		t.Fatal("object-root traversal accepted")
 	}
+	s = testSet(t)
+	s.Status = StatusPublished
+	if err := s.Validate(); err == nil {
+		t.Fatal("published set without validation pointer accepted")
+	}
+	s.PublishedValidationAttemptID = "018f3f83-7b2f-7b37-9f9e-000000000020"
+	if err := s.Validate(); err != nil {
+		t.Fatalf("published set with validation pointer rejected: %v", err)
+	}
 }
 
 func TestRecoverySetNormalizeAndDigest(t *testing.T) {
@@ -67,6 +76,7 @@ func TestRecoverySetNormalizeAndDigest(t *testing.T) {
 		t.Fatalf("child ordering changed digest: %s != %s", da, db)
 	}
 	a.Status = StatusPublished
+	a.PublishedValidationAttemptID = "018f3f83-7b2f-7b37-9f9e-000000000020"
 	if !a.FrontierEqual(b) {
 		t.Fatal("publication metadata changed frontier digest")
 	}

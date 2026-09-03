@@ -183,6 +183,9 @@ func stableDeliveryStartupDiagnostic(code deployment.DeliveryStartupDiagnosticCo
 		deployment.DeliveryStartupRecoverySetCatalogMismatch,
 		deployment.DeliveryStartupRecoverySetCompatibilityMismatch,
 		deployment.DeliveryStartupRecoverySetArtifactMismatch,
+		deployment.DeliveryStartupRecoverySetValidationMissing,
+		deployment.DeliveryStartupRecoverySetValidationNotPassed,
+		deployment.DeliveryStartupRecoverySetValidationMismatch,
 		deployment.DeliveryStartupRecoverySetInvalid:
 		return true
 	default:

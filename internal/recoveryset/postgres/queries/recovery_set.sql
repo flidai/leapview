@@ -61,7 +61,8 @@ SELECT set_id::text AS set_id, schema_version, expected_cluster_points, expected
  duckdb_runtime, ducklake_extension, catalog_format, storage_implementation,
  object_naming_contract, fence_epoch, audit_identity, status, created_by, created_at,
  frontier_digest, COALESCE(published_by, '') AS published_by,
- COALESCE(published_at, 'epoch'::timestamptz) AS published_at
+ COALESCE(published_at, 'epoch'::timestamptz) AS published_at,
+ COALESCE(published_validation_attempt_id::text, '')::text AS published_validation_attempt_id
 FROM recovery.recovery_set WHERE set_id = sqlc.arg(set_id)::uuid;
 
 -- name: ListRecoveryClusterPoints :many
@@ -74,9 +75,21 @@ FROM recovery.recovery_object_root WHERE set_id = sqlc.arg(set_id)::uuid ORDER B
 
 -- name: PublishRecoverySet :one
 UPDATE recovery.recovery_set
-SET status = 'published', published_by = sqlc.arg(published_by), published_at = COALESCE(published_at, clock_timestamp())
+SET status = 'published', published_by = sqlc.arg(published_by), published_at = COALESCE(published_at, clock_timestamp()),
+    published_validation_attempt_id = sqlc.arg(validation_attempt_id)::uuid
 WHERE set_id = sqlc.arg(set_id)::uuid AND fence_epoch = sqlc.arg(fence_epoch)::bigint
-  AND ((status = 'prepared') OR (status = 'published' AND published_by = sqlc.arg(published_by)))
+  AND ((status = 'prepared' AND EXISTS (
+          SELECT 1
+          FROM recovery.validation_attempt AS validation
+          JOIN recovery.validation_result AS result ON result.attempt_id = validation.attempt_id
+          WHERE validation.attempt_id = sqlc.arg(validation_attempt_id)::uuid
+            AND validation.set_id = recovery_set.set_id
+            AND validation.fence_epoch = recovery_set.fence_epoch
+            AND validation.status = 'passed'
+            AND validation.result_digest = result.result_digest
+      ))
+      OR (status = 'published' AND published_by = sqlc.arg(published_by)
+          AND published_validation_attempt_id = sqlc.arg(validation_attempt_id)::uuid))
 RETURNING set_id::text AS set_id, status, published_by, published_at;
 
 -- name: SupersedeRecoverySet :execrows

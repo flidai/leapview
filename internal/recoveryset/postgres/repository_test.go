@@ -39,6 +39,13 @@ func TestRecoverySetExactReplayAndFencedPublication(t *testing.T) {
 	db := recoverySetDB(t)
 	r := New(db)
 	in := recoverySetFixture(t)
+	prepublished := in
+	prepublished.ID = "018f3f83-7b2f-7b37-9f9e-000000000107"
+	prepublished.Status = recoveryset.StatusPublished
+	prepublished.PublishedValidationAttemptID = "018f3f83-7b2f-7b37-9f9e-000000000108"
+	if _, err := r.Create(t.Context(), prepublished); !errors.Is(err, recoveryset.ErrInvalid) {
+		t.Fatalf("pre-published create = %v, want invalid", err)
+	}
 	created, err := r.Create(context.Background(), in)
 	if err != nil {
 		t.Fatal(err)
@@ -61,17 +68,40 @@ func TestRecoverySetExactReplayAndFencedPublication(t *testing.T) {
 	if _, err := r.Create(t.Context(), changed); !errors.Is(err, recoveryset.ErrConflict) {
 		t.Fatalf("metadata drift=%v", err)
 	}
-	if _, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch+1); !errors.Is(err, recoveryset.ErrFenced) {
+	validationID := "018f3f83-7b2f-7b37-9f9e-000000000109"
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	attempt := recoveryset.ValidationAttempt{AttemptID: validationID, SetID: in.ID, OwnerID: "validator", FenceEpoch: in.FenceEpoch, AuditIdentity: "audit", Status: recoveryset.ValidationRunning, StartedAt: started}
+	if _, err := r.BeginValidation(t.Context(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	result := recoveryset.ValidationResult{AttemptID: validationID, ResultDigest: "sha256:" + strings.Repeat("8", 64), Evidence: []byte(`{"ok":true}`), RecordedAt: started.Add(500 * time.Millisecond)}
+	if err := r.RecordValidationResult(t.Context(), result); err != nil {
+		t.Fatal(err)
+	}
+	attempt.Status, attempt.ResultDigest, attempt.CompletedAt = recoveryset.ValidationPassed, result.ResultDigest, started.Add(time.Second)
+	if err := r.CompleteValidation(t.Context(), attempt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch+1, validationID); !errors.Is(err, recoveryset.ErrFenced) {
 		t.Fatalf("stale publish=%v", err)
 	}
-	published, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch)
+	if _, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch, "018f3f83-7b2f-7b37-9f9e-000000000108"); !errors.Is(err, recoveryset.ErrFenced) {
+		t.Fatalf("unrelated validation publish=%v", err)
+	}
+	if _, err := db.Exec(t.Context(), `UPDATE recovery.recovery_set SET status='published', published_by='publisher', published_at=clock_timestamp(), published_validation_attempt_id=$2::uuid WHERE set_id=$1::uuid`, in.ID, "018f3f83-7b2f-7b37-9f9e-000000000108"); err == nil {
+		t.Fatal("direct publication without exact passed evidence succeeded")
+	}
+	published, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch, validationID)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if published.Status != recoveryset.StatusPublished {
 		t.Fatalf("status=%s", published.Status)
 	}
-	if replay, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch); err != nil || replay.Status != recoveryset.StatusPublished {
+	if published.PublishedValidationAttemptID != validationID {
+		t.Fatalf("published validation attempt = %q, want %q", published.PublishedValidationAttemptID, validationID)
+	}
+	if replay, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch, validationID); err != nil || replay.Status != recoveryset.StatusPublished {
 		t.Fatalf("publish replay=%#v err=%v", replay, err)
 	}
 	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.recovery_object_root(set_id,root_kind,root_uri,version_id,digest) VALUES ($1::uuid,'extra','objects/extra','1',$2)`, in.ID, "sha256:"+strings.Repeat("f", 64)); err == nil {
@@ -80,7 +110,7 @@ func TestRecoverySetExactReplayAndFencedPublication(t *testing.T) {
 	if err := r.Supersede(t.Context(), in.ID, in.FenceEpoch); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch); !errors.Is(err, recoveryset.ErrFenced) {
+	if _, err := r.Publish(t.Context(), in.ID, "publisher", in.FenceEpoch, validationID); !errors.Is(err, recoveryset.ErrFenced) {
 		t.Fatalf("superseded publish=%v", err)
 	}
 }
@@ -93,6 +123,12 @@ func TestValidationEvidenceIsExactRepeatableAndFenced(t *testing.T) {
 		t.Fatal(err)
 	}
 	started := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.validation_attempt(attempt_id,set_id,owner_id,fence_epoch,audit_identity,status,result_digest,started_at,completed_at) VALUES ('018f3f83-7b2f-7b37-9f9e-000000000113'::uuid,$1::uuid,'validator',$2,'operator','passed',$3,clock_timestamp(),clock_timestamp())`, set.ID, set.FenceEpoch, "sha256:"+strings.Repeat("8", 64)); err == nil {
+		t.Fatal("direct terminal validation attempt insertion succeeded")
+	}
+	if _, err := db.Exec(t.Context(), `INSERT INTO recovery.validation_attempt(attempt_id,set_id,owner_id,fence_epoch,audit_identity,status,started_at) VALUES ('018f3f83-7b2f-7b37-9f9e-000000000114'::uuid,$1::uuid,'validator',$2,'operator','running',clock_timestamp())`, set.ID, set.FenceEpoch+1); err == nil {
+		t.Fatal("validation attempt with a stale frontier fence succeeded")
+	}
 	attempt := recoveryset.ValidationAttempt{AttemptID: "018f3f83-7b2f-7b37-9f9e-000000000110", SetID: set.ID, OwnerID: "validator", FenceEpoch: set.FenceEpoch, AuditIdentity: "operator", Status: recoveryset.ValidationRunning, StartedAt: started}
 	created, err := r.BeginValidation(t.Context(), attempt)
 	if err != nil {

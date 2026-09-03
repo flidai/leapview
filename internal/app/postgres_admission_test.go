@@ -10,12 +10,14 @@ import (
 	"testing"
 	"time"
 
+	ducklakecatalog "github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/app/config"
 	postgresauthority "github.com/flidai/leapview/internal/app/postgresauthority"
 	postgresducklake "github.com/flidai/leapview/internal/app/postgresducklake"
 	extensionfixture "github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 )
 
 // TestPostgres18ProductionAdmission exercises the public production entrypoint
@@ -31,6 +33,7 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_backup"})
 	ducklakeRuntime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_runtime", Password: "admission-ducklake", Login: true})
 	ducklakeMaintenance := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_maintenance", Password: "admission-ducklake-maintenance", Login: true})
+	ducklakeOwner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_ducklake_owner"})
 	h.GrantRole(t, owner, migrator)
 
 	control := h.NewDatabase(t, "leapview_production_admission_control")
@@ -39,8 +42,29 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	h.GrantDatabase(t, control.Name, migrator, "CONNECT", "CREATE")
 	h.GrantDatabase(t, control.Name, runtime, "CONNECT")
 	h.GrantDatabase(t, control.Name, maintenance, "CONNECT")
-	h.GrantDatabase(t, ducklake.Name, ducklakeRuntime, "CONNECT", "CREATE", "TEMPORARY")
-	h.GrantDatabase(t, ducklake.Name, ducklakeMaintenance, "CONNECT", "CREATE", "TEMPORARY")
+	ducklakeAdmin, err := pgx.Connect(t.Context(), ducklake.AdminURL())
+	if err != nil {
+		t.Fatalf("open DuckLake admission administrator: %v", err)
+	}
+	t.Cleanup(func() { _ = ducklakeAdmin.Close(context.Background()) })
+	ducklakeDatabase := pgx.Identifier{ducklake.Name}.Sanitize()
+	ducklakeOwnerName := pgx.Identifier{ducklakeOwner.Name}.Sanitize()
+	ducklakeRuntimeName := pgx.Identifier{ducklakeRuntime.Name}.Sanitize()
+	ducklakeMaintenanceName := pgx.Identifier{ducklakeMaintenance.Name}.Sanitize()
+	physicalPoolID := "sha256:" + strings.Repeat("b", 64)
+	metadataSchema := pgx.Identifier{ducklakecatalog.MetadataSchemaForPool(physicalPoolID)}.Sanitize()
+	for _, statement := range []string{
+		"REVOKE ALL ON DATABASE " + ducklakeDatabase + " FROM PUBLIC",
+		"CREATE SCHEMA " + metadataSchema + " AUTHORIZATION " + ducklakeOwnerName,
+		"REVOKE ALL ON SCHEMA " + metadataSchema + " FROM PUBLIC",
+		"GRANT USAGE ON SCHEMA " + metadataSchema + " TO " + ducklakeRuntimeName + ", " + ducklakeMaintenanceName,
+	} {
+		if _, err := ducklakeAdmin.Exec(t.Context(), statement); err != nil {
+			t.Fatalf("prepare DuckLake admission policy: %v", err)
+		}
+	}
+	h.GrantDatabase(t, ducklake.Name, ducklakeRuntime, "CONNECT")
+	h.GrantDatabase(t, ducklake.Name, ducklakeMaintenance, "CONNECT")
 
 	cfg := config.Config{
 		Production: true, PostgresExpectedMajor: platformpostgres.DefaultExpectedMajor, PostgresRequireTLS: true,
@@ -85,7 +109,7 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	cfg.PublicURL = "https://localhost"
 	cfg.AllowedHosts = "localhost"
 	cfg.Environment = "prod"
-	cfg.DeliveryPhysicalPoolID = "sha256:" + strings.Repeat("b", 64)
+	cfg.DeliveryPhysicalPoolID = physicalPoolID
 	cfg.DeliveryPhysicalPoolCompatibilityDigest = "sha256:" + strings.Repeat("a", 64)
 
 	target, targetErr := BuildProduction(t.Context(), cfg)
@@ -158,6 +182,38 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	}
 	if graph.RefreshCancelAudit == nil || graph.RefreshCancelAudit.Audit != graph.AccessAudit {
 		t.Fatal("refresh cancellation audit adapter does not preserve canonical Access audit identity")
+	}
+
+	if _, err := ducklakeAdmin.Exec(t.Context(), "REVOKE USAGE ON SCHEMA "+metadataSchema+" FROM "+ducklakeRuntimeName); err != nil {
+		t.Fatalf("revoke DuckLake runtime metadata privilege: %v", err)
+	}
+	if err := lifecycle.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "DuckLake runtime admission") {
+		t.Fatalf("lifecycle accepted missing DuckLake metadata privilege: %v", err)
+	}
+	if _, err := ducklakeAdmin.Exec(t.Context(), "GRANT USAGE ON SCHEMA "+metadataSchema+" TO "+ducklakeRuntimeName); err != nil {
+		t.Fatalf("restore DuckLake runtime metadata privilege: %v", err)
+	}
+
+	controlAdmin, err := pgx.Connect(t.Context(), control.AdminURL())
+	if err != nil {
+		t.Fatalf("open control admission administrator: %v", err)
+	}
+	defer controlAdmin.Close(context.Background())
+	runtimeName := pgx.Identifier{runtime.Name}.Sanitize()
+	if _, err := controlAdmin.Exec(t.Context(), "REVOKE SELECT ON recovery.recovery_set FROM "+runtimeName); err != nil {
+		t.Fatalf("revoke runtime recovery privilege: %v", err)
+	}
+	if err := lifecycle.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "control runtime admission") {
+		t.Fatalf("lifecycle accepted missing runtime privilege: %v", err)
+	}
+	if _, err := controlAdmin.Exec(t.Context(), "GRANT SELECT ON recovery.recovery_set TO "+runtimeName); err != nil {
+		t.Fatalf("restore runtime recovery privilege: %v", err)
+	}
+	if _, err := controlAdmin.Exec(t.Context(), "ALTER EXTENSION pgcrypto SET SCHEMA public"); err != nil {
+		t.Fatalf("move required extension for negative admission test: %v", err)
+	}
+	if err := lifecycle.Start(t.Context()); err == nil || !strings.Contains(err.Error(), "control runtime admission") {
+		t.Fatalf("lifecycle accepted required extension in wrong schema: %v", err)
 	}
 
 	if err := lifecycle.Stop(context.Background()); err != nil {

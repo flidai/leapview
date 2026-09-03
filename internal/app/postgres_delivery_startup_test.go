@@ -70,14 +70,29 @@ type postgresDeliveryStartupPhysicalFake struct {
 }
 
 type postgresDeliveryStartupRecoveryFake struct {
-	set  recoveryset.RecoverySet
-	err  error
-	seen string
+	set            recoveryset.RecoverySet
+	err            error
+	seen           string
+	attempt        recoveryset.ValidationAttempt
+	attemptErr     error
+	result         recoveryset.ValidationResult
+	resultErr      error
+	validationSeen string
 }
 
 func (f *postgresDeliveryStartupRecoveryFake) ReadExact(_ context.Context, id string) (recoveryset.RecoverySet, error) {
 	f.seen = id
 	return f.set, f.err
+}
+
+func (f *postgresDeliveryStartupRecoveryFake) ValidationAttempt(_ context.Context, id string) (recoveryset.ValidationAttempt, error) {
+	f.validationSeen = id
+	return f.attempt, f.attemptErr
+}
+
+func (f *postgresDeliveryStartupRecoveryFake) ValidationResult(_ context.Context, id string) (recoveryset.ValidationResult, error) {
+	f.validationSeen = id
+	return f.result, f.resultErr
 }
 
 func (f postgresDeliveryStartupPhysicalFake) LoadAdmissionContractByCompatibilityDigest(context.Context, physicalpool.PoolID, string) (physicalpool.AdmissionContract, error) {
@@ -314,6 +329,48 @@ func TestPostgresDeliveryStartupValidatesExplicitRecoverySet(t *testing.T) {
 	}
 }
 
+func TestPostgresDeliveryStartupRequiresExactPassedRecoveryValidation(t *testing.T) {
+	fixture := startupRecoveryFixture(t)
+	for _, test := range []struct {
+		name string
+		make func(*postgresDeliveryStartupRecoveryFake)
+		want deployment.DeliveryStartupDiagnosticCode
+	}{
+		{name: "missing attempt", make: func(r *postgresDeliveryStartupRecoveryFake) { r.attemptErr = recoveryset.ErrNotFound }, want: deployment.DeliveryStartupRecoverySetValidationMissing},
+		{name: "missing result", make: func(r *postgresDeliveryStartupRecoveryFake) { r.resultErr = recoveryset.ErrNotFound }, want: deployment.DeliveryStartupRecoverySetValidationMissing},
+		{name: "running attempt", make: func(r *postgresDeliveryStartupRecoveryFake) { r.attempt.Status = recoveryset.ValidationRunning }, want: deployment.DeliveryStartupRecoverySetValidationNotPassed},
+		{name: "failed attempt", make: func(r *postgresDeliveryStartupRecoveryFake) { r.attempt.Status = recoveryset.ValidationFailed }, want: deployment.DeliveryStartupRecoverySetValidationNotPassed},
+		{name: "attempt belongs to another set", make: func(r *postgresDeliveryStartupRecoveryFake) { r.attempt.SetID = "018f3f83-7b2f-7b37-9f9e-0000000002ff" }, want: deployment.DeliveryStartupRecoverySetValidationMismatch},
+		{name: "result digest drift", make: func(r *postgresDeliveryStartupRecoveryFake) {
+			r.result.ResultDigest = "sha256:" + strings.Repeat("f", 64)
+		}, want: deployment.DeliveryStartupRecoverySetValidationMismatch},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			recovery := &postgresDeliveryStartupRecoveryFake{}
+			fixture.config(recovery)
+			test.make(recovery)
+			check, err := newPostgresDeliveryStartupCheck(fixture.config(recovery))
+			if err != nil {
+				t.Fatal(err)
+			}
+			assertPostgresStartupDiagnostic(t, check(t.Context()), test.want)
+		})
+	}
+}
+
+func TestPostgresDeliveryStartupPreservesRecoveryValidationStoreFailure(t *testing.T) {
+	fixture := startupRecoveryFixture(t)
+	want := errors.New("validation store unavailable")
+	recovery := &postgresDeliveryStartupRecoveryFake{attemptErr: want}
+	check, err := newPostgresDeliveryStartupCheck(fixture.config(recovery))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := check(t.Context()); !errors.Is(err, want) {
+		t.Fatalf("startup validation error = %v, want wrapped store failure", err)
+	}
+}
+
 func TestPostgresDeliveryStartupRejectsMissingInvalidAndUnpublishedRecoverySet(t *testing.T) {
 	fixture := startupRecoveryFixture(t)
 	for _, test := range []struct {
@@ -324,8 +381,12 @@ func TestPostgresDeliveryStartupRejectsMissingInvalidAndUnpublishedRecoverySet(t
 		{name: "missing", make: func(r *postgresDeliveryStartupRecoveryFake) { r.err = recoveryset.ErrNotFound }, want: deployment.DeliveryStartupRecoverySetMissing},
 		{name: "read invalid", make: func(r *postgresDeliveryStartupRecoveryFake) { r.err = recoveryset.ErrInvalid }, want: deployment.DeliveryStartupRecoverySetInvalid},
 		{name: "invalid", make: func(r *postgresDeliveryStartupRecoveryFake) { r.set.Delivery.TargetRevision = 0 }, want: deployment.DeliveryStartupRecoverySetInvalid},
+		{name: "missing validation pointer", make: func(r *postgresDeliveryStartupRecoveryFake) { r.set.PublishedValidationAttemptID = "" }, want: deployment.DeliveryStartupRecoverySetInvalid},
 		{name: "invalid status", make: func(r *postgresDeliveryStartupRecoveryFake) { r.set.Status = recoveryset.StatusInvalid }, want: deployment.DeliveryStartupRecoverySetInvalid},
-		{name: "not published", make: func(r *postgresDeliveryStartupRecoveryFake) { r.set.Status = recoveryset.StatusPrepared }, want: deployment.DeliveryStartupRecoverySetNotPublished},
+		{name: "not published", make: func(r *postgresDeliveryStartupRecoveryFake) {
+			r.set.Status = recoveryset.StatusPrepared
+			r.set.PublishedValidationAttemptID = ""
+		}, want: deployment.DeliveryStartupRecoverySetNotPublished},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			recovery := &postgresDeliveryStartupRecoveryFake{set: fixture.set}
@@ -383,13 +444,26 @@ func TestPostgresDeliveryStartupRequiresCanonicalRecoverySetID(t *testing.T) {
 }
 
 type postgresDeliveryStartupRecoveryFixture struct {
-	set       recoveryset.RecoverySet
-	authority *postgresDeliveryStartupAuthorityFake
-	serving   *postgresDeliveryStartupServingFake
-	physical  postgresDeliveryStartupPhysicalFake
+	set        recoveryset.RecoverySet
+	authority  *postgresDeliveryStartupAuthorityFake
+	serving    *postgresDeliveryStartupServingFake
+	physical   postgresDeliveryStartupPhysicalFake
+	validation recoveryset.ValidationAttempt
+	result     recoveryset.ValidationResult
 }
 
 func (f postgresDeliveryStartupRecoveryFixture) config(recovery *postgresDeliveryStartupRecoveryFake) postgresDeliveryStartupCheckConfig {
+	if recovery != nil {
+		if recovery.set.ID == "" {
+			recovery.set = f.set
+		}
+		if recovery.attempt.AttemptID == "" {
+			recovery.attempt = f.validation
+		}
+		if recovery.result.AttemptID == "" {
+			recovery.result = f.result
+		}
+	}
 	return postgresDeliveryStartupCheckConfig{
 		TargetID: startupTarget, Environment: startupEnvironment, RecoverySetID: f.set.ID,
 		ReadClaim: func(context.Context) (projectgraph.ResourceID, bool, error) { return startupProject, true, nil },
@@ -404,6 +478,7 @@ func startupRecoveryFixture(t *testing.T) postgresDeliveryStartupRecoveryFixture
 		generationID  = "018f3f83-7b2f-7b37-9f9e-000000000201"
 		publicationID = "018f3f83-7b2f-7b37-9f9e-000000000202"
 		sealID        = "018f3f83-7b2f-7b37-9f9e-000000000203"
+		validationID  = "018f3f83-7b2f-7b37-9f9e-000000000204"
 	)
 	digest := func(ch string) string { return "sha256:" + strings.Repeat(ch, 64) }
 	pool, admission := startupPhysicalPool(t)
@@ -433,11 +508,13 @@ func startupRecoveryFixture(t *testing.T) postgresDeliveryStartupRecoveryFixture
 			{Kind: recoveryset.ObjectRootDuckLake, URI: seal.ObjectRoot, VersionID: "v42", Digest: seal.ObjectRootDigest},
 			{Kind: recoveryset.ObjectRootServingArtifact, URI: seal.ArtifactRoot, VersionID: "v2", Digest: seal.ArtifactRootDigest},
 		}, Compatibility: admission.Compatibility,
-		FenceEpoch: 1, AuditIdentity: "recovery-selection", Status: recoveryset.StatusPublished, CreatedBy: "operator", CreatedAt: time.Now().UTC(),
+		FenceEpoch: 1, AuditIdentity: "recovery-selection", Status: recoveryset.StatusPublished, PublishedValidationAttemptID: validationID, CreatedBy: "operator", CreatedAt: time.Now().UTC(),
 	}
 	if err := set.Validate(); err != nil {
 		t.Fatalf("recovery fixture: %v", err)
 	}
+	validationStarted := time.Now().UTC().Truncate(time.Microsecond)
+	validationDigest := digest("a")
 	return postgresDeliveryStartupRecoveryFixture{
 		set: set,
 		authority: &postgresDeliveryStartupAuthorityFake{
@@ -446,6 +523,14 @@ func startupRecoveryFixture(t *testing.T) postgresDeliveryStartupRecoveryFixture
 		},
 		serving:  &postgresDeliveryStartupServingFake{state: servingstate.State{ID: servingstate.ID(generationID), ProjectID: startupProject, Environment: startupEnvironment, Status: servingstate.StatusActive, Digest: artifact.Digest, DuckLakeSnapshotID: 42}, artifact: artifact},
 		physical: postgresDeliveryStartupPhysicalFake{contract: physicalpool.AdmissionContract{Pool: pool, Admission: admission}},
+		// The published pointer must resolve to one exact passed attempt and
+		// matching immutable result evidence during readiness.
+		validation: recoveryset.ValidationAttempt{
+			AttemptID: validationID, SetID: setID, OwnerID: "validator", FenceEpoch: set.FenceEpoch,
+			AuditIdentity: "recovery-selection", Status: recoveryset.ValidationPassed, ResultDigest: validationDigest,
+			StartedAt: validationStarted, CompletedAt: validationStarted.Add(time.Second),
+		},
+		result: recoveryset.ValidationResult{AttemptID: validationID, ResultDigest: validationDigest, Evidence: []byte(`{"ok":true}`), RecordedAt: validationStarted.Add(500 * time.Millisecond)},
 	}
 }
 

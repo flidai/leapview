@@ -196,6 +196,13 @@ type SchemaRevision struct {
 	Checksum    string
 }
 
+// Extension is the installed PostgreSQL extension identity used by the
+// post-migration production admission gate.
+type Extension struct {
+	Name   string
+	Schema string
+}
+
 // PoolConfig returns the normalized policy used to construct the pool.
 func (p *Pool) PoolConfig() Config {
 	if p == nil {
@@ -419,6 +426,47 @@ func (p *Pool) SchemaRevision(ctx context.Context, revision int64) (SchemaRevisi
 		return SchemaRevision{}, err
 	}
 	return SchemaRevision{Revision: record.Revision, MigrationID: record.MigrationID, Checksum: record.Checksum}, nil
+}
+
+// RequiredExtension returns one exact installed extension and its owning
+// schema. Missing extensions remain a query error so admission fails closed.
+func (p *Pool) RequiredExtension(ctx context.Context, name string) (Extension, error) {
+	if p == nil || p.pool == nil {
+		return Extension{}, errors.New("postgres pool is nil")
+	}
+	record, err := platformdb.New(p).RequiredExtension(ctx, name)
+	if err != nil {
+		return Extension{}, err
+	}
+	return Extension{Name: record.ExtensionName, Schema: record.SchemaName}, nil
+}
+
+func (p *Pool) HasSchemaPrivilege(ctx context.Context, object, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasSchemaPrivilege(ctx, platformdb.HasSchemaPrivilegeParams{SchemaName: object, PrivilegeName: privilege})
+}
+
+func (p *Pool) HasTablePrivilege(ctx context.Context, object, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasTablePrivilege(ctx, platformdb.HasTablePrivilegeParams{TableName: object, PrivilegeName: privilege})
+}
+
+func (p *Pool) HasFunctionPrivilege(ctx context.Context, object, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasFunctionPrivilege(ctx, platformdb.HasFunctionPrivilegeParams{FunctionName: object, PrivilegeName: privilege})
+}
+
+func (p *Pool) HasCurrentDatabasePrivilege(ctx context.Context, privilege string) (bool, error) {
+	if p == nil || p.pool == nil {
+		return false, errors.New("postgres pool is nil")
+	}
+	return platformdb.New(p).HasCurrentDatabasePrivilege(ctx, privilege)
 }
 
 // Close releases all pooled connections. It is safe to call on a nil Pool.

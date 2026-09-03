@@ -174,8 +174,13 @@ type RecoverySet struct {
 	FenceEpoch     int64                  `json:"fence_epoch"`
 	AuditIdentity  string                 `json:"audit_identity"`
 	Status         Status                 `json:"status"`
-	CreatedBy      string                 `json:"created_by"`
-	CreatedAt      time.Time              `json:"created_at"`
+	// PublishedValidationAttemptID binds a published frontier to one exact,
+	// immutable validation attempt. It is empty while a set is prepared, and
+	// publication must set it atomically after proving the attempt has passed
+	// and carries matching evidence.
+	PublishedValidationAttemptID string    `json:"published_validation_attempt_id,omitempty"`
+	CreatedBy                    string    `json:"created_by"`
+	CreatedAt                    time.Time `json:"created_at"`
 }
 
 var digestPattern = regexp.MustCompile(`^sha256:[0-9a-f]{64}$`)
@@ -371,6 +376,16 @@ func (s RecoverySet) Validate() error {
 	if !s.Status.valid() {
 		return fmt.Errorf("%w: unsupported status %q", ErrInvalid, s.Status)
 	}
+	if s.Status == StatusPrepared && s.PublishedValidationAttemptID != "" {
+		return fmt.Errorf("%w: prepared recovery set cannot carry a published validation attempt", ErrInvalid)
+	}
+	if s.Status == StatusPublished || s.Status == StatusSuperseded {
+		if !canonicalUUID(s.PublishedValidationAttemptID) {
+			return fmt.Errorf("%w: published recovery set requires a canonical validation attempt id", ErrInvalid)
+		}
+	} else if s.PublishedValidationAttemptID != "" && !canonicalUUID(s.PublishedValidationAttemptID) {
+		return fmt.Errorf("%w: published validation attempt id must be a canonical UUID", ErrInvalid)
+	}
 	if err := canonicalText(s.CreatedBy, "created by", 255); err != nil {
 		return err
 	}
@@ -537,7 +552,7 @@ func (s RecoverySet) Digest() (string, error) {
 	// Digest covers only the immutable frontier projection. Publication status,
 	// fence, audit actor, and creation metadata remain separate record fields.
 	n := s
-	n.Status, n.FrontierDigest = StatusPrepared, ""
+	n.Status, n.FrontierDigest, n.PublishedValidationAttemptID = StatusPrepared, "", ""
 	if err := n.Validate(); err != nil {
 		return "", err
 	}
@@ -571,6 +586,9 @@ func (s RecoverySet) IdentityEqual(other RecoverySet) bool {
 	// Publication status is mutable metadata; all identity, fence, audit and
 	// creation fields remain part of an exact insert replay comparison.
 	a.Status, b.Status = StatusPrepared, StatusPrepared
+	// The exact validation attempt is attached atomically at publication and
+	// is therefore lifecycle metadata rather than part of create identity.
+	a.PublishedValidationAttemptID, b.PublishedValidationAttemptID = "", ""
 	if a.FrontierDigest == "" {
 		a.FrontierDigest, _ = a.Digest()
 	}

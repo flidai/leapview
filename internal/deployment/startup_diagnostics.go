@@ -40,6 +40,9 @@ const (
 	DeliveryStartupRecoverySetCatalogMismatch       DeliveryStartupDiagnosticCode = "recovery_set_catalog_mismatch"
 	DeliveryStartupRecoverySetCompatibilityMismatch DeliveryStartupDiagnosticCode = "recovery_set_compatibility_mismatch"
 	DeliveryStartupRecoverySetArtifactMismatch      DeliveryStartupDiagnosticCode = "recovery_set_artifact_mismatch"
+	DeliveryStartupRecoverySetValidationMissing     DeliveryStartupDiagnosticCode = "recovery_set_validation_missing"
+	DeliveryStartupRecoverySetValidationNotPassed   DeliveryStartupDiagnosticCode = "recovery_set_validation_not_passed"
+	DeliveryStartupRecoverySetValidationMismatch    DeliveryStartupDiagnosticCode = "recovery_set_validation_mismatch"
 	DeliveryStartupRecoverySetInvalid               DeliveryStartupDiagnosticCode = "recovery_set_invalid"
 )
 

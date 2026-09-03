@@ -58,6 +58,10 @@ CREATE TABLE IF NOT EXISTS recovery.recovery_set (
     created_at                     timestamptz NOT NULL DEFAULT clock_timestamp(),
     published_by                   text,
     published_at                   timestamptz,
+    -- The attempt row is created after this frontier row, so the explicit
+    -- publication binding is verified transactionally by PublishRecoverySet
+    -- rather than expressed as a circular foreign key.
+    published_validation_attempt_id uuid,
     CHECK (target_id = btrim(target_id) AND octet_length(target_id) BETWEEN 1 AND 255),
     CHECK (physical_pool_id = btrim(physical_pool_id) AND octet_length(physical_pool_id) BETWEEN 1 AND 255),
     CHECK (tenant_domain = btrim(tenant_domain) AND octet_length(tenant_domain) BETWEEN 1 AND 255),
@@ -85,8 +89,8 @@ CREATE TABLE IF NOT EXISTS recovery.recovery_set (
     CHECK (request_digest ~ '^sha256:[0-9a-f]{64}$' AND plan_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (compatibility_digest ~ '^sha256:[0-9a-f]{64}$'),
     CHECK (frontier_digest ~ '^sha256:[0-9a-f]{64}$'),
-    CHECK ((status = 'prepared' AND published_by IS NULL AND published_at IS NULL)
-        OR (status IN ('published', 'superseded') AND published_by IS NOT NULL AND published_at IS NOT NULL)
+    CHECK ((status = 'prepared' AND published_by IS NULL AND published_at IS NULL AND published_validation_attempt_id IS NULL)
+        OR (status IN ('published', 'superseded') AND published_by IS NOT NULL AND published_at IS NOT NULL AND published_validation_attempt_id IS NOT NULL)
         OR status = 'invalid')
 );
 
@@ -174,7 +178,20 @@ BEGIN
        AND NEW.storage_implementation = OLD.storage_implementation AND NEW.object_naming_contract = OLD.object_naming_contract
        AND NEW.fence_epoch = OLD.fence_epoch AND NEW.audit_identity = OLD.audit_identity
        AND NEW.created_by = OLD.created_by AND NEW.created_at = OLD.created_at
+       AND ((OLD.status = 'prepared' AND NEW.published_validation_attempt_id IS NOT NULL)
+            OR NEW.published_validation_attempt_id IS NOT DISTINCT FROM OLD.published_validation_attempt_id)
        AND ((OLD.status = 'prepared' AND NEW.status = 'published' AND NEW.published_by IS NOT NULL AND NEW.published_at IS NOT NULL
+             AND NEW.published_validation_attempt_id IS NOT NULL
+             AND EXISTS (
+                 SELECT 1
+                 FROM recovery.validation_attempt AS validation
+                 JOIN recovery.validation_result AS result ON result.attempt_id = validation.attempt_id
+                 WHERE validation.attempt_id = NEW.published_validation_attempt_id
+                   AND validation.set_id = NEW.set_id
+                   AND validation.fence_epoch = NEW.fence_epoch
+                   AND validation.status = 'passed'
+                   AND validation.result_digest = result.result_digest
+             )
              AND (SELECT count(*) FROM recovery.recovery_cluster_point WHERE set_id = NEW.set_id) = 2
              AND (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = NEW.set_id) = (SELECT expected_object_roots FROM recovery.recovery_set WHERE set_id = NEW.set_id))
          OR (OLD.status = 'published' AND NEW.status IN ('published', 'superseded') AND NEW.published_by = OLD.published_by AND NEW.published_at = OLD.published_at)) THEN
@@ -184,9 +201,25 @@ BEGIN
 END;
 $$;
 
+CREATE OR REPLACE FUNCTION recovery.reject_frontier_insert()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, recovery AS $$
+BEGIN
+    -- A frontier is created prepared and can become published only through
+    -- the fenced transition below, which proves one exact passed validation.
+    IF NEW.status = 'prepared' AND NEW.published_validation_attempt_id IS NULL THEN
+        RETURN NEW;
+    END IF;
+    RAISE EXCEPTION 'recovery-set frontier must be created prepared';
+END;
+$$;
+
 DROP TRIGGER IF EXISTS recovery_set_immutable ON recovery.recovery_set;
 CREATE TRIGGER recovery_set_immutable BEFORE UPDATE OR DELETE ON recovery.recovery_set
 FOR EACH ROW EXECUTE FUNCTION recovery.reject_frontier_mutation();
+
+DROP TRIGGER IF EXISTS recovery_set_insert_guard ON recovery.recovery_set;
+CREATE TRIGGER recovery_set_insert_guard BEFORE INSERT ON recovery.recovery_set
+FOR EACH ROW EXECUTE FUNCTION recovery.reject_frontier_insert();
 
 CREATE OR REPLACE FUNCTION recovery.reject_child_mutation()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, recovery AS $$
@@ -219,6 +252,17 @@ $$;
 CREATE OR REPLACE FUNCTION recovery.guard_validation_attempt_transition()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, recovery AS $$
 BEGIN
+    IF TG_OP = 'INSERT'
+       AND NEW.status = 'running' AND NEW.result_digest IS NULL
+       AND NEW.error IS NULL AND NEW.completed_at IS NULL
+       AND EXISTS (
+           SELECT 1 FROM recovery.recovery_set AS frontier
+           WHERE frontier.set_id = NEW.set_id
+             AND frontier.fence_epoch = NEW.fence_epoch
+             AND frontier.status = 'prepared'
+       ) THEN
+        RETURN NEW;
+    END IF;
     IF TG_OP = 'UPDATE'
        AND OLD.status = 'running' AND NEW.status IN ('passed', 'failed')
        AND NEW.attempt_id = OLD.attempt_id AND NEW.set_id = OLD.set_id
@@ -240,7 +284,7 @@ END;
 $$;
 
 DROP TRIGGER IF EXISTS recovery_validation_attempt_guard ON recovery.validation_attempt;
-CREATE TRIGGER recovery_validation_attempt_guard BEFORE UPDATE OR DELETE ON recovery.validation_attempt
+CREATE TRIGGER recovery_validation_attempt_guard BEFORE INSERT OR UPDATE OR DELETE ON recovery.validation_attempt
 FOR EACH ROW EXECUTE FUNCTION recovery.guard_validation_attempt_transition();
 
 CREATE OR REPLACE FUNCTION recovery.reject_validation_result_mutation()
