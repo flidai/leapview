@@ -18,8 +18,11 @@ export class CategoryColorRegistry {
     const scope = categoryColorScope(envelope, ref)
     const assignments = this.#scopes.get(scope) ?? { slots: new Map<string, number>(), nextSlot: 0 }
     this.#scopes.set(scope, assignments)
-    for (const value of values) {
-      const identity = categoryIdentity(value)
+    // Query completion order must not decide a dashboard's category colors.
+    // Register each batch in canonical identity order so sibling visuals that
+    // expose the same category domain converge on the same palette slots.
+    const identities = [...new Set(values.map(categoryIdentity))].sort()
+    for (const identity of identities) {
       if (assignments.slots.has(identity)) continue
       assignments.slots.set(identity, assignments.nextSlot++)
     }

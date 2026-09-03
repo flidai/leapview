@@ -18,15 +18,31 @@ test('report table virtualization does not present unknown cardinality as an exa
 
 test('report table column sizing preserves configured minimums', () => {
   const controller = new ReportTableColumnController(() => ({ order_id: 80, revenue: 180 }))
-  expect(controller.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(160)
+  expect(controller.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(220)
   expect(controller.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(180)
   expect(controller.pixelWidth({ key: 'orders', label: 'Orders', align: 'right' })).toBe(114)
-  expect(controller.tableWidth([{ key: 'order_id', label: 'Order ID' }, { key: 'revenue', label: 'Revenue' }])).toBe(340)
+  expect(controller.tableWidth([{ key: 'order_id', label: 'Order ID' }, { key: 'revenue', label: 'Revenue' }])).toBe(400)
 
   const defaults = new ReportTableColumnController(() => ({}))
-  expect(defaults.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(160)
-  expect(defaults.pixelWidth({ key: 'status', label: 'Status' })).toBe(106)
-  expect(defaults.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(114)
+  expect(defaults.pixelWidth({ key: 'order_id', label: 'Order ID' })).toBe(320)
+  expect(defaults.pixelWidth({ key: 'status', label: 'Status' })).toBe(120)
+  expect(defaults.pixelWidth({ key: 'revenue', label: 'Revenue', align: 'right' })).toBe(126)
+})
+
+test('report table default columns preserve readable widths for internal scrolling', () => {
+  const controller = new ReportTableColumnController(() => ({}))
+  const columns = [
+    { key: 'order_id', label: 'Order ID' },
+    { key: 'purchase_date', label: 'Purchase date' },
+    { key: 'status', label: 'Status' },
+    { key: 'category', label: 'Category' },
+    { key: 'revenue', label: 'Revenue', align: 'right' as const },
+    { key: 'review_score', label: 'Review score', align: 'right' as const },
+    { key: 'delivery_days', label: 'Delivery days', align: 'right' as const },
+  ]
+
+  expect(controller.pixelWidths(columns)).toEqual([320, 150, 120, 300, 126, 140, 140])
+  expect(controller.tableWidth(columns)).toBe(1296)
 })
 
 test('report tables pin only the leading visible identity column', () => {

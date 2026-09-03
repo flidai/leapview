@@ -1,8 +1,9 @@
-import type { VisualizationColorIntent, VisualizationConditionalFormat, VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
+import type { VisualizationConditionalFormat, VisualizationEnvelope, VisualizationFieldRef } from '../../../../../generated/visualization'
 import type { RendererContext } from '../../host-controller'
-import { conditionalIconGlyph, conditionalStyleColor, resolveConditionalFormat } from '../../conditional-format'
+import { conditionalIconGlyph, resolveConditionalFormat } from '../../conditional-format'
 import { resolveVisualizationMetadata } from '../../metadata'
 import { axis, escapeHTML, field, fieldLabel, formatDisplayField, formatField, inlineDataset, labelFormatter, legend, selectedDatasetSource, toneColor, type EChartsTranslation } from './common'
+import { conditionalCategoryColor, conditionalItemColor, seriesColor } from './conditional-color'
 import { echartsLabelPolicy } from './label-policy'
 import type { CategoryColorRegistry } from './category-colors'
 
@@ -138,8 +139,15 @@ function cartesianBaseOption(envelope: VisualizationEnvelope, context: RendererC
     const secondary = split.series.some((item) => item.yAxisIndex === 1)
     const primaryAxis = axis(envelope, spec.y[0]!, 'value', context, 'primary_y', spec.y)
     if (stackingMode(spec) === 'percent') applyPercentAxis(primaryAxis, context)
+    if (split.scrollLegend) {
+      // Crowded category-series cards surrender vertical space to a paged
+      // legend. Keep value ticks legible in the remaining plot instead of
+      // allowing ECharts to stack a dense automatic scale.
+      primaryAxis.splitNumber = 4
+      primaryAxis.axisLabel = { ...primaryAxis.axisLabel, hideOverlap: true }
+    }
     return {
-      dataset: split.datasets, legend: legend(spec.presentation.legend, context), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
+      dataset: split.datasets, grid: cartesianGrid(spec), legend: legend(spec.presentation.legend, context, split.scrollLegend), xAxis: axis(envelope, spec.x, axisType(envelope, spec.x, 'category'), context, 'x'),
       yAxis: secondary ? [primaryAxis, axis(envelope, spec.y[0]!, 'value', context, 'secondary_y', spec.y)] : primaryAxis,
       dataZoom, series: [...split.series, ...interactionHitSeries(envelope, spec, split.series)],
     }
@@ -425,7 +433,7 @@ function cartesianGrid(spec: CartesianSpec): EChartsTranslation {
   }
 }
 
-function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[] } | undefined {
+function splitCartesianSeries(envelope: VisualizationEnvelope, context: RendererContext, categoryColors: CategoryColorRegistry): { datasets: EChartsTranslation[]; series: EChartsTranslation[]; scrollLegend: boolean } | undefined {
   const spec = envelope.spec
   if (spec.kind !== 'cartesian' || !spec.series || spec.y.length !== 1 || envelope.dataState.kind !== 'inline') return undefined
   const dataset = envelope.dataState.datasets.find((candidate) => candidate.id === spec.series?.dataset)
@@ -450,7 +458,7 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
   const datasets: EChartsTranslation[] = [{ id: `dataset:${dataset.id}`, source: selectedDatasetSource(envelope, dataset) }]
   const stack = stackingMode(spec)
   const normalizedSources = stack === 'percent' ? normalizedSeriesSources(envelope, dataset, spec, values) : undefined
-  const series = values.map((value) => {
+  const series: EChartsTranslation[] = values.map((value) => {
     const token = encodeURIComponent(String(value))
     const datasetID = `dataset:series:${spec.series?.field}:${token}`
     const normalized = normalizedSources?.get(String(value))
@@ -463,7 +471,9 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
     const valueRef = spec.y[0]!
     const fill = conditionalItemColor(envelope, valueRef, 'mark_fill', context) ?? conditionalItemColor(envelope, valueRef, 'series_color', context)
     const stroke = conditionalItemColor(envelope, valueRef, 'mark_stroke', context)
-    const markColor = fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context))
+    const governedSeriesColor = conditionalCategoryColor(envelope, valueRef, spec.series!, value, 'mark_fill', context)
+      ?? conditionalCategoryColor(envelope, valueRef, spec.series!, value, 'series_color', context)
+    const markColor = governedSeriesColor ?? fill ?? (intent?.color ? seriesColor(String(value), intent.color, context) : categoryColors.color(envelope, spec.series!, value, context))
     return {
       id: `series:${spec.series?.dataset}:${spec.series?.field}:${token}`, datasetId: datasetID, name: String(value), type: cartesianSeriesType(mark), yAxisIndex: combo?.axis === 'secondary' ? 1 : 0,
       encode: { x: spec.x.field, y: normalized?.dimension ?? spec.y[0]?.field }, smooth: spec.presentation.smooth, symbol: spec.presentation.showSymbols ? undefined : 'none',
@@ -479,7 +489,16 @@ function splitCartesianSeries(envelope: VisualizationEnvelope, context: Renderer
         : chartLabel(envelope, spec.y[0], spec, context, combo?.axis === 'secondary' ? 'secondary_y' : 'primary_y', markColor)),
     }
   })
-  return { datasets, series }
+  const crowded = spec.presentation.labelPolicy.density === 'automatic'
+    && spec.presentation.labelPolicy.tooltipFallback
+    && (values.length > 4 || dataset.rows.length > 24)
+  if (crowded) {
+    for (const item of series) {
+      item.label = { ...item.label, show: false }
+      item.labelLayout = { hideOverlap: true }
+    }
+  }
+  return { datasets, series, scrollLegend: values.length > 4 }
 }
 
 function normalizedSeriesSources(
@@ -613,40 +632,6 @@ function percentLabel(envelope: VisualizationEnvelope, spec: CartesianSpec, cont
     },
     context,
   )
-}
-
-function seriesColor(value: string, intent: VisualizationColorIntent | undefined, context: RendererContext): string {
-  switch (intent) {
-    case 'accent': return context.colors.accent
-    case 'neutral': return context.colors.muted
-    case 'ink': return context.colors.foreground
-    case 'success': return context.colors.success
-    case 'warning': return context.colors.attention
-    case 'danger': return context.colors.danger
-  }
-  if (intent?.startsWith('data_')) {
-    const index = Number(intent.slice(5)) - 1
-    if (Number.isInteger(index) && context.colors.data.length > 0) return context.colors.data[index % context.colors.data.length]!
-  }
-  let hash = 2166136261
-  for (let index = 0; index < value.length; index++) hash = Math.imul(hash ^ value.charCodeAt(index), 16777619)
-  return context.colors.data.length > 0 ? context.colors.data[(hash >>> 0) % context.colors.data.length]! : context.colors.accent
-}
-
-function conditionalItemColor(
-  envelope: VisualizationEnvelope,
-  ref: VisualizationFieldRef,
-  target: VisualizationConditionalFormat['target'],
-  context: RendererContext,
-): ((params: { value?: unknown }) => string | undefined) | undefined {
-  const format = envelope.spec.conditionalFormatting?.find((candidate) =>
-    candidate.target === target && candidate.field.dataset === ref.dataset && candidate.field.field === ref.field)
-  if (!format) return undefined
-  return (params) => {
-    if (!Array.isArray(params.value)) return undefined
-    const result = resolveConditionalForRow(envelope, format, params.value)
-    return result ? conditionalStyleColor(result.style, (intent) => seriesColor('', intent, context)) : undefined
-  }
 }
 
 function conditionalGradient(

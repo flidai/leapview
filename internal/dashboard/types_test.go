@@ -464,7 +464,7 @@ func TestInteractionCommandMappingDistinguishesOmittedValueFromExplicitNull(t *t
 	}
 }
 
-func TestFiltersApplySpatialInteractionReplacesAndClearsOnlyItsSource(t *testing.T) {
+func TestFiltersApplySpatialInteractionAppendsAndClearsOnlyItsSource(t *testing.T) {
 	box := visualizationir.VisualizationSpatialSelectionGeometry{Value: &visualizationir.VisualizationSpatialBoxSelection{
 		VisualizationSpatialSelectionGeometryBase: visualizationir.VisualizationSpatialSelectionGeometryBase{Kind: "box"}, Kind: "box",
 		Bounds: visualizationir.VisualizationSpatialBounds{West: -50, South: -25, East: -40, North: -15},
@@ -476,7 +476,7 @@ func TestFiltersApplySpatialInteractionReplacesAndClearsOnlyItsSource(t *testing
 	filters := Filters{}.ApplySpatialInteraction(SpatialSelectionCommand{VisualID: "map-a", InteractionID: "spatial_selection", Action: "set", Geometry: box})
 	filters = filters.ApplySpatialInteraction(SpatialSelectionCommand{VisualID: "map-b", InteractionID: "spatial_selection", Action: "set", Geometry: radius})
 	filters = filters.ApplySpatialInteraction(SpatialSelectionCommand{VisualID: "map-a", InteractionID: "spatial_selection", Action: "set", Geometry: radius})
-	if len(filters.SpatialSelections) != 2 || filters.SpatialSelections[0].VisualID != "map-b" || filters.SpatialSelections[1].VisualID != "map-a" {
+	if len(filters.SpatialSelections) != 3 || filters.SpatialSelections[0].VisualID != "map-a" || filters.SpatialSelections[1].VisualID != "map-b" || filters.SpatialSelections[2].VisualID != "map-a" {
 		t.Fatalf("spatial selections = %#v", filters.SpatialSelections)
 	}
 	filters = filters.ApplySpatialInteraction(SpatialSelectionCommand{VisualID: "map-a", InteractionID: "spatial_selection", Action: "clear"})

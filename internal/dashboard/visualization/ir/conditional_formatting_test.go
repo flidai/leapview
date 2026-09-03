@@ -110,3 +110,43 @@ func TestValidateSpecEnforcesGovernedConditionalFormatting(t *testing.T) {
 		})
 	}
 }
+
+func TestValidateSpecAllowsGovernedProportionalCategoryColors(t *testing.T) {
+	t.Parallel()
+	data1 := VisualizationColorIntentData1
+	circle := VisualizationIconIntentCircle
+	formats := []VisualizationConditionalFormat{{
+		ID: "status-colors", Target: VisualizationConditionalTargetSeriesColor,
+		Field: VisualizationFieldRef{Dataset: "primary", Field: "orders"},
+		Rule: VisualizationConditionalRule{Value: &FieldVisualizationConditionalRule{
+			VisualizationConditionalRuleBase: VisualizationConditionalRuleBase{Kind: "field"}, Kind: "field",
+			Source: VisualizationFieldRef{Dataset: "primary", Field: "status"},
+			Values: map[string]VisualizationConditionalStyle{
+				"delivered": {Color: &data1, Icon: &circle},
+			},
+			NullStyle:    VisualizationConditionalStyle{Color: &data1, Icon: &circle},
+			DefaultStyle: VisualizationConditionalStyle{Color: &data1, Icon: &circle},
+		}},
+	}}
+	base := VisualizationSpecBase{
+		Kind: "proportional", Title: "Orders by status",
+		Datasets: []VisualizationDatasetSchema{{ID: "primary", Fields: []VisualizationField{
+			{ID: "status", Role: VisualizationFieldRoleDimension, DataType: VisualizationDataTypeString, Label: "Status"},
+			{ID: "orders", Role: VisualizationFieldRoleMetric, DataType: VisualizationDataTypeInteger, Label: "Orders"},
+		}}},
+		DataBudget:    VisualizationDataBudget{MaxRows: 100, RequiredCompleteness: VisualizationCompletenessComplete},
+		Accessibility: VisualizationAccessibility{Title: "Orders by status", Description: "Order status share"},
+		Interactions:  []VisualizationInteraction{}, ConditionalFormatting: &formats,
+	}
+	spec := VisualizationSpec{Value: &ProportionalVisualizationSpec{
+		VisualizationSpecBase: base, Kind: "proportional", Mark: VisualizationProportionalMarkDonut,
+		Category: VisualizationFieldRef{Dataset: "primary", Field: "status"},
+		Value:    VisualizationFieldRef{Dataset: "primary", Field: "orders"},
+		Presentation: ProportionalVisualizationPresentation{
+			VisualizationPresentation: testVisualizationPresentation(VisualizationLegendPositionBottom),
+		},
+	}}
+	if err := ValidateSpec(spec); err != nil {
+		t.Fatalf("valid proportional conditional formatting: %v", err)
+	}
+}

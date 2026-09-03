@@ -291,6 +291,7 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
             label: kpiLabel?.textContent?.trim(),
             value: kpiValue?.textContent?.trim(),
             note: kpi?.querySelector('.lv-visualization-note')?.textContent?.trim(),
+            notes: [...(kpi?.querySelectorAll('.lv-visualization-note') ?? [])].map((note) => note.textContent?.trim()),
             display: kpi ? getComputedStyle(kpi).display : '',
             valueSize: kpiValue ? Number.parseFloat(getComputedStyle(kpiValue).fontSize) : 0,
             labelSize: kpiLabel ? Number.parseFloat(getComputedStyle(kpiLabel).fontSize) : 0,
@@ -315,7 +316,12 @@ for (const viewport of [{ name: 'desktop', width: 1280, height: 820 }, { name: '
       expect(state.legacyCellButtons).toBe(0)
       expect(state.tableText).toContain('o1')
       expect(state.tableUpgraded).toBe(true)
-      expect(state.kpi).toMatchObject({ tone: 'ink', label: 'Orders', value: '42', note: 'Filtered', display: 'grid' })
+      expect(state.kpi).toMatchObject({
+        tone: 'ink', label: 'Orders', value: '42',
+        note: 'Selection highlighted. Comparison total is unchanged.',
+        notes: ['Selection highlighted. Comparison total is unchanged.', 'Filtered'],
+        display: 'grid',
+      })
       expect(state.kpi.valueSize).toBeGreaterThan(state.kpi.labelSize)
       if (viewport.name === 'mobile') {
         expect(state.presentationMode).toBe('mobile')
@@ -1096,7 +1102,7 @@ test('desktop report tables distribute columns across the available visual width
   }
 })
 
-test('mobile report tables expose horizontal scrolling and a visible swipe hint', async () => {
+test('mobile report tables keep accessible horizontal scrolling and native scrollbar presentation', async () => {
   const page = await browser.newPage({ viewport: { width: 390, height: 760 } })
   try {
     await page.goto(baseURL)
@@ -1112,18 +1118,20 @@ test('mobile report tables expose horizontal scrolling and a visible swipe hint'
       const table = tableHost.shadowRoot.querySelector('lv-report-table') as any
       await table.updateComplete
       const scrollport = table.shadowRoot.querySelector('.table-scrollport') as HTMLElement
-      const hint = table.shadowRoot.querySelector('.table-scroll-hint') as HTMLElement
       return {
         role: scrollport.getAttribute('role'),
         label: scrollport.getAttribute('aria-label'),
         tabIndex: scrollport.getAttribute('tabindex'),
-        hint: hint.textContent?.replace(/\s+/g, ' ').trim(),
-        hintDisplay: getComputedStyle(hint).display,
+        hasHint: table.shadowRoot.querySelector('.table-scroll-hint') !== null,
+        scrollbarWidth: getComputedStyle(scrollport).scrollbarWidth,
+        scrollbarColor: getComputedStyle(scrollport).scrollbarColor,
+        webkitScrollbarWidth: getComputedStyle(scrollport, '::-webkit-scrollbar').width,
       }
     })
     expect(result).toEqual({
       role: 'table', label: 'Orders', tabIndex: '0',
-      hint: 'Swipe horizontally to see more columns →', hintDisplay: 'block',
+      hasHint: false,
+      scrollbarWidth: 'auto', scrollbarColor: 'auto', webkitScrollbarWidth: 'auto',
     })
   } finally {
     await page.close()
@@ -1536,6 +1544,10 @@ test('dashboard agent drawer carries page context and explicit visual references
       const ask = chart.querySelector('.ask-visual') as HTMLElement
       const kpiAsk = kpi.querySelector('.ask-visual') as HTMLElement
       const tableAsk = table.querySelector('.ask-visual') as HTMLElement
+      const reportTable = table.shadowRoot.querySelector('lv-report-table') as any
+      await reportTable.updateComplete
+      const tableExpand = reportTable.shadowRoot.querySelector('.visual-actions .icon-action') as HTMLElement
+      const tableOptions = reportTable.shadowRoot.querySelector('.visual-options summary') as HTMLElement
       const askStyle = getComputedStyle(ask)
       const expand = chart.shadowRoot.querySelector('[data-visualization-expand]') as HTMLElement
       const agentIconMarkup = root.querySelector('.agent-toggle svg')?.innerHTML
@@ -1550,6 +1562,10 @@ test('dashboard agent drawer carries page context and explicit visual references
         askActionRow: ask.assignedSlot?.parentElement?.className,
         kpiAskActionRow: kpiAsk.assignedSlot?.parentElement?.className,
         tableAskActionRow: tableAsk.assignedSlot?.parentElement?.className,
+        tableAskRight: tableAsk.getBoundingClientRect().right,
+        tableExpandLeft: tableExpand.getBoundingClientRect().left,
+        tableExpandRight: tableExpand.getBoundingClientRect().right,
+        tableOptionsLeft: tableOptions.getBoundingClientRect().left,
         askPressed: ask.getAttribute('aria-pressed'),
         askUsesAgentIcon: ask.querySelector('svg')?.innerHTML === agentIconMarkup
           && drawer.shadowRoot.querySelector('.title svg')?.innerHTML === agentIconMarkup,
@@ -1570,6 +1586,8 @@ test('dashboard agent drawer carries page context and explicit visual references
       chartAction: 'Expand chart',
       tableHasExpand: false,
     })
+    expect(visualActionsAtRest.tableExpandLeft - visualActionsAtRest.tableAskRight).toBeGreaterThanOrEqual(4)
+    expect(visualActionsAtRest.tableExpandRight).toBeLessThanOrEqual(visualActionsAtRest.tableOptionsLeft)
 
     await page.locator('lv-dashboard-visual-frame[data-visual-id="orders_chart"]').hover()
     const visualActionsOnHover = await page.locator('lv-dashboard-page').evaluate((element: any) => {

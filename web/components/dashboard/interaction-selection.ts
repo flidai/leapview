@@ -140,7 +140,8 @@ export function visualizationHighlightStates(
     if (source?.spec.kind !== 'geographic') continue
     const interaction = source.spec.spatialInteractions.find((candidate) =>
       candidate.id === selection.interactionID
-      && candidate.targets.some((candidate) => candidate.visualID === target.visualID && candidate.effect === 'highlight'))
+      && (selection.visualID === target.visualID
+        || candidate.targets.some((candidate) => candidate.visualID === target.visualID && candidate.effect === 'highlight')))
     if (!interaction) continue
     highlights.push({
       sourceVisualID: selection.visualID,

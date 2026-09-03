@@ -2,14 +2,34 @@ import { expect, test } from 'bun:test'
 
 import type { VisualizationEnvelope, VisualizationGeographicLayer } from '../../../../generated/visualization'
 import type { FeatureCollection } from 'geojson'
-import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapInteractionCommand, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapPointerOptions, mapThemeColors, mapTooltipEntries, normalizeFeatureWeights, pathGeometry, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceDataReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
+import { aggregateExpansionCamera, applyFeatureScales, applyTiledPrecisionLayerVisibility, basemapBoundaryLayer, basemapLayer, basemapThemeKey, clusterExpansionForRenderedFeatures, concreteCSSColor, coordinateGeometry, coordinateReferenceGrid, createBasemapThemeScheduler, fitMapToGeographicData, installWebGLRecovery, interactionCommandForRenderedFeatures, joinGeometry, loadMapStyleAsset, mapAccessibleData, mapAccessibleRenderedFeatures, mapAccessibleTableSides, mapAccessibleTableStyle, mapClickCanRefineCamera, mapInteractionCommand, mapInteractionOptions, mapLayer, mapLibreChromeCSS, mapOutlineLayer, mapOverlayBottom, mapOverlaysNeedStacking, mapPointerOptions, mapSelectionControlAvailable, mapThemeColors, mapTooltipEntries, mapVisibleDataSummary, normalizeFeatureWeights, pathGeometry, progressiveAggregateRefinementZoom, removeRendererFrame, resetMapToHome, sameOriginGeometryURL, setRendererFramePresented, tiledAggregateCountLayer, tiledAggregateHeatLayer, tiledAggregatePointLayer, tiledLayerPaintUpdates, tiledPrecisionLayerFamily, tiledRawPrecisionVisible, tiledSourceEventReady, tiledSourceLifecycle, tiledSourceTransition, updateSelectionSources, vectorTileTemplateURL, verifyGeometryDigest, waitForMapRender } from './maplibre'
 import { adapterObservation } from '../telemetry'
 
 test('MapLibre owns usable shadow-DOM styles for map navigation controls', () => {
   expect(mapLibreChromeCSS).toContain('.maplibregl-ctrl-top-right')
-  expect(mapLibreChromeCSS).toContain('width:30px')
+  expect(mapLibreChromeCSS).toContain('--lv-map-navigation-target:max(30px,calc(25px * var(--report-canvas-inverse-scale,1)))')
+  expect(mapLibreChromeCSS).toContain('width:var(--lv-map-navigation-target)')
   expect(mapLibreChromeCSS).toContain('.maplibregl-ctrl-zoom-in::before')
   expect(mapLibreChromeCSS).toContain('.maplibregl-ctrl-compass')
+})
+
+test('MapLibre reserves a non-overlapping mobile attribution band for accessible map data', () => {
+  expect(mapAccessibleTableStyle).toContain('bottom:50px')
+  expect(mapAccessibleTableStyle).toContain('background:var(--lv-bg-panel,#fff)')
+  expect(mapAccessibleTableStyle).not.toContain('transparent')
+  expect(mapAccessibleTableSides('left')).toEqual({ left: '', right: '10px' })
+  expect(mapAccessibleTableSides('bottom')).toEqual({ left: '', right: '10px' })
+  expect(mapAccessibleTableSides('right')).toEqual({ left: '10px', right: '' })
+  expect(mapOverlayBottom(0)).toBe('28px')
+  expect(mapOverlayBottom(21.2)).toBe('34px')
+  expect(mapOverlayBottom(34)).toBe('46px')
+  expect(mapOverlaysNeedStacking(680, 150, 470)).toBe(false)
+  expect(mapOverlaysNeedStacking(680, 150, 520)).toBe(true)
+  expect(mapVisibleDataSummary(8, 8, 0, 14_833)).toEqual({
+    label: 'View map data (8 cells)',
+    accessibleLabel: 'View visible map data (8 visible aggregate cells; 14833 total coordinates)',
+  })
+  expect(mapVisibleDataSummary(12, 1, 11, 14_833).label).toBe('View map data (12 features)')
 })
 
 test('MapLibre geometry assets are same-origin and content addressed', async () => {
@@ -301,6 +321,16 @@ test('MapLibre tiled layers reuse one native source and stable server-provided d
   expect(vectorTileTemplateURL(envelope.dataState.kind === 'spatial_tiled' ? envelope.dataState.tileURL : '', 'https://example.test/dashboard')).toBe('https://example.test/dashboards/orders/visuals/orders-map/tiles/revision/{z}/{x}/{y}.mvt')
 })
 
+test('MapLibre exposes selection controls for inline and tile-backed maps', () => {
+  const tiled = tiledPointEnvelope()
+  expect(tiled.spec.interactions.some((candidate) => candidate.kind === 'select')).toBe(true)
+  expect(mapSelectionControlAvailable(tiled)).toBe(true)
+  expect(mapPointerOptions(tiled).interactive).toBe(true)
+
+  const inline = { ...tiled, dataState: { kind: 'inline', rows: [] } } as VisualizationEnvelope
+  expect(mapSelectionControlAvailable(inline)).toBe(true)
+})
+
 test('MapLibre switches the complete tiled map to one precision family at the global transition', () => {
 	expect(tiledRawPrecisionVisible(6.999, 7)).toBe(false)
 	expect(tiledRawPrecisionVisible(7, 7)).toBe(true)
@@ -318,11 +348,10 @@ test('MapLibre replaces the tiled source generation before exposing a new precis
   expect(tiledSourceLifecycle('replace', false)).toBe('error')
 })
 
-test('MapLibre waits for an idle source event before ending a tiled replacement', () => {
-  expect(tiledSourceDataReady('metadata', true)).toBe(false)
-  expect(tiledSourceDataReady('content', true)).toBe(false)
-  expect(tiledSourceDataReady('idle', false)).toBe(false)
-  expect(tiledSourceDataReady('idle', true)).toBe(true)
+test('MapLibre treats governed source content as ready without waiting for unrelated basemap idle', () => {
+  expect(tiledSourceEventReady({ sourceId: 'orders', sourceDataType: 'content', isSourceLoaded: false }, 'orders')).toBe(true)
+  expect(tiledSourceEventReady({ sourceId: 'orders', isSourceLoaded: true }, 'orders')).toBe(true)
+  expect(tiledSourceEventReady({ sourceId: 'basemap', sourceDataType: 'content', isSourceLoaded: true }, 'orders')).toBe(false)
 })
 
 test('MapLibre hides both tiled precision families during replacement and restores exactly one after source readiness', () => {
@@ -425,6 +454,17 @@ test('MapLibre aggregate clicks jump directly to the server refinement zoom', ()
 	expect(aggregateExpansionCamera({ __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0 })).toBeUndefined()
 })
 
+test('MapLibre selection maps reserve clicks for data interaction instead of moving the camera', () => {
+	const interactive = selectableEnvelope()
+	expect(mapClickCanRefineCamera(interactive)).toBe(false)
+	if (interactive.spec.kind !== 'geographic') throw new Error('geographic fixture is unavailable')
+	const exploratory = {
+		...interactive,
+		spec: { ...interactive.spec, interactions: [], spatialInteractions: [] },
+	} as VisualizationEnvelope
+	expect(mapClickCanRefineCamera(exploratory)).toBe(true)
+})
+
 test('MapLibre tiled accessibility deduplicates visible raw and aggregate features', () => {
   const envelope = tiledPointEnvelope()
   const data = mapAccessibleRenderedFeatures(envelope, [
@@ -446,6 +486,63 @@ test('MapLibre tiled interaction submits raw identities and never aggregate cell
   const aggregate = { layer: { id: 'lv-orders' }, properties: { __lv_id: 22, __lv_aggregate: true, order_id: 'not-a-row' } }
   expect(mapInteractionCommand(envelope, [raw], ['lv-orders'])?.mappings[0]?.value).toBe('o1')
   expect(mapInteractionCommand(envelope, [aggregate], ['lv-orders'])).toBeUndefined()
+})
+
+test('MapLibre builds the tile-backed picker from unique visible raw points', () => {
+  const envelope = tiledPointEnvelope()
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_id: 11, __lv_aggregate: false, __lv_selected: true, order_id: 'o1' } }
+  const duplicate = { layer: { id: 'lv-orders' }, properties: { __lv_id: 12, __lv_aggregate: false, order_id: 'o1' } }
+  const aggregate = { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_id: 22, __lv_aggregate: true, order_id: 'not-a-row' } }
+  const options = mapInteractionOptions(envelope, [raw, duplicate, aggregate], ['lv-orders', 'lv-orders-aggregate'])
+  expect(options).toHaveLength(1)
+  expect(options[0]).toMatchObject({ label: 'o1', selected: true })
+  expect(options[0]?.command?.mappings[0]?.value).toBe('o1')
+})
+
+test('MapLibre marks tile-backed picker options from canonical selection state', () => {
+  const base = tiledPointEnvelope()
+  const envelope = {
+    ...base,
+    selection: [{ datum: { dataset: 'primary', dataRevision: base.dataRevision, identity: { order_id: 'o1' } }, label: 'o1' }],
+  } as VisualizationEnvelope
+  const raw = { layer: { id: 'lv-orders' }, properties: { __lv_aggregate: false, order_id: 'o1' } }
+  expect(mapInteractionOptions(envelope, [raw], ['lv-orders'])[0]?.selected).toBe(true)
+})
+
+test('MapLibre offers aggregate refinement areas before raw selectable points are visible', () => {
+  const envelope = tiledPointEnvelope()
+  const features = [
+    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_west: -54, __lv_south: -18, __lv_east: -36, __lv_north: 0, __lv_target_zoom: 5, revenue: 12_800 } },
+    { layer: { id: 'lv-orders-aggregate' }, properties: { __lv_aggregate: true, __lv_west: -72, __lv_south: -36, __lv_east: -54, __lv_north: -18, __lv_target_zoom: 5, revenue: 2_300 } },
+  ]
+  const options = mapInteractionOptions(envelope, features, ['lv-orders-aggregate'])
+  expect(options.map((option) => option.label)).toEqual(['Zoom to area 1 · 12.8k orders', 'Zoom to area 2 · 2.3k orders'])
+  expect(options[0]?.command).toBeUndefined()
+  expect(options[0]?.refinement).toEqual({ center: [-45, -9], zoom: 5 })
+})
+
+test('MapLibre refines dense aggregate areas progressively instead of jumping to an empty raw zoom', () => {
+  expect(progressiveAggregateRefinementZoom(3, 7)).toBe(5)
+  expect(progressiveAggregateRefinementZoom(6, 7)).toBe(7)
+  expect(progressiveAggregateRefinementZoom(7, 7)).toBe(7)
+})
+
+test('MapLibre distinguishes visible tiled options that share a display label', () => {
+  const envelope = tiledPointEnvelope()
+  if (envelope.spec.kind !== 'geographic') throw new Error('geographic fixture is unavailable')
+  const interaction = envelope.spec.interactions[0]!
+  const withCityLabels = {
+    ...envelope,
+    spec: { ...envelope.spec, interactions: [{ ...interaction, mappings: interaction.mappings.map((mapping) => ({ ...mapping, label: { dataset: 'primary', field: 'city' } })) }] },
+  } as VisualizationEnvelope
+  const features = [
+    { layer: { id: 'lv-orders' }, properties: { __lv_aggregate: false, order_id: '15100', city: 'penapolis' } },
+    { layer: { id: 'lv-orders' }, properties: { __lv_aggregate: false, order_id: '15101', city: 'penapolis' } },
+  ]
+  expect(mapInteractionOptions(withCityLabels, features, ['lv-orders']).map((option) => option.label)).toEqual([
+    'penapolis · 15100',
+    'penapolis · 15101',
+  ])
 })
 
 test('MapLibre exposes a bounded formatted tabular equivalent without unrelated fields', () => {
