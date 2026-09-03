@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -55,9 +56,40 @@ func TestReconcilePreservesPublicIDAcrossProjectCutover(t *testing.T) {
 	input.ServingStateID = "state_3"
 	input.Publications = map[string]publication.Definition{}
 	reconcile(t, ctx, db, input)
-	disabled := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
-	if disabled.Status() != publication.StatusUnconfigured || disabled.PublicID != first.PublicID {
-		t.Fatalf("disabled = %#v", disabled)
+	omitted := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
+	if omitted.Status() != publication.StatusActive || omitted.PublicID != first.PublicID || omitted.ServingStateID != "state_2" {
+		t.Fatalf("omitted = %#v", omitted)
+	}
+}
+
+func TestReconcileCandidateOmissionPreservesControlState(t *testing.T) {
+	ctx := context.Background()
+	store, err := platform.Open(ctx, t.TempDir()+"/platform.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = store.Close() })
+	db := store.SQLDB()
+	seedProject(t, db)
+	repo := NewRepository(db)
+	reconcile(t, ctx, db, publication.ReconcileInput{
+		ProjectID: projectgraph.ResourceID("site"), ServingStateID: "state_1", ActorID: "owner",
+		Publications: map[string]publication.Definition{"website": definition("digest-1")},
+	})
+	if _, err := repo.Suspend(ctx, projectgraph.ResourceID("site"), "website", "principal-suspend"); err != nil {
+		t.Fatal(err)
+	}
+	before := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
+
+	// An ordinary modern analytics candidate has no publication definitions;
+	// that omission must not mutate the durable control-plane aggregate.
+	reconcile(t, ctx, db, publication.ReconcileInput{
+		ProjectID: projectgraph.ResourceID("site"), ServingStateID: "state_2", ActorID: "candidate-owner",
+		Publications: map[string]publication.Definition{},
+	})
+	after := mustGet(t, repo, ctx, projectgraph.ResourceID("site"), "website")
+	if !reflect.DeepEqual(after, before) {
+		t.Fatalf("candidate omission changed publication state:\nbefore=%#v\nafter=%#v", before, after)
 	}
 }
 

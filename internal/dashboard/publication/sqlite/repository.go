@@ -261,17 +261,9 @@ func ReconcileTx(
 		}
 	}
 
-	for name, row := range existing {
-		if _, ok := input.Publications[name]; ok || !row.configured {
-			continue
-		}
-		if err := q.DisableDashboardPublication(ctx, row.id); err != nil {
-			return err
-		}
-		if err := insertEvent(ctx, q, row.id, "disabled", input.ActorID, input.ServingStateID); err != nil {
-			return err
-		}
-	}
+	// DashboardPublication control state is owned by the control-plane API.
+	// Analytics candidates may supply compatibility definitions, but omission
+	// never removes or disables an existing durable publication.
 
 	names := make([]string, 0, len(input.Publications))
 	for name := range input.Publications {

@@ -364,7 +364,9 @@ func reconcileActivatedDashboardPublications(
 	// Older and test-authored serving states predate the compiled publication
 	// snapshot. An absent snapshot is not an authoritative empty definition and
 	// must not erase publication rows owned by those activation paths. Modern
-	// compilation writes an explicit JSON object (including "{}" for none).
+	// compilation writes an explicit JSON object (including "{}" for none), but
+	// publication reconciliation remains non-authoritative: analytics
+	// activation does not own instance control-plane publications.
 	if raw == "" || raw == "null" {
 		return nil
 	}
@@ -1041,8 +1043,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 	analyticsAPI := analyticsmodule.AnalyticsAPIGenConfig{
 		QueryAudit: analyticsmodule.QueryAuditAPIGenConfig{
 			Reader: runtime.queryAuditProvider,
-			ProjectID: func(value string) projectgraph.ResourceID {
-				return projectgraph.ResourceID(value)
+			ProjectID: func(ctx context.Context) (projectgraph.ResourceID, error) {
+				if routes.accessModule == nil {
+					return "", errors.New("access capability is unavailable")
+				}
+				return routes.accessModule.CurrentProjectID(ctx)
 			},
 		},
 		Connections: analyticsmodule.ConnectionBindingAPIGenConfig{
