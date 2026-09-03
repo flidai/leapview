@@ -34,7 +34,6 @@ import (
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	"github.com/flidai/leapview/internal/deployment"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
-	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
@@ -811,7 +810,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		},
 	}
 	if string(environment) == "evaluation" {
-		deploymentConfig.BeforeNativeActivationCommit = func(ctx context.Context, _ deploymentpostgres.DeliveryPublication) error {
+		deploymentConfig.BeforeNativeActivationCommit = func(ctx context.Context) error {
 			return sealedcontrol.QualificationActivationBarrier(ctx, string(environment))
 		}
 	}

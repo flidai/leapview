@@ -13,7 +13,6 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
-	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
@@ -179,6 +178,12 @@ type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, s
 type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, string, int64) (sealedcontrol.RollbackRequest, error)
 type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
 
+// ActivationPreCommitHook is the module-owned qualification seam invoked
+// immediately before native activation commits its durable target CAS. The
+// module exposes only the cancellation context; publication details remain an
+// implementation concern of the PostgreSQL deployment adapter.
+type ActivationPreCommitHook func(context.Context) error
+
 type Config struct {
 	// Persistence is the native clean-slate PostgreSQL delivery authority.
 	// Production callers construct it with NewPostgresPersistence; local and
@@ -239,7 +244,7 @@ type Config struct {
 	// BeforeNativeActivationCommit is an optional application-owned release
 	// qualification seam. The native PostgreSQL repository invokes it after
 	// validating every activation proof and immediately before its target CAS.
-	BeforeNativeActivationCommit deploymentpostgres.ActivationPreCommitHook
+	BeforeNativeActivationCommit ActivationPreCommitHook
 	// BootstrapPolicies is the durable one-shot first-activation policy store.
 	// It is intentionally separate from approvals and active-generation
 	// snapshots; composition supplies the access-role/credential and

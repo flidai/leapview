@@ -529,6 +529,28 @@ func TestNativeCoordinatorPostgresActivationPreCommitHookRollsBack(t *testing.T)
 	}
 }
 
+func TestActivationPreCommitHookAdapterPreservesContextAndFailure(t *testing.T) {
+	if adaptActivationPreCommitHook(nil) != nil {
+		t.Fatal("nil module hook produced a PostgreSQL hook")
+	}
+	wantErr := errors.New("qualification interrupted")
+	ctx := t.Context()
+	calls := 0
+	hook := adaptActivationPreCommitHook(func(got context.Context) error {
+		calls++
+		if got != ctx {
+			t.Fatal("activation hook context changed at the module boundary")
+		}
+		return wantErr
+	})
+	if err := hook(ctx, deploymentpostgres.DeliveryPublication{PublicationID: "publication-private"}); !errors.Is(err, wantErr) {
+		t.Fatalf("adapted activation hook error = %v, want %v", err, wantErr)
+	}
+	if calls != 1 {
+		t.Fatalf("activation hook calls = %d, want 1", calls)
+	}
+}
+
 func TestNativeCoordinatorApprovedActivationRejectsTamperedPublicationActor(t *testing.T) {
 	f := newNativePGFixture(t)
 	created, err := f.coordinator.Create(t.Context(), nativeCreateRequest(f, "tampered-actor-create"))

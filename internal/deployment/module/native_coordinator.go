@@ -57,7 +57,7 @@ type nativeCoordinatorCapabilities struct {
 	audit                  NativeDeliveryAuditAppender
 	workflow               NativeDeliveryWorkflowRecorder
 	operations             NativeOperationAuthority
-	beforeActivationCommit deploymentpostgres.ActivationPreCommitHook
+	beforeActivationCommit ActivationPreCommitHook
 }
 
 var _ NativeDeliveryPublicationPort = (*nativeCoordinator)(nil)
@@ -73,11 +73,20 @@ func newNativeCoordinator(repository *deploymentpostgres.Repository, targetID, i
 	if capabilities.events == nil || capabilities.audit == nil || capabilities.workflow == nil || capabilities.operations == nil {
 		return nil, errors.New("native deployment event, audit, workflow, and operation authorities are required")
 	}
-	coordinator := &nativeCoordinator{repository: repository, targetID: targetID, instanceEnv: instanceEnv, events: capabilities.events, audit: capabilities.audit, workflow: capabilities.workflow, operations: capabilities.operations, beforeActivationCommit: capabilities.beforeActivationCommit}
+	coordinator := &nativeCoordinator{repository: repository, targetID: targetID, instanceEnv: instanceEnv, events: capabilities.events, audit: capabilities.audit, workflow: capabilities.workflow, operations: capabilities.operations, beforeActivationCommit: adaptActivationPreCommitHook(capabilities.beforeActivationCommit)}
 	coordinator.eventReader, _ = capabilities.events.(nativeDeliveryEventReader)
 	coordinator.auditReader, _ = capabilities.audit.(nativeDeliveryAuditReader)
 	coordinator.operationReader, _ = capabilities.operations.(nativeOperationLookupReader)
 	return coordinator, nil
+}
+
+func adaptActivationPreCommitHook(hook ActivationPreCommitHook) deploymentpostgres.ActivationPreCommitHook {
+	if hook == nil {
+		return nil
+	}
+	return func(ctx context.Context, _ deploymentpostgres.DeliveryPublication) error {
+		return hook(ctx)
+	}
 }
 
 func (c *nativeCoordinator) Create(ctx context.Context, request apiadapter.CreateRequest) (apiadapter.Deployment, error) {
