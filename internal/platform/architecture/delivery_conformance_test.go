@@ -17,9 +17,8 @@ import (
 // as adversarial inputs without making them reachable.
 func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	root := repoRoot(t)
-	// build.go dispatches production to postgres_build.go. The
-	// local_composition.go path is intentionally excluded: it remains the
-	// explicit SQLite development/evaluation fixture used by local tests.
+	// build.go dispatches every app entrypoint to postgres_build.go. Local
+	// SQLite authority is intentionally absent from the application graph.
 	productionRoots := []string{
 		"internal/deployment", "internal/app/runtimefactory", "internal/app/build.go", "internal/app/postgres_build.go",
 		"internal/analytics/candidatecatalog", "internal/analytics/sealedcatalog",
@@ -122,11 +121,12 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 // TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors keeps the
 // production assembly boundary explicit. Only the BuildProduction dispatch,
 // PostgreSQL composition, and PostgreSQL serving runtime are roots here; the
-// guarded local SQLite branch remains intentionally outside this scan.
+// removed local SQLite authority graph is not a production closure.
 func TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors(t *testing.T) {
 	root := repoRoot(t)
 	roots := []string{
 		"internal/app/build.go",
+		"internal/app/composition.go",
 		"internal/app/postgres_build.go",
 		"internal/app/runtimefactory/postgres.go",
 	}
@@ -185,22 +185,33 @@ func TestPostgresRuntimeRootsDoNotReachLocalCatalogConstructors(t *testing.T) {
 		})
 	}
 
-	// Keep the explicit local/evaluation branch visible and admissible: this
-	// test must not turn a guarded SQLite fixture into a production ban.
-	local, err := os.ReadFile(filepath.Join(root, "internal/app/local_composition.go"))
+	localCompositionPath := filepath.Join(root, "internal/app/local_composition.go")
+	if _, err := os.Stat(localCompositionPath); err == nil {
+		t.Fatal("local SQLite application composition must not exist")
+	} else if !os.IsNotExist(err) {
+		t.Fatalf("stat removed local SQLite composition: %v", err)
+	}
+	buildSource, err := os.ReadFile(filepath.Join(root, "internal/app/build.go"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	localText := string(local)
-	if !strings.Contains(localText, "guardSQLiteAuthorityComposition") || !strings.Contains(localText, "NewSQLiteSealedFactory(") {
-		t.Fatal("guarded local SQLite composition is missing its explicit factory branch")
+	if strings.Contains(string(buildSource), "assembleLocalSQLite(") {
+		t.Fatal("Build retains a local SQLite authority graph")
+	}
+	compositionSource, err := os.ReadFile(filepath.Join(root, "internal/app/composition.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, forbidden := range []string{"localruntimefactory", "NewSQLiteSealedFactory("} {
+		if strings.Contains(string(compositionSource), forbidden) {
+			t.Fatalf("production app composition retains local authority %q", forbidden)
+		}
 	}
 }
 
 // TestLEA414ProductionUsesSealedCanonicalPath keeps the cutover boundary
 // explicit. Production composition must select the target-owned PostgreSQL
-// sealed delivery factory; the SQLite adapter remains outside this path for
-// development/evaluation fixtures only.
+// sealed delivery factory, with no local SQLite fallback in the app graph.
 func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 	root := repoRoot(t)
 	productionBuildBytes, err := os.ReadFile(filepath.Join(root, "internal/app/build.go"))

@@ -24,25 +24,6 @@ type canonicalPublishReaderFake struct {
 	plan      deployment.DeliveryPlan
 }
 
-func TestLocalEvaluationRuntimeIsLimitedToDevelopmentAndDisposableEvaluation(t *testing.T) {
-	for _, test := range []struct {
-		name       string
-		production bool
-		evaluation bool
-		want       bool
-	}{
-		{name: "development", want: true},
-		{name: "disposable evaluation", production: true, evaluation: true, want: true},
-		{name: "production", production: true, want: false},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			if got := allowsLocalEvaluationRuntime(test.production, test.evaluation); got != test.want {
-				t.Fatalf("allowsLocalEvaluationRuntime(%v, %v) = %v, want %v", test.production, test.evaluation, got, test.want)
-			}
-		})
-	}
-}
-
 func (f canonicalPublishReaderFake) DeliveryCandidateByID(context.Context, string) (deployment.DeliveryCandidate, error) {
 	return f.candidate, nil
 }

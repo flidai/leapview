@@ -721,9 +721,6 @@ func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	}
 	for _, required := range []string{
 		modulePath + "/internal/admin/cli",
-		// Initialization and local pool qualification remain delegated to this
-		// compatibility composition; maintenance is native-only.
-		modulePath + "/internal/app/adminoffline",
 		modulePath + "/internal/app/adminpostgres",
 	} {
 		if !importListContains(adminFile.imports, required) {
@@ -777,29 +774,6 @@ func TestOfflineAdminUseCasesAreCapabilityOwned(t *testing.T) {
 		t.Fatal("internal/admin/offline production package was not found")
 	}
 
-	compositionFound := false
-	for _, file := range productionGoFiles(t) {
-		if file.pkgDir != "internal/app/adminoffline" {
-			continue
-		}
-		compositionFound = true
-		if !importListContains(file.imports, modulePath+"/internal/admin/offline") {
-			t.Errorf("%s does not compose Admin-owned offline use cases", file.path)
-		}
-		for _, forbidden := range []string{
-			"mail.ParseAddress(",
-			"json.Marshal(",
-			"fmt.Fprintf(",
-			"retention days must be zero or greater",
-		} {
-			if strings.Contains(file.body, forbidden) {
-				t.Errorf("%s retains offline Admin product behavior %q", file.path, forbidden)
-			}
-		}
-	}
-	if !compositionFound {
-		t.Fatal("internal/app/adminoffline composition package was not found")
-	}
 }
 
 func TestAccessGeneratedAPIIsCapabilityOwned(t *testing.T) {
@@ -1955,7 +1929,7 @@ func TestRequestRuntimeDoesNotRetainConstructionDependencies(t *testing.T) {
 
 func TestAppDoesNotConstructRepositoriesFromSQLDB(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
-		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && file.path != "internal/app/local_composition.go" && strings.Contains(file.body, ".SQLDB()") {
+		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && strings.Contains(file.body, ".SQLDB()") {
 			t.Errorf("%s constructs adapters from platform.Store; capability modules must receive construction ownership", file.path)
 		}
 	}
@@ -4529,7 +4503,6 @@ func isSQLDBAllowedFile(file goFile) bool {
 	if file.pkgDir == "internal/app" {
 		switch file.path {
 		case "internal/app/build.go",
-			"internal/app/local_composition.go",
 			"internal/app/server.go",
 			"internal/app/publishes.go",
 			"internal/app/refresh_runs.go",

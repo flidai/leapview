@@ -276,7 +276,7 @@ func TestPostgresSettingsAuthoritySatisfiesAgentSettingsPortAndPreservesIdentity
 	}
 }
 
-func TestBuildProductionFailsClosedBeforeLegacySQLiteComposition(t *testing.T) {
+func TestBuildProductionFailsClosedBeforePostgresConnection(t *testing.T) {
 	_, err := BuildProduction(context.Background(), config.Config{Production: true})
 	if err == nil {
 		t.Fatal("BuildProduction accepted missing PostgreSQL control-plane configuration")
@@ -310,10 +310,10 @@ func TestBuildProductionRejectsSecurityBypassBeforeConnecting(t *testing.T) {
 	}
 }
 
-func TestBuildCannotBypassProductionPostgreSQLGate(t *testing.T) {
-	_, err := Build(context.Background(), config.Config{Production: true})
+func TestBuildAlwaysUsesProductionPostgreSQLGate(t *testing.T) {
+	_, err := Build(context.Background(), config.Config{})
 	if err == nil || !strings.Contains(err.Error(), "LEAPVIEW_POSTGRES_CONTROL_URL") {
-		t.Fatalf("Build production gate error = %v", err)
+		t.Fatalf("Build PostgreSQL gate error = %v", err)
 	}
 }
 

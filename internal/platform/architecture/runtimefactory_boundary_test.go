@@ -76,32 +76,23 @@ func TestRuntimeFactoryHasNoControlPlaneSQLiteDependencies(t *testing.T) {
 		}
 	}
 
-	localText := readAppProductionSources(t, filepath.Join(root, "internal", "app"))
-	for _, required := range []string{"guardSQLiteAuthorityComposition(", "localruntimefactory.NewSQLiteSealedFactory("} {
-		if !strings.Contains(localText, required) {
-			t.Errorf("local composition is missing explicit SQLite guard/factory boundary %q", required)
-		}
+	localCompositionPath := filepath.Join(root, "internal", "app", "local_composition.go")
+	if _, err := os.Stat(localCompositionPath); err == nil {
+		t.Error("local SQLite application composition must not exist")
+	} else if !os.IsNotExist(err) {
+		t.Errorf("stat removed local SQLite composition: %v", err)
 	}
-}
-
-func readAppProductionSources(t *testing.T, root string) string {
-	t.Helper()
-	entries, err := os.ReadDir(root)
-	if err != nil {
-		t.Fatalf("read app package: %v", err)
-	}
-	var sources strings.Builder
-	for _, entry := range entries {
-		if entry.IsDir() || filepath.Ext(entry.Name()) != ".go" || strings.HasSuffix(entry.Name(), "_test.go") {
-			continue
-		}
-		source, err := os.ReadFile(filepath.Join(root, entry.Name()))
+	for _, path := range []string{"internal/app/build.go", "internal/app/composition.go"} {
+		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
 		if err != nil {
-			t.Fatalf("read app source %s: %v", entry.Name(), err)
+			t.Fatalf("read %s: %v", path, err)
 		}
-		sources.Write(source)
+		for _, forbidden := range []string{"assembleLocalSQLite(", "localruntimefactory", "NewSQLiteSealedFactory("} {
+			if strings.Contains(string(source), forbidden) {
+				t.Errorf("%s retains local SQLite authority %q", path, forbidden)
+			}
+		}
 	}
-	return sources.String()
 }
 
 // isRuntimeFactorySQLiteAdapterImport recognizes capability-owned SQLite

@@ -1,6 +1,5 @@
-// Package adminpostgres adapts production Admin commands to native PostgreSQL
-// control-plane authorities. Operations without a native owner remain
-// delegated to the retained offline initialization and pool paths.
+// Package adminpostgres adapts Admin commands to native PostgreSQL control-plane
+// authorities.
 package adminpostgres
 
 import (
@@ -16,7 +15,6 @@ import (
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	admincli "github.com/flidai/leapview/internal/admin/cli"
 	adminoffline "github.com/flidai/leapview/internal/admin/offline"
-	appadminoffline "github.com/flidai/leapview/internal/app/adminoffline"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/app/postgresmaintenance"
@@ -102,10 +100,8 @@ type Dependencies struct {
 	Now             func() time.Time
 }
 
-// Operations preserves the retained offline Admin operations and owns the
-// native PostgreSQL maintenance command.
+// Operations owns the PostgreSQL-native Admin command operations.
 type Operations struct {
-	appadminoffline.Operations
 	Dependencies Dependencies
 }
 
@@ -172,6 +168,10 @@ func New(dependencies Dependencies) Operations {
 // Those targets no longer expose the retired cross-domain SQLite retention
 // implementation.
 var ErrNativeMaintenanceUnavailable = errors.New("native PostgreSQL admin maintenance is unavailable outside production")
+
+// ErrNativeAdminUnavailable indicates that a PostgreSQL-native Admin
+// operation was requested outside the production target.
+var ErrNativeAdminUnavailable = errors.New("native PostgreSQL admin operations are unavailable outside production")
 
 // Maintenance executes native PostgreSQL retention. Preview is the default
 // and always rolls back; --apply invokes the committing runner.

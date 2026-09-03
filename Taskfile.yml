@@ -1301,7 +1301,7 @@ tasks:
       - go test ./internal/app/runtimefactory -count=1 -v
       # Recovery is part of the lifecycle: audit stays query-only and repair
       # revalidates the exact root revision atomically before mutation.
-      - go test ./internal/admin/offline ./internal/admin/cli ./internal/app/adminoffline ./internal/app/gcadapter ./internal/platform/architecture -count=1 -v
+      - go test ./internal/admin/offline ./internal/admin/cli ./internal/app/adminpostgres ./internal/app/gcadapter ./internal/platform/architecture -count=1 -v
       # Protected targets must prove that source ownership and retained
       # attestations are enforced, rather than trusting client provenance text.
       - go test ./internal/project/module -run '^(TestCandidateSourceSynchronizerAuthorizesOnlyPlannedOwnerUploads|TestCandidateSourceSynchronizerRetainsActivePlanAcrossRestart)$' -count=1 -v

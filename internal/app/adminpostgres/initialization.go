@@ -20,9 +20,8 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
-// Initialize performs production bootstrap through the native PostgreSQL
-// access authority. Evaluation and development continue to use the existing
-// offline service, including its local credential recovery behavior.
+// Initialize performs bootstrap through the native PostgreSQL access
+// authority. Local and evaluation targets do not expose this operation.
 func (o Operations) Initialize(ctx context.Context, request adminoffline.InitializeRequest, out io.Writer) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
@@ -30,7 +29,7 @@ func (o Operations) Initialize(ctx context.Context, request adminoffline.Initial
 		return err
 	}
 	if !cfg.Production || cfg.EvaluationMode {
-		return o.Operations.Initialize(ctx, request, out)
+		return ErrNativeAdminUnavailable
 	}
 	// Match the offline service's admission checks before opening a native
 	// connection or taking the instance lock. A nil writer must not allow a
@@ -87,9 +86,8 @@ func (o Operations) Initialize(ctx context.Context, request adminoffline.Initial
 	return service.Initialize(ctx, request, out)
 }
 
-// AcknowledgeInitialCredentials removes the recoverable production bootstrap
+// AcknowledgeInitialCredentials removes the recoverable PostgreSQL bootstrap
 // bundle only after confirming that the native instance marker exists.
-// Evaluation and development retain the offline implementation unchanged.
 func (o Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 	deps := o.Dependencies.withDefaults()
 	cfg, err := deps.LoadConfig()
@@ -97,7 +95,7 @@ func (o Operations) AcknowledgeInitialCredentials(ctx context.Context) error {
 		return err
 	}
 	if !cfg.Production || cfg.EvaluationMode {
-		return o.Operations.AcknowledgeInitialCredentials(ctx)
+		return ErrNativeAdminUnavailable
 	}
 	accessConfig, err := productionAccessConfig(cfg)
 	if err != nil {

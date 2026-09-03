@@ -1,8 +1,7 @@
 package app
 
-// Native PostgreSQL process composition.  This file intentionally keeps the
-// graph assembly separate from the local SQLite buildLocalSQLiteRuntime path: a
-// production process must never open database/sql or infer a fallback store.
+// Native PostgreSQL process composition. This is the sole application
+// authority graph; it never opens database/sql or infers a fallback store.
 
 import (
 	"context"
@@ -714,7 +713,7 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		RuntimeVersion:  runtimeVersion,
 		PolicyResolver: func(operation deployment.DeliveryOperationKind) (appruntimefactory.CandidateDeliveryPolicy, error) {
 			return appruntimefactory.CandidateDeliveryPolicy{
-				RequiresApproval:       requiresDeliveryApproval(true, cfg.EvaluationMode, operation),
+				RequiresApproval:       requiresDeliveryApproval(operation),
 				ApprovalPolicyRevision: appruntimefactory.CurrentApprovalPolicyRevision,
 				RollbackClass:          deployment.DeliveryServingSafe,
 				RetentionWindow:        cfg.DeliveryRollbackRetention().String(),

@@ -18,7 +18,6 @@ import (
 	deploymentapiadapter "github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
-	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
@@ -52,6 +51,17 @@ type canonicalPublishReader interface {
 
 type deliveryTargetReader interface {
 	DeliveryTargetRevision(context.Context, string) (deployment.DeliveryTarget, error)
+}
+
+type sealedDeliveryGenerationReader interface {
+	DeliveryGenerationByID(context.Context, string) (deployment.DeliveryGeneration, error)
+	DeliveryCandidateByID(context.Context, string) (deployment.DeliveryCandidate, error)
+	DeliveryCatalogSealByID(context.Context, string) (deployment.CatalogSeal, error)
+}
+
+type canonicalRollbackReader interface {
+	sealedDeliveryGenerationReader
+	deliveryTargetReader
 }
 
 func verifyCanonicalDeliveryTarget(ctx context.Context, reader deliveryTargetReader, targetID, projectID, environment, generationID string, revision int64) error {
@@ -476,22 +486,14 @@ func (p projectCatalogLeaseProvider) Acquire(ctx context.Context) (projectcatalo
 	return catalogLease, nil
 }
 
-func allowsLocalEvaluationRuntime(production, evaluation bool) bool {
-	return !production || evaluation
-}
-
-func protectedPublishingTarget(production, evaluation bool) bool {
-	return production && !evaluation
-}
-
-func requiresDeliveryApproval(production, evaluation bool, operation deployment.DeliveryOperationKind) bool {
+func requiresDeliveryApproval(operation deployment.DeliveryOperationKind) bool {
 	// Restatement is the sealed implementation of an authorized operational
 	// refresh. Requiring a separate deployment approval for every scheduled or
 	// manually requested refresh would leave the refresh dispatcher unable to
 	// complete. Publication still crosses the live RBAC authorization boundary
 	// and the exact target/seal CAS; only the code/policy change approval is not
 	// applicable to this data-only operation.
-	return protectedPublishingTarget(production, evaluation) && operation != deployment.DeliveryOperationRestatement
+	return operation != deployment.DeliveryOperationRestatement
 }
 
 func readClaimedProject(repository deploymentmodule.ProjectClaimReader, environment servingstatemodule.Environment) func(context.Context) (projectgraph.ResourceID, bool, error) {
@@ -622,7 +624,7 @@ func accessAuthConfig(cfg config.Config, production, cookieSecure bool) accessmo
 	}
 }
 
-func buildSealedPublishRequest(ctx context.Context, delivery *deploymentsqlite.Repository, releases release.DeploymentLinkage, pending deploymentapiadapter.Deployment, releaseID, targetID string) (sealedcontrol.PublishRequest, error) {
+func buildSealedPublishRequest(ctx context.Context, delivery canonicalPublishReader, releases release.DeploymentLinkage, pending deploymentapiadapter.Deployment, releaseID, targetID string) (sealedcontrol.PublishRequest, error) {
 	if delivery == nil || releases == nil {
 		return sealedcontrol.PublishRequest{}, fmt.Errorf("sealed delivery and release repositories are required")
 	}
@@ -742,7 +744,7 @@ func buildCanonicalPublishRequest(ctx context.Context, delivery canonicalPublish
 	return sealedcontrol.PublishRequest{Publication: publication, Generation: root, Seal: sealedVerifiedSeal(seal), ApprovalReleaseID: candidate.ServingArtifactID}, nil
 }
 
-func buildCanonicalRollbackRequest(ctx context.Context, delivery *deploymentsqlite.Repository, generationID, idempotencyKey, targetID string) (sealedcontrol.RollbackRequest, error) {
+func buildCanonicalRollbackRequest(ctx context.Context, delivery canonicalRollbackReader, generationID, idempotencyKey, targetID string) (sealedcontrol.RollbackRequest, error) {
 	if delivery == nil || strings.TrimSpace(generationID) == "" || strings.TrimSpace(idempotencyKey) == "" {
 		return sealedcontrol.RollbackRequest{}, fmt.Errorf("canonical rollback inputs are incomplete")
 	}
@@ -795,7 +797,7 @@ func sealedRollbackEvidence(plan deployment.DeliveryPlan, createdAt time.Time) (
 	return evidence.Class, until, append([]string(nil), evidence.ExternalEffects...), nil
 }
 
-func buildSealedRollbackRequest(ctx context.Context, delivery *deploymentsqlite.Repository, releases release.DeploymentLinkage, pending deploymentapiadapter.Deployment, releaseID, targetID, expectedBaseGenerationID string, expectedTargetRevision int64) (sealedcontrol.RollbackRequest, error) {
+func buildSealedRollbackRequest(ctx context.Context, delivery sealedDeliveryGenerationReader, releases release.DeploymentLinkage, pending deploymentapiadapter.Deployment, releaseID, targetID, expectedBaseGenerationID string, expectedTargetRevision int64) (sealedcontrol.RollbackRequest, error) {
 	if delivery == nil || releases == nil {
 		return sealedcontrol.RollbackRequest{}, fmt.Errorf("sealed delivery and release repositories are required")
 	}

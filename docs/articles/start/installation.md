@@ -27,132 +27,15 @@ that will run `leapviewctl`:
 
 ## Before you begin
 
-Install Docker Engine. The five-minute path below needs no source checkout,
-registry login, Go, Bun, Task, manual YAML, or external dataset. A public
-production instance additionally needs Docker Compose, a DNS name, HTTPS,
-durable secret storage, and provider-native recovery storage.
+Install Docker Engine and Docker Compose. A public instance also needs a DNS
+name, HTTPS, durable secret storage, PostgreSQL, and provider-native recovery
+storage.
 
-## Run the five-minute evaluation
+## Choose an installation
 
-Pull the public image and start its self-contained evaluator:
-
-```sh
-IMAGE='ghcr.io/yacobolo/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9'
-docker pull "$IMAGE"
-docker run --detach --name leapview-evaluate --init \
-  --publish 127.0.0.1:8080:8080 \
-  --volume leapview-evaluate:/var/lib/leapview \
-  "$IMAGE" evaluate
-```
-
-The evaluator generates private runtime secrets, creates a forced-change local
-administrator, stages the small synthetic dataset shipped in the image,
-creates a private candidate, and publishes those exact bytes into one
-disposable project. It prints no secret to the container log. Wait for the
-health check, then consume the credentials once:
-
-```sh
-docker exec leapview-evaluate leapview healthcheck
-docker exec leapview-evaluate leapview evaluate first-login
-```
-
-Open <http://localhost:8080>, sign in, and change the temporary password. Choose
-**Five-minute Sales Evaluation**, select a State, and confirm that the Orders
-KPI, revenue chart, and governed order table update together. This exercises
-authentication, immutable serving-state deployment, managed data, semantic
-query planning, DuckDB execution, filters, and table rendering.
-
-The `127.0.0.1` publish address is part of the security boundary. Evaluation
-mode intentionally uses local HTTP and generated local secrets; do not expose
-it on a LAN or the internet and do not treat the synthetic project as
-production seeding.
-
-### Persistence, diagnostics, and cleanup
-
-The named volume preserves the initialized instance, changed password, managed
-data, and active deployment:
-
-```sh
-docker restart leapview-evaluate
-docker exec leapview-evaluate leapview healthcheck
-```
-
-If initialization does not become healthy, inspect the deterministic bootstrap
-log and container state:
-
-```sh
-docker logs leapview-evaluate
-docker inspect --format '{{.State.Health.Status}}' leapview-evaluate
-```
-
-`first-login` is deliberately one-time. If its output was lost, reset the
-disposable evaluator. Removing the container does not remove its volume:
-
-```sh
-docker rm --force leapview-evaluate
-```
-
-Delete the persisted evaluation instance only when a full reset is intended:
-
-```sh
-docker volume rm leapview-evaluate
-```
-
-The evaluator is pinned to the supported candidate digest so that the
-instructions, runtime, and retained evidence cannot drift independently.
-
-To run another evaluator concurrently, give it a separate volume, container
-name, host port, and target port:
-
-```sh
-docker run --detach --name leapview-evaluate-2 --init \
-  --publish 127.0.0.1:8081:8081 \
-  --volume leapview-evaluate-2:/var/lib/leapview \
-  "$IMAGE" evaluate --port 8081
-```
-
-Each evaluator then has its own instance identity and ordinary target origin
-(`http://localhost:8080` or `http://localhost:8081`). Reusing either the state
-volume or listen port is rejected instead of merging instances.
-
-### Move beyond the sample
-
-The bundled synthetic project exists only to qualify the product journey.
-From a source checkout, the evaluator is also an ordinary authoring target:
-
-```sh
-leapview login http://localhost:8080 \
-  --project evaluation/project/leapview.yaml
-PLAN_JSON=$(leapview plan evaluation/project/leapview.yaml \
-  --target http://localhost:8080 --format json)
-PLAN_ID=$(printf '%s' "$PLAN_JSON" | jq -r .planId)
-BUILD_JSON=$(leapview build "$PLAN_ID" --format json)
-CANDIDATE_ID=$(printf '%s' "$BUILD_JSON" | jq -r .candidateId)
-leapview publish "$CANDIDATE_ID"
-```
-
-Complete the browser sign-in prompted by `login`. Local evaluation policy
-activates the exact candidate without a separate enterprise approver; durable
-production targets retain protected approval and activation. To connect real
-data, start with [Connect a data source](/docs/guides/build/connect-data). For
-a durable or externally reachable instance, use the versioned Compose release
-below; it adds immutable image pinning and HTTPS. Set up PostgreSQL/PITR and
-DuckLake/object-store protection with the [PostgreSQL operations
-guide](/docs/guides/operate/postgresql-operations) and [Backup and restore
-guide](/docs/guides/operate/backup-restore); LeapView does not provide a
-Compose backup or upgrade controller.
-
-For an isolated one-shot private preview of the evaluator project, you may use
-the optional `dev` loop against the same loopback target:
-
-```sh
-leapview dev --once \
-  --project evaluation/project/leapview.yaml \
-  --target http://localhost:8080 --no-browser
-```
-
-This preview is a convenience for checking an authoring change; reviewed
-publication still follows the `plan`, `build`, and `publish` commands above.
+The supported installation is the PostgreSQL-backed Compose deployment below.
+It uses the same native control, delivery, and recovery architecture in local,
+staging, and production environments; there is no embedded control-plane mode.
 
 ## Run a durable production instance
 
