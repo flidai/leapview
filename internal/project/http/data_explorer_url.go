@@ -57,7 +57,9 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 		}
 		command.Explore = &explore
 	}
-	return h.dataExplorerSignalsForRestoredCommand(w, r, command, executeQuery)
+	version, versionPresent := dataExplorerURLValue(values, "v")
+	legacyURLState := mode == "explore" && (!versionPresent || version == dataExploreURLVersion)
+	return h.dataExplorerSignalsForRestoredCommand(w, r, command, executeQuery, legacyURLState)
 }
 
 const dataExploreURLVersion = "1"
@@ -350,6 +352,132 @@ func legacyFilterExpression(filter legacyDataExploreFilter) (exploration.Explora
 	}
 }
 
+// adaptLegacyExplorationFilterValues upgrades the old flat URL filter shape,
+// whose values were all JSON strings, into the typed canonical value variants
+// required by ExplorationSpec. This is deliberately called only for v1 (or
+// unversioned) URL restores after the authorized field projection is built;
+// canonical v2 state must never infer a value kind from model metadata.
+func adaptLegacyExplorationFilterValues(spec *exploration.ExplorationSpec, fields []projectsignals.DataExploreFieldSignal, model *semanticmodel.Model) error {
+	if spec == nil {
+		return errors.New("exploration spec is required")
+	}
+	fieldByID := make(map[string]projectsignals.DataExploreFieldSignal, len(fields))
+	for _, field := range fields {
+		fieldByID[field.ID] = field
+	}
+	for index := range spec.Filters {
+		filter := &spec.Filters[index]
+		field, ok := fieldByID[filter.Field]
+		if !ok || field.Kind != "dimension" || !field.Compatible {
+			return fmt.Errorf("filter %d field %q is no longer available in the active semantic model; remove it from the URL or reload the explorer", index+1, filter.Field)
+		}
+		fieldType := strings.ToLower(strings.TrimSpace(projectsignals.ValueOrZero(field.Type)))
+		if fieldType == "" && model != nil {
+			if dimension, err := model.ResolveDimension(filter.Field); err == nil {
+				if dimension.Datatype != "" {
+					fieldType = strings.ToLower(string(dimension.Datatype))
+				} else {
+					fieldType = strings.ToLower(strings.TrimSpace(dimension.Type))
+				}
+			}
+		}
+		kind, err := legacyExplorationFilterKind(fieldType)
+		if err != nil {
+			return fmt.Errorf("filter %d field %q: %w", index+1, filter.Field, err)
+		}
+		adapt := func(value *exploration.ExplorationFilterValue, valueIndex int) error {
+			if value == nil {
+				return fmt.Errorf("filter %d value %d is required", index+1, valueIndex+1)
+			}
+			legacy, ok := value.Value.(*exploration.StringExplorationFilterValue)
+			if !ok || legacy == nil {
+				return fmt.Errorf("filter %d value %d is not a legacy string literal", index+1, valueIndex+1)
+			}
+			converted, err := legacyExplorationFilterValue(kind, legacy.Value)
+			if err != nil {
+				return fmt.Errorf("filter %d value %d: %w", index+1, valueIndex+1, err)
+			}
+			*value = converted
+			return nil
+		}
+		switch expression := filter.Expression.Value.(type) {
+		case *exploration.SetExplorationFilterExpression:
+			for valueIndex := range expression.Values {
+				if err := adapt(&expression.Values[valueIndex], valueIndex); err != nil {
+					return err
+				}
+			}
+		case *exploration.ComparisonExplorationFilterExpression:
+			if err := adapt(&expression.Value, 0); err != nil {
+				return err
+			}
+		case *exploration.NullCheckExplorationFilterExpression:
+			// Null checks have no literal values to upgrade.
+		case *exploration.UnfilteredExplorationFilterExpression:
+			// Unfiltered expressions have no literal values to upgrade.
+		default:
+			return fmt.Errorf("filter %d uses unsupported legacy expression %T", index+1, filter.Expression.Value)
+		}
+	}
+	// Legacy URLs may omit model; projection selects the active model later.
+	// Validate the converted shape without turning that intentional omission
+	// into a restore failure.
+	shape := *spec
+	if strings.TrimSpace(shape.ModelID) == "" {
+		shape.ModelID = "legacy:placeholder"
+	}
+	if err := exploration.ValidateShape(&shape); err != nil {
+		return fmt.Errorf("converted filter values: %w", err)
+	}
+	return nil
+}
+
+func legacyExplorationFilterKind(fieldType string) (string, error) {
+	switch fieldType {
+	case "":
+		// Older model fixtures omitted a logical type for text dimensions. Keep
+		// their established string behavior; a known non-string type is never
+		// guessed here.
+		return "string", nil
+	case "integer", "int", "bigint", "smallint":
+		return "integer", nil
+	case "decimal", "float", "number", "numeric", "double", "real":
+		return "decimal", nil
+	case "boolean", "bool":
+		return "boolean", nil
+	case "date":
+		return "date", nil
+	case "timestamp", "datetime", "datetimetz":
+		return "timestamp", nil
+	case "string", "text", "varchar", "char", "time":
+		return "string", nil
+	default:
+		return "", fmt.Errorf("has unsupported filter type %q; choose a supported dimension", fieldType)
+	}
+}
+
+func legacyExplorationFilterValue(kind, value string) (exploration.ExplorationFilterValue, error) {
+	switch kind {
+	case "integer":
+		return exploration.ExplorationFilterValue{Value: &exploration.IntegerExplorationFilterValue{Kind: "integer", Value: value}}, nil
+	case "decimal":
+		return exploration.ExplorationFilterValue{Value: &exploration.DecimalExplorationFilterValue{Kind: "decimal", Value: value}}, nil
+	case "boolean":
+		if value != "true" && value != "false" {
+			return exploration.ExplorationFilterValue{}, fmt.Errorf("boolean literal %q must be true or false", value)
+		}
+		return exploration.ExplorationFilterValue{Value: &exploration.BooleanExplorationFilterValue{Kind: "boolean", Value: value == "true"}}, nil
+	case "date":
+		return exploration.ExplorationFilterValue{Value: &exploration.DateExplorationFilterValue{Kind: "date", Value: value}}, nil
+	case "timestamp":
+		return exploration.ExplorationFilterValue{Value: &exploration.TimestampExplorationFilterValue{Kind: "timestamp", Value: value}}, nil
+	case "string":
+		return exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: value}}, nil
+	default:
+		return exploration.ExplorationFilterValue{}, fmt.Errorf("unsupported legacy filter value kind %q", kind)
+	}
+}
+
 func decodeDataExploreURLValue(value string, target any) error {
 	return strictjson.DecodeWithOptions([]byte(value), target, strictjson.Options{MaxBytes: 1 << 20, MaxDepth: 32})
 }
@@ -380,7 +508,15 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		return fmt.Errorf("model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedModelID)
 	}
 	if model != nil {
-		if err := exploration.ValidateAgainstModel(model, &spec); err != nil {
+		// Legacy explore URLs historically allowed the model operand to be
+		// omitted; projection selects the first visible active model in that
+		// case. Validate the restored operands against that selected model while
+		// retaining the authored spec unchanged for the later projection.
+		validationSpec := spec
+		if modelID == "" {
+			validationSpec.ModelID = selectedModelID
+		}
+		if err := exploration.ValidateAgainstModel(model, &validationSpec); err != nil {
 			return fmt.Errorf("exploration state: %w; remove it from the URL or choose an active field", err)
 		}
 	}

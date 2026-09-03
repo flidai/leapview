@@ -58,7 +58,7 @@ export function fieldColumnID(field: DataExploreFieldSignal): string {
 export function explorationSortFieldForResult(spec: ExplorationSpec, resultKey: string): string | undefined {
   const key = resultKey.trim()
   if (!key) return undefined
-  const refs = [...spec.dimensions, ...spec.metrics]
+  const refs = explorationSortRefs(spec)
   for (const ref of refs) {
     const alias = ref.alias?.trim()
     if (alias === key) return alias
@@ -85,11 +85,21 @@ export function explorationSortFieldForResult(spec: ExplorationSpec, resultKey: 
 export function explorationResultKeyForSort(spec: ExplorationSpec, sortField: string, resultKeys: string[]): string | undefined {
   const canonical = sortField.trim()
   if (!canonical) return undefined
-  const ref = [...spec.dimensions, ...spec.metrics].find((candidate) => candidate.field === canonical || candidate.alias?.trim() === canonical)
+  const ref = explorationSortRefs(spec).find((candidate) => candidate.field === canonical || candidate.alias?.trim() === canonical)
   if (!ref) return undefined
   const alias = ref.alias?.trim()
   if (alias) return resultKeys.find((key) => key === alias) ?? resultKeys.find((key) => explorationSortFieldForResult(spec, key) === canonical)
   return resultKeys.find((key) => key === canonical) ?? resultKeys.find((key) => explorationSortFieldForResult(spec, key) === canonical)
+}
+
+type ExplorationSortRef = { field: string; alias?: string }
+
+function explorationSortRefs(spec: ExplorationSpec): ExplorationSortRef[] {
+  const refs: ExplorationSortRef[] = [...spec.dimensions, ...spec.metrics]
+  if (spec.time && !refs.some((ref) => ref.field === spec.time!.field && ref.alias?.trim() === spec.time!.alias?.trim())) {
+    refs.push({ field: spec.time.field, alias: spec.time.alias })
+  }
+  return refs
 }
 
 export function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {

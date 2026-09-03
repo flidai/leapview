@@ -269,9 +269,12 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 	for _, field := range fields {
 		fieldByID[field.ID] = field
 	}
+	if err := validateExplorerProjectedSpec(spec, fieldByID); err != nil {
+		resultSignal.Error = projectsignals.Pointer("invalid exploration command: " + err.Error())
+		return command, resultSignal
+	}
 	state.Dimensions = validExplorerFields(state.Dimensions, "dimension", fieldByID)
 	state.Metrics = validExplorerFields(state.Metrics, "metric", fieldByID)
-	state.Filters = validExplorerFilters(state.Filters, fieldByID)
 	state.Sort = validExplorerSort(state.Sort, state, explorationSpecSortAliases(spec))
 	command.Spec = explorationSpecWithState(spec, state)
 	spec = command.Spec
@@ -355,7 +358,7 @@ func dataExplorerSemanticResult(ctx context.Context, executor DataQueryExecutor,
 }
 
 func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]string {
-	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Metrics))
+	fields := make([]string, 0, len(spec.Dimensions)+len(spec.Metrics)+1)
 	aliases := make(map[string]string, len(fields))
 	for _, dimension := range spec.Dimensions {
 		fields = append(fields, dimension.Field)
@@ -367,6 +370,12 @@ func explorerSpecQueryAliases(spec exploration.ExplorationSpec) map[string]strin
 		fields = append(fields, metric.Field)
 		if alias := strings.TrimSpace(projectsignals.ValueOrZero(metric.Alias)); alias != "" {
 			aliases[metric.Field] = alias
+		}
+	}
+	if spec.Time != nil {
+		fields = append(fields, spec.Time.Field)
+		if alias := strings.TrimSpace(projectsignals.ValueOrZero(spec.Time.Alias)); alias != "" {
+			aliases[spec.Time.Field] = alias
 		}
 	}
 	derived := explorerQueryAliases(fields, nil)
@@ -564,6 +573,52 @@ func validExplorerFields(values []string, kind string, fields map[string]project
 	return out
 }
 
+// validateExplorerProjectedSpec checks the authored field references against
+// the authorized active-generation projection before any incremental state
+// normalization can discard an operand. The canonical semantic validator
+// separately checks the model's field/type authorization; this check ensures
+// the browser projection has not removed or marked the same operand unsafe.
+func validateExplorerProjectedSpec(spec exploration.ExplorationSpec, fields map[string]projectsignals.DataExploreFieldSignal) error {
+	validate := func(reference, kind, label string) error {
+		field, ok := fields[reference]
+		if !ok {
+			return fmt.Errorf("%s field %q is unavailable from the authorized projection", label, reference)
+		}
+		if field.Kind != kind {
+			return fmt.Errorf("%s field %q has kind %q, want %q", label, reference, field.Kind, kind)
+		}
+		if !field.Compatible {
+			reason := strings.TrimSpace(projectsignals.ValueOrZero(field.CompatibilityReason))
+			if reason == "" {
+				return fmt.Errorf("%s field %q is incompatible with the authorized projection", label, reference)
+			}
+			return fmt.Errorf("%s field %q is incompatible with the authorized projection: %s", label, reference, reason)
+		}
+		return nil
+	}
+	for index, dimension := range spec.Dimensions {
+		if err := validate(dimension.Field, "dimension", fmt.Sprintf("dimension %d", index+1)); err != nil {
+			return err
+		}
+	}
+	for index, metric := range spec.Metrics {
+		if err := validate(metric.Field, "metric", fmt.Sprintf("metric %d", index+1)); err != nil {
+			return err
+		}
+	}
+	for index, filter := range spec.Filters {
+		if err := validate(filter.Field, "dimension", fmt.Sprintf("filter %d", index+1)); err != nil {
+			return err
+		}
+	}
+	if spec.Time != nil {
+		if err := validate(spec.Time.Field, "dimension", "time"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func validExplorerFilters(filters []dataExploreFilter, fields map[string]projectsignals.DataExploreFieldSignal) []dataExploreFilter {
 	out := make([]dataExploreFilter, 0, len(filters))
 	for _, filter := range filters {
@@ -579,6 +634,12 @@ func validExplorerFilters(filters []dataExploreFilter, fields map[string]project
 
 func explorationSpecSortAliases(spec exploration.ExplorationSpec) map[string]struct{} {
 	selected := map[string]struct{}{}
+	if spec.Time != nil {
+		selected[spec.Time.Field] = struct{}{}
+		if spec.Time.Alias != nil && strings.TrimSpace(*spec.Time.Alias) != "" {
+			selected[*spec.Time.Alias] = struct{}{}
+		}
+	}
 	for _, dimension := range spec.Dimensions {
 		if dimension.Alias != nil && strings.TrimSpace(*dimension.Alias) != "" {
 			selected[*dimension.Alias] = struct{}{}

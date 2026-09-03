@@ -154,7 +154,10 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 			break
 		}
 	}
-	if selectedModelIndex < 0 && len(models) > 0 {
+	// An empty model selection is the only case that may default to the first
+	// visible model. Preserve a non-empty unavailable ID so the command path
+	// can reject it instead of executing a different model's exploration.
+	if selectedModelIndex < 0 && selectedModelID == "" && len(models) > 0 {
 		selectedModelIndex = 0
 	}
 	warnings := []string(nil)
@@ -176,6 +179,12 @@ func BuildDataExplorerProjection(assets []projectview.DevelopAssetView, project 
 			result.SelectedDataset = &selected
 			break
 		}
+	}
+	// Likewise, an authored dataset ID must never be replaced by the first
+	// available dataset. Returning without fields leaves the command intact for
+	// the execution boundary to reject while preserving empty initialization.
+	if result.SelectedDataset == nil && selectedDatasetID != "" {
+		return result
 	}
 	if result.SelectedDataset == nil && len(result.Datasets) > 0 {
 		selected := result.Datasets[0]

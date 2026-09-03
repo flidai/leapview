@@ -83,6 +83,11 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 				Dimensions: map[string]semanticmodel.MetricDimension{
 					"status":     {Label: "Status", Type: "string"},
 					"created_at": {Label: "Created at", Type: "timestamp"},
+					"quantity":   {Label: "Quantity", Type: "number", Datatype: semanticmodel.DataTypeInteger},
+					"amount":     {Label: "Amount", Type: "number", Datatype: semanticmodel.DataTypeDecimal},
+					"order_date": {Label: "Order date", Type: "date", Datatype: semanticmodel.DataTypeDate},
+					"active":     {Label: "Active", Type: "boolean", Datatype: semanticmodel.DataTypeBoolean},
+					"event_at":   {Label: "Event at", Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ},
 				},
 			},
 		},
@@ -207,6 +212,180 @@ func TestDataExploreCommandFromQueryTrimsMetadataButPreservesFilterValues(t *tes
 	}
 	if command.Spec.Time == nil || command.Spec.Time.Field != "orders.created_at" || command.Spec.Time.Grain != "month" || projectsignals.ValueOrZero(command.Spec.Time.Alias) != "order_month" {
 		t.Fatalf("trimmed time = %#v", command.Spec.Time)
+	}
+}
+
+func TestDataExplorerLegacyURLAdaptsTypedFilterValues(t *testing.T) {
+	tests := []struct {
+		name     string
+		field    string
+		value    string
+		wantKind string
+		version  string
+	}{
+		{name: "integer", field: "orders.quantity", value: "42", wantKind: "integer", version: "1"},
+		{name: "date", field: "orders.order_date", value: "2026-09-03", wantKind: "date", version: ""},
+		{name: "boolean", field: "orders.active", value: "true", wantKind: "boolean", version: "1"},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			h, executor := newDataExplorerURLTestHandler(t)
+			filter, err := json.Marshal(map[string]any{
+				"field": test.field, "operator": "equals", "values": []string{test.value},
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			values := url.Values{
+				"mode":      {"explore"},
+				"model":     {"semantic:sales"},
+				"dataset":   {"orders"},
+				"dimension": {test.field},
+				"filter":    {string(filter)},
+			}
+			if test.version != "" {
+				values.Set("v", test.version)
+			}
+			recorder := httptest.NewRecorder()
+			_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+			if !ok {
+				t.Fatalf("legacy URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+			}
+			if executor.calls != 1 {
+				t.Fatalf("legacy URL executed %d analytical queries, want 1", executor.calls)
+			}
+			if len(explorer.Explore.Command.Spec.Filters) != 1 {
+				t.Fatalf("filters = %#v", explorer.Explore.Command.Spec.Filters)
+			}
+			kind, err := explorer.Explore.Command.Spec.Filters[0].Expression.Value.(*exploration.ComparisonExplorationFilterExpression).Value.Kind()
+			if err != nil || kind != test.wantKind {
+				t.Fatalf("adapted filter kind = %q, %v; want %q", kind, err, test.wantKind)
+			}
+		})
+	}
+}
+
+func TestDataExplorerLegacyURLAdaptsDecimalAndTimestampSetValues(t *testing.T) {
+	decimalFilter, err := json.Marshal(map[string]any{
+		"field": "orders.amount", "operator": "in", "values": []string{"1.25", "2.50"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	timestampFilter, err := json.Marshal(map[string]any{
+		"field": "orders.event_at", "operator": "in", "values": []string{"2026-09-03T00:00:00Z", "2026-09-04T00:00:00Z"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	h, executor := newDataExplorerURLTestHandler(t)
+	values := url.Values{
+		"v":         {"1"},
+		"mode":      {"explore"},
+		"model":     {"semantic:sales"},
+		"dataset":   {"orders"},
+		"dimension": {"orders.amount", "orders.event_at"},
+		"filter":    {string(decimalFilter), string(timestampFilter)},
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if !ok {
+		t.Fatalf("legacy URL rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("legacy URL executed %d analytical queries, want 1", executor.calls)
+	}
+	if len(explorer.Explore.Command.Spec.Filters) != 2 {
+		t.Fatalf("filters = %#v, want decimal and timestamp set filters", explorer.Explore.Command.Spec.Filters)
+	}
+	wantKinds := []string{"decimal", "timestamp"}
+	for index, wantKind := range wantKinds {
+		expression, ok := explorer.Explore.Command.Spec.Filters[index].Expression.Value.(*exploration.SetExplorationFilterExpression)
+		if !ok {
+			t.Fatalf("filter %d expression = %T, want set", index, explorer.Explore.Command.Spec.Filters[index].Expression.Value)
+		}
+		if len(expression.Values) != 2 {
+			t.Fatalf("filter %d values = %#v, want both legacy values adapted", index, expression.Values)
+		}
+		for valueIndex := range expression.Values {
+			kind, err := expression.Values[valueIndex].Kind()
+			if err != nil || kind != wantKind {
+				t.Fatalf("filter %d value %d kind = %q, %v; want %q", index, valueIndex, kind, err, wantKind)
+			}
+		}
+	}
+}
+
+func TestDataExplorerLegacyURLWithoutModelUsesProjectedDefaultModel(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	values := url.Values{
+		"v":         {"1"},
+		"mode":      {"explore"},
+		"dataset":   {"orders"},
+		"dimension": {"orders.status"},
+	}
+	recorder := httptest.NewRecorder()
+	_, explorer, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if !ok {
+		t.Fatalf("legacy URL without model rejected: status=%d body=%s", recorder.Code, recorder.Body.String())
+	}
+	if executor.calls != 1 {
+		t.Fatalf("legacy URL without model executed %d analytical queries, want 1", executor.calls)
+	}
+	if got := explorer.Explore.Command.Spec.ModelID; got != "semantic:sales" {
+		t.Fatalf("restored default model = %q, want semantic:sales", got)
+	}
+}
+
+func TestDataExplorerLegacyURLRejectsInvalidTypedFilterLiteralWithoutExecution(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	filter, err := json.Marshal(map[string]any{
+		"field": "orders.quantity", "operator": "equals", "values": []string{"not-an-integer"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"v": {"1"}, "mode": {"explore"}, "model": {"semantic:sales"}, "dataset": {"orders"}, "dimension": {"orders.quantity"}, "filter": {string(filter)}}
+	recorder := httptest.NewRecorder()
+	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if ok || recorder.Code != http.StatusBadRequest {
+		t.Fatalf("invalid legacy URL accepted: ok=%v status=%d body=%s", ok, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "integer") {
+		t.Fatalf("invalid legacy URL feedback = %q, want integer diagnostic", recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("invalid legacy URL executed %d analytical queries, want 0", executor.calls)
+	}
+}
+
+func TestDataExplorerV2URLDoesNotInferLegacyFilterValueKind(t *testing.T) {
+	h, executor := newDataExplorerURLTestHandler(t)
+	dataset := "orders"
+	spec := exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: &dataset,
+		Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.quantity"}},
+		Metrics:    []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{{Field: "orders.quantity", Expression: exploration.ExplorationFilterExpression{Value: &exploration.ComparisonExplorationFilterExpression{
+			Kind: "comparison", Operator: "equals", Value: exploration.ExplorationFilterValue{Value: &exploration.StringExplorationFilterValue{Kind: "string", Value: "42"}},
+		}}}},
+		Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}
+	state, err := json.Marshal(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := url.Values{"v": {"2"}, "mode": {"explore"}, "state": {string(state)}}
+	recorder := httptest.NewRecorder()
+	_, _, ok := h.dataExplorerSignalsForURL(recorder, httptest.NewRequest(http.MethodGet, "/updates?"+values.Encode(), nil), true)
+	if ok || recorder.Code != http.StatusBadRequest {
+		t.Fatalf("wrong-kind v2 URL accepted: ok=%v status=%d body=%s", ok, recorder.Code, recorder.Body.String())
+	}
+	if !strings.Contains(recorder.Body.String(), "value kind") {
+		t.Fatalf("wrong-kind v2 feedback = %q, want value-kind diagnostic", recorder.Body.String())
+	}
+	if executor.calls != 0 {
+		t.Fatalf("wrong-kind v2 URL executed %d analytical queries, want 0", executor.calls)
 	}
 }
 

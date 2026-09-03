@@ -32,6 +32,19 @@ func TestDataExplorerBootstrapProjectsAgentExplorationContext(t *testing.T) {
 	}
 }
 
+func TestDataExplorerAgentContextOmitsAbsentDataset(t *testing.T) {
+	explorer := uisignals.DataExplorerSignal{Explore: uisignals.DataExploreSignal{Command: uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1, ModelID: "commerce",
+		Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{},
+		Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100,
+	}}}}
+
+	context := DataExplorerAgentContext(uisignals.DataExplorerPageSignal{}, explorer)
+	if context.DatasetID != nil {
+		t.Fatalf("agent context dataset id = %q, want absent", *context.DatasetID)
+	}
+}
+
 func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
 		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: uisignals.Pointer("orders"),

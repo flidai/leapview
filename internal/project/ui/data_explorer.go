@@ -125,9 +125,8 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 	command := explorer.Explore.Command
 	spec := command.Spec
 	modelID := spec.ModelID
-	datasetID := uisignals.ValueOrZero(spec.DatasetID)
 	return uisignals.AgentContextSignal{
-		Surface: "data", ModelID: modelID, DatasetID: &datasetID,
+		Surface: "data", ModelID: modelID, DatasetID: spec.DatasetID,
 		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "", Exploration: &spec,
 		Filters: uisignals.DashboardFilterState{
 			AppliedControls: map[string]uisignals.DashboardAppliedFilterState{},

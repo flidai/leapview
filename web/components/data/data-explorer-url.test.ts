@@ -113,6 +113,17 @@ test('result aliases resolve to selected canonical sort references', () => {
   expect(explorationSortFieldForResult(spec, 'unselected')).toBeUndefined()
 })
 
+test('time result aliases resolve to canonical time sort references', () => {
+  const spec: ExplorationSpec = {
+    schemaVersion: 1, modelId: 'sales', dimensions: [], metrics: [], filters: [], sort: [], limit: 100,
+    time: { field: 'orders.created_at', grain: 'day', alias: 'order_date' },
+  }
+  expect(explorationSortFieldForResult(spec, 'order_date')).toBe('order_date')
+  expect(explorationSortFieldForResult(spec, 'orders.created_at')).toBe('orders.created_at')
+  expect(explorationResultKeyForSort(spec, 'orders.created_at', ['order_date'])).toBe('order_date')
+  expect(explorationResultKeyForSort(spec, 'order_date', ['order_date'])).toBe('order_date')
+})
+
 test('removing or toggling a field clears sorts for its field and authored alias', () => {
   const spec: ExplorationSpec = {
     schemaVersion: 1, modelId: 'sales', dimensions: [{ field: 'orders.status', alias: 'status_label' }], metrics: [{ field: 'revenue', alias: 'total_revenue' }], filters: [],

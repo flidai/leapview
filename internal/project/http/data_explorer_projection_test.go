@@ -191,6 +191,31 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 	}
 }
 
+func TestBuildDataExplorerProjectionDoesNotFallbackUnavailableModelOrDataset(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":    {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"customers": {ModelName: "customers", Dimensions: map[string]semanticmodel.MetricDimension{"region": {Label: "Region"}}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders": {Model: "orders"}, "customers": {Model: "customers"}},
+	}
+	project := projectmanifest.Project{SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model}}
+	assets := []projectview.DevelopAssetView{{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"}}
+
+	missingModel := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:missing"})
+	modelProjection := BuildDataExplorerProjection(assets, project, missingModel, compiledProjectionModels(t, project))
+	if modelProjection.SelectedModel != nil || modelProjection.Command.Spec.ModelID != "semantic:missing" || len(modelProjection.Fields) != 0 {
+		t.Fatalf("unavailable model was replaced or exposed: %#v", modelProjection)
+	}
+
+	missingDataset := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("missing")})
+	datasetProjection := BuildDataExplorerProjection(assets, project, missingDataset, compiledProjectionModels(t, project))
+	if datasetProjection.SelectedModel == nil || datasetProjection.SelectedDataset != nil || projectsignals.ValueOrZero(datasetProjection.Command.Spec.DatasetID) != "missing" || len(datasetProjection.Fields) != 0 {
+		t.Fatalf("unavailable dataset was replaced or exposed: %#v", datasetProjection)
+	}
+}
+
 func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing.T) {
 	model := &semanticmodel.Model{
 		Name: "sales",
