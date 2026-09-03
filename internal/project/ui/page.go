@@ -66,6 +66,8 @@ type CatalogDashboardItem struct {
 	PageCount                                                int
 	Tags                                                     []string
 	Appearance                                               dashboardappearance.Value
+	Popularity                                               uisignals.PopularityLevel
+	Featured                                                 bool
 }
 
 type CatalogListOptions struct {
@@ -272,11 +274,17 @@ func catalogDashboardSignal(_ catalog.Project, report catalog.Dashboard, id stri
 
 func catalogDashboardItemSignal(item CatalogDashboardItem) uisignals.CatalogDashboardSignal {
 	appearance := dashboardappearance.Resolve(item.Appearance)
+	var featured *bool
+	if item.Featured {
+		featured = uisignals.Optional(true)
+	}
 	return uisignals.CatalogDashboardSignal{
 		AppearanceColor: appearance.Color, AppearanceIcon: appearance.Icon,
 		CatalogScope: item.CatalogScope, Description: uisignals.Optional(item.Description),
 		DashboardID: item.DashboardID, Href: item.Href, ID: item.ID,
-		Owner: uisignals.Optional(item.Owner), PageCount: int64(item.PageCount),
+		Featured: featured,
+		Owner:    uisignals.Optional(item.Owner), PageCount: int64(item.PageCount),
+		Popularity:    uisignals.Optional(item.Popularity),
 		SemanticModel: uisignals.Optional(item.SemanticModel),
 		Status:        item.Status, Tags: uisignals.OptionalSlice(item.Tags), Title: item.Title,
 		UpdatedAt: uisignals.Optional(item.UpdatedAt),
@@ -296,12 +304,20 @@ func filterCatalogDashboards(dashboards []uisignals.CatalogDashboardSignal, quer
 			uisignals.ValueOrZero(dashboard.SemanticModel),
 			uisignals.ValueOrZero(dashboard.Owner),
 			dashboard.Status,
+			catalogTags(dashboard.Tags),
 		}, " "))
 		if strings.Contains(haystack, query) {
 			filtered = append(filtered, dashboard)
 		}
 	}
 	return filtered
+}
+
+func catalogTags(tags *[]string) string {
+	if tags == nil {
+		return ""
+	}
+	return strings.Join(*tags, " ")
 }
 
 func recordTableBadgeValue(value, tone string) any {

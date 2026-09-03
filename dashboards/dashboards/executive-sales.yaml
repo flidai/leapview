@@ -6,6 +6,7 @@ metadata:
   displayName: Executive Sales
   description: Revenue, AOV, category, and order volume overview.
   owner: Analytics
+  featured: true
   tags:
   - sales
   - revenue

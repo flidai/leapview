@@ -103,7 +103,7 @@ test('new dashboard trigger opens an accessible native dialog with the create fo
         selectedModel: root.querySelector<HTMLSelectElement>('#catalog-create-draft-model')?.value,
         csrf: root.querySelector<HTMLInputElement>('[name="gorilla.csrf.Token"]')?.value,
         idempotency: root.querySelector<HTMLInputElement>('[name="idempotencyKey"]')?.value,
-        advanced: root.querySelector('summary')?.textContent?.trim(),
+        advanced: dialog.querySelector('summary')?.textContent?.trim(),
         closeHasSVG: Boolean(close.querySelector('svg')),
         closeText: close.textContent?.trim(),
         noHorizontalOverflow: shell.scrollWidth <= shell.clientWidth,
@@ -153,7 +153,7 @@ test('create query auto-opens with the semantic model preselected and dismissal 
       await new Promise<void>((resolve) => queueMicrotask(resolve))
       const root = element.shadowRoot
       const dialog = root.querySelector('dialog') as HTMLDialogElement
-      const select = root.querySelector('select') as HTMLSelectElement
+      const select = root.querySelector('#catalog-create-draft-model') as HTMLSelectElement
       const autoOpened = dialog.open
       const close = root.querySelector('.catalog-create-dialog-close') as HTMLButtonElement
       close.click()
@@ -229,7 +229,7 @@ test('mobile create dialog stays within the viewport and disables submission wit
       await element.updateComplete
       const dialog = root.querySelector('dialog') as HTMLDialogElement
       const rect = dialog.getBoundingClientRect()
-      const select = root.querySelector('select') as HTMLSelectElement
+      const select = root.querySelector('#catalog-create-draft-model') as HTMLSelectElement
       const submit = root.querySelector('[type="submit"]') as HTMLButtonElement
       return {
         withinViewport: rect.left >= 0 && rect.right <= window.innerWidth && rect.top >= 0 && rect.bottom <= window.innerHeight,
@@ -404,6 +404,100 @@ test('dashboard tabs filter by ownership without hiding managed dashboards from 
     expect(state.all).toEqual(['Executive Sales Dashboard', 'Operations Health', 'Inventory Risk', 'Customer Detail'])
     expect(state.mine).toEqual(['Executive Sales Dashboard'])
     expect(state.shared).toEqual(['Operations Health'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('catalog discovery keeps source, sorting, and filters in one compact toolbar', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => ({
+          ...dashboard,
+          featured: index === 1,
+          status: index === 3 ? 'private_draft' : dashboard.status,
+        })),
+      } })
+      await element.updateComplete
+      const root = element.shadowRoot
+      const list = root.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const filter = root.querySelector('.catalog-filter') as HTMLDetailsElement
+      filter.open = true
+      await element.updateComplete
+      const model = root.querySelector('[aria-label="Filter by data model"]') as HTMLSelectElement
+      model.value = 'operations'
+      model.dispatchEvent(new Event('change', { bubbles: true }))
+      await element.updateComplete
+      await list.updateComplete
+      return {
+        controls: Array.from(root.querySelectorAll('.catalog-discovery-control')).map((control: Element) => control.getAttribute('aria-label') ?? control.textContent?.trim()),
+        models: Array.from(model.options).map((option) => option.textContent?.trim()),
+        visible: Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim()),
+        activeFilters: root.querySelector('.catalog-filter-count')?.textContent?.trim(),
+        sources: Array.from(list.querySelectorAll('.entity-list-meta')).map((source: Element) => source.textContent?.trim()),
+        featured: Array.from(list.querySelectorAll('.entity-list-badge-featured')).map((badge: Element) => badge.textContent?.trim()),
+        popularity: Array.from(list.querySelectorAll('.entity-list-badge-popularity')).map((badge: Element) => badge.textContent?.trim()),
+      }
+    })
+
+    expect(state).toEqual({
+      controls: ['Filter dashboards', 'Sort dashboards'],
+      models: ['All data models', 'Customers', 'Inventory', 'Olist', 'Operations'],
+      visible: ['Operations Health'],
+      activeFilters: '1',
+      sources: ['Operations model'],
+      featured: ['Featured'],
+      popularity: ['Top 20%'],
+    })
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard favorites persist and rank first while recently viewed remains a sort choice', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const state = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      localStorage.clear()
+      element.reloadDiscoveryPreferences()
+      await element.updateComplete
+      let list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const favorites = () => Array.from(list.querySelectorAll('.entity-list-favorite')).map((button: Element) => button.getAttribute('aria-label'))
+      const titles = () => Array.from(list.querySelectorAll('.entity-list-title')).map((title: Element) => title.textContent?.trim())
+      const favoriteLabels = favorites()
+      ;(list.querySelectorAll('.entity-list-favorite')[2] as HTMLButtonElement).click()
+      await element.updateComplete
+      list = element.shadowRoot.querySelector('lv-entity-list') as any
+      await list.updateComplete
+      const ranked = titles()
+      const pressed = (list.querySelector('.entity-list-favorite') as HTMLButtonElement).getAttribute('aria-pressed')
+      const storedFavorites = JSON.parse(localStorage.getItem('leapview.dashboard-catalog.favorites.v1') ?? '[]')
+      const operations = list.querySelector('a[data-item-id="operations-health"]') as HTMLAnchorElement
+      operations.addEventListener('click', (event) => event.preventDefault(), { once: true })
+      operations.click()
+      const sort = element.shadowRoot.querySelector('[aria-label="Sort dashboards"]') as HTMLSelectElement
+      sort.value = 'recent'
+      sort.dispatchEvent(new Event('change', { bubbles: true }))
+      await element.updateComplete
+      await list.updateComplete
+      return { favoriteLabels, ranked, pressed, storedFavorites, recent: titles() }
+    })
+
+    expect(state.favoriteLabels).toContain('Add Inventory Risk to favorites')
+    expect(state.ranked[0]).toBe('Inventory Risk')
+    expect(state.pressed).toBe('true')
+    expect(state.storedFavorites).toContain('inventory-risk')
+    expect(state.recent[0]).toBe('Operations Health')
   } finally {
     await page.close()
   }

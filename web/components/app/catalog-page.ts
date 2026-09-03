@@ -13,12 +13,25 @@ interface CreateDraftModel {
   title: string
 }
 
+type CatalogDashboard = CatalogPageSignal['dashboards'][number] & { featured?: boolean }
+type CatalogSort = 'recommended' | 'recent' | 'popular' | 'updated' | 'name'
+
+const catalogFavoritesStorageKey = 'leapview.dashboard-catalog.favorites.v1'
+const catalogRecentsStorageKey = 'leapview.dashboard-catalog.recents.v1'
+
 class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @property({ attribute: 'create-draft-href' }) createDraftHref = ''
   @property({ attribute: 'create-draft-models' }) createDraftModelsJSON = ''
   @property({ attribute: 'create-draft-csrf-token' }) createDraftCSRFToken = ''
   @property({ attribute: 'create-draft-idempotency-key' }) createDraftIdempotencyKey = ''
   @state() private catalogScope: 'all' | 'mine' | 'shared' = 'all'
+  @state() private catalogSort: CatalogSort = 'recommended'
+  @state() private catalogModel = 'all'
+  @state() private catalogStatus = 'all'
+  @state() private catalogFavoritesOnly = false
+  @state() private catalogFeaturedOnly = false
+  @state() private favoriteDashboardIDs: string[] = []
+  @state() private recentDashboardIDs: Record<string, string> = {}
   @state() private createDraftOpen = false
   private freshnessTimer: number | undefined
   private autoOpenChecked = false
@@ -97,18 +110,85 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     .catalog-tab[aria-selected='true']::after { position: absolute; right: var(--base-size-8); bottom: -1px; left: var(--base-size-8); height: 2px; border-radius: var(--lv-radius-full); background: var(--lv-fg-accent); content: ''; }
     .catalog-tab:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
 
+    .catalog-discovery-control {
+      box-sizing: border-box;
+      min-height: var(--control-medium-size);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-default);
+      background: var(--lv-bg-panel);
+      font: var(--lv-type-body-compact);
+    }
+
+    select.catalog-discovery-control { min-width: 9.25rem; padding: 0 var(--base-size-8); }
+    .catalog-discovery-control:focus-visible,
+    .catalog-filter select:focus-visible,
+    .catalog-filter input:focus-visible,
+    .catalog-filter button:focus-visible { outline: var(--focus-outline); outline-offset: var(--focus-outline-offset); }
+
+    .catalog-filter { position: relative; }
+    .catalog-filter summary {
+      display: inline-flex;
+      min-width: 5.5rem;
+      align-items: center;
+      justify-content: center;
+      gap: var(--base-size-6);
+      padding: 0 var(--base-size-8);
+      cursor: pointer;
+      list-style: none;
+      user-select: none;
+    }
+    .catalog-filter summary::-webkit-details-marker { display: none; }
+    .catalog-filter[open] summary { background: var(--lv-bg-control-hover); }
+    .catalog-filter-count {
+      display: inline-grid;
+      min-width: var(--base-size-16);
+      height: var(--base-size-16);
+      place-items: center;
+      border-radius: var(--lv-radius-full);
+      color: var(--lv-fg-on-emphasis);
+      background: var(--lv-fg-accent);
+      padding-inline: 2px;
+      font: var(--lv-type-caption);
+    }
+    .catalog-filter-popover {
+      position: absolute;
+      z-index: 10;
+      top: calc(100% + var(--base-size-6));
+      right: 0;
+      display: grid;
+      width: min(20rem, calc(100vw - var(--base-size-32)));
+      gap: var(--base-size-12);
+      box-sizing: border-box;
+      border: var(--lv-border-default);
+      border-radius: var(--lv-radius-panel, var(--lv-radius-default));
+      background: var(--lv-bg-panel);
+      box-shadow: var(--lv-shadow-floating-lg);
+      padding: var(--base-size-16);
+    }
+    .catalog-filter-field { display: grid; gap: var(--base-size-6); color: var(--lv-fg-default); font: var(--lv-type-body-compact); }
+    .catalog-filter-field > span { font-weight: var(--base-text-weight-semibold); }
+    .catalog-filter-field select { box-sizing: border-box; width: 100%; min-height: var(--control-medium-size); border: var(--lv-border-muted); border-radius: var(--lv-radius-default); color: var(--lv-fg-default); background: var(--lv-bg-control); padding: 0 var(--base-size-8); font: inherit; }
+    .catalog-filter-check { display: flex; align-items: center; gap: var(--base-size-8); color: var(--lv-fg-default); font: var(--lv-type-body-compact); }
+    .catalog-filter-actions { display: flex; justify-content: flex-end; border-top: var(--lv-border-muted); padding-top: var(--base-size-12); }
+    .catalog-filter-actions button { border: 0; color: var(--lv-fg-link); background: transparent; padding: var(--base-size-4); cursor: pointer; font: var(--lv-type-body-compact); }
+
     @media (max-width: 720px) {
       .catalog-create-dialog { width: calc(100% - var(--base-size-16)); max-height: calc(100svh - var(--base-size-16)); }
       .catalog-create-dialog-header { padding-inline: var(--base-size-16); }
       .catalog-create-dialog-form { padding-inline: var(--base-size-16); }
       .catalog-create-dialog-actions { position: sticky; bottom: 0; margin-inline: calc(var(--base-size-16) * -1); padding: var(--base-size-12) var(--base-size-16); border-top: var(--lv-border-muted); background: var(--lv-bg-panel); }
       .catalog-create-dialog-actions button { flex: 1; }
+      .catalog-filter { flex: 1; }
+      .catalog-filter summary { width: 100%; }
+      select.catalog-discovery-control { flex: 1; min-width: 0; }
     }
 
   `]
 
   override connectedCallback(): void {
     super.connectedCallback()
+	this.reloadDiscoveryPreferences()
 	this.freshnessTimer = window.setInterval(() => this.requestUpdate(), 60_000)
   }
 
@@ -146,7 +226,8 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   render() {
     const page = this.page
     if (!page) return html`<slot></slot>`
-    const dashboards = page.dashboards.filter((dashboard) => this.catalogScope === 'all' || dashboard.catalogScope === this.catalogScope)
+    const sourceDashboards = page.dashboards as CatalogDashboard[]
+    const dashboards = this.visibleDashboards(sourceDashboards)
     const models = this.createDraftModels()
     return html`
       <section aria-label="LeapView dashboard catalog">
@@ -163,14 +244,21 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             id: dashboard.id,
             dashboardId: dashboard.dashboardId,
             title: dashboard.title,
-            description: dashboard.description || dashboard.semanticModel || 'Dashboard',
+            description: dashboard.description || 'Dashboard',
+            meta: semanticModelLabel(dashboard.semanticModel),
             href: dashboard.href,
             icon: 'dashboard',
-            badges: dashboard.popularity ? [{
-              icon: 'popularity' as const,
-              level: dashboard.popularity,
-              label: popularityLabel(dashboard.popularity),
-            }] : [],
+            favorite: this.favoriteDashboardIDs.includes(dashboard.id),
+            favoriteLabel: this.favoriteDashboardIDs.includes(dashboard.id) ? `Remove ${dashboard.title} from favorites` : `Add ${dashboard.title} to favorites`,
+            badges: [
+              ...(dashboard.featured ? [{ icon: 'featured' as const, label: 'Featured dashboard', text: 'Featured' }] : []),
+              ...(dashboard.popularity ? [{
+                icon: 'popularity' as const,
+                level: dashboard.popularity,
+                label: popularityLabel(dashboard.popularity),
+                text: popularityPercentile(dashboard.popularity),
+              }] : []),
+            ],
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
@@ -188,6 +276,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               updated: formatExactTime(dashboard.updatedAt || dashboard.lastRefreshedAt),
             },
           })})}
+          .toolbarTrailing=${this.renderDiscoveryToolbar(sourceDashboards)}
           .columns=${[
             { id: 'name', label: 'Dashboard', width: '46%' },
             { id: 'owner', label: 'Owner', width: '16%' },
@@ -197,11 +286,126 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
           initial-query=${page.listQuery ?? ''}
           active-filter=${page.listFilter ?? 'all'}
           search-placeholder="Search dashboards"
-          empty-text=${this.catalogScope === 'all' ? 'No dashboards are available.' : 'No dashboards in this view.'}
+          empty-text=${this.activeCatalogFilterCount() ? 'No dashboards match these filters.' : this.catalogScope === 'all' ? 'No dashboards are available.' : 'No dashboards in this view.'}
+          @lv-entity-list-favorite-toggle=${this.toggleDashboardFavorite}
+          @lv-entity-list-item-activate=${this.recordDashboardOpen}
         ></lv-entity-list>
         ${this.createDraftHref ? this.renderCreateDraftDialog(models) : ''}
       </section>
     `
+  }
+
+  private renderDiscoveryToolbar(dashboards: CatalogDashboard[]) {
+    const activeFilters = this.activeCatalogFilterCount()
+    const models = Array.from(new Set(dashboards.map((dashboard) => dashboard.semanticModel?.trim()).filter((model): model is string => Boolean(model))))
+      .sort((left, right) => semanticModelLabel(left).localeCompare(semanticModelLabel(right)))
+    const hasFeatured = dashboards.some((dashboard) => dashboard.featured)
+    return html`
+      <details class="catalog-filter">
+        <summary class="catalog-discovery-control" aria-label="Filter dashboards">
+          <span>Filter</span>
+          ${activeFilters ? html`<span class="catalog-filter-count" aria-label=${`${activeFilters} active filters`}>${activeFilters}</span>` : ''}
+        </summary>
+        <div class="catalog-filter-popover">
+          <label class="catalog-filter-field">
+            <span>Data model</span>
+            <select aria-label="Filter by data model" .value=${this.catalogModel} @change=${this.changeCatalogModel}>
+              <option value="all">All data models</option>
+              ${models.map((model) => html`<option value=${model}>${semanticModelTitle(model)}</option>`)}
+            </select>
+          </label>
+          <label class="catalog-filter-field">
+            <span>Status</span>
+            <select aria-label="Filter by status" .value=${this.catalogStatus} @change=${this.changeCatalogStatus}>
+              <option value="all">All statuses</option>
+              <option value="published">Published</option>
+              <option value="private_draft">Private drafts</option>
+              <option value="unpublished_changes">Unpublished changes</option>
+            </select>
+          </label>
+          <label class="catalog-filter-check"><input type="checkbox" .checked=${this.catalogFavoritesOnly} @change=${this.changeCatalogFavoritesOnly}> Favorites only</label>
+          ${hasFeatured ? html`<label class="catalog-filter-check"><input type="checkbox" .checked=${this.catalogFeaturedOnly} @change=${this.changeCatalogFeaturedOnly}> Featured only</label>` : ''}
+          ${activeFilters ? html`<div class="catalog-filter-actions"><button type="button" @click=${this.clearCatalogFilters}>Clear filters</button></div>` : ''}
+        </div>
+      </details>
+      <select class="catalog-discovery-control" aria-label="Sort dashboards" .value=${this.catalogSort} @change=${this.changeCatalogSort}>
+        <option value="recommended">Recommended</option>
+        <option value="recent">Recently viewed</option>
+        <option value="popular">Most popular</option>
+        <option value="updated">Recently updated</option>
+        <option value="name">Name</option>
+      </select>
+    `
+  }
+
+  private visibleDashboards(dashboards: CatalogDashboard[]): CatalogDashboard[] {
+    const filtered = dashboards.filter((dashboard) => {
+      if (this.catalogScope !== 'all' && dashboard.catalogScope !== this.catalogScope) return false
+      if (this.catalogModel !== 'all' && dashboard.semanticModel !== this.catalogModel) return false
+      if (this.catalogStatus !== 'all' && dashboard.status !== this.catalogStatus) return false
+      if (this.catalogFavoritesOnly && !this.favoriteDashboardIDs.includes(dashboard.id)) return false
+      if (this.catalogFeaturedOnly && !dashboard.featured) return false
+      return true
+    })
+    return filtered
+      .map((dashboard, index) => ({ dashboard, index }))
+      .sort((left, right) => this.compareDashboards(left.dashboard, right.dashboard) || left.index - right.index)
+      .map(({ dashboard }) => dashboard)
+  }
+
+  private compareDashboards(left: CatalogDashboard, right: CatalogDashboard): number {
+    const name = () => left.title.localeCompare(right.title, undefined, { numeric: true, sensitivity: 'base' })
+    const updated = () => timestamp(right.updatedAt || right.lastRefreshedAt) - timestamp(left.updatedAt || left.lastRefreshedAt)
+    const recent = () => timestamp(this.recentDashboardIDs[right.id]) - timestamp(this.recentDashboardIDs[left.id])
+    const popularity = () => popularityRank(right.popularity) - popularityRank(left.popularity)
+    const recommended = () =>
+      Number(this.favoriteDashboardIDs.includes(right.id)) - Number(this.favoriteDashboardIDs.includes(left.id)) ||
+      Number(Boolean(right.featured)) - Number(Boolean(left.featured)) || popularity() || recent() || updated() || name()
+    switch (this.catalogSort) {
+      case 'recent': return recent() || recommended()
+      case 'popular': return popularity() || recommended()
+      case 'updated': return updated() || name()
+      case 'name': return name()
+      default: return recommended()
+    }
+  }
+
+  reloadDiscoveryPreferences(): void {
+    this.favoriteDashboardIDs = readStringList(catalogFavoritesStorageKey)
+    this.recentDashboardIDs = readStringRecord(catalogRecentsStorageKey)
+  }
+
+  private toggleDashboardFavorite = (event: CustomEvent<{ item?: { id?: string } }>): void => {
+    const id = event.detail?.item?.id?.trim()
+    if (!id) return
+    const favorites = new Set(this.favoriteDashboardIDs)
+    if (favorites.has(id)) favorites.delete(id)
+    else favorites.add(id)
+    this.favoriteDashboardIDs = Array.from(favorites)
+    writeStorage(catalogFavoritesStorageKey, this.favoriteDashboardIDs)
+  }
+
+  private recordDashboardOpen = (event: CustomEvent<{ item?: { id?: string } }>): void => {
+    const id = event.detail?.item?.id?.trim()
+    if (!id) return
+    this.recentDashboardIDs = { ...this.recentDashboardIDs, [id]: new Date().toISOString() }
+    writeStorage(catalogRecentsStorageKey, this.recentDashboardIDs)
+  }
+
+  private activeCatalogFilterCount(): number {
+    return Number(this.catalogModel !== 'all') + Number(this.catalogStatus !== 'all') + Number(this.catalogFavoritesOnly) + Number(this.catalogFeaturedOnly)
+  }
+
+  private changeCatalogSort = (event: Event): void => { this.catalogSort = (event.currentTarget as HTMLSelectElement).value as CatalogSort }
+  private changeCatalogModel = (event: Event): void => { this.catalogModel = (event.currentTarget as HTMLSelectElement).value }
+  private changeCatalogStatus = (event: Event): void => { this.catalogStatus = (event.currentTarget as HTMLSelectElement).value }
+  private changeCatalogFavoritesOnly = (event: Event): void => { this.catalogFavoritesOnly = (event.currentTarget as HTMLInputElement).checked }
+  private changeCatalogFeaturedOnly = (event: Event): void => { this.catalogFeaturedOnly = (event.currentTarget as HTMLInputElement).checked }
+  private clearCatalogFilters = (): void => {
+    this.catalogModel = 'all'
+    this.catalogStatus = 'all'
+    this.catalogFavoritesOnly = false
+    this.catalogFeaturedOnly = false
   }
 
   private renderCreateDraftDialog(models: CreateDraftModel[]) {
@@ -325,8 +529,58 @@ function humanizeCreateDraftModelTitle(value: string): string {
 }
 
 function popularityLabel(level: 'low' | 'medium' | 'high'): string {
-  const percentile = level === 'high' ? 'top 10%' : level === 'medium' ? 'top 20%' : 'top 30%'
-  return `${capitalize(level)} popularity — ${percentile} in the last 30 days`
+  return `${capitalize(level)} popularity — ${popularityPercentile(level).toLowerCase()} in the last 30 days`
+}
+
+function popularityPercentile(level: 'low' | 'medium' | 'high'): string {
+  return level === 'high' ? 'Top 10%' : level === 'medium' ? 'Top 20%' : 'Top 30%'
+}
+
+function popularityRank(level: CatalogDashboard['popularity']): number {
+  return level === 'high' ? 3 : level === 'medium' ? 2 : level === 'low' ? 1 : 0
+}
+
+function semanticModelTitle(value: string | undefined): string {
+  if (!value) return 'Unknown'
+  const segment = value.split(':').pop() ?? value
+  return humanizeCreateDraftModelTitle(segment)
+}
+
+function semanticModelLabel(value: string | undefined): string {
+  return `${semanticModelTitle(value)} model`
+}
+
+function timestamp(value: string | undefined): number {
+  if (!value) return 0
+  const result = new Date(value).getTime()
+  return Number.isNaN(result) ? 0 : result
+}
+
+function readStringList(key: string): string[] {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '[]')
+    return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())) : []
+  } catch {
+    return []
+  }
+}
+
+function readStringRecord(key: string): Record<string, string> {
+  try {
+    const value: unknown = JSON.parse(localStorage.getItem(key) ?? '{}')
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return {}
+    return Object.fromEntries(Object.entries(value).filter((entry): entry is [string, string] => typeof entry[1] === 'string'))
+  } catch {
+    return {}
+  }
+}
+
+function writeStorage(key: string, value: unknown): void {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch {
+    // Discovery preferences are a progressive enhancement when storage is unavailable.
+  }
 }
 
 function formatRelativeTime(value: string | undefined): string {
