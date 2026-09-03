@@ -20,9 +20,10 @@ func TestBackgroundLifecycleReclaimsPersistedAPIJobs(t *testing.T) {
 	if repo == nil {
 		t.Fatal("async job repository is required")
 	}
-	// Seed through persistence to simulate an unknown kind left by a former
-	// process version; the module intentionally rejects new unknown enqueues.
-	if _, err := jobsqlite.NewRepository(store.SQLDB()).Enqueue(t.Context(), jobs.EnqueueInput{ID: "job-restart", Kind: "test.unsupported", WorkloadClass: "control", PrincipalID: jobplatform.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "test", ResourceID: "resource-1", Payload: []byte(`{}`)}); err != nil {
+	// Seed through persistence to simulate a supported job left by a former
+	// process. The malformed payload makes the real handler terminate it after
+	// the restarted worker claims the durable row.
+	if _, err := jobsqlite.NewRepository(store.SQLDB()).Enqueue(t.Context(), jobs.EnqueueInput{ID: "job-restart", Kind: "agent.run", WorkloadClass: jobplatform.WorkloadClassBackground, PrincipalID: jobplatform.SystemPrincipalID, GroupIDs: []string{}, EstimatedMemoryBytes: 1, ResourceKind: "agent_run", ResourceID: "agent-restart", Payload: []byte(`{}`)}); err != nil {
 		t.Fatal(err)
 	}
 
