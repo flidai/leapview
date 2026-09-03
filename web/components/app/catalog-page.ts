@@ -414,10 +414,10 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       ]
     }
     return [
-      { id: 'name', label: 'Dashboard', width: '28%' },
+      { id: 'name', label: 'Dashboard', width: '34%' },
       { id: 'dataModel', label: 'Data model', width: '14%' },
-      { id: 'owner', label: 'Owner', width: '16%', render: 'person' as const },
-      { id: 'status', label: 'Status', width: '16%', render: 'quiet-status' as const },
+      { id: 'owner', label: 'Owner', width: '8%', render: 'person-avatar' as const },
+      { id: 'status', label: 'Status', width: '18%', render: 'quiet-status' as const },
       { id: 'updated', label: 'Updated', width: '10%' },
       { id: 'lastOpened', label: 'Last opened', width: '11%' },
       { id: 'actions', label: 'Actions', width: '5%', align: 'right' as const, sortable: false, render: 'actions' as const },
