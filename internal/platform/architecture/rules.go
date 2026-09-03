@@ -103,41 +103,83 @@ var CompositionContractPrefixes = map[string]struct{}{
 	// this list exact (rather than allowing capability roots) so a new app
 	// import still requires an architecture review while the sealed delivery
 	// wiring can construct its concrete physical/control-plane ports here.
-	"internal/analytics/candidatecatalog":    {},
-	"internal/analytics/catalogseal":         {},
-	"internal/analytics/ducklake":            {},
-	"internal/analytics/physicalpool":        {},
-	"internal/analytics/physicalpool/sqlite": {},
-	"internal/analytics/runtime":             {},
-	"internal/access":                        {},
-	"internal/access/snapshot":               {},
-	"internal/analytics/connectionbinding":   {},
-	"internal/analytics/gates":               {},
-	"internal/analytics/materialize":         {},
-	"internal/analytics/model":               {},
-	"internal/dashboard/authoring":           {},
-	"internal/deployment":                    {},
-	"internal/deployment/apiadapter":         {},
-	"internal/deployment/gcstore":            {},
-	"internal/deployment/sealedcontrol":      {},
-	"internal/deployment/extensionsupply":    {},
-	"internal/deployment/sqlite":             {},
-	"internal/manageddata":                   {},
-	"internal/manageddata/control":           {},
-	"internal/project/bundle":                {},
-	"internal/project/catalog":               {},
-	"internal/project/graph":                 {},
-	"internal/refresh/run":                   {},
-	"internal/runtimehost":                   {},
-	"internal/release":                       {},
-	"internal/recoveryset":                   {},
-	"internal/recoveryset/postgres":          {},
-	"internal/servingstate":                  {},
-	"internal/servingstate/postgres":         {},
-	"internal/deployment/postgres":           {},
-	"internal/analytics/cache/l3":            {},
-	"internal/analytics/cache/postgres":      {},
-	"internal/analytics/resulttier":          {},
+	"internal/analytics/candidatecatalog":  {},
+	"internal/analytics/catalogseal":       {},
+	"internal/analytics/ducklake":          {},
+	"internal/analytics/physicalpool":      {},
+	"internal/analytics/runtime":           {},
+	"internal/access":                      {},
+	"internal/access/snapshot":             {},
+	"internal/analytics/connectionbinding": {},
+	"internal/analytics/gates":             {},
+	"internal/analytics/materialize":       {},
+	"internal/analytics/model":             {},
+	"internal/dashboard/authoring":         {},
+	"internal/deployment":                  {},
+	"internal/deployment/apiadapter":       {},
+	"internal/deployment/gcstore":          {},
+	"internal/deployment/sealedcontrol":    {},
+	"internal/deployment/extensionsupply":  {},
+	"internal/manageddata":                 {},
+	"internal/manageddata/control":         {},
+	"internal/project/bundle":              {},
+	"internal/project/catalog":             {},
+	"internal/project/graph":               {},
+	"internal/refresh/run":                 {},
+	"internal/runtimehost":                 {},
+	"internal/release":                     {},
+	"internal/recoveryset":                 {},
+	"internal/recoveryset/postgres":        {},
+	"internal/servingstate":                {},
+	"internal/servingstate/postgres":       {},
+	"internal/deployment/postgres":         {},
+	"internal/analytics/cache/l3":          {},
+	"internal/analytics/cache/postgres":    {},
+	"internal/analytics/resulttier":        {},
+}
+
+// SQLiteFixturePackagePrefixes enumerates the local/evaluation SQLite
+// adapters that remain in the tree solely to support tests and offline
+// tooling. They are deliberately not composition contracts: production code
+// must use the native PostgreSQL implementations instead.
+var SQLiteFixturePackagePrefixes = []string{
+	"internal/access/sqlite",
+	"internal/agent/sqlite",
+	"internal/project/sqlite",
+	"internal/servingstate/sqlite",
+	"internal/manageddata/sqlite",
+	"internal/refresh/sqlite",
+	"internal/dashboard/publication/sqlite",
+	"internal/deployment/sqlite",
+	"internal/analytics/physicalpool/sqlite",
+	"internal/platform/http/cursorsigning/sqlite",
+	"internal/platform/http/idempotency/sqlite",
+	"internal/platform/jobs/sqlite",
+}
+
+// IsSQLitePackage reports whether path contains a path-segment named sqlite.
+// Checking segments avoids treating ordinary files such as catalog.sqlite as
+// package dependencies.
+func IsSQLitePackage(path string) bool {
+	path = strings.Trim(path, "/")
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "sqlite" {
+			return true
+		}
+	}
+	return false
+}
+
+// IsSQLiteFixturePackage reports whether path belongs to one of the explicitly
+// retained local/evaluation SQLite adapters.
+func IsSQLiteFixturePackage(path string) bool {
+	path = strings.Trim(path, "/")
+	for _, prefix := range SQLiteFixturePackagePrefixes {
+		if path == prefix || strings.HasPrefix(path, prefix+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func IsCompositionContractImport(packagePath string) bool {
@@ -213,6 +255,9 @@ func IsPublicContractImport(capability, packagePath string) bool {
 // Module packages deliberately use the same rules as every other capability
 // package; only process composition is exempt.
 func CapabilityImportViolation(sourcePath string, source PackageRule, packagePath string, target PackageRule) string {
+	if IsSQLitePackage(packagePath) {
+		return fmt.Sprintf("SQLite adapter package %s is restricted to test fixtures", packagePath)
+	}
 	if source.Capability == target.Capability || source.Layer == LayerComposition {
 		return ""
 	}
@@ -271,6 +316,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/analytics/modelsql", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/gates", Capability: "release", Layer: LayerUseCase},
 	{Prefix: "internal/analytics/physicalpool", Capability: "analytics", Layer: LayerContract},
+	{Prefix: "internal/analytics/physicalpool/sqlite", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/catalogseal", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogartifact", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogstats", Capability: "analytics", Layer: LayerContract},

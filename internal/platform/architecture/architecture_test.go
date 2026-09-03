@@ -199,7 +199,6 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 		{path: "internal/analytics/modelsql", capability: "analytics", layer: LayerContract},
 		{path: "internal/analytics/infisical", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/environment", capability: "analytics", layer: LayerAdapter},
-		{path: "internal/analytics/sqlite", capability: "analytics", layer: LayerAdapter},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
@@ -211,6 +210,44 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 				t.Fatalf("%s classification = %#v, want %s %s", test.path, rule, test.capability, test.layer)
 			}
 		})
+	}
+}
+
+func TestSQLiteFixtureBoundaryIsExplicitAndNonCompositional(t *testing.T) {
+	for _, path := range SQLiteFixturePackagePrefixes {
+		if !IsSQLitePackage(path) {
+			t.Errorf("SQLite fixture prefix %q is not a SQLite package path", path)
+		}
+		if !IsSQLiteFixturePackage(path) {
+			t.Errorf("SQLite fixture prefix %q is not recognized as a retained fixture", path)
+		}
+		if IsCompositionContractImport(path) {
+			t.Errorf("SQLite fixture %q is exposed as a production composition contract", path)
+		}
+		rule, ok := ClassifyPackage(path)
+		if !ok || rule.Layer != LayerAdapter {
+			t.Errorf("SQLite fixture %q classification = %#v, %v; want adapter", path, rule, ok)
+		}
+	}
+	for _, removed := range []string{
+		"internal/analytics/sqlite",
+		"internal/dashboard/appearance/sqlite",
+		"internal/dashboard/authoring/sqlite",
+		"internal/release/sqlite",
+		"internal/manageddata/maintenance/sqlite",
+	} {
+		if IsSQLiteFixturePackage(removed) {
+			t.Errorf("removed SQLite adapter %q remains in fixture allowlist", removed)
+		}
+	}
+
+	source, sourceOK := ClassifyPackage("internal/app")
+	target, targetOK := ClassifyPackage("internal/deployment/sqlite")
+	if !sourceOK || !targetOK {
+		t.Fatalf("classify composition=%v SQLite target=%v", sourceOK, targetOK)
+	}
+	if violation := CapabilityImportViolation("internal/app", source, "internal/deployment/sqlite", target); violation == "" {
+		t.Fatal("composition import of SQLite fixture was accepted")
 	}
 }
 
@@ -432,7 +469,6 @@ func TestEnterpriseAuthoringStateRemainsCapabilityOwned(t *testing.T) {
 		{path: "internal/analytics/connectionbinding", capability: "analytics", layer: LayerUseCase},
 		{path: "internal/analytics/infisical", capability: "analytics", layer: LayerAdapter},
 		{path: "internal/analytics/environment", capability: "analytics", layer: LayerAdapter},
-		{path: "internal/analytics/sqlite", capability: "analytics", layer: LayerAdapter},
 	}
 	for _, test := range tests {
 		t.Run(test.path, func(t *testing.T) {
@@ -1364,12 +1400,10 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	for _, output := range []string{
 		"internal/access/internal/db",
 		"internal/agent/internal/db",
-		"internal/analytics/internal/db",
 		"internal/dashboard/internal/db",
 		"internal/deployment/internal/db",
 		"internal/manageddata/internal/db",
 		"internal/refresh/internal/db",
-		"internal/release/internal/db",
 		"internal/servingstate/internal/db",
 		"internal/project/internal/db",
 	} {
@@ -1385,7 +1419,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/manageddata/sqlite/manageddb",
 		"internal/refresh/sqlite/materializedb",
 		"internal/refresh/sqlite/refreshdb",
-		"internal/release/sqlite/releasedb",
 		"internal/servingstate/sqlite/servingdb",
 	} {
 		if strings.Contains(config, legacy) {
@@ -1449,25 +1482,13 @@ func TestCompositionDoesNotUseTestTransports(t *testing.T) {
 }
 
 func TestRefreshPersistenceIsConstructedOnlyByItsModule(t *testing.T) {
-	constructors := 0
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
 			if imported != modulePath+"/internal/refresh/sqlite" {
 				continue
 			}
-			if file.pkgDir != "internal/refresh/module" {
-				t.Errorf("%s imports refresh persistence outside refresh/module", file.path)
-			}
+			t.Errorf("%s imports the local refresh SQLite fixture; production must use the PostgreSQL persistence surface", file.path)
 		}
-		if file.pkgDir == "internal/refresh/module" {
-			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepository(")
-			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepositoryWithWorkflow(")
-			constructors += strings.Count(file.body, "refreshsqlite.NewSQLRunRepositoryWithWorkflowAndAudit(")
-			constructors += strings.Count(file.body, "refreshsqlite.NewRepository(")
-		}
-	}
-	if constructors != 3 {
-		t.Fatalf("refresh/module persistence constructors = %d, want 3 (run, schedule, recovery)", constructors)
 	}
 }
 
@@ -1649,6 +1670,13 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 				continue
 			}
 			packagePath := strings.TrimPrefix(imported, modulePath+"/")
+			if IsSQLitePackage(packagePath) {
+				if sameSQLiteFixture(packagePath, file.pkgDir) {
+					continue
+				}
+				t.Errorf("%s imports SQLite package %s; SQLite adapters are test fixtures only", file.path, packagePath)
+				continue
+			}
 			target, ok := ClassifyPackage(packagePath)
 			if !ok || source.Capability == target.Capability {
 				continue
@@ -1660,6 +1688,42 @@ func TestProductionImportsFollowCapabilityGraph(t *testing.T) {
 			if violation := CapabilityImportViolation(file.pkgDir, source, packagePath, target); violation != "" {
 				t.Errorf("%s imports %s: %s", file.path, packagePath, violation)
 			}
+		}
+	}
+}
+
+// sameSQLiteFixture permits a retained fixture adapter to import its own
+// generated support package while rejecting every cross-fixture or
+// production-to-fixture dependency.
+func sameSQLiteFixture(sourcePath, targetPath string) bool {
+	if !IsSQLiteFixturePackage(sourcePath) || !IsSQLiteFixturePackage(targetPath) {
+		return false
+	}
+	for _, prefix := range SQLiteFixturePackagePrefixes {
+		if hasPackagePrefix(sourcePath, []string{prefix}) && hasPackagePrefix(targetPath, []string{prefix}) {
+			return true
+		}
+	}
+	return false
+}
+
+func TestProductionSourcesDoNotImportSQLiteAdapters(t *testing.T) {
+	for _, file := range productionGoFiles(t) {
+		for _, imported := range file.imports {
+			if imported == "modernc.org/sqlite" {
+				if file.path != "internal/platform/store.go" {
+					t.Errorf("%s imports SQLite driver outside the platform Store fixture", file.path)
+				}
+				continue
+			}
+			if !strings.HasPrefix(imported, modulePath+"/") {
+				continue
+			}
+			packagePath := strings.TrimPrefix(imported, modulePath+"/")
+			if !IsSQLitePackage(packagePath) || sameSQLiteFixture(file.pkgDir, packagePath) {
+				continue
+			}
+			t.Errorf("%s imports SQLite package %s; SQLite adapters are test fixtures only", file.path, packagePath)
 		}
 	}
 }
@@ -2319,7 +2383,6 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/platform/jobs/sqlite/queries/async_job.sql",
 		"internal/platform/db/queries/platform.sql",
 		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
-		"internal/release/sqlite/queries/release.sql",
 		"internal/servingstate/sqlite/queries/serving_state.sql",
 		"internal/project/sqlite/queries/project.sql",
 	} {
@@ -4049,12 +4112,10 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"FROM go-deps AS build",
 			"COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db",
 			"COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db",
-			"COPY --from=sourcegen /src/internal/analytics/internal/db ./internal/analytics/internal/db",
 			"COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db",
 			"COPY --from=sourcegen /src/internal/deployment/internal/db ./internal/deployment/internal/db",
 			"COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db",
 			"COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db",
-			"COPY --from=sourcegen /src/internal/release/internal/db ./internal/release/internal/db",
 			"COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db",
 			"COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db",
 			"COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb",
@@ -4324,10 +4385,6 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 		filepath.Join("internal", "platform", "store.go"): {
 			"INSERT INTO platform_settings",
 		},
-		filepath.Join("internal", "manageddata", "maintenance", "sqlite", "source.go"): {
-			"const reachabilityQuery",
-			"QueryContext(ctx, reachabilityQuery)",
-		},
 	}
 	for name, fragments := range handwrittenSQL {
 		body, err := os.ReadFile(filepath.Join(root, name))
@@ -4347,7 +4404,6 @@ func TestAPIv1SQLiteAdaptersUseSQLC(t *testing.T) {
 		"internal/platform/http/idempotency/sqlite":   {},
 		"internal/jobs/sqlite":                        {},
 		"internal/platform/http/cursorsigning/sqlite": {},
-		"internal/release/sqlite":                     {},
 	}
 	for _, file := range productionGoFiles(t) {
 		if _, ok := packages[file.pkgDir]; !ok {
@@ -4517,8 +4573,8 @@ func isSQLDBAllowedFile(file goFile) bool {
 		strings.HasPrefix(file.pkgDir, "internal/admin/storage") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/duckdb") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/ducklake") ||
-		strings.HasSuffix(file.pkgDir, "/sqlite") ||
-		strings.Contains(file.pkgDir, "/sqlite/") {
+		IsSQLiteFixturePackage(file.pkgDir) ||
+		file.path == "internal/platform/store.go" {
 		return true
 	}
 	return false
