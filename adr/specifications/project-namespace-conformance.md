@@ -4,7 +4,7 @@ Status: accepted
 
 Profile: `leapview.project-namespace/v1`
 
-Last updated: 2026-09-02
+Last updated: 2026-09-03
 
 Owners: LeapView maintainers
 
@@ -304,7 +304,7 @@ names, and physical relation names must not replace durable identity.
 | SemanticModel dataset names a Model in another Project         | Compile failure without foreign metadata disclosure                                      |
 | Resource reference names another Project                       | Compile failure without foreign metadata disclosure                                      |
 | Source uses `projectOutput` or another native Project import   | Schema or compile rejection                                                              |
-| Optional dbt metadata is absent                                 | Continue through explicitly authored Connection, Source, and Model resources             |
+| Optional dbt metadata is absent                                | Continue through explicitly authored Connection, Source, and Model resources             |
 | Rollback names another environment or Project                  | Reject and require deployment to the intended target                                     |
 
 ## Evidence and conformance gates
@@ -319,7 +319,7 @@ names, and physical relation names must not replace durable identity.
 | SEM-01–SEM-05     | Project-local dataset resolution, generation closure, dbt lowering, and topology tests                | Pending |
 | ISO-01–ISO-03     | Deployment topology and isolation-claim review                                                        | Pending |
 | XPR-01–XPR-05     | Foreign-reference and unsupported-import rejection corpus                                             | Pending |
-| DBT-01–DBT-06     | Reference deployment, upstream dependency, and multi-release rejection tests                          | Pending |
+| DBT-01–DBT-06     | Reference deployment, upstream dependency, multi-Source closure, and cross-Project rejection tests    | Pending |
 
 Implementation must update the project-delivery and data-contract versioning
 conformance specifications where their current language conflicts with this
