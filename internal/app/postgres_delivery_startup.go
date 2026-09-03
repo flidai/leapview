@@ -13,7 +13,9 @@ import (
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
+	"github.com/flidai/leapview/internal/recoveryset"
 	"github.com/flidai/leapview/internal/servingstate"
+	"github.com/google/uuid"
 )
 
 // postgresDeliveryStartupAuthority is the read-only portion of the native
@@ -35,13 +37,22 @@ type postgresDeliveryStartupPhysicalPools interface {
 	LoadAdmissionContractByCompatibilityDigest(context.Context, physicalpool.PoolID, string) (physicalpool.AdmissionContract, error)
 }
 
+// postgresDeliveryStartupRecoverySets is deliberately exact-ID and read-only.
+// Recovery selection never means latest/current and readiness cannot mutate
+// validation evidence.
+type postgresDeliveryStartupRecoverySets interface {
+	ReadExact(context.Context, string) (recoveryset.RecoverySet, error)
+}
+
 type postgresDeliveryStartupCheckConfig struct {
-	TargetID    string
-	Environment servingstate.Environment
-	ReadClaim   func(context.Context) (projectgraph.ResourceID, bool, error)
-	Delivery    appdeploymentpostgres.StartupReader
-	Serving     postgresDeliveryStartupServingStates
-	Physical    postgresDeliveryStartupPhysicalPools
+	TargetID      string
+	Environment   servingstate.Environment
+	RecoverySetID string
+	ReadClaim     func(context.Context) (projectgraph.ResourceID, bool, error)
+	Delivery      appdeploymentpostgres.StartupReader
+	Recovery      postgresDeliveryStartupRecoverySets
+	Serving       postgresDeliveryStartupServingStates
+	Physical      postgresDeliveryStartupPhysicalPools
 }
 
 // newPostgresDeliveryStartupCheck builds the production readiness callback.
@@ -68,8 +79,47 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 	if config.Physical == nil {
 		return nil, errors.New("PostgreSQL delivery startup physical-pool authority is required")
 	}
+	recoverySetID := config.RecoverySetID
+	if recoverySetID != "" && recoverySetID != strings.TrimSpace(recoverySetID) {
+		return nil, errors.New("PostgreSQL delivery startup recovery set id must be a canonical UUID without surrounding whitespace")
+	}
+	if recoverySetID != "" {
+		parsed, err := uuid.Parse(recoverySetID)
+		if err != nil || parsed.String() != recoverySetID {
+			return nil, errors.New("PostgreSQL delivery startup recovery set id must be a canonical UUID")
+		}
+	}
+	if recoverySetID != "" && config.Recovery == nil {
+		return nil, errors.New("PostgreSQL delivery startup recovery-set authority is required when recovery set id is configured")
+	}
 
 	return func(ctx context.Context) error {
+		var selectedRecovery *recoveryset.RecoverySet
+		if recoverySetID != "" {
+			set, err := config.Recovery.ReadExact(ctx, recoverySetID)
+			if err != nil {
+				if postgresDeliveryStartupNotFound(err) || errors.Is(err, recoveryset.ErrNotFound) {
+					return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetMissing)
+				}
+				if errors.Is(err, recoveryset.ErrInvalid) {
+					return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetInvalid)
+				}
+				return fmt.Errorf("delivery startup recovery set: %w", err)
+			}
+			if err := set.Validate(); err != nil {
+				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetInvalid)
+			}
+			if set.ID != recoverySetID {
+				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetPointerMismatch)
+			}
+			if set.Status == recoveryset.StatusInvalid {
+				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetInvalid)
+			}
+			if set.Status != recoveryset.StatusPublished {
+				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetNotPublished)
+			}
+			selectedRecovery = &set
+		}
 		claimedProject, claimFound, err := config.ReadClaim(ctx)
 		if err != nil {
 			return fmt.Errorf("delivery startup project claim: %w", err)
@@ -88,6 +138,9 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 		if !claimFound && !targetFound {
 			// No durable scope exists yet. This is the only healthy fresh-target
 			// state and must not be confused with a broken partial migration.
+			if selectedRecovery != nil {
+				return postgresDeliveryStartupDiagnostics(config.TargetID, deployment.DeliveryStartupRecoverySetPointerMismatch)
+			}
 			return nil
 		}
 		if claimFound != targetFound {
@@ -110,6 +163,9 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 		if generationID == "" {
 			// A claimed target with no active generation is a valid
 			// administrable pre-publication state.
+			if selectedRecovery != nil {
+				return postgresDeliveryStartupDiagnostics(scope, deployment.DeliveryStartupRecoverySetPointerMismatch)
+			}
 			return nil
 		}
 
@@ -181,6 +237,11 @@ func newPostgresDeliveryStartupCheck(config postgresDeliveryStartupCheckConfig) 
 		if admission.Pool.ID != physicalpool.PoolID(seal.PhysicalPoolID) || !admission.Pool.Admitted || admission.Admission.PoolID != physicalpool.PoolID(seal.PhysicalPoolID) || admission.Admission.CompatibilityDigest != seal.CompatibilityDigest {
 			return postgresDeliveryStartupDiagnostics(scope, deployment.DeliveryStartupUnadmittedPool)
 		}
+		if selectedRecovery != nil {
+			if code := postgresDeliveryStartupRecoveryMismatch(*selectedRecovery, target, generation, publication, seal, state, artifact, admission); code != "" {
+				return postgresDeliveryStartupDiagnostics(scope, code)
+			}
+		}
 		return nil
 	}, nil
 }
@@ -247,6 +308,149 @@ func postgresDeliveryStartupSealComplete(seal appdeploymentpostgres.StartupSnaps
 		seal.ArtifactRoot == generation.ArtifactRoot &&
 		strings.TrimSpace(seal.ArtifactRootDigest) != "" &&
 		seal.ArtifactRootDigest == generation.ArtifactRootDigest
+}
+
+// postgresDeliveryStartupRecoveryMismatch compares an explicitly selected
+// immutable recovery frontier with every active native projection available
+// to readiness. The returned code is stable and deliberately coarse; values
+// from the frontier are never included in diagnostics.
+func postgresDeliveryStartupRecoveryMismatch(
+	set recoveryset.RecoverySet,
+	target appdeploymentpostgres.StartupTarget,
+	generation appdeploymentpostgres.StartupGeneration,
+	publication appdeploymentpostgres.StartupPublication,
+	seal appdeploymentpostgres.StartupSnapshotSeal,
+	state servingstate.State,
+	artifact servingstate.Artifact,
+	admission physicalpool.AdmissionContract,
+) deployment.DeliveryStartupDiagnosticCode {
+	// The delivery pointer and all generation/publication identity bindings are
+	// checked together so a selected frontier can never silently follow a
+	// different active target revision.
+	if set.Delivery.TargetID != target.TargetID ||
+		set.Delivery.GenerationID != target.ActiveGenerationID ||
+		set.Delivery.PublicationID != target.ActivePublicationID ||
+		set.Delivery.TargetRevision != target.TargetRevision ||
+		set.Delivery.GenerationID != generation.GenerationID ||
+		set.Delivery.TargetID != generation.TargetID ||
+		set.Serving.SealID != generation.SnapshotSealID ||
+		set.Serving.PlanDigest != generation.PlanDigest ||
+		set.Serving.ServingArtifactDigest != generation.ServingArtifactDigest ||
+		set.Serving.CompiledGraphDigest != generation.CompiledGraphDigest ||
+		set.Serving.CompiledConfigDigest != generation.CompiledConfigDigest ||
+		set.Serving.SecurityDomainFingerprint != generation.SecurityDomainFingerprint ||
+		set.Serving.ArtifactRoot != generation.ArtifactRoot ||
+		set.Serving.ArtifactRootDigest != generation.ArtifactRootDigest ||
+		set.Delivery.PublicationID != publication.PublicationID ||
+		set.Delivery.TargetID != publication.TargetID ||
+		set.Delivery.GenerationID != publication.GenerationID ||
+		publication.CandidateID != generation.CandidateID ||
+		publication.SnapshotSealID != generation.SnapshotSealID ||
+		publication.State != "committed" ||
+		publication.ResultTargetRevision != set.Delivery.TargetRevision {
+		return deployment.DeliveryStartupRecoverySetPointerMismatch
+	}
+
+	// Artifact identity is separately diagnosed because it is the final
+	// immutable serving object bound to both the seal and serving state.
+	if set.Serving.ServingArtifactID != seal.ServingArtifactID ||
+		set.Serving.ServingArtifactDigest != seal.ServingArtifactDigest ||
+		set.Serving.ServingArtifactID != artifact.ID ||
+		set.Serving.ServingArtifactDigest != artifact.Digest ||
+		artifact.ServingStateID != state.ID {
+		return deployment.DeliveryStartupRecoverySetArtifactMismatch
+	}
+
+	if set.Catalog.CatalogID != seal.CatalogID ||
+		set.Catalog.CatalogDatabase != seal.CatalogDatabase ||
+		set.Catalog.CatalogUUID != seal.CatalogUUID ||
+		set.Catalog.CatalogVersion != seal.CatalogVersion ||
+		set.Catalog.SnapshotID != seal.DuckLakeSnapshotID ||
+		set.Serving.CatalogID != seal.CatalogID ||
+		set.Serving.CatalogDatabase != seal.CatalogDatabase ||
+		set.Serving.CatalogUUID != seal.CatalogUUID ||
+		set.Serving.CatalogVersion != seal.CatalogVersion ||
+		set.Serving.DuckLakeSnapshotID != seal.DuckLakeSnapshotID ||
+		set.Serving.DuckLakeSnapshotID != state.DuckLakeSnapshotID {
+		return deployment.DeliveryStartupRecoverySetCatalogMismatch
+	}
+
+	compatibilityDigest, err := set.Compatibility.Digest()
+	if err != nil || set.Serving.CompatibilityDigest != seal.CompatibilityDigest ||
+		set.Serving.CompatibilityDigest != compatibilityDigest ||
+		!set.Compatibility.Equal(admission.Admission.Compatibility) {
+		return deployment.DeliveryStartupRecoverySetCompatibilityMismatch
+	}
+	poolDataPath, err := admission.Pool.DataPath()
+	if err != nil || set.Serving.TenantDomain != admission.Pool.Identity.Tenant ||
+		set.Serving.Region != admission.Pool.Identity.Region ||
+		set.Serving.EncryptionDomain != admission.Pool.Identity.EncryptionDomain ||
+		set.Serving.ObjectNamespace != admission.Pool.Identity.StorageNamespace ||
+		set.Serving.ObjectRoot != poolDataPath {
+		return deployment.DeliveryStartupRecoverySetSealMismatch
+	}
+	if !postgresDeliveryStartupRecoveryRootsMatch(set.ObjectRoots, seal) {
+		return deployment.DeliveryStartupRecoverySetSealMismatch
+	}
+
+	// Compare every remaining durable seal field, including provider-neutral
+	// object roots and runtime compatibility versions. Catalog and compatibility
+	// fields are checked above with their dedicated diagnostics.
+	if set.Serving.SealID != seal.SealID ||
+		set.Serving.PhysicalPoolID != seal.PhysicalPoolID ||
+		set.Serving.TenantDomain != seal.TenantDomain ||
+		set.Serving.Region != seal.Region ||
+		set.Serving.EncryptionDomain != seal.EncryptionDomain ||
+		set.Serving.ObjectNamespace != seal.ObjectNamespace ||
+		set.Serving.RelationNamespace != seal.RelationNamespace ||
+		set.Serving.RelationManifestDigest != seal.RelationManifestDigest ||
+		set.Serving.ClosureDigest != seal.ClosureDigest ||
+		set.Serving.ObjectRoot != seal.ObjectRoot ||
+		set.Serving.ObjectRootDigest != seal.ObjectRootDigest ||
+		set.Serving.ArtifactRoot != seal.ArtifactRoot ||
+		set.Serving.ArtifactRootDigest != seal.ArtifactRootDigest ||
+		set.Serving.CompiledGraphDigest != seal.CompiledGraphDigest ||
+		set.Serving.CompiledConfigDigest != seal.CompiledConfigDigest ||
+		set.Serving.SecurityDomainFingerprint != seal.SecurityDomainFingerprint ||
+		set.Serving.RequestDigest != seal.RequestDigest ||
+		set.Serving.PlanDigest != seal.PlanDigest ||
+		set.Serving.DuckDBVersion != seal.DuckDBVersion ||
+		set.Serving.RuntimeVersion != seal.RuntimeVersion ||
+		set.Serving.DuckLakeExtensionVersion != seal.DuckLakeExtensionVersion ||
+		set.Serving.DuckLakeSpecVersion != seal.DuckLakeSpecVersion ||
+		set.Serving.CatalogSchemaVersion != seal.CatalogSchemaVersion {
+		return deployment.DeliveryStartupRecoverySetSealMismatch
+	}
+	return ""
+}
+
+// postgresDeliveryStartupRecoveryRootsMatch consumes every selected root.
+// The active native seal has exactly two provider recovery boundaries: the
+// DuckLake object root and the immutable serving-artifact root. Provider
+// version/frontier values remain part of the signed recovery-set identity;
+// the recovery drill probes those values against the provider before publish.
+func postgresDeliveryStartupRecoveryRootsMatch(roots []recoveryset.ObjectRoot, seal appdeploymentpostgres.StartupSnapshotSeal) bool {
+	if len(roots) != 2 {
+		return false
+	}
+	objectRoot, artifactRoot := false, false
+	for _, root := range roots {
+		switch root.Kind {
+		case recoveryset.ObjectRootDuckLake:
+			if root.URI != seal.ObjectRoot || root.Digest != seal.ObjectRootDigest || objectRoot {
+				return false
+			}
+			objectRoot = true
+		case recoveryset.ObjectRootServingArtifact:
+			if root.URI != seal.ArtifactRoot || root.Digest != seal.ArtifactRootDigest || artifactRoot {
+				return false
+			}
+			artifactRoot = true
+		default:
+			return false
+		}
+	}
+	return objectRoot && artifactRoot
 }
 
 func postgresDeliveryStartupDiagnostics(scope string, codes ...deployment.DeliveryStartupDiagnosticCode) error {

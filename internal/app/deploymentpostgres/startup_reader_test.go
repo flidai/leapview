@@ -38,7 +38,13 @@ func TestStartupReaderProjectsNativeEvidence(t *testing.T) {
 		target:      nativepostgres.DeliveryTarget{TargetID: "target", ProjectID: "project", Environment: "prod", TargetRevision: 3, ActiveGenerationID: "generation", ActivePublicationID: "publication"},
 		generation:  nativepostgres.DeliveryGeneration{GenerationID: "generation", TargetID: "target", CandidateID: "candidate", SnapshotSealID: "seal", PlanID: "plan", PlanDigest: "plan-digest", ArtifactRoot: "artifact-root", ArtifactRootDigest: "root-digest", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest"},
 		publication: nativepostgres.DeliveryPublication{PublicationID: "publication", TargetID: "target", GenerationID: "generation", CandidateID: "candidate", SnapshotSealID: "seal", State: "committed", ExpectedTargetRevision: 2, ResultTargetRevision: 3},
-		seal:        nativepostgres.SnapshotSeal{SealID: "seal", CandidateID: "candidate", PhysicalPoolID: "pool", CompatibilityDigest: "compatibility-digest", DuckLakeSnapshotID: 42, PlanDigest: "plan-digest", ServingArtifactID: "artifact", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", ArtifactRoot: "artifact-root", ArtifactRootDigest: "root-digest"},
+		seal: nativepostgres.SnapshotSeal{
+			SealID: "seal", AttemptID: "attempt", CandidateID: "candidate", PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "region", EncryptionDomain: "encryption", ObjectNamespace: "namespace",
+			CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: "catalog-uuid", CatalogVersion: 3, DuckLakeSnapshotID: 42,
+			RelationNamespace: "relation", RelationManifestDigest: "relation-digest", ClosureDigest: "closure-digest", ObjectRoot: "object-root", ObjectRootDigest: "object-digest", ArtifactRoot: "artifact-root", ArtifactRootDigest: "root-digest",
+			ServingArtifactID: "artifact", ServingArtifactDigest: "artifact-digest", CompiledGraphDigest: "graph-digest", CompiledConfigDigest: "config-digest", SecurityDomainFingerprint: "security-digest", RequestDigest: "request-digest", PlanDigest: "plan-digest", CompatibilityDigest: "compatibility-digest",
+			DuckDBVersion: "duckdb", RuntimeVersion: "runtime", DuckLakeExtensionVersion: "extension", DuckLakeSpecVersion: "spec", CatalogSchemaVersion: "schema",
+		},
 	}
 	reader := newStartupReader(fake)
 	target, err := reader.Target(t.Context(), "target")
@@ -54,7 +60,7 @@ func TestStartupReaderProjectsNativeEvidence(t *testing.T) {
 		t.Fatalf("publication projection = %#v, %v", publication, err)
 	}
 	seal, err := reader.SnapshotSeal(t.Context(), "seal")
-	if err != nil || seal.SealID != fake.seal.SealID || seal.ServingArtifactID != fake.seal.ServingArtifactID || seal.DuckLakeSnapshotID != fake.seal.DuckLakeSnapshotID {
+	if err != nil || seal.SealID != fake.seal.SealID || seal.AttemptID != fake.seal.AttemptID || seal.TenantDomain != fake.seal.TenantDomain || seal.CatalogID != fake.seal.CatalogID || seal.CatalogVersion != fake.seal.CatalogVersion || seal.RelationManifestDigest != fake.seal.RelationManifestDigest || seal.ClosureDigest != fake.seal.ClosureDigest || seal.ObjectRootDigest != fake.seal.ObjectRootDigest || seal.ServingArtifactID != fake.seal.ServingArtifactID || seal.DuckLakeSnapshotID != fake.seal.DuckLakeSnapshotID || seal.RequestDigest != fake.seal.RequestDigest || seal.RuntimeVersion != fake.seal.RuntimeVersion || seal.CatalogSchemaVersion != fake.seal.CatalogSchemaVersion {
 		t.Fatalf("seal projection = %#v, %v", seal, err)
 	}
 }

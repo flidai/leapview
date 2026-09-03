@@ -52,6 +52,7 @@ import (
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projectmodule "github.com/flidai/leapview/internal/project/module"
+	recoverysetpostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
@@ -595,12 +596,14 @@ func buildPostgresProductionTarget(ctx context.Context, cfg config.Config) (*App
 		return fail(err)
 	}
 	deliveryStartup, err := newPostgresDeliveryStartupCheck(postgresDeliveryStartupCheckConfig{
-		TargetID:    instanceID,
-		Environment: environment,
-		ReadClaim:   readClaim,
-		Delivery:    appdeploymentpostgres.NewStartupReader(graph.DeploymentRepository),
-		Serving:     graph.ServingState,
-		Physical:    graph.PhysicalPool,
+		TargetID:      instanceID,
+		Environment:   environment,
+		RecoverySetID: cfg.RecoverySetID,
+		ReadClaim:     readClaim,
+		Delivery:      appdeploymentpostgres.NewStartupReader(graph.DeploymentRepository),
+		Recovery:      recoverysetpostgres.New(bootstrap.RuntimePool()),
+		Serving:       graph.ServingState,
+		Physical:      graph.PhysicalPool,
 	})
 	if err != nil {
 		return fail(fmt.Errorf("build PostgreSQL delivery startup checker: %w", err))

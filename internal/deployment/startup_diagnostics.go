@@ -31,6 +31,16 @@ const (
 	DeliveryStartupServingEvidenceMismatch DeliveryStartupDiagnosticCode = "serving_evidence_mismatch"
 	DeliveryStartupMissingSeal             DeliveryStartupDiagnosticCode = "snapshot_seal_missing"
 	DeliveryStartupSealEvidenceMismatch    DeliveryStartupDiagnosticCode = "snapshot_seal_evidence_mismatch"
+	// Optional explicit recovery-mode validation diagnostics. These values are
+	// stable and intentionally carry no recovery-set contents or provider data.
+	DeliveryStartupRecoverySetMissing               DeliveryStartupDiagnosticCode = "recovery_set_missing"
+	DeliveryStartupRecoverySetNotPublished          DeliveryStartupDiagnosticCode = "recovery_set_not_published"
+	DeliveryStartupRecoverySetPointerMismatch       DeliveryStartupDiagnosticCode = "recovery_set_pointer_mismatch"
+	DeliveryStartupRecoverySetSealMismatch          DeliveryStartupDiagnosticCode = "recovery_set_seal_mismatch"
+	DeliveryStartupRecoverySetCatalogMismatch       DeliveryStartupDiagnosticCode = "recovery_set_catalog_mismatch"
+	DeliveryStartupRecoverySetCompatibilityMismatch DeliveryStartupDiagnosticCode = "recovery_set_compatibility_mismatch"
+	DeliveryStartupRecoverySetArtifactMismatch      DeliveryStartupDiagnosticCode = "recovery_set_artifact_mismatch"
+	DeliveryStartupRecoverySetInvalid               DeliveryStartupDiagnosticCode = "recovery_set_invalid"
 )
 
 // DeliveryStartupDiagnostic is a stable, non-secret readiness reason. Scope

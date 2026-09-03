@@ -36,6 +36,11 @@ const (
 	StatusInvalid    Status = "invalid"
 )
 
+const (
+	ObjectRootDuckLake        = "ducklake"
+	ObjectRootServingArtifact = "serving-artifact"
+)
+
 type DatabaseRole string
 
 type ValidationStatus string

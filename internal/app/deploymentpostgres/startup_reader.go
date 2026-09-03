@@ -31,12 +31,16 @@ type StartupPublication struct {
 }
 
 type StartupSnapshotSeal struct {
-	SealID, CandidateID, PhysicalPoolID, CompatibilityDigest string
-	DuckLakeSnapshotID                                       int64
-	PlanDigest, ServingArtifactDigest, ServingArtifactID     string
-	CompiledGraphDigest, CompiledConfigDigest                string
-	SecurityDomainFingerprint                                string
-	ArtifactRoot, ArtifactRootDigest                         string
+	SealID, AttemptID, CandidateID                                                                     string
+	PhysicalPoolID, TenantDomain, Region, EncryptionDomain, ObjectNamespace                            string
+	CatalogDatabase, CatalogID, CatalogUUID                                                            string
+	CatalogVersion, DuckLakeSnapshotID                                                                 int64
+	RelationNamespace, RelationManifestDigest, ClosureDigest                                           string
+	ObjectRoot, ObjectRootDigest, ArtifactRoot, ArtifactRootDigest                                     string
+	ServingArtifactID, ServingArtifactDigest                                                           string
+	CompiledGraphDigest, CompiledConfigDigest, SecurityDomainFingerprint                               string
+	RequestDigest, PlanDigest, CompatibilityDigest                                                     string
+	DuckDBVersion, RuntimeVersion, DuckLakeExtensionVersion, DuckLakeSpecVersion, CatalogSchemaVersion string
 }
 
 // StartupReader is the composition-owned, read-only deployment authority
@@ -114,7 +118,23 @@ func (r startupReader) SnapshotSeal(ctx context.Context, id string) (StartupSnap
 	if err != nil {
 		return StartupSnapshotSeal{}, startupReaderError(err)
 	}
-	return StartupSnapshotSeal{SealID: value.SealID, CandidateID: value.CandidateID, PhysicalPoolID: value.PhysicalPoolID, CompatibilityDigest: value.CompatibilityDigest, DuckLakeSnapshotID: value.DuckLakeSnapshotID, PlanDigest: value.PlanDigest, ServingArtifactDigest: value.ServingArtifactDigest, ServingArtifactID: value.ServingArtifactID, CompiledGraphDigest: value.CompiledGraphDigest, CompiledConfigDigest: value.CompiledConfigDigest, SecurityDomainFingerprint: value.SecurityDomainFingerprint, ArtifactRoot: value.ArtifactRoot, ArtifactRootDigest: value.ArtifactRootDigest}, nil
+	return StartupSnapshotSeal{
+		SealID: value.SealID, AttemptID: value.AttemptID, CandidateID: value.CandidateID,
+		PhysicalPoolID: value.PhysicalPoolID, TenantDomain: value.TenantDomain, Region: value.Region,
+		EncryptionDomain: value.EncryptionDomain, ObjectNamespace: value.ObjectNamespace,
+		CatalogDatabase: value.CatalogDatabase, CatalogID: value.CatalogID, CatalogUUID: value.CatalogUUID,
+		CatalogVersion: value.CatalogVersion, DuckLakeSnapshotID: value.DuckLakeSnapshotID,
+		RelationNamespace: value.RelationNamespace, RelationManifestDigest: value.RelationManifestDigest,
+		ClosureDigest: value.ClosureDigest, ObjectRoot: value.ObjectRoot, ObjectRootDigest: value.ObjectRootDigest,
+		ArtifactRoot: value.ArtifactRoot, ArtifactRootDigest: value.ArtifactRootDigest,
+		ServingArtifactID: value.ServingArtifactID, ServingArtifactDigest: value.ServingArtifactDigest,
+		CompiledGraphDigest: value.CompiledGraphDigest, CompiledConfigDigest: value.CompiledConfigDigest,
+		SecurityDomainFingerprint: value.SecurityDomainFingerprint, RequestDigest: value.RequestDigest,
+		PlanDigest: value.PlanDigest, CompatibilityDigest: value.CompatibilityDigest,
+		DuckDBVersion: value.DuckDBVersion, RuntimeVersion: value.RuntimeVersion,
+		DuckLakeExtensionVersion: value.DuckLakeExtensionVersion, DuckLakeSpecVersion: value.DuckLakeSpecVersion,
+		CatalogSchemaVersion: value.CatalogSchemaVersion,
+	}, nil
 }
 
 func startupReaderError(err error) error {

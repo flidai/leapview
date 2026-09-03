@@ -118,6 +118,25 @@ func TestReadyzExposesOnlyReviewedDeliveryStartupCodes(t *testing.T) {
 	}
 }
 
+func TestReadyzExposesReviewedRecoveryStartupCodeWithoutScope(t *testing.T) {
+	deliveryErr := &deployment.DeliveryStartupDiagnosticsError{Diagnostics: []deployment.DeliveryStartupDiagnostic{{Code: deployment.DeliveryStartupRecoverySetSealMismatch, Scope: "secret-recovery-scope"}}}
+	response := httptest.NewRecorder()
+	newHealth(healthConfig{
+		Platform: func(context.Context) error { return nil },
+		Checks: map[string]func(context.Context) error{
+			"deliveryStartup": func(context.Context) error { return deliveryErr },
+		},
+	}).Readyz(response, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+
+	want := `{"checks":{"deliveryStartup":"recovery_set_seal_mismatch","platformStore":"ok"},"status":"not_ready"}` + "\n"
+	if response.Code != http.StatusServiceUnavailable || response.Body.String() != want {
+		t.Fatalf("recovery readiness = %d %q, want %d %q", response.Code, response.Body.String(), http.StatusServiceUnavailable, want)
+	}
+	if strings.Contains(response.Body.String(), "secret-recovery-scope") {
+		t.Fatalf("response exposed recovery scope: %s", response.Body.String())
+	}
+}
+
 func TestReadyzUsesStableRuntimeKeyWhenReady(t *testing.T) {
 	response := httptest.NewRecorder()
 	newHealth(healthConfig{

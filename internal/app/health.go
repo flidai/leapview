@@ -175,7 +175,15 @@ func stableDeliveryStartupDiagnostic(code deployment.DeliveryStartupDiagnosticCo
 		deployment.DeliveryStartupMissingServingState,
 		deployment.DeliveryStartupServingEvidenceMismatch,
 		deployment.DeliveryStartupMissingSeal,
-		deployment.DeliveryStartupSealEvidenceMismatch:
+		deployment.DeliveryStartupSealEvidenceMismatch,
+		deployment.DeliveryStartupRecoverySetMissing,
+		deployment.DeliveryStartupRecoverySetNotPublished,
+		deployment.DeliveryStartupRecoverySetPointerMismatch,
+		deployment.DeliveryStartupRecoverySetSealMismatch,
+		deployment.DeliveryStartupRecoverySetCatalogMismatch,
+		deployment.DeliveryStartupRecoverySetCompatibilityMismatch,
+		deployment.DeliveryStartupRecoverySetArtifactMismatch,
+		deployment.DeliveryStartupRecoverySetInvalid:
 		return true
 	default:
 		return false

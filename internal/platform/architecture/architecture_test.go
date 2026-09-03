@@ -33,6 +33,7 @@ var targetCapabilities = map[string]struct{}{
 	"project": {}, "access": {}, "manageddata": {}, "analytics": {},
 	"dashboard": {}, "agent": {}, "release": {}, "deployment": {}, "servingstate": {},
 	"refresh": {}, "runtimehost": {}, "workload": {}, "lineage": {}, "semanticvalue": {}, "platform": {},
+	"recoveryset": {},
 }
 
 var approvedInternalRoots = map[string]struct{}{
@@ -40,6 +41,7 @@ var approvedInternalRoots = map[string]struct{}{
 	"access": {}, "admin": {}, "agent": {}, "analytics": {}, "dashboard": {},
 	"deployment": {}, "manageddata": {}, "project": {}, "refresh": {}, "release": {},
 	"runtimehost": {}, "semanticvalue": {}, "servingstate": {}, "workload": {}, "lineage": {}, "extension": {},
+	"recoveryset": {},
 }
 
 func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {

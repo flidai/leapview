@@ -43,6 +43,7 @@ var PublicContractPrefixes = map[string][]string{
 	"deployment":    {"internal/deployment"},
 	"servingstate":  {"internal/servingstate", "internal/servingstate/validate"},
 	"refresh":       {"internal/refresh/artifact", "internal/refresh/plan", "internal/refresh/presentation", "internal/refresh/run", "internal/refresh/schedule"},
+	"recoveryset":   {"internal/recoveryset"},
 	"runtimehost":   {"internal/runtimehost"},
 	"workload":      {"internal/workload"},
 }
@@ -129,7 +130,14 @@ var CompositionContractPrefixes = map[string]struct{}{
 	"internal/refresh/run":                   {},
 	"internal/runtimehost":                   {},
 	"internal/release":                       {},
+	"internal/recoveryset":                   {},
+	"internal/recoveryset/postgres":          {},
 	"internal/servingstate":                  {},
+	"internal/servingstate/postgres":         {},
+	"internal/deployment/postgres":           {},
+	"internal/analytics/cache/l3":            {},
+	"internal/analytics/cache/postgres":      {},
+	"internal/analytics/resulttier":          {},
 }
 
 func IsCompositionContractImport(packagePath string) bool {
@@ -181,6 +189,7 @@ var CapabilityDependencies = map[string]map[string]bool{
 	"refresh":       {"access": true, "servingstate": true, "manageddata": true, "analytics": true, "runtimehost": true, "workload": true},
 	"runtimehost":   {"manageddata": true, "servingstate": true},
 	"lineage":       {"project": true},
+	"recoveryset":   {"analytics": true},
 	"workload":      {},
 	"semanticvalue": {},
 	"platform":      {},
@@ -254,6 +263,8 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/project/compiler", Capability: "project", Layer: LayerUseCase},
 	{Prefix: "internal/project/artifact", Capability: "project", Layer: LayerContract},
 	{Prefix: "internal/lineage/postgres", Capability: "lineage", Layer: LayerAdapter},
+	{Prefix: "internal/recoveryset/postgres", Capability: "recoveryset", Layer: LayerAdapter},
+	{Prefix: "internal/recoveryset", Capability: "recoveryset", Layer: LayerContract},
 	{Prefix: "internal/analytics/resultidentity", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/sourcedataidentity", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/runtime", Capability: "analytics", Layer: LayerContract},
