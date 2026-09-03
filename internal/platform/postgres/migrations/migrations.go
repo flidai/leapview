@@ -36,6 +36,9 @@ var contractPublicationSQL string
 //go:embed 004_identity_activation_transition_journal.sql
 var activationTransitionJournalSQL string
 
+//go:embed 005_identity_activation_transition_references.sql
+var activationTransitionReferencesSQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -54,6 +57,12 @@ const ContractPublicationMigrationID = "003_contract_publication_evidence"
 const ActivationTransitionJournalRevision int64 = 4
 
 const ActivationTransitionJournalMigrationID = "004_identity_activation_transition_journal"
+
+// ActivationTransitionReferencesRevision adds durable-reference evidence to
+// the FAI-617 activation transition journal without mutating revision four.
+const ActivationTransitionReferencesRevision int64 = 5
+
+const ActivationTransitionReferencesMigrationID = "005_identity_activation_transition_references"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -89,6 +98,13 @@ func ActivationTransitionJournalChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func ActivationTransitionReferencesSQL() string { return activationTransitionReferencesSQL }
+
+func ActivationTransitionReferencesChecksum() string {
+	sum := sha256.Sum256([]byte(activationTransitionReferencesSQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
@@ -118,6 +134,7 @@ func Apply(ctx context.Context, tx Tx) error {
 		{IdentityLedgerRevision, IdentityLedgerMigrationID, identityLedgerSQL, IdentityLedgerChecksum()},
 		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
 		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, activationTransitionJournalSQL, ActivationTransitionJournalChecksum()},
+		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, activationTransitionReferencesSQL, ActivationTransitionReferencesChecksum()},
 	}
 	for _, migration := range migrations {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {

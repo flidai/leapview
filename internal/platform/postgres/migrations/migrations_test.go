@@ -93,7 +93,7 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 8 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() {
+	if len(recorder.sqls) != 10 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
@@ -191,6 +191,23 @@ func TestActivationTransitionJournalMigrationIsImmutableAndFenced(t *testing.T) 
 	}
 }
 
+func TestActivationTransitionReferencesMigrationAddsEvidenceAndInsertFence(t *testing.T) {
+	sql := ActivationTransitionReferencesSQL()
+	for _, marker := range []string{
+		"ADD COLUMN IF NOT EXISTS durable_references_json text",
+		"SET durable_references_json = '[]'",
+		"ALTER COLUMN durable_references_json SET NOT NULL",
+		"identity_activation_transition_durable_references_json_check",
+		"BEFORE INSERT OR UPDATE",
+		"activation transition must be inserted in prepared state",
+		"NEW.durable_references_json IS DISTINCT FROM OLD.durable_references_json",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("activation transition references migration missing %q", marker)
+		}
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -204,6 +221,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		ActivationTransitionJournalRevision: {
 			revision: ActivationTransitionJournalRevision, migrationID: ActivationTransitionJournalMigrationID, checksum: ActivationTransitionJournalChecksum(),
+		},
+		ActivationTransitionReferencesRevision: {
+			revision: ActivationTransitionReferencesRevision, migrationID: ActivationTransitionReferencesMigrationID, checksum: ActivationTransitionReferencesChecksum(),
 		},
 	}
 }

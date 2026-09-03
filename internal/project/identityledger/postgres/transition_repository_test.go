@@ -43,6 +43,42 @@ func TestPrepareTransitionExactlyReplaysImmutableEvidence(t *testing.T) {
 	}
 }
 
+func TestPublishedBundleTransitionRequiresCompletedPublishEvidence(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx := t.Context()
+	input := testTransition("instance-published-evidence", "transition-published-evidence", "bundle-published-evidence")
+	if _, err := repo.PrepareTransition(ctx, input); err != nil {
+		t.Fatal(err)
+	}
+	prepared, err := repo.BundlePublishTransition(ctx, input.InstanceID, input.BundleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if prepared.Phase != identityledger.PhasePrepared {
+		t.Fatalf("publish evidence phase = %q, want prepared", prepared.Phase)
+	}
+	if _, err := repo.PublishedBundleTransition(ctx, input.InstanceID, input.BundleID); !errors.Is(err, identityledger.ErrTransitionNotFound) {
+		t.Fatalf("incomplete published evidence error = %v, want ErrTransitionNotFound", err)
+	}
+	for _, step := range [][2]identityledger.TransitionPhase{
+		{identityledger.PhasePrepared, identityledger.PhaseIdentityPending},
+		{identityledger.PhaseIdentityPending, identityledger.PhaseIdentityActive},
+		{identityledger.PhaseIdentityActive, identityledger.PhaseDeliveryActive},
+		{identityledger.PhaseDeliveryActive, identityledger.PhaseCompleted},
+	} {
+		if _, err := repo.AdvanceTransition(ctx, input.InstanceID, input.TransitionID, step[0], step[1], ""); err != nil {
+			t.Fatalf("advance %s -> %s: %v", step[0], step[1], err)
+		}
+	}
+	completed, err := repo.PublishedBundleTransition(ctx, input.InstanceID, input.BundleID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if completed.Phase != identityledger.PhaseCompleted {
+		t.Fatalf("published evidence phase = %q, want completed", completed.Phase)
+	}
+}
+
 func TestPrepareTransitionChangedGraphResourcesOrBundleConflicts(t *testing.T) {
 	repo, _ := newLedgerDatabase(t)
 	ctx := t.Context()
@@ -58,6 +94,10 @@ func TestPrepareTransitionChangedGraphResourcesOrBundleConflicts(t *testing.T) {
 		},
 		"resources": func(input identityledger.Transition) identityledger.Transition {
 			input.Resources = append(input.Resources, resource("customers", projectgraph.KindModel))
+			return input
+		},
+		"references": func(input identityledger.Transition) identityledger.Transition {
+			input.References[0].ExpectedKind = projectgraph.KindModel
 			return input
 		},
 		"bundle": func(input identityledger.Transition) identityledger.Transition {
@@ -281,6 +321,21 @@ func TestTransitionJournalDatabaseRejectsImmutableUpdateDeleteAndTruncate(t *tes
 	}
 }
 
+func TestTransitionJournalRejectsAdvancedInsert(t *testing.T) {
+	_, admin := newLedgerDatabase(t)
+	ctx := t.Context()
+	_, err := admin.Exec(ctx, `
+		INSERT INTO project.identity_activation_transition
+		    (instance_id, transition_id, operation, candidate_id, bundle_id, expected_bundle_id,
+		     actor_id, reason, authored_resources_json, durable_references_json, graph_digest, phase)
+		VALUES ('instance-insert-guard', 'transition-insert-guard', 'publish', 'candidate-insert',
+		        'bundle-insert', 'base-insert', 'actor-insert', 'direct insert', '[]', '[]',
+		        'sha256:' || repeat('a', 64), 'identity_active')`)
+	if err == nil {
+		t.Fatal("database accepted an advanced activation transition insert")
+	}
+}
+
 func TestCompletedTransitionRejectsProgressMutation(t *testing.T) {
 	repo, admin := newLedgerDatabase(t)
 	ctx := t.Context()
@@ -310,7 +365,7 @@ func assertTransitionEvidence(t *testing.T, got, want identityledger.Transition)
 	if got.TransitionID != want.TransitionID || got.Operation != want.Operation || got.InstanceID != want.InstanceID ||
 		got.CandidateID != want.CandidateID || got.BundleID != want.BundleID || got.ExpectedBundleID != want.ExpectedBundleID ||
 		got.ActorID != want.ActorID || got.Reason != want.Reason || got.GraphDigest != want.GraphDigest ||
-		!reflect.DeepEqual(got.Resources, want.Resources) {
+		!reflect.DeepEqual(got.Resources, want.Resources) || !reflect.DeepEqual(got.References, want.References) {
 		t.Fatalf("transition evidence = %#v, want %#v", got, want)
 	}
 }
@@ -328,6 +383,10 @@ func testTransition(instanceID, transitionID, bundleID string) identityledger.Tr
 			resource("orders-model", projectgraph.KindModel),
 			resource("orders", projectgraph.KindSource),
 		},
+		References: []identityledger.DurableReference{{
+			InstanceID: instanceID, ReferenceID: "grant:orders-reader", OwnerAuthoredID: "orders-reader", OwnerKind: "grant",
+			TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource,
+		}},
 		GraphDigest: "sha256:" + strings.Repeat("a", 64),
 	}
 }

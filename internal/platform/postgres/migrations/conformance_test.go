@@ -98,6 +98,35 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != ActivationTransitionJournalRevision {
 		t.Fatalf("activation transition schema revision = %d, want %d", revision, ActivationTransitionJournalRevision)
 	}
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, ActivationTransitionReferencesMigrationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != ActivationTransitionReferencesRevision {
+		t.Fatalf("activation transition references schema revision = %d, want %d", revision, ActivationTransitionReferencesRevision)
+	}
+	var nullable string
+	if err := db.QueryRow(ctx, `
+		SELECT is_nullable
+		FROM information_schema.columns
+		WHERE table_schema = 'project'
+		  AND table_name = 'identity_activation_transition'
+		  AND column_name = 'durable_references_json'`).Scan(&nullable); err != nil {
+		t.Fatal(err)
+	}
+	if nullable != "NO" {
+		t.Fatalf("durable reference evidence nullability = %q, want NO", nullable)
+	}
+	var durableCheckCount int
+	if err := db.QueryRow(ctx, `
+		SELECT count(*)
+		FROM pg_constraint
+		WHERE conrelid = 'project.identity_activation_transition'::regclass
+		  AND conname = 'identity_activation_transition_durable_references_json_check'`).Scan(&durableCheckCount); err != nil {
+		t.Fatal(err)
+	}
+	if durableCheckCount != 1 {
+		t.Fatalf("durable reference evidence check constraints = %d, want 1", durableCheckCount)
+	}
 	var canUpdateAudit, canUpdateRevision, canUpdatePublication, canDeleteTransition bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),

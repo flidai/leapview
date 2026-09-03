@@ -109,6 +109,12 @@ func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := repo.PutReference(ctx, identityledger.DurableReference{
+		InstanceID: "instance-a", ReferenceID: "grant-stale", OwnerAuthoredID: "grant-2",
+		OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource,
+	}); err != nil {
+		t.Fatal(err)
+	}
 
 	// Kind is immutable even after the first generation.
 	changedKind := candidate("instance-a", "bundle-kind-conflict", "bundle-1",
@@ -136,6 +142,13 @@ func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
 	if reference.Lifecycle != identityledger.ReferenceSuspended || reference.SuspendedAt == nil {
 		t.Fatalf("suspended reference = %#v", reference)
 	}
+	stale, err := repo.Reference(ctx, "instance-a", "grant-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Lifecycle != identityledger.ReferenceSuspended || stale.SuspendedAt == nil {
+		t.Fatalf("stale suspended reference = %#v", stale)
+	}
 
 	third := candidate("instance-a", "bundle-3", "bundle-2",
 		resource("orders", projectgraph.KindSource), resource("orders-model", projectgraph.KindModel),
@@ -152,8 +165,28 @@ func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	if reference.Lifecycle != identityledger.ReferenceSuspended || reference.SuspendedAt == nil || reference.ReactivatedAt != nil {
+		t.Fatalf("restore unexpectedly reactivated reference = %#v", reference)
+	}
+	if _, err := repo.ReconcileReferences(ctx, "instance-a", []identityledger.DurableReference{{
+		InstanceID: "instance-a", ReferenceID: "grant-orders", OwnerAuthoredID: "grant-1",
+		OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+	reference, err = repo.Reference(ctx, "instance-a", "grant-orders")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if reference.Lifecycle != identityledger.ReferenceActive || reference.SuspendedAt != nil || reference.ReactivatedAt == nil {
-		t.Fatalf("reactivated reference = %#v", reference)
+		t.Fatalf("exact desired reference was not reactivated = %#v", reference)
+	}
+	stale, err = repo.Reference(ctx, "instance-a", "grant-stale")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stale.Lifecycle != identityledger.ReferenceSuspended || stale.SuspendedAt == nil || stale.ReactivatedAt != nil {
+		t.Fatalf("removed reference was reactivated = %#v", stale)
 	}
 
 	// Rollback uses the exact historical bundle snapshot and switches the
@@ -184,6 +217,77 @@ func TestIdentityLedgerPostgreSQL18Lifecycle(t *testing.T) {
 	}
 	if _, err := admin.Exec(ctx, `UPDATE project.resource_identity_history SET reason='tampered' WHERE instance_id='instance-a' AND authored_id='orders'`); err == nil {
 		t.Fatal("resource identity history mutation unexpectedly succeeded")
+	}
+}
+
+func TestIdentityLedgerPostgreSQLReferenceReconciliationConflictsAndRetries(t *testing.T) {
+	repo, _ := newLedgerDatabase(t)
+	ctx, cancel := context.WithTimeout(t.Context(), 30*time.Second)
+	defer cancel()
+	if _, err := repo.Activate(ctx, candidate("instance-references", "bundle-1", "", resource("orders", projectgraph.KindSource), resource("orders-model", projectgraph.KindModel))); err != nil {
+		t.Fatal(err)
+	}
+	desired := []identityledger.DurableReference{
+		{InstanceID: "instance-references", ReferenceID: "grant-orders", OwnerAuthoredID: "grant-1", OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource},
+		{InstanceID: "instance-references", ReferenceID: "grant-model", OwnerAuthoredID: "grant-2", OwnerKind: "grant", TargetAuthoredID: "orders-model", ExpectedKind: projectgraph.KindModel},
+		{InstanceID: "instance-references", ReferenceID: "publication-model", OwnerAuthoredID: "publication-1", OwnerKind: "dashboard_publication", TargetAuthoredID: "orders-model", ExpectedKind: projectgraph.KindModel},
+	}
+	if _, err := repo.PutReference(ctx, identityledger.DurableReference{
+		InstanceID: "instance-references", ReferenceID: "audit-orders", OwnerAuthoredID: "audit-1", OwnerKind: "audit", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := repo.ReconcileReferences(ctx, "instance-references", desired); err != nil || len(got) != len(desired) {
+		t.Fatalf("initial reference reconciliation = %#v, %v", got, err)
+	}
+	if _, err := repo.ReconcileReferences(ctx, "instance-references", nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, referenceID := range []string{"grant-orders", "grant-model", "publication-model"} {
+		ref, err := repo.Reference(ctx, "instance-references", referenceID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if ref.Lifecycle != identityledger.ReferenceActive || ref.SuspendedAt != nil || ref.ReactivatedAt != nil {
+			t.Fatalf("empty candidate changed %q = %#v", referenceID, ref)
+		}
+	}
+	if _, err := repo.ReconcileReferences(ctx, "instance-references", desired[:1]); err != nil {
+		t.Fatal(err)
+	}
+	modelRef, err := repo.Reference(ctx, "instance-references", "grant-model")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if modelRef.Lifecycle != identityledger.ReferenceActive || modelRef.SuspendedAt != nil || modelRef.ReactivatedAt != nil {
+		t.Fatalf("omitted model reference changed = %#v", modelRef)
+	}
+	auditRef, err := repo.Reference(ctx, "instance-references", "audit-orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if auditRef.Lifecycle != identityledger.ReferenceActive {
+		t.Fatalf("unrelated audit reference was changed = %#v", auditRef)
+	}
+	if _, err := repo.ReconcileReferences(ctx, "instance-references", desired[:1]); err != nil {
+		t.Fatalf("idempotent reference reconciliation = %v", err)
+	}
+	if _, err := repo.ReconcileReferences(ctx, "instance-references", []identityledger.DurableReference{{
+		InstanceID: "instance-references", ReferenceID: "grant-orders", OwnerAuthoredID: "changed-owner", OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource,
+	}}); !errors.Is(err, identityledger.ErrReferenceConflict) {
+		t.Fatalf("binding conflict = %v, want ErrReferenceConflict", err)
+	}
+	if _, err := repo.ReconcileReferences(ctx, "instance-references", []identityledger.DurableReference{{
+		InstanceID: "instance-references", ReferenceID: "grant-kind", OwnerAuthoredID: "grant-kind", OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindModel,
+	}}); !errors.Is(err, identityledger.ErrKindConflict) {
+		t.Fatalf("target kind conflict = %v, want ErrKindConflict", err)
+	}
+	ordersRef, err := repo.Reference(ctx, "instance-references", "grant-orders")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ordersRef.OwnerAuthoredID != "grant-1" || ordersRef.Lifecycle != identityledger.ReferenceActive {
+		t.Fatalf("conflicting reconciliation changed original binding = %#v", ordersRef)
 	}
 }
 

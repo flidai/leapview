@@ -181,6 +181,33 @@ type PublishRequest struct {
 	Bootstrap bool
 }
 
+// Validate checks the complete immutable publication tuple without reading or
+// mutating a store. Outer lifecycle coordinators use this preflight before
+// they advance their own durable state.
+func (r PublishRequest) Validate() error {
+	if err := r.Seal.Validate(); err != nil {
+		return err
+	}
+	if err := r.Generation.Validate(); err != nil {
+		return err
+	}
+	if r.Generation.CatalogDigest != r.Seal.CatalogDigest || r.Generation.CatalogObjectKey != r.Seal.CatalogObjectKey || r.Generation.PhysicalPoolID != r.Seal.PhysicalPoolID || r.Generation.ServingArtifactID != r.Seal.ServingArtifactID || r.Generation.ServingArtifactDigest != r.Seal.ServingArtifactDigest {
+		return fmt.Errorf("%w: generation does not point to exact verified seal", ErrSealUnverified)
+	}
+	if err := r.Publication.Validate(); err != nil {
+		return err
+	}
+	if r.Publication.CandidateID != r.Generation.CandidateID || r.Publication.GenerationID != r.Generation.ID || r.Publication.PlanID != r.Generation.PlanID || r.Publication.PlanDigest != r.Generation.PlanDigest || r.Publication.TargetID != r.Generation.TargetID || r.Publication.ProjectID != r.Generation.ProjectID || r.Publication.Environment != r.Generation.Environment {
+		return fmt.Errorf("%w: publication does not bind exact candidate/generation", ErrSealUnverified)
+	}
+	if r.ActorID != "" {
+		if err := deployment.ValidateDeliveryID(r.ActorID); err != nil {
+			return fmt.Errorf("publication actor id: %w", err)
+		}
+	}
+	return nil
+}
+
 func (c *Coordinator) Publish(ctx context.Context, request PublishRequest) (deployment.PublicationIntent, error) {
 	return c.PublishWithActivation(ctx, request, nil)
 }
@@ -194,20 +221,8 @@ func (c *Coordinator) PublishWithActivation(ctx context.Context, request Publish
 	if c == nil || c.Publications == nil || c.VerifySeal == nil || c.Authorize == nil {
 		return deployment.PublicationIntent{}, fmt.Errorf("%w: publication store, seal verifier, and authorization are required", ErrInvalidRequest)
 	}
-	if err := request.Seal.Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return deployment.PublicationIntent{}, err
-	}
-	if err := request.Generation.Validate(); err != nil {
-		return deployment.PublicationIntent{}, err
-	}
-	if request.Generation.CatalogDigest != request.Seal.CatalogDigest || request.Generation.CatalogObjectKey != request.Seal.CatalogObjectKey || request.Generation.PhysicalPoolID != request.Seal.PhysicalPoolID || request.Generation.ServingArtifactID != request.Seal.ServingArtifactID || request.Generation.ServingArtifactDigest != request.Seal.ServingArtifactDigest {
-		return deployment.PublicationIntent{}, fmt.Errorf("%w: generation does not point to exact verified seal", ErrSealUnverified)
-	}
-	if err := request.Publication.Validate(); err != nil {
-		return deployment.PublicationIntent{}, err
-	}
-	if request.Publication.CandidateID != request.Generation.CandidateID || request.Publication.GenerationID != request.Generation.ID || request.Publication.PlanID != request.Generation.PlanID || request.Publication.PlanDigest != request.Generation.PlanDigest || request.Publication.TargetID != request.Generation.TargetID || request.Publication.ProjectID != request.Generation.ProjectID || request.Publication.Environment != request.Generation.Environment {
-		return deployment.PublicationIntent{}, fmt.Errorf("%w: publication does not bind exact candidate/generation", ErrSealUnverified)
 	}
 	binding := SealBinding{Seal: request.Seal, DeploymentID: request.Publication.ID, ProjectID: request.Publication.ProjectID.String(), Environment: request.Publication.Environment, TargetID: request.Publication.TargetID, CandidateID: request.Generation.CandidateID, GenerationID: request.Generation.ID, PlanDigest: request.Generation.PlanDigest, ServingArtifactID: request.Generation.ServingArtifactID, ApprovalReleaseID: request.ApprovalReleaseID, ActorID: request.ActorID, Operation: "publish", Bootstrap: request.Bootstrap}
 	// A committed retry may skip only the fresh approval check.  Authorization
@@ -294,6 +309,19 @@ type RollbackRequest struct {
 	ActorID string
 }
 
+// Validate checks rollback evidence before an outer identity lifecycle may
+// change the active authored-resource bundle.
+func (r RollbackRequest) Validate() error {
+	request := r.Request
+	if request.ActorID == "" {
+		request.ActorID = r.ActorID
+	}
+	if r.ActorID != "" && request.ActorID != r.ActorID {
+		return fmt.Errorf("%w: rollback actors differ", ErrInvalidRequest)
+	}
+	return request.Validate()
+}
+
 func (c *Coordinator) Rollback(ctx context.Context, request RollbackRequest) (deployment.RollbackResult, error) {
 	return c.RollbackWithActivation(ctx, request, nil)
 }
@@ -305,17 +333,24 @@ func (c *Coordinator) RollbackWithActivation(ctx context.Context, request Rollba
 	if c == nil || c.Rollbacks == nil || c.VerifySeal == nil || c.Authorize == nil {
 		return deployment.RollbackResult{}, fmt.Errorf("%w: rollback store, seal verifier, and authorization are required", ErrInvalidRequest)
 	}
-	if err := request.Request.Validate(); err != nil {
+	if err := request.Validate(); err != nil {
 		return deployment.RollbackResult{}, err
 	}
-	binding := SealBinding{Seal: request.Request.VerifiedSeal, DeploymentID: request.Request.ID, ProjectID: request.Request.ProjectID.String(), Environment: request.Request.Environment, TargetID: request.Request.TargetID, CandidateID: request.Request.CandidateID, GenerationID: request.Request.GenerationID, ActorID: request.ActorID, Operation: "rollback"}
+	// Validate accepts the inner request actor when the wrapper actor is
+	// omitted. Carry that same canonical actor into authorization and the
+	// target store; otherwise this path silently clears a valid inner actor.
+	actorID := request.ActorID
+	if actorID == "" {
+		actorID = request.Request.ActorID
+	}
+	request.Request.ActorID = actorID
+	binding := SealBinding{Seal: request.Request.VerifiedSeal, DeploymentID: request.Request.ID, ProjectID: request.Request.ProjectID.String(), Environment: request.Request.Environment, TargetID: request.Request.TargetID, CandidateID: request.Request.CandidateID, GenerationID: request.Request.GenerationID, ActorID: actorID, Operation: "rollback"}
 	if err := c.Authorize(ctx, binding); err != nil {
 		return deployment.RollbackResult{}, fmt.Errorf("%w: %v", ErrUnauthorized, err)
 	}
 	if err := c.VerifySeal(ctx, binding); err != nil {
 		return deployment.RollbackResult{}, fmt.Errorf("%w: %v", ErrSealUnverified, err)
 	}
-	request.Request.ActorID = request.ActorID
 	var result deployment.RollbackResult
 	commit := func() error {
 		var err error

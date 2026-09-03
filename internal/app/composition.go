@@ -739,6 +739,13 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
+	identityAuthority, err := buildIdentityAuthority(ctx, cfg)
+	if err != nil {
+		return fail(fmt.Errorf("build identity authority: %w", err))
+	}
+	if identityAuthority.Cleanup != nil {
+		cleanup.Push("identity-authority", identityAuthority.Cleanup)
+	}
 	servingStateRepo, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Database: store.SQLDB()})
 	if err != nil {
 		return fail(err)
@@ -818,7 +825,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return projectID, nil
 	}
 	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{
-		Database: store.SQLDB(), Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
+		Database: store.SQLDB(), Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
 		PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProjectID,
 	})
 	if err != nil {
@@ -941,7 +948,12 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		return fail(errors.New("managed-data runtime resolver is required"))
 	}
 	managedDataResolver := appruntimefactory.NewManagedDataResolver(managedDataResolution)
-	var sealedCoordinator *sealedcontrol.Coordinator
+	var sealedCoordinator interface {
+		deploymentmodule.SealedCoordinator
+		PublishWithActivation(context.Context, sealedcontrol.PublishRequest, sealedcontrol.PublicationActivation) (deployment.PublicationIntent, error)
+		RollbackWithActivation(context.Context, sealedcontrol.RollbackRequest, sealedcontrol.PublicationActivation) (deployment.RollbackResult, error)
+	}
+	var sealedControlCoordinator *sealedcontrol.Coordinator
 	var sealedPublishRequest deploymentmodule.SealedPublishRequestResolver
 	var sealedRollbackRequest deploymentmodule.SealedRollbackRequestResolver
 	var sealedRollbackFence func(context.Context, string) (string, int64, error)
@@ -954,7 +966,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return sealedcontrol.QualificationActivationBarrier(ctx, publication.Environment)
 			}
 		}
-		sealedCoordinator = &sealedcontrol.Coordinator{
+		sealedControlCoordinator = &sealedcontrol.Coordinator{
 			Publications: sealedDelivery, Rollbacks: sealedDelivery,
 			BeforePublicationCommit: beforePublicationCommit,
 			Authorize: func(ctx context.Context, binding sealedcontrol.SealBinding) error {
@@ -1013,6 +1025,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 				return nil
 			},
 		}
+		sealedCoordinator = sealedControlCoordinator
 		releases := releaseModule.DeploymentLinkage()
 		sealedPublishRequest = func(ctx context.Context, pending deploymentapiadapter.Deployment, releaseID string, actor deployment.ApprovalActor, bootstrap bool) (sealedcontrol.PublishRequest, error) {
 			request, err := buildSealedPublishRequest(ctx, sealedDelivery, releases, pending, releaseID, instanceID)
@@ -1072,6 +1085,15 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			return servingstate.ID(stateID), nil
 		}
+	}
+	if production {
+		identityCoordinator, identityErr := NewIdentitySealedCoordinator(IdentitySealedCoordinatorConfig{
+			InstanceID: instanceID, Transitions: identityAuthority.Repository, Sealed: sealedControlCoordinator,
+		})
+		if identityErr != nil {
+			return fail(fmt.Errorf("build identity sealed coordinator: %w", identityErr))
+		}
+		sealedCoordinator = identityCoordinator
 	}
 	if err := refreshmodule.Recover(ctx, store.SQLDB(), string(environment)); err != nil {
 		return fail(err)
@@ -1365,6 +1387,18 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		// callback reads durable state each time; configuration never synthesizes
 		// an admission or serving pointer.
 		deliveryStartupCheck = func(ctx context.Context) error {
+			if production {
+				if identityAuthority.Repository == nil {
+					return fmt.Errorf("identity startup transition reader is unavailable")
+				}
+				inFlight, err := identityAuthority.Repository.ListInFlightTransitions(ctx, instanceID)
+				if err != nil {
+					return fmt.Errorf("identity startup transition check: %w", err)
+				}
+				if len(inFlight) > 0 {
+					return fmt.Errorf("%w: identity activation transition is in flight", deployment.ErrDeliveryStartupNotReady)
+				}
+			}
 			startupProjectID, err := resolveDeliveryStartupProjectID(ctx, projectID, readClaim)
 			if err != nil {
 				return fmt.Errorf("delivery startup project claim: %w", err)
@@ -1514,6 +1548,16 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		buildFactory := appruntimefactory.BuildRequestFactory(appruntimefactory.CandidateCatalogRunnerConfig{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ExtensionAdmission: extensionSupply, CredentialBootstrap: poolCredentialBootstrap, Base: baseResolver, Materialize: materialize, Connections: candidateConnectionLeaser{leaser: candidateBindings, module: analyticsModule}, QualificationFactory: appruntimefactory.QualificationRequestForCandidate, ObjectStore: poolStore, SealRepository: deliveryRepository, RemoteVerifier: appruntimefactory.ReadOnlyCatalogVerifier{PoolContract: poolContract, StagingRoot: cfg.DeliveryStagingDir, ObjectStore: poolStore, ExtensionAdmission: extensionSupply, CredentialBootstrap: poolCredentialBootstrap}, VerifyLease: verifyLease, RuntimeVersion: identity.Version + ":" + identity.Revision})
 		planCandidate := func(planCtx context.Context, input deployment.DeliveryCandidateBuildInput, artifacts release.CandidateArtifactSet) (deployment.DeliveryPlan, error) {
+			if identityAuthority.Repository != nil {
+				if _, _, err := PlanIdentityCandidate(planCtx, identityAuthority.Repository, IdentityCandidateInput{
+					InstanceID:               instanceID,
+					ExpectedBaseGenerationID: input.Candidate.Scope.BaseGenerationID,
+					ActorID:                  input.Candidate.OwnerID,
+					Artifacts:                artifacts,
+				}); err != nil {
+					return deployment.DeliveryPlan{}, fmt.Errorf("admit candidate identity: %w", err)
+				}
+			}
 			var reuse *deployment.DeliveryReuseInput
 			if input.Candidate.Scope.BaseGenerationID != "" {
 				generation, generationErr := deliveryRepository.DeliveryGenerationByID(planCtx, input.Candidate.Scope.BaseGenerationID)
@@ -1656,6 +1700,20 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 			}
 			if retained.Digest != provenance.Digest {
 				return deployment.Candidate{}, fmt.Errorf("retained candidate provenance changed")
+			}
+			if identityAuthority.Repository != nil {
+				if _, err := PrepareIdentityPublishTransition(readyCtx, identityAuthority.Repository, IdentityPublishPreparationInput{
+					IdentityCandidateInput: IdentityCandidateInput{
+						InstanceID:               instanceID,
+						ExpectedBaseGenerationID: input.Candidate.Scope.BaseGenerationID,
+						ActorID:                  input.Candidate.OwnerID,
+						Artifacts:                artifacts,
+					},
+					CandidateID: input.Candidate.ID,
+					Reason:      "candidate ready",
+				}); err != nil {
+					return deployment.Candidate{}, fmt.Errorf("prepare identity publish transition: %w", err)
+				}
 			}
 			input.Candidate.Status = deployment.CandidateReady
 			input.Candidate.ProvenanceDigest = retained.Digest
@@ -1899,7 +1957,7 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	}
 	if sealedCoordinator != nil && routes.deploymentModule != nil {
 		durableApproval := routes.deploymentModule.SealedApprovalVerifier()
-		sealedCoordinator.ApprovalVerifier = func(approvalCtx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
+		sealedControlCoordinator.ApprovalVerifier = func(approvalCtx context.Context, binding sealedcontrol.SealBinding, publication deployment.PublicationIntent) error {
 			slog.Default().InfoContext(approvalCtx, "sealed publication approval verification started", "deployment", binding.DeploymentID, "bootstrap", binding.Bootstrap)
 			if binding.Bootstrap {
 				// The activation worker has already revalidated the durable

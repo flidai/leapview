@@ -28,7 +28,7 @@ func (f *coordinatorFake) PrepareTransition(_ context.Context, input Transition)
 		f.transition.Phase = PhasePrepared
 		f.transition.Error = ""
 	}
-	if !sameTransitionEvidence(f.transition, input) {
+	if !SameTransitionEvidence(f.transition, input) {
 		return Transition{}, ErrTransitionConflict
 	}
 	return f.transition, nil

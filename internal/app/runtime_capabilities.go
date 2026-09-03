@@ -92,6 +92,7 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 
 type accessCapabilityConfig struct {
 	Database       *sql.DB
+	Production     bool
 	Auth           accessmodule.AuthConfig
 	Assets         staticasset.Resolver
 	AvatarBlobs    accessmodule.AvatarBlobStore
@@ -109,7 +110,8 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		return accessCapabilityBundle{}, errors.New("access current-project resolver is required")
 	}
 	module, err := accessmodule.Build(ctx, accessmodule.Config{
-		Database: cfg.Database, Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
+		Database: cfg.Database, LegacySQLite: !cfg.Production, Production: cfg.Production,
+		Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
 		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
 		CurrentProjectID: cfg.CurrentProject,
 		Presentation:     page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},

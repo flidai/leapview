@@ -42,6 +42,19 @@ const (
 	ReferenceSuspended ReferenceLifecycle = "suspended"
 )
 
+// ReviewedReferenceOwnerKind identifies the control-plane owners whose
+// compiler-projected bindings may be validated during publication. Other
+// durable reference owners remain outside that set. Omission from a candidate
+// never implies suspension; target removal is handled by resource reconcile.
+const (
+	ReferenceOwnerKindGrant                = "grant"
+	ReferenceOwnerKindDashboardPublication = "dashboard_publication"
+)
+
+func IsReviewedReferenceOwnerKind(kind string) bool {
+	return kind == ReferenceOwnerKindGrant || kind == ReferenceOwnerKindDashboardPublication
+}
+
 // Resource is one source-authored identity in a compiled bundle.
 type Resource struct {
 	AuthoredID projectgraph.ResourceID

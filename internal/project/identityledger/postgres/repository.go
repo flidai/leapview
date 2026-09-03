@@ -229,12 +229,6 @@ func reconcile(ctx context.Context, tx pgx.Tx, instanceID, bundleID, actorID, re
 				WHERE instance_id=$1 AND authored_id=$2`, instanceID, resource.AuthoredID.String(), bundleID); err != nil {
 				return fmt.Errorf("restore resource identity %q: %w", resource.AuthoredID, err)
 			}
-			if _, err := tx.Exec(ctx, `
-				UPDATE project.durable_resource_reference
-				SET lifecycle_state='active',suspended_at=NULL,reactivated_at=clock_timestamp(),updated_at=clock_timestamp()
-				WHERE instance_id=$1 AND target_authored_id=$2 AND expected_kind=$3`, instanceID, resource.AuthoredID.String(), string(resource.Kind)); err != nil {
-				return fmt.Errorf("reactivate references for %q: %w", resource.AuthoredID, err)
-			}
 		} else {
 			if rollback {
 				action = "rollback_activated"
@@ -579,8 +573,103 @@ func (r *Repository) Identity(ctx context.Context, instanceID string, authoredID
 	return identity, nil
 }
 
+// ReconcileReferences atomically validates and applies the supplied reviewed
+// bindings for one activation. It never treats absence from the supplied list
+// as a control-plane deletion: omitted bindings remain durable and retain
+// their current lifecycle. Desired bindings are only active when their target
+// is an active identity with the expected immutable kind. FAI-616 follow-up
+// work must provide a complete reviewed set from live control repositories if
+// deployments need to reconcile control-plane removals.
+func (r *Repository) ReconcileReferences(ctx context.Context, instanceID string, references []identityledger.DurableReference) ([]identityledger.DurableReference, error) {
+	normalized, err := identityledger.NormalizeReferences(instanceID, references)
+	if err != nil {
+		return nil, err
+	}
+	tx, err := r.db.BeginTx(ctx, pgx.TxOptions{IsoLevel: pgx.Serializable})
+	if err != nil {
+		return nil, fmt.Errorf("begin durable reference reconciliation: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if err := lockInstance(ctx, tx, instanceID); err != nil {
+		return nil, err
+	}
+
+	result := make([]identityledger.DurableReference, 0, len(normalized))
+	for _, reference := range normalized {
+		if !identityledger.IsReviewedReferenceOwnerKind(reference.OwnerKind) {
+			return nil, fmt.Errorf("%w: unsupported reviewed reference owner kind %q", identityledger.ErrInvalidInput, reference.OwnerKind)
+		}
+		stored, readErr := readReference(ctx, tx, instanceID, reference.ReferenceID)
+		exists := readErr == nil
+		if readErr != nil && !errors.Is(readErr, pgx.ErrNoRows) {
+			return nil, readErr
+		}
+		if exists && !sameReferenceBinding(stored, reference) {
+			return nil, fmt.Errorf("%w: reference %q is already bound", identityledger.ErrReferenceConflict, reference.ReferenceID)
+		}
+
+		var kind, lifecycle string
+		if err := tx.QueryRow(ctx, `
+			SELECT resource_kind,lifecycle_state
+			FROM project.resource_identity
+			WHERE instance_id=$1 AND authored_id=$2 FOR UPDATE`, instanceID, reference.TargetAuthoredID.String()).Scan(&kind, &lifecycle); err != nil {
+			return nil, fmt.Errorf("resolve durable reference target: %w", err)
+		}
+		if projectgraph.Kind(kind) != reference.ExpectedKind {
+			return nil, fmt.Errorf("%w: target %q is %s, expected %s", identityledger.ErrKindConflict, reference.TargetAuthoredID, kind, reference.ExpectedKind)
+		}
+		desiredLifecycle := identityledger.ReferenceActive
+		if identityledger.Lifecycle(lifecycle) == identityledger.LifecycleTombstoned {
+			desiredLifecycle = identityledger.ReferenceSuspended
+		}
+		if !exists {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO project.durable_resource_reference
+				(instance_id,reference_id,owner_authored_id,owner_kind,target_authored_id,expected_kind,lifecycle_state,suspended_at)
+				VALUES($1,$2,$3,$4,$5,$6,$7,CASE WHEN $7='suspended' THEN clock_timestamp() ELSE NULL END)`,
+				instanceID, reference.ReferenceID, reference.OwnerAuthoredID, reference.OwnerKind,
+				reference.TargetAuthoredID.String(), string(reference.ExpectedKind), string(desiredLifecycle)); err != nil {
+				return nil, fmt.Errorf("insert durable reference: %w", err)
+			}
+		} else {
+			if _, err := tx.Exec(ctx, `
+				UPDATE project.durable_resource_reference
+				SET lifecycle_state=$3,
+					suspended_at=CASE WHEN $3='suspended' THEN COALESCE(suspended_at,clock_timestamp()) ELSE NULL END,
+					reactivated_at=CASE WHEN $3='suspended' THEN NULL
+						WHEN lifecycle_state='suspended' THEN clock_timestamp()
+						ELSE reactivated_at END,
+					updated_at=clock_timestamp()
+				WHERE instance_id=$1 AND reference_id=$2`, instanceID, reference.ReferenceID, string(desiredLifecycle)); err != nil {
+				return nil, fmt.Errorf("update durable reference %q: %w", reference.ReferenceID, err)
+			}
+		}
+		stored, err = readReference(ctx, tx, instanceID, reference.ReferenceID)
+		if err != nil {
+			return nil, err
+		}
+		if !sameReferenceBinding(stored, reference) {
+			return nil, fmt.Errorf("%w: durable reference writer changed binding for %q", identityledger.ErrReferenceConflict, reference.ReferenceID)
+		}
+		result = append(result, stored)
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return nil, mapCommitError("durable reference reconciliation", err)
+	}
+	return result, nil
+}
+
+func sameReferenceBinding(left, right identityledger.DurableReference) bool {
+	return left.InstanceID == right.InstanceID && left.ReferenceID == right.ReferenceID &&
+		left.OwnerAuthoredID == right.OwnerAuthoredID && left.OwnerKind == right.OwnerKind &&
+		left.TargetAuthoredID == right.TargetAuthoredID && left.ExpectedKind == right.ExpectedKind
+}
+
 // PutReference creates or verifies one durable control-plane reference. Its
-// target kind and authored identity cannot be retargeted on retry.
+// target kind and authored identity cannot be retargeted on retry. New callers
+// should use ReconcileReferences when they have a reviewed batch to validate
+// and apply atomically; omission never implies control-plane deletion.
 func (r *Repository) PutReference(ctx context.Context, reference identityledger.DurableReference) (identityledger.DurableReference, error) {
 	if err := validateReference(reference); err != nil {
 		return identityledger.DurableReference{}, err
@@ -617,8 +706,7 @@ func (r *Repository) PutReference(ctx context.Context, reference identityledger.
 	if err != nil {
 		return identityledger.DurableReference{}, err
 	}
-	if stored.OwnerAuthoredID != reference.OwnerAuthoredID || stored.OwnerKind != reference.OwnerKind ||
-		stored.TargetAuthoredID != reference.TargetAuthoredID || stored.ExpectedKind != reference.ExpectedKind {
+	if !sameReferenceBinding(stored, reference) {
 		return identityledger.DurableReference{}, fmt.Errorf("%w: reference %q is already bound", identityledger.ErrReferenceConflict, reference.ReferenceID)
 	}
 	if err := tx.Commit(ctx); err != nil {

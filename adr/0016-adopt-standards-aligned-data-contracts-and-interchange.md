@@ -4,7 +4,7 @@ Status: accepted
 
 Decision date: 2026-09-01
 
-Implementation: pending
+Implementation: in progress (controlled FAI-617 identity integration)
 
 Deciders: LeapView maintainers
 
@@ -365,6 +365,36 @@ references whose stored instance, authored ID, and expected kind still match
 are safely reactivated. External standard projections qualify the portable
 authored ID with a stable instance or tenant URI rather than claiming that the
 raw ID is globally unique.
+
+FAI-617 adds an immutable transition-evidence boundary for legacy compiled
+references. At candidate readiness, the application projects references only
+from the retained compiler manifest and graph: Grant objects are allowlisted to
+the six authored analytics kinds, Project targets are excluded from the
+resource-reference set, and every DashboardPublication dependency is resolved
+to its graph kind before the transition is prepared. The PostgreSQL activation journal stores this exact
+reference set beside the authored-resource evidence. Applying this evidence is
+additive: omission from an analytics candidate never deletes or suspends live
+instance control state. Target tombstoning still suspends dependent references.
+A complete removal reconciliation must come from the live control repositories
+as part of the remaining FAI-616 migration, not from an empty modern compiler
+manifest. Reference IDs remain
+readable and collision-safe (`grant:<grantID>` and length-prefixed
+`dashboard_publication:<owner-bytes>:<owner>:<target-bytes>:<target>` forms), and an overlong ID is rejected
+rather than hashed or truncated. Rollback copies the original publish evidence;
+it does not reconstruct references from a moving source tree.
+
+The identity builder is production-only PostgreSQL composition. Local and
+development composition receive no fake or SQLite identity ledger. Canonical
+publish and rollback are still separate from target-owned sealed delivery: the
+identity coordinator is the durable fence and the sealed operation is its
+delivery commit. Production composition performs read-only identity admission
+during candidate planning, persists the immutable transition at readiness,
+routes both canonical and worker publication paths through that fence, and
+reports in-flight transitions as not ready after restart. Live PostgreSQL
+end-to-end qualification remains environment-dependent. Explicit restore is
+not yet reachable from candidate admission (FAI-663), complete control-store
+reference migration remains FAI-616 work, and FAI-648/649's transitional
+DataPolicy removal and semantic access migration remain outside this layer.
 
 The linked data-contract versioning conformance specification owns the exact
 collision, tombstone, restore, rollback, and projection requirements.
@@ -732,22 +762,40 @@ Independent conformance tooling remains a development and CI oracle. It may
 increase CI setup and update cost, but does not enter the production binary or
 receive production credentials by default.
 
-## Confirmation
+## Qualification state
 
-- The authoring registry accepts exactly Connection, Source, Model,
-  SemanticModel, Pipeline, and Dashboard. Fixtures prove `Project`, `Group`,
-  `RoleBinding`, `Grant`, `DataPolicy`, and `DashboardPublication` are rejected
-  as authored kinds with migration diagnostics.
-- Compilation selects a source root, discovers only conventional resource
+The labels below distinguish repository evidence already implemented from
+work that is still blocked or deliberately deferred. FAI-632 may convert this
+section into final conformance evidence only after every active prerequisite is
+qualified.
+
+- **BLOCKED (FAI-649):** the authoring registry accepts the six analytics kinds,
+  while standalone `DataPolicy` remains an explicitly transitional exception.
+  `Project`, `Group`, `RoleBinding`, `Grant`, and `DashboardPublication` are
+  rejected as fresh authored kinds; claiming `DataPolicy` rejection awaits the
+  qualified ADR-0017 cutover.
+- **IMPLEMENTED, qualification incomplete (FAI-616):** compilation selects a source root, discovers only conventional resource
   directories, and produces one atomic graph without `leapview.yaml`, a public
-  Project ID, or include-glob behavior. Public routes, API schemas, grants, and
-  audit subjects contain no Project resource.
-- Identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
+  Project resource, or include-glob behavior. Residual Project-shaped
+  deployment scopes and missing control API implementations remain tracked by
+  FAI-616 and are not represented as complete here.
+- **IMPLEMENTED, qualification incomplete (FAI-617/FAI-663):** identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
   instance-qualified authored identities across source-root and file moves,
   kind-change rejection, tombstone
-  non-reuse, explicit restore behavior, rollback identity, and durable
-  control-plane references that cannot silently rebind.
-- TypeSpec owns the six authored structures, including the shared envelope,
+  non-reuse, rollback identity, and durable references that cannot silently
+  rebind. The ledger primitive supports explicit restore, but the real candidate
+  restore operation remains FAI-663 work.
+- **IMPLEMENTED, qualification incomplete (FAI-617):** transition evidence fixtures prove that legacy Grant and
+  DashboardPublication references are projected from the retained compiler
+  manifest and graph, preserve expected target kinds, exclude Project targets,
+  reject missing targets and overlong readable IDs, and replay exactly through
+  the immutable PostgreSQL transition journal. Architecture tests prove the
+  production identity builder is PostgreSQL-backed, local composition has no
+  substitute ledger, canonical publish/rollback are identity-fenced before
+  sealed delivery, and the lifecycle adds no hash authority. Omitted bindings
+  do not mutate live control state; complete live-reference ownership remains a
+  FAI-616 boundary.
+- **QUALIFIED (FAI-619):** TypeSpec owns the six authored structures, including the shared envelope,
   metadata, contract evolution, quality identity, field governance,
   deprecation, and the ADR-0017 SemanticModel access contract. It generates Go
   DTOs, JSON Schema, documentation, and any browser types from those
@@ -758,9 +806,11 @@ receive production credentials by default.
 - Architecture fixtures reject authored access-policy fields outside
   SemanticModel and delegate the access-rule schema and compiler corpus to the
   ADR-0017 conformance specification.
-- Control-plane tests prove SCIM and admin APIs own users and groups; role,
-  grant, sharing, and publication APIs own assignments and lifecycle state; and
-  analytics deployment cannot create, update, or delete any of them.
+- **BLOCKED (FAI-616/FAI-648):** users, groups, and dashboard-publication
+  administration have control-plane paths. Role/grant/effective-capability
+  operations are still generated without complete handlers, and analytics
+  activation still consumes compatibility snapshots; full control ownership
+  is therefore not yet claimed.
 - Schema and compiler tests reject duplicate check IDs, invalid semantic
   versions, unknown compatibility policies, malformed authoritative links,
   contradictory deprecation replacements, and generic extension bags.
@@ -772,28 +822,23 @@ receive production credentials by default.
   `leapview.contract/v1` projection and defaults, produce byte-identical RFC
   8785 and SHA-256 results in Go and an independent implementation, and reject
   reuse of a published version with different bytes.
-- Pinned ODCS 3.1.0 fixtures pass the upstream schema and an independent CLI
-  linter. Import/export golden tests cover supported types, nested-field
-  diagnostics, identities, relationships, checks, freshness, metadata,
-  extensions, unknown fields, and loss reports.
-- Security tests prove ODCS import/export never serializes credentials, never
-  creates a target binding or Access grant, never executes imported arbitrary
-  SQL, and cannot widen connector, filesystem, object-store, or network scope.
-- Bitol ODPS 1.0.0 fixtures prove that only selected Source dependencies and
-  explicit publications become ports, every port refers to a stable ODCS
-  contract ID and version, and internal resources remain absent.
-- DCAT 3 JSON-LD fixtures normalize to deterministic RDF graphs and contain
-  only authorization-visible catalogs, datasets, distributions, and services.
+- **QUALIFIED for export only (FAI-623):** pinned ODCS 3.1.0 export fixtures pass
+  the vendored schema and independent CI oracle. Mapping/loss and secret
+  exclusion tests cover the implemented Source/Model export profile. ODCS
+  import and round-trip are deferred and no import, SQL-execution, or target-
+  binding capability is claimed.
+- **DEFERRED:** Bitol ODPS 1.0.0 is capability-gated; no implementation or
+  fixture-conformance claim is active.
+- **DEFERRED:** DCAT 3 export is capability-gated; no implementation or
+  deterministic RDF qualification claim is active.
 - OpenLineage contract tests validate standard schema, version, quality,
   statistics, parent, and lineage facets plus immutable canonical schema URLs
   for every LeapView extension facet. The export-only projection and its
   evidence boundaries are recorded in the [OpenLineage conformance
   specification](specifications/openlineage-conformance.md).
-- The generated conformance matrix is checked against registered adapters,
-  pinned schemas, documentation, CLI commands, and test fixtures. Every adapter
-  or public compliance claim must have a matching matrix entry; FAI-629
-  claims only projection/document conformance and does not include a collector,
-  transport, import, or round-trip path.
+- **BLOCKED (FAI-632):** the final generated conformance matrix is not yet
+  qualified. FAI-629 claims only OpenLineage projection/document conformance
+  and does not include a collector, transport, import, or round-trip path.
 - Architecture tests keep standards-version DTOs inside interchange or
   telemetry adapters and prevent core compiled-graph, analytics, deployment,
   release, and runtime packages from importing them.

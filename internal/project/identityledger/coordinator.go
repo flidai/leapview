@@ -76,7 +76,7 @@ func (c *Coordinator) Run(ctx context.Context, transition Transition, commit Del
 	if err != nil {
 		return Transition{}, err
 	}
-	if !sameTransitionEvidence(loaded, normalized) {
+	if !SameTransitionEvidence(loaded, normalized) {
 		return loaded, fmt.Errorf("%w: transition %q immutable evidence differs", ErrTransitionConflict, normalized.TransitionID)
 	}
 	if loaded.InstanceID != normalized.InstanceID {
@@ -247,24 +247,4 @@ func phaseError(err error) string {
 		message = message[:len(message)-size]
 	}
 	return message
-}
-
-func sameTransitionEvidence(left, right Transition) bool {
-	if left.TransitionID != right.TransitionID || left.Operation != right.Operation ||
-		left.InstanceID != right.InstanceID || left.CandidateID != right.CandidateID ||
-		left.BundleID != right.BundleID || left.ExpectedBundleID != right.ExpectedBundleID ||
-		left.ActorID != right.ActorID || left.Reason != right.Reason || left.GraphDigest != right.GraphDigest {
-		return false
-	}
-	leftResources, leftErr := NormalizeResources(left.Resources)
-	rightResources, rightErr := NormalizeResources(right.Resources)
-	if leftErr != nil || rightErr != nil || len(leftResources) != len(rightResources) {
-		return false
-	}
-	for index := range leftResources {
-		if leftResources[index] != rightResources[index] {
-			return false
-		}
-	}
-	return true
 }

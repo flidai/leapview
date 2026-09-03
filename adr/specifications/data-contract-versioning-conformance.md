@@ -4,7 +4,7 @@ Status: accepted
 
 Profile: `leapview.contract/v1`
 
-Last updated: 2026-09-01
+Last updated: 2026-09-03
 
 Owners: LeapView maintainers
 
@@ -60,6 +60,34 @@ profile identifier is part of canonical bytes and conformance evidence.
 - **RID-10:** Candidate planning reports created, updated, removed, tombstoned,
   restored, dangling, and collision outcomes before approval. An unresolved or
   ambiguously resolved control-plane reference blocks activation.
+- **RID-11:** Candidate publish transitions carry the normalized set of legacy
+  reference bindings projected from the retained compiler manifest and graph.
+  The projector is allowlisted to Grant objects and
+  DashboardPublication dependency assets; it does not reload source files,
+  resolve by display name, or infer a target kind from an ID's spelling.
+- **RID-12:** Grant target kinds are limited to the six authored analytics
+  kinds. A Grant with a Project target is excluded from the durable
+  resource-reference set, while a missing target or a target whose graph kind
+  differs from the manifest's expected kind is rejected.
+  DashboardPublication dependencies likewise require an existing graph target
+  and retain that target's expected kind for durable revalidation.
+- **RID-13:** Reference IDs are deterministic, readable, and collision-safe:
+  `grant:<grantID>` for grants and a length-prefixed owner/target form for
+  DashboardPublication dependencies. IDs longer than 255 bytes are rejected;
+  hashing and truncation are not permitted.
+- **RID-14:** PostgreSQL persists immutable durable-reference evidence with the
+  transition. Normalize, sort, encode, decode, and exact-replay comparisons all
+  include the reference set. Rollback copies the original publish references
+  without rebuilding them.
+- **RID-15:** Production identity composition uses the PostgreSQL ledger and
+  local/development composition has no substitute ledger. Candidate planning
+  and readiness use that authority, canonical and worker publish/rollback pass
+  through the durable identity coordinator before target-owned delivery, and
+  startup fails readiness while a claimed transition requires replay. Absence
+  from compiler-derived evidence never removes instance control state; complete
+  reference-set reconciliation must be sourced from the live control stores.
+  This milestone does not claim explicit restore admission or semantic access
+  migration.
 
 ## Canonical contract envelope
 
@@ -200,8 +228,10 @@ profile identifier is part of canonical bytes and conformance evidence.
 
 | Requirement range | Evidence | Status |
 |---|---|---|
-| RID-01–RID-10 | The PostgreSQL identity-ledger package has collision, tombstone, restore, rollback, concurrency, and durable-reference tests. The current evidence is package-local: compiler admission, activation, rollback, serving state, access, and publication/release consumers do not yet use it as their runtime authority. | Ledger primitives implemented by FAI-617; lifecycle integration and end-to-end qualification remain in progress. |
-| ADR-0016 public control boundary | FAI-616 removes the authored Project selector from the public access, audit, authoring-session, and dashboard-publication contracts. Runtime adapters resolve the active internal serving Project where the current persistence and authorization implementation still requires that deployment key, and public audit metadata is projected through a fail-closed redaction boundary. Contract tests reject the legacy Project-scoped routes, generated response schemas containing `projectId`, and resource kinds outside the six authored analytics kinds. Verified with `task api:generate`, the focused access/dashboard/API/APIGen package tests, and `git diff --check`. | Boundary implemented by FAI-616; access-control CRUD persistence and identity-ledger lifecycle integration remain FAI-617 work. Transitional authored `DataPolicy` removal remains blocked on FAI-648 and owned by FAI-649. Historical internal audit evidence may retain Project targets. |
+| RID-01–RID-10 | The PostgreSQL identity-ledger package has collision, tombstone, restore, rollback, concurrency, and durable-reference tests. App lifecycle tests exercise exact candidate admission, publish/rollback evidence binding, and fail-closed delivery ordering against the coordinator contract. | In progress in FAI-617. Ordinary activation and rollback are integrated; explicit candidate restore remains blocked on FAI-663, and live PostgreSQL process qualification is environment-dependent. |
+| RID-11–RID-14 | [`ProjectIdentityReferences`](../../internal/app/identity_lifecycle.go) is a pure retained-manifest-plus-graph projector for legacy bindings. Focused app tests cover all six authored target kinds, Project exclusion, missing targets, length-prefixed collision-safe IDs, and the 255-byte fail-closed bound. [`transition_test.go`](../../internal/project/identityledger/transition_test.go) covers normalization, sorting, lifecycle-state rejection, and replay evidence; [`transition_repository_test.go`](../../internal/project/identityledger/postgres/transition_repository_test.go) covers PostgreSQL round-trip and immutable journal evidence. Applying supplied bindings is additive; an empty modern analytics manifest does not suspend instance control state. | Transition evidence implemented by FAI-617. Complete live control-reference ownership/removal reconciliation remains FAI-616 work. |
+| RID-15 | [`identity_conformance_test.go`](../../internal/platform/architecture/identity_conformance_test.go) proves the production identity builder selects PostgreSQL, local composition has no substitute ledger, candidate planning/readiness use the ledger, canonical publish/rollback route through the identity coordinator, and lifecycle code adds no second hash authority. | Runtime integration implemented but not fully qualified: FAI-663 restore admission, FAI-616 live control references, and FAI-648/649 semantic access migration remain open. |
+| ADR-0016 public control boundary | FAI-616 removes the authored Project selector from the public access, audit, authoring-session, and dashboard-publication contracts. Runtime adapters resolve the active internal serving Project where current persistence and authorization still require that deployment key, and public audit metadata uses a fail-closed redaction boundary. | In progress. Fresh Project/control authoring is removed, but role/grant/effective-capability handlers, live control-reference ownership, compatibility snapshot replacement, and residual Project-shaped public operational scopes remain. Transitional `DataPolicy` removal is blocked on FAI-648 and owned by FAI-649. |
 | ADR-0016 structural authority | FAI-619 completed the SemanticModel migration to [`api/data-resources/main.tsp`](../../api/data-resources/main.tsp). The generated [Go DTOs](../../internal/project/contracts/models.gen.go) and [JSON Schema](../../internal/project/contracts/gen/data-resources.schema.json) are the only production structural authority; the [architecture guard](../../internal/platform/architecture/architecture_test.go) rejects handwritten compiler DTOs and CUE copies. Qualified 2026-09-02 with `task generated:check`, `go test ./internal/platform/architecture -run '^TestSemanticModelStructuralAuthorityIsGeneratedFromTypeSpec$' -count=1`, `go test ./internal/project/contracts ./internal/project/schema -count=1`, and the focused `duckdb_arrow` compiler-lowering tests. | Implemented by FAI-619 |
 | CAN-01–CAN-07 | FAI-620 added the explicit generated [`leapview.contract/v1` projection DTOs](../../api/data-resources/contract-projections.tsp), sealed [projection boundary](../../internal/project/contractprojection/types.go), and reviewed [exclusion manifest](../../internal/project/contractprojection/exclusions.json). The data-resource generator fails when a reachable Source, Model, or SemanticModel field is in neither the generated projection DTO nor the reviewed exclusion manifest. Verified with `go test ./internal/project/contracts/generate -count=1` and `task generated:check`. | Implemented by FAI-620 |
 | SRC-01–SRC-02 | The allowlist projector includes public schema mode and fields, freshness/SLA values, governance, authoritative definitions, and deprecation while excluding connector and physical location data. Golden leak-prevention and digest fixtures are in [`canonical_test.go`](../../internal/project/contractprojection/canonical_test.go). | Implemented by FAI-620 |

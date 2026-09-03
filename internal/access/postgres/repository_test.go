@@ -21,8 +21,9 @@ const (
 )
 
 type auditDatabase struct {
-	admin   *pgxpool.Pool
-	runtime *pgxpool.Pool
+	admin    *pgxpool.Pool
+	runtime  *pgxpool.Pool
+	readonly *pgxpool.Pool
 }
 
 func newAuditDatabase(t *testing.T) auditDatabase {

@@ -14,6 +14,7 @@ import (
 	"github.com/flidai/leapview/internal/app"
 	"github.com/flidai/leapview/internal/app/config"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
+	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
@@ -124,8 +125,7 @@ func TestBuildCreatesPrivateStateDirectories(t *testing.T) {
 }
 
 func TestProductionApplicationAllowsCallbackHostAndRejectsOthers(t *testing.T) {
-	home := t.TempDir()
-	cfg := serveTestConfig(t, home)
+	cfg := serveTestConfig(t, t.TempDir())
 	cfg.Production = true
 	cfg.OIDCIssuerURL = "https://issuer.example"
 	cfg.OIDCClientID = "client-id"
@@ -134,11 +134,13 @@ func TestProductionApplicationAllowsCallbackHostAndRejectsOthers(t *testing.T) {
 	cfg.PublicURL = "https://app.example.com"
 	cfg.CSRFKey = "0123456789abcdef0123456789abcdef"
 	cfg.MetricsBearerToken = "0123456789abcdef0123456789abcdef"
-	application, err := app.Build(context.Background(), cfg)
+	allowedHosts, err := cfg.ProductionAllowedHosts()
 	if err != nil {
-		t.Fatalf("build production application: %v", err)
+		t.Fatalf("derive production hosts: %v", err)
 	}
-	defer application.Shutdown(context.Background())
+	handler := apihttpmiddleware.AllowedHosts(allowedHosts)(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
 	for _, test := range []struct {
 		name, host string
 		want       int
@@ -150,7 +152,7 @@ func TestProductionApplicationAllowsCallbackHostAndRejectsOthers(t *testing.T) {
 			request := httptest.NewRequest(http.MethodGet, "/healthz", nil)
 			request.Host = test.host
 			response := httptest.NewRecorder()
-			application.Handler().ServeHTTP(response, request)
+			handler.ServeHTTP(response, request)
 			if response.Code != test.want {
 				t.Fatalf("status = %d, want %d body=%s", response.Code, test.want, response.Body.String())
 			}

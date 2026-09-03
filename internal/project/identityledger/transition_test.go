@@ -17,6 +17,10 @@ func TestNormalizeTransitionSortsEvidenceAndValidatesGraphDigest(t *testing.T) {
 			{AuthoredID: "zeta", Kind: projectgraph.KindModel},
 			{AuthoredID: "alpha", Kind: projectgraph.KindSource},
 		},
+		References: []DurableReference{
+			{InstanceID: "instance-1", ReferenceID: "grant:zeta", OwnerAuthoredID: "zeta", OwnerKind: "grant", TargetAuthoredID: "zeta", ExpectedKind: projectgraph.KindModel},
+			{InstanceID: "instance-1", ReferenceID: "grant:alpha", OwnerAuthoredID: "alpha", OwnerKind: "grant", TargetAuthoredID: "alpha", ExpectedKind: projectgraph.KindSource},
+		},
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -27,14 +31,38 @@ func TestNormalizeTransitionSortsEvidenceAndValidatesGraphDigest(t *testing.T) {
 	if transition.Resources[0].AuthoredID != "alpha" {
 		t.Fatalf("resources were not sorted: %#v", transition.Resources)
 	}
+	if transition.References[0].ReferenceID != "grant:alpha" {
+		t.Fatalf("references were not sorted: %#v", transition.References)
+	}
 	reordered := transition
 	reordered.Resources = []Resource{transition.Resources[1], transition.Resources[0]}
+	reordered.References = []DurableReference{transition.References[1], transition.References[0]}
 	if err := ValidateTransition(reordered); err != nil {
 		t.Fatalf("reordered equivalent evidence rejected: %v", err)
 	}
 	reordered.GraphDigest = "sha256:" + strings.Repeat("g", 64)
 	if err := ValidateTransition(reordered); !errors.Is(err, ErrInvalidInput) {
 		t.Fatalf("bad evidence digest error = %v", err)
+	}
+}
+
+func TestNormalizeReferencesRejectsMutableOrDuplicateEvidence(t *testing.T) {
+	base := DurableReference{InstanceID: "instance-1", ReferenceID: "grant:one", OwnerAuthoredID: "one", OwnerKind: "grant", TargetAuthoredID: "orders", ExpectedKind: projectgraph.KindSource}
+	if _, err := NormalizeReferences("instance-1", []DurableReference{base, base}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("duplicate reference error = %v", err)
+	}
+	base.Lifecycle = ReferenceActive
+	if _, err := NormalizeReferences("instance-1", []DurableReference{base}); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("mutable lifecycle evidence error = %v", err)
+	}
+}
+
+func TestNormalizeReferencesRequiresInstanceIdentityEvenWhenEmpty(t *testing.T) {
+	if _, err := NormalizeReferences("", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("empty instance reference evidence error = %v, want ErrInvalidInput", err)
+	}
+	if _, err := NormalizeReferences(" instance-1", nil); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("non-canonical instance reference evidence error = %v, want ErrInvalidInput", err)
 	}
 }
 

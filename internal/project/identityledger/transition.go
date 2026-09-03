@@ -4,10 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 // TransitionOperation identifies the durable operation being fenced.
@@ -49,6 +51,7 @@ type Transition struct {
 	ActorID          string
 	Reason           string
 	Resources        []Resource
+	References       []DurableReference
 	GraphDigest      string
 	Phase            TransitionPhase
 	Error            string
@@ -91,6 +94,10 @@ func NormalizeTransition(transition Transition) (Transition, error) {
 	if err != nil {
 		return Transition{}, err
 	}
+	references, err := NormalizeReferences(transition.InstanceID, transition.References)
+	if err != nil {
+		return Transition{}, err
+	}
 	if transition.Phase == "" {
 		transition.Phase = PhasePrepared
 	}
@@ -104,7 +111,39 @@ func NormalizeTransition(transition Transition) (Transition, error) {
 		return Transition{}, fmt.Errorf("%w: graph digest: %v", ErrInvalidInput, err)
 	}
 	transition.Resources = resources
+	transition.References = references
 	return transition, nil
+}
+
+// NormalizeReferences validates immutable reference bindings and returns a
+// stable reference-ID ordering. Lifecycle timestamps belong to the live ledger
+// row and are not admitted as candidate evidence.
+func NormalizeReferences(instanceID string, references []DurableReference) ([]DurableReference, error) {
+	if err := validateToken("instance id", instanceID); err != nil {
+		return nil, err
+	}
+	result := append([]DurableReference(nil), references...)
+	seen := make(map[string]struct{}, len(result))
+	for index := range result {
+		reference := &result[index]
+		if reference.InstanceID != instanceID || reference.ReferenceID == "" || reference.ReferenceID != strings.TrimSpace(reference.ReferenceID) || len(reference.ReferenceID) > 255 ||
+			reference.OwnerAuthoredID == "" || reference.OwnerAuthoredID != strings.TrimSpace(reference.OwnerAuthoredID) || len(reference.OwnerAuthoredID) > 255 ||
+			reference.OwnerKind == "" || reference.OwnerKind != strings.TrimSpace(reference.OwnerKind) || len(reference.OwnerKind) > 255 {
+			return nil, fmt.Errorf("%w: durable reference identity", ErrInvalidInput)
+		}
+		if _, duplicate := seen[reference.ReferenceID]; duplicate {
+			return nil, fmt.Errorf("%w: duplicate durable reference %q", ErrInvalidInput, reference.ReferenceID)
+		}
+		seen[reference.ReferenceID] = struct{}{}
+		if err := reference.TargetAuthoredID.Validate(); err != nil || !IsAuthoredKind(reference.ExpectedKind) {
+			return nil, fmt.Errorf("%w: durable reference %q target", ErrInvalidInput, reference.ReferenceID)
+		}
+		if reference.Lifecycle != "" || reference.SuspendedAt != nil || reference.ReactivatedAt != nil {
+			return nil, fmt.Errorf("%w: durable reference %q contains mutable lifecycle state", ErrInvalidInput, reference.ReferenceID)
+		}
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].ReferenceID < result[j].ReferenceID })
+	return result, nil
 }
 
 // ValidateTransition validates without changing the supplied value.
@@ -134,6 +173,64 @@ func ResourceEvidenceJSON(resources []Resource) ([]byte, error) {
 		return nil, fmt.Errorf("marshal transition evidence: %w", err)
 	}
 	return canonical, nil
+}
+
+// ReferenceEvidenceJSON returns the stable JSON persisted with the transition.
+// It encodes only immutable bindings; live lifecycle state remains authoritative
+// in durable_resource_reference.
+func ReferenceEvidenceJSON(instanceID string, references []DurableReference) ([]byte, error) {
+	normalized, err := NormalizeReferences(instanceID, references)
+	if err != nil {
+		return nil, err
+	}
+	type evidenceReference struct {
+		ReferenceID      string                  `json:"reference_id"`
+		OwnerAuthoredID  string                  `json:"owner_authored_id"`
+		OwnerKind        string                  `json:"owner_kind"`
+		TargetAuthoredID projectgraph.ResourceID `json:"target_authored_id"`
+		ExpectedKind     projectgraph.Kind       `json:"expected_kind"`
+	}
+	evidence := make([]evidenceReference, len(normalized))
+	for index, reference := range normalized {
+		evidence[index] = evidenceReference{
+			ReferenceID: reference.ReferenceID, OwnerAuthoredID: reference.OwnerAuthoredID,
+			OwnerKind: reference.OwnerKind, TargetAuthoredID: reference.TargetAuthoredID,
+			ExpectedKind: reference.ExpectedKind,
+		}
+	}
+	encoded, err := json.Marshal(evidence)
+	if err != nil {
+		return nil, fmt.Errorf("marshal transition reference evidence: %w", err)
+	}
+	return encoded, nil
+}
+
+// SameTransitionEvidence compares only the immutable request and authored
+// evidence fields. Mutable journal progress and timestamps are deliberately
+// excluded so callers share one exact-replay definition.
+func SameTransitionEvidence(left, right Transition) bool {
+	if left.TransitionID != right.TransitionID || left.Operation != right.Operation ||
+		left.InstanceID != right.InstanceID || left.CandidateID != right.CandidateID ||
+		left.BundleID != right.BundleID || left.ExpectedBundleID != right.ExpectedBundleID ||
+		left.ActorID != right.ActorID || left.Reason != right.Reason || left.GraphDigest != right.GraphDigest {
+		return false
+	}
+	leftResources, leftErr := NormalizeResources(left.Resources)
+	rightResources, rightErr := NormalizeResources(right.Resources)
+	if leftErr != nil || rightErr != nil || len(leftResources) != len(rightResources) {
+		return false
+	}
+	for index := range leftResources {
+		if leftResources[index] != rightResources[index] {
+			return false
+		}
+	}
+	leftReferences, leftErr := ReferenceEvidenceJSON(left.InstanceID, left.References)
+	rightReferences, rightErr := ReferenceEvidenceJSON(right.InstanceID, right.References)
+	if leftErr != nil || rightErr != nil || string(leftReferences) != string(rightReferences) {
+		return false
+	}
+	return true
 }
 
 // CanAdvance reports whether a phase may move forward through the journal.

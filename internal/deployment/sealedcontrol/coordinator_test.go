@@ -276,6 +276,34 @@ func TestRollbackRequiresAuthorizationAndUsesControlStore(t *testing.T) {
 	}
 }
 
+func TestRollbackWithActivationPreservesInnerActorWhenWrapperOmitsIt(t *testing.T) {
+	seal := coordinatorSeal()
+	request := deployment.RollbackRequest{
+		ID: "rollback-inner-actor", RequestDigest: coordinatorDigest('f'), TargetID: "target-1",
+		ProjectID: projectgraph.ResourceID("project-1"), Environment: "prod", GenerationID: "generation-1",
+		CandidateID: "candidate-1", ActorID: "inner-actor", ExpectedTargetRevision: 0,
+		VerifiedSeal: seal, CreatedAt: time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC),
+	}
+	store := &fakeRollbackStore{}
+	var authorizedActor string
+	coordinator := &Coordinator{
+		Rollbacks:  store,
+		VerifySeal: func(context.Context, SealBinding) error { return nil },
+		Authorize: func(_ context.Context, binding SealBinding) error {
+			authorizedActor = binding.ActorID
+			return nil
+		},
+	}
+	if _, err := coordinator.RollbackWithActivation(t.Context(), RollbackRequest{Request: request}, func(_ context.Context, commit func() error) error {
+		return commit()
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if authorizedActor != request.ActorID || store.got.ActorID != request.ActorID {
+		t.Fatalf("rollback actor = authorized %q/store %q, want %q", authorizedActor, store.got.ActorID, request.ActorID)
+	}
+}
+
 func TestRollbackWithActivationRequiresCommit(t *testing.T) {
 	seal := coordinatorSeal()
 	request := deployment.RollbackRequest{ID: "rollback-1", RequestDigest: coordinatorDigest('f'), TargetID: "target-1", ProjectID: projectgraph.ResourceID("project-1"), Environment: "prod", GenerationID: "generation-1", CandidateID: "candidate-1", ExpectedTargetRevision: 0, VerifiedSeal: seal, CreatedAt: time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)}
