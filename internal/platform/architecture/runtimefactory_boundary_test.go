@@ -54,9 +54,7 @@ func TestRuntimeFactoryHasNoControlPlaneSQLiteDependencies(t *testing.T) {
 			case importPath == "database/sql":
 				t.Errorf("%s imports database/sql; production runtimefactory must not depend on the local control-plane database API", relative)
 			case isRuntimeFactorySQLiteAdapterImport(importPath):
-				t.Errorf("%s imports control-plane SQLite adapter %q; move local persistence behind localruntimefactory", relative, importPath)
-			case isRuntimeFactoryLocalCompositionImport(importPath):
-				t.Errorf("%s imports localruntimefactory %q; local composition must remain outside the production-facing runtimefactory package", relative, importPath)
+				t.Errorf("%s imports control-plane SQLite adapter %q; production runtimefactory must remain persistence-independent", relative, importPath)
 			}
 		}
 		return nil
@@ -81,6 +79,12 @@ func TestRuntimeFactoryHasNoControlPlaneSQLiteDependencies(t *testing.T) {
 		t.Error("local SQLite application composition must not exist")
 	} else if !os.IsNotExist(err) {
 		t.Errorf("stat removed local SQLite composition: %v", err)
+	}
+	legacyRuntimeFactoryPath := filepath.Join(root, "internal", "app", "localruntimefactory")
+	if _, err := os.Stat(legacyRuntimeFactoryPath); err == nil {
+		t.Error("legacy localruntimefactory package must not exist")
+	} else if !os.IsNotExist(err) {
+		t.Errorf("stat removed localruntimefactory package: %v", err)
 	}
 	for _, path := range []string{"internal/app/build.go", "internal/app/composition.go"} {
 		source, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(path)))
@@ -109,9 +113,4 @@ func isRuntimeFactorySQLiteAdapterImport(importPath string) bool {
 		}
 	}
 	return false
-}
-
-func isRuntimeFactoryLocalCompositionImport(importPath string) bool {
-	const localPrefix = modulePath + "/internal/app/localruntimefactory"
-	return importPath == localPrefix || strings.HasPrefix(importPath, localPrefix+"/")
 }
