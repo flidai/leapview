@@ -65,6 +65,10 @@ func mutationResponse(result authoringservice.Result) (dashboardgen.DashboardAut
 type AuthoringAPI struct {
 	Application HeadlessAuthoringApplication
 	ActorID     func(*nethttp.Request) string
+	// ResolveProjectID binds authoring operations to the active serving
+	// instance. Project is an internal persistence/authorization scope, not a
+	// client-selectable route identity.
+	ResolveProjectID func(context.Context) (projectgraph.ResourceID, error)
 	// RecordAudit is retained for source compatibility with older focused
 	// fixtures. Production authoring mutations use the transaction-bound
 	// Access recorder carried by the authoring repository instead.
@@ -82,10 +86,18 @@ func (h AuthoringAPI) actor(r *nethttp.Request) (string, error) {
 	return actor, nil
 }
 
-func requireProjectID(w nethttp.ResponseWriter, r *nethttp.Request) (projectgraph.ResourceID, bool) {
-	projectID, err := projectgraph.NewResourceID(strings.TrimSpace(chi.URLParam(r, "project")))
+func (h AuthoringAPI) requireProjectID(w nethttp.ResponseWriter, r *nethttp.Request) (projectgraph.ResourceID, bool) {
+	if h.ResolveProjectID == nil {
+		writeAuthoringError(w, r, errors.New("active instance project is unavailable"), nethttp.StatusServiceUnavailable)
+		return "", false
+	}
+	projectID, err := h.ResolveProjectID(r.Context())
 	if err != nil {
-		writeAuthoringError(w, r, fmt.Errorf("%w: projectId: %v", authoring.ErrInvalidAuthoring, err), nethttp.StatusBadRequest)
+		writeAuthoringError(w, r, err, nethttp.StatusServiceUnavailable)
+		return "", false
+	}
+	if err := projectID.Validate(); err != nil {
+		writeAuthoringError(w, r, fmt.Errorf("active instance project: %w", err), nethttp.StatusServiceUnavailable)
 		return "", false
 	}
 	return projectID, true
@@ -102,7 +114,7 @@ func (h AuthoringAPI) begin(r *nethttp.Request) (string, bool) {
 
 func (h AuthoringAPI) ListCatalog(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -126,7 +138,7 @@ func (h AuthoringAPI) ListCatalog(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (h AuthoringAPI) GetDashboard(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -153,7 +165,6 @@ func catalogDashboardResponse(value catalog.Dashboard) (dashboardgen.DashboardAu
 	response := dashboardgen.DashboardAuthoringSummary{
 		Id:            value.ID.String(),
 		StableId:      value.StableID,
-		ProjectId:     value.ProjectID.String(),
 		Title:         value.Title,
 		SemanticModel: value.SemanticModel.String(),
 		Source:        string(value.Source),
@@ -182,7 +193,6 @@ func catalogDashboardResponse(value catalog.Dashboard) (dashboardgen.DashboardAu
 			return dashboardgen.DashboardAuthoringSummary{}, fmt.Errorf("catalog serving identity: %w", err)
 		}
 		response.ServingIdentity = &dashboardgen.DashboardAuthoringServingIdentity{
-			ProjectId:    value.ServingIdentity.ProjectID.String(),
 			Environment:  value.ServingIdentity.Environment,
 			GenerationId: value.ServingIdentity.GenerationID,
 		}
@@ -258,7 +268,6 @@ func catalogPublicationEvidenceResponse(value catalog.PublicationEvidence) (dash
 	response := dashboardgen.DashboardAuthoringPublicationEvidence{
 		Revision: revision,
 		SemanticIdentity: dashboardgen.DashboardAuthoringServingIdentity{
-			ProjectId:    value.SemanticIdentity.ProjectID.String(),
 			Environment:  value.SemanticIdentity.Environment,
 			GenerationId: value.SemanticIdentity.GenerationID,
 		},
@@ -287,13 +296,12 @@ func draftResponse(read application.DraftRead) (dashboardgen.DashboardAuthoringD
 	}
 	var response dashboardgen.DashboardAuthoringDraftResponse
 	value := struct {
-		ProjectID   string                       `json:"projectId"`
 		DashboardID string                       `json:"dashboardId"`
 		DraftID     string                       `json:"draftId"`
 		Revision    authoring.RevisionToken      `json:"revision"`
 		Lifecycle   authoring.DashboardLifecycle `json:"lifecycle"`
 		Document    document.DashboardDocument   `json:"document"`
-	}{ProjectID: read.Lifecycle.ProjectID.String(), DashboardID: read.Revision.DashboardID.String(), DraftID: draftID.String(), Revision: read.Revision.Token(), Lifecycle: read.Lifecycle, Document: read.Revision.Document}
+	}{DashboardID: read.Revision.DashboardID.String(), DraftID: draftID.String(), Revision: read.Revision.Token(), Lifecycle: read.Lifecycle, Document: read.Revision.Document}
 	if err := decodeGeneratedProjection(value, &response); err != nil {
 		return dashboardgen.DashboardAuthoringDraftResponse{}, err
 	}
@@ -304,6 +312,17 @@ func decodeGeneratedProjection(source any, destination any) error {
 	encoded, err := json.Marshal(source)
 	if err != nil {
 		return fmt.Errorf("encode authoring projection: %w", err)
+	}
+	var public any
+	if err := json.Unmarshal(encoded, &public); err != nil {
+		return fmt.Errorf("decode authoring projection: %w", err)
+	}
+	if err := stripPublicProjectIdentity(public, destination); err != nil {
+		return err
+	}
+	encoded, err = json.Marshal(public)
+	if err != nil {
+		return fmt.Errorf("encode public authoring projection: %w", err)
 	}
 	decoder := json.NewDecoder(bytes.NewReader(encoded))
 	decoder.DisallowUnknownFields()
@@ -320,9 +339,59 @@ func decodeGeneratedProjection(source any, destination any) error {
 	return nil
 }
 
+// stripPublicProjectIdentity removes internal graph scope only from the
+// reviewed authoring evidence fields. It intentionally does not recursively
+// rewrite arbitrary dashboard documents, layouts, or source metadata.
+func stripPublicProjectIdentity(value any, destination any) error {
+	root, ok := value.(map[string]any)
+	if !ok {
+		return errors.New("dashboard authoring projection must be a JSON object")
+	}
+	switch destination.(type) {
+	case *dashboardgen.DashboardAuthoringMutationResponse, *dashboardgen.DashboardAuthoringDraftResponse:
+		stripLifecycleProjectIdentity(objectField(root, "lifecycle"))
+	case *dashboardgen.DashboardAuthoringRevisionResponse:
+		stripProvenanceProjectIdentity(objectField(root, "provenance"))
+	case *dashboardgen.DashboardAuthoringPreviewResponse:
+		stripServingProjectIdentity(objectField(objectField(root, "semanticEvidence"), "identity"))
+	default:
+		return fmt.Errorf("unsupported dashboard authoring projection %T", destination)
+	}
+	return nil
+}
+
+func stripLifecycleProjectIdentity(lifecycle map[string]any) {
+	delete(lifecycle, "projectId")
+	draft := objectField(lifecycle, "draft")
+	stripProvenanceProjectIdentity(objectField(draft, "provenance"))
+	published := objectField(lifecycle, "published")
+	stripProvenanceProjectIdentity(objectField(published, "provenance"))
+	stripServingProjectIdentity(objectField(objectField(published, "compilation"), "semanticIdentity"))
+	stripServingProjectIdentity(objectField(objectField(lifecycle, "revalidation"), "identity"))
+}
+
+func stripProvenanceProjectIdentity(provenance map[string]any) {
+	stripServingProjectIdentity(objectField(provenance, "baseSemanticIdentity"))
+	fork := objectField(provenance, "forkedFrom")
+	instance := objectField(fork, "instance")
+	delete(instance, "sourceProjectId")
+	project := objectField(fork, "project")
+	delete(project, "sourceProjectId")
+	stripServingProjectIdentity(objectField(project, "identity"))
+}
+
+func stripServingProjectIdentity(identity map[string]any) {
+	delete(identity, "projectId")
+}
+
+func objectField(value map[string]any, key string) map[string]any {
+	child, _ := value[key].(map[string]any)
+	return child
+}
+
 func (h AuthoringAPI) GetDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -346,7 +415,7 @@ func (h AuthoringAPI) GetDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -377,13 +446,12 @@ func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) 
 	}
 	var response dashboardgen.DashboardAuthoringRevisionResponse
 	value := struct {
-		ProjectID   string                     `json:"projectId"`
 		DashboardID string                     `json:"dashboardId"`
 		Revision    authoring.RevisionToken    `json:"revision"`
 		Document    document.DashboardDocument `json:"document"`
 		Provenance  authoring.Provenance       `json:"provenance"`
 		CreatedAt   time.Time                  `json:"createdAt"`
-	}{ProjectID: projectID.String(), DashboardID: revision.DashboardID.String(), Revision: revision.Token(), Document: revision.Document, Provenance: revision.Provenance, CreatedAt: revision.CreatedAt}
+	}{DashboardID: revision.DashboardID.String(), Revision: revision.Token(), Document: revision.Document, Provenance: revision.Provenance, CreatedAt: revision.CreatedAt}
 	if err := decodeGeneratedProjection(value, &response); err != nil {
 		writeAuthoringError(w, r, err)
 		return
@@ -393,7 +461,7 @@ func (h AuthoringAPI) GetRevision(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -452,7 +520,7 @@ func (h AuthoringAPI) CreateDraft(w nethttp.ResponseWriter, r *nethttp.Request) 
 
 func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -506,7 +574,7 @@ func (h AuthoringAPI) ExecuteCommand(w nethttp.ResponseWriter, r *nethttp.Reques
 
 func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -560,7 +628,7 @@ func (h AuthoringAPI) Fork(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -603,7 +671,7 @@ func (h AuthoringAPI) Preview(w nethttp.ResponseWriter, r *nethttp.Request) {
 
 func (h AuthoringAPI) Export(w nethttp.ResponseWriter, r *nethttp.Request) {
 	h.begin(r)
-	projectID, ok := requireProjectID(w, r)
+	projectID, ok := h.requireProjectID(w, r)
 	if !ok {
 		return
 	}
@@ -975,15 +1043,15 @@ func executeAuthoringMutation(r *nethttp.Request, operationID, project, key, act
 	switch operationID {
 	case "createDashboardAuthoringDraft":
 		return dashboardgen.ExecuteGenCreateDashboardAuthoringDraftCommand(r.Context(), executor, dashboardgen.GenCreateDashboardAuthoringDraftCommandInvocation{
-			Surface: invocation, Project: project, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID,
+			Surface: invocation, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID,
 		}, execution)
 	case "executeDashboardAuthoringCommand":
 		return dashboardgen.ExecuteGenExecuteDashboardAuthoringCommandCommand(r.Context(), executor, dashboardgen.GenExecuteDashboardAuthoringCommandCommandInvocation{
-			Surface: invocation, Project: project, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID,
+			Surface: invocation, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID,
 		}, execution)
 	case "forkDashboardAuthoringDraft":
 		return dashboardgen.ExecuteGenForkDashboardAuthoringDraftCommand(r.Context(), executor, dashboardgen.GenForkDashboardAuthoringDraftCommandInvocation{
-			Surface: invocation, Project: project, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID,
+			Surface: invocation, IdempotencyKey: key, RequestID: requestID, CorrelationID: correlationID,
 		}, execution)
 	default:
 		return fmt.Errorf("unknown dashboard authoring command %q", operationID)

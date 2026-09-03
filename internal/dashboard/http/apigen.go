@@ -10,16 +10,16 @@ import (
 )
 
 type APIGenHandler interface {
-	ListDashboardAuthoringCatalog(stdhttp.ResponseWriter, *stdhttp.Request, string)
-	ExecuteDashboardAuthoringCommand(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenExecuteDashboardAuthoringCommandHeaders)
-	GetDashboardAuthoringDashboard(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	GetDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
-	PreviewDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
-	GetDashboardAuthoringDraftRevision(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string, string)
-	GetDashboardAuthoringPublishedRevision(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
-	CreateDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenCreateDashboardAuthoringDraftHeaders)
-	ForkDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenForkDashboardAuthoringDraftHeaders)
-	ExportDashboardAuthoringSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
+	ListDashboardAuthoringCatalog(stdhttp.ResponseWriter, *stdhttp.Request)
+	ExecuteDashboardAuthoringCommand(stdhttp.ResponseWriter, *stdhttp.Request, dashboardgen.GenExecuteDashboardAuthoringCommandHeaders)
+	GetDashboardAuthoringDashboard(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	GetDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string)
+	PreviewDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
+	GetDashboardAuthoringDraftRevision(stdhttp.ResponseWriter, *stdhttp.Request, string, string, string)
+	GetDashboardAuthoringPublishedRevision(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
+	CreateDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, dashboardgen.GenCreateDashboardAuthoringDraftHeaders)
+	ForkDashboardAuthoringDraft(stdhttp.ResponseWriter, *stdhttp.Request, dashboardgen.GenForkDashboardAuthoringDraftHeaders)
+	ExportDashboardAuthoringSource(stdhttp.ResponseWriter, *stdhttp.Request, string, string)
 	ListDashboardPublications(stdhttp.ResponseWriter, *stdhttp.Request)
 	GetDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string)
 	ResumeDashboardPublication(stdhttp.ResponseWriter, *stdhttp.Request, string, dashboardgen.GenResumeDashboardPublicationHeaders)
@@ -54,35 +54,35 @@ func NewAPIGenDispatcher(handler APIGenHandler) *APIGenDispatcher {
 	return &APIGenDispatcher{handler: handler}
 }
 
-func (d *APIGenDispatcher) ListDashboardAuthoringCatalog(w stdhttp.ResponseWriter, r *stdhttp.Request, project string) {
-	d.handler.ListDashboardAuthoringCatalog(w, r, project)
+func (d *APIGenDispatcher) ListDashboardAuthoringCatalog(w stdhttp.ResponseWriter, r *stdhttp.Request) {
+	d.handler.ListDashboardAuthoringCatalog(w, r)
 }
-func (d *APIGenDispatcher) ExecuteDashboardAuthoringCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
-	d.handler.ExecuteDashboardAuthoringCommand(w, r, project, headers)
+func (d *APIGenDispatcher) ExecuteDashboardAuthoringCommand(w stdhttp.ResponseWriter, r *stdhttp.Request, headers dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
+	d.handler.ExecuteDashboardAuthoringCommand(w, r, headers)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard string) {
-	d.handler.GetDashboardAuthoringDashboard(w, r, project, dashboard)
+func (d *APIGenDispatcher) GetDashboardAuthoringDashboard(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard string) {
+	d.handler.GetDashboardAuthoringDashboard(w, r, dashboard)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard string) {
-	d.handler.GetDashboardAuthoringDraft(w, r, project, dashboard)
+func (d *APIGenDispatcher) GetDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard string) {
+	d.handler.GetDashboardAuthoringDraft(w, r, dashboard)
 }
-func (d *APIGenDispatcher) PreviewDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard, draft string) {
-	d.handler.PreviewDashboardAuthoringDraft(w, r, project, dashboard, draft)
+func (d *APIGenDispatcher) PreviewDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard, draft string) {
+	d.handler.PreviewDashboardAuthoringDraft(w, r, dashboard, draft)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringDraftRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard, draft, revision string) {
-	d.handler.GetDashboardAuthoringDraftRevision(w, r, project, dashboard, draft, revision)
+func (d *APIGenDispatcher) GetDashboardAuthoringDraftRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard, draft, revision string) {
+	d.handler.GetDashboardAuthoringDraftRevision(w, r, dashboard, draft, revision)
 }
-func (d *APIGenDispatcher) GetDashboardAuthoringPublishedRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, project, dashboard, revision string) {
-	d.handler.GetDashboardAuthoringPublishedRevision(w, r, project, dashboard, revision)
+func (d *APIGenDispatcher) GetDashboardAuthoringPublishedRevision(w stdhttp.ResponseWriter, r *stdhttp.Request, dashboard, revision string) {
+	d.handler.GetDashboardAuthoringPublishedRevision(w, r, dashboard, revision)
 }
-func (d *APIGenDispatcher) CreateDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
-	d.handler.CreateDashboardAuthoringDraft(w, r, project, headers)
+func (d *APIGenDispatcher) CreateDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, headers dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
+	d.handler.CreateDashboardAuthoringDraft(w, r, headers)
 }
-func (d *APIGenDispatcher) ForkDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, project string, headers dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
-	d.handler.ForkDashboardAuthoringDraft(w, r, project, headers)
+func (d *APIGenDispatcher) ForkDashboardAuthoringDraft(w stdhttp.ResponseWriter, r *stdhttp.Request, headers dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
+	d.handler.ForkDashboardAuthoringDraft(w, r, headers)
 }
-func (d *APIGenDispatcher) ExportDashboardAuthoringSource(w stdhttp.ResponseWriter, r *stdhttp.Request, project, kind, dashboard string) {
-	d.handler.ExportDashboardAuthoringSource(w, r, project, kind, dashboard)
+func (d *APIGenDispatcher) ExportDashboardAuthoringSource(w stdhttp.ResponseWriter, r *stdhttp.Request, kind, dashboard string) {
+	d.handler.ExportDashboardAuthoringSource(w, r, kind, dashboard)
 }
 
 func (d *APIGenDispatcher) ListDashboardPublications(w stdhttp.ResponseWriter, r *stdhttp.Request) {

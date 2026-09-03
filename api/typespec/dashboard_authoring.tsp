@@ -23,7 +23,6 @@ model DashboardAuthoringRevisionEvidence {
 
 /** Exact graph serving identity persisted with authored provenance and compilation evidence. */
 model DashboardAuthoringServingIdentity {
-  projectId: ResourceId;
   environment: string;
   generationId: string;
 }
@@ -43,8 +42,8 @@ model DashboardAuthoringPublicationEvidence {
 }
 
 model DashboardAuthoringSourceRef {
-  // The route's project identifies project-managed sources; instance sources
-  // use the same dashboard identity without an optional project selector.
+  // Project-managed and instance sources use the same dashboard identity;
+  // project scope is resolved from the active instance at the API boundary.
   kind: "project" | "instance";
   dashboardId: ResourceId;
 }
@@ -94,7 +93,6 @@ model DashboardAuthoringInstanceForkEvidence extends DashboardAuthoringForkEvide
 }
 
 model DashboardAuthoringInstanceForkEvidenceData {
-  sourceProjectId: ResourceId;
   sourceDashboardId: ResourceId;
   sourceRevision: DashboardAuthoringRevisionToken;
 }
@@ -105,7 +103,6 @@ model DashboardAuthoringProjectForkEvidence extends DashboardAuthoringForkEviden
 }
 
 model DashboardAuthoringProjectForkEvidenceData {
-  sourceProjectId: ResourceId;
   sourceDashboardId: ResourceId;
   identity: DashboardAuthoringServingIdentity;
   path?: string;
@@ -134,7 +131,6 @@ model DashboardAuthoringRevalidationFailure {
 }
 
 model DashboardAuthoringLifecycle {
-  projectId: ResourceId;
   id: ResourceId;
   ownerPrincipalId: string;
   slug: string;
@@ -287,7 +283,6 @@ model DashboardAuthoringArchiveCommand extends DashboardAuthoringCommandRequest 
 model DashboardAuthoringSummary {
   id: ResourceId;
   stableId: string;
-  projectId: ResourceId;
   title: string;
   description?: string;
   semanticModel: ResourceId;
@@ -316,7 +311,6 @@ model DashboardAuthoringMutationResponse {
 }
 
 model DashboardAuthoringDraftResponse {
-  projectId: ResourceId;
   dashboardId: ResourceId;
   draftId: string;
   revision: DashboardAuthoringRevisionToken;
@@ -325,7 +319,6 @@ model DashboardAuthoringDraftResponse {
 }
 
 model DashboardAuthoringRevisionResponse {
-  projectId: ResourceId;
   dashboardId: ResourceId;
   revision: DashboardAuthoringRevisionToken;
   document: LeapViewDashboard.DashboardDocument;
@@ -617,8 +610,8 @@ model DashboardAuthoringCommandAuditPayload {
 }
 
 @tag("Dashboard Authoring")
-@doc("Headless project-wide dashboard authoring identities, draft revisions, commands, forks, previews, and source export.")
-@route("/projects/{project}/authoring")
+@doc("Headless instance-bound dashboard authoring identities, draft revisions, commands, forks, previews, and source export.")
+@route("/authoring")
 @apigen.authz(#{ mode: "authenticated" })
 @apigen.auditPayload(DashboardAuthoringCommandAuditPayload)
 interface DashboardAuthoring {
@@ -626,42 +619,42 @@ interface DashboardAuthoring {
   @route("/catalog")
   @get
   @apigen.authz(#{ mode: "authenticated" })
-  listDashboardAuthoringCatalog(@path project: ResourceId): OkJson<DashboardAuthoringCatalogResponse> | CommonErrors;
+  listDashboardAuthoringCatalog(): OkJson<DashboardAuthoringCatalogResponse> | CommonErrors;
 
   @summary("Get one governed dashboard authoring identity")
   @route("/dashboards/{dashboard}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "dashboard")
-  getDashboardAuthoringDashboard(@path project: ResourceId, @path dashboard: ResourceId): OkJson<DashboardAuthoringSummary> | CommonErrors;
+  getDashboardAuthoringDashboard(@path dashboard: ResourceId): OkJson<DashboardAuthoringSummary> | CommonErrors;
 
   @summary("Get the exact current dashboard draft")
   @route("/dashboards/{dashboard}/draft")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
   @extension("x-leapview-object-scope", "dashboard")
-  getDashboardAuthoringDraft(@path project: ResourceId, @path dashboard: ResourceId): OkJson<DashboardAuthoringDraftResponse> | CommonErrors;
+  getDashboardAuthoringDraft(@path dashboard: ResourceId): OkJson<DashboardAuthoringDraftResponse> | CommonErrors;
 
   @summary("Get an exact draft revision")
   @route("/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
   @extension("x-leapview-object-scope", "dashboard")
-  getDashboardAuthoringDraftRevision(@path project: ResourceId, @path dashboard: ResourceId, @path draft: string, @path revision: string): OkJson<DashboardAuthoringRevisionResponse> | CommonErrors;
+  getDashboardAuthoringDraftRevision(@path dashboard: ResourceId, @path draft: string, @path revision: string): OkJson<DashboardAuthoringRevisionResponse> | CommonErrors;
 
   @summary("Get the exact published dashboard revision")
   @route("/dashboards/{dashboard}/revisions/{revision}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "dashboard")
-  getDashboardAuthoringPublishedRevision(@path project: ResourceId, @path dashboard: ResourceId, @path revision: string): OkJson<DashboardAuthoringRevisionResponse> | CommonErrors;
+  getDashboardAuthoringPublishedRevision(@path dashboard: ResourceId, @path revision: string): OkJson<DashboardAuthoringRevisionResponse> | CommonErrors;
 
   @summary("Create a named dashboard draft")
   @route("/drafts")
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_created", guarantee: "transactional", failures: #[] })
-  createDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  createDashboardAuthoringDraft(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCreateRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Execute one dashboard authoring command")
   @route("/commands")
@@ -669,14 +662,14 @@ interface DashboardAuthoring {
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.ui("dashboard.builder.command")
   @apigen.command(#{ auditAction: "dashboard_authoring.command_executed", guarantee: "transactional", failures: #[] })
-  executeDashboardAuthoringCommand(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCommandRequest): OkJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  executeDashboardAuthoringCommand(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringCommandRequest): OkJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Fork a dashboard source into a new draft")
   @route("/forks")
   @post
   @apigen.authz(#{ mode: "authenticated" })
   @apigen.command(#{ auditAction: "dashboard_authoring.draft_forked", guarantee: "transactional", failures: #[] })
-  forkDashboardAuthoringDraft(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
+  forkDashboardAuthoringDraft(@header("Idempotency-Key") idempotencyKey: IdempotencyKey, @body body: DashboardAuthoringForkRequest): CreatedJson<DashboardAuthoringMutationResponse> | CommonErrors;
 
   @summary("Preview one exact dashboard draft revision")
   @route("/dashboards/{dashboard}/drafts/{draft}/preview")
@@ -684,12 +677,12 @@ interface DashboardAuthoring {
   @apigen.query
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_EDIT" })
   @extension("x-leapview-object-scope", "dashboard")
-  previewDashboardAuthoringDraft(@path project: ResourceId, @path dashboard: ResourceId, @path draft: string, @body body: DashboardAuthoringPreviewRequest): OkJson<DashboardAuthoringPreviewResponse> | CommonErrors;
+  previewDashboardAuthoringDraft(@path dashboard: ResourceId, @path draft: string, @body body: DashboardAuthoringPreviewRequest): OkJson<DashboardAuthoringPreviewResponse> | CommonErrors;
 
   @summary("Export one governed dashboard source as YAML")
   @route("/sources/{kind}/{dashboard}/export")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
   @extension("x-leapview-object-scope", "dashboard")
-  exportDashboardAuthoringSource(@path project: ResourceId, @path kind: string, @path dashboard: ResourceId): DashboardAuthoringYAMLResponse | CommonErrors;
+  exportDashboardAuthoringSource(@path kind: string, @path dashboard: ResourceId): DashboardAuthoringYAMLResponse | CommonErrors;
 }

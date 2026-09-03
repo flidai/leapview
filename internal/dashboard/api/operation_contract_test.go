@@ -25,7 +25,7 @@ func TestGeneratedDashboardPublicationOperationClassifications(t *testing.T) {
 		if !command.Audit.Required || command.Audit.SuccessAction != auditAction || command.Audit.Guarantee != "transactional" {
 			t.Errorf("%s audit = %#v", operationID, command.Audit)
 		}
-		if command.Target == nil || command.Target.Parameter != "project" || command.Target.Type != "project" {
+		if command.Target == nil || command.Target.Parameter != "publication" || command.Target.Type != "publication" {
 			t.Errorf("%s target = %#v", operationID, command.Target)
 		}
 		if command.Idempotency != "required" || command.Concurrency != "" || len(command.AdditionalExposures) != 1 || command.AdditionalExposures[0] != "ui" {

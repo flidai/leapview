@@ -15,37 +15,37 @@ func (h dashboardAPIGenHandler) authoringAPI() dashboardhttp.AuthoringAPI {
 	if actor == nil {
 		actor = h.module.handler.CurrentPrincipalID
 	}
-	return dashboardhttp.AuthoringAPI{Application: h.module.authoring, ActorID: actor}
+	return dashboardhttp.AuthoringAPI{Application: h.module.authoring, ActorID: actor, ResolveProjectID: h.module.handler.ResolveProjectID}
 }
 
-func (h dashboardAPIGenHandler) ListDashboardAuthoringCatalog(w http.ResponseWriter, r *http.Request, _ string) {
+func (h dashboardAPIGenHandler) ListDashboardAuthoringCatalog(w http.ResponseWriter, r *http.Request) {
 	h.authoringAPI().ListCatalog(w, r)
 }
-func (h dashboardAPIGenHandler) ExecuteDashboardAuthoringCommand(w http.ResponseWriter, r *http.Request, _ string, _ dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
+func (h dashboardAPIGenHandler) ExecuteDashboardAuthoringCommand(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
 	h.authoringAPI().ExecuteCommand(w, r)
 }
-func (h dashboardAPIGenHandler) GetDashboardAuthoringDashboard(w http.ResponseWriter, r *http.Request, _, _ string) {
+func (h dashboardAPIGenHandler) GetDashboardAuthoringDashboard(w http.ResponseWriter, r *http.Request, _ string) {
 	h.authoringAPI().GetDashboard(w, r)
 }
-func (h dashboardAPIGenHandler) GetDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _, _ string) {
+func (h dashboardAPIGenHandler) GetDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ string) {
 	h.authoringAPI().GetDraft(w, r)
 }
-func (h dashboardAPIGenHandler) PreviewDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _, _, _ string) {
+func (h dashboardAPIGenHandler) PreviewDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _, _ string) {
 	h.authoringAPI().Preview(w, r)
 }
-func (h dashboardAPIGenHandler) GetDashboardAuthoringDraftRevision(w http.ResponseWriter, r *http.Request, _, _, _, _ string) {
+func (h dashboardAPIGenHandler) GetDashboardAuthoringDraftRevision(w http.ResponseWriter, r *http.Request, _, _, _ string) {
 	h.authoringAPI().GetRevision(w, r)
 }
-func (h dashboardAPIGenHandler) GetDashboardAuthoringPublishedRevision(w http.ResponseWriter, r *http.Request, _, _, _ string) {
+func (h dashboardAPIGenHandler) GetDashboardAuthoringPublishedRevision(w http.ResponseWriter, r *http.Request, _, _ string) {
 	h.authoringAPI().GetRevision(w, r)
 }
-func (h dashboardAPIGenHandler) CreateDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ string, _ dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
+func (h dashboardAPIGenHandler) CreateDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
 	h.authoringAPI().CreateDraft(w, r)
 }
-func (h dashboardAPIGenHandler) ForkDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ string, _ dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
+func (h dashboardAPIGenHandler) ForkDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
 	h.authoringAPI().Fork(w, r)
 }
-func (h dashboardAPIGenHandler) ExportDashboardAuthoringSource(w http.ResponseWriter, r *http.Request, _, _, _ string) {
+func (h dashboardAPIGenHandler) ExportDashboardAuthoringSource(w http.ResponseWriter, r *http.Request, _, _ string) {
 	h.authoringAPI().Export(w, r)
 }
 

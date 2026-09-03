@@ -161,34 +161,34 @@ type testAuthoringAPIGenDispatcher struct {
 	api AuthoringAPI
 }
 
-func (d testAuthoringAPIGenDispatcher) ListDashboardAuthoringCatalog(w http.ResponseWriter, r *http.Request, workspace string) {
+func (d testAuthoringAPIGenDispatcher) ListDashboardAuthoringCatalog(w http.ResponseWriter, r *http.Request) {
 	d.api.ListCatalog(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) ExecuteDashboardAuthoringCommand(w http.ResponseWriter, r *http.Request, workspace string, _ dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
+func (d testAuthoringAPIGenDispatcher) ExecuteDashboardAuthoringCommand(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenExecuteDashboardAuthoringCommandHeaders) {
 	d.api.ExecuteCommand(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringDashboard(w http.ResponseWriter, r *http.Request, workspace, dashboard string) {
+func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringDashboard(w http.ResponseWriter, r *http.Request, dashboard string) {
 	d.api.GetDashboard(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, workspace, dashboard string) {
+func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, dashboard string) {
 	d.api.GetDraft(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) PreviewDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, workspace, dashboard, draft string) {
+func (d testAuthoringAPIGenDispatcher) PreviewDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, dashboard, draft string) {
 	d.api.Preview(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringDraftRevision(w http.ResponseWriter, r *http.Request, workspace, dashboard, draft, revision string) {
+func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringDraftRevision(w http.ResponseWriter, r *http.Request, dashboard, draft, revision string) {
 	d.api.GetRevision(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringPublishedRevision(w http.ResponseWriter, r *http.Request, workspace, dashboard, revision string) {
+func (d testAuthoringAPIGenDispatcher) GetDashboardAuthoringPublishedRevision(w http.ResponseWriter, r *http.Request, dashboard, revision string) {
 	d.api.GetRevision(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) CreateDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, workspace string, _ dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
+func (d testAuthoringAPIGenDispatcher) CreateDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenCreateDashboardAuthoringDraftHeaders) {
 	d.api.CreateDraft(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) ForkDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, workspace string, _ dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
+func (d testAuthoringAPIGenDispatcher) ForkDashboardAuthoringDraft(w http.ResponseWriter, r *http.Request, _ dashboardgen.GenForkDashboardAuthoringDraftHeaders) {
 	d.api.Fork(w, r)
 }
-func (d testAuthoringAPIGenDispatcher) ExportDashboardAuthoringSource(w http.ResponseWriter, r *http.Request, workspace, kind, dashboard string) {
+func (d testAuthoringAPIGenDispatcher) ExportDashboardAuthoringSource(w http.ResponseWriter, r *http.Request, kind, dashboard string) {
 	d.api.Export(w, r)
 }
 
@@ -199,7 +199,7 @@ func (s testAuthoringAPIGenServer) HandleAPIGen(operationID string, w http.Respo
 }
 
 func testAuthoringRouter(app HeadlessAuthoringApplication) *chi.Mux {
-	api := AuthoringAPI{Application: app, ActorID: func(*http.Request) string { return "principal_1" }}
+	api := AuthoringAPI{Application: app, ActorID: func(*http.Request) string { return "principal_1" }, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "sales", nil }}
 	return testAuthoringRouterWithAPI(api)
 }
 
@@ -227,7 +227,7 @@ func testAuthoringRouterWithAPI(api AuthoringAPI) *chi.Mux {
 
 func TestAuthoringAPIRequiresIdempotencyKeyForCommands(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
@@ -235,6 +235,23 @@ func TestAuthoringAPIRequiresIdempotencyKeyForCommands(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "INVALID_REQUEST") {
 		t.Fatalf("body = %s, want generated invalid-request problem", rec.Body.String())
+	}
+}
+
+func TestAuthoringAPILegacyProjectRouteIsNotMounted(t *testing.T) {
+	rec := httptest.NewRecorder()
+	testAuthoringRouter(&fakeHeadlessAuthoring{}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/projects/legacy/authoring/catalog", nil))
+	if rec.Code != http.StatusNotFound {
+		t.Fatalf("legacy route status = %d, want %d", rec.Code, http.StatusNotFound)
+	}
+}
+
+func TestAuthoringAPIMissingProjectResolverFailsClosed(t *testing.T) {
+	api := AuthoringAPI{Application: &fakeHeadlessAuthoring{}, ActorID: func(*http.Request) string { return "principal_1" }}
+	rec := httptest.NewRecorder()
+	testAuthoringRouterWithAPI(api).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/authoring/catalog", nil))
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("missing resolver status = %d, want %d (%s)", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
 	}
 }
 
@@ -273,7 +290,7 @@ func TestAuthoringGeneratedCommandContractRejectsUnknownVisualType(t *testing.T)
 }
 
 func TestAuthoringGeneratedForkEvidenceRoundTripAndBranchExclusivity(t *testing.T) {
-	valid := `{"kind":"project","project":{"sourceProjectId":"source","sourceDashboardId":"dash","identity":{"projectId":"source","environment":"prod","generationId":"gen"}}}`
+	valid := `{"kind":"project","project":{"sourceDashboardId":"dash","identity":{"environment":"prod","generationId":"gen"}}}`
 	var evidence dashboardgen.GenSchemaDashboardAuthoringForkEvidence
 	if err := json.Unmarshal([]byte(valid), &evidence); err != nil {
 		t.Fatalf("decode project fork evidence: %v", err)
@@ -290,13 +307,13 @@ func TestAuthoringGeneratedForkEvidenceRoundTripAndBranchExclusivity(t *testing.
 		t.Fatalf("fork evidence round trip = %s, want %s (err=%v)", encoded, valid, err)
 	}
 	var exclusive dashboardgen.GenSchemaDashboardAuthoringForkEvidence
-	if err := json.Unmarshal([]byte(`{"kind":"project","project":{"sourceProjectId":"source","sourceDashboardId":"dash","identity":{"projectId":"source","environment":"prod","generationId":"gen"}},"instance":{}}`), &exclusive); err == nil {
+	if err := json.Unmarshal([]byte(`{"kind":"project","project":{"sourceDashboardId":"dash","identity":{"environment":"prod","generationId":"gen"}},"instance":{}}`), &exclusive); err == nil {
 		t.Fatal("fork evidence with both branches decoded successfully")
 	}
 }
 
 func TestAuthoringGeneratedLifecycleAndCompilationRoundTrip(t *testing.T) {
-	body := `{"projectId":"project","id":"dash","ownerPrincipalId":"owner","slug":"sales","title":"Sales","semanticModel":"sales-model","visibility":"organization","status":"published","draft":{"id":"draft","dashboardId":"dash","revision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"provenance":{"origin":"file","actorId":"owner"}},"published":{"revision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"compilation":{"authoredRevision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"definitionHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","semanticModelId":"sales-model","semanticIdentity":{"projectId":"project","environment":"prod","generationId":"gen"}},"publishedAt":"2026-01-02T03:04:05Z","provenance":{"origin":"file","actorId":"owner"}}}`
+	body := `{"id":"dash","ownerPrincipalId":"owner","slug":"sales","title":"Sales","semanticModel":"sales-model","visibility":"organization","status":"published","draft":{"id":"draft","dashboardId":"dash","revision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"provenance":{"origin":"file","actorId":"owner"}},"published":{"revision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"compilation":{"authoredRevision":{"revisionId":"rev","number":2,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"definitionHash":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","semanticModelId":"sales-model","semanticIdentity":{"environment":"prod","generationId":"gen"}},"publishedAt":"2026-01-02T03:04:05Z","provenance":{"origin":"file","actorId":"owner"}}}`
 	var lifecycle dashboardgen.GenSchemaDashboardAuthoringLifecycle
 	if err := json.Unmarshal([]byte(body), &lifecycle); err != nil {
 		t.Fatalf("decode lifecycle: %v", err)
@@ -349,6 +366,13 @@ func TestAuthoringCatalogProjectionPreservesTypedNumbersAndRejectsOverflow(t *te
 	if err != nil {
 		t.Fatalf("catalog projection: %v", err)
 	}
+	encodedResponse, err := json.Marshal(response)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedResponse), `"projectId"`) || strings.Contains(string(encodedResponse), `"sourceProjectId"`) {
+		t.Fatalf("catalog response exposed internal project identity: %s", encodedResponse)
+	}
 	if response.Revision == nil || response.Revision.Number != int64(uint64(1)<<53+1) {
 		t.Fatalf("revision number = %#v, want exact value", response.Revision)
 	}
@@ -366,6 +390,38 @@ func TestAuthoringCatalogProjectionPreservesTypedNumbersAndRejectsOverflow(t *te
 	}
 	if _, err := catalogListResponse(catalog.ListResult{Count: int(^uint(0) >> 1)}); err == nil {
 		t.Fatal("catalog count overflow was accepted")
+	}
+}
+
+func TestStripPublicProjectIdentityPreservesAuthoredMetadata(t *testing.T) {
+	value := map[string]any{"lifecycle": map[string]any{
+		"projectId": "internal-project",
+		"draft": map[string]any{"provenance": map[string]any{
+			"source": map[string]any{"metadata": map[string]any{"projectId": "authored-value"}},
+			"forkedFrom": map[string]any{"project": map[string]any{
+				"sourceProjectId": "internal-project",
+				"identity":        map[string]any{"projectId": "internal-project", "environment": "prod", "generationId": "gen"},
+			}},
+		}},
+	}}
+	if err := stripPublicProjectIdentity(value, &dashboardgen.DashboardAuthoringMutationResponse{}); err != nil {
+		t.Fatal(err)
+	}
+	lifecycle := objectField(value, "lifecycle")
+	if _, ok := lifecycle["projectId"]; ok {
+		t.Fatal("lifecycle retained internal project identity")
+	}
+	provenance := objectField(objectField(lifecycle, "draft"), "provenance")
+	projectFork := objectField(objectField(provenance, "forkedFrom"), "project")
+	if _, ok := projectFork["sourceProjectId"]; ok {
+		t.Fatal("fork evidence retained internal source project identity")
+	}
+	if _, ok := objectField(projectFork, "identity")["projectId"]; ok {
+		t.Fatal("fork serving evidence retained internal project identity")
+	}
+	metadata := objectField(objectField(provenance, "source"), "metadata")
+	if got := metadata["projectId"]; got != "authored-value" {
+		t.Fatalf("authored metadata projectId = %#v, want preserved value", got)
 	}
 }
 
@@ -442,8 +498,14 @@ func TestAuthoringPreviewProjectionRoundTripPreservesFullRuntimeShape(t *testing
 	if err := json.Unmarshal(encodedResult, &want); err != nil {
 		t.Fatal(err)
 	}
+	if err := stripPublicProjectIdentity(want, &projected); err != nil {
+		t.Fatal(err)
+	}
 	if err := json.Unmarshal(encodedProjection, &got); err != nil {
 		t.Fatal(err)
+	}
+	if strings.Contains(string(encodedProjection), `"projectId"`) || strings.Contains(string(encodedProjection), `"sourceProjectId"`) {
+		t.Fatalf("preview projection exposed internal project identity: %s", encodedProjection)
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("full preview projection changed shape:\n got %s\nwant %s", encodedProjection, encodedResult)
@@ -452,7 +514,7 @@ func TestAuthoringPreviewProjectionRoundTripPreservesFullRuntimeShape(t *testing
 
 func TestAuthoringAPIMapsStaleRevisionToConflict(t *testing.T) {
 	app := &fakeHeadlessAuthoring{draftErr: authoring.ErrStaleRevision}
-	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/draft", nil)
+	req := httptest.NewRequest(http.MethodGet, "/authoring/dashboards/dash/draft", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusConflict {
@@ -465,9 +527,9 @@ func TestAuthoringAPIMapsStaleRevisionToConflict(t *testing.T) {
 
 func TestAuthoringAPIDraftUsesAuthenticatedActor(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	api := AuthoringAPI{Application: app, ActorID: func(*http.Request) string { return "" }}
+	api := AuthoringAPI{Application: app, ActorID: func(*http.Request) string { return "" }, ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "sales", nil }}
 	router := testAuthoringRouterWithAPI(api)
-	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/draft", nil)
+	req := httptest.NewRequest(http.MethodGet, "/authoring/dashboards/dash/draft", nil)
 	rec := httptest.NewRecorder()
 	router.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -477,7 +539,7 @@ func TestAuthoringAPIDraftUsesAuthenticatedActor(t *testing.T) {
 
 func TestAuthoringAPIMapsValidation(t *testing.T) {
 	app := &fakeHeadlessAuthoring{executeErr: errors.New("invalid dashboard authoring contract")}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/commands", strings.NewReader(`{"id":"cmd-1"}`))
 	req.Header.Set("Idempotency-Key", "cmd-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -490,7 +552,7 @@ func TestAuthoringAPIMapsValidation(t *testing.T) {
 
 func TestAuthoringAPIMutationDoesNotSpoofToolCallProvenance(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales"}`))
 	req.Header.Set("Idempotency-Key", "idem-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -507,7 +569,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{
 		ID: "created-dashboard", Draft: &authoring.Draft{ID: "created-draft"},
 	}}}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales","origin":"file"}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/drafts", strings.NewReader(`{"title":"Sales","semanticModel":"sales","origin":"file"}`))
 	req.Header.Set("Idempotency-Key", "idem-audit")
 	req.Header.Set("X-Correlation-ID", "corr-1")
 	rec := httptest.NewRecorder()
@@ -529,7 +591,7 @@ func TestAuthoringAPICreateAuditBindsResultIdentityAndOrigin(t *testing.T) {
 
 func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{ID: "dash-command"}}}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"publish","dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/commands", strings.NewReader(`{"kind":"publish","dashboardId":"dash-command","draftId":"draft-command","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"origin":"agent","publish":{}}`))
 	req.Header.Set("Idempotency-Key", "cmd-audit")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -548,17 +610,17 @@ func TestAuthoringAPICommandAuditUsesDomainPrivilegeAndIdentity(t *testing.T) {
 	}
 }
 
-func TestAuthoringAPIForkBindsInstanceSourceToRouteProject(t *testing.T) {
+func TestAuthoringAPIForkBindsInstanceSourceToActiveProject(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"instance","dashboardId":"dash"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/forks", strings.NewReader(`{"source":{"kind":"instance","dashboardId":"dash"}}`))
 	req.Header.Set("Idempotency-Key", "fork-cross-workspace")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("status=%d body=%s", rec.Code, rec.Body.String())
 	}
-	if app.fork.Source.ProjectID != "target" || app.fork.Source.Kind != sourceadapter.SourceInstance {
-		t.Fatalf("fork source was not bound to route project: %#v", app.fork.Source)
+	if app.fork.Source.ProjectID != "sales" || app.fork.Source.Kind != sourceadapter.SourceInstance {
+		t.Fatalf("fork source was not bound to active project: %#v", app.fork.Source)
 	}
 }
 
@@ -566,7 +628,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 	app := &fakeHeadlessAuthoring{result: authoringservice.Result{Lifecycle: authoring.DashboardLifecycle{
 		ID: "forked-dashboard", Draft: &authoring.Draft{ID: "forked-draft"},
 	}}}
-	req := httptest.NewRequest(http.MethodPost, "/projects/target/authoring/forks", strings.NewReader(`{"source":{"kind":"project","dashboardId":"source-dashboard"},"origin":"file"}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/forks", strings.NewReader(`{"source":{"kind":"project","dashboardId":"source-dashboard"},"origin":"file"}`))
 	req.Header.Set("Idempotency-Key", "fork-audit")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -587,7 +649,7 @@ func TestAuthoringAPIForkAuditBindsResultIdentityAndOrigin(t *testing.T) {
 
 func TestAuthoringAPIRevisionRouteBindsExactDraftIdentity(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/drafts/draft-1/revisions/rev-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/authoring/dashboards/dash/drafts/draft-1/revisions/rev-1", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -600,7 +662,7 @@ func TestAuthoringAPIRevisionRouteBindsExactDraftIdentity(t *testing.T) {
 
 func TestAuthoringAPIPublishedRevisionUsesViewAction(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/dashboards/dash/revisions/rev-1", nil)
+	req := httptest.NewRequest(http.MethodGet, "/authoring/dashboards/dash/revisions/rev-1", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -613,7 +675,7 @@ func TestAuthoringAPIPublishedRevisionUsesViewAction(t *testing.T) {
 
 func TestAuthoringAPIExportSetsSafeDownloadFilename(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/sources/instance/dash.bad/export", nil)
+	req := httptest.NewRequest(http.MethodGet, "/authoring/sources/instance/dash.bad/export", nil)
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -629,7 +691,7 @@ func TestAuthoringAPIExportSetsSafeDownloadFilename(t *testing.T) {
 
 func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	request := httptest.NewRequest(http.MethodGet, "/projects/sales/authoring/sources/project/project-sales/export", nil)
+	request := httptest.NewRequest(http.MethodGet, "/authoring/sources/project/project-sales/export", nil)
 	recording := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(recording, request)
 	if recording.Code != http.StatusOK {
@@ -645,7 +707,7 @@ func TestAuthoringAPIProjectExportUsesActiveSourceExport(t *testing.T) {
 
 func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 	app := &fakeHeadlessAuthoring{}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/commands", strings.NewReader(`{"kind":"setVisibility","dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"organization"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/commands", strings.NewReader(`{"kind":"setVisibility","dashboardId":"dash","draftId":"draft-1","expectedRevision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"},"setVisibility":{"visibility":"organization"}}`))
 	req.Header.Set("Idempotency-Key", "cmd-1")
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
@@ -659,7 +721,7 @@ func TestAuthoringAPIRejectsCommandActorSpoof(t *testing.T) {
 
 func TestAuthoringAPIPreviewSemanticErrorIsUnprocessable(t *testing.T) {
 	app := &fakeHeadlessAuthoring{previewErr: preview.ErrSemanticMismatch}
-	req := httptest.NewRequest(http.MethodPost, "/projects/sales/authoring/dashboards/dash/drafts/draft-1/preview", strings.NewReader(`{"pageId":"overview","revision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`))
+	req := httptest.NewRequest(http.MethodPost, "/authoring/dashboards/dash/drafts/draft-1/preview", strings.NewReader(`{"pageId":"overview","revision":{"revisionId":"rev-1","number":1,"contentHash":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}}`))
 	rec := httptest.NewRecorder()
 	testAuthoringRouter(app).ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {

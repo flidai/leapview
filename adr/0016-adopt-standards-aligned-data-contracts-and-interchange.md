@@ -784,9 +784,13 @@ qualified.
   qualified ADR-0017 cutover.
 - **IMPLEMENTED, qualification incomplete (FAI-616):** compilation selects a source root, discovers only conventional resource
   directories, and produces one atomic graph without `leapview.yaml`, a public
-  Project resource, or include-glob behavior. Residual Project-shaped
-  deployment scopes and missing control API implementations remain tracked by
-  FAI-616 and are not represented as complete here.
+  Project resource, or include-glob behavior. Query audit and dashboard
+  authoring are instance-bound, resolve the active internal serving scope, and
+  no longer expose Project identity in their generated response contracts.
+  Project-shaped deployment, release, managed-data, and delivery routes remain
+  legitimate operational target scopes, not authored Project resources.
+  Missing control API implementations remain tracked by FAI-616 and are not
+  represented as complete here.
 - **IMPLEMENTED, qualification incomplete (FAI-617/FAI-663):** identity fixtures prove candidate-wide cross-kind ID uniqueness, stable
   instance-qualified authored identities across source-root and file moves,
   kind-change rejection, tombstone non-reuse, rollback identity, and durable
