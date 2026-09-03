@@ -314,6 +314,7 @@ for (const viewport of [
           descriptionCount: rows.filter((row) => row.querySelector('.entity-list-description')).length,
           headers: Array.from(root.querySelectorAll('thead th')).map((header) => header.textContent?.trim()),
           owners: rows.map((row) => row.querySelectorAll('.entity-list-cell')[0]?.textContent?.trim()),
+          ownerAvatars: rows.map((row) => Boolean(row.querySelectorAll('.entity-list-cell')[0]?.querySelector('lv-user-avatar'))),
           statuses: rows.map((row) => row.querySelectorAll('.entity-list-cell')[1]?.textContent?.trim()),
           updated: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim()),
           updatedTitles: rows.map((row) => row.querySelectorAll('.entity-list-cell')[2]?.getAttribute('title')),
@@ -352,8 +353,9 @@ for (const viewport of [
         headers: ['Dashboard', 'Owner', 'Status', 'Updated', 'Actions'],
         owners: ['Analytics', 'Operations', 'Supply chain', '—'],
         statuses: ['Published', 'Published', 'Published', 'Published'],
-        updated: ['2 hr ago', '19 hr ago', '2 days ago', '—'],
+        updated: ['Aug 12', 'Aug 11', 'Aug 10', '—'],
         updatedTitles: [expect.stringContaining('Aug 12, 2026'), expect.stringContaining('Aug 11, 2026'), expect.stringContaining('Aug 10, 2026'), ''],
+        ownerAvatars: [true, true, true, false],
         listBackground: 'rgb(238, 242, 246)',
         hasIcons: true,
         popularityLabels: ['High popularity — top 10% in the last 30 days', 'Medium popularity — top 20% in the last 30 days', 'Low popularity — top 30% in the last 30 days', ''],
@@ -522,6 +524,41 @@ test('My dashboards removes the redundant owner column', async () => {
   }
 })
 
+test('owned dashboards use the signed-in display name and avatar instead of You', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-catalog-page'))
+    const owner = await page.locator('lv-catalog-page').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ page: {
+        ...element.page,
+        dashboards: element.page.dashboards.map((dashboard: any, index: number) => index === 0
+          ? { ...dashboard, catalogScope: 'mine', owner: 'You' }
+          : dashboard),
+      } })
+      await element.updateComplete
+      const cell = element.shadowRoot.querySelector('.entity-list-cell') as HTMLElement
+      const avatar = cell.querySelector('lv-user-avatar') as any
+      return {
+        text: cell.textContent?.trim(),
+        avatarName: avatar?.name,
+        avatarURL: avatar?.imageUrl,
+        title: cell.getAttribute('title'),
+      }
+    })
+
+    expect(owner).toEqual({
+      text: 'Jacob Nielsen',
+      avatarName: 'Jacob Nielsen',
+      avatarURL: '/profile/avatars/jacob/avatar-digest',
+      title: 'Jacob Nielsen',
+    })
+  } finally {
+    await page.close()
+  }
+})
+
 test('catalog discovery keeps source, sorting, and filters in one compact toolbar', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -677,7 +714,7 @@ test('updated sorting uses timestamps rather than relative labels', async () => 
   }
 })
 
-test('CSV export uses displayed values instead of internal sort keys', async () => {
+test('CSV export uses compact displayed dates instead of internal sort keys', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.clock.install({ time: new Date('2026-08-12T12:00:00Z') })
@@ -700,26 +737,24 @@ test('CSV export uses displayed values instead of internal sort keys', async () 
 
     expect(csv).toContain('"Analytics"')
     expect(csv).toContain('"Published"')
-    expect(csv).toContain('"2 hr ago"')
+    expect(csv).toContain('"Aug 12"')
     expect(csv).not.toContain('2026-08-12T09:42:00Z')
   } finally {
     await page.close()
   }
 })
 
-test('relative freshness labels update while the catalog remains open', async () => {
+test('updated dates include the year when it differs from the current year', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
-    await page.clock.install({ time: new Date('2026-08-12T10:41:00Z') })
+    await page.clock.install({ time: new Date('2027-01-02T10:41:00Z') })
     await page.goto(baseURL)
     await page.waitForFunction(() => customElements.get('lv-catalog-page'))
-    const freshness = () => page.locator('lv-catalog-page').evaluate((element: any) =>
+    const updated = () => page.locator('lv-catalog-page').evaluate((element: any) =>
       element.shadowRoot.querySelectorAll('.entity-list-cell')[2]?.textContent?.trim(),
     )
 
-    expect(await freshness()).toBe('59 min ago')
-    await page.clock.fastForward(60_000)
-    expect(await freshness()).toBe('1 hr ago')
+    expect(await updated()).toBe('Aug 12, 2026')
   } finally {
     await page.close()
   }
@@ -887,7 +922,7 @@ function testDocument(): string {
         </style>
       </head>
       <body>
-        <main data-signals="${escapeHTML(JSON.stringify({ page }))}">
+        <main data-signals="${escapeHTML(JSON.stringify({ page, chrome: { sidebar: { userName: 'Jacob Nielsen', userAvatarUrl: '/profile/avatars/jacob/avatar-digest' } } }))}">
           <lv-catalog-page></lv-catalog-page>
         </main>
         <script type="module" src="/catalog-page-under-test.js"></script>
