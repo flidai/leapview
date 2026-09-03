@@ -106,3 +106,23 @@ func TestPostgresCredentialBootstrapChainsS3Bootstrap(t *testing.T) {
 		t.Fatalf("S3 bootstrap statements = %#v", execer.statements)
 	}
 }
+
+func TestPostgresPoolS3ConfigResolvesOnlyAdmittedEncryptionReference(t *testing.T) {
+	cfg := config.Config{
+		ObjectStoreS3EncryptionKeyRef:      "logical-key",
+		ObjectStoreS3EncryptionProviderKey: "arn:aws:kms:eu-west-1:123:key/provider",
+	}
+	storage := postgresPoolS3Config(cfg, postgresCredentialAdmission{})
+	resolved, err := storage.ResolveEncryptionKey(t.Context(), "logical-key")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resolved != cfg.ObjectStoreS3EncryptionProviderKey {
+		t.Fatalf("resolved encryption key = %q", resolved)
+	}
+	for _, reference := range []string{"", "other-key"} {
+		if _, err := storage.ResolveEncryptionKey(t.Context(), reference); err == nil {
+			t.Fatalf("encryption reference %q unexpectedly resolved", reference)
+		}
+	}
+}

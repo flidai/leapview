@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
+	"github.com/flidai/leapview/internal/analytics/resulttier"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	projectartifact "github.com/flidai/leapview/internal/project/artifact"
@@ -30,7 +31,7 @@ func TestPrepareDashboardRejectsMissingOrInvalidActiveRuntimeEvidence(t *testing
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
 			builderCalled := false
-			builder := func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+			builder := func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error) {
 				builderCalled = true
 				return &dashboardruntime.Service{}, nil
 			}
@@ -43,7 +44,7 @@ func TestPrepareDashboardRejectsMissingOrInvalidActiveRuntimeEvidence(t *testing
 				Artifact:    artifact,
 				ManagedData: managed,
 			}
-			_, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "", "target-1", "seal-1")
+			_, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "", "target-1", "seal-1", nil)
 			if err == nil || !strings.Contains(err.Error(), "resolve runtime dependency evidence") {
 				t.Fatalf("prepareDashboard() error = %v, want dependency-evidence failure", err)
 			}
@@ -59,7 +60,7 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 	builderCalled := false
 	var gotEvidence bool
 	var gotTargetID, gotSnapshotSealID string
-	builder := func(_ context.Context, input dashboardruntimefactory.Input, _ *ducklake.Environment) (*dashboardruntime.Service, error) {
+	builder := func(_ context.Context, input dashboardruntimefactory.Input, _ *ducklake.Environment, _ resulttier.Tier) (*dashboardruntime.Service, error) {
 		builderCalled = true
 		evidence, ok := input.DependencyEvidence["semantic:sales"]
 		gotEvidence = ok && evidence.Available()
@@ -79,7 +80,7 @@ func TestPrepareDashboardUsesValidatedCandidateRuntimeEvidenceWithoutActiveSourc
 			Capabilities:       []runtimehost.RuntimeCapabilityEvidence{dependencyEvidenceTestCapability('1')},
 		},
 	}
-	if _, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "", "target-1", "seal-1"); err != nil {
+	if _, err := factory.prepareDashboard(t.Context(), input, builder, &ducklake.Environment{}, "", "target-1", "seal-1", nil); err != nil {
 		t.Fatalf("prepareDashboard() error = %v, want candidate evidence to remain valid", err)
 	}
 	if !builderCalled || !gotEvidence {

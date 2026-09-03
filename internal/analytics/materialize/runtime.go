@@ -18,6 +18,7 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	"github.com/flidai/leapview/internal/analytics/resulttier"
 	"github.com/flidai/leapview/internal/workload"
 )
 
@@ -32,6 +33,10 @@ type RuntimeConfig struct {
 	// acquire cross-generation reuse semantics.
 	QueryResultCache   *resultcache.Scope
 	ImmutableByteCache *resultcache.Scope
+	// ResultTier is an optional persistent/reusable result tier. It is queried
+	// only after the generation-local L1 miss and receives successful physical
+	// results on a best-effort basis.
+	ResultTier resulttier.Tier
 	// ExecutionScope owns mutable query, bundle, Arrow, and immutable-byte
 	// flights for one runtime generation. It must never be shared through the
 	// stable result partition scope.
@@ -199,6 +204,7 @@ func NewRuntimeView(ctx context.Context, config RuntimeConfig) (runtime *Runtime
 	if config.QueryResultCache != nil && config.OwnQueryCache {
 		cache.ownScope()
 	}
+	cache.tier = config.ResultTier
 	limits := config.ResultLimits
 	if limits.MaxRows <= 0 {
 		limits.MaxRows = 10000

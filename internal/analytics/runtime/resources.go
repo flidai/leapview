@@ -13,6 +13,7 @@ import (
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
 	"github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
+	"github.com/flidai/leapview/internal/analytics/resulttier"
 	"github.com/flidai/leapview/internal/platform/transaction"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
@@ -62,6 +63,10 @@ type ProjectRequest struct {
 	SkipInitialRefresh bool
 	ResultLimits       dataquery.ResultLimits
 	DependencyEvidence map[string]resultidentity.Evidence
+	// ResultTier is an optional durable result-cache tier (for example, the
+	// target-scoped L3 object cache). A nil value leaves the in-process cache
+	// behaviour unchanged.
+	ResultTier resulttier.Tier
 }
 
 // Project is the narrow analytical runtime consumed by dashboard adapters.

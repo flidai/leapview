@@ -430,8 +430,16 @@ func (c *Cache) Publish(ctx context.Context, in PublishInput) (cachepostgres.Man
 // ReadResult distinguishes a hit from a safe miss. Missing or corrupt objects
 // are misses after a durable invalidation signal has been recorded.
 type ReadResult struct {
-	Hit        bool
-	Body       []byte
+	Hit  bool
+	Body []byte
+	// Metadata is the verified canonical manifest metadata associated with the
+	// object. It is returned on hits so higher-level tiers can carry
+	// generation-neutral result metadata without embedding it in Arrow bytes.
+	Metadata json.RawMessage
+	// Admission carries the exact manifest and lookup key validated for a hit.
+	// Consumers that reject semantic payloads can retire this one manifest
+	// without broad namespace invalidation.
+	Admission  AdmissionSnapshot
 	Reconciled bool
 	MissReason string
 }
@@ -478,7 +486,7 @@ func (c *Cache) Read(ctx context.Context, manifest cachepostgres.Manifest, looku
 	if err != nil {
 		return c.reconcileMiss(ctx, manifest, err.Error())
 	}
-	return ReadResult{Hit: true, Body: body}, nil
+	return ReadResult{Hit: true, Body: body, Metadata: metadata, Admission: AdmissionSnapshot{Key: lookupKey, Manifest: manifest}}, nil
 }
 
 // LookupAndRead is the explicit round-trip variant. Read itself never calls
@@ -501,6 +509,23 @@ func (c *Cache) LookupAndRead(ctx context.Context, key cachepostgres.ManifestKey
 // PostgreSQL round trip.
 func (c *Cache) ReadSnapshot(ctx context.Context, snapshot AdmissionSnapshot) (ReadResult, error) {
 	return c.Read(ctx, snapshot.Manifest, snapshot.Key)
+}
+
+// Reject retires one previously validated admitted manifest after a higher
+// tier detects semantic corruption (for example invalid Arrow IPC or result
+// metadata). The admission snapshot is checked again so callers cannot retire
+// an unrelated manifest by swapping keys or namespaces.
+func (c *Cache) Reject(ctx context.Context, snapshot AdmissionSnapshot, reason string) (ReadResult, error) {
+	if c == nil || !c.enabled {
+		return ReadResult{}, ErrDisabled
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if snapshot.Manifest.Key != snapshot.Key || !sameNamespace(snapshot.Key, c.namespace) || snapshot.Manifest.StorageSecurityDomain != c.securityDomain || snapshot.Manifest.State != cachepostgres.StateAdmitted {
+		return ReadResult{}, fmt.Errorf("%w: rejection admission snapshot", ErrSecurityDomain)
+	}
+	return c.reconcileMiss(ctx, snapshot.Manifest, reason)
 }
 
 // Get is a compact helper for callers that only need bytes and a hit bit. It

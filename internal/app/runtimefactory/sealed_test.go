@@ -10,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/dataquery"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
+	"github.com/flidai/leapview/internal/analytics/resulttier"
 	"github.com/flidai/leapview/internal/analytics/sealedcatalog"
 	reportdef "github.com/flidai/leapview/internal/dashboard/report"
 	dashboardresolver "github.com/flidai/leapview/internal/dashboard/resolver"
@@ -51,7 +52,7 @@ func TestSealedFactoryFailsClosedWhenDeliveryRootMissing(t *testing.T) {
 	want := errors.New("delivery root missing")
 	factory := NewSealedFactory(FactoryConfig{}, func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) {
 		return SealedServingRoot{}, want
-	}, structObjectStore{}, structLeases{}, func(context.Context, sealedcatalog.Artifact, catalogartifact.LeaseInput) error { return nil }, func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+	}, structObjectStore{}, structLeases{}, func(context.Context, sealedcatalog.Artifact, catalogartifact.LeaseInput) error { return nil }, func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error) {
 		return nil, errors.New("unexpected dashboard access")
 	})
 	_, err := factory.(interface {
@@ -65,7 +66,7 @@ func TestSealedFactoryFailsClosedWhenDeliveryRootMissing(t *testing.T) {
 func TestSealedFactoryRejectsPersistedArtifactMismatch(t *testing.T) {
 	factory := NewSealedFactory(FactoryConfig{}, func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) {
 		return SealedServingRoot{ServingStateID: "state-1", ServingArtifactID: "artifact-other", ServingArtifactDigest: "sha256:" + strings.Repeat("a", 64)}, nil
-	}, structObjectStore{}, structLeases{}, func(context.Context, sealedcatalog.Artifact, catalogartifact.LeaseInput) error { return nil }, func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+	}, structObjectStore{}, structLeases{}, func(context.Context, sealedcatalog.Artifact, catalogartifact.LeaseInput) error { return nil }, func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error) {
 		return nil, errors.New("unexpected dashboard access")
 	})
 	input := runtimehost.RuntimeInput{State: servingstate.State{ID: "state-1", ProjectID: projectgraph.ResourceID("project-1")}, Artifact: servingstate.Artifact{ID: "artifact-expected", ServingStateID: "state-1", Digest: "sha256:" + strings.Repeat("a", 64)}}

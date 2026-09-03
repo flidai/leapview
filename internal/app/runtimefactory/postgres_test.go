@@ -11,15 +11,46 @@ import (
 	"testing"
 	"time"
 
+	analyticscache "github.com/flidai/leapview/internal/analytics/cache"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
+	"github.com/flidai/leapview/internal/analytics/resultcache"
+	"github.com/flidai/leapview/internal/analytics/resulttier"
+	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/flidai/leapview/pkg/arrowresult"
 )
+
+type runtimeResultTierStub struct{}
+
+func (*runtimeResultTierStub) Lookup(context.Context, analyticscache.Key) (*arrowresult.Result, resultcache.Metadata, resulttier.Admission, bool, error) {
+	return nil, resultcache.Metadata{}, nil, false, nil
+}
+
+func (*runtimeResultTierStub) Store(context.Context, analyticscache.Key, *arrowresult.Result, resultcache.Metadata) error {
+	return nil
+}
+
+func TestProjectFactoryWithResultTierInjectsCapability(t *testing.T) {
+	tier := &runtimeResultTierStub{}
+	var received resulttier.Tier
+	base := analyticsruntime.ProjectFactoryFunc(func(_ context.Context, request analyticsruntime.ProjectRequest) (analyticsruntime.Project, error) {
+		received = request.ResultTier
+		return nil, nil
+	})
+	wrapped := projectFactoryWithResultTier(base, tier)
+	if _, err := wrapped.OpenProject(t.Context(), analyticsruntime.ProjectRequest{}); err != nil {
+		t.Fatal(err)
+	}
+	if received != tier {
+		t.Fatalf("injected tier = %#v, want %#v", received, tier)
+	}
+}
 
 type duckLakeRuntimeAttachCheckerFunc func(context.Context, ducklakepostgres.RuntimeAttachInput) (ducklakepostgres.RuntimeAttachEligibility, error)
 
@@ -48,7 +79,7 @@ func TestPostgresSealedFactoryRejectsMissingRuntimeAttachCheckerBeforeResolveOrL
 			resolved = true
 			return SealedServingRoot{}, nil
 		},
-		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error) {
 			return nil, errors.New("unexpected dashboard access")
 		},
 		SnapshotLeases: leases,
@@ -373,7 +404,7 @@ func TestPostgresSealedFactoryAcquiresAuthorizesAndReleasesOnAttachFailure(t *te
 	var authorization PostgresServingAuthorizationInput
 	factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{
 		Resolve: func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) { return root, nil },
-		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+		BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error) {
 			buildCalled = true
 			return nil, errors.New("unexpected dashboard access")
 		},
@@ -497,7 +528,7 @@ func TestPostgresSealedFactoryRejectsIncompleteOrMixedSealIdentityBeforeLease(t 
 			leases := &leaseProbe{}
 			factory := NewPostgresSealedFactory(PostgresSealedFactoryConfig{
 				Resolve: func(context.Context, runtimehost.RuntimeInput) (SealedServingRoot, error) { return root, nil },
-				BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error) {
+				BuildRuntime: func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error) {
 					return nil, errors.New("unexpected dashboard access")
 				},
 				SnapshotLeases: leases,

@@ -24,6 +24,7 @@ import (
 	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	physicalpoolsqlite "github.com/flidai/leapview/internal/analytics/physicalpool/sqlite"
+	"github.com/flidai/leapview/internal/analytics/resulttier"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	"github.com/flidai/leapview/internal/analytics/sealedcatalog"
 	"github.com/flidai/leapview/internal/app/gcadapter"
@@ -108,7 +109,7 @@ type SealedRootResolver func(context.Context, runtimehost.RuntimeInput) (SealedS
 // SealedDashboardRuntimeBuilder opens dashboard data runtimes against the
 // supplied immutable read-only environment. It must not retain the
 // environment after the returned dashboard service is closed.
-type SealedDashboardRuntimeBuilder func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error)
+type SealedDashboardRuntimeBuilder func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error)
 
 // SealedAuthorizationInput is the small live authorization surface needed
 // before a catalog query lease is acquired. It intentionally contains only
@@ -168,7 +169,7 @@ func NewSQLiteSealedFactory(config SQLiteSealedFactoryConfig) (runtimehost.Runti
 		}
 		return config.Authorize(ctx, SealedAuthorizationInput{ProjectID: input.State.ProjectID.String(), Environment: string(input.State.Environment), TargetID: config.TargetID, GenerationID: lease.GenerationID, SealID: artifact.SealID, CandidateID: lease.CandidateID, OwnerID: ownerID})
 	}
-	buildRuntime := func(ctx context.Context, input dashboardruntimefactory.Input, environment *ducklake.Environment) (*dashboardruntime.Service, error) {
+	buildRuntime := func(ctx context.Context, input dashboardruntimefactory.Input, environment *ducklake.Environment, _ resulttier.Tier) (*dashboardruntime.Service, error) {
 		return dashboardmodule.NewRuntimeFactory(dashboardmodule.RuntimeFactoryConfig{
 			Projects: config.ProjectRuntimeFactory(environment), MaxRows: config.DashboardMaxRows, MaxBytes: config.DashboardMaxBytes,
 		})(ctx, input)
@@ -292,7 +293,7 @@ func (f sealedServingFactory) PrepareSealed(ctx context.Context, input runtimeho
 	closeReader := func() error { return reader.Close() }
 	// Reuse the normal project artifact extraction and authorization compiler,
 	// but direct dashboard query runtimes at this reader's immutable catalog.
-	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, reader.Environment(), "", root.TargetID, root.SealID)
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, reader.Environment(), "", root.TargetID, root.SealID, nil)
 	if err != nil {
 		_ = closeReader()
 		return nil, err

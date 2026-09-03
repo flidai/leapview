@@ -3306,6 +3306,14 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_QUERY_CACHE_L3_ENABLED": {
+      "default": "false",
+      "description": "Enable the optional target-scoped durable query-result object cache (requires an admitted S3 physical pool).",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "serve"
+    },
     "LEAPVIEW_QUERY_CACHE_NODE_MAX_BYTES": {
       "default": "536870912",
       "description": "Maximum conservatively retained Arrow cache bytes for the node.",
