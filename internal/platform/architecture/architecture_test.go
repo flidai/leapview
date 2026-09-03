@@ -240,6 +240,11 @@ func TestSQLiteFixtureBoundaryIsExplicitAndNonCompositional(t *testing.T) {
 			t.Errorf("removed SQLite adapter %q remains in fixture allowlist", removed)
 		}
 	}
+	for _, path := range SQLiteFixtureFilePaths {
+		if !IsSQLiteFixtureFile(path) {
+			t.Errorf("SQLite fixture file %q is not recognized as a retained fixture", path)
+		}
+	}
 
 	source, sourceOK := ClassifyPackage("internal/app")
 	target, targetOK := ClassifyPackage("internal/deployment/sqlite")
@@ -1711,7 +1716,7 @@ func TestProductionSourcesDoNotImportSQLiteAdapters(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
 		for _, imported := range file.imports {
 			if imported == "modernc.org/sqlite" {
-				if file.path != "internal/platform/store.go" {
+				if !IsSQLiteFixtureFile(file.path) {
 					t.Errorf("%s imports SQLite driver outside the platform Store fixture", file.path)
 				}
 				continue
@@ -4573,8 +4578,7 @@ func isSQLDBAllowedFile(file goFile) bool {
 		strings.HasPrefix(file.pkgDir, "internal/admin/storage") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/duckdb") ||
 		strings.HasPrefix(file.pkgDir, "internal/analytics/ducklake") ||
-		IsSQLiteFixturePackage(file.pkgDir) ||
-		file.path == "internal/platform/store.go" {
+		IsSQLiteFixtureFile(file.path) {
 		return true
 	}
 	return false

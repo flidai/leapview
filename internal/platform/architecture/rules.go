@@ -157,6 +157,12 @@ var SQLiteFixturePackagePrefixes = []string{
 	"internal/platform/jobs/sqlite",
 }
 
+// SQLiteFixtureFilePaths contains the one retained SQLite implementation that
+// lives in the platform package rather than an explicit /sqlite subpackage.
+// The Store is only a local/evaluation fixture; production composition must
+// never construct it.
+var SQLiteFixtureFilePaths = []string{"internal/platform/store.go"}
+
 // IsSQLitePackage reports whether path contains a path-segment named sqlite.
 // Checking segments avoids treating ordinary files such as catalog.sqlite as
 // package dependencies.
@@ -180,6 +186,18 @@ func IsSQLiteFixturePackage(path string) bool {
 		}
 	}
 	return false
+}
+
+// IsSQLiteFixtureFile reports whether path is an explicitly retained fixture
+// source file or belongs to one of the fixture adapter packages.
+func IsSQLiteFixtureFile(path string) bool {
+	path = strings.Trim(path, "/")
+	for _, fixturePath := range SQLiteFixtureFilePaths {
+		if path == fixturePath {
+			return true
+		}
+	}
+	return IsSQLiteFixturePackage(path)
 }
 
 func IsCompositionContractImport(packagePath string) bool {
