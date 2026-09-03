@@ -469,6 +469,9 @@ func (c *Controller) runQualificationRecovery(
 	if pendingPublication.Status != "pending" {
 		return report, fmt.Errorf("recovery publication status %q is not pending", pendingPublication.Status)
 	}
+	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
+		return report, err
+	}
 	if err := approveQualificationPublication(
 		ctx,
 		client,
@@ -480,32 +483,17 @@ func (c *Controller) runQualificationRecovery(
 	); err != nil {
 		return report, err
 	}
-	if err := c.armQualificationActivationBarrier(ctx, options.ContainerID, workDir); err != nil {
-		return report, err
-	}
-	deploymentLog := filepath.Join(options.EvidenceDir, "recovery-deployment-activation.log")
-	deploymentCommand, err := c.startQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, options.Target, deploymentLog,
-		"leapview", "publish", deploymentCandidate.ID,
-		"--format", "json",
-	)
-	if err != nil {
-		return report, err
-	}
 	barrierCtx, cancelBarrier := qualificationContext(ctx, qualificationRecoveryActivationBarrierTimeout)
 	err = c.waitForQualificationActivationBarrier(barrierCtx, options.ContainerID, workDir)
 	cancelBarrier()
 	if err != nil {
-		_ = deploymentCommand.Stop()
 		return report, fmt.Errorf("wait for canonical publication activation barrier: %w", err)
 	}
 	if err := c.killAndRecoverQualificationCandidate(
 		ctx,
 		options.ContainerID,
 		report.Stage,
-		func() { _ = deploymentCommand.Stop() },
 	); err != nil {
-		_ = deploymentCommand.Stop()
 		return report, err
 	}
 	recoveredEvidence, err := qualificationPublicationEvidence(
@@ -515,27 +503,30 @@ func (c *Controller) runQualificationRecovery(
 	if err != nil {
 		return report, err
 	}
-	if recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusPending {
+	if recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusPending &&
+		recoveredEvidence.Status != deploymentgen.DeliveryPublicationStatusCommitted {
 		return report, fmt.Errorf(
-			"canonical publication reached %q instead of preserving the interrupted pending request",
+			"interrupted publication reached unexpected status %q after recovery",
 			recoveredEvidence.Status,
 		)
 	}
-	committedOutput, err := c.runQualificationClientCommand(
-		ctx, recoveryClient, options.PublisherToken, options.Target,
-		"leapview", "publish", deploymentCandidate.ID,
-		"--format", "json",
+	// The approval decision already enqueued the only canonical activation
+	// intent. After a process loss, wait for that exact leased job to be
+	// reclaimed; issuing publish again would correctly create a distinct
+	// operator publication attempt rather than recovering this one.
+	committedPublication, err := waitQualificationNativePublication(
+		ctx,
+		client,
+		qualificationAuthoringOptions{Target: apiRoot, ProjectID: options.ProjectID},
+		options.PublisherToken,
+		pendingPublication,
 	)
 	if err != nil {
-		return report, err
-	}
-	committedPublication, err := parseQualificationPublication(string(committedOutput), deploymentCandidate)
-	if err != nil {
-		return report, err
+		return report, fmt.Errorf("wait for canonical interrupted publication recovery: %w", err)
 	}
 	if committedPublication.Status != "committed" ||
 		committedPublication.DeploymentID != pendingPublication.DeploymentID {
-		return report, fmt.Errorf("canonical publication retry did not commit the exact interrupted publication")
+		return report, fmt.Errorf("recovery did not commit the exact interrupted publication")
 	}
 	deploymentEvidence, err := waitForQualificationPublicationEvidence(
 		ctx, client, apiRoot, options.ProjectID, options.PublisherToken,
@@ -545,7 +536,7 @@ func (c *Controller) runQualificationRecovery(
 		return report, err
 	}
 	if deploymentEvidence.GenerationId != committedPublication.GenerationID {
-		return report, fmt.Errorf("canonical publication retry returned a different generation")
+		return report, fmt.Errorf("recovered publication returned a different generation")
 	}
 	deploymentEvents, err := json.Marshal(deploymentEvidence)
 	if err != nil {

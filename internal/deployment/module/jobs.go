@@ -52,10 +52,15 @@ type JobConfig struct {
 	Logger              *slog.Logger
 }
 
+// Native activation is continuously renewed while it runs. Keeping the
+// individual lease bounded to one minute limits failover delay after a worker
+// is lost without imposing a one-minute execution deadline.
+const activationJobLeaseTimeout = time.Minute
+
 func (m *Module) JobHandlers() []jobs.Handler {
 	return []jobs.Handler{
-		jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: 5 * time.Minute},
-		jobs.HandlerFunc{JobKind: "delivery.approval.activate", Run: m.activateApprovedPublication, ExecutionLeaseTimeout: 5 * time.Minute},
+		jobs.HandlerFunc{JobKind: m.activationExecution().JobKind, Run: m.activate, ExecutionLeaseTimeout: activationJobLeaseTimeout},
+		jobs.HandlerFunc{JobKind: "delivery.approval.activate", Run: m.activateApprovedPublication, ExecutionLeaseTimeout: activationJobLeaseTimeout},
 	}
 }
 

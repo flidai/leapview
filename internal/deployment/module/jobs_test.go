@@ -36,6 +36,22 @@ func TestActivationWorkflowDistinguishesImmediateAndApprovalGatedStarts(t *testi
 	}
 }
 
+func TestActivationJobsBoundCrashRecoveryLease(t *testing.T) {
+	handlers := (&Module{}).JobHandlers()
+	if len(handlers) != 2 {
+		t.Fatalf("activation handlers = %d, want 2", len(handlers))
+	}
+	for _, handler := range handlers {
+		lease, ok := handler.(interface{ LeaseTimeout() time.Duration })
+		if !ok {
+			t.Fatalf("activation handler %q has no lease policy", handler.Kind())
+		}
+		if lease.LeaseTimeout() != activationJobLeaseTimeout {
+			t.Fatalf("activation handler %q lease = %v, want %v", handler.Kind(), lease.LeaseTimeout(), activationJobLeaseTimeout)
+		}
+	}
+}
+
 type bootstrapPolicyStub struct {
 	policy deployment.BootstrapActivationPolicy
 }
