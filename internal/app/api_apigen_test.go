@@ -25,7 +25,7 @@ import (
 	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 )
 
-const expectedAPIGenAggregateOperationCount = 197
+const expectedAPIGenAggregateOperationCount = 213
 
 func TestAPIGenUsesTypedClientGenerator(t *testing.T) {
 	root := projectRoot(t)
@@ -242,7 +242,7 @@ func TestAPIGenAccessCapabilityOwnsItsGeneratedPackage(t *testing.T) {
 
 func TestAPIGenAccessCapabilityOwnsItsOperationSurface(t *testing.T) {
 	accessContracts := accessgen.GetAPIGenOperationContracts()
-	if got, want := len(accessContracts), 58; got != want {
+	if got, want := len(accessContracts), 74; got != want {
 		t.Fatalf("Access generated operations = %d, want %d", got, want)
 	}
 	allowedTags := map[string]bool{"Access": true, "Audit": true, "Current User": true}
@@ -1034,7 +1034,7 @@ func TestAPIGenOperationExtensions(t *testing.T) {
 			}
 			continue
 		}
-		if authenticatedOperations[operationID] {
+		if authenticatedOperations[operationID] || slices.Contains(semanticAttributeAuthenticatedOperations, operationID) {
 			if got := authz["mode"]; got != "authenticated" {
 				t.Fatalf("%s x-authz mode = %#v, want authenticated", operationID, got)
 			}
