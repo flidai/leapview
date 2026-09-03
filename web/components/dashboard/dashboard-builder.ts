@@ -3164,6 +3164,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
 
     if (!this.commandPending) return
     if (detail?.type === 'finished') {
+      this.selectPendingAddedVisual(this.builder, true)
       this.commandPending = false
       this.activeCommandAction = ''
       this.pendingHistorySnapshot = null
@@ -3173,6 +3174,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     }
     const commandFailure = browserCommandFailure(event, 'Dashboard builder action')
     if (!commandFailure) return
+    const failedAction = this.activeCommandAction
     this.commandPending = false
     this.activeCommandAction = ''
     if (this.pendingHistorySnapshot) {
@@ -3195,7 +3197,14 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       this.localVisualID = this.pendingRemovePage.visualID
       this.pendingRemovePage = null
     }
-    this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
+    if (failedAction === 'set_placements') {
+      // A rejected placement leaves GridStack's mutable node coordinates
+      // ahead of the canonical builder signal. Recreate it from the authored
+      // layout so the next interaction cannot commit stale coordinates.
+      this.resetGridStackToCanonicalLayout()
+    } else {
+      this.setGridEditingEnabled(Boolean(this.builder?.capabilities.canEdit))
+    }
     this.terminalFailure = commandFailure
     this.requestUpdate()
   }
@@ -3206,6 +3215,21 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       if (generation === inFlight.generation) this.filterOptionGenerations.set(key, generation + 1)
     }
     this.filterOptionInFlight.clear()
+  }
+
+  private resetGridStackToCanonicalLayout(): void {
+    const builder = this.builder
+    const page = builder ? this.selectedPage(builder) : undefined
+    this.destroyGridStack()
+    if (!page) return
+    for (const component of [...page.visuals, ...(page.filterComponents ?? [])]) {
+      const tile = this.shadowRoot?.querySelector<HTMLElement>(`[gs-id="${CSS.escape(component.id)}"]`)
+      if (!tile) continue
+      tile.setAttribute('gs-x', String(Math.max(0, component.placement.col - 1)))
+      tile.setAttribute('gs-y', String(Math.max(0, component.placement.row - 1)))
+      tile.setAttribute('gs-w', String(Math.max(1, component.placement.colSpan)))
+      tile.setAttribute('gs-h', String(Math.max(1, component.placement.rowSpan)))
+    }
   }
 
   private readonly reloadAfterFailure = (): void => {
@@ -4186,9 +4210,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
       const datasetFields = new Map<string, DashboardBuilderFieldSignal>()
       for (const field of dataset.fields) {
         const rolesKey = [...(field.roles ?? [])].sort().join(',')
-        const labelKey = `${field.kind}:${rolesKey}:${field.label.trim().toLocaleLowerCase()}`
-        const existing = datasetFields.get(labelKey)
-        if (!existing || this.fieldCatalogScore(field) > this.fieldCatalogScore(existing)) datasetFields.set(labelKey, field)
+        const fieldKey = `${field.kind}:${rolesKey}:${field.id}`
+        const existing = datasetFields.get(fieldKey)
+        if (!existing || this.fieldCatalogScore(field) > this.fieldCatalogScore(existing)) datasetFields.set(fieldKey, field)
       }
       for (const field of datasetFields.values()) {
         const rolesKey = [...(field.roles ?? [])].sort().join(',')
@@ -4668,6 +4692,9 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.addingSlicer = false
     this.visualType = type
     if (!visual) {
+      this.selectedFilterID = ''
+      this.selectedFilterComponentID = ''
+      this.editingPage = false
       this.addVisual(type)
       return
     }
@@ -4832,6 +4859,10 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     const field = this.draggedField(event, builder)
     this.clearDraggedField()
     if (!page || !visual || !field || !this.fieldCompatibleWithVisual(field, visual)) return
+    this.addingSlicer = false
+    this.selectedFilterID = ''
+    this.selectedFilterComponentID = ''
+    this.editingPage = false
     this.localVisualID = visual.id
     this.emitCommand('assign_field', { pageId: page.id, visualId: visual.id, fieldId: field.id, role: this.roleForField(field, visual) })
   }
@@ -5496,7 +5527,7 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     this.pendingRemovePage = null
   }
 
-  private selectPendingAddedVisual(builder: DashboardBuilderSignal | null): void {
+  private selectPendingAddedVisual(builder: DashboardBuilderSignal | null, settle = false): void {
     const pending = this.pendingAddVisual
     if (!pending || !builder) return
     if (this.status.error) {
@@ -5506,10 +5537,16 @@ class LeapViewDashboardBuilder extends DatastarLit(LitElement) {
     if (pending.revision === this.revisionKey(builder)) return
     const page = builder.pages.find((item) => item.id === pending.pageID)
     const addedVisual = page?.visuals.find((visual) => !pending.visualIDs.has(visual.id))
+    if (!page || !addedVisual) {
+      if (settle) this.pendingAddVisual = null
+      return
+    }
     this.pendingAddVisual = null
-    if (!page || !addedVisual) return
     this.localPageID = page.id
     this.localVisualID = addedVisual.id
+    this.addingSlicer = false
+    this.selectedFilterID = ''
+    this.selectedFilterComponentID = ''
     this.editingPage = false
     if (this.visualCatalogEntry(addedVisual.type, builder)) this.visualType = addedVisual.type
   }

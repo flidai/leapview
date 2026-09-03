@@ -443,6 +443,11 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
       const root = element.shadowRoot
       const list = root.querySelector('lv-entity-list') as any
       await list.updateComplete
+      let copiedLink = ''
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText: async (value: string) => { copiedLink = value } },
+      })
       const trigger = list.querySelector('.entity-list-row-action') as HTMLButtonElement
       trigger.click()
       await element.updateComplete
@@ -450,7 +455,12 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
       const menuLabels = Array.from(menu.querySelectorAll('[role="menuitem"]')).map((item: Element) => item.textContent?.trim())
       const rowHref = list.querySelector('.entity-list-identity')?.getAttribute('href')
       const editHref = menu.querySelector('a[role="menuitem"]')?.getAttribute('href')
-      ;(menu.querySelector('[data-action="details"]') as HTMLButtonElement).click()
+      ;(menu.querySelector('[data-action="copy-link"]') as HTMLButtonElement).click()
+      await new Promise<void>((resolve) => queueMicrotask(resolve))
+      trigger.click()
+      await element.updateComplete
+      const reopenedMenu = root.querySelector('[role="menu"]') as HTMLElement
+      ;(reopenedMenu.querySelector('[data-action="details"]') as HTMLButtonElement).click()
       await element.updateComplete
       const drawer = root.querySelector('.catalog-details-drawer') as HTMLElement
       const details = Array.from(drawer.querySelectorAll('dt, dd')).map((item: Element) => item.textContent?.trim())
@@ -463,6 +473,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
         menuLabels,
         rowHref,
         editHref,
+        copiedLink,
         title,
         description,
         details,
@@ -474,6 +485,7 @@ test('dashboard overflow actions open a permission-aware menu and details drawer
     expect(state.menuLabels).toEqual(['Edit dashboard', 'View details', 'Copy link', 'Archive'])
     expect(state.rowHref).toBe('/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone')
     expect(state.editHref).toBe('/dashboards/executive-sales/edit?draft=draft-one')
+    expect(state.copiedLink).toBe(`${baseURL}/dashboards/executive-sales/preview?draft=draft-one&page=overview&revisionId=revision-one&revisionNumber=1&revisionContentHash=sha256%3Aone`)
     expect(state.title).toBe('Executive Sales Dashboard')
     expect(state.description).toBe('Fixture report')
     expect(state.details).toEqual(expect.arrayContaining(['Data model', 'Olist model', 'Owner', 'Analytics', 'Status', 'Published', 'Pages', '1']))

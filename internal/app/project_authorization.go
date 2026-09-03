@@ -278,6 +278,7 @@ func protectProjectResources(
 
 type repositoryDashboardAuthorizer interface {
 	AuthorizeDashboardEdit(context.Context, projectgraph.ResourceID, string, authoring.DashboardID) error
+	AuthorizeDashboardManage(context.Context, projectgraph.ResourceID, string, authoring.DashboardID) error
 }
 
 // protectProjectAuthoringResource authenticates and authorizes builder routes
@@ -291,7 +292,7 @@ func protectProjectAuthoringResource(
 	capability access.Capability,
 	next http.HandlerFunc,
 ) http.HandlerFunc {
-	if accessModule == nil || runtimeHost == nil || authorizer == nil || capability != access.CapabilityResourceEdit {
+	if accessModule == nil || runtimeHost == nil || authorizer == nil || (capability != access.CapabilityResourceEdit && capability != access.CapabilityResourceManage) {
 		return func(w http.ResponseWriter, _ *http.Request) {
 			http.Error(w, http.StatusText(http.StatusServiceUnavailable), http.StatusServiceUnavailable)
 		}
@@ -316,7 +317,13 @@ func protectProjectAuthoringResource(
 			next(w, r)
 			return
 		}
-		if err := authorizer.AuthorizeDashboardEdit(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID)); err != nil {
+		var err error
+		if capability == access.CapabilityResourceManage {
+			err = authorizer.AuthorizeDashboardManage(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
+		} else {
+			err = authorizer.AuthorizeDashboardEdit(r.Context(), projectID, principal.ID, authoring.DashboardID(dashboardID))
+		}
+		if err != nil {
 			if errors.Is(err, access.ErrForbidden) {
 				uitransport.WriteBrowserAuthorizationError(w, r, http.StatusForbidden)
 				return

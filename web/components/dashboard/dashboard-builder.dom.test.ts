@@ -449,6 +449,54 @@ test('dashboard builder creates a slicer from one compatible dimension', async (
   }
 })
 
+test('dashboard builder leaves slicer mode when adding a chart visual', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      const pages = structuredClone(element.builder.pages)
+      pages[0].filterComponents = [{ id: 'status-slicer', filterId: 'status-filter', label: 'Status', controlType: 'multiSelect', placement: { col: 7, row: 1, colSpan: 3, rowSpan: 2 } }]
+      mergePatch({ builder: {
+        filters: [{ id: 'status-filter', label: 'Status', dimension: 'orders.status', controlType: 'multiSelect', required: false, readerEditable: true, targets: [], bindings: [{ id: 'status-filter', scope: 'report', targets: [] }] }],
+        pages,
+        selectedVisualId: '',
+      } })
+      await element.updateComplete
+      ;(root.querySelector('.filter-component') as HTMLElement).click()
+      await element.updateComplete
+      const commands: Record<string, unknown>[] = []
+      element.addEventListener('lv-builder-command', (event: CustomEvent) => commands.push(event.detail))
+      ;(root.querySelector('button[data-visual-picker-type="line"]') as HTMLButtonElement).click()
+      await element.updateComplete
+      const nextPages = structuredClone(element.builder.pages)
+      nextPages[0].visuals.push({
+        id: 'new-line', visualId: 'new-line-query', title: 'Line chart', titleVisible: true, type: 'line', legendVisible: true, axisVisible: true, dataLabelsVisible: false,
+        formatOptions: [], placement: { col: 1, row: 7, colSpan: 6, rowSpan: 5 }, slots: [], filters: [],
+      })
+      mergePatch({ builder: { pages: nextPages, revision: { id: 'rev-8', number: 8, contentHash: 'sha256:line' } } })
+      await element.updateComplete
+      await element.updateComplete
+      return {
+        selectedVisual: root.querySelector('.visual[data-selected="true"]')?.getAttribute('gs-id'),
+        selectedSlicer: root.querySelector('.filter-component')?.getAttribute('data-selected'),
+        inspectorTitle: root.querySelector('.inspector-title .pane-title')?.textContent?.trim(),
+        commands,
+      }
+    })
+    expect(state.selectedVisual).toBe('new-line')
+    expect(state.selectedSlicer).toBe('false')
+    expect(state.inspectorTitle).toBe('Line chart')
+    expect(state.commands).toHaveLength(1)
+    expect(state.commands[0]).toMatchObject({ action: 'add_visual', type: 'line' })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder changes the selected visual type without creating a visual', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1436,6 +1484,32 @@ test('dashboard builder emits one canonical atomic placement command after a Gri
   }
 })
 
+test('dashboard builder restores GridStack nodes from canonical placements after a failed save', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const state = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      await element.updateComplete
+      const root = element.shadowRoot
+      const canvas = root.querySelector('.canvas') as any
+      const visual = root.querySelector('.visual') as any
+      canvas.gridstack.update(visual, { x: 4, y: 6 })
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      const moved = { x: visual.gridstackNode?.x, y: visual.gridstackNode?.y }
+      document.dispatchEvent(new CustomEvent('datastar-fetch', { detail: { type: 'error', el: element, argsRaw: { status: 503 } } }))
+      await element.updateComplete
+      await element.updateComplete
+      const restored = root.querySelector('.visual') as any
+      return { moved, restored: { x: restored.gridstackNode?.x, y: restored.gridstackNode?.y } }
+    })
+    expect(state.moved).toEqual({ x: 4, y: 6 })
+    expect(state.restored).toEqual({ x: 0, y: 0 })
+  } finally {
+    await page.close()
+  }
+})
+
 test('dashboard builder supports keyboard move and resize through the same atomic placement path', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
@@ -1917,6 +1991,28 @@ test('dashboard builder presents an entity-first field catalog with role filters
     expect(state.unsupportedFieldLabels).toEqual(['Total', 'Payload'])
     expect(state.timeOnlyEntities).toEqual([{ id: 'orders', groups: ['time'] }])
     expect(state.timeOnlyFields).toEqual(['Ordered at'])
+  } finally {
+    await page.close()
+  }
+})
+
+test('dashboard builder preserves distinct semantic fields that share a display label', async () => {
+  const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-dashboard-builder'))
+    const labels = await page.locator('lv-dashboard-builder').evaluate(async (element: any) => {
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({ builder: { semanticModel: { id: 'commerce', title: 'Orders', datasets: [{
+        id: 'orders', title: 'Orders', fields: [
+          { id: 'orders.status', datasetId: 'orders', label: 'Status', kind: 'dimension', roles: ['dimension'], dataType: 'string' },
+          { id: 'orders.shipping_status', datasetId: 'orders', label: 'Status', kind: 'dimension', roles: ['dimension'], dataType: 'string' },
+        ],
+      }] } } })
+      await element.updateComplete
+      return Array.from(element.shadowRoot.querySelectorAll('.data-pane .field-entity .field-label')).map((field: Element) => field.textContent?.trim())
+    })
+    expect(labels).toEqual(['Status', 'Status'])
   } finally {
     await page.close()
   }

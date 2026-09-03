@@ -69,6 +69,27 @@ func TestCatalogOperationsNormalizeProjectAndReleaseOneLeaseEach(t *testing.T) {
 	}
 }
 
+func TestAuthorizeDashboardManageUsesArchivePolicy(t *testing.T) {
+	repo := &applicationRepository{lifecycle: authoring.DashboardLifecycle{
+		ProjectID: "sales", ID: "dashboard-owned", OwnerPrincipalID: "owner", SemanticModel: "sales-model",
+		Visibility: authoring.VisibilityPrivate, Status: authoring.LifecycleStatusDraft,
+	}}
+	auth := &applicationAuthorizer{}
+	app, err := application.New(application.Options{
+		Authoring: newApplicationService(t, repo, auth), Repository: repo, Authorizer: auth,
+		AcquireRuntime: func(context.Context) (projectruntime.Lease, error) { return nil, nil },
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := app.AuthorizeDashboardManage(t.Context(), "sales", "owner", "dashboard-owned"); err != nil {
+		t.Fatal(err)
+	}
+	if len(auth.calls) != 1 || auth.calls[0].Action != authoring.AuthorizationActionArchive {
+		t.Fatalf("authorization calls = %#v", auth.calls)
+	}
+}
+
 func newApplicationService(t *testing.T, repo *applicationRepository, auth *applicationAuthorizer) *service.Service {
 	t.Helper()
 	svc, err := service.NewService(service.Options{Repository: repo, Authorizer: auth, Compiler: applicationCompiler{}, Now: func() time.Time { return time.Date(2026, 8, 18, 0, 0, 0, 0, time.UTC) }, NewDashboardID: func() (authoring.DashboardID, error) { return "dashboard", nil }, NewDraftID: func() (authoring.DraftID, error) { return "draft", nil }, NewRevisionID: func() (authoring.RevisionID, error) { return "revision", nil }})
@@ -78,9 +99,12 @@ func newApplicationService(t *testing.T, repo *applicationRepository, auth *appl
 	return svc
 }
 
-type applicationAuthorizer struct{}
+type applicationAuthorizer struct {
+	calls []service.AuthorizationRequest
+}
 
-func (*applicationAuthorizer) Authorize(context.Context, service.AuthorizationRequest) error {
+func (a *applicationAuthorizer) Authorize(_ context.Context, request service.AuthorizationRequest) error {
+	a.calls = append(a.calls, request)
 	return nil
 }
 

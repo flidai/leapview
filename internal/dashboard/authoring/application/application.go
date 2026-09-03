@@ -284,6 +284,16 @@ func (a *Application) Builder(ctx context.Context, request builderview.Request) 
 // are intentionally absent from the active serving graph; the authoring
 // service loads their lifecycle and applies the owner/project-role context.
 func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	return a.authorizeDashboardAction(ctx, requestedProject, actorID, dashboardID, authoring.AuthorizationActionEdit)
+}
+
+// AuthorizeDashboardManage performs the repository-backed manage decision
+// used before lifecycle operations such as archive are exposed.
+func (a *Application) AuthorizeDashboardManage(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID) error {
+	return a.authorizeDashboardAction(ctx, requestedProject, actorID, dashboardID, authoring.AuthorizationActionArchive)
+}
+
+func (a *Application) authorizeDashboardAction(ctx context.Context, requestedProject projectgraph.ResourceID, actorID string, dashboardID authoring.DashboardID, action authoring.AuthorizationAction) error {
 	if err := a.validate(); err != nil {
 		return err
 	}
@@ -309,7 +319,7 @@ func (a *Application) AuthorizeDashboardEdit(ctx context.Context, requestedProje
 		ActorID: actorID, ProjectID: project, DashboardID: dashboardID,
 		OwnerPrincipalID: lifecycle.OwnerPrincipalID, SemanticModel: lifecycle.SemanticModel,
 		Target: authoringservice.AuthorizationTargetAuthoredDashboard, Visibility: lifecycle.Visibility,
-		Action: authoring.AuthorizationActionEdit,
+		Action: action,
 	})
 }
 
