@@ -40,10 +40,10 @@ func TestBaselineOwnsOnlyReconciledCapabilities(t *testing.T) {
 }
 
 func TestVerifyRequiresExactBaselineIdentity(t *testing.T) {
-	migration := Migrations()[0]
-	revisions := map[int64]platformpostgres.SchemaRevision{
-		BaselineRevision:   {Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: Checksum()},
-		migration.Revision: {Revision: migration.Revision, MigrationID: migration.MigrationID, Checksum: migration.Checksum()},
+	migrations := Migrations()
+	revisions := map[int64]platformpostgres.SchemaRevision{BaselineRevision: {Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: Checksum()}}
+	for _, migration := range migrations {
+		revisions[migration.Revision] = platformpostgres.SchemaRevision{Revision: migration.Revision, MigrationID: migration.MigrationID, Checksum: migration.Checksum()}
 	}
 	if err := Verify(context.Background(), revisionReader{revisions: revisions}); err != nil {
 		t.Fatalf("Verify() error = %v", err)
@@ -52,6 +52,7 @@ func TestVerifyRequiresExactBaselineIdentity(t *testing.T) {
 	for key, value := range revisions {
 		bad[key] = value
 	}
+	migration := migrations[0]
 	value := bad[migration.Revision]
 	value.Checksum = strings.Repeat("f", 64)
 	bad[migration.Revision] = value

@@ -163,6 +163,7 @@ sql:
     schema:
       - "internal/access/postgres/schema.sql"
       - "internal/access/postgres/migrations/002_typed_attribute_registry.sql"
+      - "internal/access/postgres/migrations/003_semantic_attribute_control.sql"
     gen:
       go:
         package: "db"

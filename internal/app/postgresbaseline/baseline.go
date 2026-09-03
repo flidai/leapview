@@ -19,7 +19,7 @@ import (
 const (
 	BaselineRevision    = platformmigrations.BaselineRevision
 	BaselineMigrationID = platformmigrations.BaselineMigrationID
-	LatestRevision      = accesspostgres.AttributeRegistryMigrationRevision
+	LatestRevision      = accesspostgres.SemanticAttributeControlMigrationRevision
 )
 
 // Keep the reconciliation baseline intentionally small. New durable
@@ -36,6 +36,11 @@ var plan = platformmigrations.Plan{
 			Revision:    accesspostgres.AttributeRegistryMigrationRevision,
 			MigrationID: accesspostgres.AttributeRegistryMigrationID,
 			SQL:         accesspostgres.AttributeRegistryMigrationSQL(),
+		},
+		{
+			Revision:    accesspostgres.SemanticAttributeControlMigrationRevision,
+			MigrationID: accesspostgres.SemanticAttributeControlMigrationID,
+			SQL:         accesspostgres.SemanticAttributeControlMigrationSQL(),
 		},
 	},
 	RolePolicySQL: rolePolicySQL,
@@ -109,7 +114,9 @@ BEGIN
         REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON audit.audit_event FROM leapview_control_runtime;
         REVOKE DELETE ON access.session, access.api_token, access.service_principal_secret,
             access.desktop_authorization_code, access.device_authorization,
-            access.authoring_session, access.authoring_credential FROM leapview_control_runtime;
+            access.authoring_session, access.authoring_credential,
+            access.semantic_attribute_control_state, access.semantic_attribute_assignment,
+            access.semantic_attribute_claim_mapping FROM leapview_control_runtime;
         GRANT USAGE ON SCHEMA physical_pool TO leapview_control_runtime;
         GRANT SELECT ON ALL TABLES IN SCHEMA physical_pool TO leapview_control_runtime;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER
