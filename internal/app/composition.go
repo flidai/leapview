@@ -824,8 +824,14 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 		}
 		return projectID, nil
 	}
+	accessDatabase := store.SQLDB()
+	if production {
+		accessDatabase = nil
+	}
 	accessBundle, err := buildAccessCapability(ctx, accessCapabilityConfig{
-		Database: store.SQLDB(), Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
+		Database:   accessDatabase,
+		PostgresDB: identityAuthority.Pool, TokenHashKey: cfg.TokenHashKey, CSRFKey: cfg.CSRFKey,
+		Production: production, Auth: accessAuthConfig(cfg, production, cookieSecure), Assets: assets, AvatarBlobs: avatarBlobs,
 		PublicURL: publicURL, InstanceID: instanceID, MCPIssuerURL: cfg.MCPOAuthIssuerURL, CurrentProject: currentProjectID,
 	})
 	if err != nil {

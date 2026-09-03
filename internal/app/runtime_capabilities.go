@@ -11,14 +11,18 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	accessmcp "github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
+	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/staticasset"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -91,7 +95,12 @@ func buildAnalyticsCapability(ctx context.Context, cfg analyticsCapabilityConfig
 }
 
 type accessCapabilityConfig struct {
+	// Database is the explicit legacy SQLite input used only by local and test
+	// composition. Production access must receive PostgresDB instead.
 	Database       *sql.DB
+	PostgresDB     platformpostgres.DBTX
+	TokenHashKey   string
+	CSRFKey        string
 	Production     bool
 	Auth           accessmodule.AuthConfig
 	Assets         staticasset.Resolver
@@ -103,19 +112,65 @@ type accessCapabilityConfig struct {
 }
 
 func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (accessCapabilityBundle, error) {
-	if cfg.Database == nil {
-		return accessCapabilityBundle{}, errors.New("access database is required")
+	accessConfig := accessmodule.Config{
+		Production: cfg.Production,
+		Auth:       cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
+		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
+		CurrentProjectID: cfg.CurrentProject,
+		Presentation:     page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
+	}
+	if cfg.Production {
+		if cfg.Database != nil {
+			return accessCapabilityBundle{}, errors.New("production access build rejects SQLite database")
+		}
+		if cfg.PostgresDB == nil {
+			return accessCapabilityBundle{}, errors.New("production access composition requires the identity PostgreSQL pool")
+		}
+		key, err := postgresFingerprintKey(cfg.TokenHashKey, cfg.CSRFKey)
+		if err != nil {
+			return accessCapabilityBundle{}, err
+		}
+		repository, err := accesspostgres.NewAccess(cfg.PostgresDB, accesspostgres.FingerprintConfig{Key: key})
+		if err != nil {
+			return accessCapabilityBundle{}, fmt.Errorf("build PostgreSQL access repository: %w", err)
+		}
+		var auth *accessmodule.Auth
+		if !cfg.Auth.Disabled {
+			auth = accessmodule.NewAuth(repository, cfg.Auth)
+		}
+		var oauth *accessmcp.Service
+		if auth != nil && strings.TrimSpace(cfg.MCPIssuerURL) == "" {
+			publicURL := strings.TrimSuffix(strings.TrimSpace(cfg.PublicURL), "/")
+			if publicURL == "" {
+				publicURL = "http://localhost:8080"
+			}
+			oauth, err = accessmcp.NewPostgres(cfg.PostgresDB, repository, accessmcp.Config{
+				IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
+			})
+			if err != nil {
+				return accessCapabilityBundle{}, fmt.Errorf("build PostgreSQL MCP OAuth service: %w", err)
+			}
+		}
+		persistence, err := accessmodule.NewPostgresPersistence(repository, oauth)
+		if err != nil {
+			return accessCapabilityBundle{}, fmt.Errorf("build PostgreSQL access persistence: %w", err)
+		}
+		accessConfig.Persistence = &persistence
+		accessConfig.ExistingAuth = auth
+	} else {
+		if cfg.PostgresDB != nil {
+			return accessCapabilityBundle{}, errors.New("local access composition rejects PostgreSQL database")
+		}
+		if cfg.Database == nil {
+			return accessCapabilityBundle{}, errors.New("access database is required")
+		}
+		accessConfig.Database = cfg.Database
+		accessConfig.LegacySQLite = true
 	}
 	if cfg.CurrentProject == nil {
 		return accessCapabilityBundle{}, errors.New("access current-project resolver is required")
 	}
-	module, err := accessmodule.Build(ctx, accessmodule.Config{
-		Database: cfg.Database, LegacySQLite: !cfg.Production, Production: cfg.Production,
-		Auth: cfg.Auth, Assets: cfg.Assets, AvatarBlobs: cfg.AvatarBlobs,
-		PublicURL: cfg.PublicURL, InstanceID: cfg.InstanceID, MCPIssuerURL: cfg.MCPIssuerURL,
-		CurrentProjectID: cfg.CurrentProject,
-		Presentation:     page.Presentation{ProductName: brand.Name, FaviconPath: brand.FaviconPath},
-	})
+	module, err := accessmodule.Build(ctx, accessConfig)
 	if err != nil {
 		return accessCapabilityBundle{}, fmt.Errorf("build access capability: %w", err)
 	}

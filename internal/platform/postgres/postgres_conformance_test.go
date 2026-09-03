@@ -70,6 +70,45 @@ func TestPostgreSQL18PoolConformance(t *testing.T) {
 		}
 	})
 
+	t.Run("leased query resources release on decode errors", func(t *testing.T) {
+		baseline := p.Stats().AcquiredConns()
+		rows, err := p.Query(ctx, "SELECT 1::integer")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := p.Stats().AcquiredConns(); got != baseline+1 {
+			t.Fatalf("acquired connections with open rows = %d, want %d", got, baseline+1)
+		}
+		if !rows.Next() {
+			rows.Close()
+			t.Fatalf("leased rows did not return the selected row: %v", rows.Err())
+		}
+		var invalid bool
+		if err := rows.Scan(&invalid); err == nil {
+			t.Fatal("leased rows scan unexpectedly accepted an incompatible destination")
+		}
+		if got := p.Stats().AcquiredConns(); got != baseline {
+			t.Fatalf("acquired connections after rows scan error = %d, want %d", got, baseline)
+		}
+		rows.Close()
+
+		row := p.QueryRow(ctx, "SELECT 1::integer")
+		if got := p.Stats().AcquiredConns(); got != baseline+1 {
+			t.Fatalf("acquired connections with open query row = %d, want %d", got, baseline+1)
+		}
+		if err := row.Scan(&invalid); err == nil {
+			t.Fatal("leased query row scan unexpectedly accepted an incompatible destination")
+		}
+		if got := p.Stats().AcquiredConns(); got != baseline {
+			t.Fatalf("acquired connections after query row scan error = %d, want %d", got, baseline)
+		}
+
+		var one int
+		if err := p.QueryRow(ctx, "SELECT 1").Scan(&one); err != nil {
+			t.Fatalf("reuse connection after leased query errors: %v", err)
+		}
+	})
+
 	t.Run("rollback", func(t *testing.T) {
 		name := schema + ".postgres_conformance_rollback"
 		if _, err := p.Exec(ctx, "DROP TABLE IF EXISTS "+name); err != nil {

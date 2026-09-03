@@ -814,6 +814,20 @@ qualified.
   sealed delivery, and the lifecycle adds no hash authority. Omitted bindings
   do not mutate live control state; complete live-reference ownership remains a
   FAI-616 boundary.
+- **IMPLEMENTED, dependency reconciliation pending (FAI-617/FAI-609):**
+  production access composition now reuses the identity authority's exact
+  bounded PostgreSQL pool, rejects SQLite and non-transactional database
+  inputs, and derives the access fingerprint key through a dedicated purpose.
+  PostgreSQL revision 007 upgrades the existing access rows in place, revokes
+  unverifiable legacy sessions, preserves principal/group/membership identity,
+  enables canonical generation-scoped audit writes, quarantines superseded
+  generic credential/grant tables, and records an immutable checksum. Focused
+  repository, migration, composition, pool-lease, and architecture tests pass;
+  Docker-backed PostgreSQL execution remains unqualified in this environment.
+  This stack does not yet contain the completed FAI-609 production initializer
+  that applies the platform migration chain to a fresh control database, so
+  fresh-target execution is not claimed until that dependency is reconciled as
+  its own stacked layer.
 - **QUALIFIED (FAI-619):** TypeSpec owns the six authored structures, including the shared envelope,
   metadata, contract evolution, quality identity, field governance,
   deprecation, and the ADR-0017 SemanticModel access contract. It generates Go

@@ -20,7 +20,11 @@ type identityControlOpener = identitymodule.ControlOpener
 
 type identityAuthorityBundle struct {
 	Repository identitymodule.Repository
-	Cleanup    cleanupFunc
+	// Pool is the same process-owned PostgreSQL handle used by Repository.
+	// Production access composition consumes it rather than opening a second
+	// pool or falling back to the local SQLite store.
+	Pool    platformpostgres.PoolHandle
+	Cleanup cleanupFunc
 }
 
 // buildIdentityAuthority composes the production identity ledger from the
@@ -78,8 +82,16 @@ func buildIdentityAuthorityWithOpener(ctx context.Context, cfg config.Config, op
 		pool.Close()
 		return identityAuthorityBundle{}, fmt.Errorf("%w: build PostgreSQL identity ledger: %w", ErrIdentityLifecycleUnavailable, err)
 	}
+	// The identity and access authorities must share this exact handle. A
+	// control-only opener cannot produce a complete production authority and is
+	// closed immediately rather than returning a partial bundle.
+	sharedPool, ok := any(pool).(platformpostgres.PoolHandle)
+	if !ok {
+		pool.Close()
+		return identityAuthorityBundle{}, fmt.Errorf("%w: identity authority pool does not expose shared PostgreSQL access handle", ErrIdentityLifecycleUnavailable)
+	}
 	return identityAuthorityBundle{
-		Repository: repository,
+		Repository: repository, Pool: sharedPool,
 		Cleanup: func(context.Context) error {
 			pool.Close()
 			return nil

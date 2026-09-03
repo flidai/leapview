@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -79,6 +80,26 @@ type Config struct {
 type RuntimeConfig struct {
 	Control  Config
 	DuckLake Config
+}
+
+// DBTX is the capability-neutral query surface shared by PostgreSQL
+// repositories. Pool implementations must keep rows and query rows leased
+// until the caller closes or scans them; repositories therefore do not need
+// to know how the process bounds connection acquisition.
+type DBTX interface {
+	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
+	Query(context.Context, string, ...any) (pgx.Rows, error)
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// PoolHandle is the complete process-owned PostgreSQL handle. It is useful at
+// composition boundaries that need both the identity ledger transaction
+// surface and sibling capability query access without opening another pool.
+type PoolHandle interface {
+	DBTX
+	Begin(context.Context) (pgx.Tx, error)
+	BeginTx(context.Context, pgx.TxOptions) (pgx.Tx, error)
+	Close()
 }
 
 // Pool is a bounded pgxpool with an acquisition deadline. The embedded pool
@@ -156,6 +177,9 @@ func (p *Pool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, erro
 // callers should use Acquire or AcquireFunc so the transaction remains on one
 // connection while preserving the acquisition deadline.
 func (p *Pool) Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	var tag pgconn.CommandTag
 	err := p.AcquireFunc(ctx, func(conn *pgxpool.Conn) error {
 		var err error
@@ -164,6 +188,139 @@ func (p *Pool) Exec(ctx context.Context, sql string, args ...any) (pgconn.Comman
 	})
 	return tag, err
 }
+
+// Query keeps the explicitly acquired connection leased until the returned
+// rows are closed or exhausted. Only acquisition uses AcquireTimeout; query
+// execution remains governed by the caller context and PostgreSQL's session
+// statement timeout.
+func (p *Pool) Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := conn.Query(ctx, sql, args...)
+	if err != nil {
+		conn.Release()
+		return nil, err
+	}
+	return &leasedRows{Rows: rows, conn: conn}, nil
+}
+
+// QueryRow leases one connection until Scan. Callers must call Scan exactly
+// as they would for pgxpool.QueryRow; Scan releases the pool connection even
+// when decoding fails.
+func (p *Pool) QueryRow(ctx context.Context, sql string, args ...any) pgx.Row {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	conn, err := p.Acquire(ctx)
+	if err != nil {
+		return errorRow{err: err}
+	}
+	return &leasedRow{Row: conn.QueryRow(ctx, sql, args...), conn: conn}
+}
+
+type leasedRows struct {
+	pgx.Rows
+	conn rowsLease
+	once sync.Once
+}
+
+type rowsLease interface {
+	Release()
+}
+
+func (r *leasedRows) Next() bool {
+	if r == nil || r.Rows == nil {
+		return false
+	}
+	ok := r.Rows.Next()
+	if !ok {
+		r.release()
+	}
+	return ok
+}
+
+func (r *leasedRows) Close() {
+	if r == nil {
+		return
+	}
+	if r.Rows != nil {
+		r.Rows.Close()
+	}
+	r.release()
+}
+
+func (r *leasedRows) Scan(dest ...any) (err error) {
+	if r == nil {
+		return errors.New("postgres query rows are nil")
+	}
+	if r.Rows == nil {
+		r.Close()
+		return errors.New("postgres query rows are nil")
+	}
+	defer func() {
+		if err != nil {
+			r.Close()
+		}
+	}()
+	return r.Rows.Scan(dest...)
+}
+
+func (r *leasedRows) Values() (values []any, err error) {
+	if r == nil {
+		return nil, errors.New("postgres query rows are nil")
+	}
+	if r.Rows == nil {
+		r.Close()
+		return nil, errors.New("postgres query rows are nil")
+	}
+	defer func() {
+		if err != nil {
+			r.Close()
+		}
+	}()
+	return r.Rows.Values()
+}
+
+func (r *leasedRows) release() {
+	if r == nil {
+		return
+	}
+	r.once.Do(func() {
+		if r.conn != nil {
+			r.conn.Release()
+		}
+	})
+}
+
+type leasedRow struct {
+	pgx.Row
+	conn rowsLease
+	once sync.Once
+}
+
+func (r *leasedRow) Scan(dest ...any) error {
+	if r == nil || r.Row == nil {
+		return errors.New("postgres query row is nil")
+	}
+	defer r.once.Do(func() {
+		if r.conn != nil {
+			r.conn.Release()
+		}
+	})
+	return r.Row.Scan(dest...)
+}
+
+type errorRow struct{ err error }
+
+func (r errorRow) Scan(...any) error { return r.err }
+
+var _ DBTX = (*Pool)(nil)
+var _ PoolHandle = (*Pool)(nil)
 
 // Ping checks pool reachability after startup validation.
 func (p *Pool) Ping(ctx context.Context) error {

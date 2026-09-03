@@ -72,6 +72,9 @@ func NewAccess(db DBTX, cfg FingerprintConfig) (*Repository, error) {
 	if db == nil {
 		return nil, errors.New("access PostgreSQL database is required")
 	}
+	if _, ok := db.(beginner); !ok {
+		return nil, errors.New("access PostgreSQL database must support transactions via Begin(context.Context)")
+	}
 	if len(cfg.Key) < 32 {
 		return nil, errors.New("access fingerprint key must be at least 32 bytes")
 	}
