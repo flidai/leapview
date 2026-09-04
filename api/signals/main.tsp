@@ -605,7 +605,6 @@ model CatalogDashboardSignal {
 	`catalogScope`: "mine" | "shared" | "managed";
 	`description`?: string;
 	`dashboardId`: string;
-	`featured`?: boolean;
   `href`: string;
   `id`: string;
   `lastRefreshedAt`?: string;

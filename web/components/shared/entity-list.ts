@@ -18,7 +18,6 @@ import {
   Download,
   FilePenLine,
   FileText,
-  BadgeCheck,
   LayoutDashboard,
   LockKeyhole,
   EllipsisVertical,
@@ -74,7 +73,7 @@ export type EntityListRowAction = {
 }
 
 export type EntityListBadge = {
-  icon: 'popularity' | 'featured'
+  icon: 'popularity'
   label: string
   level?: 'low' | 'medium' | 'high'
   text?: string
@@ -598,8 +597,6 @@ const entityListStyles = `
     font: var(--lv-type-caption);
     white-space: nowrap;
   }
-
-  .entity-list-badge-featured { color: var(--display-purple-fgColor, var(--lv-fg-default)); }
 
   .entity-list-badge-popularity svg path {
     stroke: currentColor;
@@ -1387,7 +1384,6 @@ class EntityList extends LitElement {
 function badgeIcon(type: EntityListBadge['icon']): IconNode {
   switch (type) {
     case 'popularity': return ChartNoAxesColumnIncreasing
-    case 'featured': return BadgeCheck
   }
 }
 

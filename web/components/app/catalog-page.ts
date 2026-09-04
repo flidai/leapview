@@ -29,7 +29,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   @state() private catalogSort: CatalogSort = 'recommended'
   @state() private catalogModel = 'all'
   @state() private catalogStatus = 'all'
-  @state() private catalogFeaturedOnly = false
   @state() private favoriteDashboardIDs: string[] = []
   @state() private recentDashboardIDs: Record<string, string> = {}
   @state() private createDraftOpen = false
@@ -350,9 +349,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
             icon: 'dashboard',
             favorite: this.favoriteDashboardIDs.includes(dashboard.id),
             favoriteLabel: this.favoriteDashboardIDs.includes(dashboard.id) ? `Remove ${dashboard.title} from favorites` : `Add ${dashboard.title} to favorites`,
-            badges: [
-              ...(dashboard.featured ? [{ icon: 'featured' as const, label: 'Featured dashboard', text: 'Featured' }] : []),
-            ],
             iconNode: lucideIconByCanonicalName(appearance.icon),
             iconColor: appearance.color,
             iconTreatment: 'framed' as const,
@@ -500,7 +496,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const activeFilters = this.activeCatalogFilterCount()
     const models = Array.from(new Set(dashboards.map((dashboard) => dashboard.semanticModel?.trim()).filter((model): model is string => Boolean(model))))
       .sort((left, right) => semanticModelLabel(left).localeCompare(semanticModelLabel(right)))
-    const hasFeatured = dashboards.some((dashboard) => dashboard.featured)
     return html`
       <details class="catalog-filter">
         <summary class="catalog-discovery-control" aria-label="Filter dashboards">
@@ -524,7 +519,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
               <option value="unpublished_changes">Unpublished changes</option>
             </select>
           </label>
-          ${hasFeatured ? html`<label class="catalog-filter-check"><input type="checkbox" .checked=${this.catalogFeaturedOnly} @change=${this.changeCatalogFeaturedOnly}> Featured only</label>` : ''}
           ${activeFilters ? html`<div class="catalog-filter-actions"><button type="button" @click=${this.clearCatalogFilters}>Clear filters</button></div>` : ''}
         </div>
       </details>
@@ -544,7 +538,6 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
       if (this.catalogScope === 'favorites' && !this.favoriteDashboardIDs.includes(dashboard.id)) return false
       if (this.catalogModel !== 'all' && dashboard.semanticModel !== this.catalogModel) return false
       if (this.catalogStatus !== 'all' && dashboard.status !== this.catalogStatus) return false
-      if (this.catalogFeaturedOnly && !dashboard.featured) return false
       return true
     })
     return filtered
@@ -560,7 +553,7 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
     const popularity = () => popularityRank(right.popularity) - popularityRank(left.popularity)
     const recommended = () =>
       Number(this.favoriteDashboardIDs.includes(right.id)) - Number(this.favoriteDashboardIDs.includes(left.id)) ||
-      Number(Boolean(right.featured)) - Number(Boolean(left.featured)) || popularity() || recent() || updated() || name()
+      popularity() || recent() || updated() || name()
     switch (this.catalogSort) {
       case 'recent': return recent() || recommended()
       case 'popular': return popularity() || recommended()
@@ -655,17 +648,15 @@ class LeapViewCatalogPage extends DatastarLit(LitElement) {
   }
 
   private activeCatalogFilterCount(): number {
-    return Number(this.catalogModel !== 'all') + Number(this.catalogStatus !== 'all') + Number(this.catalogFeaturedOnly)
+    return Number(this.catalogModel !== 'all') + Number(this.catalogStatus !== 'all')
   }
 
   private changeCatalogSort = (event: Event): void => { this.catalogSort = (event.currentTarget as HTMLSelectElement).value as CatalogSort }
   private changeCatalogModel = (event: Event): void => { this.catalogModel = (event.currentTarget as HTMLSelectElement).value }
   private changeCatalogStatus = (event: Event): void => { this.catalogStatus = (event.currentTarget as HTMLSelectElement).value }
-  private changeCatalogFeaturedOnly = (event: Event): void => { this.catalogFeaturedOnly = (event.currentTarget as HTMLInputElement).checked }
   private clearCatalogFilters = (): void => {
     this.catalogModel = 'all'
     this.catalogStatus = 'all'
-    this.catalogFeaturedOnly = false
   }
 
   private catalogEmptyText(): string {

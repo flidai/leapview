@@ -95,8 +95,6 @@ model DashboardMetadata {
   domain?: string;
   tags?: string[];
   documentation?: string;
-  /** Organization-curated discovery signal used to feature this dashboard. */
-  featured?: boolean;
 }
 
 model DashboardAppearance {
