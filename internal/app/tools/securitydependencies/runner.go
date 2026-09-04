@@ -56,6 +56,7 @@ type runner struct {
 	stderr        io.Writer
 	bunRetryUsed  bool
 	bunRetrySleep func(time.Duration)
+	bunCommand    func(string, ...string) commandResult
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -226,9 +227,13 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	if contract != nil {
 		args = append(args, "--json")
 	}
-	result := r.command(dir, "bun", args...)
+	result := r.runBunCommand(dir, args...)
 	if contract == nil {
 		r.emitDirect(result)
+		return commandError("bun audit", dir, result)
+	}
+	if isBunLifecycleError(result) {
+		r.emitFailure(result)
 		return commandError("bun audit", dir, result)
 	}
 	count, critical, err := bunFindingCounts(result.stdout)
@@ -236,7 +241,11 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		r.bunRetryUsed = true
 		fmt.Fprintf(r.stdout, "bun audit %s: retrying once after transport failure (%s backoff)\n", dir, bunRetryBackoff)
 		r.waitForBunRetry()
-		result = r.command(dir, "bun", args...)
+		result = r.runBunCommand(dir, args...)
+		if isBunLifecycleError(result) {
+			r.emitFailure(result)
+			return commandError("bun audit", dir, result)
+		}
 		count, critical, err = bunFindingCounts(result.stdout)
 	}
 	if err != nil {
@@ -278,6 +287,13 @@ func (r *runner) shouldRetryBun(result commandResult) bool {
 	return !r.bunRetryUsed && isBunTransportFailure(result)
 }
 
+func (r *runner) runBunCommand(dir string, args ...string) commandResult {
+	if r.bunCommand != nil {
+		return r.bunCommand(dir, args...)
+	}
+	return r.command(dir, "bun", args...)
+}
+
 func (r *runner) waitForBunRetry() {
 	if r.bunRetrySleep != nil {
 		r.bunRetrySleep(bunRetryBackoff)
@@ -287,9 +303,12 @@ func (r *runner) waitForBunRetry() {
 }
 
 func isBunTransportFailure(result commandResult) bool {
-	return !errors.Is(result.err, context.Canceled) &&
-		!errors.Is(result.err, context.DeadlineExceeded) &&
+	return !isBunLifecycleError(result) &&
 		(hasBunTransportSignature(result.stdout) || hasBunTransportSignature(result.stderr))
+}
+
+func isBunLifecycleError(result commandResult) bool {
+	return errors.Is(result.err, context.Canceled) || errors.Is(result.err, context.DeadlineExceeded)
 }
 
 func hasBunTransportSignature(data []byte) bool {
@@ -447,7 +466,10 @@ func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) 
 			}
 			severity, present := shape["severity"]
 			if !present || json.Unmarshal(severity, &finding.Severity) != nil {
-				return findingCount, criticalCount, errors.New("finding severity is not a string")
+				return findingCount, criticalCount, errors.New("finding severity is not a usable string")
+			}
+			if !usableBunSeverity(finding.Severity) {
+				return findingCount, criticalCount, errors.New("finding severity is not usable")
 			}
 			findingCount++
 			if strings.EqualFold(finding.Severity, "critical") {
@@ -456,6 +478,18 @@ func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) 
 		}
 	}
 	return findingCount, criticalCount, nil
+}
+
+func usableBunSeverity(severity string) bool {
+	if severity == "" {
+		return false
+	}
+	switch strings.ToLower(severity) {
+	case "low", "moderate", "high", "critical":
+		return true
+	default:
+		return false
+	}
 }
 
 func allBunFindingsWaived(data []byte, contract exceptionContract) bool {

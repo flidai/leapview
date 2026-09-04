@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"strings"
@@ -143,6 +144,65 @@ func TestBunCommandDeadlineIsNotRetried(t *testing.T) {
 		if r.shouldRetryBun(result) {
 			t.Errorf("command lifecycle error %v was incorrectly retryable", commandErr)
 		}
+	}
+}
+
+func TestBunLifecycleErrorFailsBeforeAcceptingNoncriticalJSON(t *testing.T) {
+	contract := exceptionContract{}
+	for _, lifecycleErr := range []error{context.Canceled, context.DeadlineExceeded} {
+		lifecycleErr := lifecycleErr
+		t.Run(lifecycleErr.Error(), func(t *testing.T) {
+			var calls, waits int
+			var stdout, stderr bytes.Buffer
+			r := &runner{
+				stdout: &stdout, stderr: &stderr,
+				bunRetrySleep: func(time.Duration) { waits++ },
+				bunCommand: func(string, ...string) commandResult {
+					calls++
+					return commandResult{
+						stdout: []byte(`{"pkg":[{"severity":"low"}]}`),
+						status: 1,
+						err:    fmt.Errorf("scanner lifecycle: %w", lifecycleErr),
+					}
+				},
+			}
+
+			err := r.scanBun("/fixture/bun.lock", &contract)
+			if err == nil || !errors.Is(err, lifecycleErr) {
+				t.Fatalf("scanBun error = %v, want wrapped %v", err, lifecycleErr)
+			}
+			if calls != 1 || waits != 0 {
+				t.Fatalf("lifecycle result invoked Bun %d times and waited %d times, want 1 and 0", calls, waits)
+			}
+			if strings.Contains(stdout.String(), "no Critical findings") {
+				t.Fatalf("lifecycle result was accepted as noncritical: %s", stdout.String())
+			}
+		})
+	}
+}
+
+func TestBunCriticalFindingWithLifecycleErrorFails(t *testing.T) {
+	contract := exceptionContract{}
+	var stdout, stderr bytes.Buffer
+	var calls int
+	r := &runner{
+		stdout: &stdout, stderr: &stderr,
+		bunCommand: func(string, ...string) commandResult {
+			calls++
+			return commandResult{
+				stdout: []byte(`{"pkg":[{"severity":"critical"}]}`),
+				status: 1,
+				err:    fmt.Errorf("scanner timeout: %w", context.DeadlineExceeded),
+			}
+		},
+	}
+
+	err := r.scanBun("/fixture/bun.lock", &contract)
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("scanBun error = %v, want deadline failure", err)
+	}
+	if calls != 1 {
+		t.Fatalf("lifecycle result invoked Bun %d times, want 1", calls)
 	}
 }
 

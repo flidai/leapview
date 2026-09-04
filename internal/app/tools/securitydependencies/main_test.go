@@ -112,7 +112,20 @@ func TestTypedJSONParsersRejectMalformedFindings(t *testing.T) {
 	if count, critical, err := bunFindingCounts([]byte(`{"pkg":[{"severity":"moderate"}]}`)); err != nil || count != 1 || critical != 0 {
 		t.Fatalf("valid Bun result = (%d, %d, %v)", count, critical, err)
 	}
-	for _, data := range []string{`[]`, `{"pkg":{}}`, `{"pkg":null}`, `{"pkg":[{"severity":3}]}`, `{"pkg":[null]}`} {
+	if count, critical, err := bunFindingCounts([]byte(`{"pkg":[{"severity":"low"},{"severity":"critical"}]}`)); err != nil || count != 2 || critical != 1 {
+		t.Fatalf("valid low and critical Bun results = (%d, %d, %v)", count, critical, err)
+	}
+	for _, data := range []string{
+		`[]`,
+		`{"pkg":{}}`,
+		`{"pkg":null}`,
+		`{"pkg":[{"severity":3}]}`,
+		`{"pkg":[{"severity":null}]}`,
+		`{"pkg":[{"severity":""}]}`,
+		`{"pkg":[{"severity":" "}]}`,
+		`{"pkg":[{"severity":"unknown"}]}`,
+		`{"pkg":[null]}`,
+	} {
 		if _, _, err := bunFindingCounts([]byte(data)); err == nil {
 			t.Errorf("bunFindingCounts(%s) accepted malformed JSON", data)
 		}
