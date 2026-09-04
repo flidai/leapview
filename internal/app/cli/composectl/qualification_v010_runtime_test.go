@@ -272,12 +272,12 @@ func (fixture *v010DockerFixture) executeCandidateCLI(arguments []string) ([]byt
 			environment = v010Environment
 		}
 		return json.Marshal(map[string]string{"id": "candidate-instance", "environment": environment})
-	case strings.Contains(joined, "listDeployments"):
+	case strings.Contains(joined, "getDeliveryCandidateStatus"):
 		fixture.candidateProjectObserved = true
 		if fixture.candidateLegacyProject {
-			return []byte(`{"items":[],"page":{}}`), nil
+			return nil, errors.New(`GET /api/v1/projects/compatibility/delivery/candidates/v010-legacy-probe: {"status":404,"code":"DELIVERY_OBJECT_NOT_FOUND"}`)
 		}
-		return nil, errors.New(`GET /api/v1/projects/compatibility/deployments: {"status":403,"code":"FORBIDDEN"}`)
+		return nil, errors.New(`GET /api/v1/projects/compatibility/delivery/candidates/v010-legacy-probe: {"status":403,"code":"FORBIDDEN"}`)
 	case strings.Contains(joined, "listManagedConnections"):
 		fixture.candidateManagedObserved = true
 		if fixture.candidateLegacyManaged {

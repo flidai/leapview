@@ -393,24 +393,25 @@ func (c *Controller) collectV010FreshCandidateInventory(
 		(instance.Environment != "fai-517-candidate" && instance.Environment != v010Environment) {
 		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("fresh candidate environment observation is invalid")
 	}
-	// listDeployments is the supported RESOURCE_READ observation for the exact
-	// project claim during bootstrap. A clean installation has no claim and is
-	// denied by that route; an admitted legacy claim makes the read succeed even
-	// when its deployment list is empty. Earlier authenticated observations prove
-	// the credential itself before this claim-specific denial is interpreted.
+	// getDeliveryCandidateStatus is the supported project-scoped RESOURCE_READ
+	// observation for the exact project claim during bootstrap. A clean
+	// installation has no claim and is denied by that route; an admitted legacy
+	// claim makes the canonical delivery read reachable. Earlier authenticated
+	// observations prove the credential itself before this claim-specific denial
+	// is interpreted.
 	projectOutput, projectErr := call(
-		"api", "call", "listDeployments", "--target", "http://127.0.0.1:8080",
-		"--path", "project="+v010ProjectID,
+		"api", "call", "getDeliveryCandidateStatus", "--target", "http://127.0.0.1:8080",
+		"--path", "project="+v010ProjectID, "--path", "candidate=v010-legacy-probe",
 	)
-	projectVisible := projectErr == nil
-	if projectErr != nil && !v010CandidateAPIStatus(projectErr, 403) {
+	projectVisible := projectErr == nil || v010CandidateAPIStatus(projectErr, 404)
+	if projectErr != nil && !v010CandidateAPIStatus(projectErr, 403) && !v010CandidateAPIStatus(projectErr, 404) {
 		return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("observe fresh candidate legacy project: %w", projectErr)
 	}
-	if projectVisible {
-		var deployments struct {
+	if projectErr == nil {
+		var deliveryCandidate struct {
 			Items []json.RawMessage `json:"items"`
 		}
-		if err := decodeV010JourneyJSON(projectOutput, &deployments); err != nil {
+		if err := decodeV010JourneyJSON(projectOutput, &deliveryCandidate); err != nil {
 			return compatibility.V010FreshCandidateInventory{}, fmt.Errorf("decode fresh candidate legacy project observation: %w", err)
 		}
 	}
