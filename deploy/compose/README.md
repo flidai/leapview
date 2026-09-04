@@ -51,29 +51,6 @@ operations assets. VPS adapters use the matching payload embedded in the
 immutable application image and delegate installation to `leapviewctl host
 install`; they do not maintain a provider-specific Compose lifecycle.
 
-## v0.1.0 migration policy
-
-State created by v0.1.0 is **fresh-install-only** for LeapView v0.2.0-rc.1.
-The released image
-`ghcr.io/yacobolo/libredash@sha256:677caaf256cb3a0d61efd47b289debbd91984976a5a5c4b372196a5d79ce7153`
-uses the `LIBREDASH_*` configuration namespace, `/var/lib/libredash`,
-`libredash.db`, and a `libredash-backup.json` archive contract. Do not point
-this Compose package at that volume. The server rejects those paths before
-changing instance state.
-The historical package requires authentication and contains only a
-`linux/amd64` runtime.
-
-Release archives also contain `release-transition-policy.json` for the separate
-v0.1 preservation qualification. It is generated after OCI admission and names
-the exact candidate digest.
-
-Preserve the old v0.1.0 instance with that release's documented export
-procedure, then provision a fresh LeapView volume, redeploy project source,
-reload source data, and reprovision identities and grants. Keep the old image,
-export, checksum, configuration, and volume until the new instance is accepted.
-The full procedure is in the installed documentation under
-`/docs/guides/operate/upgrades#move-from-v010`.
-
 ## Qualify the exact installed candidate
 
 Before publishing or adopting a release, follow the bundled

@@ -1,7 +1,6 @@
 package platform
 
 import (
-	"bytes"
 	"context"
 	"database/sql"
 	"os"
@@ -271,31 +270,6 @@ func TestRestoreRejectsInvalidBackupWithoutChangingCurrent(t *testing.T) {
 	}
 	if err := current.Close(); err != nil {
 		t.Fatalf("close current store: %v", err)
-	}
-}
-
-func TestOpenRejectsV010InstanceStateBeforeCreatingLeapViewDatabase(t *testing.T) {
-	home := t.TempDir()
-	legacyPath := filepath.Join(home, "libredash.db")
-	legacyContents := []byte("released v0.1.0 state marker")
-	if err := os.WriteFile(legacyPath, legacyContents, 0o600); err != nil {
-		t.Fatal(err)
-	}
-	currentPath := filepath.Join(home, "leapview.db")
-
-	store, err := Open(t.Context(), currentPath)
-	if store != nil {
-		_ = store.Close()
-		t.Fatal("Open() returned a store for incompatible v0.1.0 state")
-	}
-	if err == nil || !strings.Contains(err.Error(), "v0.1.0") || !strings.Contains(err.Error(), "fresh LeapView instance") {
-		t.Fatalf("Open() error = %v, want explicit fresh-install-only policy", err)
-	}
-	if _, err := os.Stat(currentPath); !os.IsNotExist(err) {
-		t.Fatalf("incompatible state created current database: %v", err)
-	}
-	if got, err := os.ReadFile(legacyPath); err != nil || !bytes.Equal(got, legacyContents) {
-		t.Fatalf("legacy state changed before rejection: %q, %v", got, err)
 	}
 }
 

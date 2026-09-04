@@ -8,23 +8,9 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/deployment"
-	deploymentsqlite "github.com/flidai/leapview/internal/deployment/sqlite"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
-
-func TestReadClaimedProjectUsesTypedNotFoundForFreshInstall(t *testing.T) {
-	store := testStore(t)
-	repository := deploymentsqlite.NewRepositoryWithHooks(store.SQLDB(), deploymentsqlite.ActivationHooks{})
-
-	projectID, found, err := readClaimedProject(repository, "dev")(context.Background())
-	if err != nil {
-		t.Fatalf("readClaimedProject() error = %v", err)
-	}
-	if found || projectID != "" {
-		t.Fatalf("readClaimedProject() = %q, %v, want empty unclaimed result", projectID, found)
-	}
-}
 
 func TestAuthorizationSnapshotInstallerUsesAccessPersistence(t *testing.T) {
 	store := testStore(t)

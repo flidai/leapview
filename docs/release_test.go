@@ -29,10 +29,6 @@ type publicReleaseArtifact struct {
 	ChecksumURL  string `json:"checksumUrl"`
 }
 
-type releaseTransitionTemplate struct {
-	PredecessorRelease string `json:"predecessorRelease"`
-}
-
 func TestInstallationGuideMatchesCurrentPublicRelease(t *testing.T) {
 	manifestContents, err := Files.ReadFile("public-release.json")
 	if err != nil {
@@ -53,19 +49,8 @@ func TestInstallationGuideMatchesCurrentPublicRelease(t *testing.T) {
 		t.Fatalf("read VERSION: %v", err)
 	}
 	version := strings.TrimSpace(string(versionContents))
-	templateContents, err := os.ReadFile("../internal/platform/compatibility/release-transition-template.json")
-	if err != nil {
-		t.Fatalf("read release transition template: %v", err)
-	}
-	var template releaseTransitionTemplate
-	if err := json.Unmarshal(templateContents, &template); err != nil {
-		t.Fatalf("decode release transition template: %v", err)
-	}
 	if manifest.SchemaVersion != 1 {
 		t.Errorf("public release schemaVersion = %d, want 1", manifest.SchemaVersion)
-	}
-	if template.PredecessorRelease != manifest.Tag {
-		t.Errorf("reviewed predecessor = %q, public release tag = %q", template.PredecessorRelease, manifest.Tag)
 	}
 	if !semver.IsValid("v"+version) || semver.Compare("v"+version, manifest.Tag) <= 0 {
 		t.Errorf("candidate VERSION %q must be newer than public predecessor %q", version, manifest.Version)

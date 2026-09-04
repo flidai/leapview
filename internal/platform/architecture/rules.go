@@ -150,7 +150,6 @@ var SQLiteFixturePackagePrefixes = []string{
 	"internal/manageddata/sqlite",
 	"internal/refresh/sqlite",
 	"internal/dashboard/publication/sqlite",
-	"internal/deployment/sqlite",
 	"internal/analytics/physicalpool/sqlite",
 	"internal/platform/http/cursorsigning/sqlite",
 	"internal/platform/http/idempotency/sqlite",

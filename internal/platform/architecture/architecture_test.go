@@ -63,12 +63,6 @@ func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
 		"docs/public-release.json":            {},
 		"scripts/public_site_smoke.test.ts":   {},
 	}
-	historicalPredecessor := "ghcr.io/" + "yacobolo" + "/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9"
-	exactLegacyImageAllowlist := map[string][]string{
-		"internal/platform/compatibility/release-transition-policy.json": {
-			historicalPredecessor,
-		},
-	}
 	root := repoRoot(t)
 	err = filepath.WalkDir(root, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
@@ -96,17 +90,7 @@ func TestRepositoryIdentityUsesOrganizationNamespace(t *testing.T) {
 		}
 		text := string(body)
 		for _, forbidden := range []string{legacyRepository, legacyImages} {
-			checkedText := text
-			if forbidden == legacyImages {
-				relative, relErr := filepath.Rel(root, path)
-				if relErr != nil {
-					return relErr
-				}
-				for _, exact := range exactLegacyImageAllowlist[filepath.ToSlash(relative)] {
-					checkedText = strings.ReplaceAll(checkedText, exact, "")
-				}
-			}
-			if strings.Contains(checkedText, forbidden) {
+			if strings.Contains(text, forbidden) {
 				relative, relErr := filepath.Rel(root, path)
 				if relErr != nil {
 					return relErr
@@ -244,15 +228,6 @@ func TestSQLiteFixtureBoundaryIsExplicitAndNonCompositional(t *testing.T) {
 		if !IsSQLiteFixtureFile(path) {
 			t.Errorf("SQLite fixture file %q is not recognized as a retained fixture", path)
 		}
-	}
-
-	source, sourceOK := ClassifyPackage("internal/app")
-	target, targetOK := ClassifyPackage("internal/deployment/sqlite")
-	if !sourceOK || !targetOK {
-		t.Fatalf("classify composition=%v SQLite target=%v", sourceOK, targetOK)
-	}
-	if violation := CapabilityImportViolation("internal/app", source, "internal/deployment/sqlite", target); violation == "" {
-		t.Fatal("composition import of SQLite fixture was accepted")
 	}
 }
 
@@ -468,7 +443,6 @@ func TestEnterpriseAuthoringStateRemainsCapabilityOwned(t *testing.T) {
 		layer      Layer
 	}{
 		{path: "internal/deployment", capability: "deployment", layer: LayerContract},
-		{path: "internal/deployment/sqlite", capability: "deployment", layer: LayerAdapter},
 		{path: "internal/release", capability: "release", layer: LayerContract},
 		{path: "internal/release/filesystem", capability: "release", layer: LayerAdapter},
 		{path: "internal/analytics/connectionbinding", capability: "analytics", layer: LayerUseCase},
@@ -1387,7 +1361,6 @@ func TestGeneratedQueryPackagesDoNotCombineCapabilitySQL(t *testing.T) {
 		generatedPackage string
 		queryPath        string
 	}{
-		{generatedPackage: `out: "internal/deployment/internal/db"`, queryPath: `"internal/servingstate/sqlite/queries`},
 		{generatedPackage: `out: "internal/servingstate/internal/db"`, queryPath: `"internal/access/sqlite/queries`},
 	} {
 		for _, block := range blocks {
@@ -1406,7 +1379,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/access/internal/db",
 		"internal/agent/internal/db",
 		"internal/dashboard/internal/db",
-		"internal/deployment/internal/db",
 		"internal/manageddata/internal/db",
 		"internal/refresh/internal/db",
 		"internal/servingstate/internal/db",
@@ -1420,7 +1392,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 	for _, legacy := range []string{
 		"internal/access/sqlite/accessdb",
 		"internal/agent/sqlite/agentdb",
-		"internal/deployment/sqlite/deploymentdb",
 		"internal/manageddata/sqlite/manageddb",
 		"internal/refresh/sqlite/materializedb",
 		"internal/refresh/sqlite/refreshdb",
@@ -2239,7 +2210,6 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 	generatedOnly := map[string]bool{
 		"internal/agent/sqlite":                 true,
 		"internal/dashboard/publication/sqlite": true,
-		"internal/deployment/sqlite":            true,
 		"internal/manageddata/sqlite":           true,
 		"internal/servingstate/sqlite":          true,
 		"internal/project/sqlite":               true,
@@ -2253,41 +2223,10 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 		if !generatedOnly[file.pkgDir] && !generatedOnlyFiles[file.path] {
 			continue
 		}
-		// SQLite PRAGMA statements are session-local controls rather than
-		// durable queries. The deployment adapter keeps this one authored
-		// helper outside generated sqlc output; its exact shape is guarded by
-		// TestDeploymentSQLitePragmaHelperIsSessionOnly below.
-		if file.path == "internal/deployment/sqlite/pragma.go" {
-			continue
-		}
 		for _, directCall := range []string{".QueryContext(", ".QueryRowContext(", ".ExecContext("} {
 			if strings.Contains(file.body, directCall) {
 				t.Fatalf("%s bypasses sqlc via %s", file.path, directCall)
 			}
-		}
-	}
-}
-
-func TestDeploymentSQLitePragmaHelperIsSessionOnly(t *testing.T) {
-	const helperPath = "internal/deployment/sqlite/pragma.go"
-	var helper goFile
-	for _, file := range productionGoFiles(t) {
-		if file.path == helperPath {
-			helper = file
-			break
-		}
-	}
-	if helper.path == "" {
-		t.Fatalf("authored SQLite PRAGMA helper %s is missing", helperPath)
-	}
-	const call = `tx.ExecContext(ctx, fmt.Sprintf("PRAGMA busy_timeout=%d", milliseconds))`
-	if strings.Count(helper.body, ".ExecContext(") != 1 || !strings.Contains(helper.body, call) {
-		t.Fatalf("%s must issue exactly one busy_timeout PRAGMA ExecContext call", helperPath)
-	}
-	upper := strings.ToUpper(helper.body)
-	for _, durable := range []string{"INSERT ", "UPDATE ", "DELETE ", "SELECT ", "CREATE ", "DROP ", "ALTER "} {
-		if strings.Contains(upper, durable) {
-			t.Fatalf("%s contains durable SQL verb %q; PRAGMA helper must remain session-only", helperPath, durable)
 		}
 	}
 }
@@ -2381,7 +2320,6 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/agent/sqlite/queries/agent.sql",
 		"internal/platform/http/idempotency/sqlite/queries/idempotency.sql",
 		"internal/platform/http/cursorsigning/sqlite/queries/cursor_signing.sql",
-		"internal/deployment/sqlite/queries/deployment.sql",
 		"internal/dashboard/publication/sqlite/queries/publication.sql",
 		"internal/manageddata/sqlite/queries/managed_data.sql",
 		"internal/refresh/sqlite/runqueries/materialization.sql",
@@ -4118,7 +4056,6 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 			"COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db",
 			"COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db",
 			"COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db",
-			"COPY --from=sourcegen /src/internal/deployment/internal/db ./internal/deployment/internal/db",
 			"COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db",
 			"COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db",
 			"COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db",
