@@ -2953,8 +2953,6 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"name: Frontend tests (PR)",
 		"spatial-tile-benchmarks:",
 		"name: Spatial tile benchmarks (PR)",
-		"dbt-warehouse-boundary-validation:",
-		"name: dbt physical contract (PR)",
 		"runs-on: ubuntu-24.04",
 		"uses: ./.github/actions/setup-ci",
 		"run: node scripts/ci_watchdog.mjs --timeout-seconds 420 --attempts 2 -- task ci:prepare",
@@ -2965,13 +2963,12 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 		"run: task generated:check",
 		"ci-gate:",
 		"name: CI gate",
-		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"needs: [apigen-validation,",
 		"APIGEN_RESULT: ${{ needs.apigen-validation.result }}",
 		"GO_PACKAGES_RESULT: ${{ needs.go-packages-validation.result }}",
 		"GO_APPLICATION_RESULT: ${{ needs.go-application-validation.result }}",
 		"FRONTEND_RESULT: ${{ needs.frontend-validation.result }}",
 		"SPATIAL_BENCHMARK_RESULT: ${{ needs.spatial-tile-benchmarks.result }}",
-		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
 		"Validation is deferred to the top of this stack.",
 	} {
 		if !strings.Contains(text, want) {
@@ -2982,13 +2979,11 @@ func TestContinuousIntegrationWorkflowsAreTieredAndMergeQueueAware(t *testing.T)
 	goPackagesCI := workflowJobBlock(t, text, "go-packages-validation")
 	goApplicationCI := workflowJobBlock(t, text, "go-application-validation")
 	frontendCI := workflowJobBlock(t, text, "frontend-validation")
-	dbtWarehouseCI := workflowJobBlock(t, text, "dbt-warehouse-boundary-validation")
 	for name, block := range map[string]string{
 		"apigen-validation":         apigenCI,
 		"go-packages-validation":    goPackagesCI,
 		"go-application-validation": goApplicationCI,
 		"frontend-validation":       frontendCI,
-		"dbt-warehouse-boundary":    dbtWarehouseCI,
 	} {
 		for _, want := range []string{
 			"github.event_name == 'workflow_dispatch'",

@@ -464,6 +464,35 @@ func TestDBTWarehouseBoundaryWorkflowIsRequiredByCIGate(t *testing.T) {
 	t.Fatal("CI gate does not wire DBT_WAREHOUSE_RESULT from the dbt validation job")
 }
 
+func TestDBTWarehouseBoundaryCIJobUsesTheTieredWorkflow(t *testing.T) {
+	root := repoRoot(t)
+	body, err := os.ReadFile(filepath.Join(root, ".github", "workflows", "ci.yml"))
+	if err != nil {
+		t.Fatalf("read CI workflow: %v", err)
+	}
+	text := string(body)
+	for _, want := range []string{
+		"dbt-warehouse-boundary-validation:",
+		"name: dbt physical contract (PR)",
+		"needs: [apigen-validation, go-packages-validation, go-application-validation, frontend-validation, spatial-tile-benchmarks, dbt-warehouse-boundary-validation]",
+		"DBT_WAREHOUSE_RESULT: ${{ needs.dbt-warehouse-boundary-validation.result }}",
+	} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("CI workflow missing dbt validation fragment %q", want)
+		}
+	}
+	dbtWarehouseCI := workflowJobBlock(t, text, "dbt-warehouse-boundary-validation")
+	for _, want := range []string{
+		"github.event_name == 'workflow_dispatch'",
+		"github.event.pull_request.stack == null",
+		"github.event.pull_request.stack.position == github.event.pull_request.stack.size",
+	} {
+		if !strings.Contains(dbtWarehouseCI, want) {
+			t.Fatalf("dbt validation job is not limited to standalone pull requests and stack tips: missing %q", want)
+		}
+	}
+}
+
 func readDBTBoundaryWorkflow(t *testing.T, path string) dbtBoundaryWorkflow {
 	t.Helper()
 	body, err := os.ReadFile(path)
