@@ -72,6 +72,9 @@ func TestCoveredBunFailsClosedAndAcceptsOnlyNonblockingStatusOne(t *testing.T) {
 	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err == nil || !strings.Contains(stderr.String(), "not valid JSON") {
 		t.Fatalf("malformed Bun output was not rejected: err=%v stderr=%q stdout=%q", err, stderr.String(), stdout.String())
 	}
+	if got := strings.Count(mustRead(t, log), "bun|"); got != 1 {
+		t.Fatalf("malformed Bun output was retried: %d invocations", got)
+	}
 
 	setFakeScannerMode(t, "bun-nonblocking")
 	stdout.Reset()
@@ -88,6 +91,41 @@ func TestCoveredBunFailsClosedAndAcceptsOnlyNonblockingStatusOne(t *testing.T) {
 	stderr.Reset()
 	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err == nil || !strings.Contains(stderr.String(), "scanner failed without decoded blocking findings") {
 		t.Fatalf("Bun outage was not rejected: err=%v stderr=%q stdout=%q", err, stderr.String(), stdout.String())
+	}
+}
+
+func TestCoveredBunRetriesTransientTransportOnce(t *testing.T) {
+	contract := exceptionContract{}
+	root, bin, log := scannerFixture(t)
+	setFakeScannerEnv(t, bin, log, "bun-transient-once")
+	var stdout, stderr bytes.Buffer
+	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
+	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err != nil {
+		t.Fatalf("transient Bun audit failure was not recovered: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+	}
+	if got := strings.Count(mustRead(t, log), "bun|"); got != 2 {
+		t.Fatalf("transient Bun audit failure attempts = %d, want 2", got)
+	}
+	if !strings.Contains(stderr.String(), "retrying once") {
+		t.Fatalf("retry diagnostic is missing: %s", stderr.String())
+	}
+
+	setFakeScannerMode(t, "bun-finding-with-transport-error")
+	stdout.Reset()
+	stderr.Reset()
+	before := strings.Count(mustRead(t, log), "bun|")
+	if err := r.scanBun(filepath.Join(root, "bun.lock"), &contract); err == nil {
+		t.Fatal("decoded critical finding was accepted")
+	}
+	if got := strings.Count(mustRead(t, log), "bun|"); got != before+1 {
+		t.Fatalf("decoded critical finding was retried: %d new invocations", got-before)
+	}
+}
+
+func TestRetryableBunAuditTransportRejectsUnrelatedMalformedOutput(t *testing.T) {
+	result := commandResult{status: 1, stderr: []byte("audit request failed while parsing timeout metadata")}
+	if retryableBunAuditTransport(result) {
+		t.Fatal("unrelated malformed output was classified as a transport failure")
 	}
 }
 
@@ -161,6 +199,18 @@ bun-nonblocking)
   if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'; exit 1; fi ;;
 bun-outage)
   if [[ "$tool" == "bun" ]]; then printf '{}\n'; printf 'bun scanner unavailable\n' >&2; exit 70; fi ;;
+bun-transient-once)
+  if [[ "$tool" == "bun" ]]; then
+    attempts="$(grep -c '^bun|' "$SECURITY_TEST_LOG" || true)"
+    if [[ "$attempts" == "1" ]]; then printf 'error: ConnectionClosed: audit request failed (status 503)\n' >&2; exit 1; fi
+    printf '{}\n'
+  fi ;;
+bun-finding-with-transport-error)
+  if [[ "$tool" == "bun" ]]; then
+    printf '{"example-package":[{"id":"GHSA-test-1","severity":"critical"}]}\n'
+    printf 'Timeout: audit request failed\n' >&2
+    exit 1
+  fi ;;
 esac
 exit 0
 `

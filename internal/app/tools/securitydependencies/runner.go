@@ -220,6 +220,10 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "bun", args...)
+	if retryableBunAuditTransport(result) {
+		fmt.Fprintf(r.stderr, "bun audit %s: transient transport failure; retrying once\n", dir)
+		result = r.command(dir, "bun", args...)
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("bun audit", dir, result)
@@ -253,6 +257,26 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	}
 	r.emitFailure(result)
 	return statusError("bun audit", dir, status)
+}
+
+func retryableBunAuditTransport(result commandResult) bool {
+	if result.status == 0 {
+		return false
+	}
+	if _, _, err := bunFindingCounts(result.stdout); err == nil {
+		return false
+	}
+	diagnostic := strings.ToLower(string(result.stdout) + "\n" + string(result.stderr))
+	for _, signature := range []string{
+		"audit request failed (status 503)",
+		"connectionclosed: audit request failed",
+		"timeout: audit request failed",
+	} {
+		if strings.Contains(diagnostic, signature) {
+			return true
+		}
+	}
+	return false
 }
 
 func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
