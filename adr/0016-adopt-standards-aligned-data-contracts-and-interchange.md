@@ -899,8 +899,12 @@ qualified.
   fingerprints. PostgreSQL revision 008 binds digest, API version, profile,
   authored ID, kind, version, and SemVer baseline to the exact canonical bytes.
   Focused projection, generator, publication, adapter, migration, and architecture
-  tests pass; the Docker-gated PostgreSQL process test remains an environment
-  skip and final FAI-632 qualification remains blocked by the dependencies above.
+  tests pass. The application-owned PostgreSQL conformance gate is injected into
+  the reusable platform harness, preserves required-mode failure when the pinned
+  provider is unavailable, and runs revision 008 plus immutable replay and
+  concurrency fixtures in the canonical required lane. Live execution remains
+  BLOCKED on runners without Docker access, and final FAI-632 qualification
+  remains blocked by the dependencies above.
 - **QUALIFIED for export only (FAI-623):** pinned ODCS 3.1.0 export fixtures pass
   the vendored schema and independent CI oracle. Mapping/loss and secret
   exclusion tests cover the implemented Source/Model export profile. ODCS

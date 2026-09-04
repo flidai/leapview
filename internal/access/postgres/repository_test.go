@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
+	apptesting "github.com/flidai/leapview/internal/app/testing"
 	"github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -29,7 +30,7 @@ type auditDatabase struct {
 
 func newAuditDatabase(t *testing.T) auditDatabase {
 	t.Helper()
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, apptesting.PostgresConformanceRequired())
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{

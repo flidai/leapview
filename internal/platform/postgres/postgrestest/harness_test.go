@@ -1,6 +1,7 @@
 package postgrestest
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -37,17 +38,40 @@ func TestValidateRoleRequiresPasswordForLogin(t *testing.T) {
 	}
 }
 
-func TestRequiredParsesBooleanEnvironment(t *testing.T) {
-	for _, value := range []string{"1", "true", "T", "yes", "on"} {
-		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", value)
-		if !Required() {
-			t.Fatalf("Required() = false for %q", value)
-		}
+type startupFailureRecorder struct {
+	fatal bool
+	skip  bool
+	text  string
+}
+
+func (r *startupFailureRecorder) Fatalf(format string, args ...any) {
+	r.fatal = true
+	r.text = fmt.Sprintf(format, args...)
+}
+
+func (r *startupFailureRecorder) Skipf(format string, args ...any) {
+	r.skip = true
+	r.text = fmt.Sprintf(format, args...)
+}
+
+func TestReportStartupFailureSkipsOptionalUnavailableProvider(t *testing.T) {
+	reporter := new(startupFailureRecorder)
+	reportStartupFailure(reporter, false, fmt.Errorf("provider unavailable"))
+	if !reporter.skip || reporter.fatal {
+		t.Fatalf("optional startup failure = %#v, want skip without fatal", reporter)
 	}
-	for _, value := range []string{"", "0", "false", "off", "no"} {
-		t.Setenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED", value)
-		if Required() {
-			t.Fatalf("Required() = true for %q", value)
-		}
+	if !strings.Contains(reporter.text, "provider unavailable") {
+		t.Fatalf("optional startup failure message = %q, want provider error", reporter.text)
+	}
+}
+
+func TestReportStartupFailureFatalsRequiredUnavailableProvider(t *testing.T) {
+	reporter := new(startupFailureRecorder)
+	reportStartupFailure(reporter, true, fmt.Errorf("provider unavailable"))
+	if !reporter.fatal || reporter.skip {
+		t.Fatalf("required startup failure = %#v, want fatal without skip", reporter)
+	}
+	if !strings.Contains(reporter.text, "required PostgreSQL 18 conformance container") || !strings.Contains(reporter.text, "provider unavailable") {
+		t.Fatalf("required startup failure message = %q, want required provider error", reporter.text)
 	}
 }

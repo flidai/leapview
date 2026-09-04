@@ -9,7 +9,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/url"
-	"os"
 	"regexp"
 	"strings"
 	"sync"
@@ -53,32 +52,19 @@ type Harness struct {
 
 	mu    sync.Mutex
 	roles map[string]Role
-	// PostgreSQL objects may be owned by explicitly provisioned roles.  Require
+	// PostgreSQL objects may be owned by explicitly provisioned roles. Require
 	// roles to be registered before databases so LIFO cleanup always drops the
 	// database before its owners.
 	databaseCreated bool
 }
 
-// Required reports whether the real PostgreSQL conformance lane is mandatory.
-// When mandatory, an unavailable provider or pinned image fails the test;
-// otherwise Start skips the test cleanly.
-func Required() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv("LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED"))) {
-	case "1", "true", "t", "yes", "on":
-		return true
-	default:
-		return false
-	}
-}
-
-// Start starts a pinned PostgreSQL 18 container.  Docker is optional for local
-// runs, but setting LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED makes all startup
-// failures fatal (fail closed).
-func Start(t *testing.T) *Harness {
+// Start starts a pinned PostgreSQL 18 container. The caller decides whether an
+// unavailable provider or image is fatal; optional local runs skip cleanly.
+func Start(t *testing.T, required bool) *Harness {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(t.Context(), defaultHarnessTimeout)
 	defer cancel()
-	if !Required() {
+	if !required {
 		testcontainers.SkipIfProviderIsNotHealthy(t)
 	}
 
@@ -90,10 +76,8 @@ func Start(t *testing.T) *Harness {
 		testcontainers.WithLogger(log.TestLogger(t)),
 	)
 	if err != nil {
-		if Required() {
-			t.Fatalf("required PostgreSQL 18 conformance container: %v", err)
-		}
-		t.Skipf("PostgreSQL 18 conformance container unavailable: %v", err)
+		reportStartupFailure(t, required, err)
+		return nil
 	}
 	// Register cleanup immediately after Run, as recommended by testcontainers;
 	// later cleanup callbacks (pools, databases, and roles) run first.
@@ -114,6 +98,22 @@ func Start(t *testing.T) *Harness {
 	h := &Harness{container: container, adminURL: adminURL, admin: admin, roles: make(map[string]Role)}
 	t.Cleanup(func() { admin.Close() })
 	return h
+}
+
+type startupFailureReporter interface {
+	Fatalf(string, ...any)
+	Skipf(string, ...any)
+}
+
+// reportStartupFailure keeps the required/optional startup policy testable
+// without requiring Docker. Start uses the same policy for container launch
+// failures after the provider health check.
+func reportStartupFailure(t startupFailureReporter, required bool, err error) {
+	if required {
+		t.Fatalf("required PostgreSQL 18 conformance container: %v", err)
+		return
+	}
+	t.Skipf("PostgreSQL 18 conformance container unavailable: %v", err)
 }
 
 // AdminURL returns a connection URL for the bootstrap administrator.

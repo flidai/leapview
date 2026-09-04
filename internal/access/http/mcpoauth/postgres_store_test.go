@@ -10,6 +10,7 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
+	apptesting "github.com/flidai/leapview/internal/app/testing"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -25,7 +26,7 @@ type oauthPostgresDatabase struct {
 // by the migration role; PostgresStore receives only the native runtime pool.
 func newOAuthPostgresDatabase(t *testing.T) oauthPostgresDatabase {
 	t.Helper()
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, apptesting.PostgresConformanceRequired())
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime", Password: "leapview-conformance-secret", Login: true})

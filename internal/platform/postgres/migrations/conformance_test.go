@@ -6,16 +6,17 @@ import (
 	"testing"
 	"time"
 
+	apptesting "github.com/flidai/leapview/internal/app/testing"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // TestBaselinePostgreSQL18 applies the clean baseline to a real PostgreSQL 18
-// server.  CI can make container availability mandatory with
-// LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED=1; local runs skip when Docker is not
-// available, matching the existing platform PostgreSQL conformance tests.
+// server. CI can make container availability mandatory through the application
+// conformance setting; local runs skip when Docker is not available, matching
+// the existing platform PostgreSQL conformance tests.
 func TestBaselinePostgreSQL18(t *testing.T) {
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, apptesting.PostgresConformanceRequired())
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
@@ -271,7 +272,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 // The test is skip-gated by postgrestest.Start like the other PostgreSQL
 // conformance tests, so local environments without Docker remain useful.
 func TestAccessAuthorityCompatibilityPostgreSQL18(t *testing.T) {
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, apptesting.PostgresConformanceRequired())
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
@@ -525,7 +526,7 @@ func TestAccessAuthorityCompatibilityPostgreSQL18(t *testing.T) {
 // publication evidence, and that rerunning migrations leaves valid evidence
 // unchanged.
 func TestContractPublicationIntegrityPostgreSQL18(t *testing.T) {
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, apptesting.PostgresConformanceRequired())
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
 	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
 	runtimeRole := h.EnsureRole(t, postgrestest.Role{

@@ -7,13 +7,14 @@ import (
 	"testing"
 	"time"
 
+	apptesting "github.com/flidai/leapview/internal/app/testing"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 func TestPostgreSQL18PoolConformance(t *testing.T) {
-	h := postgrestest.Start(t)
+	h := postgrestest.Start(t, apptesting.PostgresConformanceRequired())
 	runtime := h.EnsureRole(t, postgrestest.Role{Name: "leapview_runtime", Password: "leapview-conformance-secret", Login: true})
 	db := h.NewDatabase(t, "leapview_control")
 	schema := db.CreateSchema(t, "conformance", runtime)
