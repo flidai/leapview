@@ -74,6 +74,34 @@ func TestMarkRunningRejectsOlderProductAttempt(t *testing.T) {
 	assertRiverFence(t, pool, riverID, rivertype.JobStateRunning, 1, []string{"owner-a"}, false)
 }
 
+func TestMarkRunningRejectsInitialRiverRowThatIsPending(t *testing.T) {
+	repository, pool := cancelClaimedRepository(t)
+	job, err := repository.Enqueue(t.Context(), jobs.EnqueueInput{
+		ID: "mark-running-initial-pending", Kind: "release.finalize", WorkloadClass: "background", PrincipalID: "test-principal",
+		PartitionKey: "mark-running-initial-pending", ResourceKind: "release", ResourceID: "mark-running-initial-pending", EstimatedMemoryBytes: 1,
+		Payload: []byte(`{"value":1}`),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	riverID := jobRiverID(t, pool, job.ID)
+	if _, err := pool.Exec(t.Context(), `UPDATE public.river_job SET state = 'pending' WHERE id = $1`, riverID); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repository.MarkRunning(t.Context(), job.ID, 1); !errors.Is(err, jobs.ErrConflict) {
+		t.Fatalf("MarkRunning() from pending initial River row error = %v, want conflict", err)
+	}
+	current, err := repository.Get(t.Context(), job.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current.Status != jobs.StatusQueued || current.Attempts != 0 {
+		t.Fatalf("product history = status %q attempt %d, want queued attempt 0", current.Status, current.Attempts)
+	}
+	assertRiverFence(t, pool, riverID, rivertype.JobStatePending, 0, nil, false)
+}
+
 func TestRequeueAfterFailureRejectsStaleRiverAttempt(t *testing.T) {
 	repository, pool := cancelClaimedRepository(t)
 	job := enqueueClaimedJob(t, repository, pool, "requeue-stale", "owner-a", 1)

@@ -31,6 +31,8 @@ import (
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/riverqueue/river"
+	"github.com/riverqueue/river/rivertype"
 )
 
 type integrationAuditWriter struct{ fail bool }
@@ -179,7 +181,11 @@ func claimRiverRefreshTest(ctx context.Context, adapter *PostgresJobsAdapter, ca
 		WHERE id=$1`, riverID, nextAttempt, owner); err != nil {
 		return refreshrun.JobRecord{}, false, err
 	}
-	history, err := adapter.Jobs.MarkRunning(ctx, candidate.ID, candidate.AttemptCount+1)
+	riverJob := &river.Job[jobspostgres.RefreshPipelineArgs]{JobRow: &rivertype.JobRow{
+		ID: riverID, Attempt: nextAttempt, State: rivertype.JobStateRunning, AttemptedBy: []string{owner},
+	}}
+	executionCtx := jobspostgres.ContextWithRiverExecution(ctx, riverJob, owner, lease)
+	history, err := adapter.Jobs.MarkRunning(executionCtx, candidate.ID, candidate.AttemptCount+1)
 	if err != nil {
 		return refreshrun.JobRecord{}, false, err
 	}

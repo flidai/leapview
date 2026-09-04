@@ -506,7 +506,7 @@ func (r *Repository) lockRiverMarkFence(ctx context.Context, tx Tx, id string, a
 	if err != nil {
 		return err
 	}
-	if int(row.Attempt) == 0 && attempt == 1 && completionFromContext(ctx) == nil {
+	if int(row.Attempt) == 0 && attempt == 1 && completionFromContext(ctx) == nil && rivertype.JobState(row.State) == rivertype.JobStateAvailable {
 		return nil
 	}
 	if int(row.Attempt) != attempt || rivertype.JobState(row.State) != rivertype.JobStateRunning {
