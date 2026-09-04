@@ -18,7 +18,7 @@ func richPlanDocumentFixture(t *testing.T, id, target, project string) (deployme
 	created := time.Date(2026, time.January, 2, 3, 4, 5, 0, time.UTC)
 	plan, err := deployment.NewDeliveryPlan(deployment.DeliveryPlan{
 		ID: id, TargetID: target, ProjectID: graph.ResourceID(project), Environment: "prod",
-		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('e'), BaseTargetRevision: 0,
+		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: d('e'), ServingArtifactDigest: d('e'), BaseTargetRevision: 0,
 		Execution: deployment.DeliveryExecutionInputs{
 			SourceArtifactDigest: d('e'), CompilerDigest: d('b'), ExecutableDigest: d('c'),
 			DependencyDigest: d('d'), ConfigDigest: d('c'), BindingDigest: d('f'),
@@ -52,7 +52,7 @@ func planDocumentProjectionFixture(t *testing.T, rich deployment.DeliveryPlan, d
 	return PlanInput{
 		PlanID: rich.ID, TargetID: rich.TargetID, PlanRevision: 1, PlanDigest: rich.Digest,
 		CompiledGraphDigest: testDigest('b'), CompiledConfigDigest: rich.Execution.ConfigDigest,
-		SecurityDomainFingerprint: rich.Governance.AuthorizationDigest, ArtifactDigest: rich.SourceDigest,
+		SecurityDomainFingerprint: rich.Governance.AuthorizationDigest, ArtifactDigest: rich.ServingArtifactDigest,
 		QualificationDigest: rich.Governance.QualificationDigest, ApprovalRequired: rich.Governance.RequiresApproval, ApprovalPolicyRevision: rich.Governance.ApprovalPolicyRevision, PlanDocument: document,
 		Evidence: json.RawMessage(`{"review":"ok"}`),
 	}
@@ -122,6 +122,23 @@ func TestRichPlanRehydratesAndKeepsApprovalSeparateFromQualificationProjection(t
 	servingDigestInput.ArtifactDigest = servingRich.ServingArtifactDigest
 	if !planDocumentProjectionMatches(servingRich, servingDigestInput) || servingDigestInput.ArtifactDigest == servingRich.SourceDigest {
 		t.Fatal("serving artifact digest was incorrectly coupled to source digest")
+	}
+	missingServing := rich
+	missingServing.ServingArtifactDigest = ""
+	missingServing, err = deployment.NewDeliveryPlan(missingServing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingDocument, err := json.Marshal(missingServing)
+	if err != nil {
+		t.Fatal(err)
+	}
+	missingInput := planDocumentProjectionFixture(t, missingServing, missingDocument)
+	// A source digest must never satisfy the PostgreSQL serving-artifact
+	// projection when the rich plan omitted its explicit serving identity.
+	missingInput.ArtifactDigest = missingServing.SourceDigest
+	if planDocumentProjectionMatches(missingServing, missingInput) {
+		t.Fatal("missing serving artifact identity was accepted via source digest fallback")
 	}
 	for name, mutate := range map[string]func(*PlanInput){
 		"authorization": func(input *PlanInput) { input.SecurityDomainFingerprint = testDigest('9') },

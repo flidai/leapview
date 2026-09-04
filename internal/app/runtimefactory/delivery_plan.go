@@ -406,9 +406,11 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 				return deployment.DeliveryPlanRequest{}, err
 			}
 			candidateReuse := *reuse
-			if candidateReuse.BaseContextDigest != "" {
-				candidateReuse.ContextDigest = currentContextDigest
-			}
+			// Canonical target composition must compare the current execution
+			// context with the exact active-base context. Do not preserve an
+			// omitted context for compatibility callers; EvaluateDeliveryReuse
+			// rejects an incomplete identity before any relation can be reused.
+			candidateReuse.ContextDigest = currentContextDigest
 			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
 			if candidateReuse.EquivalenceToken == "" {
 				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken
@@ -462,13 +464,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			decision.Reason = "operation requires explicit full materialization"
 		} else if reuse != nil && len(artifacts.Compiler.RelationExecution) > 0 {
 			candidateReuse := *reuse
-			// Production target composition supplies the active base context.
-			// Preserve an omitted context for legacy candidate-level callers so
-			// EvaluateDeliveryReuse can distinguish that case from the
-			// relation-scoped fail-closed contract below.
-			if candidateReuse.BaseContextDigest != "" {
-				candidateReuse.ContextDigest = currentContextDigest
-			}
+			// Canonical target composition supplies the active base context;
+			// omitted context identities must fail closed rather than selecting
+			// a compatibility path for candidate-level callers.
+			candidateReuse.ContextDigest = currentContextDigest
 			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
 			if candidateReuse.EquivalenceToken == "" {
 				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken
@@ -515,9 +514,10 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 			decision.Reason = "refresh mode requires private materialization"
 		} else if reuse != nil {
 			candidateReuse := *reuse
-			if candidateReuse.BaseContextDigest != "" {
-				candidateReuse.ContextDigest = currentContextDigest
-			}
+			// Canonical reuse always compares exact current/base execution
+			// context identities. An omitted base context is incomplete and is
+			// rejected by EvaluateDeliveryReuse.
+			candidateReuse.ContextDigest = currentContextDigest
 			candidateReuse.Deterministic = candidateReuse.Deterministic && artifacts.Generation.Deterministic
 			if candidateReuse.EquivalenceToken == "" {
 				candidateReuse.EquivalenceToken = artifacts.Generation.EquivalenceToken

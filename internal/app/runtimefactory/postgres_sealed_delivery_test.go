@@ -74,7 +74,7 @@ func TestPostgresSealedRootResolverCandidatePreview(t *testing.T) {
 	qualificationDigest := testPostgresResolverDigest('b')
 	planDocument, err := deploymentdomain.NewDeliveryPlan(deploymentdomain.DeliveryPlan{
 		ID: planID, TargetID: targetID, ProjectID: projectgraph.ResourceID(projectID), Environment: environment,
-		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: artifactDigest,
+		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: artifactDigest, ServingArtifactDigest: artifactDigest,
 		Execution:  deploymentdomain.DeliveryExecutionInputs{SourceArtifactDigest: artifactDigest, CompilerDigest: graphDigest, ExecutableDigest: testPostgresResolverDigest('c'), DependencyDigest: testPostgresResolverDigest('d'), ConfigDigest: configDigest, BindingDigest: securityDigest, RuntimeDigest: testPostgresResolverDigest('e'), CapabilityDigest: testPostgresResolverDigest('f')},
 		Provenance: deploymentdomain.DeliveryProvenance{Builder: "runtimefactory-test"},
 		Governance: deploymentdomain.DeliveryGovernance{PolicyDigest: testPostgresResolverDigest('0'), AuthorizationDigest: securityDigest, QualificationDigest: runtimeFactoryDigest("qualification"), ApprovalPolicyRevision: 1, ExpiresAt: time.Date(2026, 8, 29, 13, 0, 0, 0, time.UTC)},

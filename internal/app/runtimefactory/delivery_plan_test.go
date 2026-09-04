@@ -278,8 +278,12 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	baseContext, err := baseRequest.Execution.ContextDigest()
+	if err != nil {
+		t.Fatal(err)
+	}
 	reuse := &deployment.DeliveryReuseInput{
-		BaseExecutionDigest: baseExecution, CatalogDigest: deliveryPlanDigest('d'), BaseCatalogDigest: deliveryPlanDigest('d'),
+		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('d'), BaseCatalogDigest: deliveryPlanDigest('d'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true,
 	}
 	exact, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, reuse)
@@ -291,6 +295,11 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 	}
 	if exact.Execution.ConfigDigest != baseExecutionInputs.ConfigDigest || !strings.Contains(exact.Evidence.ReuseStatement, "reuses") {
 		t.Fatalf("exact reuse execution/evidence = config:%q reuse:%q", exact.Execution.ConfigDigest, exact.Evidence.ReuseStatement)
+	}
+	missingContext := *reuse
+	missingContext.BaseContextDigest = ""
+	if _, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &missingContext); err == nil || !strings.Contains(err.Error(), "execution context identity is incomplete") {
+		t.Fatalf("missing active context identity error = %v, want fail-closed rejection", err)
 	}
 	changed := *reuse
 	changed.BaseCatalogDigest = deliveryPlanDigest('f')

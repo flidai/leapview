@@ -870,16 +870,12 @@ func normalizeStoredPlanDocument(raw json.RawMessage) (json.RawMessage, deployme
 
 func planDocumentProjectionMatches(plan deployment.DeliveryPlan, in PlanInput) bool {
 	// ArtifactDigest is the immutable packed serving-bundle identity retained
-	// by the delivery row. Native plans carry it explicitly in the rich plan;
-	// legacy plans omitted that field, so their source digest remains the
-	// backwards-compatible fallback.
-	plannedArtifactDigest := plan.ServingArtifactDigest
-	if plannedArtifactDigest == "" {
-		plannedArtifactDigest = plan.SourceDigest
-	}
+	// by the delivery row. PostgreSQL plans must carry this identity explicitly
+	// in the rich plan; a source digest is a different identity and is never a
+	// valid substitute.
 	return plan.ID == in.PlanID && plan.TargetID == in.TargetID &&
 		plan.Digest == in.PlanDigest && plan.Execution.ConfigDigest == in.CompiledConfigDigest &&
-		plannedArtifactDigest == in.ArtifactDigest &&
+		plan.ServingArtifactDigest == in.ArtifactDigest &&
 		plan.Governance.AuthorizationDigest == in.SecurityDomainFingerprint &&
 		plan.Governance.QualificationDigest == in.QualificationDigest &&
 		plan.Governance.RequiresApproval == in.ApprovalRequired &&
