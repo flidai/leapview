@@ -127,14 +127,7 @@ func (r *Repository) setPrincipalDisabled(ctx context.Context, id string, provis
 		if err = accessdb.New(tx).RevokePrincipalAuthoringSessions(ctx, principalID); err != nil {
 			return access.Principal{}, err
 		}
-		// MCP OAuth sessions are opaque fosite state, so they are keyed to the
-		// principal through the persisted session subject rather than a typed
-		// foreign key. Disabling a principal must revoke both access and refresh
-		// sessions in the same transaction as the principal transition.
-		if _, err = tx.Exec(ctx, `
-UPDATE access.oauth_session
-SET active = false
-WHERE active = true AND request_json->'session'->>'subject' = $1`, id); err != nil {
+		if err = accessdb.New(tx).RevokePrincipalOAuthSessions(ctx, principalID); err != nil {
 			return access.Principal{}, err
 		}
 	}

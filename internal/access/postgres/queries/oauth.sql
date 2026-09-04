@@ -129,3 +129,9 @@ FROM refresh;
 UPDATE access.oauth_session
 SET active = false
 WHERE kind = sqlc.arg(kind) AND request_id = sqlc.arg(request_id) AND active = true;
+
+-- name: RevokePrincipalOAuthSessions :exec
+UPDATE access.oauth_session
+SET active = false
+WHERE active = true
+  AND request_json->'session'->>'subject' = (sqlc.arg(principal_id)::uuid)::text;
