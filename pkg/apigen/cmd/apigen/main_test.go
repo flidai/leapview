@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -15,24 +16,74 @@ import (
 )
 
 var (
-	managedTypeSpecNPMCacheOnce  sync.Once
-	managedTypeSpecNPMCachePath  string
-	managedTypeSpecNPMCacheErr   error
-	managedTypeSpecToolchainOnce sync.Once
-	managedTypeSpecToolchainRoot string
-	managedTypeSpecToolchainDir  string
-	managedTypeSpecToolchainErr  error
+	managedTypeSpecFixture managedTypeSpecTestFixture
 )
 
 func TestMain(m *testing.M) {
 	code := m.Run()
-	if managedTypeSpecToolchainRoot != "" {
-		_ = os.RemoveAll(managedTypeSpecToolchainRoot)
-	}
-	if managedTypeSpecNPMCachePath != "" {
-		_ = os.RemoveAll(managedTypeSpecNPMCachePath)
-	}
+	managedTypeSpecFixture.cleanup()
 	os.Exit(code)
+}
+
+type managedTypeSpecTestFixture struct {
+	npmCacheOnce sync.Once
+	npmCachePath string
+	npmCacheErr  error
+	toolchain    managedTypeSpecToolchainFixture
+}
+
+type managedTypeSpecToolchainFixture struct {
+	once            sync.Once
+	root            string
+	packageDir      string
+	dependenciesDir string
+	err             error
+}
+
+func (f *managedTypeSpecTestFixture) cleanup() {
+	f.toolchain.cleanup()
+	if f.npmCachePath != "" {
+		_ = os.RemoveAll(f.npmCachePath)
+	}
+}
+
+func (f *managedTypeSpecToolchainFixture) cleanup() {
+	if f.root != "" {
+		_ = os.RemoveAll(f.root)
+	}
+}
+
+func (f *managedTypeSpecToolchainFixture) prepare() (string, error) {
+	f.once.Do(func() {
+		f.root, f.err = os.MkdirTemp("", "apigen-test-typespec-toolchain-")
+		if f.err != nil {
+			return
+		}
+		pkg, err := installBundledTypeSpecPackage(f.root)
+		if err != nil {
+			f.err = err
+			return
+		}
+		f.packageDir = pkg.Dir
+		if f.err = ensureTypeSpecToolchain(pkg); f.err != nil {
+			return
+		}
+		f.dependenciesDir = filepath.Join(pkg.Dir, "node_modules")
+	})
+	return f.dependenciesDir, f.err
+}
+
+func seedManagedTypeSpecDependencies(pkg typeSpecPackage, dependenciesDir string) error {
+	target := filepath.Join(pkg.Dir, "node_modules")
+	if _, err := os.Lstat(target); err == nil {
+		return fmt.Errorf("managed typespec package already has node_modules: %s", target)
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("stat managed typespec node_modules: %w", err)
+	}
+	if err := os.Symlink(dependenciesDir, target); err != nil {
+		return fmt.Errorf("link managed typespec dependencies: %w", err)
+	}
+	return nil
 }
 
 func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
@@ -345,7 +396,13 @@ op second(): string;
 	pkgBefore, err := resolveTypeSpecPackage()
 	require.NoError(t, err)
 	require.True(t, pkgBefore.Managed)
-	require.Equal(t, managedTypeSpecToolchainDir, pkgBefore.Dir)
+	require.NotEqual(t, managedTypeSpecFixture.toolchain.packageDir, pkgBefore.Dir)
+	require.True(t, strings.HasPrefix(pkgBefore.Dir, filepath.Join(os.Getenv("XDG_CACHE_HOME"), "apigen", "typespec")+string(os.PathSeparator)))
+	testNodeModules, err := filepath.EvalSymlinks(filepath.Join(pkgBefore.Dir, "node_modules"))
+	require.NoError(t, err)
+	preparedNodeModules, err := filepath.EvalSymlinks(managedTypeSpecFixture.toolchain.dependenciesDir)
+	require.NoError(t, err)
+	require.Equal(t, preparedNodeModules, testNodeModules)
 	packageJSONBefore := mustReadString(t, filepath.Join(pkgBefore.Dir, "package.json"))
 
 	require.NoError(t, compileTypeSpec(firstTypeSpecDir, firstIRPath, firstOpenAPIPath))
@@ -1099,6 +1156,62 @@ touch node_modules/@typespec/compiler/cmd/tsp.js
 	secondNodeModules, err := filepath.EvalSymlinks(filepath.Join(secondPkg.Dir, "node_modules"))
 	require.NoError(t, err)
 	require.NotEqual(t, firstNodeModules, secondNodeModules)
+}
+
+func TestPrepareTypeSpecToolchain_ConcurrentFirstPreparationUsesOneNPMInstall(t *testing.T) {
+	t.Helper()
+	setupManagedTypeSpecEnvironment(t)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "npm-cache.log")
+	npmPath := filepath.Join(binDir, "npm")
+	script := `#!/bin/sh
+printf '%s\n' "$NPM_CONFIG_CACHE" >> "$APIGEN_TEST_NPM_CACHE_LOG"
+mkdir -p node_modules/@typespec/compiler/cmd
+touch node_modules/@typespec/compiler/cmd/tsp.js
+`
+	require.NoError(t, os.WriteFile(npmPath, []byte(script), 0o700))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("APIGEN_TEST_NPM_CACHE_LOG", logPath)
+
+	var fixture managedTypeSpecToolchainFixture
+	t.Cleanup(fixture.cleanup)
+	const callerCount = 8
+	results := make(chan struct {
+		path string
+		err  error
+	}, callerCount)
+	var wg sync.WaitGroup
+	for range callerCount {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			path, err := fixture.prepare()
+			results <- struct {
+				path string
+				err  error
+			}{path: path, err: err}
+		}()
+	}
+	wg.Wait()
+	close(results)
+
+	var preparedPath string
+	for result := range results {
+		require.NoError(t, result.err)
+		if preparedPath == "" {
+			preparedPath = result.path
+		}
+		require.Equal(t, preparedPath, result.path)
+	}
+	require.Equal(t, filepath.Join(fixture.packageDir, "node_modules"), preparedPath)
+	require.FileExists(t, filepath.Join(preparedPath, "@typespec", "compiler", "cmd", "tsp.js"))
+
+	cacheLog, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	cachePaths := strings.Split(strings.TrimSpace(string(cacheLog)), "\n")
+	require.Len(t, cachePaths, 1)
+	require.Equal(t, os.Getenv("NPM_CONFIG_CACHE"), cachePaths[0])
 }
 
 func TestCompileTypeSpec_FailurePreservesExistingOutputs(t *testing.T) {
@@ -2006,39 +2119,31 @@ func setupManagedTypeSpecCache(t *testing.T) {
 	t.Helper()
 
 	setupManagedTypeSpecEnvironment(t)
-	managedTypeSpecToolchainOnce.Do(func() {
-		managedTypeSpecToolchainRoot, managedTypeSpecToolchainErr = os.MkdirTemp("", "apigen-test-typespec-toolchain-")
-		if managedTypeSpecToolchainErr != nil {
-			return
-		}
-		var pkg typeSpecPackage
-		pkg, managedTypeSpecToolchainErr = installBundledTypeSpecPackage(managedTypeSpecToolchainRoot)
-		if managedTypeSpecToolchainErr != nil {
-			return
-		}
-		managedTypeSpecToolchainErr = ensureTypeSpecToolchain(pkg)
-		if managedTypeSpecToolchainErr == nil {
-			managedTypeSpecToolchainDir = pkg.Dir
-		}
-	})
-	require.NoError(t, managedTypeSpecToolchainErr)
-	// Keep the normal managed-package locator active while pointing it at the
-	// process-scoped cache that contains the installed toolchain.
-	t.Setenv("XDG_CACHE_HOME", managedTypeSpecToolchainRoot)
+	dependenciesDir, err := managedTypeSpecFixture.toolchain.prepare()
+	require.NoError(t, err)
+	pkg, err := installBundledTypeSpecPackage(os.Getenv("XDG_CACHE_HOME"))
+	require.NoError(t, err)
+	require.NoError(t, seedManagedTypeSpecDependencies(pkg, dependenciesDir))
 }
 
 func setupManagedTypeSpecEnvironment(t *testing.T) {
+	t.Helper()
+
+	managedTypeSpecFixture.setupEnvironment(t)
+}
+
+func (f *managedTypeSpecTestFixture) setupEnvironment(t *testing.T) {
 	t.Helper()
 
 	t.Setenv(typeSpecPackageDirEnv, "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
-	managedTypeSpecNPMCacheOnce.Do(func() {
-		managedTypeSpecNPMCachePath, managedTypeSpecNPMCacheErr = os.MkdirTemp("", "apigen-test-npm-cache-")
+	f.npmCacheOnce.Do(func() {
+		f.npmCachePath, f.npmCacheErr = os.MkdirTemp("", "apigen-test-npm-cache-")
 	})
-	require.NoError(t, managedTypeSpecNPMCacheErr)
-	t.Setenv("NPM_CONFIG_CACHE", managedTypeSpecNPMCachePath)
+	require.NoError(t, f.npmCacheErr)
+	t.Setenv("NPM_CONFIG_CACHE", f.npmCachePath)
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
