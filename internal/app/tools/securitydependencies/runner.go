@@ -23,16 +23,20 @@ import (
 )
 
 const (
-	govulncheckVersion = "v1.6.0"
-	auditLevel         = "critical"
-	defaultTimeout     = 10 * time.Minute
-	rootLookupTimeout  = 30 * time.Second
-	maxDiagnosticBytes = 64 << 10
+	govulncheckVersion  = "v1.6.0"
+	auditLevel          = "critical"
+	defaultTimeout      = 10 * time.Minute
+	defaultScanBudget   = 40 * time.Minute
+	rootLookupTimeout   = 30 * time.Second
+	maxDiagnosticBytes  = 64 << 10
+	bunAuditMaxAttempts = 3
+	bunAuditMaxRetries  = 3
 )
 
 var ghsaPattern = regexp.MustCompile(`GHSA-[A-Za-z0-9-]+`)
 var sensitiveDiagnostic = regexp.MustCompile(`(?i)(\b(?:token|password|secret|api[_-]?key|authorization|private[_-]?key)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`)
 var bunTransportError = regexp.MustCompile(`(?:(?:ConnectionClosed|Timeout): audit request failed|audit request failed \(status 503\))`)
+var errDependencyScanBudget = errors.New("dependency scan budget exhausted")
 
 type exceptionContract = securitypolicy.Exceptions
 type findingIdentity = securitypolicy.Finding
@@ -50,10 +54,14 @@ type commandResult struct {
 }
 
 type runner struct {
-	root    string
-	timeout time.Duration
-	stdout  io.Writer
-	stderr  io.Writer
+	root                string
+	timeout             time.Duration
+	stdout              io.Writer
+	stderr              io.Writer
+	bunTransportRetries int
+	scanBudget          time.Duration
+	scanDeadline        time.Time
+	now                 func() time.Time
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -72,14 +80,18 @@ func commandOutput(data []byte) []byte {
 }
 
 func (r *runner) command(dir, name string, args ...string) commandResult {
-	ctx, cancel := context.WithTimeout(context.Background(), r.timeout)
+	deadline, err := r.commandDeadline(dir, name)
+	if err != nil {
+		return commandResult{status: 1, err: err}
+	}
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
 	defer cancel()
 	command := exec.CommandContext(ctx, name, args...)
 	command.Dir = dir
 	var stdout, stderr bytes.Buffer
 	command.Stdout = &stdout
 	command.Stderr = &stderr
-	err := command.Run()
+	err = command.Run()
 	status := 0
 	if err != nil {
 		status = 1
@@ -91,13 +103,19 @@ func (r *runner) command(dir, name string, args ...string) commandResult {
 			}
 		}
 		if ctx.Err() != nil {
-			err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
+			if r.scanBudgetExpired() {
+				err = fmt.Errorf("%w while running %s %s", errDependencyScanBudget, name, dir)
+			} else {
+				err = fmt.Errorf("%w (command timed out after %s)", ctx.Err(), r.timeout)
+			}
 		}
 	}
 	return commandResult{stdout: stdout.Bytes(), stderr: stderr.Bytes(), status: status, err: err}
 }
 
 func (r *runner) run() error {
+	r.bunTransportRetries = 0
+	r.scanDeadline = r.currentTime().Add(r.scanBudgetOrDefault())
 	contract, err := r.loadContract()
 	if err != nil {
 		return err
@@ -198,6 +216,11 @@ func (r *runner) scanGo(moduleFile string, contract *exceptionContract) error {
 	}
 	args = append(args, "./...")
 	result := r.command(dir, "go", args...)
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "govulncheck %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("govulncheck", dir, result)
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("govulncheck", dir, result)
@@ -220,10 +243,11 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	if contract != nil {
 		args = append(args, "--json")
 	}
-	result := r.command(dir, "bun", args...)
-	if result.status != 0 && len(bytes.TrimSpace(result.stdout)) == 0 && bunTransportError.Match(result.stderr) {
-		fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; retrying once\n", dir)
-		result = r.command(dir, "bun", args...)
+	result := r.runBunAudit(dir, args...)
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "bun audit %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("bun audit", dir, result)
 	}
 	if contract == nil {
 		r.emitDirect(result)
@@ -260,6 +284,70 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 	return statusError("bun audit", dir, status)
 }
 
+func (r *runner) runBunAudit(dir string, args ...string) commandResult {
+	for attempt := 1; attempt <= bunAuditMaxAttempts; attempt++ {
+		result := r.command(dir, "bun", args...)
+		if !retryableBunAuditTransport(result) {
+			return result
+		}
+		if attempt == bunAuditMaxAttempts {
+			fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; per-lock retry budget exhausted after %d attempts\n", dir, bunAuditMaxAttempts)
+			return result
+		}
+		if r.scanBudgetExpired() {
+			fmt.Fprintf(r.stdout, "bun audit %s: dependency scan budget exhausted before retry; failing closed\n", dir)
+			return result
+		}
+		if r.bunTransportRetries >= bunAuditMaxRetries {
+			fmt.Fprintf(r.stdout, "bun audit %s: global transient transport retry budget exhausted after %d retries\n", dir, bunAuditMaxRetries)
+			return result
+		}
+		r.bunTransportRetries++
+		fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; retrying (attempt %d/%d)\n", dir, attempt+1, bunAuditMaxAttempts)
+	}
+	return commandResult{status: 1, err: errors.New("bun audit retry budget was invalid")}
+}
+
+func retryableBunAuditTransport(result commandResult) bool {
+	return result.status != 0 && len(bytes.TrimSpace(result.stdout)) == 0 && bunTransportError.Match(result.stderr)
+}
+
+func (r *runner) commandDeadline(dir, name string) (time.Time, error) {
+	now := r.currentTime()
+	if r.timeout <= 0 {
+		return time.Time{}, errors.New("scanner command timeout must be positive")
+	}
+	deadline := now.Add(r.timeout)
+	if r.scanDeadline.IsZero() {
+		return deadline, nil
+	}
+	if !r.scanDeadline.After(now) {
+		return time.Time{}, fmt.Errorf("%w before running %s %s", errDependencyScanBudget, name, dir)
+	}
+	if r.scanDeadline.Before(deadline) {
+		return r.scanDeadline, nil
+	}
+	return deadline, nil
+}
+
+func (r *runner) currentTime() time.Time {
+	if r.now != nil {
+		return r.now()
+	}
+	return time.Now()
+}
+
+func (r *runner) scanBudgetOrDefault() time.Duration {
+	if r.scanBudget > 0 {
+		return r.scanBudget
+	}
+	return defaultScanBudget
+}
+
+func (r *runner) scanBudgetExpired() bool {
+	return !r.scanDeadline.IsZero() && !r.scanDeadline.After(r.currentTime())
+}
+
 func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	dir := filepath.Dir(lockFile)
 	fmt.Fprintf(r.stdout, "npm audit %s\n", dir)
@@ -268,11 +356,21 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "npm", args...)
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("npm audit", dir, result)
+	}
 	retried := false
 	if contract != nil && retryableNPMAuditTransport(result) {
 		fmt.Fprintf(r.stdout, "npm audit %s: transient transport failure; retrying once\n", dir)
 		retried = true
 		result = r.command(dir, "npm", args...)
+	}
+	if errors.Is(result.err, errDependencyScanBudget) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: dependency scan budget exhausted; failing closed\n", dir)
+		return commandError("npm audit", dir, result)
 	}
 	if retried && result.status == 0 && !validNPMAuditReport(result.stdout) {
 		r.emitFailure(result)

@@ -39,7 +39,7 @@ jobs:
   dependency-validation:
     name: Dependency vulnerability policy
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 60
 
     steps:
       - name: Check out the exact candidate

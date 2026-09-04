@@ -98,11 +98,13 @@ func TestBunAuditRetriesOnlyBlankTransportFailures(t *testing.T) {
 		mode            string
 		wantErr         bool
 		wantInvocations int
-		wantRetryNotice bool
+		wantRetryNotice int
+		wantExhausted   bool
 	}{
-		{name: "transient transport failure then success", mode: "bun-transport-transient", wantInvocations: 2, wantRetryNotice: true},
-		{name: "HTTP 503 transport failure then success", mode: "bun-transport-http503", wantInvocations: 2, wantRetryNotice: true},
-		{name: "permanent transport failure", mode: "bun-transport-permanent", wantErr: true, wantInvocations: 2, wantRetryNotice: true},
+		{name: "transient transport failure then success", mode: "bun-transport-transient", wantInvocations: 2, wantRetryNotice: 1},
+		{name: "two transient transport failures then success", mode: "bun-transport-two-failures", wantInvocations: 3, wantRetryNotice: 2},
+		{name: "HTTP 503 transport failure then success", mode: "bun-transport-http503", wantInvocations: 2, wantRetryNotice: 1},
+		{name: "permanent transport failure", mode: "bun-transport-permanent", wantErr: true, wantInvocations: 3, wantRetryNotice: 2, wantExhausted: true},
 		{name: "critical JSON with transport stderr", mode: "bun-transport-critical", wantErr: true, wantInvocations: 1},
 		{name: "noncritical JSON with transport stderr", mode: "bun-transport-noncritical", wantInvocations: 1},
 		{name: "partial JSON with transport stderr", mode: "bun-transport-partial", wantErr: true, wantInvocations: 1},
@@ -113,7 +115,7 @@ func TestBunAuditRetriesOnlyBlankTransportFailures(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			root, bin, log := scannerFixture(t)
 			setFakeScannerEnv(t, bin, log, test.mode)
-			if test.mode == "bun-transport-transient" || test.mode == "bun-transport-http503" {
+			if test.mode == "bun-transport-transient" || test.mode == "bun-transport-two-failures" || test.mode == "bun-transport-http503" {
 				t.Setenv("SECURITY_TEST_STATE", filepath.Join(root, "transport.state"))
 			}
 			var stdout, stderr bytes.Buffer
@@ -128,13 +130,99 @@ func TestBunAuditRetriesOnlyBlankTransportFailures(t *testing.T) {
 			if got := strings.Count(mustRead(t, log), "bun|"); got != test.wantInvocations {
 				t.Fatalf("Bun was invoked %d times, want %d; log=%s", got, test.wantInvocations, mustRead(t, log))
 			}
-			notice := fmt.Sprintf("bun audit %s: transient transport failure; retrying once", root)
-			if got := strings.Count(stdout.String(), notice); test.wantRetryNotice && got != 1 {
-				t.Fatalf("retry diagnostic count = %d, want 1; stdout=%q", got, stdout.String())
-			} else if !test.wantRetryNotice && got != 0 {
+			notice := fmt.Sprintf("bun audit %s: transient transport failure; retrying", root)
+			if got := strings.Count(stdout.String(), notice); got != test.wantRetryNotice {
 				t.Fatalf("unexpected retry diagnostic: stdout=%q", stdout.String())
 			}
+			exhausted := fmt.Sprintf("bun audit %s: transient transport failure; per-lock retry budget exhausted after %d attempts", root, bunAuditMaxAttempts)
+			if got := strings.Contains(stdout.String(), exhausted); got != test.wantExhausted {
+				t.Fatalf("retry exhaustion diagnostic = %v, want %v; stdout=%q", got, test.wantExhausted, stdout.String())
+			}
 		})
+	}
+}
+
+func TestBunAuditTransportRetriesAreBoundedAcrossLockfiles(t *testing.T) {
+	root, bin, log := scannerFixture(t)
+	setFakeScannerEnv(t, bin, log, "bun-transport-permanent")
+	var stdout, stderr bytes.Buffer
+	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
+	for _, lockFile := range []string{filepath.Join(root, "bun.lock"), filepath.Join(root, "desktop", "bun.lock")} {
+		if err := r.scanBun(lockFile, &exceptionContract{}); err == nil {
+			t.Fatalf("permanent transport failure for %s was accepted", lockFile)
+		}
+	}
+	if got := strings.Count(mustRead(t, log), "bun|"); got != 5 {
+		t.Fatalf("Bun was invoked %d times, want 5 under global retry budget; log=%s", got, mustRead(t, log))
+	}
+	if got := r.bunTransportRetries; got != bunAuditMaxRetries {
+		t.Fatalf("global Bun transport retries = %d, want %d", got, bunAuditMaxRetries)
+	}
+	secondLock := filepath.Join(root, "desktop")
+	if !strings.Contains(stdout.String(), fmt.Sprintf("bun audit %s: global transient transport retry budget exhausted after %d retries", secondLock, bunAuditMaxRetries)) {
+		t.Fatalf("global retry exhaustion diagnostic is missing: stdout=%q", stdout.String())
+	}
+}
+
+func TestDependencyScanBudgetStopsCommandsBeforeTheyRun(t *testing.T) {
+	root, bin, log := scannerFixture(t)
+	setFakeScannerEnv(t, bin, log, "bun-transport-permanent")
+	var stdout, stderr bytes.Buffer
+	r := &runner{
+		root:         root,
+		timeout:      time.Second,
+		stdout:       &stdout,
+		stderr:       &stderr,
+		scanDeadline: time.Now().Add(-time.Second),
+	}
+	err := r.scanBun(filepath.Join(root, "bun.lock"), &exceptionContract{})
+	if err == nil || !strings.Contains(err.Error(), "dependency scan budget exhausted") {
+		t.Fatalf("expired scan budget error = %v, want budget exhaustion", err)
+	}
+	var logs string
+	if fileExists(log) {
+		logs = mustRead(t, log)
+	}
+	if got := strings.Count(logs, "bun|"); got != 0 {
+		t.Fatalf("Bun was invoked %d times after the scan budget expired, want 0; log=%s", got, logs)
+	}
+}
+
+func TestCommandDeadlineUsesRemainingScanBudget(t *testing.T) {
+	clock := time.Date(2026, time.January, 1, 0, 0, 0, 0, time.UTC)
+	r := &runner{timeout: 10 * time.Minute, scanDeadline: clock.Add(2 * time.Minute), now: func() time.Time { return clock }}
+	deadline, err := r.commandDeadline("/tmp/project", "bun")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := clock.Add(2 * time.Minute); !deadline.Equal(want) {
+		t.Fatalf("command deadline = %s, want %s", deadline, want)
+	}
+}
+
+func TestScanGoBudgetFailureCannotBeWaived(t *testing.T) {
+	root, bin, log := scannerFixture(t)
+	setFakeScannerEnv(t, bin, log, "go-budget-blocking-waived")
+	contract := exceptionContract{Exceptions: []securitypolicy.Exception{{
+		Scanner: "govulncheck", Rule: "GHSA-test-1", Resource: "example-module",
+	}}}
+	var stdout, stderr bytes.Buffer
+	r := &runner{
+		root:         root,
+		timeout:      time.Second,
+		stdout:       &stdout,
+		stderr:       &stderr,
+		scanDeadline: time.Now().Add(100 * time.Millisecond),
+	}
+	err := r.scanGo(filepath.Join(root, "go.mod"), &contract)
+	if err == nil || !strings.Contains(err.Error(), "dependency scan budget exhausted") {
+		t.Fatalf("expired govulncheck error = %v, want budget exhaustion", err)
+	}
+	if strings.Contains(stdout.String(), "all findings match exact, active exceptions") {
+		t.Fatalf("budget-exhausted govulncheck output was waived: stdout=%q", stdout.String())
+	}
+	if got := strings.Count(mustRead(t, log), "go|"); got != 1 {
+		t.Fatalf("Go was invoked %d times, want 1; log=%s", got, mustRead(t, log))
 	}
 }
 
@@ -285,6 +373,10 @@ func scannerFixture(t *testing.T) (root, bin, log string) {
 set -eu
 tool="$(basename "$0")"
 printf '%s|%s|%s\n' "$tool" "$PWD" "$*" >> "$SECURITY_TEST_LOG"
+if [[ "$tool" == "go" && "${SECURITY_TEST_MODE:-}" == "go-budget-blocking-waived" ]]; then
+  printf '{"finding":{"osv":"GHSA-test-1","trace":[{"module":"example-module"}],"severity":"moderate"}}\n'
+  while :; do :; done
+fi
 if [[ "$tool" == "go" ]]; then exit 0; fi
 if [[ "$tool" == "npm" ]]; then
   case "${SECURITY_TEST_MODE:-}" in
@@ -416,6 +508,23 @@ bun-transport-transient)
       : > "$SECURITY_TEST_STATE"
       printf '\033[33mBun 1.3.14\033[0m\nConnectionClosed: audit request failed\n' >&2
       printf ' \t\n'
+      exit 1
+    fi
+    printf '{}\n'
+    exit 0
+  fi ;;
+bun-transport-two-failures)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf 'Timeout: audit request failed\n' >&2
+      printf '\t\n'
+      exit 1
+    fi
+    if [[ ! -e "$SECURITY_TEST_STATE.second" ]]; then
+      : > "$SECURITY_TEST_STATE.second"
+      printf 'Timeout: audit request failed\n' >&2
+      printf '\t\n'
       exit 1
     fi
     printf '{}\n'
