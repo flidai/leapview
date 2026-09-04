@@ -32,6 +32,7 @@ const (
 
 var ghsaPattern = regexp.MustCompile(`GHSA-[A-Za-z0-9-]+`)
 var sensitiveDiagnostic = regexp.MustCompile(`(?i)(\b(?:token|password|secret|api[_-]?key|authorization|private[_-]?key)\b\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s,}]+)`)
+var bunTransportError = regexp.MustCompile(`(?:(?:ConnectionClosed|Timeout): audit request failed|audit request failed \(status 503\))`)
 
 type exceptionContract = securitypolicy.Exceptions
 type findingIdentity = securitypolicy.Finding
@@ -220,6 +221,10 @@ func (r *runner) scanBun(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "bun", args...)
+	if result.status != 0 && len(bytes.TrimSpace(result.stdout)) == 0 && bunTransportError.Match(result.stderr) {
+		fmt.Fprintf(r.stdout, "bun audit %s: transient transport failure; retrying once\n", dir)
+		result = r.command(dir, "bun", args...)
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("bun audit", dir, result)

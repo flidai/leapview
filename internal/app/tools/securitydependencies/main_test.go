@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -91,6 +92,52 @@ func TestCoveredBunFailsClosedAndAcceptsOnlyNonblockingStatusOne(t *testing.T) {
 	}
 }
 
+func TestBunAuditRetriesOnlyBlankTransportFailures(t *testing.T) {
+	tests := []struct {
+		name            string
+		mode            string
+		wantErr         bool
+		wantInvocations int
+		wantRetryNotice bool
+	}{
+		{name: "transient transport failure then success", mode: "bun-transport-transient", wantInvocations: 2, wantRetryNotice: true},
+		{name: "HTTP 503 transport failure then success", mode: "bun-transport-http503", wantInvocations: 2, wantRetryNotice: true},
+		{name: "permanent transport failure", mode: "bun-transport-permanent", wantErr: true, wantInvocations: 2, wantRetryNotice: true},
+		{name: "critical JSON with transport stderr", mode: "bun-transport-critical", wantErr: true, wantInvocations: 1},
+		{name: "noncritical JSON with transport stderr", mode: "bun-transport-noncritical", wantInvocations: 1},
+		{name: "partial JSON with transport stderr", mode: "bun-transport-partial", wantErr: true, wantInvocations: 1},
+		{name: "malformed JSON with transport stderr", mode: "bun-transport-malformed", wantErr: true, wantInvocations: 1},
+		{name: "unrelated blank-output error", mode: "bun-transport-unrelated", wantErr: true, wantInvocations: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root, bin, log := scannerFixture(t)
+			setFakeScannerEnv(t, bin, log, test.mode)
+			if test.mode == "bun-transport-transient" || test.mode == "bun-transport-http503" {
+				t.Setenv("SECURITY_TEST_STATE", filepath.Join(root, "transport.state"))
+			}
+			var stdout, stderr bytes.Buffer
+			r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
+			err := r.scanBun(filepath.Join(root, "bun.lock"), &exceptionContract{})
+			if test.wantErr && err == nil {
+				t.Fatalf("transport result was accepted: stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("transport result failed: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+			}
+			if got := strings.Count(mustRead(t, log), "bun|"); got != test.wantInvocations {
+				t.Fatalf("Bun was invoked %d times, want %d; log=%s", got, test.wantInvocations, mustRead(t, log))
+			}
+			notice := fmt.Sprintf("bun audit %s: transient transport failure; retrying once", root)
+			if got := strings.Count(stdout.String(), notice); test.wantRetryNotice && got != 1 {
+				t.Fatalf("retry diagnostic count = %d, want 1; stdout=%q", got, stdout.String())
+			} else if !test.wantRetryNotice && got != 0 {
+				t.Fatalf("unexpected retry diagnostic: stdout=%q", stdout.String())
+			}
+		})
+	}
+}
+
 func TestExceptionMatchingIsExactAndCriticalFindingsAreNeverWaived(t *testing.T) {
 	contract := securitypolicy.Exceptions{Exceptions: []securitypolicy.Exception{{Scanner: "bun-audit", Rule: "GHSA-test-1", Resource: "pkg"}}}
 	if !matches(contract, findingIdentity{Scanner: "bun-audit", Rule: "GHSA-test-1", Resource: "pkg", Severity: "moderate"}) {
@@ -161,6 +208,40 @@ bun-nonblocking)
   if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":123,"severity":"moderate"}]}\n'; exit 1; fi ;;
 bun-outage)
   if [[ "$tool" == "bun" ]]; then printf '{}\n'; printf 'bun scanner unavailable\n' >&2; exit 70; fi ;;
+bun-transport-transient)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf '\033[33mBun 1.3.14\033[0m\nConnectionClosed: audit request failed\n' >&2
+      printf ' \t\n'
+      exit 1
+    fi
+    printf '{}\n'
+    exit 0
+  fi ;;
+bun-transport-http503)
+  if [[ "$tool" == "bun" ]]; then
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf '\033[31merror:\033[0m audit request failed (status 503)\n' >&2
+      printf '\n'
+      exit 1
+    fi
+    printf '{}\n'
+    exit 0
+  fi ;;
+bun-transport-permanent)
+  if [[ "$tool" == "bun" ]]; then printf ' \t\n'; printf 'banner: Timeout: audit request failed\n' >&2; exit 70; fi ;;
+bun-transport-critical)
+  if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"severity":"critical"}]}\n'; printf 'ConnectionClosed: audit request failed\n' >&2; exit 1; fi ;;
+bun-transport-noncritical)
+  if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"severity":"moderate"}]}\n'; printf 'Timeout: audit request failed\n' >&2; exit 1; fi ;;
+bun-transport-partial)
+  if [[ "$tool" == "bun" ]]; then printf '{"example-package":\n'; printf 'Timeout: audit request failed\n' >&2; exit 1; fi ;;
+bun-transport-malformed)
+  if [[ "$tool" == "bun" ]]; then printf 'not JSON\n'; printf 'ConnectionClosed: audit request failed\n' >&2; exit 1; fi ;;
+bun-transport-unrelated)
+  if [[ "$tool" == "bun" ]]; then printf ' \t\n'; printf 'bun scanner unavailable\n' >&2; exit 70; fi ;;
 esac
 exit 0
 `
