@@ -231,6 +231,31 @@ func TestSQLiteFixtureBoundaryIsExplicitAndNonCompositional(t *testing.T) {
 	}
 }
 
+func TestPlatformRootImportRuleIsExact(t *testing.T) {
+	if !IsPlatformRootImport(modulePath + "/internal/platform") {
+		t.Fatal("platform root import was not recognized")
+	}
+	for _, subpackage := range []string{
+		modulePath + "/internal/platform/digest",
+		modulePath + "/internal/platform/postgres",
+		modulePath + "/internal/platform/http/transport",
+	} {
+		if IsPlatformRootImport(subpackage) {
+			t.Fatalf("platform subpackage %q was incorrectly rejected as the root import", subpackage)
+		}
+	}
+}
+
+func TestProductionDoesNotImportPlatformRootPackage(t *testing.T) {
+	for _, file := range productionGoFiles(t) {
+		for _, imported := range file.imports {
+			if IsPlatformRootImport(imported) {
+				t.Errorf("%s imports the platform root package; production code must use an explicit platform subpackage", file.path)
+			}
+		}
+	}
+}
+
 func TestPublicJobsPackageIsPlatformOwned(t *testing.T) {
 	for _, path := range []string{"pkg/jobs", "pkg/jobs/queue"} {
 		rule, ok := ClassifyPackage(path)
@@ -1382,7 +1407,6 @@ func TestCapabilitySQLCOutputsArePrivate(t *testing.T) {
 		"internal/manageddata/internal/db",
 		"internal/refresh/internal/db",
 		"internal/servingstate/internal/db",
-		"internal/project/internal/db",
 	} {
 		fragment := "package: \"db\"\n        out: \"" + output + "\""
 		if !strings.Contains(config, fragment) {
@@ -2212,7 +2236,6 @@ func TestStaticSQLiteAdaptersUseGeneratedQueries(t *testing.T) {
 		"internal/dashboard/publication/sqlite": true,
 		"internal/manageddata/sqlite":           true,
 		"internal/servingstate/sqlite":          true,
-		"internal/project/sqlite":               true,
 	}
 	generatedOnlyFiles := map[string]bool{
 		"internal/access/sqlite/api_symmetry.go":  true,
@@ -2319,7 +2342,6 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/access/sqlite/queries/access.sql",
 		"internal/agent/sqlite/queries/agent.sql",
 		"internal/platform/http/idempotency/sqlite/queries/idempotency.sql",
-		"internal/platform/http/cursorsigning/sqlite/queries/cursor_signing.sql",
 		"internal/dashboard/publication/sqlite/queries/publication.sql",
 		"internal/manageddata/sqlite/queries/managed_data.sql",
 		"internal/refresh/sqlite/runqueries/materialization.sql",
@@ -2327,7 +2349,6 @@ func TestSQLCQueriesAreSplitByDomain(t *testing.T) {
 		"internal/platform/db/queries/platform.sql",
 		"internal/refresh/sqlite/schedulequeries/refresh_pipeline.sql",
 		"internal/servingstate/sqlite/queries/serving_state.sql",
-		"internal/project/sqlite/queries/project.sql",
 	} {
 		contents, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(domain)))
 		if err != nil {
@@ -4087,8 +4108,6 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 		"internal/manageddata/internal/db",
 		"internal/refresh/internal/db",
 		"internal/servingstate/internal/db",
-		"internal/project/internal/db",
-		"internal/platform/http/cursorsigning/sqlite/cursordb",
 		"internal/platform/http/idempotency/sqlite/idempotencydb",
 		"internal/platform/jobs/sqlite/jobdb",
 	} {
@@ -4353,9 +4372,8 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 
 func TestAPIv1SQLiteAdaptersUseSQLC(t *testing.T) {
 	packages := map[string]struct{}{
-		"internal/platform/http/idempotency/sqlite":   {},
-		"internal/jobs/sqlite":                        {},
-		"internal/platform/http/cursorsigning/sqlite": {},
+		"internal/platform/http/idempotency/sqlite": {},
+		"internal/jobs/sqlite":                      {},
 	}
 	for _, file := range productionGoFiles(t) {
 		if _, ok := packages[file.pkgDir]; !ok {

@@ -154,7 +154,7 @@ func TestPostgresBuildSourceCompositionHasNoSQLiteOrPathFallbackImports(t *testi
 		if err != nil {
 			t.Fatal(err)
 		}
-		if path == "database/sql" || path == "github.com/flidai/leapview/internal/project/sqlite" {
+		if path == "database/sql" {
 			t.Fatalf("postgres build imports forbidden SQLite fallback %q", path)
 		}
 	}

@@ -17,7 +17,6 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
 	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
@@ -86,10 +85,8 @@ func TestAdminPublicationRouteDurablyReplaysAndRechecksAuthorization(t *testing.
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	protocol, err := apiprotocol.Build(t.Context(), apiprotocol.Config{
-		Store: apiidempotencysqlite.NewStore(store.SQLDB()),
-		CursorSigning: cursorsigning.InitializerFunc(func(ctx context.Context) error {
-			return cursorsigningsqlite.Configure(ctx, store.SQLDB())
-		}),
+		Store:         apiidempotencysqlite.NewStore(store.SQLDB()),
+		CursorSigning: cursorsigning.NewEphemeralInitializer(),
 	})
 	if err != nil {
 		t.Fatal(err)

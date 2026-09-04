@@ -2,12 +2,10 @@ package protocol
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -17,7 +15,6 @@ import (
 
 	"github.com/flidai/leapview/internal/platform"
 	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
-	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
 	apiidempotencypostgres "github.com/flidai/leapview/internal/platform/http/idempotency/postgres"
 	apiidempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	operationpostgres "github.com/flidai/leapview/internal/platform/operation/postgres"
@@ -33,14 +30,8 @@ func withSQLiteProtocolConfig(t *testing.T, config Config) Config {
 	}
 	t.Cleanup(func() { _ = store.Close() })
 	config.Store = apiidempotencysqlite.NewStore(store.SQLDB())
-	config.CursorSigning = cursignInitializer(store.SQLDB())
+	config.CursorSigning = cursorsigning.NewEphemeralInitializer()
 	return config
-}
-
-func cursignInitializer(db *sql.DB) cursorsigning.Initializer {
-	return cursorsigning.InitializerFunc(func(ctx context.Context) error {
-		return cursorsigningsqlite.Configure(ctx, db)
-	})
 }
 
 func TestBuildConstructsProtocolPersistence(t *testing.T) {
@@ -214,7 +205,7 @@ func TestAdversarialIdempotencyNeverStoresWriteOnlyCredentialReferences(t *testi
 	}
 }
 
-func TestAdversarialDurableIdempotencyDatabaseAndBackupExcludeOneTimeCredential(t *testing.T) {
+func TestAdversarialDurableIdempotencyDatabaseExcludesOneTimeCredential(t *testing.T) {
 	ctx := t.Context()
 	databasePath := filepath.Join(t.TempDir(), "idempotency.db")
 	store, err := platform.Open(ctx, databasePath)
@@ -222,7 +213,7 @@ func TestAdversarialDurableIdempotencyDatabaseAndBackupExcludeOneTimeCredential(
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = store.Close() })
-	protocol, err := Build(ctx, Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursignInitializer(store.SQLDB()), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
+	protocol, err := Build(ctx, Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return true }})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -247,17 +238,6 @@ func TestAdversarialDurableIdempotencyDatabaseAndBackupExcludeOneTimeCredential(
 	if strings.Contains(string(storedBody), secret) {
 		t.Fatal("one-time credential persisted in idempotency database")
 	}
-	backupPath := filepath.Join(t.TempDir(), "idempotency-backup.db")
-	if err := store.Backup(ctx, backupPath); err != nil {
-		t.Fatal(err)
-	}
-	backupBytes, err := os.ReadFile(backupPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if strings.Contains(string(backupBytes), secret) {
-		t.Fatal("one-time credential persisted in database backup")
-	}
 }
 
 func TestAdversarialIdempotencyAllowsNonSecretReplay(t *testing.T) {
@@ -275,7 +255,7 @@ func TestAdversarialReplayReauthorizesCurrentCredentialAndGrants(t *testing.T) {
 	t.Cleanup(func() { _ = store.Close() })
 	var allowed atomic.Bool
 	allowed.Store(true)
-	p, err := Build(t.Context(), Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursignInitializer(store.SQLDB()), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
+	p, err := Build(t.Context(), Config{Store: apiidempotencysqlite.NewStore(store.SQLDB()), CursorSigning: cursorsigning.NewEphemeralInitializer(), BearerToken: func(*http.Request) string { return "credential" }, AcceptsBearer: func(*http.Request) bool { return true }, ReplayAuthorize: func(*http.Request) bool { return allowed.Load() }})
 	if err != nil {
 		t.Fatal(err)
 	}

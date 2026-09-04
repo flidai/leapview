@@ -143,12 +143,10 @@ var CompositionContractPrefixes = map[string]struct{}{
 var SQLiteFixturePackagePrefixes = []string{
 	"internal/access/sqlite",
 	"internal/agent/sqlite",
-	"internal/project/sqlite",
 	"internal/servingstate/sqlite",
 	"internal/manageddata/sqlite",
 	"internal/refresh/sqlite",
 	"internal/dashboard/publication/sqlite",
-	"internal/platform/http/cursorsigning/sqlite",
 	"internal/platform/http/idempotency/sqlite",
 	"internal/platform/jobs/sqlite",
 }
@@ -158,6 +156,17 @@ var SQLiteFixturePackagePrefixes = []string{
 // The Store is only a local/evaluation fixture; production composition must
 // never construct it.
 var SQLiteFixtureFilePaths = []string{"internal/platform/store.go"}
+
+// PlatformRootImportPath is the legacy SQLite platform store package. It is
+// retained only as a shared test harness; production code must depend on the
+// explicit platform subpackages instead.
+const PlatformRootImportPath = "github.com/flidai/leapview/internal/platform"
+
+// IsPlatformRootImport reports whether an import targets the legacy platform
+// root package exactly. Subpackages remain valid platform dependencies.
+func IsPlatformRootImport(importPath string) bool {
+	return importPath == PlatformRootImportPath
+}
 
 // IsSQLitePackage reports whether path contains a path-segment named sqlite.
 // Checking segments avoids treating ordinary files such as catalog.sqlite as

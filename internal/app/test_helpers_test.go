@@ -27,7 +27,7 @@ import (
 	deploymentmodule "github.com/flidai/leapview/internal/deployment/module"
 	"github.com/flidai/leapview/internal/extension"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
-	cursorsigningsqlite "github.com/flidai/leapview/internal/platform/http/cursorsigning/sqlite"
+	"github.com/flidai/leapview/internal/platform/http/cursorsigning"
 	idempotencysqlite "github.com/flidai/leapview/internal/platform/http/idempotency/sqlite"
 	apihttpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
 	jobsmodule "github.com/flidai/leapview/internal/platform/jobs/module"
@@ -400,7 +400,7 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 	}
 	if options.Database != nil {
 		data.APIIdempotency = idempotencysqlite.NewStore(options.Database)
-		data.CursorSigning = cursorsigningsqlite.NewInitializer(options.Database)
+		data.CursorSigning = cursorsigning.NewEphemeralInitializer()
 	}
 	if options.ProjectCatalog == nil && options.AccessModule != nil && options.RuntimeHost != nil {
 		catalog, err := projectcatalog.NewService(
