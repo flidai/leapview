@@ -268,12 +268,28 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "npm", args...)
+	retried := false
+	if contract != nil && retryableNPMAuditTransport(result) {
+		fmt.Fprintf(r.stdout, "npm audit %s: transient transport failure; retrying once\n", dir)
+		retried = true
+		result = r.command(dir, "npm", args...)
+	}
+	if retried && result.status == 0 && !validNPMAuditReport(result.stdout) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: scanner output after retry is not a valid audit report\n", dir)
+		return errors.New("npm audit output after retry was malformed")
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("npm audit", dir, result)
 	}
 	if result.status == 0 {
 		return nil
+	}
+	if !validNPMAuditReport(result.stdout) {
+		r.emitFailure(result)
+		fmt.Fprintf(r.stderr, "npm audit %s: scanner output is not a valid audit report\n", dir)
+		return errors.New("npm audit output was malformed")
 	}
 	if allNPMFindingsWaived(result.stdout, *contract) {
 		fmt.Fprintf(r.stdout, "npm audit %s: all findings match exact, active exceptions\n", dir)
@@ -282,6 +298,101 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	r.emitFailure(result)
 	return commandError("npm audit", dir, result)
 }
+
+func retryableNPMAuditTransport(result commandResult) bool {
+	if result.status == 0 {
+		return false
+	}
+	var envelope map[string]json.RawMessage
+	if err := json.Unmarshal(result.stdout, &envelope); err != nil || envelope == nil {
+		return false
+	}
+	for field := range envelope {
+		switch field {
+		case "statusCode", "message", "method", "uri", "headers", "body", "error":
+		default:
+			return false
+		}
+	}
+	var payload struct {
+		StatusCode      int                        `json:"statusCode"`
+		Message         string                     `json:"message"`
+		Method          string                     `json:"method"`
+		URI             string                     `json:"uri"`
+		Headers         json.RawMessage            `json:"headers"`
+		Body            map[string]json.RawMessage `json:"body"`
+		Error           json.RawMessage            `json:"error"`
+		Vulnerabilities json.RawMessage            `json:"vulnerabilities"`
+	}
+	if err := json.Unmarshal(result.stdout, &payload); err != nil || payload.Vulnerabilities != nil {
+		return false
+	}
+	if payload.StatusCode != 503 || payload.Message != npmAuditBulk503Message {
+		return false
+	}
+	if payload.Method != "" && payload.Method != "POST" || payload.URI != "" && payload.URI != npmAuditBulkEndpoint {
+		return false
+	}
+	if payload.Headers != nil {
+		var headers map[string]json.RawMessage
+		if json.Unmarshal(payload.Headers, &headers) != nil || headers == nil {
+			return false
+		}
+	}
+	if payload.Error != nil && !validNPMAuditTransportError(payload.Error) {
+		return false
+	}
+	if len(payload.Body) != 1 {
+		return false
+	}
+	bodyError, ok := payload.Body["error"]
+	if !ok {
+		return false
+	}
+	var bodyErrorText string
+	if json.Unmarshal(bodyError, &bodyErrorText) != nil || bodyErrorText != "Service Unavailable" {
+		return false
+	}
+	diagnostic := string(result.stderr)
+	return strings.Contains(diagnostic, "npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable") &&
+		strings.Contains(diagnostic, "npm error audit endpoint returned an error")
+}
+
+func validNPMAuditTransportError(data []byte) bool {
+	var diagnostic map[string]json.RawMessage
+	if json.Unmarshal(data, &diagnostic) != nil || len(diagnostic) != 2 {
+		return false
+	}
+	for _, field := range []string{"summary", "detail"} {
+		var value string
+		raw, present := diagnostic[field]
+		if !present || json.Unmarshal(raw, &value) != nil || value != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func validNPMAuditReport(data []byte) bool {
+	var report map[string]json.RawMessage
+	if err := json.Unmarshal(data, &report); err != nil || report == nil {
+		return false
+	}
+	for _, errorField := range []string{"statusCode", "message", "body", "error"} {
+		if _, present := report[errorField]; present {
+			return false
+		}
+	}
+	vulnerabilities, ok := report["vulnerabilities"]
+	if !ok {
+		return false
+	}
+	var object map[string]json.RawMessage
+	return json.Unmarshal(vulnerabilities, &object) == nil && object != nil
+}
+
+const npmAuditBulkEndpoint = "https://registry.npmjs.org/-/npm/v1/security/advisories/bulk"
+const npmAuditBulk503Message = "503 Service Unavailable - POST " + npmAuditBulkEndpoint + " - Service Unavailable"
 
 func (r *runner) emitDirect(result commandResult) {
 	if len(result.stdout) > 0 {

@@ -138,6 +138,93 @@ func TestBunAuditRetriesOnlyBlankTransportFailures(t *testing.T) {
 	}
 }
 
+func TestNPMAuditRetriesOnlyStructuredTransport503(t *testing.T) {
+	tests := []struct {
+		name            string
+		mode            string
+		wantErr         bool
+		wantInvocations int
+		wantRetryNotice bool
+	}{
+		{name: "transient transport failure then success", mode: "npm-transport-transient", wantInvocations: 2, wantRetryNotice: true},
+		{name: "permanent transport failure", mode: "npm-transport-permanent", wantErr: true, wantInvocations: 2, wantRetryNotice: true},
+		{name: "second attempt malformed despite exit zero", mode: "npm-transport-exit0-malformed", wantErr: true, wantInvocations: 2, wantRetryNotice: true},
+		{name: "second attempt transport envelope despite exit zero", mode: "npm-transport-exit0-error-envelope", wantErr: true, wantInvocations: 2, wantRetryNotice: true},
+		{name: "second attempt mixed report and transport envelope despite exit zero", mode: "npm-transport-exit0-mixed-envelope", wantErr: true, wantInvocations: 2, wantRetryNotice: true},
+		{name: "real vulnerability JSON", mode: "npm-vulnerability", wantErr: true, wantInvocations: 1},
+		{name: "real vulnerability JSON with transport text", mode: "npm-vulnerability-with-transport", wantErr: true, wantInvocations: 1},
+		{name: "malformed JSON", mode: "npm-malformed", wantErr: true, wantInvocations: 1},
+		{name: "unrelated error", mode: "npm-unrelated", wantErr: true, wantInvocations: 1},
+		{name: "empty body", mode: "npm-body-empty", wantErr: true, wantInvocations: 1},
+		{name: "wrong body error", mode: "npm-body-wrong-error", wantErr: true, wantInvocations: 1},
+		{name: "top-level error without body", mode: "npm-top-level-error-only", wantErr: true, wantInvocations: 1},
+		{name: "null body", mode: "npm-body-null", wantErr: true, wantInvocations: 1},
+		{name: "missing body", mode: "npm-body-missing", wantErr: true, wantInvocations: 1},
+		{name: "extra body field", mode: "npm-body-extra-field", wantErr: true, wantInvocations: 1},
+		{name: "unexpected top-level advisory field", mode: "npm-top-level-advisories", wantErr: true, wantInvocations: 1},
+		{name: "nonempty top-level diagnostic error", mode: "npm-top-level-nonempty-error", wantErr: true, wantInvocations: 1},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			root, bin, log := scannerFixture(t)
+			setFakeScannerEnv(t, bin, log, test.mode)
+			if strings.HasPrefix(test.mode, "npm-transport-") &&
+				test.mode != "npm-transport-permanent" {
+				t.Setenv("SECURITY_TEST_STATE", filepath.Join(root, "transport.state"))
+			}
+			var stdout, stderr bytes.Buffer
+			r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
+			err := r.scanNPM(filepath.Join(root, "typespec", "package-lock.json"), &exceptionContract{})
+			if test.wantErr && err == nil {
+				t.Fatalf("npm result was accepted: stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("npm result failed: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+			}
+			if got := strings.Count(mustRead(t, log), "npm|"); got != test.wantInvocations {
+				t.Fatalf("npm was invoked %d times, want %d; log=%s", got, test.wantInvocations, mustRead(t, log))
+			}
+			notice := fmt.Sprintf("npm audit %s: transient transport failure; retrying once", filepath.Join(root, "typespec"))
+			if got := strings.Count(stdout.String(), notice); test.wantRetryNotice && got != 1 {
+				t.Fatalf("retry diagnostic count = %d, want 1; stdout=%q", got, stdout.String())
+			} else if !test.wantRetryNotice && got != 0 {
+				t.Fatalf("unexpected retry diagnostic: stdout=%q", stdout.String())
+			}
+		})
+	}
+}
+
+func TestNPMAuditRejectsErrorEnvelopeBeforeApplyingExceptions(t *testing.T) {
+	contract := exceptionContract{Exceptions: []securitypolicy.Exception{{
+		Scanner: "npm-audit", Rule: "GHSA-test-1", Resource: "example-package",
+	}}}
+	for _, test := range []struct {
+		name    string
+		mode    string
+		wantErr bool
+	}{
+		{name: "pure audit report can be waived", mode: "npm-waived"},
+		{name: "mixed transport envelope cannot be waived", mode: "npm-waived-mixed", wantErr: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			root, bin, log := scannerFixture(t)
+			setFakeScannerEnv(t, bin, log, test.mode)
+			var stdout, stderr bytes.Buffer
+			r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
+			err := r.scanNPM(filepath.Join(root, "typespec", "package-lock.json"), &contract)
+			if test.wantErr && err == nil {
+				t.Fatalf("mixed npm result was waived: stdout=%q stderr=%q", stdout.String(), stderr.String())
+			}
+			if !test.wantErr && err != nil {
+				t.Fatalf("pure npm audit report was rejected: %v\nstdout=%s\nstderr=%s", err, stdout.String(), stderr.String())
+			}
+			if got := strings.Count(mustRead(t, log), "npm|"); got != 1 {
+				t.Fatalf("npm was invoked %d times, want 1; log=%s", got, mustRead(t, log))
+			}
+		})
+	}
+}
+
 func TestExceptionMatchingIsExactAndCriticalFindingsAreNeverWaived(t *testing.T) {
 	contract := securitypolicy.Exceptions{Exceptions: []securitypolicy.Exception{{Scanner: "bun-audit", Rule: "GHSA-test-1", Resource: "pkg"}}}
 	if !matches(contract, findingIdentity{Scanner: "bun-audit", Rule: "GHSA-test-1", Resource: "pkg", Severity: "moderate"}) {
@@ -198,7 +285,122 @@ func scannerFixture(t *testing.T) (root, bin, log string) {
 set -eu
 tool="$(basename "$0")"
 printf '%s|%s|%s\n' "$tool" "$PWD" "$*" >> "$SECURITY_TEST_LOG"
-if [[ "$tool" == "go" || "$tool" == "npm" ]]; then exit 0; fi
+if [[ "$tool" == "go" ]]; then exit 0; fi
+if [[ "$tool" == "npm" ]]; then
+  case "${SECURITY_TEST_MODE:-}" in
+  npm-transport-transient)
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf '{"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","method":"POST","uri":"https://registry.npmjs.org/-/npm/v1/security/advisories/bulk","headers":{"content-type":["application/json"]},"statusCode":503,"body":{"error":"Service Unavailable"},"error":{"summary":"","detail":""}}\n'
+      printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+      printf 'npm error audit endpoint returned an error\n' >&2
+      exit 1
+    fi
+    printf '{"vulnerabilities":{}}\n'
+    exit 0 ;;
+  npm-transport-permanent)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-transport-exit0-malformed)
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+      printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+      printf 'npm error audit endpoint returned an error\n' >&2
+      exit 1
+    fi
+    printf 'not JSON\n'
+    exit 0 ;;
+  npm-transport-exit0-error-envelope)
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+      printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+      printf 'npm error audit endpoint returned an error\n' >&2
+      exit 1
+    fi
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+    exit 0 ;;
+  npm-transport-exit0-mixed-envelope)
+    if [[ ! -e "$SECURITY_TEST_STATE" ]]; then
+      : > "$SECURITY_TEST_STATE"
+      printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+      printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+      printf 'npm error audit endpoint returned an error\n' >&2
+      exit 1
+    fi
+    printf '{"vulnerabilities":{},"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+    exit 0 ;;
+  npm-vulnerability)
+    printf '{"vulnerabilities":{"example-package":{"severity":"critical","via":[{"source":"GHSA-test-1","severity":"critical"}]}}}\n'
+    exit 1 ;;
+  npm-vulnerability-with-transport)
+    printf '{"vulnerabilities":{"example-package":{"severity":"critical","via":[{"source":"GHSA-test-1","severity":"critical"}]}},"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-malformed)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-unrelated)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+    printf 'npm error audit request failed\n' >&2
+    exit 1 ;;
+  npm-body-empty)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-body-wrong-error)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Gateway Timeout"}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-top-level-error-only)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","error":{"code":"E503"}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-body-null)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":null}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-body-missing)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable"}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-body-extra-field)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable","status":503}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-top-level-advisories)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"},"advisories":{}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-top-level-nonempty-error)
+    printf '{"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"},"error":{"summary":"registry unavailable","detail":""}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  npm-waived)
+    printf '{"vulnerabilities":{"example-package":{"severity":"moderate","via":[{"source":"GHSA-test-1","severity":"moderate"}]}}}\n'
+    exit 1 ;;
+  npm-waived-mixed)
+    printf '{"vulnerabilities":{"example-package":{"severity":"moderate","via":[{"source":"GHSA-test-1","severity":"moderate"}]}},"statusCode":503,"message":"503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable","body":{"error":"Service Unavailable"}}\n'
+    printf 'npm warn audit 503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable\n' >&2
+    printf 'npm error audit endpoint returned an error\n' >&2
+    exit 1 ;;
+  esac
+  exit 0
+fi
 case "${SECURITY_TEST_MODE:-}" in
 vulnerable)
   if [[ "$tool" == "bun" ]]; then printf 'critical dependency finding\n' >&2; exit 1; fi ;;
