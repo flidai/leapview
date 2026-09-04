@@ -195,7 +195,7 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 	handler := m.handlers[history.Kind]
 	m.mu.RUnlock()
 	if handler == nil {
-		return m.failTerminal(ctx, history.ID, rowAttempt)
+		return m.failTerminal(ctx, history.ID, history.Fence())
 	}
 	err = handler.Handle(lease.Context(), history)
 	if err == nil {
@@ -232,15 +232,15 @@ func (m *Module) work(ctx context.Context, riverJobID int64, rowAttempt int, arg
 		m.retryAt.Store(riverJobID, time.Now().Add(max(retry.Delay, time.Millisecond)))
 		return errors.New("ASYNC_JOB_RETRY")
 	}
-	return m.failTerminal(ctx, history.ID, rowAttempt)
+	return m.failTerminal(ctx, history.ID, history.Fence())
 }
 
-func (m *Module) failTerminal(ctx context.Context, id string, attempt int) error {
+func (m *Module) failTerminal(ctx context.Context, id string, fence jobs.Fence) error {
 	history, err := m.repository.Get(context.WithoutCancel(ctx), id)
 	if err == nil && (history.Status == jobs.StatusFailed || history.Status == jobs.StatusCancelled) {
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILED"))
 	}
-	if err := m.repository.Fail(context.WithoutCancel(ctx), id, jobs.Fence{Generation: int64(attempt)}, []byte(`{"code":"ASYNC_JOB_FAILED"}`)); err != nil {
+	if err := m.repository.Fail(context.WithoutCancel(ctx), id, fence, []byte(`{"code":"ASYNC_JOB_FAILED"}`)); err != nil {
 		return river.JobCancel(errors.New("ASYNC_JOB_FAILURE_PERSISTENCE_FAILED"))
 	}
 	return river.JobCancel(errors.New("ASYNC_JOB_FAILED"))

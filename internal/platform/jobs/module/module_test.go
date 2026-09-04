@@ -263,7 +263,11 @@ type retryPersistenceFailureDB struct{ Pool *pgxpool.Pool }
 func (db retryPersistenceFailureDB) NativePool() *pgxpool.Pool { return db.Pool }
 
 func (db retryPersistenceFailureDB) Begin(ctx context.Context) (pgx.Tx, error) {
-	return db.Pool.Begin(ctx)
+	tx, err := db.Pool.Begin(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return retryPersistenceFailureTx{Tx: tx}, nil
 }
 
 func (db retryPersistenceFailureDB) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
@@ -279,6 +283,15 @@ func (db retryPersistenceFailureDB) Query(ctx context.Context, query string, arg
 
 func (db retryPersistenceFailureDB) QueryRow(ctx context.Context, query string, args ...any) pgx.Row {
 	return db.Pool.QueryRow(ctx, query, args...)
+}
+
+type retryPersistenceFailureTx struct{ pgx.Tx }
+
+func (tx retryPersistenceFailureTx) Exec(ctx context.Context, query string, args ...any) (pgconn.CommandTag, error) {
+	if strings.Contains(query, "RequeueJobAfterFailure") {
+		return pgconn.CommandTag{}, errors.New("simulated retry persistence failure")
+	}
+	return tx.Tx.Exec(ctx, query, args...)
 }
 
 func testJobInput(id, resourceID string) jobs.EnqueueInput {

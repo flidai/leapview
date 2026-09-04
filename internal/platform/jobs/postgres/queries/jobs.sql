@@ -48,7 +48,8 @@ SET status = 'running',
     started_at = COALESCE(started_at, clock_timestamp()),
     finished_at = NULL,
     error = NULL
-WHERE id = sqlc.arg(id) AND status IN ('queued', 'running');
+WHERE id = sqlc.arg(id) AND status IN ('queued', 'running')
+  AND attempt_count <= sqlc.arg(attempt);
 
 -- name: SetJobTerminalWithError :execrows
 UPDATE jobs.job_history
@@ -68,7 +69,8 @@ UPDATE jobs.job_history
 SET status = 'queued',
     attempt_count = GREATEST(attempt_count, sqlc.arg(attempt)),
     error = sqlc.arg(problem)::jsonb
-WHERE id = sqlc.arg(id) AND status = 'running';
+WHERE id = sqlc.arg(id) AND status = 'running'
+  AND attempt_count = sqlc.arg(attempt);
 
 -- name: EnsureEventSequence :exec
 INSERT INTO jobs.event_sequence(resource_kind, resource_id, next_event_id)

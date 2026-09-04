@@ -427,6 +427,9 @@ func (r *Repository) get(ctx context.Context, db DBTX, id string) (jobs.Job, err
 }
 
 func (r *Repository) RiverJobIDTx(ctx context.Context, tx Tx, id string) (int64, error) {
+	if tx == nil {
+		return 0, errors.New("job transaction is required")
+	}
 	riverID, err := queries(tx).GetRiverJobID(ctx, id)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return 0, jobs.ErrNotFound
@@ -439,20 +442,110 @@ func (r *Repository) RiverJobIDTx(ctx context.Context, tx Tx, id string) (int64,
 	return *riverID, nil
 }
 
+// lockRiverFence locks the operational row that is bound to a product job and
+// verifies the exact River claim before the caller mutates product history or
+// River state. River's completion/cancellation helpers identify a row by ID;
+// the lock closes the gap where a reclaimed row could otherwise be acted on by
+// a stale worker. allowInitial admits the narrow non-worker bootstrap path
+// used by direct adapters: a freshly inserted, still-available River row can
+// be terminalized by product-side validation before River claims it. A real
+// worker context never receives this exception.
+func (r *Repository) lockRiverFence(ctx context.Context, tx Tx, id string, fence jobs.Fence, allowInitial bool) error {
+	if tx == nil || strings.TrimSpace(id) == "" || fence.Generation <= 0 {
+		return errors.New("River execution fence is invalid")
+	}
+	if strings.TrimSpace(fence.Owner) != fence.Owner {
+		return errors.New("River execution owner is not canonical")
+	}
+	riverID, err := r.RiverJobIDTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	row, err := queries(tx).LockRiverJobFence(ctx, riverID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return jobs.ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	if allowInitial && completionFromContext(ctx) == nil && int(row.Attempt) == 0 && fence.Generation == 1 && rivertype.JobState(row.State) == rivertype.JobStateAvailable {
+		return nil
+	}
+	if rivertype.JobState(row.State) != rivertype.JobStateRunning || int(row.Attempt) != int(fence.Generation) {
+		return jobs.ErrConflict
+	}
+	if fence.Owner == "" || len(row.AttemptedBy) == 0 || row.AttemptedBy[len(row.AttemptedBy)-1] != fence.Owner {
+		return jobs.ErrConflict
+	}
+	if completion := completionFromContext(ctx); completion != nil && completion.riverJobID > 0 {
+		if completion.riverJobID != riverID || completion.generation != fence.Generation || completion.owner != fence.Owner {
+			return jobs.ErrConflict
+		}
+	}
+	return nil
+}
+
+// lockRiverMarkFence is the claim check used while projecting River's claim
+// into product history. A freshly inserted River row has attempt zero and is
+// still available; retaining this one compatibility case supports callers
+// that advance product history in a transaction before River's worker starts.
+// Once River has started an attempt, however, only that exact running attempt
+// may mark the product row running.
+func (r *Repository) lockRiverMarkFence(ctx context.Context, tx Tx, id string, attempt int) error {
+	if tx == nil || strings.TrimSpace(id) == "" || attempt < 1 {
+		return errors.New("River execution fence is invalid")
+	}
+	riverID, err := r.RiverJobIDTx(ctx, tx, id)
+	if err != nil {
+		return err
+	}
+	row, err := queries(tx).LockRiverJobFence(ctx, riverID)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return jobs.ErrConflict
+	}
+	if err != nil {
+		return err
+	}
+	if int(row.Attempt) == 0 && attempt == 1 && completionFromContext(ctx) == nil {
+		return nil
+	}
+	if int(row.Attempt) != attempt || rivertype.JobState(row.State) != rivertype.JobStateRunning {
+		return jobs.ErrConflict
+	}
+	completion := completionFromContext(ctx)
+	if completion == nil || completion.riverJobID <= 0 || completion.generation != int64(attempt) || completion.owner == "" {
+		return jobs.ErrConflict
+	}
+	if completion.riverJobID != riverID || len(row.AttemptedBy) == 0 || row.AttemptedBy[len(row.AttemptedBy)-1] != completion.owner {
+		return jobs.ErrConflict
+	}
+	return nil
+}
+
 func (r *Repository) MarkRunning(ctx context.Context, id string, attempt int) (jobs.Job, error) {
 	if attempt < 1 {
 		return jobs.Job{}, errors.New("River attempt must be positive")
 	}
-	changed, err := queries(r.db).MarkJobRunning(ctx, jobdb.MarkJobRunningParams{ID: id, Attempt: int32(attempt)})
+	var current jobs.Job
+	err := r.inTx(ctx, func(tx Tx) error {
+		if err := r.lockRiverMarkFence(ctx, tx, id, attempt); err != nil {
+			return err
+		}
+		changed, err := queries(tx).MarkJobRunning(ctx, jobdb.MarkJobRunningParams{ID: id, Attempt: int32(attempt)})
+		if err != nil {
+			return err
+		}
+		current, err = r.get(ctx, tx, id)
+		if err != nil {
+			return err
+		}
+		if changed == 0 || current.Status != jobs.StatusRunning || current.Attempts < attempt {
+			return jobs.ErrConflict
+		}
+		return nil
+	})
 	if err != nil {
 		return jobs.Job{}, err
-	}
-	current, err := r.Get(ctx, id)
-	if err != nil {
-		return jobs.Job{}, err
-	}
-	if changed == 0 || current.Status != jobs.StatusRunning || current.Attempts < attempt {
-		return jobs.Job{}, jobs.ErrConflict
 	}
 	return current, nil
 }
@@ -494,6 +587,9 @@ func (r *Repository) setTerminalTx(ctx context.Context, tx Tx, id string, fence 
 }
 
 func (r *Repository) CompleteTx(ctx context.Context, tx Tx, id string, fence jobs.Fence) error {
+	if err := r.lockRiverFence(ctx, tx, id, fence, false); err != nil {
+		return err
+	}
 	if err := r.setTerminalTx(ctx, tx, id, fence, jobs.StatusSucceeded, nil); err != nil {
 		return err
 	}
@@ -509,6 +605,9 @@ func (r *Repository) CompleteTx(ctx context.Context, tx Tx, id string, fence job
 	return nil
 }
 func (r *Repository) FailTx(ctx context.Context, tx Tx, id string, fence jobs.Fence, problem []byte) error {
+	if err := r.lockRiverFence(ctx, tx, id, fence, true); err != nil {
+		return err
+	}
 	if err := r.setTerminalTx(ctx, tx, id, fence, jobs.StatusFailed, problem); err != nil {
 		return err
 	}
@@ -546,14 +645,41 @@ func (r *Repository) RequeueAfterFailure(ctx context.Context, id string, attempt
 	if !json.Valid(problem) {
 		return errors.New("retry evidence must be valid JSON")
 	}
-	changed, err := queries(r.db).RequeueJobAfterFailure(ctx, jobdb.RequeueJobAfterFailureParams{ID: id, Attempt: int32(attempt), Problem: problem})
-	if err != nil {
-		return err
+	if attempt < 1 {
+		return errors.New("River attempt must be positive")
 	}
-	if changed == 0 {
+	// Requeue must lock and validate the bound River row in the same
+	// transaction as the product update. A database adapter without transaction
+	// authority cannot safely perform the transition, so fail closed as a
+	// conflict without mutating anything.
+	if _, ok := r.db.(beginner); !ok {
 		return jobs.ErrConflict
 	}
-	return nil
+	err := r.inTx(ctx, func(tx Tx) error {
+		fence := jobs.Fence{Generation: int64(attempt)}
+		if completion := completionFromContext(ctx); completion != nil && completion.riverJobID > 0 {
+			fence.Owner = completion.owner
+			if completion.generation != int64(attempt) {
+				return jobs.ErrConflict
+			}
+		}
+		if fence.Owner != "" {
+			if err := r.lockRiverFence(ctx, tx, id, fence, false); err != nil {
+				return err
+			}
+		} else if err := r.lockRiverMarkFence(ctx, tx, id, attempt); err != nil {
+			return err
+		}
+		rows, err := queries(tx).RequeueJobAfterFailure(ctx, jobdb.RequeueJobAfterFailureParams{ID: id, Attempt: int32(attempt), Problem: problem})
+		if err != nil {
+			return err
+		}
+		if rows == 0 {
+			return jobs.ErrConflict
+		}
+		return nil
+	})
+	return err
 }
 
 func (r *Repository) Cancel(ctx context.Context, id string) error {
@@ -601,29 +727,11 @@ func (r *Repository) CancelClaimedTx(ctx context.Context, tx Tx, id string, f jo
 	if err != nil {
 		return err
 	}
-	// Keep the product-to-River lock order used by completion/failure paths;
-	// a stale result rolls this guarded product update back below.
+	if err := r.lockRiverFence(ctx, tx, id, f, false); err != nil {
+		return err
+	}
 	if err := r.setTerminalTx(ctx, tx, id, f, jobs.StatusCancelled, nil); err != nil {
 		return err
-	}
-	// River's JobCancelTx API is intentionally ID-based. Lock and verify the
-	// current River attempt first so a stale worker cannot cancel a later
-	// attempt that reused the same operational row.
-	var state rivertype.JobState
-	var attempt int
-	var attemptedBy []string
-	row, err := queries(tx).LockRiverJobFence(ctx, riverID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return jobs.ErrConflict
-		}
-		return err
-	}
-	state = rivertype.JobState(row.State)
-	attempt = int(row.Attempt)
-	attemptedBy = row.AttemptedBy
-	if state != rivertype.JobStateRunning || attempt != int(f.Generation) || len(attemptedBy) == 0 || attemptedBy[len(attemptedBy)-1] != f.Owner {
-		return jobs.ErrConflict
 	}
 	client, err := r.riverClient()
 	if err != nil {
