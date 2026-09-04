@@ -89,7 +89,7 @@ The **Preview** link identifies one exact draft revision. It includes the draft 
 GET /dashboards/{dashboard}/preview?draft={draft}&page={page}&revisionId={id}&revisionNumber={number}&revisionContentHash={hash}
 ```
 
-Preview compiles that retained document against the active governed runtime and returns the definition, page patch, semantic-model/runtime identity, exact serving identity (`projectId`, `environment`, and `generationId`), and DuckLake snapshot evidence. Preview does not change the draft, publish the dashboard, deploy a serving generation, or mutate data.
+Preview compiles that retained document against the active governed runtime and returns the definition, page patch, semantic-model/runtime identity, exact public serving identity (`environment` and `generationId`), and DuckLake snapshot evidence. The instance-bound server retains its internal deployment scope; clients do not select it. Preview does not change the draft, publish the dashboard, deploy a serving generation, or mutate data.
 
 **Publish** is a typed command against the same complete expected revision. LeapView compiles the draft with its governed semantic model, stores the compiled revision and publication evidence, and moves the dashboard lifecycle to `published`. Publishing does not deploy a full project to production; use the development publication and full-project promotion gates described above.
 
@@ -103,20 +103,20 @@ The export is reviewable project YAML. A retained project source resolves the cu
 
 ## Use the headless dashboard-authoring API
 
-The generated API is rooted at `/api/v1/projects/{project}/authoring`. Authenticate with a scoped principal and use IDs returned by the catalog; do not infer identity from titles. The generated OpenAPI contract is authoritative for field types and status codes.
+The generated, instance-bound API is rooted at `/api/v1/authoring`. Authenticate with a scoped principal and use IDs returned by the catalog; do not infer identity from titles or supply a Project selector. The generated OpenAPI contract is authoritative for field types and status codes.
 
 | Method and path | Purpose and access |
 | --- | --- |
-| `GET /api/v1/projects/{project}/authoring/catalog` | List governed dashboard identities (`RESOURCE_READ`). |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}` | Read one dashboard summary (`RESOURCE_READ`). |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/draft` | Read the current private draft, lifecycle pointer, document, and exact revision (`RESOURCE_EDIT`). |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}` | Read that exact current draft revision (`RESOURCE_EDIT`); the draft and revision path values must match. |
-| `GET /api/v1/projects/{project}/authoring/dashboards/{dashboard}/revisions/{revision}` | Read that exact published revision (`RESOURCE_READ`); this path never means “latest draft.” |
-| `POST /api/v1/projects/{project}/authoring/drafts` | Create one named private draft. |
-| `POST /api/v1/projects/{project}/authoring/commands` | Apply one closed command: one builder intent, `publish`, or `archive`. |
-| `POST /api/v1/projects/{project}/authoring/forks` | Fork a retained project source into a new private draft. |
-| `POST /api/v1/projects/{project}/authoring/dashboards/{dashboard}/drafts/{draft}/preview` | Preview one exact revision and page. |
-| `GET /api/v1/projects/{project}/authoring/sources/{kind}/{dashboard}/export` | Export canonical YAML for the `project` source kind. |
+| `GET /api/v1/authoring/catalog` | List governed dashboard identities (`RESOURCE_READ`). |
+| `GET /api/v1/authoring/dashboards/{dashboard}` | Read one dashboard summary (`RESOURCE_READ`). |
+| `GET /api/v1/authoring/dashboards/{dashboard}/draft` | Read the current private draft, lifecycle pointer, document, and exact revision (`RESOURCE_EDIT`). |
+| `GET /api/v1/authoring/dashboards/{dashboard}/drafts/{draft}/revisions/{revision}` | Read that exact current draft revision (`RESOURCE_EDIT`); the draft and revision path values must match. |
+| `GET /api/v1/authoring/dashboards/{dashboard}/revisions/{revision}` | Read that exact published revision (`RESOURCE_READ`); this path never means “latest draft.” |
+| `POST /api/v1/authoring/drafts` | Create one named private draft. |
+| `POST /api/v1/authoring/commands` | Apply one closed command: one builder intent, `publish`, or `archive`. |
+| `POST /api/v1/authoring/forks` | Fork a retained project source into a new private draft. |
+| `POST /api/v1/authoring/dashboards/{dashboard}/drafts/{draft}/preview` | Preview one exact revision and page. |
+| `GET /api/v1/authoring/sources/{kind}/{dashboard}/export` | Export canonical YAML for the `project` source kind. |
 
 `POST /drafts`, `POST /commands`, and `POST /forks` require an `Idempotency-Key` header (1–200 characters). The key is an operation-idempotency identity, separate from actor and tool-call provenance, and is audited with the authenticated actor; it is not a repository or Git authority. For create and fork, the same key with the same normalized payload durably replays the original draft/result; the same key with a changed payload is a conflict; a different key creates a new draft. Command retries likewise replay only when the same key is reused with the same request fingerprint. Preview, reads, and export do not require an idempotency key.
 
