@@ -718,7 +718,7 @@ func TestApplicationCLIAdminOnlyComposesAdminOperations(t *testing.T) {
 	}
 	for _, required := range []string{
 		modulePath + "/internal/admin/cli",
-		modulePath + "/internal/app/adminoffline",
+		modulePath + "/internal/app/adminpostgres",
 	} {
 		if !importListContains(adminFile.imports, required) {
 			t.Errorf("application CLI Admin composition is missing import %s", required)

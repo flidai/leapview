@@ -116,6 +116,12 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if revision != ContractPublicationIntegrityRevision {
 		t.Fatalf("contract publication integrity schema revision = %d, want %d", revision, ContractPublicationIntegrityRevision)
 	}
+	if err := db.QueryRow(ctx, `SELECT revision FROM platform.schema_revision WHERE migration_id = $1`, PlatformBootstrapAuthorityMigrationID).Scan(&revision); err != nil {
+		t.Fatal(err)
+	}
+	if revision != PlatformBootstrapAuthorityRevision {
+		t.Fatalf("platform bootstrap authority schema revision = %d, want %d", revision, PlatformBootstrapAuthorityRevision)
+	}
 	var nullable string
 	if err := db.QueryRow(ctx, `
 		SELECT is_nullable

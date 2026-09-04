@@ -250,6 +250,9 @@ func TestRepositoryInitializeInstanceRollsBackWhenCredentialPreparationFails(t *
 	if _, err := store.GetSetting(ctx, access.InstanceInitializedSetting); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("instance initialization setting error = %v, want sql.ErrNoRows", err)
 	}
+	if initialized, err := repo.Initialized(ctx); err != nil || initialized {
+		t.Fatalf("rolled-back Initialized() = %t, %v", initialized, err)
+	}
 	principals, err := repo.ListPrincipals(ctx, access.PrincipalFilter{Email: "admin@example.com"})
 	if err != nil {
 		t.Fatalf("list principals: %v", err)

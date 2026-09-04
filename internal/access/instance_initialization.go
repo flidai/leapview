@@ -27,6 +27,7 @@ type InitialInstanceCredentials struct {
 // InstanceInitializer owns the atomic, audited Access mutation used by
 // offline Admin initialization.
 type InstanceInitializer interface {
+	Initialized(context.Context) (bool, error)
 	InitializeInstance(context.Context, InstanceInitializationInput, func(InitialInstanceCredentials) error) (InitialInstanceCredentials, error)
 }
 

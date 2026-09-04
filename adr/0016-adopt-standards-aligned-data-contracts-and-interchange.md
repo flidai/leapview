@@ -814,7 +814,7 @@ qualified.
   sealed delivery, and the lifecycle adds no hash authority. Omitted bindings
   do not mutate live control state; complete live-reference ownership remains a
   FAI-616 boundary.
-- **IMPLEMENTED, dependency reconciliation pending (FAI-617/FAI-609):**
+- **IMPLEMENTED, live PostgreSQL qualification pending (FAI-617/FAI-609):**
   production access composition now reuses the identity authority's exact
   bounded PostgreSQL pool, rejects SQLite and non-transactional database
   inputs, and derives the access fingerprint key through a dedicated purpose.
@@ -827,10 +827,19 @@ qualified.
   generic credential/grant tables, and records an immutable checksum. Focused
   repository, migration, composition, pool-lease, and architecture tests pass;
   Docker-backed PostgreSQL execution remains unqualified in this environment.
-  This stack does not yet contain the completed FAI-609 production initializer
-  that applies the platform migration chain to a fresh control database, so
-  fresh-target execution is not claimed until that dependency is reconciled as
-  its own stacked layer.
+  The focused FAI-609 reconciliation adds a distinct one-connection migrator
+  credential, applies and verifies the exact append-only migration ledger, and
+  routes production `admin initialize` plus credential acknowledgement through
+  the module-owned PostgreSQL Access initializer. Revision 009 owns immutable
+  instance identity and environment binding; production composition now reads
+  those values from the shared control pool rather than the embedded SQLite
+  store. Local and evaluation initialization remain explicitly local. Unit,
+  migration, configuration, and architecture tests pass. Fresh-target and
+  least-privilege execution against PostgreSQL 18 remain unqualified where the
+  container provider is unavailable. Native physical-pool bootstrap and the
+  general serving-store cutover were intentionally not imported from draft PR
+  #386 because they are separate capability migrations, not dependencies of
+  FAI-616/617/662.
 - **QUALIFIED (FAI-619):** TypeSpec owns the six authored structures, including the shared envelope,
   metadata, contract evolution, quality identity, field governance,
   deprecation, and the ADR-0017 SemanticModel access contract. It generates Go

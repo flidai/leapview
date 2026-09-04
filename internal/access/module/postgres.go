@@ -6,9 +6,26 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 )
+
+// PostgresInstanceInitializer is the narrow bootstrap authority exposed to
+// application composition. It keeps the concrete access/postgres repository
+// behind this capability module while preserving the recovery semantics used
+// by offline Admin.
+type PostgresInstanceInitializer interface {
+	Initialized(context.Context) (bool, error)
+	InitializeInstance(context.Context, access.InstanceInitializationInput, func(access.InitialInstanceCredentials) error) (access.InitialInstanceCredentials, error)
+}
+
+// NewPostgresInstanceInitializer constructs the access-owned initializer over
+// an already-open control-plane handle. It neither opens a connection nor
+// performs schema work; migration/bootstrap lifecycle remains with callers.
+func NewPostgresInstanceInitializer(database accesspostgres.DBTX, fingerprintKey []byte) (PostgresInstanceInitializer, error) {
+	return accesspostgres.NewAccess(database, accesspostgres.FingerprintConfig{Key: fingerprintKey})
+}
 
 // PostgresBuildConfig supplies the already-open production control handle and
 // the purpose-separated fingerprint key. Connection and schema lifecycle stay

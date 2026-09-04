@@ -2,11 +2,30 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 )
+
+// Initialized reports whether the access-owned one-shot initialization marker
+// exists. A missing marker is the normal pre-bootstrap state.
+func (r *Repository) Initialized(ctx context.Context) (bool, error) {
+	if r == nil || r.db == nil {
+		return false, fmt.Errorf("access repository database is required")
+	}
+	var marker string
+	err := r.db.QueryRowContext(ctx, `SELECT value FROM platform_settings WHERE key = ?`, access.InstanceInitializedSetting).Scan(&marker)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
 
 func (r *Repository) InitializeInstance(
 	ctx context.Context,

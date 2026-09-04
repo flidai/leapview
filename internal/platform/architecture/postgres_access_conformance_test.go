@@ -71,3 +71,45 @@ func TestFAI617PostgresAccessComposition(t *testing.T) {
 		}
 	}
 }
+
+func TestFAI609NativeAdminKeepsPostgresAdaptersCapabilityOwned(t *testing.T) {
+	root := repoRoot(t)
+	admin, err := os.ReadFile(filepath.Join(root, "internal", "app", "adminpostgres", "operations.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := string(admin)
+	for _, required := range []string{
+		"accessmodule.NewPostgresInstanceInitializer",
+		"migrations.Apply",
+		"migrations.Verify",
+		"bootstrappostgres.New",
+	} {
+		if !strings.Contains(source, required) {
+			t.Errorf("native Admin composition is missing %q", required)
+		}
+	}
+	for _, forbidden := range []string{
+		"internal/access/postgres",
+		"platform.Open(",
+		"store.SQLDB()",
+	} {
+		if strings.Contains(source, forbidden) {
+			t.Errorf("native Admin composition owns forbidden adapter/fallback %q", forbidden)
+		}
+	}
+	composition, err := os.ReadFile(filepath.Join(root, "internal", "app", "composition.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, required := range []string{
+		"if production {",
+		"instanceBootstrap = bootstrappostgres.New(identityAuthority.Pool)",
+		"instanceBootstrap.BindInstanceEnvironment(ctx, string(environment))",
+		"instanceBootstrap.InstanceID(ctx)",
+	} {
+		if !strings.Contains(string(composition), required) {
+			t.Errorf("production composition is missing PostgreSQL bootstrap selection %q", required)
+		}
+	}
+}

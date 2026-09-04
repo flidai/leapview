@@ -48,6 +48,7 @@ import (
 	"github.com/flidai/leapview/internal/extension"
 	manageddatamodule "github.com/flidai/leapview/internal/manageddata/module"
 	"github.com/flidai/leapview/internal/platform"
+	bootstrappostgres "github.com/flidai/leapview/internal/platform/bootstrap/postgres"
 	"github.com/flidai/leapview/internal/platform/buildinfo"
 	"github.com/flidai/leapview/internal/platform/compatibility"
 	"github.com/flidai/leapview/internal/platform/filesystem"
@@ -74,6 +75,14 @@ type projectCatalogLeaseProvider struct {
 
 type projectCatalogSubjectResolver struct {
 	resolve func(context.Context, string) ([]access.SubjectRef, error)
+}
+
+// instanceBootstrapAuthority is the common capability boundary used during
+// composition. Local/evaluation processes retain the embedded store; a
+// production process replaces it with the PostgreSQL bootstrap repository.
+type instanceBootstrapAuthority interface {
+	BindInstanceEnvironment(context.Context, string) error
+	InstanceID(context.Context) (string, error)
 }
 
 type sealedDeliveryAuthorizationReader interface {
@@ -722,9 +731,6 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(fmt.Errorf("build access audit runtime: %w", err))
 	}
-	if err := store.BindInstanceEnvironment(ctx, string(environment)); err != nil {
-		return fail(err)
-	}
 	extensionSupply, err := loadExtensionSupply(ctx, cfg)
 	if err != nil {
 		return fail(err)
@@ -735,16 +741,26 @@ func buildRuntime(ctx context.Context, cfg config.Config, production bool, envir
 	if err != nil {
 		return fail(err)
 	}
-	instanceID, err := store.InstanceID(ctx)
-	if err != nil {
-		return fail(err)
-	}
 	identityAuthority, err := buildIdentityAuthority(ctx, cfg)
 	if err != nil {
 		return fail(fmt.Errorf("build identity authority: %w", err))
 	}
 	if identityAuthority.Cleanup != nil {
 		cleanup.Push("identity-authority", identityAuthority.Cleanup)
+	}
+	instanceBootstrap := instanceBootstrapAuthority(store)
+	if production {
+		if identityAuthority.Pool == nil {
+			return fail(fmt.Errorf("%w: PostgreSQL platform bootstrap pool is required", ErrIdentityLifecycleUnavailable))
+		}
+		instanceBootstrap = bootstrappostgres.New(identityAuthority.Pool)
+	}
+	if err := instanceBootstrap.BindInstanceEnvironment(ctx, string(environment)); err != nil {
+		return fail(err)
+	}
+	instanceID, err := instanceBootstrap.InstanceID(ctx)
+	if err != nil {
+		return fail(err)
 	}
 	servingStateRepo, err := servingstatemodule.Build(ctx, servingstatemodule.Config{Database: store.SQLDB()})
 	if err != nil {

@@ -93,11 +93,25 @@ func TestApplyUsesCallerOwnedTransaction(t *testing.T) {
 	if err := Apply(context.Background(), recorder); err != nil {
 		t.Fatalf("Apply() error = %v", err)
 	}
-	if len(recorder.sqls) != 16 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() {
+	if len(recorder.sqls) != 18 || recorder.sqls[0] != BaselineSQL() || recorder.sqls[2] != IdentityLedgerSQL() || recorder.sqls[4] != ContractPublicationSQL() || recorder.sqls[6] != ActivationTransitionJournalSQL() || recorder.sqls[8] != ActivationTransitionReferencesSQL() || recorder.sqls[10] != IdentityRestoreTransitionSQL() || recorder.sqls[12] != AccessAuthorityCompatibilitySQL() || recorder.sqls[14] != ContractPublicationIntegritySQL() || recorder.sqls[16] != PlatformBootstrapAuthoritySQL() {
 		t.Fatal("Apply() did not execute the authored migrations in order")
 	}
 	if err := Apply(context.Background(), nil); err == nil {
 		t.Fatal("Apply(nil) unexpectedly succeeded")
+	}
+}
+
+func TestVerifyRequiresEveryExactRevision(t *testing.T) {
+	valid := &recordingTx{revisions: validRevisions()}
+	if err := Verify(context.Background(), valid); err != nil {
+		t.Fatalf("Verify() error = %v", err)
+	}
+	delete(valid.revisions, PlatformBootstrapAuthorityRevision)
+	if err := Verify(context.Background(), valid); err == nil {
+		t.Fatal("Verify() accepted a missing current revision")
+	}
+	if err := Verify(context.Background(), nil); err == nil {
+		t.Fatal("Verify() accepted a nil reader")
 	}
 }
 
@@ -332,6 +346,28 @@ func TestContractPublicationIntegrityMigrationBindsCanonicalEvidence(t *testing.
 	}
 }
 
+func TestPlatformBootstrapAuthorityMigrationIsAppendOnlyAndLeastPrivilege(t *testing.T) {
+	sql := PlatformBootstrapAuthoritySQL()
+	for _, marker := range []string{
+		"CREATE TABLE IF NOT EXISTS platform.instance_identity",
+		"CREATE TABLE IF NOT EXISTS platform.instance_environment",
+		"instance_identity_immutable",
+		"instance_environment_immutable",
+		"reject_instance_bootstrap_mutation",
+		"GRANT SELECT, INSERT ON platform.instance_identity, platform.instance_environment",
+		"REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER",
+		"leapview_control_readonly",
+		"leapview_control_backup",
+	} {
+		if !strings.Contains(sql, marker) {
+			t.Errorf("platform bootstrap migration missing %q", marker)
+		}
+	}
+	if strings.Contains(sql, "DROP TABLE") || strings.Contains(sql, "ALTER TABLE") {
+		t.Fatal("platform bootstrap migration must be additive")
+	}
+}
+
 func validRevisions() map[int64]recordingRow {
 	return map[int64]recordingRow{
 		BaselineRevision: {
@@ -357,6 +393,9 @@ func validRevisions() map[int64]recordingRow {
 		},
 		ContractPublicationIntegrityRevision: {
 			revision: ContractPublicationIntegrityRevision, migrationID: ContractPublicationIntegrityMigrationID, checksum: ContractPublicationIntegrityChecksum(),
+		},
+		PlatformBootstrapAuthorityRevision: {
+			revision: PlatformBootstrapAuthorityRevision, migrationID: PlatformBootstrapAuthorityMigrationID, checksum: PlatformBootstrapAuthorityChecksum(),
 		},
 	}
 }

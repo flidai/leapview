@@ -48,6 +48,9 @@ var accessAuthorityCompatibilitySQL string
 //go:embed 008_contract_publication_integrity.sql
 var contractPublicationIntegritySQL string
 
+//go:embed 009_platform_bootstrap_authority.sql
+var platformBootstrapAuthoritySQL string
+
 // IdentityLedgerRevision introduces the PostgreSQL-only FAI-617 resource
 // identity ledger.
 const IdentityLedgerRevision int64 = 2
@@ -90,6 +93,12 @@ const AccessAuthorityCompatibilityMigrationID = "007_access_authority_compatibil
 const ContractPublicationIntegrityRevision int64 = 8
 
 const ContractPublicationIntegrityMigrationID = "008_contract_publication_integrity"
+
+// PlatformBootstrapAuthorityRevision adds immutable platform instance
+// identity and environment binding without rewriting revisions 001-008.
+const PlatformBootstrapAuthorityRevision int64 = 9
+
+const PlatformBootstrapAuthorityMigrationID = "009_platform_bootstrap_authority"
 
 // BaselineSQL returns the exact authored baseline migration.  Callers should
 // execute it as a migration authority, inside a transaction where the driver
@@ -153,12 +162,47 @@ func ContractPublicationIntegrityChecksum() string {
 	return hex.EncodeToString(sum[:])
 }
 
+func PlatformBootstrapAuthoritySQL() string { return platformBootstrapAuthoritySQL }
+
+func PlatformBootstrapAuthorityChecksum() string {
+	sum := sha256.Sum256([]byte(platformBootstrapAuthoritySQL))
+	return hex.EncodeToString(sum[:])
+}
+
 // Tx is the transaction boundary required by Apply.  pgx.Tx and pgxpool.Tx
 // both satisfy it; keeping the boundary here avoids opening a second
 // connection or introducing repository policy into the schema package.
 type Tx interface {
 	Exec(context.Context, string, ...any) (pgconn.CommandTag, error)
 	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+// RevisionReader is the read-only surface used to verify that an ordinary
+// runtime connection observes the exact migration ledger prepared by the
+// separate migrator authority.
+type RevisionReader interface {
+	QueryRow(context.Context, string, ...any) pgx.Row
+}
+
+type migration struct {
+	revision int64
+	id       string
+	sql      string
+	checksum string
+}
+
+func ordered() []migration {
+	return []migration{
+		{BaselineRevision, BaselineMigrationID, baselineSQL, BaselineChecksum()},
+		{IdentityLedgerRevision, IdentityLedgerMigrationID, identityLedgerSQL, IdentityLedgerChecksum()},
+		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
+		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, activationTransitionJournalSQL, ActivationTransitionJournalChecksum()},
+		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, activationTransitionReferencesSQL, ActivationTransitionReferencesChecksum()},
+		{IdentityRestoreTransitionRevision, IdentityRestoreTransitionMigrationID, identityRestoreTransitionSQL, IdentityRestoreTransitionChecksum()},
+		{AccessAuthorityCompatibilityRevision, AccessAuthorityCompatibilityMigrationID, accessAuthorityCompatibilitySQL, AccessAuthorityCompatibilityChecksum()},
+		{ContractPublicationIntegrityRevision, ContractPublicationIntegrityMigrationID, contractPublicationIntegritySQL, ContractPublicationIntegrityChecksum()},
+		{PlatformBootstrapAuthorityRevision, PlatformBootstrapAuthorityMigrationID, platformBootstrapAuthoritySQL, PlatformBootstrapAuthorityChecksum()},
+	}
 }
 
 // Apply executes every authored migration in revision order on a caller-owned
@@ -172,24 +216,34 @@ func Apply(ctx context.Context, tx Tx) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	migrations := []struct {
-		revision int64
-		id       string
-		sql      string
-		checksum string
-	}{
-		{BaselineRevision, BaselineMigrationID, baselineSQL, BaselineChecksum()},
-		{IdentityLedgerRevision, IdentityLedgerMigrationID, identityLedgerSQL, IdentityLedgerChecksum()},
-		{ContractPublicationRevision, ContractPublicationMigrationID, contractPublicationSQL, ContractPublicationChecksum()},
-		{ActivationTransitionJournalRevision, ActivationTransitionJournalMigrationID, activationTransitionJournalSQL, ActivationTransitionJournalChecksum()},
-		{ActivationTransitionReferencesRevision, ActivationTransitionReferencesMigrationID, activationTransitionReferencesSQL, ActivationTransitionReferencesChecksum()},
-		{IdentityRestoreTransitionRevision, IdentityRestoreTransitionMigrationID, identityRestoreTransitionSQL, IdentityRestoreTransitionChecksum()},
-		{AccessAuthorityCompatibilityRevision, AccessAuthorityCompatibilityMigrationID, accessAuthorityCompatibilitySQL, AccessAuthorityCompatibilityChecksum()},
-		{ContractPublicationIntegrityRevision, ContractPublicationIntegrityMigrationID, contractPublicationIntegritySQL, ContractPublicationIntegrityChecksum()},
-	}
-	for _, migration := range migrations {
+	for _, migration := range ordered() {
 		if err := applyOne(ctx, tx, migration.revision, migration.id, migration.sql, migration.checksum); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// Verify proves that a runtime connection sees every exact authored revision.
+// Missing, renamed, or checksum-drifted rows fail closed.
+func Verify(ctx context.Context, reader RevisionReader) error {
+	if reader == nil {
+		return errors.New("postgres migration revision reader is nil")
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	for _, want := range ordered() {
+		var revision int64
+		var migrationID, checksum string
+		if err := reader.QueryRow(ctx, `
+			SELECT revision, migration_id, checksum
+			FROM platform.schema_revision WHERE revision = $1`, want.revision).
+			Scan(&revision, &migrationID, &checksum); err != nil {
+			return fmt.Errorf("verify PostgreSQL schema revision %d: %w", want.revision, err)
+		}
+		if revision != want.revision || migrationID != want.id || checksum != want.checksum {
+			return fmt.Errorf("PostgreSQL schema revision mismatch: got revision=%d migration=%q checksum=%q", revision, migrationID, checksum)
 		}
 	}
 	return nil

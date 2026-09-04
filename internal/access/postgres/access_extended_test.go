@@ -123,6 +123,9 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 		t.Fatalf("missing-principal desktop code error = %v", err)
 	}
 
+	if initialized, err := repo.Initialized(t.Context()); err != nil || initialized {
+		t.Fatalf("pre-bootstrap Initialized() = %t, %v", initialized, err)
+	}
 	initial, err := repo.InitializeInstance(t.Context(), access.InstanceInitializationInput{
 		Email: "bootstrap@example.com", Environment: "production", Now: time.Unix(1, 0).UTC(),
 	}, nil)
@@ -131,6 +134,9 @@ func TestAccessExtendedPostgreSQL18AuthorityBoundaries(t *testing.T) {
 	}
 	if initial.PublisherToken == "" || !initial.PublisherTokenExpiresAt.After(time.Now().UTC()) {
 		t.Fatalf("initial credentials = %#v", initial)
+	}
+	if initialized, err := repo.Initialized(t.Context()); err != nil || !initialized {
+		t.Fatalf("post-bootstrap Initialized() = %t, %v", initialized, err)
 	}
 	var marker string
 	if err := db.admin.QueryRow(t.Context(), `SELECT value FROM access.platform_setting WHERE key=$1`, access.InstanceInitializedSetting).Scan(&marker); err != nil {

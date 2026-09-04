@@ -2530,6 +2530,20 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
+    "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {
+      "default": "leapview_control_migrator",
+      "description": "PostgreSQL role used by the one-connection control-plane migration authority.",
+      "type": "string",
+      "x-lifecycle": "supported",
+      "x-scope": "admin"
+    },
+    "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": {
+      "description": "Explicit PostgreSQL control-plane migration connection URL; used only by schema and instance bootstrap authorities.",
+      "type": "string",
+      "writeOnly": true,
+      "x-lifecycle": "supported",
+      "x-scope": "admin"
+    },
     "LEAPVIEW_POSTGRES_CONTROL_POOL_MAX_CONNS": {
       "default": "8",
       "description": "Maximum connections allowed in the control-plane PostgreSQL pool.",
