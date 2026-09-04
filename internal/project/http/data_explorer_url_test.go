@@ -48,6 +48,51 @@ func testExplorationCommand(spec exploration.ExplorationSpec) projectsignals.Dat
 	return projectsignals.DataExploreCommand{Spec: spec}
 }
 
+func TestDataExploreCommandFromQueryRoundTripsCanonicalSpec(t *testing.T) {
+	values, err := url.ParseQuery("v=1&mode=explore&model=semantic%3Asales&dataset=orders&dimension=orders.month&dimension=customers.state&metric=revenue&filter=%7B%22field%22%3A%22customers.state%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22CA%22%5D%7D&sort=%7B%22field%22%3A%22revenue%22%2C%22direction%22%3A%22desc%22%7D&time=%7B%22field%22%3A%22orders.created_at%22%2C%22grain%22%3A%22month%22%7D&limit=250")
+	if err != nil {
+		t.Fatal(err)
+	}
+	command, err := dataExploreCommandFromQuery(values)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if command.Spec.ModelID != "semantic:sales" || projectsignals.ValueOrZero(command.Spec.DatasetID) != "orders" {
+		t.Fatalf("target = %q/%q", command.Spec.ModelID, projectsignals.ValueOrZero(command.Spec.DatasetID))
+	}
+	if !reflect.DeepEqual([]string{command.Spec.Dimensions[0].Field, command.Spec.Dimensions[1].Field}, []string{"orders.month", "customers.state"}) || !reflect.DeepEqual([]string{command.Spec.Metrics[0].Field}, []string{"revenue"}) {
+		t.Fatalf("fields = %#v / %#v", command.Spec.Dimensions, command.Spec.Metrics)
+	}
+	if len(command.Spec.Filters) != 1 || command.Spec.Filters[0].Field != "customers.state" {
+		t.Fatalf("filters = %#v", command.Spec.Filters)
+	}
+	if len(command.Spec.Sort) != 1 || command.Spec.Sort[0].Field != "revenue" || command.Spec.Sort[0].Direction != "desc" {
+		t.Fatalf("sort = %#v", command.Spec.Sort)
+	}
+	if command.Spec.Time == nil || command.Spec.Time.Field != "orders.created_at" || command.Spec.Time.Grain != "month" || command.Spec.Limit != 250 {
+		t.Fatalf("time/limit = %#v / %d", command.Spec.Time, command.Spec.Limit)
+	}
+	if command.RequestSeq != 0 || command.ResetVersion != 0 {
+		t.Fatalf("runtime state leaked into URL command: %#v", command)
+	}
+}
+
+func TestDataExploreCommandFromQueryRejectsMalformedState(t *testing.T) {
+	tests := []url.Values{
+		{"v": {"2"}},
+		{"limit": {"0"}},
+		{"limit": {"1001"}},
+		{"filter": {`{"field":"status","operator":"equals","values":[],"unexpected":true}`}},
+		{"sort": {`{"field":"revenue","direction":"sideways"}`}},
+		{"time": {`{"field":"created_at","grain":"month"} trailing`}},
+	}
+	for _, values := range tests {
+		if command, err := dataExploreCommandFromQuery(values); err == nil {
+			t.Fatalf("query %#v accepted as %#v", values, command)
+		}
+	}
+}
+
 func testStringFilter(field, operator string, values ...string) exploration.ExplorationFilter {
 	items := make([]exploration.ExplorationFilterValue, 0, len(values))
 	for _, value := range values {

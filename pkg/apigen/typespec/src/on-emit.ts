@@ -4,15 +4,8 @@ import {
   getDiscriminatedUnion,
   getDiscriminatedUnionFromInheritance,
   getDiscriminator,
-  getMaxItems,
-  getMaxLength,
-  getMaxValue,
-  getMinItems,
-  getMinLength,
-  getMinValue,
   getOverloadedOperation,
   getOverloads,
-  getPattern,
   getService,
   getSummary,
   isArrayModelType,
@@ -80,6 +73,7 @@ import {
   validateServiceCount,
   validateServicePresence,
 } from "./phase-validation.js";
+import { withSchemaConstraints } from "./schema-constraints.js";
 
 interface Document {
   schema_version: "v4";
@@ -2184,50 +2178,6 @@ function securityScheme(scheme: HttpAuth): SecurityScheme {
     default:
       return { type: scheme.type };
   }
-}
-
-function withSchemaConstraints(program: Program, target: Type, schema: SchemaRef): SchemaRef {
-  const candidates = schemaConstraintCandidates(target);
-  const minimum = firstSchemaConstraint(candidates, (candidate) => getMinValue(program, candidate));
-  const maximum = firstSchemaConstraint(candidates, (candidate) => getMaxValue(program, candidate));
-  const minLength = firstSchemaConstraint(candidates, (candidate) => getMinLength(program, candidate));
-  const maxLength = firstSchemaConstraint(candidates, (candidate) => getMaxLength(program, candidate));
-  const minItems = firstSchemaConstraint(candidates, (candidate) => getMinItems(program, candidate));
-  const maxItems = firstSchemaConstraint(candidates, (candidate) => getMaxItems(program, candidate));
-  const pattern = firstSchemaConstraint(candidates, (candidate) => getPattern(program, candidate));
-  return prune({
-    ...schema,
-    minimum,
-    maximum,
-    min_length: minLength,
-    max_length: maxLength,
-    min_items: minItems,
-    max_items: maxItems,
-    pattern,
-  }) as SchemaRef;
-}
-
-function schemaConstraintCandidates(target: Type): Type[] {
-  const candidates: Type[] = [target];
-  let current: Type | undefined = target.kind === "ModelProperty" ? target.type : target;
-  if (current !== target) {
-    candidates.push(current);
-  }
-  while (current?.kind === "Scalar" && current.baseScalar) {
-    current = current.baseScalar;
-    candidates.push(current);
-  }
-  return candidates;
-}
-
-function firstSchemaConstraint<T>(candidates: Type[], read: (candidate: Type) => T | undefined): T | undefined {
-  for (const candidate of candidates) {
-    const value = read(candidate);
-    if (value !== undefined) {
-      return value;
-    }
-  }
-  return undefined;
 }
 
 function scalarSchemaRef(scalar: Scalar): SchemaRef {
