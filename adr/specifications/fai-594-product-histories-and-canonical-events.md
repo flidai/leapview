@@ -150,8 +150,11 @@ committed domain result without a second CAS advance, second activation, or
 second canonical event. If the durable commit did not occur, the same
 operation may be retried under its original identity. No SSE notification,
 Watermill acknowledgement, in-memory cursor, or broker offset can decide this
-case. This is the required activation lost-ack boundary demonstrated by
-[`TestPublishReconcilesCommittedLostResponseWithoutSecondActivation`](../../internal/deployment/sealedcontrol/coordinator_test.go)
+case. This is the required activation lost-ack boundary demonstrated by the
+native PostgreSQL publication and activation coordinator tests
+([`TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays`](../../internal/deployment/module/native_coordinator_pg_test.go)
+and
+[`TestNativeCoordinatorPostgresActivationPreCommitHookRollsBack`](../../internal/deployment/module/native_coordinator_pg_test.go))
 and the native dashboard projection reconciler
 ([activation.go](../../internal/app/dashboardpublication/activation.go)).
 

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 
@@ -265,8 +264,6 @@ func TestTargetStoreManifestExcludesSynchronizationProtocolIdentity(t *testing.T
 	request.IdempotencyKey = "retry-key"
 	request.SourceOnly = true
 	request.CandidateKey = "branch"
-	request.ExpectedCandidateID = "candidate"
-	request.ExpectedArtifactDigest = "sha256:" + strings.Repeat("a", 64)
 	for _, artifact := range snapshot.Artifacts {
 		require.NoError(t, store.Put(t.Context(), artifact.Digest, bytes.NewReader(artifact.Content)))
 	}
@@ -275,7 +272,7 @@ func TestTargetStoreManifestExcludesSynchronizationProtocolIdentity(t *testing.T
 	manifestPath := filepath.Join(store.snapshots, digestHex(snapshot.Digest), "manifest.json")
 	content, err := os.ReadFile(manifestPath)
 	require.NoError(t, err)
-	for _, forbidden := range []string{"planId", "idempotencyKey", "sourceOnly", "candidateKey", "expectedCandidateId", "sourceRevision"} {
+	for _, forbidden := range []string{"planId", "idempotencyKey", "sourceOnly", "candidateKey", "sourceRevision"} {
 		if bytes.Contains(content, []byte(forbidden)) {
 			t.Fatalf("retained source manifest contains protocol field %q: %s", forbidden, content)
 		}

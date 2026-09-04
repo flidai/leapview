@@ -23,14 +23,12 @@ type CandidateSourceRevision struct {
 }
 
 type CandidateSynchronizationRequest struct {
-	ProjectFile            string                    `json:"projectFile"`
-	ArtifactDigest         string                    `json:"artifactDigest"`
-	SourceOnly             bool                      `json:"sourceOnly,omitempty"`
-	CandidateKey           *string                   `json:"candidateKey,omitempty"`
-	SourceRevision         *CandidateSourceRevision  `json:"sourceRevision,omitempty"`
-	ExpectedCandidateID    *string                   `json:"expectedCandidateId,omitempty"`
-	ExpectedArtifactDigest *string                   `json:"expectedArtifactDigest,omitempty"`
-	Artifacts              []CandidateSourceArtifact `json:"artifacts"`
+	ProjectFile    string                    `json:"projectFile"`
+	ArtifactDigest string                    `json:"artifactDigest"`
+	SourceOnly     bool                      `json:"sourceOnly,omitempty"`
+	CandidateKey   *string                   `json:"candidateKey,omitempty"`
+	SourceRevision *CandidateSourceRevision  `json:"sourceRevision,omitempty"`
+	Artifacts      []CandidateSourceArtifact `json:"artifacts"`
 }
 
 type CandidateSynchronizationPlanResponse struct {

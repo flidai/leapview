@@ -101,10 +101,6 @@ func (c Config) ListenAddr() string {
 	return ":8080"
 }
 
-func (c Config) DBPath() string {
-	return filepath.Join(c.HomeDir, "leapview.db")
-}
-
 func (c Config) ArtifactDir() string {
 	return filepath.Join(c.HomeDir, "artifacts")
 }

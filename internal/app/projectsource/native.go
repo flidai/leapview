@@ -676,18 +676,6 @@ func normalizeNativeRequest(scope project.CandidateSourceScope, request project.
 	if !canonicalNativePath(r.ProjectFile) || !validNativeText(r.CandidateKey) || !validNativeText(r.IdempotencyKey) {
 		return project.CandidateSynchronizationRequest{}, nil, "", project.ErrCandidateSourceInvalid
 	}
-	if r.ExpectedCandidateID != "" {
-		r.ExpectedCandidateID = strings.TrimSpace(r.ExpectedCandidateID)
-		if r.ExpectedCandidateID == "" || !validNativeText(r.ExpectedCandidateID) || r.ExpectedArtifactDigest == "" {
-			return project.CandidateSynchronizationRequest{}, nil, "", project.ErrCandidateSourceInvalid
-		}
-	}
-	if r.ExpectedArtifactDigest != "" {
-		r.ExpectedArtifactDigest = strings.TrimSpace(r.ExpectedArtifactDigest)
-		if !validNativeDigest(r.ExpectedArtifactDigest) || r.ExpectedArtifactDigest != r.ArtifactDigest || r.ExpectedCandidateID == "" {
-			return project.CandidateSynchronizationRequest{}, nil, "", project.ErrCandidateSourceInvalid
-		}
-	}
 	if r.SourceRevision != nil {
 		revision := *r.SourceRevision
 		revision.Revision = strings.TrimSpace(revision.Revision)

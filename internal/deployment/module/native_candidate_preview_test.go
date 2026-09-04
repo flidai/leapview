@@ -10,6 +10,7 @@ import (
 
 	"github.com/flidai/leapview/internal/deployment"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
+	projectgraph "github.com/flidai/leapview/internal/project/graph"
 )
 
 func TestResolveOwnedCandidateUsesNativeEvidenceAndCanonicalPreview(t *testing.T) {
@@ -45,6 +46,43 @@ func TestResolveOwnedCandidateConcealsNativeForeignOwner(t *testing.T) {
 	m.canonicalOrigin = "https://prod.leapview.example"
 
 	_, err := m.ResolveOwnedCandidate(t.Context(), rows.candidate.CandidateID, "foreign-owner")
+	if !errors.Is(err, deployment.ErrCandidateNotFound) {
+		t.Fatalf("error = %v, want candidate not found", err)
+	}
+}
+
+func TestResolveOwnedCandidateRejectsEmptyOwner(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+	m.canonicalOrigin = "https://prod.leapview.example"
+
+	_, err := m.ResolveOwnedCandidate(t.Context(), rows.candidate.CandidateID, "")
+	if !errors.Is(err, deployment.ErrCandidateNotFound) {
+		t.Fatalf("error = %v, want candidate not found", err)
+	}
+}
+
+func TestResolveCandidateForReviewUsesNativeEvidenceAndRedactsOwner(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+
+	candidate, err := m.ResolveCandidateForReview(t.Context(), projectgraph.ResourceID("finance"), rows.candidate.CandidateID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if candidate.ID != rows.candidate.CandidateID || candidate.OwnerID != "" || candidate.PreviewURL != "" {
+		t.Fatalf("review candidate leaked owner or preview identity: %#v", candidate)
+	}
+	if candidate.Scope.ProjectID != projectgraph.ResourceID("finance") || candidate.Status != deployment.CandidateReady || candidate.ArtifactDigest == "" {
+		t.Fatalf("review candidate evidence = %#v", candidate)
+	}
+}
+
+func TestResolveCandidateForReviewConcealsProjectMismatch(t *testing.T) {
+	rows := nativeReadRowsFixture(t, "target")
+	m := nativeReadModule(rows)
+
+	_, err := m.ResolveCandidateForReview(t.Context(), projectgraph.ResourceID("other"), rows.candidate.CandidateID)
 	if !errors.Is(err, deployment.ErrCandidateNotFound) {
 		t.Fatalf("error = %v, want candidate not found", err)
 	}

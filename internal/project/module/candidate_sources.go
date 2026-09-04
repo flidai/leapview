@@ -492,15 +492,13 @@ func synchronizationPlanRequest(
 ) projectdevloop.SynchronizationPlanRequest {
 	result := projectdevloop.SynchronizationPlanRequest{
 		ProjectID: scope.ProjectID, ProjectFile: request.ProjectFile,
-		SourceOnly:             request.SourceOnly,
-		CandidateKey:           request.CandidateKey,
-		ArtifactDigest:         request.ArtifactDigest,
-		ExpectedCandidateID:    request.ExpectedCandidateID,
-		ExpectedArtifactDigest: request.ExpectedArtifactDigest,
-		Artifacts:              make([]projectdevloop.ArtifactReference, len(request.Artifacts)),
-		SourceRevision:         candidateSourceRevisionToDevloop(request.SourceRevision),
-		PlanID:                 request.PlanID,
-		IdempotencyKey:         request.IdempotencyKey,
+		SourceOnly:     request.SourceOnly,
+		CandidateKey:   request.CandidateKey,
+		ArtifactDigest: request.ArtifactDigest,
+		Artifacts:      make([]projectdevloop.ArtifactReference, len(request.Artifacts)),
+		SourceRevision: candidateSourceRevisionToDevloop(request.SourceRevision),
+		PlanID:         request.PlanID,
+		IdempotencyKey: request.IdempotencyKey,
 	}
 	for index, artifact := range request.Artifacts {
 		result.Artifacts[index] = projectdevloop.ArtifactReference{

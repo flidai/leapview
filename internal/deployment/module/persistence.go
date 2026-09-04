@@ -275,10 +275,8 @@ type NativeProjectClaimRepository interface {
 	ClaimProjectTx(context.Context, deploymentpostgres.Tx, deployment.ProjectClaimInput) (deployment.ProjectClaim, error)
 }
 
-// NativeCandidateRepository contains only the candidate operations currently
-// implemented by the clean-slate delivery authority. It intentionally does
-// not implement deployment.CandidateRepository, whose identity and lifecycle
-// semantics differ from the native authority.
+// NativeCandidateRepository contains the candidate operations implemented by
+// the clean-slate delivery authority.
 type NativeCandidateRepository interface {
 	CreateCandidate(context.Context, deploymentpostgres.CandidateInput) (deploymentpostgres.DeliveryCandidate, error)
 	CreateCandidateTx(context.Context, deploymentpostgres.Tx, deploymentpostgres.CandidateInput) (deploymentpostgres.DeliveryCandidate, error)
@@ -289,9 +287,8 @@ type NativeCandidateRepository interface {
 	QualifyCandidateTx(context.Context, deploymentpostgres.Tx, string, string, string) (deploymentpostgres.DeliveryCandidate, error)
 }
 
-// NativeDeliveryReader is the read-only clean-slate delivery surface.  The
-// deployment.DeliveryReader also includes projections not persisted by the
-// PostgreSQL authority, so no unsafe adapter is provided.
+// NativeDeliveryReader is the read-only clean-slate PostgreSQL delivery
+// surface used by production composition.
 type NativeDeliveryReader interface {
 	Plan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)
 	LoadPlan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)

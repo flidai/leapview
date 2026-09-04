@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCandidateSourcePlanDoesNotRequireLegacyCandidateService(t *testing.T) {
+func TestCandidateSourcePlanUsesNativeClaimAuthority(t *testing.T) {
 	module := nativeSourcePlanModule("principal_1")
 	claims := &candidateProjectClaimRepositoryStub{}
 	claimService, err := deployment.NewProjectClaimService(claims)
@@ -57,19 +57,6 @@ func TestNativeCandidateSourcePlanRequiresProjectClaimAuthority(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
 	require.Contains(t, response.Body.String(), "CANDIDATE_SERVICE_UNAVAILABLE")
 	require.Zero(t, sources.plans)
-}
-
-func TestNativeCandidateSourcePlanFailsClosedForLegacyExpectedCandidate(t *testing.T) {
-	module := nativeSourcePlanModule("principal_1")
-	module.candidateSources = &candidateSourceSynchronizerStub{}
-	digest := "sha256:" + strings.Repeat("a", 64)
-
-	response := callCandidateAPI(t, http.MethodPost, "/api/v1/projects/finance/candidate-sync/plan", `{"projectFile":"leapview.yaml","artifactDigest":"`+digest+`","expectedCandidateId":"cand_opaque_1","expectedArtifactDigest":"`+digest+`","artifacts":[]}`, func(w http.ResponseWriter, r *http.Request) {
-		module.PlanProjectCandidateSynchronization(w, r, "finance", "plan-idem")
-	})
-
-	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "CANDIDATE_SERVICE_UNAVAILABLE")
 }
 
 func nativeSourcePlanModule(principalID string) *Module {

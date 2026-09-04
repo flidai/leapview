@@ -14,14 +14,16 @@ import (
 // TestPlanDeliveryPhysicalAuthorityGuards keeps the immutable DuckLake
 // boundary reviewable in source. It intentionally scans authored production
 // code and schema only; qualification tests may mention forbidden statements
-// as adversarial inputs without making them reachable.
+// as adversarial inputs without making them reachable. PostgreSQL-native
+// snapshot seals own delivery identity; the removed generic catalog-seal
+// package is not part of this production closure.
 func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	root := repoRoot(t)
 	// build.go dispatches every app entrypoint to postgres_build.go. Local
 	// SQLite authority is intentionally absent from the application graph.
 	productionRoots := []string{
 		"internal/deployment", "internal/app/runtimefactory", "internal/app/build.go", "internal/app/postgres_build.go",
-		"internal/analytics/candidatecatalog", "internal/analytics/sealedcatalog",
+		"internal/analytics/candidatecatalog",
 	}
 	forbidden := []string{
 		"file_membership", "table_membership", "reference_count",
@@ -79,16 +81,6 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 		}
 	}
 
-	sealedFactory, err := os.ReadFile(filepath.Join(root, "internal/app/runtimefactory/sealed.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	sealedText := string(sealedFactory)
-	for _, required := range []string{"cannot use legacy Prepare", "PrepareSealed", "sealedcatalog.Open"} {
-		if !strings.Contains(sealedText, required) {
-			t.Errorf("production sealed factory missing fail-closed boundary %q", required)
-		}
-	}
 	productionBuild, err := os.ReadFile(filepath.Join(root, "internal/app/build.go"))
 	if err != nil {
 		t.Fatal(err)

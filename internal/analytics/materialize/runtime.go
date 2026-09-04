@@ -1291,10 +1291,3 @@ func (r *Runtime) LastRefresh() time.Time {
 	}
 	return r.lastRefresh
 }
-
-func (r *Runtime) DBPath() string {
-	if r == nil {
-		return ""
-	}
-	return r.db.Path()
-}

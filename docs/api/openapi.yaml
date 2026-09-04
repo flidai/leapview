@@ -27350,8 +27350,6 @@ paths:
                   path: example
                   sizeBytes: 1
               candidateKey: example
-              expectedArtifactDigest: example
-              expectedCandidateId: example
               projectFile: example
               sourceOnly: true
               sourceRevision:
@@ -27704,8 +27702,6 @@ paths:
                   path: example
                   sizeBytes: 1
               candidateKey: example
-              expectedArtifactDigest: example
-              expectedCandidateId: example
               projectFile: example
               sourceOnly: true
               sourceRevision:
@@ -62004,12 +62000,6 @@ components:
           example: example
         sourceRevision:
           $ref: '#/components/schemas/CandidateSourceRevision'
-        expectedCandidateId:
-          type: string
-          example: example
-        expectedArtifactDigest:
-          type: string
-          example: example
         artifacts:
           type: array
           items:
@@ -62025,8 +62015,6 @@ components:
             path: example
             sizeBytes: 1
         candidateKey: example
-        expectedArtifactDigest: example
-        expectedCandidateId: example
         projectFile: example
         sourceOnly: true
         sourceRevision:

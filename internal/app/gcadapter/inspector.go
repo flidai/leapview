@@ -16,12 +16,16 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/flidai/leapview/internal/analytics/catalogseal"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/gc"
 	"github.com/flidai/leapview/internal/extension"
 )
+
+// catalogDigestMetadataKey is the optional provider metadata key accepted
+// when inspecting an immutable catalog root. The GC adapter owns this
+// compatibility check; catalog sealing/upload is handled by native delivery.
+const catalogDigestMetadataKey = "leapview-catalog-digest"
 
 type Inspector struct {
 	Store               gc.PoolStore
@@ -82,7 +86,7 @@ func (i Inspector) Inspect(ctx context.Context, root deployment.DeliveryRoot) (g
 		return gc.CatalogReachability{}, fmt.Errorf("rooted catalog digest mismatch")
 	}
 	if object.Metadata != nil {
-		if value := object.Metadata[catalogseal.MetadataDigest]; value != "" && value != digest {
+		if value := object.Metadata[catalogDigestMetadataKey]; value != "" && value != digest {
 			return gc.CatalogReachability{}, fmt.Errorf("rooted catalog metadata digest mismatch")
 		}
 		if value := object.Metadata["sha256"]; value != "" && value != digest {

@@ -58,10 +58,8 @@ type Candidate struct {
 }
 
 type SyncRequest struct {
-	Snapshot               Snapshot
-	ExpectedCandidateID    string
-	ExpectedArtifactDigest string
-	SourceOnly             bool
+	Snapshot   Snapshot
+	SourceOnly bool
 }
 
 type Builder interface {
@@ -107,7 +105,7 @@ func New(builder Builder, remote Remote) (*Service, error) {
 // Reconcile builds a coherent snapshot before performing any remote mutation.
 // Invalid or failed builds leave the last synchronized candidate untouched.
 // The mutex also makes concurrent worktree/editor events idempotent inside one
-// process; the remote port owns cross-process optimistic concurrency.
+// process; the remote source/plan protocol owns cross-process idempotency.
 func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 	if service == nil {
 		return Result{}, fmt.Errorf("project dev loop is not configured")
@@ -130,11 +128,7 @@ func (service *Service) Reconcile(ctx context.Context) (Result, error) {
 		result.Snapshot = cloneSnapshot(snapshot)
 		return result, nil
 	}
-	request := SyncRequest{
-		Snapshot:               cloneSnapshot(snapshot),
-		ExpectedCandidateID:    service.candidate.ID,
-		ExpectedArtifactDigest: service.candidate.ArtifactDigest,
-	}
+	request := SyncRequest{Snapshot: cloneSnapshot(snapshot)}
 	candidate, err := service.remote.Synchronize(ctx, request)
 	if err != nil {
 		result := service.result(StatusRetryable)

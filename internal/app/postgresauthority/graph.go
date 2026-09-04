@@ -452,9 +452,9 @@ func latestReleaseID(ctx context.Context, releases releaseLister, projectID stri
 }
 
 // activeDeploymentID maps the native delivery pointer's publication identity
-// to the release catalog's deployment identity. sealedcontrol.Coordinator
-// deliberately sets DeploymentID from Publication.ID, so ActivePublicationID
-// is the canonical value (not ActiveGenerationID).
+// to the release catalog's deployment identity. The native publication
+// authority sets DeploymentID from Publication.ID, so ActivePublicationID is
+// the canonical value (not ActiveGenerationID).
 func activeDeploymentID(ctx context.Context, targets deploymentTargetReader, targetID string) (string, error) {
 	if targets == nil {
 		return "", errors.New("deployment authority is required")

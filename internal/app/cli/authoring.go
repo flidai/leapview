@@ -398,14 +398,6 @@ func candidateSynchronizationBody(
 			body.SourceRevision.ChangeId = &value
 		}
 	}
-	if request.ExpectedCandidateID != "" {
-		value := request.ExpectedCandidateID
-		body.ExpectedCandidateId = &value
-	}
-	if request.ExpectedArtifactDigest != "" {
-		value := request.ExpectedArtifactDigest
-		body.ExpectedArtifactDigest = &value
-	}
 	for index, artifact := range request.Artifacts {
 		body.Artifacts[index] = deploymentgen.CandidateSourceArtifact{
 			Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,

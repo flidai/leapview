@@ -27,18 +27,13 @@ func (m *Module) ResolveOwnedCandidate(ctx context.Context, candidateID, princip
 	if m == nil {
 		return Candidate{}, deployment.ErrCandidateUnavailable
 	}
-	if m.candidates != nil {
-		candidate, err := m.candidates.GetOwned(ctx, candidateID, principalID)
-		if err != nil {
-			return Candidate{}, err
-		}
-		candidate.PreviewURL = m.candidates.PreviewURL(candidate.ID)
-		return candidate, nil
-	}
 	if m.nativeDeliveryReader == nil {
 		return Candidate{}, deployment.ErrCandidateUnavailable
 	}
-	return m.resolveNativeOwnedCandidate(ctx, candidateID, principalID)
+	if candidateID == "" || principalID == "" {
+		return Candidate{}, deployment.ErrCandidateNotFound
+	}
+	return m.resolveNativeCandidate(ctx, candidateID, principalID, nil)
 }
 
 // ResolveCandidateForReview returns bounded candidate evidence for a reviewer
@@ -46,21 +41,13 @@ func (m *Module) ResolveOwnedCandidate(ctx context.Context, candidateID, princip
 // candidate runtime or expose an owner principal; governed candidate preview
 // remains owner-only.
 func (m *Module) ResolveCandidateForReview(ctx context.Context, projectID projectgraph.ResourceID, candidateID string) (Candidate, error) {
-	if m == nil || m.candidates == nil {
+	if m == nil || m.nativeDeliveryReader == nil {
 		return Candidate{}, deployment.ErrCandidateUnavailable
 	}
-	return m.candidates.Review(ctx, projectID, strings.TrimSpace(candidateID))
-}
-
-// MarkCanonicalCandidateReady is used by the plan-driven adapter after the
-// durable catalog seal has completed. It keeps the legacy candidate API view
-// synchronized with the immutable delivery candidate without allowing the
-// HTTP layer to bypass sealing.
-func (m *Module) MarkCanonicalCandidateReady(ctx context.Context, candidate Candidate, provenanceDigest string) (Candidate, error) {
-	if m == nil || m.candidates == nil {
-		return Candidate{}, deployment.ErrCandidateUnavailable
+	if projectID.Validate() != nil || projectID.String() != strings.TrimSpace(projectID.String()) {
+		return Candidate{}, deployment.ErrCandidateNotFound
 	}
-	return m.candidates.MarkReady(ctx, candidateScope(candidate), candidate.ArtifactDigest, provenanceDigest)
+	return m.resolveNativeCandidate(ctx, strings.TrimSpace(candidateID), "", &projectID)
 }
 
 func (m *Module) ServeCandidatePreview(
@@ -69,7 +56,7 @@ func (m *Module) ServeCandidatePreview(
 	candidateID, principalID string,
 	layout webpage.Provider,
 ) {
-	if m == nil || (m.candidates == nil && m.nativeDeliveryReader == nil) {
+	if m == nil || m.nativeDeliveryReader == nil {
 		http.Error(w, "Candidate preview is unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -102,14 +89,20 @@ func (m *Module) ServeCandidatePreview(
 	_ = deploymentui.CandidatePage(candidate, layout).Render(w)
 }
 
-// resolveNativeOwnedCandidate rehydrates the legacy owner-bound candidate
-// view from the canonical PostgreSQL delivery evidence. Native candidate rows
-// intentionally do not persist an owner; ownership is proved by the exact
-// candidate -> seal -> build-attempt -> plan chain, with the attempt owner
-// compared to the authenticated principal before any candidate fields are
-// returned.
-func (m *Module) resolveNativeOwnedCandidate(ctx context.Context, candidateID, principalID string) (Candidate, error) {
-	if candidateID == "" || principalID == "" || candidateID != strings.TrimSpace(candidateID) || principalID != strings.TrimSpace(principalID) {
+// resolveNativeCandidate rehydrates a candidate view from the canonical
+// PostgreSQL delivery evidence. Native candidate rows intentionally do not
+// persist an owner; ownership is proved by the exact candidate -> seal ->
+// build-attempt -> plan chain. For owner-bound preview, expectedOwner must
+// match the attempt owner. Reviewer reads instead constrain the plan project
+// and clear OwnerID before returning the bounded evidence projection.
+func (m *Module) resolveNativeCandidate(ctx context.Context, candidateID, expectedOwner string, expectedProject *projectgraph.ResourceID) (Candidate, error) {
+	if candidateID == "" || candidateID != strings.TrimSpace(candidateID) || expectedOwner != strings.TrimSpace(expectedOwner) {
+		return Candidate{}, deployment.ErrCandidateNotFound
+	}
+	if (expectedOwner == "") == (expectedProject == nil) {
+		return Candidate{}, deployment.ErrCandidateNotFound
+	}
+	if expectedProject != nil && (expectedProject.Validate() != nil || expectedProject.String() != strings.TrimSpace(expectedProject.String())) {
 		return Candidate{}, deployment.ErrCandidateNotFound
 	}
 	reader := m.nativeDeliveryReader
@@ -135,12 +128,18 @@ func (m *Module) resolveNativeOwnedCandidate(ctx context.Context, candidateID, p
 		return Candidate{}, nativeCandidateEvidenceUnavailable("candidate build attempt identity is inconsistent")
 	}
 	// A foreign candidate must be indistinguishable from a missing candidate.
-	if attempt.OwnerID != principalID {
+	if expectedOwner != "" && attempt.OwnerID != expectedOwner {
 		return Candidate{}, deployment.ErrCandidateNotFound
 	}
 	plan, err := nativeReadPlan(ctx, reader, row.PlanID)
 	if err != nil {
 		return Candidate{}, nativeCandidateReadError(err)
+	}
+	// A reviewer request scoped to another project must be indistinguishable
+	// from a missing candidate, even when the candidate evidence is otherwise
+	// internally consistent.
+	if expectedProject != nil && plan.ProjectID != *expectedProject {
+		return Candidate{}, deployment.ErrCandidateNotFound
 	}
 	if plan.ID != row.PlanID || plan.TargetID != row.TargetID || plan.ProjectID.Validate() != nil || plan.Environment == "" ||
 		(m.instanceEnvironment != "" && plan.Environment != string(m.instanceEnvironment)) ||
@@ -161,9 +160,12 @@ func (m *Module) resolveNativeOwnedCandidate(ctx context.Context, candidateID, p
 	// against an already-invalid plan. Capture one UTC instant for this check.
 	now := time.Now().UTC()
 	status := nativeCandidateStatusForPreviewAt(row.Status, attempt.State, plan.Governance.ExpiresAt, now)
-	previewURL, err := m.candidatePreviewURL(row.CandidateID)
-	if err != nil {
-		return Candidate{}, nativeCandidateEvidenceUnavailable("candidate preview origin is unavailable")
+	var previewURL string
+	if expectedOwner != "" {
+		previewURL, err = m.candidatePreviewURL(row.CandidateID)
+		if err != nil {
+			return Candidate{}, nativeCandidateEvidenceUnavailable("candidate preview origin is unavailable")
+		}
 	}
 	updatedAt := row.CreatedAt.UTC()
 	if !attempt.UpdatedAt.IsZero() && attempt.UpdatedAt.After(updatedAt) {
@@ -175,12 +177,18 @@ func (m *Module) resolveNativeOwnedCandidate(ctx context.Context, candidateID, p
 	result := Candidate{
 		ID: row.CandidateID, Key: row.CandidateID, TargetID: row.TargetID, OwnerID: attempt.OwnerID, PreviewURL: previewURL,
 		Scope: deployment.CandidateScope{ProjectID: plan.ProjectID, Environment: plan.Environment, BaseGenerationID: plan.BaseGenerationID},
-		// The legacy candidate view calls this field ArtifactDigest, but its
-		// authoring/CLI contract is the retained source identity. Native
+		// The product candidate projection calls this field ArtifactDigest, but
+		// its authoring/CLI contract is the retained source identity. Native
 		// serving-artifact identity remains in the seal and is checked above.
 		ArtifactDigest: plan.SourceDigest, ProvenanceDigest: plan.ProvenanceDigest,
 		Status: status, ExpiresAt: plan.Governance.ExpiresAt.UTC(), CreatedAt: row.CreatedAt.UTC(), UpdatedAt: updatedAt,
 		Revision: row.CandidateRevision,
+	}
+	if expectedOwner == "" {
+		// Reviewer evidence is deliberately bounded to status, timing, project,
+		// and immutable digests. Never expose the attempt owner on this path.
+		result.OwnerID = ""
+		result.PreviewURL = ""
 	}
 	if status == deployment.CandidateReady {
 		result.ReadyAt = row.QualifiedAt.UTC()
@@ -248,7 +256,7 @@ func (m *Module) ServeCandidateReview(
 	projectID projectgraph.ResourceID,
 	layout webpage.Provider,
 ) {
-	if m == nil || m.candidates == nil {
+	if m == nil || m.nativeDeliveryReader == nil {
 		http.Error(w, "Candidate review is unavailable", http.StatusServiceUnavailable)
 		return
 	}

@@ -12,7 +12,6 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -172,13 +171,6 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	}
 	logger.InfoContext(ctx, "deployment activation loaded pending row", "deployment", payload.Deployment, "status", pending.Status, "generation", pending.GenerationID)
 	releaseID := ""
-	if m.sealedCoordinator != nil && m.api.Releases != nil {
-		resolved, _, resolveErr := m.api.Releases.DeploymentRelease(ctx, payload.Project, payload.Deployment)
-		if resolveErr != nil {
-			return resolveErr
-		}
-		releaseID = resolved
-	}
 	if payload.Bootstrap {
 		if !m.protected || m.bootstrapPolicies == nil || m.authorizeBootstrap == nil || payload.Credential.CredentialClass != deployment.CredentialClassAPIToken || payload.Credential.PrincipalID != payload.Actor {
 			return deployment.ErrApprovalRequired
@@ -235,71 +227,10 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		}
 	}
 	var row apiadapter.Deployment
-	if m.sealedCoordinator != nil {
-		if m.sealedPublishRequest == nil || m.sealedRollbackRequest == nil || m.sealedActivationMarker == nil {
-			return fmt.Errorf("sealed publication lifecycle is incomplete")
-		}
-		if payload.Rollback {
-			request, resolveErr := m.sealedRollbackRequest(ctx, pending, releaseID, payload.Credential, payload.ExpectedBaseGenerationID, payload.ExpectedTargetRevision)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			result, publishErr := m.sealedCoordinator.Rollback(ctx, request)
-			if publishErr != nil {
-				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
-				return publishErr
-			}
-			activation := sealedActivationInput(pending, payload.Actor, result.CatalogDigest)
-			activated, markErr := m.sealedActivationMarker(ctx, activation)
-			if markErr != nil {
-				return markErr
-			}
-			if m.sealedReconcile != nil {
-				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
-					return reconcileErr
-				}
-			}
-			row = mapSealedDeployment(activated)
-		} else {
-			logger.InfoContext(ctx, "deployment activation sealed publish starting", "deployment", payload.Deployment, "bootstrap", payload.Bootstrap)
-			request, resolveErr := m.sealedPublishRequest(ctx, pending, releaseID, payload.Credential, payload.Bootstrap)
-			if resolveErr != nil {
-				return resolveErr
-			}
-			_, publishErr := m.sealedCoordinator.Publish(ctx, request)
-			if publishErr != nil {
-				logger.ErrorContext(ctx, "deployment activation sealed publish failed", "deployment", payload.Deployment, "error", publishErr)
-				m.appendEvent(ctx, payload.Deployment, "deployment.failed", "failed")
-				return publishErr
-			}
-			logger.InfoContext(ctx, "deployment activation sealed publish committed", "deployment", payload.Deployment)
-			activation := sealedActivationInput(pending, payload.Actor, request.Seal.CatalogDigest)
-			logger.InfoContext(ctx, "deployment activation sealed marker starting", "deployment", payload.Deployment)
-			activated, markErr := m.sealedActivationMarker(ctx, activation)
-			if markErr != nil {
-				logger.ErrorContext(ctx, "deployment activation sealed marker failed", "deployment", payload.Deployment, "error", markErr)
-				return markErr
-			}
-			logger.InfoContext(ctx, "deployment activation sealed marker committed", "deployment", payload.Deployment)
-			if m.sealedReconcile != nil {
-				logger.InfoContext(ctx, "deployment activation sealed reconcile starting", "deployment", payload.Deployment)
-				if reconcileErr := m.sealedReconcile(ctx, pending.GenerationID); reconcileErr != nil {
-					logger.ErrorContext(ctx, "deployment activation sealed reconcile failed", "deployment", payload.Deployment, "error", reconcileErr)
-					return reconcileErr
-				}
-				logger.InfoContext(ctx, "deployment activation sealed reconcile completed", "deployment", payload.Deployment)
-			}
-			row = mapSealedDeployment(activated)
-		}
-	} else {
-		if m.requireSealedCoordinator {
-			return fmt.Errorf("sealed publication coordinator is unavailable")
-		}
-		row, err = m.jobs.Coordinator.Activate(ctx, apiadapter.ActivateRequest{
-			Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
-			Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
-		})
-	}
+	row, err = m.jobs.Coordinator.Activate(ctx, apiadapter.ActivateRequest{
+		Scope: apiadapter.Scope{Project: payload.Project, DeploymentID: payload.Deployment},
+		Actor: payload.Actor, IdempotencyKey: payload.IdempotencyKey,
+	})
 	if err == nil && m.jobs.ReconcileActivation != nil {
 		if reconcileErr := m.jobs.ReconcileActivation(ctx, row); reconcileErr != nil {
 			err = reconcileErr
@@ -326,24 +257,6 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 		row,
 	)
 	return err
-}
-
-func sealedActivationInput(pending apiadapter.Deployment, actor, verificationDigest string) deployment.ActivationInput {
-	identity := projectgraph.ServingIdentity{ProjectID: projectgraph.ResourceID(pending.Project), Environment: pending.Environment, GenerationID: pending.GenerationID}
-	return deployment.ActivationInput{
-		DeploymentID: pending.ID, ServingIdentity: identity, ArtifactDigest: pending.ArtifactDigest,
-		PriorGenerationID: pending.PriorGenerationID, ActivationPrincipal: actor, VerificationDigest: verificationDigest,
-	}
-}
-
-func mapSealedDeployment(row deployment.Deployment) apiadapter.Deployment {
-	return apiadapter.Deployment{
-		ID: row.ID, Project: row.ServingIdentity.ProjectID.String(), Environment: row.ServingIdentity.Environment,
-		GenerationID: row.ServingIdentity.GenerationID, ArtifactDigest: row.ArtifactDigest,
-		PriorGenerationID: row.PriorGenerationID, RequestDigest: row.RequestDigest, Status: apiadapter.Status(row.Status),
-		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
-		ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
-	}
 }
 
 func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status string) {

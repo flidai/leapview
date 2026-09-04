@@ -60,10 +60,6 @@ func TestReconcileIsIdempotentAndRetriesFailedSynchronization(t *testing.T) {
 	if len(remote.requests) != 2 {
 		t.Fatalf("remote requests = %d, want retry plus success", len(remote.requests))
 	}
-	if remote.requests[0].ExpectedArtifactDigest != "" ||
-		remote.requests[1].ExpectedArtifactDigest != "" {
-		t.Fatalf("failed synchronization advanced optimistic state: %#v", remote.requests)
-	}
 }
 
 func TestConcurrentReconcileSerializesOneDigestSynchronization(t *testing.T) {
@@ -101,7 +97,7 @@ func TestConcurrentReconcileSerializesOneDigestSynchronization(t *testing.T) {
 	}
 }
 
-func TestReconcileBindsReplacementToCandidateIdentityAndDigest(t *testing.T) {
+func TestReconcileSynchronizesChangedSnapshot(t *testing.T) {
 	first := testSnapshot("first")
 	second := testSnapshot("second")
 	builder := &scriptedBuilder{steps: []buildStep{{snapshot: first}, {snapshot: second}}}
@@ -114,10 +110,8 @@ func TestReconcileBindsReplacementToCandidateIdentityAndDigest(t *testing.T) {
 	if _, err := service.Reconcile(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	if len(remote.requests) != 2 ||
-		remote.requests[1].ExpectedCandidateID != "cand_1" ||
-		remote.requests[1].ExpectedArtifactDigest != first.Digest {
-		t.Fatalf("replacement optimistic identity = %#v", remote.requests)
+	if len(remote.requests) != 2 || remote.requests[1].Snapshot.Digest == remote.requests[0].Snapshot.Digest {
+		t.Fatalf("changed snapshot was not synchronized: %#v", remote.requests)
 	}
 }
 

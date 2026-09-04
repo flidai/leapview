@@ -33,14 +33,12 @@ type CandidateSynchronizationRequest struct {
 	// SourceOnly retains the immutable source snapshot without invoking
 	// candidate preparation or any physical writer. Delivery plan callers set
 	// this explicitly so Build remains the first physical operation.
-	SourceOnly             bool
-	CandidateKey           string
-	ExpectedCandidateID    string
-	ExpectedArtifactDigest string
-	PlanID                 string
-	IdempotencyKey         string
-	Artifacts              []CandidateSourceArtifact
-	SourceRevision         *CandidateSourceRevision
+	SourceOnly     bool
+	CandidateKey   string
+	PlanID         string
+	IdempotencyKey string
+	Artifacts      []CandidateSourceArtifact
+	SourceRevision *CandidateSourceRevision
 }
 
 type CandidateSourceScope struct {

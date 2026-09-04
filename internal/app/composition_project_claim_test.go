@@ -52,22 +52,6 @@ func TestReadClaimedProjectFailsClosedAndChecksEnvironment(t *testing.T) {
 	}
 }
 
-func TestResolveClaimedProjectIDRequiresDurableClaim(t *testing.T) {
-	scopes := []servingstatemodule.ActiveScope{{ProjectID: "finance", Environment: "prod"}}
-	if _, err := resolveClaimedProjectID(scopes, "prod", "", false); err == nil {
-		t.Fatal("resolveClaimedProjectID() accepted active scope without durable claim")
-	}
-	if got, err := resolveClaimedProjectID(nil, "prod", "", false); err != nil || got != "" {
-		t.Fatalf("fresh unclaimed resolution = %q, %v, want empty success", got, err)
-	}
-	if got, err := resolveClaimedProjectID(scopes, "prod", "finance", true); err != nil || got != "finance" {
-		t.Fatalf("restart claim resolution = %q, %v, want finance", got, err)
-	}
-	if _, err := resolveClaimedProjectID(scopes, "prod", "marketing", true); err == nil {
-		t.Fatal("resolveClaimedProjectID() accepted conflicting durable claim")
-	}
-}
-
 func TestPostgresAuthoringProjectIDResolverFreshClaimedAndCorruptStates(t *testing.T) {
 	claim := deployment.ProjectClaim{ProjectID: "finance", Environment: "prod", ClaimedBy: "principal", ClaimedAt: time.Now().UTC()}
 	readErr := errors.New("claim database unavailable")
@@ -146,58 +130,6 @@ func (s authoringServingStateReaderStub) ActiveScopeForTarget(context.Context, s
 		return servingstatemodule.ActiveScope{}, false, nil
 	}
 	return s.scopes[0], true, nil
-}
-
-func TestResolveDeliveryStartupProjectIDReadsLiveClaim(t *testing.T) {
-	readClaim := func(context.Context) (projectgraph.ResourceID, bool, error) {
-		return "finance", true, nil
-	}
-	if got, err := resolveDeliveryStartupProjectID(t.Context(), "", readClaim); err != nil || got != "finance" {
-		t.Fatalf("resolveDeliveryStartupProjectID() = %q, %v, want finance", got, err)
-	}
-}
-
-func TestResolveDeliveryStartupProjectIDRetainsInitialScopeWithoutClaim(t *testing.T) {
-	readClaim := func(context.Context) (projectgraph.ResourceID, bool, error) {
-		return "", false, nil
-	}
-	if got, err := resolveDeliveryStartupProjectID(t.Context(), "finance", readClaim); err != nil || got != "finance" {
-		t.Fatalf("resolveDeliveryStartupProjectID() = %q, %v, want finance", got, err)
-	}
-}
-
-func TestResolveDeliveryStartupProjectIDFailsClosed(t *testing.T) {
-	readErr := errors.New("claim unavailable")
-	tests := []struct {
-		name      string
-		initial   projectgraph.ResourceID
-		readClaim func(context.Context) (projectgraph.ResourceID, bool, error)
-		wantErr   string
-	}{
-		{
-			name:    "claim changed",
-			initial: "finance",
-			readClaim: func(context.Context) (projectgraph.ResourceID, bool, error) {
-				return "marketing", true, nil
-			},
-			wantErr: "project claim changed",
-		},
-		{
-			name: "reader error",
-			readClaim: func(context.Context) (projectgraph.ResourceID, bool, error) {
-				return "", false, readErr
-			},
-			wantErr: readErr.Error(),
-		},
-		{name: "missing reader", wantErr: "project claim reader is required"},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			if _, err := resolveDeliveryStartupProjectID(t.Context(), test.initial, test.readClaim); err == nil || !containsError(err, test.wantErr) {
-				t.Fatalf("resolveDeliveryStartupProjectID() error = %v, want %q", err, test.wantErr)
-			}
-		})
-	}
 }
 
 func TestBindClaimedProjectEnforcesConfiguredEnvironment(t *testing.T) {

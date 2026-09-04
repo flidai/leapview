@@ -22,14 +22,12 @@ type SynchronizationPlanRequest struct {
 	ArtifactDigest string
 	// SourceOnly asks the target to retain bytes without candidate preparation.
 	// It is used by canonical delivery plan before Build performs physical work.
-	SourceOnly             bool
-	CandidateKey           string
-	ExpectedCandidateID    string
-	ExpectedArtifactDigest string
-	PlanID                 string
-	IdempotencyKey         string
-	Artifacts              []ArtifactReference
-	SourceRevision         *SourceRevision
+	SourceOnly     bool
+	CandidateKey   string
+	PlanID         string
+	IdempotencyKey string
+	Artifacts      []ArtifactReference
+	SourceRevision *SourceRevision
 }
 
 type SynchronizationPlan struct {

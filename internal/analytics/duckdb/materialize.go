@@ -1463,13 +1463,6 @@ func (r *ProjectRuntime) SourceObservations() []analyticsmaterialize.SourceObser
 	return cloneSourceObservations(r.sourceObservations)
 }
 
-func (r *ProjectRuntime) DBPath() string {
-	if r == nil || r.db == nil {
-		return ""
-	}
-	return r.db.Path()
-}
-
 func (r *ProjectRuntime) DuckLakeSnapshotID() int64 {
 	if r == nil {
 		return 0

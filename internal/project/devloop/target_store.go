@@ -538,22 +538,12 @@ func normalizePlanRequest(request SynchronizationPlanRequest) (SynchronizationPl
 	request = clonePlanRequest(request)
 	request.ProjectFile = strings.TrimSpace(request.ProjectFile)
 	request.ArtifactDigest = strings.TrimSpace(request.ArtifactDigest)
-	request.ExpectedCandidateID = strings.TrimSpace(request.ExpectedCandidateID)
-	request.ExpectedArtifactDigest = strings.TrimSpace(request.ExpectedArtifactDigest)
 	if err := request.ProjectID.Validate(); err != nil || !canonicalArtifactPath(request.ProjectFile) ||
 		len(request.Artifacts) == 0 || len(request.Artifacts) > maxTargetSnapshotFiles {
 		return SynchronizationPlanRequest{}, fmt.Errorf("project synchronization manifest is incomplete")
 	}
 	if err := digest.ValidateSHA256Identity(request.ArtifactDigest); err != nil {
 		return SynchronizationPlanRequest{}, fmt.Errorf("project synchronization digest is invalid: %w", err)
-	}
-	if request.ExpectedArtifactDigest != "" {
-		if err := digest.ValidateSHA256Identity(request.ExpectedArtifactDigest); err != nil {
-			return SynchronizationPlanRequest{}, fmt.Errorf("expected candidate digest is invalid: %w", err)
-		}
-	}
-	if (request.ExpectedCandidateID == "") != (request.ExpectedArtifactDigest == "") {
-		return SynchronizationPlanRequest{}, fmt.Errorf("expected candidate identity and digest must be supplied together")
 	}
 	seen := make(map[string]struct{}, len(request.Artifacts))
 	artifacts := make([]Artifact, len(request.Artifacts))

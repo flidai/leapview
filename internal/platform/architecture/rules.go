@@ -34,7 +34,7 @@ type PackageRule struct {
 var PublicContractPrefixes = map[string][]string{
 	"access":        {"internal/access", "internal/access/api", "internal/access/policy", "internal/access/snapshot", "internal/access/ui/signals"},
 	"agent":         {"internal/agent/api", "internal/agent/ui/signals"},
-	"analytics":     {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogseal", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
+	"analytics":     {"pkg/arrowresult", "internal/analytics/model", "internal/analytics/modelsql", "internal/analytics/query", "internal/analytics/materialize", "internal/analytics/materialization", "internal/analytics/connectors", "internal/analytics/connectionadmin", "internal/analytics/arrowquery", "internal/analytics/resource", "internal/analytics/runtime", "internal/analytics/queryaudit", "internal/analytics/dataquery", "internal/analytics/physicalpool", "internal/analytics/catalogartifact", "internal/analytics/catalogstats", "internal/analytics/resultidentity", "internal/analytics/sourcedataidentity"},
 	"dashboard":     {"internal/dashboard", "internal/dashboard/api", "internal/dashboard/appearance", "internal/dashboard/authoring", "internal/dashboard/catalog", "internal/dashboard/compiler", "internal/dashboard/definition", "internal/dashboard/document", "internal/dashboard/filter", "internal/dashboard/layoutcontract", "internal/dashboard/publication", "internal/dashboard/report", "internal/dashboard/reportmodel", "internal/dashboard/queryruntime", "internal/dashboard/resolver", "internal/dashboard/ui/signals", "internal/dashboard/visualization/definition", "internal/dashboard/visualization/format", "internal/dashboard/visualization/geometry", "internal/dashboard/visualization/ir", "internal/dashboard/visualization/mapasset", "internal/dashboard/visualization/runtime"},
 	"manageddata":   {"internal/manageddata", "internal/manageddata/binding", "internal/manageddata/runtimebinding"},
 	"project":       {"internal/project", "internal/project/api", "internal/project/schema", "internal/project/contracts", "internal/project/artifact", "internal/project/bundle", "internal/project/catalog", "internal/project/compiler", "internal/project/manifest", "internal/project/runtime"},
@@ -101,10 +101,9 @@ var SharedContractPrefixes = map[string][]string{
 var CompositionContractPrefixes = map[string]struct{}{
 	// Process assembly is the explicit owner of these target adapters. Keep
 	// this list exact (rather than allowing capability roots) so a new app
-	// import still requires an architecture review while the sealed delivery
-	// wiring can construct its concrete physical/control-plane ports here.
+	// import still requires an architecture review while composition constructs
+	// its concrete physical/control-plane ports and evaluation seams here.
 	"internal/analytics/candidatecatalog":  {},
-	"internal/analytics/catalogseal":       {},
 	"internal/analytics/ducklake":          {},
 	"internal/analytics/physicalpool":      {},
 	"internal/analytics/runtime":           {},
@@ -118,7 +117,6 @@ var CompositionContractPrefixes = map[string]struct{}{
 	"internal/deployment":                  {},
 	"internal/deployment/apiadapter":       {},
 	"internal/deployment/gcstore":          {},
-	"internal/deployment/sealedcontrol":    {},
 	"internal/deployment/extensionsupply":  {},
 	"internal/manageddata":                 {},
 	"internal/manageddata/control":         {},
@@ -334,11 +332,9 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/analytics/gates", Capability: "release", Layer: LayerUseCase},
 	{Prefix: "internal/analytics/physicalpool", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/physicalpool/sqlite", Capability: "analytics", Layer: LayerAdapter},
-	{Prefix: "internal/analytics/catalogseal", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogartifact", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogstats", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/candidatecatalog", Capability: "analytics", Layer: LayerAdapter},
-	{Prefix: "internal/analytics/sealedcatalog", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/connectionadmin", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/infisical", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/environment", Capability: "analytics", Layer: LayerAdapter},

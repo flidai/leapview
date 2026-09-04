@@ -11,7 +11,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	apigenfailure "github.com/Yacobolo/toolbelt/apigen/runtime/failure"
@@ -58,9 +57,6 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 		m.writeCandidateCommandFailure(w, r, operationID, err)
 		return
 	}
-	if !m.validateExpectedCandidate(w, r, project, principalID, request, deploymentCommandOperation(operationID)) {
-		return
-	}
 	plan, err := m.candidateSources.Plan(r.Context(), deployment.CandidateSourceScope{
 		ProjectID: projectID, OwnerID: principalID, CandidateKey: request.CandidateKey,
 	}, request)
@@ -89,9 +85,6 @@ func (m *Module) PlanProjectCandidateSynchronization(w http.ResponseWriter, r *h
 func (m *Module) claimCandidateSynchronizationProject(ctx context.Context, projectID projectgraph.ResourceID, principalID string) error {
 	if m == nil {
 		return deployment.ErrCandidateUnavailable
-	}
-	if m.candidates != nil {
-		return m.candidates.ClaimProject(ctx, projectID, principalID)
 	}
 	if m.projectClaims == nil {
 		return deployment.ErrCandidateUnavailable
@@ -127,10 +120,6 @@ func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Req
 	projectID, err := projectgraph.NewResourceID(project)
 	if err != nil {
 		m.writeCandidateCommandFailure(w, r, operationID, err)
-		return
-	}
-	if request.ExpectedCandidateID != "" || request.ExpectedArtifactDigest != "" {
-		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("candidate_invalid", "source retention does not accept candidate concurrency inputs"))
 		return
 	}
 	request.SourceOnly = true
@@ -584,41 +573,6 @@ func candidateRuntimeRestrictions(values []release.CandidateRestriction) []deplo
 	return result
 }
 
-func tentativeCandidate(
-	candidate deployment.Candidate,
-	request deployment.CandidateSynchronizationRequest,
-) (deployment.Candidate, error) {
-	if request.ExpectedCandidateID == "" {
-		if candidate.Status == deployment.CandidatePreparing {
-			return candidate, nil
-		}
-		if candidate.Status != deployment.CandidateReady {
-			return deployment.Candidate{}, deployment.ErrCandidateConflict
-		}
-		request.ExpectedArtifactDigest = candidate.ArtifactDigest
-	}
-	if candidate.Status != deployment.CandidateReady ||
-		request.ExpectedArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) ||
-		request.ArtifactDigest != strings.TrimSpace(request.ArtifactDigest) ||
-		candidate.ArtifactDigest != request.ExpectedArtifactDigest {
-		return deployment.Candidate{}, deployment.ErrCandidateConflict
-	}
-	candidate.ArtifactDigest = request.ArtifactDigest
-	candidate.ProvenanceDigest = ""
-	candidate.Status = deployment.CandidatePreparing
-	candidate.FailureReason = ""
-	candidate.ReadyAt = time.Time{}
-	candidate.Revision++
-	return candidate, nil
-}
-
-func candidateScope(candidate deployment.Candidate) deployment.CandidateAccessScope {
-	return deployment.CandidateAccessScope{
-		ProjectID: candidate.Scope.ProjectID, CandidateID: candidate.ID,
-		OwnerID: candidate.OwnerID, TargetID: candidate.TargetID,
-	}
-}
-
 func candidatePreparationError(err error) error {
 	switch {
 	case errors.Is(err, release.ErrCandidateArtifactInvalid):
@@ -672,12 +626,6 @@ func (m *Module) decodeCandidateSynchronizationRequest(
 			request.SourceRevision.ChangeID = *body.SourceRevision.ChangeID
 		}
 	}
-	if body.ExpectedCandidateID != nil {
-		request.ExpectedCandidateID = *body.ExpectedCandidateID
-	}
-	if body.ExpectedArtifactDigest != nil {
-		request.ExpectedArtifactDigest = *body.ExpectedArtifactDigest
-	}
 	for index, artifact := range body.Artifacts {
 		request.Artifacts[index] = deployment.CandidateSourceArtifact{
 			Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes,
@@ -705,90 +653,6 @@ func (m *Module) candidateSynchronizationPrincipal(
 		return "", false
 	}
 	return principal.ID, true
-}
-
-func (m *Module) validateExpectedCandidate(
-	w http.ResponseWriter,
-	r *http.Request,
-	project, principalID string,
-	request deployment.CandidateSynchronizationRequest,
-	operationID *deploymentgen.GenCommandOperationID,
-) bool {
-	if request.ExpectedCandidateID != strings.TrimSpace(request.ExpectedCandidateID) || request.ExpectedArtifactDigest != strings.TrimSpace(request.ExpectedArtifactDigest) || request.CandidateKey != strings.TrimSpace(request.CandidateKey) {
-		err := fmt.Errorf("%w: expected candidate fields must be canonical", deployment.ErrCandidateInvalid)
-		if operationID == nil {
-			writeCandidateAPIError(w, r, err)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, err)
-		}
-		return false
-	}
-	hasID := request.ExpectedCandidateID != ""
-	hasDigest := request.ExpectedArtifactDigest != ""
-	if hasID != hasDigest {
-		err := fmt.Errorf(
-			"%w: expected candidate identity and digest must be supplied together",
-			deployment.ErrCandidateInvalid,
-		)
-		if operationID == nil {
-			writeCandidateAPIError(w, r, err)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, err)
-		}
-		return false
-	}
-	if !hasID {
-		return true
-	}
-	if m.candidates == nil {
-		if operationID == nil {
-			writeCandidateUnavailable(w, r)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateUnavailable)
-		}
-		return false
-	}
-	projectID, projectErr := projectgraph.NewResourceID(project)
-	if projectErr != nil {
-		if operationID == nil {
-			writeCandidateAPIError(w, r, projectErr)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, projectErr)
-		}
-		return false
-	}
-	candidate, err := m.candidates.Get(r.Context(), deployment.CandidateAccessScope{
-		ProjectID: projectID, CandidateID: request.ExpectedCandidateID, OwnerID: principalID,
-	})
-	if err != nil {
-		if operationID == nil {
-			writeCandidateAPIError(w, r, err)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, err)
-		}
-		return false
-	}
-	if candidate.ArtifactDigest != request.ExpectedArtifactDigest {
-		if operationID == nil {
-			writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateConflict)
-		}
-		return false
-	}
-	candidateKey := request.CandidateKey
-	if candidateKey == "" {
-		candidateKey = "default"
-	}
-	if candidate.Key != candidateKey {
-		if operationID == nil {
-			writeCandidateAPIError(w, r, deployment.ErrCandidateConflict)
-		} else {
-			m.writeCandidateCommandFailure(w, r, *operationID, deployment.ErrCandidateConflict)
-		}
-		return false
-	}
-	return true
 }
 
 func deploymentCommandOperation(operationID deploymentgen.GenCommandOperationID) *deploymentgen.GenCommandOperationID {

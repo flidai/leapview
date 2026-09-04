@@ -1,4 +1,4 @@
-package sealedcontrol
+package qualificationbarrier
 
 import (
 	"context"
@@ -9,33 +9,33 @@ import (
 	"time"
 )
 
-func TestQualificationActivationBarrierIsInertOutsideEvaluation(t *testing.T) {
+func TestWaitBeforeActivationIsInertOutsideEvaluation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LEAPVIEW_HOME", home)
-	if err := os.WriteFile(filepath.Join(home, QualificationActivationBarrierArmedMarker), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ArmedMarker), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 100*time.Millisecond)
 	defer cancel()
-	if err := QualificationActivationBarrier(ctx, "prod"); err != nil {
+	if err := WaitBeforeActivation(ctx, "prod"); err != nil {
 		t.Fatalf("production barrier = %v, want nil", err)
 	}
-	if _, err := os.Stat(filepath.Join(home, QualificationActivationBarrierArmedMarker)); err != nil {
+	if _, err := os.Stat(filepath.Join(home, ArmedMarker)); err != nil {
 		t.Fatalf("production marker was consumed: %v", err)
 	}
 }
 
-func TestQualificationActivationBarrierConsumesAndReachesBeforeBlocking(t *testing.T) {
+func TestWaitBeforeActivationConsumesAndReachesBeforeBlocking(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LEAPVIEW_HOME", home)
-	armed := filepath.Join(home, QualificationActivationBarrierArmedMarker)
-	reached := filepath.Join(home, QualificationActivationBarrierReachedMarker)
+	armed := filepath.Join(home, ArmedMarker)
+	reached := filepath.Join(home, ReachedMarker)
 	if err := os.WriteFile(armed, []byte("armed"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithCancel(t.Context())
 	result := make(chan error, 1)
-	go func() { result <- QualificationActivationBarrier(ctx, "evaluation") }()
+	go func() { result <- WaitBeforeActivation(ctx, "evaluation") }()
 	deadline := time.Now().Add(time.Second)
 	for {
 		if _, err := os.Stat(reached); err == nil {
@@ -57,16 +57,16 @@ func TestQualificationActivationBarrierConsumesAndReachesBeforeBlocking(t *testi
 	}
 }
 
-func TestQualificationActivationBarrierRejectsStaleReachedMarker(t *testing.T) {
+func TestWaitBeforeActivationRejectsStaleReachedMarker(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("LEAPVIEW_HOME", home)
-	if err := os.WriteFile(filepath.Join(home, QualificationActivationBarrierArmedMarker), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ArmedMarker), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(home, QualificationActivationBarrierReachedMarker), nil, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(home, ReachedMarker), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := QualificationActivationBarrier(t.Context(), "evaluation"); err == nil {
+	if err := WaitBeforeActivation(t.Context(), "evaluation"); err == nil {
 		t.Fatal("stale reached marker unexpectedly accepted")
 	}
 }

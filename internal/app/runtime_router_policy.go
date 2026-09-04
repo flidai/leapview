@@ -270,60 +270,6 @@ func deliveryProjectAllows(snapshot accesssnapshot.AuthorizationSnapshot, subjec
 	return false, nil
 }
 
-// deliveryAuthorizationPlan resolves the explicit local/evaluation delivery
-// projection. Native production callers use nativeDeliveryAuthorizationPlan
-// directly and never enter this legacy reader path.
-func deliveryAuthorizationPlan(ctx context.Context, reader deployment.DeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
-	if strings.TrimSpace(objectID) == "" {
-		return deployment.DeliveryPlan{}, sql.ErrNoRows
-	}
-	if reader == nil {
-		return deployment.DeliveryPlan{}, fmt.Errorf("delivery authorization reader is unavailable")
-	}
-	loadPlan := func(planID string) (deployment.DeliveryPlan, error) {
-		if strings.TrimSpace(planID) == "" {
-			return deployment.DeliveryPlan{}, sql.ErrNoRows
-		}
-		return reader.PlanByID(ctx, planID)
-	}
-	switch operationID {
-	case "buildDeliveryPlan", "getDeliveryPlanPreview":
-		return loadPlan(objectID)
-	case "publishDeliveryCandidate", "getDeliveryCandidateStatus":
-		candidate, err := reader.DeliveryCandidateByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(candidate.PlanID)
-	case "rollbackDeliveryGeneration", "getDeliveryGenerationStatus":
-		generation, err := reader.DeliveryGenerationByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(generation.PlanID)
-	case "getDeliveryBuildStatus":
-		attempt, err := reader.DeliveryBuildAttemptByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(attempt.PlanID)
-	case "getDeliverySealStatus":
-		seal, err := reader.DeliveryCatalogSealByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(seal.PlanID)
-	case "getDeliveryPublicationEvidence", "requestDeliveryPublicationApproval", "getDeliveryPublicationApproval", "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
-		publication, err := reader.DeliveryPublicationByID(ctx, objectID)
-		if err != nil {
-			return deployment.DeliveryPlan{}, err
-		}
-		return loadPlan(publication.PlanID)
-	default:
-		return deployment.DeliveryPlan{}, fmt.Errorf("unsupported delivery authorization operation %q", operationID)
-	}
-}
-
 func deliveryApprovalDecisionOperation(operationID string) bool {
 	switch operationID {
 	case "approveDeliveryPublicationApproval", "denyDeliveryPublicationApproval", "revokeDeliveryPublicationApproval":
@@ -413,8 +359,7 @@ func deliveryResourceCapability(resource access.ResourceRef, capability access.C
 }
 
 // nativeDeliveryAuthorizationPlan resolves the canonical PostgreSQL delivery
-// graph used by production authorization. It intentionally never consults the
-// legacy DeliveryReader projection.
+// graph used by production authorization.
 func nativeDeliveryAuthorizationPlan(ctx context.Context, reader deploymentmodule.NativeDeliveryReader, operationID, objectID string) (deployment.DeliveryPlan, error) {
 	if strings.TrimSpace(objectID) == "" {
 		return deployment.DeliveryPlan{}, sql.ErrNoRows

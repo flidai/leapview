@@ -3,16 +3,13 @@ package module
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log/slog"
 	"net/http"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/deployment"
-	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
-	"github.com/flidai/leapview/internal/deployment/sealedcontrol"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
@@ -20,7 +17,6 @@ import (
 
 type Module struct {
 	handler                   *deploymenthttp.Handler
-	candidates                *deployment.CandidateService
 	projectClaims             *deployment.ProjectClaimService
 	approvals                 *deployment.ApprovalService
 	candidateRuntimes         CandidateRuntimePreparer
@@ -46,13 +42,6 @@ type Module struct {
 	authorizeActivation       func(context.Context, deployment.ApprovalActor, string, string) error
 	bootstrapPolicies         BootstrapPolicyStore
 	authorizeBootstrap        func(context.Context, deployment.BootstrapActivationPolicy) error
-	sealedCoordinator         SealedCoordinator
-	sealedPublishRequest      SealedPublishRequestResolver
-	sealedRollbackRequest     SealedRollbackRequestResolver
-	sealedActivationMarker    SealedActivationMarker
-	sealedReconcile           func(context.Context, string) error
-	sealedRollbackFence       func(context.Context, string) (string, int64, error)
-	requireSealedCoordinator  bool
 	nativeDeliveryReader      NativeDeliveryReader
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	nativeDeliveryPublication NativeDeliveryPublicationPort
@@ -66,7 +55,6 @@ type Principal struct {
 
 type Candidate = deployment.Candidate
 type CandidateStatus = deployment.CandidateStatus
-type CandidateEvent = deployment.CandidateEvent
 type CandidateConnectionRequest = deployment.CandidateConnectionRequest
 type CandidateConnectionEvidence = deployment.CandidateConnectionEvidence
 type CandidateConnectionLeases = deployment.CandidateConnectionLeases
@@ -158,18 +146,6 @@ var (
 	ErrCandidateUnavailable = deployment.ErrCandidateUnavailable
 )
 
-// SealedCoordinator contains only durable publication and rollback operations.
-// Catalog/seal lookup remains in the resolver callbacks so this HTTP module
-// never receives object-store credentials or paths.
-type SealedCoordinator interface {
-	Publish(context.Context, sealedcontrol.PublishRequest) (deployment.PublicationIntent, error)
-	Rollback(context.Context, sealedcontrol.RollbackRequest) (deployment.RollbackResult, error)
-}
-
-type SealedPublishRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, bool) (sealedcontrol.PublishRequest, error)
-type SealedRollbackRequestResolver func(context.Context, apiadapter.Deployment, string, deployment.ApprovalActor, string, int64) (sealedcontrol.RollbackRequest, error)
-type SealedActivationMarker func(context.Context, deployment.ActivationInput) (deployment.Deployment, error)
-
 // ActivationPreCommitHook is the module-owned qualification seam invoked
 // immediately before native activation commits its durable target CAS. The
 // module exposes only the cancellation context; publication details remain an
@@ -229,13 +205,6 @@ type Config struct {
 	Jobs                     JobConfig
 	API                      APIConfig
 	PublicationAuthorization PublicationAuthorizationConfig
-	SealedCoordinator        SealedCoordinator
-	SealedPublishRequest     SealedPublishRequestResolver
-	SealedRollbackRequest    SealedRollbackRequestResolver
-	SealedActivationMarker   SealedActivationMarker
-	SealedReconcile          func(context.Context, string) error
-	SealedRollbackFence      func(context.Context, string) (string, int64, error)
-	RequireSealedCoordinator bool
 	// NativeDeliveryMutations is the clean-slate PostgreSQL plan/build port.
 	// Native production composition must inject this port; HTTP plan/build
 	// handlers never fall back to a broad delivery lifecycle contract.
@@ -314,19 +283,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		if config.NativeDeliveryReader == nil {
 			return nil, errors.New("production native deployment requires a delivery reader")
 		}
-		// Keep the native module from retaining optional compatibility seams
-		// supplied by broad application composition. Native handlers fail closed
-		// when their native ports are absent rather than falling back to them.
-		config.SealedCoordinator = nil
-		config.SealedPublishRequest = nil
-		config.SealedRollbackRequest = nil
-		config.SealedActivationMarker = nil
-		config.SealedReconcile = nil
-		config.SealedRollbackFence = nil
-		config.RequireSealedCoordinator = false
-	}
-	if config.RequireSealedCoordinator && (config.SealedCoordinator == nil || config.SealedPublishRequest == nil || config.SealedRollbackRequest == nil || config.SealedReconcile == nil || config.SealedRollbackFence == nil) {
-		return nil, fmt.Errorf("sealed publication coordinator and durable request resolvers are required")
 	}
 	executions, err := loadDeploymentExecutionContracts()
 	if err != nil {
@@ -406,12 +362,8 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		authorizeApproval:    config.AuthorizeApproval,
 		authorizeActivation:  config.AuthorizeActivation,
 		bootstrapPolicies:    config.BootstrapPolicies, authorizeBootstrap: config.AuthorizeBootstrap,
-		sealedCoordinator: config.SealedCoordinator, sealedPublishRequest: config.SealedPublishRequest,
-		sealedRollbackRequest: config.SealedRollbackRequest, sealedActivationMarker: config.SealedActivationMarker,
-		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
-		requireSealedCoordinator: config.RequireSealedCoordinator,
-		nativeDeliveryReader:     config.NativeDeliveryReader,
-		nativeDeliveryMutations:  config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
+		nativeDeliveryReader:    config.NativeDeliveryReader,
+		nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
 		nativeDeliveryApproval: config.NativeDeliveryApproval,
 		persistence:            config.Persistence,
 	}
@@ -436,16 +388,6 @@ func (m *Module) NativePersistence() *Persistence {
 		return nil
 	}
 	return m.persistence
-}
-
-// SealedApprovalVerifier returns the module's durable approval check for the
-// sealed publication boundary. Composition installs it on the coordinator
-// after Build, once the durable approval service exists.
-func (m *Module) SealedApprovalVerifier() sealedcontrol.ApprovalVerifier {
-	if m == nil {
-		return sealedcontrol.DurableApprovalVerifier(nil)
-	}
-	return sealedcontrol.DurableApprovalVerifier(m.approvals)
 }
 
 func (m *Module) PrepareCandidateRuntime(

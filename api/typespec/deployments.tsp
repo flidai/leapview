@@ -139,8 +139,6 @@ model CandidateSynchronizationRequest {
   sourceOnly?: boolean;
   candidateKey?: string;
   sourceRevision?: CandidateSourceRevision;
-  expectedCandidateId?: string;
-  expectedArtifactDigest?: string;
   artifacts: CandidateSourceArtifact[];
 }
 
