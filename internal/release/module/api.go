@@ -357,13 +357,6 @@ func (m *Module) GetRelease(w http.ResponseWriter, r *http.Request, project, rel
 	apitransport.WriteJSON(w, http.StatusOK, response(row))
 }
 
-// UploadReleaseArtifact is retired for native PostgreSQL delivery. Artifacts
-// are admitted and materialized by the immutable candidate pipeline rather
-// than through a file-backed release upload.
-func (m *Module) UploadReleaseArtifact(w http.ResponseWriter, r *http.Request, _, _ string, _, _ string) {
-	http.Error(w, "release artifact upload is unavailable", http.StatusGone)
-}
-
 func (m *Module) FinalizeRelease(w http.ResponseWriter, r *http.Request, project, releaseID, idempotencyKey string) {
 	principal, ok := m.currentPrincipal(r)
 	if !ok {
@@ -527,8 +520,6 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 		switch operationID {
 		case string(releasegen.GenOperationCreateRelease):
 			return releasegen.EncodeGenCreateReleaseAuditPayload(releasegen.GenSchemaReleaseCreatedAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), ProjectDigest: str("projectDigest"), Status: str("status"), CreatedBy: str("createdBy")})
-		case string(releasegen.GenOperationUploadReleaseArtifact):
-			return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 		case string(releasegen.GenOperationFinalizeRelease):
 			return releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{OperationId: operationID, ReleaseId: str("releaseId"), ProjectId: str("projectId"), Status: str("status")})
 		}
@@ -540,8 +531,6 @@ func encodeReleaseAuditPayload(operationID string, data any) (string, error) {
 			return "", fmt.Errorf("release create audit payload has type %T", data)
 		}
 		return releasegen.EncodeGenCreateReleaseAuditPayload(payload)
-	case string(releasegen.GenOperationUploadReleaseArtifact):
-		return "", fmt.Errorf("release artifact audit contract is not generation-scoped")
 	case string(releasegen.GenOperationFinalizeRelease):
 		payload, ok := data.(releasegen.GenSchemaReleaseValidatingAuditPayload)
 		if !ok {

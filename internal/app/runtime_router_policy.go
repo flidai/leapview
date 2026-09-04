@@ -197,8 +197,7 @@ func bootstrapAPIGenDecision(
 
 func bootstrapControlPlaneOperation(operationID string) bool {
 	switch operationID {
-	case "listDeployments", "getDeployment", "listDeploymentEvents",
-		"planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
 		"getDeliveryCandidateStatus", "getDeliveryPlanPreview":
 		return true
 	default:
@@ -208,10 +207,9 @@ func bootstrapControlPlaneOperation(operationID string) bool {
 
 func bootstrapOperationAllowed(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "createDeliveryPlan", "buildDeliveryPlan", "publishDeliveryCandidate", "getDeliveryCandidateStatus", "getDeliveryPlanPreview", "requestDeliveryPublicationApproval", "approveDeliveryPublicationApproval",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"listDeployments", "getDeployment", "listDeploymentEvents":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
 	case "managedDataTusTransport":
 		return true
@@ -222,7 +220,7 @@ func bootstrapOperationAllowed(operationID string) bool {
 
 func bootstrapOperationAllowedWithoutClaim(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "planProjectCandidateSynchronization",
+	case "planProjectCandidateSynchronization",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
 		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
 		"managedDataTusTransport":

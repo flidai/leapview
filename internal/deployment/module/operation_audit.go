@@ -3,11 +3,11 @@ package module
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"strings"
 
 	"github.com/flidai/leapview/internal/access"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
 const (
@@ -39,37 +39,20 @@ type deploymentAuditCommandInput struct {
 // durable Access outbox intent. The deployment and approval repositories add
 // their own aggregate revision while still inside the source transaction.
 func buildDeploymentAuditIntent(input deploymentAuditCommandInput) (access.AuditIntent, error) {
-	contract, ok := deploymentgen.GetAPIGenOperationContract(input.OperationID)
-	if !ok || contract.Command == nil {
+	action, ok := deploymentAuditActions[input.OperationID]
+	if !ok {
 		return access.AuditIntent{}, fmt.Errorf("deployment operation %q has no command audit contract", input.OperationID)
 	}
-	if contract.Command.Audit.Guarantee != "transactional" {
-		return access.AuditIntent{}, fmt.Errorf("deployment operation %q does not provide transactional auditing", input.OperationID)
+	metadataBytes, err := json.Marshal(map[string]any{
+		"operationId": input.OperationID, "deploymentId": input.DeploymentID,
+		"projectId": input.ProjectID, "releaseId": input.ReleaseID,
+		"approvalId": input.ApprovalID, "approvalRevision": input.ApprovalRev,
+		"status": input.Status,
+	})
+	if err != nil {
+		return access.AuditIntent{}, err
 	}
-	var metadata string
-	var err error
-	switch input.OperationID {
-	case string(deploymentgen.GenOperationCreateDeployment):
-		metadata, err = deploymentgen.EncodeGenCreateDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
-	case string(deploymentgen.GenOperationActivateDeployment):
-		metadata, err = deploymentgen.EncodeGenActivateDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
-	case string(deploymentgen.GenOperationCancelDeployment):
-		metadata, err = deploymentgen.EncodeGenCancelDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentCancelledAuditPayload{DeploymentId: input.DeploymentID, Status: input.Status})
-	case string(deploymentgen.GenOperationRetryDeployment):
-		metadata, err = deploymentgen.EncodeGenRetryDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
-	case string(deploymentgen.GenOperationRollbackDeployment):
-		metadata, err = deploymentgen.EncodeGenRollbackDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentQueuedAuditPayload{DeploymentId: input.DeploymentID, ProjectId: input.ProjectID, ReleaseId: input.ReleaseID, Status: input.Status})
-	case string(deploymentgen.GenOperationRequestDeploymentApproval):
-		metadata, err = deploymentgen.EncodeGenRequestDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalRequestedAuditPayload{DeploymentId: input.DeploymentID, ApprovalId: input.ApprovalID})
-	case string(deploymentgen.GenOperationApproveDeployment):
-		metadata, err = deploymentgen.EncodeGenApproveDeploymentAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: input.DeploymentID, ApprovalId: input.ApprovalID, ApprovalRevision: input.ApprovalRev})
-	case string(deploymentgen.GenOperationDenyDeploymentApproval):
-		metadata, err = deploymentgen.EncodeGenDenyDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: input.DeploymentID, ApprovalId: input.ApprovalID, ApprovalRevision: input.ApprovalRev})
-	case string(deploymentgen.GenOperationRevokeDeploymentApproval):
-		metadata, err = deploymentgen.EncodeGenRevokeDeploymentApprovalAuditPayload(deploymentgen.GenSchemaDeploymentApprovalDecisionAuditPayload{DeploymentId: input.DeploymentID, ApprovalId: input.ApprovalID, ApprovalRevision: input.ApprovalRev})
-	default:
-		return access.AuditIntent{}, fmt.Errorf("deployment operation %q has no transactional audit payload", input.OperationID)
-	}
+	metadata := string(metadataBytes)
 	if err != nil {
 		return access.AuditIntent{}, err
 	}
@@ -86,7 +69,7 @@ func buildDeploymentAuditIntent(input deploymentAuditCommandInput) (access.Audit
 	}
 	sum := sha256.Sum256([]byte("deployment\x00" + input.OperationID + "\x00" + aggregateKey + "\x00" + key))
 	capability := access.CapabilityResourcePublish
-	if input.OperationID == string(deploymentgen.GenOperationRollbackDeployment) || input.OperationID == string(deploymentgen.GenOperationApproveDeployment) || input.OperationID == string(deploymentgen.GenOperationDenyDeploymentApproval) || input.OperationID == string(deploymentgen.GenOperationRevokeDeploymentApproval) {
+	if input.OperationID == "rollbackDeployment" || input.OperationID == "approveDeployment" || input.OperationID == "denyDeploymentApproval" || input.OperationID == "revokeDeploymentApproval" {
 		capability = access.CapabilityProjectAdmin
 	}
 	outcome := strings.TrimSpace(input.Outcome)
@@ -94,21 +77,30 @@ func buildDeploymentAuditIntent(input deploymentAuditCommandInput) (access.Audit
 		outcome = "success"
 	}
 	sequence := int64(1)
-	if input.OperationID == string(deploymentgen.GenOperationActivateDeployment) || input.OperationID == string(deploymentgen.GenOperationCancelDeployment) {
+	if input.OperationID == "activateDeployment" || input.OperationID == "cancelDeployment" {
 		// Lifecycle events can race (for example, activation and cancellation
 		// of the same queued deployment). Let Access allocate the next sequence
 		// in the source transaction so both events cannot collide at sequence 2.
 		sequence = 0
 	}
-	return access.AuditIntent{EventID: "deployment:" + hex.EncodeToString(sum[:16]), Source: "deployment", Operation: input.OperationID, PrincipalID: strings.TrimSpace(input.PrincipalID), Action: contract.Command.Audit.SuccessAction, ResourceKind: "project", ResourceID: strings.TrimSpace(input.ProjectID), Capability: capability, Outcome: outcome, RequestID: strings.TrimSpace(input.RequestID), CorrelationID: strings.TrimSpace(input.CorrelationID), AggregateKey: aggregateKey, AggregateSequence: sequence, MetadataJSON: metadata}.Canonicalize()
+	return access.AuditIntent{EventID: "deployment:" + hex.EncodeToString(sum[:16]), Source: "deployment", Operation: input.OperationID, PrincipalID: strings.TrimSpace(input.PrincipalID), Action: action, ResourceKind: "project", ResourceID: strings.TrimSpace(input.ProjectID), Capability: capability, Outcome: outcome, RequestID: strings.TrimSpace(input.RequestID), CorrelationID: strings.TrimSpace(input.CorrelationID), AggregateKey: aggregateKey, AggregateSequence: sequence, MetadataJSON: metadata}.Canonicalize()
+}
+
+var deploymentAuditActions = map[string]string{
+	"createDeployment":          deploymentQueuedAuditAction,
+	"cancelDeployment":          deploymentCancelledAuditAction,
+	"retryDeployment":           deploymentQueuedAuditAction,
+	"rollbackDeployment":        deploymentQueuedAuditAction,
+	"requestDeploymentApproval": deploymentApprovalRequestedAuditAction,
+	"approveDeployment":         deploymentApprovedAuditAction,
+	"denyDeploymentApproval":    deploymentDeniedAuditAction,
+	"revokeDeploymentApproval":  deploymentApprovalRevokedAuditAction,
+	"activateDeployment":        deploymentActivationRequestedAuditAction,
 }
 
 func isDeploymentApprovalAuditOperation(operationID string) bool {
 	switch operationID {
-	case string(deploymentgen.GenOperationRequestDeploymentApproval),
-		string(deploymentgen.GenOperationApproveDeployment),
-		string(deploymentgen.GenOperationDenyDeploymentApproval),
-		string(deploymentgen.GenOperationRevokeDeploymentApproval):
+	case "requestDeploymentApproval", "approveDeployment", "denyDeploymentApproval", "revokeDeploymentApproval":
 		return true
 	default:
 		return false

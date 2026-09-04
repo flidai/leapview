@@ -147,57 +147,9 @@ func (transport *candidateSynchronizationTransport) Upload(
 	return nil
 }
 
-func (transport *candidateSynchronizationTransport) Commit(
-	ctx context.Context,
-	request projectdevloop.SynchronizationPlanRequest,
-) (projectdevloop.Candidate, error) {
-	if transport == nil || transport.client == nil {
-		return projectdevloop.Candidate{}, fmt.Errorf("candidate synchronization client is not configured")
-	}
-	body := candidateSynchronizationBody(request)
-	idempotencyKey, err := candidateSynchronizationIdempotencyKey(
-		"candidate-sync", request.ProjectID.String(), request.PlanID, body,
-	)
-	if err != nil {
-		return projectdevloop.Candidate{}, err
-	}
-	response, err := transport.client.CommitProjectCandidateSynchronization(
-		ctx,
-		deploymentgen.GenCommitProjectCandidateSynchronizationClientRequest{
-			Project: request.ProjectID.String(),
-			Headers: deploymentgen.GenCommitProjectCandidateSynchronizationClientHeaders{
-				IdempotencyKey:            idempotencyKey,
-				SourceSynchronizationPlan: request.PlanID,
-			},
-			Body: body,
-		},
-	)
-	if err != nil {
-		return projectdevloop.Candidate{}, mapCommitProjectCandidateSynchronizationFailure(err)
-	}
-	if response.Body.ProvenanceDigest == nil {
-		return projectdevloop.Candidate{}, fmt.Errorf("target candidate is missing publication provenance")
-	}
-	projectID, err := projectgraph.NewResourceID(response.Body.ProjectId)
-	if err != nil {
-		return projectdevloop.Candidate{}, fmt.Errorf("target candidate project identity: %w", err)
-	}
-	return projectdevloop.Candidate{
-		ID: response.Body.Id, ProjectID: projectID,
-		OwnerID:          response.Body.OwnerId,
-		ArtifactDigest:   response.Body.ArtifactDigest,
-		PreviewURL:       response.Body.PreviewUrl,
-		TargetID:         response.Body.TargetId,
-		Environment:      response.Body.Environment,
-		ProvenanceDigest: *response.Body.ProvenanceDigest,
-		Revision:         response.Body.Revision,
-	}, nil
-}
-
 // SynchronizeNative captures the source through candidate-sync's source-only
 // protocol, then hands that retained source to the canonical delivery plan and
-// build APIs. Native PostgreSQL targets deliberately do not expose the legacy
-// candidate Commit endpoint, so this path never invokes it.
+// build APIs.
 func (transport *candidateSynchronizationTransport) SynchronizeNative(
 	ctx context.Context,
 	request projectdevloop.SyncRequest,

@@ -248,14 +248,35 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	syncSource := string(syncBytes)
-	sourceOnly := strings.Index(syncSource, "if request.SourceOnly")
-	startCandidate := strings.Index(syncSource, "m.candidates.Start")
-	canonicalBuilder := strings.Index(syncSource, "if m.deliveryCandidateBuilder != nil")
-	legacyPrepare := strings.Index(syncSource, "m.prepareCandidate(")
-	if sourceOnly < 0 || startCandidate < 0 || sourceOnly > startCandidate {
-		t.Fatal("legacy candidate synchronization must reject source-only requests before candidate creation")
+	for _, required := range []string{
+		"func (m *Module) RetainProjectCandidateSource",
+		"request.SourceOnly = true",
+		"m.candidateSources.Commit(",
+	} {
+		if !strings.Contains(syncSource, required) {
+			t.Errorf("source retention path is missing canonical evidence %q", required)
+		}
 	}
-	if canonicalBuilder < 0 || legacyPrepare < 0 || canonicalBuilder > legacyPrepare {
-		t.Fatal("candidate synchronization must route physical preparation through canonical delivery before the compatibility fallback")
+	if strings.Contains(syncSource, "m.candidates.Start(") || strings.Contains(syncSource, "m.deliveryCandidateBuilder") {
+		t.Fatal("source synchronization path retains a candidate-construction fallback")
+	}
+
+	canonicalBytes, err := os.ReadFile(filepath.Join(root, "internal/deployment/module/canonical_delivery.go"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	canonicalSource := string(canonicalBytes)
+	for _, required := range []string{
+		"func (m *CanonicalDeliveryMutations) CreatePlan",
+		"func (m *CanonicalDeliveryMutations) BuildPlan",
+		"m.Lifecycle.Store.CreatePlan(",
+		"m.Lifecycle.Build(",
+	} {
+		if !strings.Contains(canonicalSource, required) {
+			t.Errorf("canonical native delivery path is missing evidence %q", required)
+		}
+	}
+	if strings.Contains(canonicalSource, "resolveLegacyCandidatePlan") {
+		t.Fatal("canonical delivery retains a legacy candidate plan fallback")
 	}
 }

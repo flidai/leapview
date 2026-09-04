@@ -186,7 +186,7 @@ func expectedRequestContentType(operationID, method string) (string, bool) {
 		return "", false
 	}
 	switch operationID {
-	case "uploadProjectCandidateSourceBlob", "uploadReleaseArtifact":
+	case "uploadProjectCandidateSourceBlob":
 		return "application/octet-stream", true
 	}
 	// All generated mutation/query bodies are JSON except the two raw blob

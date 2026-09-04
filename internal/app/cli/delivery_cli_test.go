@@ -206,6 +206,14 @@ type deliveryBuildRetryTransport struct {
 	keys []string
 }
 
+func generatedProblemErrorForTest(status int, code string) error {
+	return &apigenclient.ProblemError{
+		OperationID: "delivery-command",
+		Response:    apigenclient.Response{StatusCode: status},
+		Problem:     apigenclient.ProblemDetails{Status: status, Code: code, Detail: "declared failure"},
+	}
+}
+
 func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, request apigenclient.Request, out any) (apigenclient.Response, error) {
 	if request.OperationID != deploymentgen.GenOperationBuildDeliveryPlan {
 		return apigenclient.Response{}, fmt.Errorf("unexpected operation %q", request.OperationID)

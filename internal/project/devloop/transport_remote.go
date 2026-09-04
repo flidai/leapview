@@ -37,20 +37,19 @@ type SynchronizationPlan struct {
 	MissingDigests []string
 }
 
-// SynchronizationTransport is the target-facing protocol port. Plan transfers
-// only the immutable source manifest, Upload transfers target-requested blobs,
-// and Commit atomically advances the owned private candidate.
+// SynchronizationTransport is the target-facing source protocol port. Plan
+// transfers only the immutable source manifest and Upload transfers the blobs
+// requested by the target. Candidate synchronization is exposed separately
+// through NativeSynchronizationTransport.
 type SynchronizationTransport interface {
 	Plan(context.Context, SynchronizationPlanRequest) (SynchronizationPlan, error)
 	Upload(context.Context, SynchronizationPlanRequest, Artifact) error
-	Commit(context.Context, SynchronizationPlanRequest) (Candidate, error)
 }
 
 // NativeSynchronizationTransport is the canonical PostgreSQL delivery seam.
-// Implementations own the source-retention, plan, and build requests and must
-// return the same candidate projection as the legacy protocol. The upload
-// limit is supplied by TransportRemote so native and legacy flows preserve the
-// caller's bounded concurrency policy.
+// Implementations own source retention, delivery-plan creation, and build
+// requests. The upload limit is supplied by TransportRemote so the transport
+// preserves the caller's bounded concurrency policy.
 type NativeSynchronizationTransport interface {
 	SynchronizeNative(context.Context, SyncRequest, int) (Candidate, error)
 }
@@ -87,65 +86,18 @@ func (remote *TransportRemote) Synchronize(ctx context.Context, request SyncRequ
 	if remote == nil || remote.transport == nil {
 		return Candidate{}, fmt.Errorf("project synchronization transport is not configured")
 	}
+	native, ok := remote.transport.(NativeSynchronizationTransport)
+	if !ok {
+		return Candidate{}, fmt.Errorf("target does not implement native project synchronization")
+	}
 	snapshot, err := normalizeSnapshot(request.Snapshot)
 	if err != nil {
 		return Candidate{}, err
 	}
-	planRequest := SynchronizationPlanRequest{
-		ProjectID:              snapshot.ProjectID,
-		ProjectFile:            snapshot.ProjectFile,
-		ArtifactDigest:         snapshot.Digest,
-		SourceOnly:             request.SourceOnly,
-		CandidateKey:           snapshot.CandidateKey,
-		ExpectedCandidateID:    strings.TrimSpace(request.ExpectedCandidateID),
-		ExpectedArtifactDigest: strings.TrimSpace(request.ExpectedArtifactDigest),
-		Artifacts:              make([]ArtifactReference, len(snapshot.Artifacts)),
-		SourceRevision:         snapshot.SourceRevision,
-	}
 	request.Snapshot = cloneSnapshot(snapshot)
-	if native, ok := remote.transport.(NativeSynchronizationTransport); ok {
-		candidate, nativeErr := native.SynchronizeNative(ctx, request, remote.maxParallelUploads)
-		if nativeErr != nil {
-			return Candidate{}, fmt.Errorf("synchronize project delivery: %w", nativeErr)
-		}
-		return candidate, nil
-	}
-	artifactsByDigest := make(map[string]Artifact, len(snapshot.Artifacts))
-	for index, artifact := range snapshot.Artifacts {
-		planRequest.Artifacts[index] = ArtifactReference{Path: artifact.Path, Digest: artifact.Digest, SizeBytes: artifact.SizeBytes}
-		if _, exists := artifactsByDigest[artifact.Digest]; !exists {
-			artifactsByDigest[artifact.Digest] = artifact
-		}
-	}
-	plan, err := remote.transport.Plan(ctx, clonePlanRequest(planRequest))
-	if err != nil {
-		return Candidate{}, fmt.Errorf("plan project synchronization: %w", err)
-	}
-	if strings.TrimSpace(plan.PlanID) == "" {
-		return Candidate{}, fmt.Errorf("target synchronization plan did not return a plan id")
-	}
-	planRequest.PlanID = strings.TrimSpace(plan.PlanID)
-	missing, err := missingArtifacts(plan.MissingDigests, artifactsByDigest)
-	if err != nil {
-		return Candidate{}, err
-	}
-	group, uploadContext := errgroup.WithContext(ctx)
-	group.SetLimit(remote.maxParallelUploads)
-	for _, artifact := range missing {
-		artifact := artifact
-		group.Go(func() error {
-			if err := remote.transport.Upload(uploadContext, clonePlanRequest(planRequest), artifact); err != nil {
-				return fmt.Errorf("upload project artifact %q: %w", artifact.Path, err)
-			}
-			return nil
-		})
-	}
-	if err := group.Wait(); err != nil {
-		return Candidate{}, err
-	}
-	candidate, err := remote.transport.Commit(ctx, clonePlanRequest(planRequest))
-	if err != nil {
-		return Candidate{}, fmt.Errorf("commit project synchronization: %w", err)
+	candidate, nativeErr := native.SynchronizeNative(ctx, request, remote.maxParallelUploads)
+	if nativeErr != nil {
+		return Candidate{}, fmt.Errorf("synchronize project delivery: %w", nativeErr)
 	}
 	return candidate, nil
 }

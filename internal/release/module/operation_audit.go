@@ -11,9 +11,8 @@ import (
 )
 
 const (
-	releaseCreatedAuditAction          = "release.created"
-	releaseArtifactUploadedAuditAction = "release.artifact_uploaded"
-	releaseValidatingAuditAction       = "release.validating"
+	releaseCreatedAuditAction    = "release.created"
+	releaseValidatingAuditAction = "release.validating"
 )
 
 type releaseAuditCommandInput struct {
@@ -28,9 +27,6 @@ type releaseAuditCommandInput struct {
 	ProjectDigest  string
 	Status         string
 	CreatedBy      string
-	GenerationID   string
-	ArtifactDigest string
-	ArtifactSize   int64
 	Outcome        string
 }
 
@@ -53,11 +49,6 @@ func buildReleaseCreatedAuditIntent(input releaseAuditCommandInput) (access.Audi
 			OperationId: input.OperationID, ReleaseId: input.ReleaseID, ProjectId: input.ProjectID.String(),
 			ProjectDigest: input.ProjectDigest, Status: input.Status, CreatedBy: input.CreatedBy,
 		})
-	case string(releasegen.GenOperationUploadReleaseArtifact):
-		metadata, err = releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
-			OperationId: input.OperationID, ReleaseId: input.ReleaseID, GenerationId: input.GenerationID,
-			Digest: input.ArtifactDigest, SizeBytes: input.ArtifactSize,
-		})
 	case string(releasegen.GenOperationFinalizeRelease):
 		metadata, err = releasegen.EncodeGenFinalizeReleaseAuditPayload(releasegen.GenSchemaReleaseValidatingAuditPayload{
 			OperationId: input.OperationID, ReleaseId: input.ReleaseID, ProjectId: input.ProjectID.String(), Status: input.Status,
@@ -79,10 +70,8 @@ func buildReleaseCreatedAuditIntent(input releaseAuditCommandInput) (access.Audi
 	auditEventID := uuid.NewSHA1(uuid.NameSpaceOID, []byte("release\x00"+input.OperationID+"\x00"+aggregateKey+"\x00"+key)).String()
 	sequence := int64(1)
 	switch input.OperationID {
-	case string(releasegen.GenOperationUploadReleaseArtifact):
-		sequence = 2
 	case string(releasegen.GenOperationFinalizeRelease):
-		sequence = 3
+		sequence = 2
 	}
 	outcome := strings.TrimSpace(input.Outcome)
 	if outcome == "" {

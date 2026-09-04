@@ -12,8 +12,6 @@ import (
 	"strings"
 	"time"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -434,46 +432,22 @@ func (service *CandidateService) record(ctx context.Context, operationID, action
 	if metadata == nil {
 		metadata = map[string]any{}
 	}
+	metadata["operationId"] = operationID
 	metadata["environment"] = candidate.Scope.Environment
 	metadata["baseGeneration"] = candidate.Scope.BaseGenerationID
 	metadata["projectId"] = candidate.Scope.ProjectID.String()
+	metadata["candidateId"] = candidate.ID
 	metadata["candidateKey"] = candidate.Key
-	resumed, _ := metadata["resumed"].(bool)
-	payload := deploymentgen.GenSchemaCandidateAuditPayload{
-		OperationId: operationID, CandidateId: candidate.ID, ProjectId: candidate.Scope.ProjectID.String(),
-		TargetId: candidate.TargetID, Environment: candidate.Scope.Environment,
-		BaseGeneration: candidate.Scope.BaseGenerationID, CandidateKey: candidate.Key,
-		Status: string(candidate.Status), Resumed: resumed,
-	}
-	var encoded string
-	var err error
-	switch operationID {
-	case string(deploymentgen.GenOperationStartProjectCandidate):
-		encoded, err = deploymentgen.EncodeGenStartProjectCandidateAuditPayload(payload)
-	case string(deploymentgen.GenOperationReplaceProjectCandidateArtifact):
-		encoded, err = deploymentgen.EncodeGenReplaceProjectCandidateArtifactAuditPayload(payload)
-	case string(deploymentgen.GenOperationRetryProjectCandidate):
-		encoded, err = deploymentgen.EncodeGenRetryProjectCandidateAuditPayload(payload)
-	case string(deploymentgen.GenOperationCancelProjectCandidate):
-		encoded, err = deploymentgen.EncodeGenCancelProjectCandidateAuditPayload(payload)
-	case string(deploymentgen.GenOperationCancelProjectCandidateByKey):
-		encoded, err = deploymentgen.EncodeGenCancelProjectCandidateByKeyAuditPayload(payload)
-	case string(deploymentgen.GenOperationCommitProjectCandidateSynchronization):
-		encoded, err = deploymentgen.EncodeGenCommitProjectCandidateSynchronizationAuditPayload(payload)
-	default:
-		encodedBytes, marshalErr := json.Marshal(metadata)
-		if marshalErr != nil {
-			return marshalErr
-		}
-		encoded = string(encodedBytes)
-	}
+	metadata["targetId"] = candidate.TargetID
+	metadata["status"] = string(candidate.Status)
+	encodedBytes, err := json.Marshal(metadata)
 	if err != nil {
 		return err
 	}
 	baseIdentity, _ := candidate.Scope.BaseIdentity()
 	return service.audit(ctx, CandidateEvent{
 		Action: action, CandidateID: candidate.ID, ProjectID: candidate.Scope.ProjectID, BaseIdentity: baseIdentity, TargetID: candidate.TargetID,
-		PrincipalID: candidate.OwnerID, Status: candidate.Status, MetadataJSON: string(encoded),
+		PrincipalID: candidate.OwnerID, Status: candidate.Status, MetadataJSON: string(encodedBytes),
 	})
 }
 
@@ -487,59 +461,8 @@ func (service *CandidateService) recordBestEffort(
 	if logger == nil {
 		logger = slog.Default()
 	}
-	operationID, command := apigencommand.OperationID(ctx)
-	if command {
-		contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(operationID)
-		if !ok || contract.AuditAction != action {
-			operationID, command = candidateOperationID(action)
-		}
-	} else {
-		operationID, command = candidateOperationID(action)
-	}
-	if !command {
-		if err := service.record(ctx, "", action, candidate, metadata); err != nil {
-			logger.ErrorContext(ctx, "candidate audit failed", "audit_action", action, "candidate_id", candidate.ID, "project_id", candidate.Scope.ProjectID.String(), "principal_id", candidate.OwnerID, "error", err)
-		}
-		return
-	}
-	executor, err := apigencommand.NewExecutor(deploymentgen.GetAPIGenCommandRuntimeContract, logger)
-	if err != nil {
-		logger.ErrorContext(ctx, "candidate command executor is unavailable", "operation_id", operationID, "error", err)
-		return
-	}
-	err = executor.Execute(ctx, operationID, apigencommand.Execution{
-		BestEffortAudit: func(ctx context.Context, contract apigencommand.Contract) error {
-			if action != contract.AuditAction {
-				return fmt.Errorf("candidate audit action %q does not match generated action %q", action, contract.AuditAction)
-			}
-			return service.record(ctx, contract.OperationID, contract.AuditAction, candidate, metadata)
-		},
-		LogMessage: "candidate audit failed",
-		LogAttributes: []slog.Attr{
-			slog.String("candidate_id", candidate.ID),
-			slog.String("project_id", candidate.Scope.ProjectID.String()),
-			slog.String("principal_id", candidate.OwnerID),
-		},
-	})
-	if err != nil {
-		logger.ErrorContext(ctx, "candidate command contract execution failed", "operation_id", operationID, "error", err)
-	}
-}
-
-func candidateOperationID(action string) (string, bool) {
-	switch action {
-	case CandidateAuditStarted:
-		return string(deploymentgen.GenOperationStartProjectCandidate), true
-	case CandidateAuditArtifactReplaced:
-		return string(deploymentgen.GenOperationReplaceProjectCandidateArtifact), true
-	case CandidateAuditReady:
-		return string(deploymentgen.GenOperationCommitProjectCandidateSynchronization), true
-	case CandidateAuditRetried:
-		return string(deploymentgen.GenOperationRetryProjectCandidate), true
-	case CandidateAuditCancelled:
-		return string(deploymentgen.GenOperationCancelProjectCandidate), true
-	default:
-		return "", false
+	if err := service.record(ctx, "", action, candidate, metadata); err != nil {
+		logger.ErrorContext(ctx, "candidate audit failed", "audit_action", action, "candidate_id", candidate.ID, "project_id", candidate.Scope.ProjectID.String(), "principal_id", candidate.OwnerID, "error", err)
 	}
 }
 

@@ -25,19 +25,6 @@ func generatedProblemError(operation string, problem apigenclient.ProblemDetails
 	return fmt.Errorf("%s failed: %s", operation, detail)
 }
 
-func mapCommitProjectCandidateSynchronizationFailure(err error) error {
-	var failure deploymentgen.GenCommitProjectCandidateSynchronizationFailure
-	if !errors.As(err, &failure) {
-		return err
-	}
-	handler := func(problem apigenclient.ProblemDetails) error {
-		return generatedProblemError("commit candidate synchronization", problem)
-	}
-	return deploymentgen.MatchGenCommitProjectCandidateSynchronizationFailure(
-		failure, handler, handler, handler, handler,
-	)
-}
-
 func mapUploadProjectCandidateSourceBlobFailure(err error) error {
 	var failure deploymentgen.GenUploadProjectCandidateSourceBlobFailure
 	if !errors.As(err, &failure) {
@@ -48,20 +35,5 @@ func mapUploadProjectCandidateSourceBlobFailure(err error) error {
 	}
 	return deploymentgen.MatchGenUploadProjectCandidateSourceBlobFailure(
 		failure, handler, handler, handler, handler, handler,
-	)
-}
-
-func mapPublishProjectCandidateFailure(err error) error {
-	var failure deploymentgen.GenPublishProjectCandidateFailure
-	if !errors.As(err, &failure) {
-		return err
-	}
-	handler := func(problem apigenclient.ProblemDetails) error {
-		return generatedProblemError("publish candidate", problem)
-	}
-	return deploymentgen.MatchGenPublishProjectCandidateFailure(
-		failure,
-		handler, handler, handler, handler, handler, handler, handler,
-		handler, handler, handler, handler, handler, handler,
 	)
 }

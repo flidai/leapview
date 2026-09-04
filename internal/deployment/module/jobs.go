@@ -11,7 +11,6 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
@@ -153,8 +152,7 @@ func (m *Module) execution(operationID string) (apigencommand.AsyncExecutionCont
 }
 
 func (m *Module) activationExecution() apigencommand.AsyncExecutionContract {
-	execution, _ := m.execution(string(deploymentgen.GenOperationActivateDeployment))
-	return execution
+	return apigencommand.AsyncExecutionContract{Mode: "async", Guarantee: "transactional", JobKind: "deployment.activate", ResourceKind: "deployment", InitialEvent: "deployment.activation_requested", InitialState: "queued", StatusOperation: "deliveryGenerationStatus", EventsOperation: "deliveryGenerationStatus", Cancellation: "supported"}
 }
 
 func (m *Module) activate(ctx context.Context, job jobs.Job) error {
@@ -361,7 +359,7 @@ func activationWorkflow(
 	idempotencyKey string,
 	environment string,
 ) jobs.WorkflowIntent {
-	workflow, _ := activationWorkflowForOperation(string(deploymentgen.GenOperationCreateDeployment), execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, environment)
+	workflow, _ := activationWorkflowForOperation("delivery.activate", execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, environment)
 	return workflow
 }
 
@@ -421,38 +419,22 @@ func activationWorkflowForOperationWithRollbackFence(
 		ApprovalID:       approval.ID,
 		ApprovalRevision: approval.Revision,
 		IdempotencyKey:   idempotencyKey, Bootstrap: bootstrap,
-		Rollback:                 operationID == string(deploymentgen.GenOperationRollbackDeployment) || rollbackIntent,
+		Rollback:                 rollbackIntent,
 		ExpectedBaseGenerationID: expectedBaseGenerationID,
 		ExpectedTargetRevision:   expectedTargetRevision,
 	})
-	queuedPayload := deploymentgen.GenSchemaDeploymentQueuedAuditPayload{
-		DeploymentId: deploymentID, ProjectId: project, ReleaseId: releaseID, Status: execution.InitialState,
-	}
-	var eventString string
-	var eventErr error
-	switch operationID {
-	case string(deploymentgen.GenOperationCreateDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenCreateDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationRetryDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenRetryDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationRollbackDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenRollbackDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationActivateDeployment):
-		eventString, eventErr = deploymentgen.EncodeGenActivateDeploymentAuditPayload(queuedPayload)
-	case string(deploymentgen.GenOperationPublishProjectCandidate):
-		eventString, eventErr = deploymentgen.EncodeGenPublishProjectCandidateAuditPayload(queuedPayload)
-	default:
-		return jobs.WorkflowIntent{}, fmt.Errorf("deployment operation %q has no queued audit payload encoder", operationID)
-	}
+	eventData, eventErr := json.Marshal(map[string]any{
+		"operationId": operationID, "deploymentId": deploymentID,
+		"projectId": project, "releaseId": releaseID, "status": execution.InitialState,
+	})
 	if eventErr != nil {
 		return jobs.WorkflowIntent{}, eventErr
 	}
-	event := []byte(eventString)
 	workflow := jobs.WorkflowIntent{
 		Event: jobs.EventInput{
 			Key:          execution.InitialEvent,
 			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
-			EventType: execution.InitialEvent, Data: event,
+			EventType: execution.InitialEvent, Data: eventData,
 		},
 	}
 	if enqueue {
@@ -502,41 +484,21 @@ func (m *Module) appendActivationEvent(
 }
 
 func loadDeploymentExecutionContracts() (map[string]apigencommand.AsyncExecutionContract, error) {
-	operationIDs := []string{
-		string(deploymentgen.GenOperationCreateDeployment),
-		string(deploymentgen.GenOperationRetryDeployment),
-		string(deploymentgen.GenOperationRollbackDeployment),
-		string(deploymentgen.GenOperationActivateDeployment),
-		string(deploymentgen.GenOperationPublishProjectCandidate),
-	}
+	operationIDs := []string{"delivery.activate"}
 	executions := make(map[string]apigencommand.AsyncExecutionContract, len(operationIDs))
 	for _, operationID := range operationIDs {
-		contract, ok := deploymentgen.GetAPIGenCommandRuntimeContract(operationID)
-		if !ok {
-			return nil, fmt.Errorf("deployment command contract %q is unavailable", operationID)
-		}
-		if err := contract.Validate(); err != nil {
-			return nil, fmt.Errorf("validate deployment command contract %q: %w", operationID, err)
-		}
-		if contract.Execution == nil {
-			return nil, fmt.Errorf("deployment command %q async execution contract is unavailable", operationID)
-		}
-		execution := *contract.Execution
-		if execution.Guarantee != "transactional" {
-			return nil, fmt.Errorf("deployment command %q requires transactional execution, got %q", operationID, execution.Guarantee)
-		}
-		if execution.ResourceKind != "deployment" || execution.InitialState != "queued" {
-			return nil, fmt.Errorf("deployment command %q has incompatible initial lifecycle %q/%q", operationID, execution.ResourceKind, execution.InitialState)
-		}
-		if execution.StatusOperation != string(deploymentgen.GenOperationGetDeployment) || execution.EventsOperation != string(deploymentgen.GenOperationListDeploymentEvents) {
-			return nil, fmt.Errorf("deployment command %q has incompatible lifecycle operations", operationID)
-		}
-		if execution.Cancellation != "supported" {
-			return nil, fmt.Errorf("deployment command %q cancellation policy %q is not implemented", operationID, execution.Cancellation)
-		}
+		execution := mActivationExecutionContract(operationID)
 		executions[operationID] = execution
 	}
 	return executions, nil
+}
+
+func mActivationExecutionContract(operationID string) apigencommand.AsyncExecutionContract {
+	initialEvent := "deployment.queued"
+	if operationID == "delivery.activate" {
+		initialEvent = "deployment.activation_requested"
+	}
+	return apigencommand.AsyncExecutionContract{Mode: "async", Guarantee: "transactional", JobKind: "deployment.activate", ResourceKind: "deployment", InitialEvent: initialEvent, InitialState: "queued", StatusOperation: "deliveryGenerationStatus", EventsOperation: "deliveryGenerationStatus", Cancellation: "supported"}
 }
 
 func validateDeploymentJobHandlers(executions map[string]apigencommand.AsyncExecutionContract, handlers []jobs.Handler) error {

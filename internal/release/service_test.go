@@ -5,16 +5,13 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"strings"
 	"testing"
 
-	"github.com/flidai/leapview/internal/access"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	releasegen "github.com/flidai/leapview/internal/release/api/gen"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/stretchr/testify/require"
@@ -59,34 +56,6 @@ func TestUploadArtifactRejectsMalformedExpectedDigestWithoutSaving(t *testing.T)
 	_, err := service.UploadArtifact(t.Context(), "project_a", "release_1", "sha-256=:invalid:", strings.NewReader("artifact"))
 	require.ErrorIs(t, err, ErrInvalid)
 	require.Equal(t, 0, store.saveCalls)
-}
-
-func TestUploadArtifactRefreshesGeneratedAuditPayloadWithVerifiedSize(t *testing.T) {
-	content := []byte("compiled project artifact")
-	digest := sha256.Sum256(content)
-	actualDigest := "sha256:" + fmt.Sprintf("%x", digest[:])
-	identity := projectgraph.ServingIdentity{ProjectID: "project_a", Environment: "dev", GenerationID: "generation_1"}
-	repo := &serviceTestReleaseRepository{current: Release{
-		ID: "release_1", ServingIdentity: identity, Status: StatusDraft, ArtifactDigest: actualDigest,
-	}}
-	metadata, err := releasegen.EncodeGenUploadReleaseArtifactAuditPayload(releasegen.GenSchemaReleaseArtifactUploadedAuditPayload{
-		OperationId: "uploadReleaseArtifact", ReleaseId: "release_1", GenerationId: identity.GenerationID,
-		Digest: actualDigest, SizeBytes: 0,
-	})
-	require.NoError(t, err)
-	ctx := WithAuditIntent(t.Context(), access.AuditIntent{MetadataJSON: metadata})
-	service := &Service{releases: repo, artifacts: &serviceTestArtifactStore{}}
-
-	_, err = service.UploadArtifact(ctx, "project_a", "release_1", wireDigest(content), bytes.NewReader(content))
-	require.NoError(t, err)
-	var envelope map[string]any
-	require.NoError(t, json.Unmarshal([]byte(repo.recordedAuditMetadata), &envelope))
-	payload, ok := envelope["payload"].(map[string]any)
-	require.True(t, ok)
-	require.Equal(t, float64(len(content)), payload["sizeBytes"])
-	require.Equal(t, actualDigest, payload["digest"])
-	_, hasTopLevelSize := envelope["sizeBytes"]
-	require.False(t, hasTopLevelSize)
 }
 
 func TestValidateFinalizationRequiresEveryArtifactToMatchReleaseConnectionPins(t *testing.T) {

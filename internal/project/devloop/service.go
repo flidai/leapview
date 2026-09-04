@@ -50,8 +50,7 @@ type Candidate struct {
 	ProvenanceDigest string
 	Revision         int64
 	// Native delivery transports return the plan that produced the sealed
-	// candidate. Legacy candidate transports leave these fields empty; the
-	// Project CLI then resolves a plan through its injected plan operations.
+	// candidate and its immutable execution evidence.
 	PlanID          string
 	PlanDigest      string
 	ExecutionDigest string

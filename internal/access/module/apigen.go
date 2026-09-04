@@ -262,15 +262,14 @@ func (a *APIGenAuthorizer) Protect(operationID string, next http.Handler) (http.
 }
 
 // isBootstrapAPIGenOperation is the exact pre-activation operation allowlist.
-// Candidate lifecycle and managed-data staging operations are the only
+// Candidate source retention and managed-data staging operations are the only
 // project-scoped routes that may run before an active serving generation; all
 // other project resource operations must use immutable snapshot authorization.
 func isBootstrapAPIGenOperation(operationID string) bool {
 	switch operationID {
-	case "startProjectCandidate", "getProjectCandidate", "replaceProjectCandidateArtifact", "retryProjectCandidate", "cancelProjectCandidate", "publishProjectCandidate", "reviewProjectCandidate", "cancelProjectCandidateByKey", "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization",
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource",
 		"createManagedDataUploadSession", "getManagedDataUploadSession", "cancelManagedDataUploadSession", "finalizeManagedDataUploadSession",
-		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload",
-		"listDeployments", "getDeployment", "listDeploymentEvents":
+		"createManagedDataS3MultipartUpload", "signManagedDataS3MultipartPart", "completeManagedDataS3MultipartUpload", "abortManagedDataS3MultipartUpload":
 		return true
 	default:
 		return false
@@ -578,7 +577,7 @@ func (a *APIGenAuthorizer) protectBootstrapOperation(operationID string, capabil
 
 func isAuthoringBootstrapOperation(operationID string) bool {
 	switch operationID {
-	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource", "commitProjectCandidateSynchronization":
+	case "planProjectCandidateSynchronization", "uploadProjectCandidateSourceBlob", "retainProjectCandidateSource":
 		return true
 	default:
 		return false

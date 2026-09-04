@@ -19,6 +19,14 @@ import (
 	"github.com/google/uuid"
 )
 
+type approvalDecision uint8
+
+const (
+	approvalDecisionApprove approvalDecision = iota + 1
+	approvalDecisionDeny
+	approvalDecisionRevoke
+)
+
 // deliveryEventReader is intentionally narrower than deployment.DeliveryReader:
 // alternate read ports do not need to carry the event ledger contract. The
 // generated command guard verifies this evidence after the mutation has

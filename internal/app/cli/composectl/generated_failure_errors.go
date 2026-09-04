@@ -7,7 +7,6 @@ import (
 
 	apigenclient "github.com/Yacobolo/toolbelt/apigen/runtime/client"
 	accessgen "github.com/flidai/leapview/internal/access/api/gen"
-	deploymentgen "github.com/flidai/leapview/internal/deployment/api/gen"
 )
 
 func qualificationGeneratedProblemError(operation string, problem apigenclient.ProblemDetails) error {
@@ -55,33 +54,4 @@ func mapQualificationCreateCurrentAPITokenFailure(err error) error {
 		return qualificationGeneratedProblemError("create qualification API token", problem)
 	}
 	return accessgen.MatchGenCreateCurrentAPITokenFailure(failure, handler)
-}
-
-func mapQualificationApproveDeploymentFailure(err error) error {
-	var failure deploymentgen.GenApproveDeploymentFailure
-	if !errors.As(err, &failure) {
-		return err
-	}
-	handler := func(problem apigenclient.ProblemDetails) error {
-		return qualificationGeneratedProblemError("approve qualification deployment", problem)
-	}
-	return deploymentgen.MatchGenApproveDeploymentFailure(
-		failure, handler, handler, handler, handler,
-		handler, handler, handler, handler,
-	)
-}
-
-func mapQualificationActivateDeploymentFailure(err error) error {
-	var failure deploymentgen.GenActivateDeploymentFailure
-	if !errors.As(err, &failure) {
-		return err
-	}
-	handler := func(problem apigenclient.ProblemDetails) error {
-		return qualificationGeneratedProblemError("activate qualification deployment", problem)
-	}
-	return deploymentgen.MatchGenActivateDeploymentFailure(
-		failure,
-		handler, handler, handler, handler, handler, handler,
-		handler, handler, handler, handler, handler, handler,
-	)
 }

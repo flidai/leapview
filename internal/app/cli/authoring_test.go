@@ -54,146 +54,6 @@ spec:
 	}
 }
 
-func TestGeneratedCandidateSynchronizationTransportMapsTypedProtocol(t *testing.T) {
-	generic := &candidateSyncTransportStub{}
-	transport := newCandidateSynchronizationTransport(deploymentgen.NewGenClient(generic))
-	request := projectdevloop.SynchronizationPlanRequest{
-		ProjectID: "finance", ProjectFile: "leapview.yaml",
-		ArtifactDigest:         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ExpectedCandidateID:    "cand_1",
-		ExpectedArtifactDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		CandidateKey:           "github:pull/42",
-		Artifacts: []projectdevloop.ArtifactReference{{
-			Path: "leapview.yaml", Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", SizeBytes: 6,
-		}},
-		SourceRevision: &projectdevloop.SourceRevision{
-			Revision: "commit-a", Repository: "https://code.example/acme/analytics",
-			Ref: "refs/pull/42/head", ChangeID: "pull/42",
-		},
-	}
-
-	plan, err := transport.Plan(t.Context(), request)
-	if err != nil || len(plan.MissingDigests) != 1 ||
-		plan.MissingDigests[0] != request.Artifacts[0].Digest {
-		t.Fatalf("plan = %#v, %v", plan, err)
-	}
-	request.PlanID = plan.PlanID
-	if err := transport.Upload(t.Context(), request, projectdevloop.Artifact{
-		Path: request.Artifacts[0].Path, Digest: request.Artifacts[0].Digest, Content: []byte("source"),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	candidate, err := transport.Commit(t.Context(), request)
-	require.NoError(t, err)
-	if candidate.ID != "cand_1" || candidate.ProjectID != "finance" ||
-		candidate.ArtifactDigest != request.ArtifactDigest ||
-		candidate.TargetID != "target_1" ||
-		candidate.Environment != "development" ||
-		candidate.ProvenanceDigest != "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" ||
-		candidate.Revision != 7 {
-		t.Fatalf("candidate = %#v", candidate)
-	}
-	if len(generic.requests) != 3 ||
-		generic.requests[0].Headers.Get("Idempotency-Key") == "" ||
-		generic.requests[0].Body.(deploymentgen.CandidateSynchronizationRequest).Artifacts[0].SizeBytes != 6 ||
-		generic.requests[1].Headers.Get("Content-Digest") != standardCandidateContentDigest(request.Artifacts[0].Digest) ||
-		generic.requests[1].Headers.Get("Source-Synchronization-Plan") != request.PlanID ||
-		generic.requests[2].Headers.Get("Idempotency-Key") == "" ||
-		generic.requests[2].Headers.Get("Source-Synchronization-Plan") != request.PlanID ||
-		string(generic.requests[1].Body.([]byte)) != "source" {
-		t.Fatalf("generated requests = %#v", generic.requests)
-	}
-	body := generic.requests[2].Body.(deploymentgen.CandidateSynchronizationRequest)
-	if body.SourceRevision == nil ||
-		body.SourceRevision.Revision != request.SourceRevision.Revision ||
-		body.SourceRevision.Repository == nil ||
-		*body.SourceRevision.Repository != request.SourceRevision.Repository {
-		t.Fatalf("source revision request = %#v", body.SourceRevision)
-	}
-	if body.CandidateKey == nil || *body.CandidateKey != request.CandidateKey {
-		t.Fatalf("candidate key request = %#v", body.CandidateKey)
-	}
-}
-
-func TestCandidateSynchronizationIdempotencyKeysBindExpectedPredecessor(t *testing.T) {
-	generic := &candidateSyncTransportStub{}
-	transport := newCandidateSynchronizationTransport(
-		deploymentgen.NewGenClient(generic),
-	)
-	request := projectdevloop.SynchronizationPlanRequest{
-		ProjectID: "finance", ProjectFile: "leapview.yaml",
-		ArtifactDigest:         "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		ExpectedCandidateID:    "cand_1",
-		ExpectedArtifactDigest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-		CandidateKey:           "github:pull/42",
-		Artifacts: []projectdevloop.ArtifactReference{{
-			Path:   "leapview.yaml",
-			Digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", SizeBytes: 6,
-		}},
-	}
-
-	plan, err := transport.Plan(t.Context(), request)
-	if err != nil {
-		t.Fatal(err)
-	}
-	request.PlanID = plan.PlanID
-	if _, err := transport.Commit(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transport.Plan(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transport.Commit(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	baselineRequest := request
-	request.ExpectedArtifactDigest =
-		"sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
-	if _, err := transport.Plan(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := transport.Commit(t.Context(), request); err != nil {
-		t.Fatal(err)
-	}
-
-	if len(generic.requests) != 6 {
-		t.Fatalf("generated requests = %d, want 6", len(generic.requests))
-	}
-	firstPlanKey := generic.requests[0].Headers.Get("Idempotency-Key")
-	firstCommitKey := generic.requests[1].Headers.Get("Idempotency-Key")
-	replayedPlanKey := generic.requests[2].Headers.Get("Idempotency-Key")
-	replayedCommitKey := generic.requests[3].Headers.Get("Idempotency-Key")
-	secondPlanKey := generic.requests[4].Headers.Get("Idempotency-Key")
-	secondCommitKey := generic.requests[5].Headers.Get("Idempotency-Key")
-	if firstPlanKey != replayedPlanKey {
-		t.Fatalf("identical plan did not retain idempotency key: %q != %q", firstPlanKey, replayedPlanKey)
-	}
-	if firstCommitKey != replayedCommitKey {
-		t.Fatalf("identical commit did not retain idempotency key: %q != %q", firstCommitKey, replayedCommitKey)
-	}
-	if firstPlanKey == secondPlanKey {
-		t.Fatalf("plan idempotency key did not bind expected predecessor: %q", firstPlanKey)
-	}
-	if firstCommitKey == secondCommitKey {
-		t.Fatalf("commit idempotency key did not bind expected predecessor: %q", firstCommitKey)
-	}
-	secondGeneric := &candidateSyncTransportStub{}
-	secondTransport := newCandidateSynchronizationTransport(
-		deploymentgen.NewGenClient(secondGeneric),
-	)
-	secondPlan, err := secondTransport.Plan(t.Context(), baselineRequest)
-	if err != nil {
-		t.Fatal(err)
-	}
-	baselineRequest.PlanID = secondPlan.PlanID
-	if _, err := secondTransport.Commit(t.Context(), baselineRequest); err != nil {
-		t.Fatal(err)
-	}
-	if got := secondGeneric.requests[1].Headers.Get("Idempotency-Key"); got != firstCommitKey {
-		t.Fatalf("identical commit changed idempotency key across transport instances: %q != %q", got, firstCommitKey)
-	}
-}
-
 func TestNativeSynchronizationProjectsCanonicalDeliveryCandidate(t *testing.T) {
 	const (
 		projectID   = "finance"
@@ -231,11 +91,6 @@ func TestNativeSynchronizationProjectsCanonicalDeliveryCandidate(t *testing.T) {
 		candidate.ExecutionDigest != "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" ||
 		candidate.EvidenceDigest != "sha256:9999999999999999999999999999999999999999999999999999999999999999" {
 		t.Fatalf("candidate = %#v", candidate)
-	}
-	for _, request := range generic.requests {
-		if request.OperationID == deploymentgen.GenOperationCommitProjectCandidateSynchronization {
-			t.Fatal("native synchronization invoked legacy candidate commit")
-		}
 	}
 	if !generic.sawNativePlan || !generic.sawNativeBuild || !generic.sawSourceRetention {
 		t.Fatalf("native requests were incomplete: %#v", generic.requests)
@@ -469,14 +324,6 @@ func (stub *candidateSyncTransportStub) DoAPIGen(
 		status = http.StatusCreated
 		response = deploymentgen.CandidateSourceBlobResponse{
 			Digest: request.PathParams["digest"], SizeBytes: int64(len(request.Body.([]byte))),
-		}
-	case deploymentgen.GenOperationCommitProjectCandidateSynchronization:
-		body := request.Body.(deploymentgen.CandidateSynchronizationRequest)
-		response = deploymentgen.CandidateResponse{
-			Id: "cand_1", ProjectId: "finance", ArtifactDigest: body.ArtifactDigest,
-			PreviewUrl: "https://target.example/candidates/cand_1",
-			TargetId:   "target_1", Environment: "development", Revision: 7,
-			ProvenanceDigest: testPointer("sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
 		}
 	}
 	encoded, err := json.Marshal(response)

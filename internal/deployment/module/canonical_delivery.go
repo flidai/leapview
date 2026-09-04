@@ -16,10 +16,9 @@ import (
 	"github.com/flidai/leapview/internal/release"
 )
 
-// CandidateProvenance builds the same retained provenance used by the legacy
-// candidate preparation path. Canonical delivery uses it only after the
-// sealed delivery candidate is complete, to project readiness into the
-// existing candidate API without making that API a second seal authority.
+// CandidateProvenance builds retained provenance after the sealed delivery
+// candidate is complete. It projects readiness into the candidate runtime
+// without making that API a second seal authority.
 func CandidateProvenance(candidate deployment.Candidate, artifacts release.CandidateArtifactSet, receipt deployment.CandidateRuntimeReceipt, sourceRevision *project.CandidateSourceRevision) (release.Provenance, error) {
 	return candidateReleaseProvenance(candidate, artifacts, receipt, sourceRevision)
 }
@@ -438,21 +437,14 @@ func (a *CanonicalDeliveryAdapter) BuildCandidate(ctx context.Context, input dep
 	if artifacts.Generation.Identity.GenerationID == "" || artifacts.Generation.ServingArtifactID == "" || artifacts.Generation.ArtifactDigest == "" {
 		return deployment.Candidate{}, fmt.Errorf("%w: compiler returned incomplete serving artifact identity", deployment.ErrCandidateInvalid)
 	}
-	// DeliveryMutationPort Build supplies the exact durable plan created by
-	// CreatePlan. Only the legacy candidate-sync path (which has no persisted
-	// plan yet) is allowed to derive one here.
-	if input.Plan == nil && a.Plan != nil {
-		plan, planErr := resolveLegacyCandidatePlan(ctx, input, artifacts, a.Lifecycle.Store, a.Plan)
-		if planErr != nil {
-			return deployment.Candidate{}, planErr
-		}
-		input.Plan = &plan
+	// Candidate builds must be bound to the exact durable plan created by
+	// CreatePlan. There is no candidate-only preparation fallback.
+	if input.Plan == nil {
+		return deployment.Candidate{}, fmt.Errorf("%w: canonical delivery plan is required", deployment.ErrDeliveryInvalid)
 	}
-	if input.Plan != nil {
-		artifacts, err = EffectiveCandidateArtifacts(*input.Plan, input.Candidate.ID, artifacts)
-		if err != nil {
-			return deployment.Candidate{}, err
-		}
+	artifacts, err = EffectiveCandidateArtifacts(*input.Plan, input.Candidate.ID, artifacts)
+	if err != nil {
+		return deployment.Candidate{}, err
 	}
 	request, err := a.BuildRequest(ctx, input, artifacts)
 	if err != nil {
@@ -466,45 +458,6 @@ func (a *CanonicalDeliveryAdapter) BuildCandidate(ctx context.Context, input dep
 		return deployment.Candidate{}, err
 	}
 	return a.ReadyCandidate(ctx, input, artifacts, result)
-}
-
-// resolveLegacyCandidatePlan makes the legacy candidate-sync path durable and
-// replay-safe. A failed physical build leaves its plan row behind; retries
-// must load that exact row instead of recomputing a time-dependent digest.
-func resolveLegacyCandidatePlan(
-	ctx context.Context,
-	input deployment.DeliveryCandidateBuildInput,
-	artifacts release.CandidateArtifactSet,
-	store deployment.DeliveryPlanRepository,
-	planner func(context.Context, deployment.DeliveryCandidateBuildInput, release.CandidateArtifactSet) (deployment.DeliveryPlan, error),
-) (deployment.DeliveryPlan, error) {
-	if store == nil {
-		return deployment.DeliveryPlan{}, fmt.Errorf("canonical delivery plan repository is unavailable")
-	}
-	if planner == nil {
-		return deployment.DeliveryPlan{}, fmt.Errorf("canonical delivery plan planner is unavailable")
-	}
-	planID := "plan-" + input.Candidate.ID
-	if existing, readErr := store.PlanByID(ctx, planID); readErr == nil {
-		if existing.ID != planID || existing.ProjectID != input.ProjectID || existing.TargetID != input.Candidate.TargetID || existing.Environment != input.Candidate.Scope.Environment || existing.SourceDigest != input.ArtifactDigest || existing.Provenance.AttestationDigest != input.Source.SourceAttestationDigest || (input.Operation != "" && existing.Operation != input.Operation) {
-			return deployment.DeliveryPlan{}, fmt.Errorf("%w: persisted legacy plan does not match candidate scope", deployment.ErrDeliveryConflict)
-		}
-		return existing, nil
-	} else if !errors.Is(readErr, deployment.ErrNotFound) && !errors.Is(readErr, sql.ErrNoRows) {
-		return deployment.DeliveryPlan{}, readErr
-	}
-	plan, planErr := planner(ctx, input, artifacts)
-	if planErr != nil {
-		return deployment.DeliveryPlan{}, planErr
-	}
-	if plan.ID != planID {
-		return deployment.DeliveryPlan{}, fmt.Errorf("%w: legacy plan identity does not match candidate", deployment.ErrDeliveryConflict)
-	}
-	persisted, persistErr := store.CreatePlan(ctx, plan)
-	if persistErr != nil {
-		return deployment.DeliveryPlan{}, persistErr
-	}
-	return persisted, nil
 }
 
 // CandidateDeliveryBuilder returns a module-compatible function and keeps the
