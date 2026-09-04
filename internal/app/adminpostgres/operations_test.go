@@ -54,11 +54,11 @@ func (n *testNative) Run(_ context.Context, policy postgresmaintenance.Policy) (
 func validProductionMaintenanceConfig() config.Config {
 	return config.Config{
 		Production: true, PostgresRequireTLS: true,
-		PostgresControlURL:             "postgres://runtime:secret@control/leapview?sslmode=require",
-		PostgresControlMigratorURL:     "postgres://migrator:secret@control/leapview?sslmode=require",
-		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@control/leapview?sslmode=require",
-		PostgresDuckLakeURL:            "postgres://ducklake:secret@ducklake/leapview?sslmode=require",
-		PostgresDuckLakeMaintenanceURL: "postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=require",
+		PostgresControlURL:             "postgres://runtime:secret@control/leapview?sslmode=verify-full",
+		PostgresControlMigratorURL:     "postgres://migrator:secret@control/leapview?sslmode=verify-full",
+		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@control/leapview?sslmode=verify-full",
+		PostgresDuckLakeURL:            "postgres://ducklake:secret@ducklake/leapview?sslmode=verify-full",
+		PostgresDuckLakeMaintenanceURL: "postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=verify-full",
 		DeliveryPhysicalPoolID:         "pool-prod", DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
 	}
 }

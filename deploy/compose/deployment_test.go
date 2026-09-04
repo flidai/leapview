@@ -667,7 +667,7 @@ fi
 		if output, err := runControllerResult(root, fakeDocker, "", "init", "--admin-email", "admin@example.com", "--domain", "dash.example.com", "--image", image); err == nil || !strings.Contains(output, "initialization can be retried") {
 			t.Fatalf("failed initialization = %v, %s", err, output)
 		}
-		if contents, err := os.ReadFile(filepath.Join(root, "leapview.env")); err != nil || !strings.Contains(string(contents), "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=require\n") {
+		if contents, err := os.ReadFile(filepath.Join(root, "leapview.env")); err != nil || !strings.Contains(string(contents), "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=verify-full\n") {
 			t.Fatalf("operator application environment was not preserved after validation failure: %v\n%s", err, contents)
 		}
 		if _, err := os.Stat(filepath.Join(root, "initial-credentials.json")); !os.IsNotExist(err) {
@@ -713,11 +713,11 @@ func copyConfiguredApplicationFile(t *testing.T, targetDir string) {
 	contents, err := os.ReadFile("leapview.env.example")
 	require.NoError(t, err)
 	replacements := map[string]string{
-		"LEAPVIEW_POSTGRES_CONTROL_URL=":                        "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=require",
-		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=":               "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgres://migrator:secret@control/leapview?sslmode=require",
-		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=":            "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=postgres://maintenance:secret@control/leapview?sslmode=require",
-		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=":                       "LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://ducklake:secret@ducklake/leapview?sslmode=require",
-		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=":           "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=require",
+		"LEAPVIEW_POSTGRES_CONTROL_URL=":                        "LEAPVIEW_POSTGRES_CONTROL_URL=postgres://runtime:secret@control/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=":               "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgres://migrator:secret@control/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=":            "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL=postgres://maintenance:secret@control/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_URL=":                       "LEAPVIEW_POSTGRES_DUCKLAKE_URL=postgres://ducklake:secret@ducklake/leapview?sslmode=verify-full",
+		"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=":           "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=postgres://ducklake-maintenance:secret@ducklake/leapview?sslmode=verify-full",
 		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=":                   "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=pool-prod",
 		"LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=": "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=sha256:" + strings.Repeat("a", 64),
 	}

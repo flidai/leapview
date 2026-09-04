@@ -57,6 +57,7 @@ type Role struct {
 type Harness struct {
 	container *tcpostgres.PostgresContainer
 	adminURL  string
+	rootCert  string
 	admin     *pgxpool.Pool
 
 	mu    sync.Mutex
@@ -90,8 +91,8 @@ func Start(t *testing.T) *Harness {
 // self-signed certificate. It is intended for production-admission tests,
 // whose configuration must require encrypted PostgreSQL URLs even though the
 // ordinary conformance harness deliberately exercises plaintext connections.
-// sslmode=require is sufficient here because the client does not verify the
-// certificate chain in this isolated test container.
+// Callers should use RootCertPath with sslmode=verify-full when constructing
+// URLs for this harness.
 func StartTLS(t *testing.T) *Harness {
 	return start(t, true)
 }
@@ -116,8 +117,10 @@ func start(t *testing.T, tls bool) *Harness {
 		testcontainers.WithWaitStrategy(wait.ForLog("database system is ready to accept connections").WithOccurrence(2).WithStartupTimeout(defaultStartupTimeout)),
 		testcontainers.WithLogger(log.TestLogger(t)),
 	}
+	var rootCert string
 	if tls {
 		caCert, cert, key := tlsCertificateFiles(t)
+		rootCert = caCert
 		containerOptions = append(containerOptions,
 			tcpostgres.WithSSLCert(caCert, cert, key),
 			testcontainers.WithCmd("postgres", "-c", "fsync=off", "-c", "ssl=on", "-c", "ssl_ca_file=/tmp/testcontainers-go/postgres/ca_cert.pem", "-c", "ssl_cert_file=/tmp/testcontainers-go/postgres/server.cert", "-c", "ssl_key_file=/tmp/testcontainers-go/postgres/server.key"),
@@ -146,9 +149,18 @@ func start(t *testing.T, tls bool) *Harness {
 		admin.Close()
 		t.Fatalf("ping PostgreSQL conformance administrator pool: %v", err)
 	}
-	h := &Harness{container: container, adminURL: adminURL, admin: admin, roles: make(map[string]Role)}
+	h := &Harness{container: container, adminURL: adminURL, rootCert: rootCert, admin: admin, roles: make(map[string]Role)}
 	t.Cleanup(func() { admin.Close() })
 	return h
+}
+
+// RootCertPath returns the host path to the disposable CA that signed the
+// harness server certificate. It is empty for a plaintext harness.
+func (h *Harness) RootCertPath() string {
+	if h == nil {
+		return ""
+	}
+	return h.rootCert
 }
 
 func tlsCertificateFiles(t *testing.T) (caCert, cert, key string) {

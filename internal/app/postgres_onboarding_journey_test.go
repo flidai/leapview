@@ -42,7 +42,7 @@ func TestPostgres18ProductionOnboardingJourney(t *testing.T) {
 	grantPostgresOnboardingDatabases(t, h, control, catalog, roles)
 
 	fixture := extensionfixture.New(t, "ducklake", "postgres")
-	cfg := postgresOnboardingConfig(t, control, catalog, roles, fixture)
+	cfg := postgresOnboardingConfig(t, h, control, catalog, roles, fixture)
 
 	operations := adminpostgres.New(adminpostgres.Dependencies{
 		LoadConfig: func() (config.Config, error) { return cfg, nil },
@@ -326,9 +326,9 @@ func grantPostgresOnboardingDatabases(t *testing.T, h *postgrestest.Harness, con
 	}
 }
 
-func postgresOnboardingConfig(t *testing.T, control, catalog *postgrestest.Database, roles postgresOnboardingRoles, fixture extensionfixture.Fixture) config.Config {
+func postgresOnboardingConfig(t *testing.T, h *postgrestest.Harness, control, catalog *postgrestest.Database, roles postgresOnboardingRoles, fixture extensionfixture.Fixture) config.Config {
 	t.Helper()
-	tlsURL := productionAdmissionTLSURL
+	tlsURL := func(raw string) string { return productionAdmissionTLSURL(raw, h.RootCertPath()) }
 	home := t.TempDir()
 	return config.Config{
 		HomeDir: home, Production: true, Environment: "prod", BootstrapEmail: "admin@example.com",

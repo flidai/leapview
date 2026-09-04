@@ -286,11 +286,11 @@ func TestBuildProductionRejectsSecurityBypassBeforeConnecting(t *testing.T) {
 		Production:                              true,
 		DevAuthBypass:                           true,
 		PostgresRequireTLS:                      true,
-		PostgresControlURL:                      "postgres://runtime:secret@localhost/control?sslmode=require",
-		PostgresControlMigratorURL:              "postgres://migrator:secret@localhost/control?sslmode=require",
-		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@localhost/control?sslmode=require",
-		PostgresDuckLakeURL:                     "postgres://ducklake:secret@localhost/ducklake?sslmode=require",
-		PostgresDuckLakeMaintenanceURL:          "postgres://ducklake-maintenance:secret@localhost/ducklake?sslmode=require",
+		PostgresControlURL:                      "postgres://runtime:secret@localhost/control?sslmode=verify-full",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@localhost/control?sslmode=verify-full",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@localhost/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@localhost/ducklake?sslmode=verify-full",
+		PostgresDuckLakeMaintenanceURL:          "postgres://ducklake-maintenance:secret@localhost/ducklake?sslmode=verify-full",
 		PostgresControlRuntimeRole:              "leapview_control_runtime",
 		PostgresControlMigratorRole:             "leapview_control_migrator",
 		PostgresControlMaintenanceRole:          "leapview_control_maintenance",
@@ -321,7 +321,7 @@ func TestOpenPostgresControlPlaneRejectsMissingPoolConfiguration(t *testing.T) {
 
 func TestPostgresDuckLakeMaintenanceConfigIsDedicatedSingleConnection(t *testing.T) {
 	cfg := config.Config{
-		PostgresDuckLakeMaintenanceURL:  "postgres://maintenance:secret@localhost/ducklake?sslmode=require",
+		PostgresDuckLakeMaintenanceURL:  "postgres://maintenance:secret@localhost/ducklake?sslmode=verify-full",
 		PostgresDuckLakeMaintenanceRole: "leapview_ducklake_maintenance",
 	}
 	got := cfg.PostgresDuckLakeMaintenanceConfig()

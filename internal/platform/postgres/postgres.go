@@ -63,9 +63,11 @@ type Config struct {
 	// RuntimeRole is compared with current_user during connection admission.
 	RuntimeRole string
 	Intent      Intent
-	// RequireTLS rejects URLs whose sslmode permits a plaintext connection.
-	// Production callers should set this true; conformance tests may use an
-	// explicitly disabled local URL and leave it false.
+	// RequireTLS requires TLS with both certificate-chain and server-hostname
+	// verification. In particular, sslmode=require and verify-ca are rejected:
+	// the former skips certificate verification and the latter skips hostname
+	// verification. Conformance tests may use an explicitly disabled local URL
+	// and leave this false.
 	RequireTLS bool
 
 	MinConns int32
@@ -673,10 +675,13 @@ func (c Config) Validate() error {
 		if err != nil {
 			return errors.New("PostgreSQL URL is malformed")
 		}
-		switch strings.ToLower(strings.TrimSpace(parsed.Query().Get("sslmode"))) {
-		case "require", "verify-ca", "verify-full":
-		default:
-			return errors.New("PostgreSQL URL must set sslmode=require, verify-ca, or verify-full when TLS is required")
+		query, err := url.ParseQuery(parsed.RawQuery)
+		if err != nil {
+			return errors.New("PostgreSQL URL is malformed")
+		}
+		sslModes := query["sslmode"]
+		if len(sslModes) != 1 || strings.TrimSpace(sslModes[0]) != "verify-full" {
+			return errors.New("PostgreSQL URL must set sslmode=verify-full when TLS is required")
 		}
 	}
 	if c.ExpectedMajor <= 0 {

@@ -50,11 +50,11 @@ func testCatalogUpgradeConfig(t *testing.T) config.Config {
 	t.Helper()
 	return config.Config{
 		Production: true, HomeDir: t.TempDir(), PostgresExpectedMajor: 18, PostgresRequireTLS: true,
-		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL:           "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:                  "postgres://ducklake:secret@db/ducklake?sslmode=require",
-		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=require",
-		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=require",
+		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:           "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                  "postgres://ducklake:secret@db/ducklake?sslmode=verify-full",
+		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=verify-full",
 	}
 }
 

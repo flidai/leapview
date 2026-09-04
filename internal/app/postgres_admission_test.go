@@ -79,11 +79,11 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 
 	cfg := config.Config{
 		Production: true, PostgresExpectedMajor: platformpostgres.DefaultExpectedMajor, PostgresRequireTLS: true,
-		PostgresControlURL:             productionAdmissionTLSURL(control.URL(runtime)),
-		PostgresControlMigratorURL:     productionAdmissionTLSURL(control.URL(migrator)),
-		PostgresControlMaintenanceURL:  productionAdmissionTLSURL(control.URL(maintenance)),
-		PostgresDuckLakeURL:            productionAdmissionTLSURL(ducklake.URL(ducklakeRuntime)),
-		PostgresDuckLakeMaintenanceURL: productionAdmissionTLSURL(ducklake.URL(ducklakeMaintenance)),
+		PostgresControlURL:             productionAdmissionTLSURL(control.URL(runtime), h.RootCertPath()),
+		PostgresControlMigratorURL:     productionAdmissionTLSURL(control.URL(migrator), h.RootCertPath()),
+		PostgresControlMaintenanceURL:  productionAdmissionTLSURL(control.URL(maintenance), h.RootCertPath()),
+		PostgresDuckLakeURL:            productionAdmissionTLSURL(ducklake.URL(ducklakeRuntime), h.RootCertPath()),
+		PostgresDuckLakeMaintenanceURL: productionAdmissionTLSURL(ducklake.URL(ducklakeMaintenance), h.RootCertPath()),
 		PostgresControlRuntimeRole:     runtime.Name, PostgresControlMigratorRole: migrator.Name,
 		PostgresControlMaintenanceRole: maintenance.Name, PostgresDuckLakeRuntimeRole: ducklakeRuntime.Name,
 		PostgresDuckLakeMaintenanceRole: ducklakeMaintenance.Name,
@@ -247,13 +247,16 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	}
 }
 
-func productionAdmissionTLSURL(raw string) string {
+func productionAdmissionTLSURL(raw string, rootCertPaths ...string) string {
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return raw
 	}
 	query := parsed.Query()
-	query.Set("sslmode", "require")
+	query.Set("sslmode", "verify-full")
+	if len(rootCertPaths) > 0 && strings.TrimSpace(rootCertPaths[0]) != "" {
+		query.Set("sslrootcert", rootCertPaths[0])
+	}
 	parsed.RawQuery = query.Encode()
 	return parsed.String()
 }

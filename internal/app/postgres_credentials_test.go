@@ -34,7 +34,7 @@ func (a invalidPostgresCredentialAdmission) AdmitExtension(context.Context, stri
 }
 
 func TestPostgresCredentialBootstrapValidatesTLSAndLoadsAdmittedScanner(t *testing.T) {
-	cfg := config.Config{PostgresDuckLakeURL: "postgres://user:p%27ass@db.example/ducklake?sslmode=require"}
+	cfg := config.Config{PostgresDuckLakeURL: "postgres://user:p%27ass@db.example/ducklake?sslmode=verify-full&sslrootcert=%2Fetc%2Fleapview%2Fpostgres-root.crt"}
 	bootstrap, err := newPostgresDuckLakeCredentialBootstrap(cfg, nil, postgresCredentialAdmission{})
 	if err != nil {
 		t.Fatal(err)
@@ -49,7 +49,7 @@ func TestPostgresCredentialBootstrapValidatesTLSAndLoadsAdmittedScanner(t *testi
 	if !strings.HasPrefix(execer.statements[0], "LOAD '/opt/leapview/extensions/postgres_scanner.duckdb_extension'") {
 		t.Fatalf("scanner statement = %q", execer.statements[0])
 	}
-	if !strings.Contains(execer.statements[1], "PASSWORD 'p''ass'") || !strings.Contains(execer.statements[1], "SSLMODE 'require'") {
+	if !strings.Contains(execer.statements[1], "PASSWORD 'p''ass'") || !strings.Contains(execer.statements[1], "SSLMODE 'verify-full'") || !strings.Contains(execer.statements[1], "SSLROOTCERT '/etc/leapview/postgres-root.crt'") {
 		t.Fatalf("secret statement did not escape credentials: %q", execer.statements[1])
 	}
 }
@@ -58,6 +58,8 @@ func TestPostgresCredentialBootstrapRejectsUnsafeURLOptions(t *testing.T) {
 	for _, raw := range []string{
 		"postgres://user:secret@db/ducklake?sslmode=disable",
 		"postgres://user:secret@db/ducklake?application_name=leak",
+		"postgres://user:secret@db/ducklake?sslmode=verify-full&sslrootcert=relative.pem",
+		"postgres://user:secret@db/ducklake?sslmode=verify-full&sslrootcert=%2Fetc%2Fca.pem&sslrootcert=%2Fetc%2Fother.pem",
 		"postgres://user:secret@db/a/b",
 		"postgres://user:secret@db/ducklake#fragment",
 	} {

@@ -25,6 +25,10 @@ requires provider-owned PostgreSQL control and DuckLake URLs, distinct
 migrator/runtime/maintenance roles, and the exact target delivery pool ID and
 compatibility digest. Edit those values in `leapview.env`; initialization
 preserves them and fails with the missing variable name when they are absent.
+Each PostgreSQL URL must use `sslmode=verify-full` with a trusted provider CA
+(through `sslrootcert` or the image's system trust store); `require` and
+`verify-ca` are intentionally rejected because they do not authenticate both
+the server certificate and hostname.
 The pre-initialization pool command must be a dry run. Apply the same reviewed
 pool/evidence pair only after `init`, because durable admission verifies the
 control baseline created during initialization. Inject the DuckLake migrator

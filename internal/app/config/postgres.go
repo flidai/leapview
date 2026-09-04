@@ -394,6 +394,48 @@ func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeli
 			return fmt.Errorf("production serve requires LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST: %w", err)
 		}
 	}
+	if requireTLS {
+		// Keep operation-only URLs under the same production TLS contract as
+		// serving pools. They are not opened by ordinary serving, but accepting
+		// sslmode=require or verify-ca here would leave a production migration or
+		// maintenance path without certificate-and-hostname authentication.
+		for _, connection := range []struct {
+			name string
+			url  string
+		}{
+			{"LEAPVIEW_POSTGRES_CONTROL_URL", c.PostgresControlURL},
+			{"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL", c.PostgresControlMigratorURL},
+			{"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL", c.PostgresControlUpgradeCoordinatorURL},
+			{"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL", c.PostgresControlMaintenanceURL},
+			{"LEAPVIEW_POSTGRES_CONTROL_READONLY_URL", c.PostgresControlReadonlyURL},
+			{"LEAPVIEW_POSTGRES_DUCKLAKE_URL", c.PostgresDuckLakeURL},
+			{"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL", c.PostgresDuckLakeMigratorURL},
+			{"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL", c.PostgresDuckLakeMaintenanceURL},
+		} {
+			if strings.TrimSpace(connection.url) == "" {
+				continue
+			}
+			if err := validatePostgresCertificateHostnameTLS(connection.url); err != nil {
+				return fmt.Errorf("%s serve requires %s to use sslmode=verify-full: %w", mode, connection.name, err)
+			}
+		}
+	}
+	return nil
+}
+
+func validatePostgresCertificateHostnameTLS(raw string) error {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || parsed == nil {
+		return errors.New("PostgreSQL URL is malformed")
+	}
+	query, err := url.ParseQuery(parsed.RawQuery)
+	if err != nil {
+		return errors.New("PostgreSQL URL is malformed")
+	}
+	sslModes := query["sslmode"]
+	if len(sslModes) != 1 || strings.TrimSpace(sslModes[0]) != "verify-full" {
+		return errors.New("certificate and hostname verification is required")
+	}
 	return nil
 }
 

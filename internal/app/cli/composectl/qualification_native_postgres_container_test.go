@@ -115,8 +115,8 @@ func TestQualificationNativePostgresTopologyContainerBackedContract(t *testing.T
 
 const qualificationNativePostgresContractSchema = `
 set -eu
-export PGSSLMODE=require PGPASSWORD="$POSTGRES_PASSWORD"
-psql --host 127.0.0.1 --username leapview_bootstrap --dbname leapview_control --no-psqlrc --set ON_ERROR_STOP=1 <<'SQL'
+export PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD="$POSTGRES_PASSWORD"
+psql --host localhost --username leapview_bootstrap --dbname leapview_control --no-psqlrc --set ON_ERROR_STOP=1 <<'SQL'
 CREATE SCHEMA IF NOT EXISTS ducklake AUTHORIZATION leapview_control_owner;
 CREATE SCHEMA IF NOT EXISTS delivery AUTHORIZATION leapview_control_owner;
 CREATE SCHEMA IF NOT EXISTS serving_state AUTHORIZATION leapview_control_owner;
@@ -136,19 +136,19 @@ check_tls() {
   role="$1"
   database="$2"
   password="$3"
-  actual="$(PGSSLMODE=require PGPASSWORD="$password" psql --host 127.0.0.1 --username "$role" --dbname "$database" --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database()::text || '|' || (SELECT ssl::text FROM pg_stat_ssl WHERE pid = pg_backend_pid())")"
+  actual="$(PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD="$password" psql --host localhost --username "$role" --dbname "$database" --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database()::text || '|' || (SELECT ssl::text FROM pg_stat_ssl WHERE pid = pg_backend_pid())")"
   if [ "$actual" != "$role|$database|true" ]; then
     printf 'TLS identity mismatch: %s expected %s|%s|true\n' "$actual" "$role" "$database"
     exit 1
   fi
 }
-export PGSSLMODE=require PGPASSWORD="$POSTGRES_PASSWORD"
-databases="$(psql --host 127.0.0.1 --username leapview_bootstrap --dbname postgres --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database WHERE datname IN ('leapview_control', 'leapview_ducklake')")"
+export PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD="$POSTGRES_PASSWORD"
+databases="$(psql --host localhost --username leapview_bootstrap --dbname postgres --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT string_agg(datname, ',' ORDER BY datname) FROM pg_database WHERE datname IN ('leapview_control', 'leapview_ducklake')")"
 if [ "$databases" != "leapview_control,leapview_ducklake" ]; then
   printf 'database set mismatch: %s\n' "$databases"
   exit 1
 fi
-owners="$(psql --host 127.0.0.1 --username leapview_bootstrap --dbname postgres --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT string_agg(datname || '=' || pg_get_userbyid(datdba), ',' ORDER BY datname) FROM pg_database WHERE datname IN ('leapview_control', 'leapview_ducklake')")"
+owners="$(psql --host localhost --username leapview_bootstrap --dbname postgres --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT string_agg(datname || '=' || pg_get_userbyid(datdba), ',' ORDER BY datname) FROM pg_database WHERE datname IN ('leapview_control', 'leapview_ducklake')")"
 if [ "$owners" != "leapview_control=leapview_control_owner,leapview_ducklake=leapview_ducklake_owner" ]; then
   printf 'database owner mismatch: %s\n' "$owners"
   exit 1
@@ -156,7 +156,7 @@ fi
 check_role() {
   role="$1"
   expected="$2"
-  actual="$(psql --host 127.0.0.1 --username leapview_bootstrap --dbname postgres --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT rolcanlogin::text || '|' || rolsuper::text || '|' || rolcreatedb::text || '|' || rolcreaterole::text || '|' || rolinherit::text FROM pg_roles WHERE rolname = '$role'")"
+  actual="$(psql --host localhost --username leapview_bootstrap --dbname postgres --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT rolcanlogin::text || '|' || rolsuper::text || '|' || rolcreatedb::text || '|' || rolcreaterole::text || '|' || rolinherit::text FROM pg_roles WHERE rolname = '$role'")"
   if [ "$actual" != "$expected" ]; then
     printf 'role attributes mismatch for %s: %s expected %s\n' "$role" "$actual" "$expected"
     exit 1
@@ -185,20 +185,20 @@ check_tls leapview_ducklake_maintenance leapview_ducklake "$LEAPVIEW_POSTGRES_DU
 
 const qualificationNativePostgresPublishPointer = `
 set -eu
-export PGSSLMODE=require PGPASSWORD="$POSTGRES_PASSWORD"
-psql --host 127.0.0.1 --username leapview_bootstrap --dbname leapview_control --no-psqlrc --set ON_ERROR_STOP=1 --command "INSERT INTO delivery.delivery_active_pointer(pointer_id) VALUES (1)"
+export PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD="$POSTGRES_PASSWORD"
+psql --host localhost --username leapview_bootstrap --dbname leapview_control --no-psqlrc --set ON_ERROR_STOP=1 --command "INSERT INTO delivery.delivery_active_pointer(pointer_id) VALUES (1)"
 `
 
 const qualificationNativePostgresControlCrossDatabaseProbe = `
 set -eu
-export PGSSLMODE=require PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD"
-psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_ducklake --no-psqlrc --set ON_ERROR_STOP=1 --command 'SELECT 1'
+export PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD"
+psql --host localhost --username leapview_control_runtime --dbname leapview_ducklake --no-psqlrc --set ON_ERROR_STOP=1 --command 'SELECT 1'
 `
 
 const qualificationNativePostgresRevokeDeliveryGrant = `
 set -eu
-export PGSSLMODE=require PGPASSWORD="$POSTGRES_PASSWORD"
-psql --host 127.0.0.1 --username leapview_bootstrap --dbname leapview_control --no-psqlrc --set ON_ERROR_STOP=1 --command "REVOKE SELECT ON delivery.delivery_snapshot_seal FROM leapview_control_runtime"
+export PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD="$POSTGRES_PASSWORD"
+psql --host localhost --username leapview_bootstrap --dbname leapview_control --no-psqlrc --set ON_ERROR_STOP=1 --command "REVOKE SELECT ON delivery.delivery_snapshot_seal FROM leapview_control_runtime"
 `
 
 func qualificationExecSQL(t *testing.T, ctx context.Context, container qualificationContainer, script string) {

@@ -51,12 +51,13 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 	if parsed.Fragment != "" {
 		return nil, errors.New("PostgreSQL DuckLake URL contains an invalid fragment")
 	}
-	for key, values := range parsed.Query() {
-		if key != "sslmode" {
+	query := parsed.Query()
+	for key, values := range query {
+		if key != "sslmode" && key != "sslrootcert" {
 			return nil, fmt.Errorf("PostgreSQL DuckLake URL query option %q is unsupported", key)
 		}
 		if len(values) != 1 {
-			return nil, errors.New("PostgreSQL DuckLake URL sslmode must be specified once")
+			return nil, fmt.Errorf("PostgreSQL DuckLake URL query option %q must be specified once", key)
 		}
 	}
 	user, password := "", ""
@@ -88,11 +89,20 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 		return nil, errors.New("PostgreSQL DuckLake database identity is invalid")
 	}
 	sslMode := "require"
-	if configured := strings.TrimSpace(parsed.Query().Get("sslmode")); configured != "" {
+	if configured := strings.TrimSpace(query.Get("sslmode")); configured != "" {
 		sslMode = configured
 	}
 	if sslMode != "require" && sslMode != "verify-ca" && sslMode != "verify-full" && !(sslMode == "disable" && config.AllowPlaintextLoopback && postgresLoopbackHost(parsed.Hostname())) {
 		return nil, errors.New("PostgreSQL DuckLake credential bootstrap requires TLS")
+	}
+	sslRootCert := strings.TrimSpace(query.Get("sslrootcert"))
+	if sslRootCert != "" {
+		if !filepath.IsAbs(sslRootCert) || filepath.Clean(sslRootCert) != sslRootCert || strings.ContainsAny(sslRootCert, "\x00\r\n") {
+			return nil, errors.New("PostgreSQL DuckLake URL sslrootcert must be a canonical absolute path")
+		}
+		if sslMode != "verify-ca" && sslMode != "verify-full" {
+			return nil, errors.New("PostgreSQL DuckLake URL sslrootcert requires certificate verification")
+		}
 	}
 
 	var objectBootstrap ducklake.CredentialBootstrap
@@ -120,7 +130,11 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 		if _, err := execer.ExecContext(ctx, "LOAD '"+sqlLiteral(admitted.Path)+"'", nil); err != nil {
 			return fmt.Errorf("load PostgreSQL DuckDB scanner: %w", err)
 		}
-		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE '%s')", PostgresSecret, sqlLiteral(parsed.Hostname()), port, sqlLiteral(database), sqlLiteral(user), sqlLiteral(password), sqlLiteral(sslMode))
+		rootCertOption := ""
+		if sslRootCert != "" {
+			rootCertOption = ", SSLROOTCERT '" + sqlLiteral(sslRootCert) + "'"
+		}
+		statement := fmt.Sprintf("CREATE OR REPLACE TEMPORARY SECRET %s (TYPE postgres, HOST '%s', PORT %d, DATABASE '%s', USER '%s', PASSWORD '%s', SSLMODE '%s'%s)", PostgresSecret, sqlLiteral(parsed.Hostname()), port, sqlLiteral(database), sqlLiteral(user), sqlLiteral(password), sqlLiteral(sslMode), rootCertOption)
 		if _, err := execer.ExecContext(ctx, statement, nil); err != nil {
 			return fmt.Errorf("create temporary PostgreSQL DuckDB secret: %w", err)
 		}

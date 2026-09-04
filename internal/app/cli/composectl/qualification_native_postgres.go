@@ -39,6 +39,7 @@ const (
 	qualificationNativePostgresDuckLakeMaintenanceRole = "leapview_ducklake_maintenance"
 
 	qualificationNativePostgresReadyTimeout = 2 * time.Minute
+	qualificationNativePostgresRootCertPath = "/var/lib/leapview/home/postgres-root.crt"
 )
 
 var qualificationNativePostgresIdentifier = regexp.MustCompile(`^[a-z0-9][a-z0-9_-]{0,62}$`)
@@ -154,7 +155,7 @@ func newQualificationNativePostgresTopology(
 	if err := validateQualificationNativePostgresIdentifier(containerName, "qualification PostgreSQL container name"); err != nil {
 		return nil, err
 	}
-	secretDir, tlsFiles, err := createQualificationNativePostgresTLSFiles()
+	secretDir, tlsFiles, err := createQualificationNativePostgresTLSFiles(containerName)
 	if err != nil {
 		return nil, err
 	}
@@ -183,6 +184,11 @@ func newQualificationNativePostgresTopology(
 			{Source: tlsFiles.ca, Target: "/run/secrets/leapview-postgres-ca.pem", ReadOnly: true},
 			{Source: tlsFiles.cert, Target: "/run/secrets/leapview-postgres-server.pem", ReadOnly: true},
 			{Source: tlsFiles.key, Target: "/run/secrets/leapview-postgres-server.key", ReadOnly: true},
+			// Compose creates the application state volume when the service is
+			// materialized. Sharing it lets the disposable sidecar provide its
+			// private CA to the application without exposing a host path in the
+			// production template.
+			{Source: strings.TrimSpace(options.ComposeProject) + "_leapview-state", Target: "/var/lib/leapview"},
 		},
 		Tmpfs: []string{
 			"/var/lib/postgresql:rw,exec,nosuid,nodev,size=512m",
@@ -252,8 +258,8 @@ func (topology *qualificationNativePostgresTopology) AssertBootstrapOpen(ctx con
 		ctx,
 		nil,
 		"sh", "-ec",
-		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD"
-psql --host 127.0.0.1 --username leapview_control_readonly --dbname leapview_control --no-psqlrc --tuples-only --no-align --command 'SELECT count(*) FROM delivery.delivery_active_pointer'`,
+		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD" PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem
+psql --host localhost --username leapview_control_readonly --dbname leapview_control --no-psqlrc --tuples-only --no-align --command 'SELECT count(*) FROM delivery.delivery_active_pointer'`,
 	)
 	if err != nil {
 		return qualificationContainerOperationError(ctx, topology.Container, "verify qualification bootstrap state after "+stage, err)
@@ -285,8 +291,8 @@ func (topology *qualificationNativePostgresTopology) AssertNativeDeliveryReads(c
 		ctx,
 		nil,
 		"sh", "-ec",
-		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD" PGSSLMODE=require
-psql --host 127.0.0.1 --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database() || '|' || has_table_privilege(current_user, 'ducklake.catalog_identity', 'SELECT')::text || '|' || has_table_privilege(current_user, 'delivery.delivery_build_attempt', 'SELECT')::text || '|' || has_table_privilege(current_user, 'delivery.delivery_snapshot_seal', 'SELECT')::text || '|' || has_table_privilege(current_user, 'serving_state.bundle', 'SELECT')::text" --command "SELECT physical_pool_id FROM ducklake.catalog_identity LIMIT 0" --command "SELECT attempt_id FROM delivery.delivery_build_attempt LIMIT 0" --command "SELECT seal_id FROM delivery.delivery_snapshot_seal LIMIT 0" --command "SELECT generation_id FROM serving_state.bundle LIMIT 0"`,
+		`export PGPASSWORD="$LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD" PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem
+psql --host localhost --username leapview_control_runtime --dbname leapview_control --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command "SELECT current_user::text || '|' || current_database() || '|' || has_table_privilege(current_user, 'ducklake.catalog_identity', 'SELECT')::text || '|' || has_table_privilege(current_user, 'delivery.delivery_build_attempt', 'SELECT')::text || '|' || has_table_privilege(current_user, 'delivery.delivery_snapshot_seal', 'SELECT')::text || '|' || has_table_privilege(current_user, 'serving_state.bundle', 'SELECT')::text" --command "SELECT physical_pool_id FROM ducklake.catalog_identity LIMIT 0" --command "SELECT attempt_id FROM delivery.delivery_build_attempt LIMIT 0" --command "SELECT seal_id FROM delivery.delivery_snapshot_seal LIMIT 0" --command "SELECT generation_id FROM serving_state.bundle LIMIT 0"`,
 	)
 	if err != nil {
 		return qualificationContainerOperationError(ctx, topology.Container, "verify native delivery PostgreSQL reads", err)
@@ -433,7 +439,7 @@ func validateQualificationNativePostgresIdentifier(value, label string) error {
 }
 
 func qualificationNativePostgresURL(host, database, role, password string) string {
-	connectionURL := &url.URL{Scheme: "postgres", Host: host, Path: "/" + database, RawQuery: "sslmode=require"}
+	connectionURL := &url.URL{Scheme: "postgres", Host: host, Path: "/" + database, RawQuery: "sslmode=verify-full&sslrootcert=" + url.QueryEscape(qualificationNativePostgresRootCertPath)}
 	connectionURL.User = url.UserPassword(role, password)
 	return connectionURL.String()
 }
@@ -441,6 +447,9 @@ func qualificationNativePostgresURL(host, database, role, password string) strin
 const qualificationNativePostgresEntrypointScript = `set -eu
 mkdir -p /tmp/leapview-postgres-tls
 cp /run/secrets/leapview-postgres-ca.pem /tmp/leapview-postgres-tls/ca.pem
+mkdir -p /var/lib/leapview/home
+cp /run/secrets/leapview-postgres-ca.pem /var/lib/leapview/home/postgres-root.crt
+chmod 0644 /var/lib/leapview/home/postgres-root.crt
 cp /run/secrets/leapview-postgres-server.pem /tmp/leapview-postgres-tls/server.pem
 cp /run/secrets/leapview-postgres-server.key /tmp/leapview-postgres-tls/server.key
 chown -R postgres:postgres /tmp/leapview-postgres-tls
@@ -450,7 +459,7 @@ exec /usr/local/bin/docker-entrypoint.sh postgres -c ssl=on -c ssl_ca_file=/tmp/
 
 type qualificationNativePostgresTLSFiles struct{ ca, cert, key string }
 
-func createQualificationNativePostgresTLSFiles() (string, qualificationNativePostgresTLSFiles, error) {
+func createQualificationNativePostgresTLSFiles(serverHost string) (string, qualificationNativePostgresTLSFiles, error) {
 	dir, err := os.MkdirTemp("", "leapview-qualification-postgres-")
 	if err != nil {
 		return "", qualificationNativePostgresTLSFiles{}, fmt.Errorf("create qualification PostgreSQL TLS directory: %w", err)
@@ -486,10 +495,15 @@ func createQualificationNativePostgresTLSFiles() (string, qualificationNativePos
 	if err != nil {
 		return removeOnError(fmt.Errorf("generate qualification PostgreSQL server serial: %w", err))
 	}
+	serverHost = strings.TrimSpace(serverHost)
+	dnsNames := []string{"postgres", "localhost"}
+	if serverHost != "" && serverHost != dnsNames[0] && serverHost != dnsNames[1] {
+		dnsNames = append(dnsNames, serverHost)
+	}
 	serverTemplate := &x509.Certificate{
 		SerialNumber: serverSerial,
 		Subject:      pkix.Name{CommonName: "postgres"},
-		DNSNames:     []string{"postgres", "localhost"},
+		DNSNames:     dnsNames,
 		NotBefore:    time.Now().Add(-time.Minute), NotAfter: time.Now().Add(24 * time.Hour),
 		KeyUsage:    x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
@@ -561,5 +575,5 @@ func waitQualificationNativePostgresTopology(
 }
 
 func qualificationNativePostgresProbe(database, role, password string) string {
-	return fmt.Sprintf("PGSSLMODE=require PGPASSWORD=%s psql --host 127.0.0.1 --port 5432 --username %s --dbname %s --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command 'SELECT 1'", password, role, database)
+	return fmt.Sprintf("PGSSLMODE=verify-full PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem PGPASSWORD=%s psql --host localhost --port 5432 --username %s --dbname %s --no-psqlrc --tuples-only --no-align --set ON_ERROR_STOP=1 --command 'SELECT 1'", password, role, database)
 }

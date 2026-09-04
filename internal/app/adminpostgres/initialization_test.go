@@ -66,7 +66,7 @@ func productionAdminConfig(home string) config.Config {
 	return config.Config{
 		HomeDir: home, Production: true, Environment: "prod", BootstrapEmail: "bootstrap@example.com",
 		TokenHashKey: strings.Repeat("k", 32), PostgresRequireTLS: true,
-		PostgresControlURL: "postgres://runtime/control?sslmode=require",
+		PostgresControlURL: "postgres://runtime/control?sslmode=verify-full",
 	}
 }
 

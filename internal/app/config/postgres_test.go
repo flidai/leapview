@@ -128,13 +128,73 @@ func TestValidatePostgresProductionRejectsPlaintextAndRequiresDelivery(t *testin
 		t.Fatal("production PostgreSQL validation accepted plaintext URLs")
 	}
 	base.PostgresRequireTLS = true
-	base.PostgresControlURL = "postgres://runtime:secret@db/control?sslmode=require"
-	base.PostgresControlMigratorURL = "postgres://migrator:secret@db/control?sslmode=require"
-	base.PostgresControlMaintenanceURL = "postgres://maintenance:secret@db/control?sslmode=require"
-	base.PostgresDuckLakeURL = "postgres://ducklake:secret@db/ducklake?sslmode=require"
-	base.PostgresDuckLakeMaintenanceURL = "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require"
+	base.PostgresControlURL = "postgres://runtime:secret@db/control?sslmode=verify-full"
+	base.PostgresControlMigratorURL = "postgres://migrator:secret@db/control?sslmode=verify-full"
+	base.PostgresControlMaintenanceURL = "postgres://maintenance:secret@db/control?sslmode=verify-full"
+	base.PostgresDuckLakeURL = "postgres://ducklake:secret@db/ducklake?sslmode=verify-full"
+	base.PostgresDuckLakeMaintenanceURL = "postgres://catalog-maintenance:secret@db/ducklake?sslmode=verify-full"
 	if err := base.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID") {
 		t.Fatalf("production PostgreSQL validation accepted incomplete deployment: %v", err)
+	}
+}
+
+func TestValidatePostgresProductionRequiresCertificateAndHostnameVerification(t *testing.T) {
+	base := Config{
+		Production:                              true,
+		PostgresRequireTLS:                      true,
+		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=verify-full",
+		PostgresControlReadonlyURL:              "postgres://readonly:secret@db/control?sslmode=verify-full",
+		PostgresControlUpgradeCoordinatorURL:    "postgres://coordinator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=verify-full",
+		PostgresDuckLakeMigratorURL:             "postgres://catalog-migrator:secret@db/ducklake?sslmode=verify-full",
+		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=verify-full",
+		PostgresControlRuntimeRole:              postgresControlRuntimeRole,
+		PostgresControlMigratorRole:             postgresControlMigratorRole,
+		PostgresControlMaintenanceRole:          postgresControlMaintenanceRole,
+		PostgresDuckLakeRuntimeRole:             postgresDuckLakeRuntimeRole,
+		DeliveryPhysicalPoolID:                  "pool-prod",
+		DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
+	}
+	for _, sslmode := range []string{"require", "verify-ca"} {
+		for _, test := range []struct {
+			name string
+			set  func(*Config, string)
+		}{
+			{name: "control runtime", set: func(cfg *Config, mode string) {
+				cfg.PostgresControlURL = "postgres://runtime:secret@db/control?sslmode=" + mode
+			}},
+			{name: "control migrator", set: func(cfg *Config, mode string) {
+				cfg.PostgresControlMigratorURL = "postgres://migrator:secret@db/control?sslmode=" + mode
+			}},
+			{name: "control upgrade coordinator", set: func(cfg *Config, mode string) {
+				cfg.PostgresControlUpgradeCoordinatorURL = "postgres://coordinator:secret@db/control?sslmode=" + mode
+			}},
+			{name: "control maintenance", set: func(cfg *Config, mode string) {
+				cfg.PostgresControlMaintenanceURL = "postgres://maintenance:secret@db/control?sslmode=" + mode
+			}},
+			{name: "control readonly", set: func(cfg *Config, mode string) {
+				cfg.PostgresControlReadonlyURL = "postgres://readonly:secret@db/control?sslmode=" + mode
+			}},
+			{name: "DuckLake runtime", set: func(cfg *Config, mode string) {
+				cfg.PostgresDuckLakeURL = "postgres://ducklake:secret@db/ducklake?sslmode=" + mode
+			}},
+			{name: "DuckLake migrator", set: func(cfg *Config, mode string) {
+				cfg.PostgresDuckLakeMigratorURL = "postgres://catalog-migrator:secret@db/ducklake?sslmode=" + mode
+			}},
+			{name: "DuckLake maintenance", set: func(cfg *Config, mode string) {
+				cfg.PostgresDuckLakeMaintenanceURL = "postgres://catalog-maintenance:secret@db/ducklake?sslmode=" + mode
+			}},
+		} {
+			t.Run(sslmode+"/"+test.name, func(t *testing.T) {
+				cfg := base
+				test.set(&cfg, sslmode)
+				if err := cfg.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "sslmode=verify-full") {
+					t.Fatalf("production sslmode=%s accepted for %s: %v", sslmode, test.name, err)
+				}
+			})
+		}
 	}
 }
 
@@ -165,11 +225,11 @@ func TestValidatePostgresProductionRequiresDistinctMaintenanceCredentials(t *tes
 	base := Config{
 		Production:                              true,
 		PostgresRequireTLS:                      true,
-		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=require",
-		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require",
+		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=verify-full",
+		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=verify-full",
 		PostgresControlRuntimeRole:              postgresControlRuntimeRole,
 		PostgresControlMigratorRole:             postgresControlMigratorRole,
 		PostgresControlMaintenanceRole:          postgresControlMaintenanceRole,
@@ -199,11 +259,11 @@ func TestValidatePostgresProductionRequiresDeliveryPoolContract(t *testing.T) {
 	base := Config{
 		Production:                              true,
 		PostgresRequireTLS:                      true,
-		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=require",
-		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require",
+		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=verify-full",
+		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=verify-full",
 		PostgresControlRuntimeRole:              postgresControlRuntimeRole,
 		PostgresControlMigratorRole:             postgresControlMigratorRole,
 		PostgresControlMaintenanceRole:          postgresControlMaintenanceRole,
@@ -236,11 +296,11 @@ func TestValidatePostgresProductionRejectsSemanticMaintenanceCredentialAlias(t *
 	cfg := Config{
 		Production:                     true,
 		PostgresRequireTLS:             true,
-		PostgresControlURL:             "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL:     "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:            "postgres://ducklake:secret@db/ducklake?sslmode=require",
-		PostgresDuckLakeMaintenanceURL: "postgresql://ducklake:secret@db:5432/ducklake?sslrootcert=%2Fetc%2Fca.pem&sslmode=require",
+		PostgresControlURL:             "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresControlMigratorURL:     "postgres://migrator:secret@db/control?sslmode=verify-full",
+		PostgresControlMaintenanceURL:  "postgres://maintenance:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:            "postgres://ducklake:secret@db/ducklake?sslmode=verify-full",
+		PostgresDuckLakeMaintenanceURL: "postgresql://ducklake:secret@db:5432/ducklake?sslrootcert=%2Fetc%2Fca.pem&sslmode=verify-full",
 		PostgresControlRuntimeRole:     postgresControlRuntimeRole,
 		PostgresControlMigratorRole:    postgresControlMigratorRole,
 		PostgresControlMaintenanceRole: postgresControlMaintenanceRole,
@@ -253,10 +313,10 @@ func TestValidatePostgresProductionRejectsSemanticMaintenanceCredentialAlias(t *
 
 func TestValidatePostgresUpgradeRequiresIndependentOwnerCredentials(t *testing.T) {
 	base := Config{PostgresExpectedMajor: 18, PostgresRequireTLS: true,
-		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:                  "postgres://duck:secret@db/ducklake?sslmode=require",
-		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=require",
-		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=require"}
+		PostgresControlURL:                   "postgres://runtime:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeURL:                  "postgres://duck:secret@db/ducklake?sslmode=verify-full",
+		PostgresControlUpgradeCoordinatorURL: "postgres://coordinator:secret@db/control?sslmode=verify-full",
+		PostgresDuckLakeMigratorURL:          "postgres://catalog-migrator:secret@db/ducklake?sslmode=verify-full"}
 	if err := base.ValidatePostgresUpgrade(); err != nil {
 		t.Fatalf("valid independent upgrade credentials rejected: %v", err)
 	}

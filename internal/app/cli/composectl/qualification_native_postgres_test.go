@@ -101,7 +101,8 @@ func TestQualificationNativePostgresNativeDeliveryReadInvariant(t *testing.T) {
 	require.NoError(t, topology.AssertNativeDeliveryReads(t.Context()))
 	require.Len(t, container.probes, 1)
 	require.Contains(t, container.probes[0], "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD")
-	require.Contains(t, container.probes[0], "PGSSLMODE=require")
+	require.Contains(t, container.probes[0], "PGSSLMODE=verify-full")
+	require.Contains(t, container.probes[0], "PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem")
 	require.Contains(t, container.probes[0], "ducklake.catalog_identity")
 	require.Contains(t, container.probes[0], "delivery.delivery_build_attempt")
 	require.Contains(t, container.probes[0], "delivery.delivery_snapshot_seal")
@@ -166,10 +167,13 @@ func TestQualificationNativePostgresTopologyStartsPinnedTLSNetworkSidecar(t *tes
 	require.Equal(t, "leapview-qualification_default", runtime.request.NetworkMode)
 	require.Equal(t, []string{"sh"}, runtime.request.Entrypoint)
 	require.True(t, runtime.request.NoHealth)
-	require.Len(t, runtime.request.Volumes, 4)
-	for _, volume := range runtime.request.Volumes {
+	require.Len(t, runtime.request.Volumes, 5)
+	for _, volume := range runtime.request.Volumes[:4] {
 		require.True(t, volume.ReadOnly, "all init/TLS mounts must be read-only")
 	}
+	require.False(t, runtime.request.Volumes[4].ReadOnly)
+	require.Equal(t, "leapview-qualification_leapview-state", runtime.request.Volumes[4].Source)
+	require.Equal(t, "/var/lib/leapview", runtime.request.Volumes[4].Target)
 	require.Contains(t, runtime.request.Command[1], "ssl=on")
 	require.Contains(t, runtime.request.Command[1], "ssl_ca_file=")
 	require.Contains(t, runtime.request.Command[1], "ssl_cert_file=")
@@ -193,7 +197,7 @@ func TestQualificationNativePostgresTopologyStartsPinnedTLSNetworkSidecar(t *tes
 	for _, probe := range []string{"leapview_control", "leapview_ducklake"} {
 		found := false
 		for _, command := range runtime.container.probes {
-			if strings.Contains(command, "PGSSLMODE=require") && strings.Contains(command, "--dbname "+probe) && strings.Contains(command, "--command 'SELECT 1'") {
+			if strings.Contains(command, "PGSSLMODE=verify-full") && strings.Contains(command, "PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem") && strings.Contains(command, "--dbname "+probe) && strings.Contains(command, "--command 'SELECT 1'") {
 				found = true
 				break
 			}
@@ -207,7 +211,8 @@ func TestQualificationNativePostgresTopologyStartsPinnedTLSNetworkSidecar(t *tes
 	} {
 		parsed, parseErr := url.Parse(connectionURL)
 		require.NoError(t, parseErr)
-		require.Equal(t, "require", parsed.Query().Get("sslmode"))
+		require.Equal(t, "verify-full", parsed.Query().Get("sslmode"))
+		require.Equal(t, qualificationNativePostgresRootCertPath, parsed.Query().Get("sslrootcert"))
 		require.NotEmpty(t, parsed.User.Username())
 		password, present := parsed.User.Password()
 		require.True(t, present)
@@ -318,7 +323,8 @@ func TestQualificationNativePostgresTopologyCleansUpStartAndReadinessFailures(t 
 func TestQualificationNativePostgresProbeRedactsCredentialDiagnostics(t *testing.T) {
 	secret := strings.Repeat("a", 48)
 	message := qualificationNativePostgresProbe("leapview_control", qualificationNativePostgresControlRuntimeRole, secret)
-	require.Contains(t, message, "PGSSLMODE=require")
+	require.Contains(t, message, "PGSSLMODE=verify-full")
+	require.Contains(t, message, "PGSSLROOTCERT=/tmp/leapview-postgres-tls/ca.pem")
 	require.Contains(t, message, "PGPASSWORD="+secret)
 
 	redacted := string(redactQualificationBytes([]byte(message)))

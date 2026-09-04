@@ -21,7 +21,7 @@ func qualificationNativeEnvironmentTopologyFixture() *qualificationNativePostgre
 			qualificationNativePostgresDuckLakeRuntimeRole:     qualificationNativePostgresDuckLakeDatabase,
 			qualificationNativePostgresDuckLakeMigratorRole:    qualificationNativePostgresDuckLakeDatabase,
 			qualificationNativePostgresDuckLakeMaintenanceRole: qualificationNativePostgresDuckLakeDatabase,
-		}[role], RawQuery: "sslmode=require"}
+		}[role], RawQuery: "sslmode=verify-full&sslrootcert=" + url.QueryEscape(qualificationNativePostgresRootCertPath)}
 		return parsed.String()
 	}
 	makeURL := func(role string) string {
@@ -126,7 +126,7 @@ func TestQualificationNativeEnvironmentRejectsAliasURLsAndRoles(t *testing.T) {
 			require.NoError(t, err)
 			parsed.Scheme = "postgresql"
 			parsed.Host = "POSTGRES:5432"
-			parsed.RawQuery = "foo=bar&sslmode=require"
+			parsed.RawQuery = "foo=bar&sslmode=verify-full&sslrootcert=" + url.QueryEscape(qualificationNativePostgresRootCertPath)
 			topology.ControlMigratorURL = parsed.String()
 		},
 		"role alias": func(topology *qualificationNativePostgresTopology) {

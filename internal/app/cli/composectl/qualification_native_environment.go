@@ -238,8 +238,8 @@ func validateQualificationNativePostgresURL(raw, expectedRole, expectedDatabase,
 		return "", fmt.Errorf("qualification PostgreSQL %s URL has an invalid role identity", label)
 	}
 	query, err := url.ParseQuery(parsed.RawQuery)
-	if err != nil || len(query["sslmode"]) != 1 || !strings.EqualFold(strings.TrimSpace(query.Get("sslmode")), "require") {
-		return "", fmt.Errorf("qualification PostgreSQL %s URL must set sslmode=require", label)
+	if err != nil || len(query["sslmode"]) != 1 || strings.TrimSpace(query["sslmode"][0]) != "verify-full" {
+		return "", fmt.Errorf("qualification PostgreSQL %s URL must set sslmode=verify-full", label)
 	}
 	port := 5432
 	if parsed.Port() != "" {

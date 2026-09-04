@@ -140,12 +140,19 @@ func TestOpenControlPlaneRequiresReadWriteSingleConnectionMaintenance(t *testing
 func TestConfigValidateTLSIntent(t *testing.T) {
 	cfg := testConfig()
 	cfg.RequireTLS = true
-	if err := cfg.Validate(); err == nil {
-		t.Fatal("plaintext PostgreSQL URL accepted when TLS is required")
+	for _, sslmode := range []string{"", "disable", "require", "verify-ca"} {
+		candidate := cfg
+		candidate.URL = "postgres://runtime:secret@db/control"
+		if sslmode != "" {
+			candidate.URL += "?sslmode=" + sslmode
+		}
+		if err := candidate.Validate(); err == nil {
+			t.Fatalf("PostgreSQL URL with sslmode=%q accepted when certificate and hostname verification is required", sslmode)
+		}
 	}
 	cfg.URL += "?sslmode=verify-full"
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("TLS PostgreSQL URL rejected: %v", err)
+		t.Fatalf("certificate- and hostname-verified PostgreSQL URL rejected: %v", err)
 	}
 }
 

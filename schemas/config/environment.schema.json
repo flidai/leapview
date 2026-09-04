@@ -2970,7 +2970,7 @@
     },
     "LEAPVIEW_POSTGRES_REQUIRE_TLS": {
       "default": "true",
-      "description": "Require PostgreSQL URLs to use an encrypted sslmode.",
+      "description": "Require PostgreSQL URLs to use sslmode=verify-full, authenticating both the server certificate chain and hostname.",
       "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
       "type": "string",
       "x-lifecycle": "supported",

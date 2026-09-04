@@ -140,8 +140,12 @@ migration identities may have narrowly scoped DDL; a migrator must not remain
 in the request path. A readonly identity must not be able to mutate metadata,
 leases, jobs, or access state. Do not run LeapView with a PostgreSQL superuser.
 
-Require TLS with server certificate and hostname verification (the provider's
-`verify-full` equivalent) and keep CA material in the deployment secret store.
+Require TLS with server certificate and hostname verification. PostgreSQL URLs
+must use `sslmode=verify-full` (or a provider setting with the same certificate
+and hostname guarantees), with the provider CA available through `sslrootcert`
+or the deployment image's trusted system CA. `sslmode=require` and
+`sslmode=verify-ca` are rejected because they do not authenticate both sides of
+that contract. Keep CA material in the deployment secret store.
 For a rotation:
 
 1. Rotate the password or provider credential for the existing canonical role
