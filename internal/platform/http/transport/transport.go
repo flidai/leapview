@@ -3,7 +3,6 @@ package transport
 
 import (
 	"bytes"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -15,6 +14,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 const (
@@ -164,11 +165,14 @@ func StrongETag(value string) string {
 }
 
 func NewRequestID() string {
-	var value [16]byte
-	if _, err := rand.Read(value[:]); err != nil {
+	value, err := uuid.NewV7()
+	if err != nil {
+		// Entropy failures are exceptional. Do not retry through another API
+		// that may panic on the same failure or risk a non-unique identity;
+		// callers will reject this explicit unavailable sentinel.
 		return "req_unavailable"
 	}
-	return "req_" + hex.EncodeToString(value[:])
+	return value.String()
 }
 
 type keysetPageCursor struct {

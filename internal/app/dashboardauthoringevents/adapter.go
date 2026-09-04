@@ -51,15 +51,11 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx authoringpostgres.Tx, inpu
 	if err := canonicalEventUUIDv7(input.EventID); err != nil {
 		return authoringpostgres.Event{}, fmt.Errorf("%w: authoring event id: %v", authoring.ErrConflict, err)
 	}
-	if input.CorrelationID != "" {
-		if err := canonicalCorrelationUUIDv7(input.CorrelationID); err != nil {
-			return authoringpostgres.Event{}, fmt.Errorf("%w: authoring correlation id: %v", authoring.ErrConflict, err)
-		}
-	}
+	correlationID := eventspostgres.CanonicalCorrelationID(input.CorrelationID)
 	stored, err := a.events.AppendEvent(ctx, tx, watermill.TopicDashboard, watermill.EventInput{
 		EventID: input.EventID, ScopeID: input.ProjectID, AggregateType: "dashboard_authoring",
 		AggregateID: input.DashboardID, EventType: input.Type, SchemaVersion: 1,
-		CorrelationID: input.CorrelationID, Payload: append([]byte(nil), input.Payload...),
+		CorrelationID: correlationID, Payload: append([]byte(nil), input.Payload...),
 	})
 	if err != nil {
 		if isEventIDValidation(err) {
@@ -74,21 +70,10 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx authoringpostgres.Tx, inpu
 	if stored.EventID != input.EventID || stored.ScopeID != input.ProjectID ||
 		stored.AggregateType != "dashboard_authoring" || stored.AggregateID != input.DashboardID ||
 		stored.EventType != input.Type || stored.SchemaVersion != 1 ||
-		stored.CorrelationID != input.CorrelationID || stored.AggregateVersion <= 0 {
+		stored.CorrelationID != correlationID || stored.AggregateVersion <= 0 {
 		return authoringpostgres.Event{}, fmt.Errorf("%w: dashboard authoring event identity differs", authoring.ErrConflict)
 	}
 	return authoringpostgres.Event{EventID: stored.EventID, ProjectID: stored.ScopeID, DashboardID: stored.AggregateID, ActorID: input.ActorID, CorrelationID: stored.CorrelationID, Revision: input.Revision, Type: stored.EventType, AggregateVersion: stored.AggregateVersion, Payload: append([]byte(nil), stored.Payload...)}, nil
-}
-
-func canonicalCorrelationUUIDv7(value string) error {
-	if value == "" || value != strings.TrimSpace(value) {
-		return errors.New("must be a canonical UUIDv7")
-	}
-	parsed, err := uuid.Parse(value)
-	if err != nil || parsed.String() != value || parsed.Version() != 7 {
-		return errors.New("must be a canonical UUIDv7")
-	}
-	return nil
 }
 
 func isEventIDValidation(err error) bool {

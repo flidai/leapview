@@ -17,6 +17,7 @@ import (
 	runtimehost "github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
+	"github.com/google/uuid"
 )
 
 const postgresPublicJourneyGenerationID = "0198f2c0-7c7a-7f00-8a11-000000000001"
@@ -58,6 +59,24 @@ func TestPostgresPublicDashboardJourney(t *testing.T) {
 
 	if err := fixture.Graph.Project.EnsureIdentity(t.Context(), postgresJourneyProject); err != nil {
 		t.Fatalf("ensure journey project identity: %v", err)
+	}
+	// Exercise one native authoring mutation through the generated API route
+	// without client-supplied request/correlation headers. RequestCorrelation
+	// must generate canonical UUIDv7 identities that the event/audit boundary
+	// can carry transactionally.
+	authoringCreate := fixture.Request(t.Context(), http.MethodPost, "/api/v1/projects/"+postgresJourneyProject.String()+"/authoring/drafts", strings.NewReader(`{"title":"Journey dashboard","semanticModel":"semantic:journey"}`))
+	authoringCreate.Header.Set("Authorization", "Bearer "+journeyToken)
+	authoringCreate.Header.Set("Content-Type", "application/json")
+	authoringCreate.Header.Set("Idempotency-Key", "0198f2c0-7c7a-7f00-8a11-000000000011")
+	authoringResponse := httptest.NewRecorder()
+	handler.ServeHTTP(authoringResponse, authoringCreate)
+	if authoringResponse.Code != http.StatusCreated {
+		t.Fatalf("native authoring create = %d body=%s", authoringResponse.Code, authoringResponse.Body.String())
+	}
+	generatedCorrelation := authoringResponse.Header().Get("X-Correlation-ID")
+	parsedCorrelation, parseCorrelationErr := uuid.Parse(generatedCorrelation)
+	if parseCorrelationErr != nil || parsedCorrelation.String() != generatedCorrelation || parsedCorrelation.Version() != 7 {
+		t.Fatalf("generated authoring correlation = %q, want canonical UUIDv7", generatedCorrelation)
 	}
 	if err := fixture.SeedNativePublication(t.Context(), publication.ReconcileInput{
 		ProjectID:      postgresJourneyProject,

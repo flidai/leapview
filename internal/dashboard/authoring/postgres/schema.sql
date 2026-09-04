@@ -701,7 +701,12 @@ BEGIN
            AND a.resource_id = e.aggregate_id
            AND a.aggregate_key = ('dashboard_authoring:' || e.scope_id || ':' || e.aggregate_id)
            AND a.aggregate_sequence = e.aggregate_version
-           AND a.correlation_id IS NOT DISTINCT FROM e.correlation_id::text
+           -- event_log keeps only canonical UUID correlations.  Audit rows
+           -- intentionally retain opaque request/client correlation values;
+           -- event_id is the exact linkage when the event-side UUID is NULL.
+           AND (a.correlation_id IS NOT DISTINCT FROM e.correlation_id::text
+                OR (e.correlation_id IS NULL AND a.correlation_id IS NOT NULL
+                    AND NOT (a.correlation_id ~ '^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$')))
            AND a.action = e.event_type
            AND a.metadata = e.payload)
        INTO v_ok;

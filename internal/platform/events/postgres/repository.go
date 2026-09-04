@@ -19,6 +19,7 @@ import (
 
 	eventsdb "github.com/flidai/leapview/internal/platform/events/postgres/internal/db"
 	"github.com/flidai/leapview/pkg/strictjson"
+	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -1114,6 +1115,21 @@ func validateUUID(label, value string) error {
 		return fmt.Errorf("%s must be a UUID: %w", label, err)
 	}
 	return nil
+}
+
+// CanonicalCorrelationID projects an opaque request/client correlation into
+// the event-log UUID field. Non-UUID values remain available on the audit row,
+// while the canonical event envelope represents them as SQL NULL.
+func CanonicalCorrelationID(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	parsed, err := uuid.Parse(value)
+	if err != nil || parsed.String() != value {
+		return ""
+	}
+	return value
 }
 
 // validateUUIDv7 enforces the event authority's textual identity contract.

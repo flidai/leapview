@@ -16,6 +16,7 @@ import (
 	dashboarddb "github.com/flidai/leapview/internal/dashboard/authoring/postgres/internal/db"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	"github.com/flidai/leapview/internal/dashboard/document"
+	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/flidai/leapview/internal/project/graph"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -1152,12 +1153,13 @@ func (r *Repository) recordAuditIntent(ctx context.Context, tx Tx, lifecycle aut
 	if r.events == nil {
 		return fmt.Errorf("dashboard authoring domain event port is required")
 	}
+	correlationID := eventspostgres.CanonicalCorrelationID(intent.CorrelationID)
 	eventID := auditID
-	event, err := r.events.AppendEvent(ctx, tx, EventInput{EventID: eventID.String(), ProjectID: projectID, DashboardID: lifecycle.ID.String(), ActorID: intent.ActorID, CorrelationID: intent.CorrelationID, Revision: revisionNumber, Type: intent.Action, Payload: []byte(metadata)})
+	event, err := r.events.AppendEvent(ctx, tx, EventInput{EventID: eventID.String(), ProjectID: projectID, DashboardID: lifecycle.ID.String(), ActorID: intent.ActorID, CorrelationID: correlationID, Revision: revisionNumber, Type: intent.Action, Payload: []byte(metadata)})
 	if err != nil {
 		return fmt.Errorf("append dashboard authoring domain event: %w", err)
 	}
-	if event.EventID != eventID.String() || event.ProjectID != projectID || event.DashboardID != lifecycle.ID.String() || event.ActorID != intent.ActorID || event.CorrelationID != intent.CorrelationID || event.Revision != revisionNumber || event.Type != intent.Action || event.AggregateVersion <= 0 || !canonicalJSONEqual(event.Payload, []byte(metadata)) {
+	if event.EventID != eventID.String() || event.ProjectID != projectID || event.DashboardID != lifecycle.ID.String() || event.ActorID != intent.ActorID || event.CorrelationID != correlationID || event.Revision != revisionNumber || event.Type != intent.Action || event.AggregateVersion <= 0 || !canonicalJSONEqual(event.Payload, []byte(metadata)) {
 		return fmt.Errorf("dashboard authoring domain event returned mismatched identity")
 	}
 	intent.DomainEventID = event.EventID
