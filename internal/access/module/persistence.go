@@ -119,9 +119,6 @@ func NewPostgresPersistence(repository *accesspostgres.Repository, oauth *mcpoau
 	if !repository.Configured() {
 		return Persistence{}, errors.New("PostgreSQL access repository is not configured")
 	}
-	if oauth != nil && !oauth.IsPostgresBacked() {
-		return Persistence{}, errors.New("PostgreSQL access persistence requires PostgreSQL-backed MCP OAuth state")
-	}
 	p := Persistence{Repository: repository, OAuth: oauth, backend: backendPostgres, nativeRepository: repository}
 	p.Snapshot, p.Publication = postgresActivationPorts{}, postgresActivationPorts{}
 	p.Authoring, _ = any(repository).(access.AuthoringAuthRepository)

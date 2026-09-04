@@ -62,8 +62,8 @@ func TestNewPersistenceConstructsPostgresOAuth(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewPersistence(internal issuer): %v", err)
 	}
-	if persistence.OAuth == nil || !persistence.OAuth.IsPostgresBacked() {
-		t.Fatal("internal composition did not construct PostgreSQL-backed OAuth service")
+	if persistence.OAuth == nil {
+		t.Fatal("internal composition did not construct PostgreSQL OAuth service")
 	}
 }
 
@@ -124,7 +124,7 @@ func TestNewPersistenceWithPostgresOAuthIntegration(t *testing.T) {
 	if err != nil {
 		t.Fatalf("construct native persistence: %v", err)
 	}
-	if persistence.OAuth == nil || !persistence.OAuth.IsPostgresBacked() {
-		t.Fatal("integration persistence missing PostgreSQL-backed OAuth")
+	if persistence.OAuth == nil {
+		t.Fatal("integration persistence missing PostgreSQL OAuth")
 	}
 }

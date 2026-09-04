@@ -3,7 +3,6 @@ package mcpoauth
 import (
 	"context"
 	"crypto/rand"
-	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -39,8 +38,7 @@ type Config struct {
 type Service struct {
 	config         Config
 	provider       fosite.OAuth2Provider
-	store          StoreBackend
-	postgresBacked bool
+	store          *PostgresStore
 	repo           access.Repository
 	metadataClient *http.Client
 }
@@ -91,24 +89,6 @@ type TokenResponse struct {
 	Scope        string `json:"scope,omitempty"`
 }
 
-// StoreBackend is the durable MCP OAuth state contract. Implementations may
-// use PostgreSQL, while the legacy Store uses SQLite only through New.
-type StoreBackend interface {
-	fosite.Storage
-	SetClientResolver(func(context.Context, string) (StoredClient, error))
-	ClientName(context.Context, string) (string, error)
-	CreateClient(context.Context, StoredClient) error
-	EnsureServiceClient(context.Context, string, string, string) error
-	SetSessionRetention(time.Duration)
-}
-
-func New(db *sql.DB, repo access.Repository, config Config) (*Service, error) {
-	if db == nil {
-		return nil, fmt.Errorf("MCP OAuth SQLite storage is required")
-	}
-	return newWithStore(NewStore(db), repo, config, false)
-}
-
 // NewPostgres constructs MCP OAuth over the access control PostgreSQL
 // connection. The caller is responsible for applying the access baseline
 // before invoking this constructor.
@@ -117,20 +97,10 @@ func NewPostgres(db accesspostgres.DBTX, repo access.Repository, config Config) 
 	if err != nil {
 		return nil, err
 	}
-	return newWithStore(store, repo, config, true)
+	return newPostgresService(store, repo, config)
 }
 
-// NewWithStore constructs MCP OAuth over an explicitly supplied durable store.
-// It is intentionally non-PostgreSQL-marked; production should use
-// NewPostgres, which owns the marker after constructing PostgresStore.
-func NewWithStore(store StoreBackend, repo access.Repository, config Config) (*Service, error) {
-	return newWithStore(store, repo, config, false)
-}
-
-// newWithStore is constructor-owned so an arbitrary StoreBackend cannot claim
-// PostgreSQL backing through a user-defined marker method. Only NewPostgres
-// sets postgresBacked=true after constructing the concrete PG adapter.
-func newWithStore(store StoreBackend, repo access.Repository, config Config, postgresBacked bool) (*Service, error) {
+func newPostgresService(store *PostgresStore, repo access.Repository, config Config) (*Service, error) {
 	if store == nil || repo == nil {
 		return nil, fmt.Errorf("MCP OAuth requires storage and access repository")
 	}
@@ -184,14 +154,10 @@ func newWithStore(store StoreBackend, repo access.Repository, config Config, pos
 		compose.OAuth2TokenRevocationFactory,
 		compose.OAuth2PKCEFactory,
 	)
-	service := &Service{config: config, provider: provider, store: store, postgresBacked: postgresBacked, repo: repo, metadataClient: metadataClient}
+	service := &Service{config: config, provider: provider, store: store, repo: repo, metadataClient: metadataClient}
 	store.SetClientResolver(service.resolveClientMetadata)
 	return service, nil
 }
-
-// IsPostgresBacked reports whether the service's state store is a PostgreSQL
-// implementation. A nil or legacy SQLite service returns false.
-func (s *Service) IsPostgresBacked() bool { return s != nil && s.postgresBacked }
 
 func (s *Service) Consent(r *http.Request) (Consent, error) {
 	request, err := s.normalizeResourceRequest(r, true)

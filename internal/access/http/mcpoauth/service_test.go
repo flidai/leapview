@@ -9,15 +9,15 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
 	"github.com/flidai/leapview/internal/access/http/mcpoauth"
-	accesssqlite "github.com/flidai/leapview/internal/access/sqlite"
-	"github.com/flidai/leapview/internal/platform"
+	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
+	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 const (
@@ -28,17 +28,13 @@ const (
 
 func TestAuthorizationCodePKCERefreshAndRevocation(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	db := newTestPostgres(t)
+	repo := db.repo
 	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{Email: "user@example.com", DisplayName: "MCP User"})
 	if err != nil {
 		t.Fatalf("create principal: %v", err)
 	}
-	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{
+	service, err := mcpoauth.NewPostgres(db.pool, repo, mcpoauth.Config{
 		IssuerURL:   testIssuer,
 		ResourceURL: testResource,
 		Secret:      []byte("0123456789abcdef0123456789abcdef"),
@@ -130,19 +126,15 @@ func TestAuthorizationCodePKCERefreshAndRevocation(t *testing.T) {
 
 func TestPrincipalDisableThenEnableDoesNotReviveMCPOAuthTokens(t *testing.T) {
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	db := newTestPostgres(t)
+	repo := db.repo
 	principal, err := repo.UpsertPrincipal(ctx, access.PrincipalInput{
 		Email: "disabled-mcp@example.com", DisplayName: "Disabled MCP User",
 	})
 	if err != nil {
 		t.Fatalf("create principal: %v", err)
 	}
-	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{
+	service, err := mcpoauth.NewPostgres(db.pool, repo, mcpoauth.Config{
 		IssuerURL: testIssuer, ResourceURL: testResource,
 		Secret: []byte("0123456789abcdef0123456789abcdef"),
 	})
@@ -176,7 +168,7 @@ func TestPrincipalDisableThenEnableDoesNotReviveMCPOAuthTokens(t *testing.T) {
 		t.Fatalf("authenticate before disable: %v", err)
 	}
 
-	if _, err := repo.DisablePrincipal(ctx, principal.ID); err != nil {
+	if _, err := repo.DisableProvisionedPrincipal(ctx, principal.ID); err != nil {
 		t.Fatalf("disable principal: %v", err)
 	}
 	if _, err := repo.EnablePrincipal(ctx, principal.ID); err != nil {
@@ -192,11 +184,11 @@ func TestPrincipalDisableThenEnableDoesNotReviveMCPOAuthTokens(t *testing.T) {
 		}))
 	})
 	var active int
-	if err := store.SQLDB().QueryRowContext(ctx, `
+	if err := db.pool.QueryRow(ctx, `
 SELECT COUNT(*)
-FROM oauth_sessions
-WHERE active = 1
-  AND json_extract(request_json, '$.session.subject') = ?`, principal.ID).Scan(&active); err != nil {
+FROM access.oauth_session
+WHERE active = true
+  AND request_json->'session'->>'subject' = $1`, principal.ID).Scan(&active); err != nil {
 		t.Fatal(err)
 	}
 	if active != 0 {
@@ -229,18 +221,13 @@ func TestRejectsMissingPKCEAndWrongResource(t *testing.T) {
 
 func TestClientIDMetadataDocumentRegistration(t *testing.T) {
 	const clientID = "https://client.example/oauth/client-metadata.json"
-	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	db := newTestPostgres(t)
+	repo := db.repo
 	metadataClient := &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		body := `{"client_id":"` + clientID + `","client_name":"CIMD Client","redirect_uris":["` + testRedirect + `"],"grant_types":["authorization_code","refresh_token"],"response_types":["code"],"token_endpoint_auth_method":"none","logo_uri":"https://client.example/logo.png"}`
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": {"application/json"}}, Body: io.NopCloser(strings.NewReader(body)), Request: request}, nil
 	})}
-	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{
+	service, err := mcpoauth.NewPostgres(db.pool, repo, mcpoauth.Config{
 		IssuerURL: testIssuer, ResourceURL: testResource,
 		Secret: []byte("0123456789abcdef0123456789abcdef"), ClientMetadataHTTPClient: metadataClient,
 	})
@@ -266,21 +253,17 @@ func TestServicePrincipalClientCredentials(t *testing.T) {
 	const accessTokenTTL = 2 * time.Second
 
 	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	principal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{ID: "sp_mcp", DisplayName: "MCP automation"})
+	db := newTestPostgres(t)
+	repo := db.repo
+	principal, err := repo.CreateServicePrincipal(ctx, access.ServicePrincipalInput{DisplayName: "MCP automation"})
 	if err != nil {
 		t.Fatalf("create service principal: %v", err)
 	}
-	secret, _, err := repo.CreateServicePrincipalSecret(ctx, principal.ID, access.ServicePrincipalSecretInput{Name: "mcp"})
+	secret, _, err := repo.CreateServicePrincipalSecret(ctx, principal.ID, access.ServicePrincipalSecretInput{Name: "mcp", ExpiresAt: time.Now().UTC().Add(time.Hour)})
 	if err != nil {
 		t.Fatalf("create service principal secret: %v", err)
 	}
-	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{
+	service, err := mcpoauth.NewPostgres(db.pool, repo, mcpoauth.Config{
 		IssuerURL: testIssuer, ResourceURL: testResource,
 		Secret: []byte("0123456789abcdef0123456789abcdef"), AccessTokenTTL: accessTokenTTL,
 	})
@@ -396,17 +379,12 @@ func assertOAuthError(t *testing.T, status int, run func(*httptest.ResponseRecor
 }
 
 func TestAdversarialProviderMetadataBodyIsBoundedAndSecretsAreNotReturned(t *testing.T) {
-	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "provider.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
+	db := newTestPostgres(t)
+	repo := db.repo
 	metadataClient := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(strings.Repeat("secret-provider-body", 100000)))}, nil
 	})}
-	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{IssuerURL: testIssuer, ResourceURL: testResource, Secret: []byte("0123456789abcdef0123456789abcdef"), ClientMetadataHTTPClient: metadataClient})
+	service, err := mcpoauth.NewPostgres(db.pool, repo, mcpoauth.Config{IssuerURL: testIssuer, ResourceURL: testResource, Secret: []byte("0123456789abcdef0123456789abcdef"), ClientMetadataHTTPClient: metadataClient})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -420,14 +398,8 @@ func TestAdversarialProviderMetadataBodyIsBoundedAndSecretsAreNotReturned(t *tes
 
 func testService(t *testing.T) *mcpoauth.Service {
 	t.Helper()
-	ctx := context.Background()
-	store, err := platform.Open(ctx, filepath.Join(t.TempDir(), "leapview.db"))
-	if err != nil {
-		t.Fatalf("open store: %v", err)
-	}
-	t.Cleanup(func() { _ = store.Close() })
-	repo := accesssqlite.NewRepository(store.SQLDB())
-	service, err := mcpoauth.New(store.SQLDB(), repo, mcpoauth.Config{
+	db := newTestPostgres(t)
+	service, err := mcpoauth.NewPostgres(db.pool, db.repo, mcpoauth.Config{
 		IssuerURL: testIssuer, ResourceURL: testResource,
 		Secret: []byte("0123456789abcdef0123456789abcdef"),
 	})
@@ -435,6 +407,38 @@ func testService(t *testing.T) *mcpoauth.Service {
 		t.Fatalf("new OAuth service: %v", err)
 	}
 	return service
+}
+
+type testPostgres struct {
+	pool *pgxpool.Pool
+	repo *accesspostgres.Repository
+}
+
+func newTestPostgres(t *testing.T) testPostgres {
+	t.Helper()
+	h := postgrestest.Start(t)
+	database := h.NewDatabase(t, "mcpoauth_service")
+	pool, err := pgxpool.New(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatalf("open PostgreSQL pool: %v", err)
+	}
+	t.Cleanup(pool.Close)
+	tx, err := pool.Begin(t.Context())
+	if err != nil {
+		t.Fatalf("begin PostgreSQL schema transaction: %v", err)
+	}
+	if err := accesspostgres.ApplySchema(t.Context(), tx); err != nil {
+		_ = tx.Rollback(t.Context())
+		t.Fatalf("apply access schema: %v", err)
+	}
+	if err := tx.Commit(t.Context()); err != nil {
+		t.Fatalf("commit access schema: %v", err)
+	}
+	repo, err := accesspostgres.NewAccess(pool, accesspostgres.FingerprintConfig{Key: []byte(strings.Repeat("k", 32))})
+	if err != nil {
+		t.Fatalf("construct access repository: %v", err)
+	}
+	return testPostgres{pool: pool, repo: repo}
 }
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
