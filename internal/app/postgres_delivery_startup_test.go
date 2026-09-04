@@ -430,7 +430,7 @@ func TestPostgresDeliveryStartupClassifiesRecoverySetMismatches(t *testing.T) {
 			set.Serving.CompatibilityDigest, _ = set.Compatibility.Digest()
 		}, want: deployment.DeliveryStartupRecoverySetCompatibilityMismatch},
 		{name: "seal", make: func(set *recoveryset.RecoverySet) { set.Serving.Region = "region-other" }, want: deployment.DeliveryStartupRecoverySetSealMismatch},
-		{name: "object roots", make: func(set *recoveryset.RecoverySet) { set.ObjectRoots = set.ObjectRoots[:1] }, want: deployment.DeliveryStartupRecoverySetSealMismatch},
+		{name: "object roots", make: func(set *recoveryset.RecoverySet) { set.ObjectRoots = set.ObjectRoots[:1] }, want: deployment.DeliveryStartupRecoverySetInvalid},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			set := fixture.set
@@ -443,6 +443,17 @@ func TestPostgresDeliveryStartupClassifiesRecoverySetMismatches(t *testing.T) {
 			assertPostgresStartupDiagnostic(t, check(t.Context()), test.want)
 		})
 	}
+}
+
+func TestPostgresDeliveryStartupRequiresPublishedRecoveryRootsToMatchSeal(t *testing.T) {
+	fixture := startupRecoveryFixture(t)
+	fixture.set.ObjectRoots[0].URI = "objects/not-the-active-pool"
+	recovery := &postgresDeliveryStartupRecoveryFake{set: fixture.set}
+	check, err := newPostgresDeliveryStartupCheck(fixture.config(recovery))
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertPostgresStartupDiagnostic(t, check(t.Context()), deployment.DeliveryStartupRecoverySetInvalid)
 }
 
 func TestPostgresDeliveryStartupRequiresCanonicalRecoverySetID(t *testing.T) {

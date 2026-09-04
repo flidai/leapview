@@ -78,7 +78,7 @@ UPDATE recovery.recovery_set
 SET status = 'published', published_by = sqlc.arg(published_by), published_at = COALESCE(published_at, clock_timestamp()),
     published_validation_attempt_id = sqlc.arg(validation_attempt_id)::uuid
 WHERE set_id = sqlc.arg(set_id)::uuid AND fence_epoch = sqlc.arg(fence_epoch)::bigint
-  AND ((status = 'prepared' AND EXISTS (
+      AND ((status = 'prepared' AND EXISTS (
           SELECT 1
           FROM recovery.validation_attempt AS validation
           JOIN recovery.validation_result AS result ON result.attempt_id = validation.attempt_id
@@ -87,6 +87,18 @@ WHERE set_id = sqlc.arg(set_id)::uuid AND fence_epoch = sqlc.arg(fence_epoch)::b
             AND validation.fence_epoch = recovery_set.fence_epoch
             AND validation.status = 'passed'
             AND validation.result_digest = result.result_digest
+      )
+      AND expected_object_roots = 2
+      AND (SELECT count(*) FROM recovery.recovery_object_root AS root WHERE root.set_id = recovery_set.set_id) = 2
+      AND EXISTS (
+          SELECT 1 FROM recovery.recovery_object_root AS root
+           WHERE root.set_id = recovery_set.set_id AND root.root_kind = 'ducklake'
+             AND root.root_uri = recovery_set.object_root AND root.digest = recovery_set.object_root_digest
+      )
+      AND EXISTS (
+          SELECT 1 FROM recovery.recovery_object_root AS root
+           WHERE root.set_id = recovery_set.set_id AND root.root_kind = 'serving-artifact'
+             AND root.root_uri = recovery_set.artifact_root AND root.digest = recovery_set.artifact_root_digest
       ))
       OR (status = 'published' AND published_by = sqlc.arg(published_by)
           AND published_validation_attempt_id = sqlc.arg(validation_attempt_id)::uuid))

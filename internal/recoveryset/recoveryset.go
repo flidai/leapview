@@ -712,6 +712,9 @@ func (s RecoverySet) Validate() error {
 		}
 		seenRoots[key] = struct{}{}
 	}
+	if err := validateCanonicalObjectRoots(s.Serving, s.ObjectRoots); err != nil {
+		return err
+	}
 	if s.FenceEpoch <= 0 {
 		return fmt.Errorf("%w: fence epoch must be positive", ErrInvalid)
 	}
@@ -742,6 +745,38 @@ func (s RecoverySet) Validate() error {
 		if err != nil || computed != s.FrontierDigest {
 			return fmt.Errorf("%w: frontier digest does not match immutable evidence", ErrInvalid)
 		}
+	}
+	return nil
+}
+
+// validateCanonicalObjectRoots keeps the recovery frontier aligned with the
+// roots consumed by delivery startup. A serving seal has exactly one DuckLake
+// data root and one immutable serving-artifact root; allowing any other child
+// roots would produce a set that validates at publication but is guaranteed to
+// fail the subsequent readiness check.
+func validateCanonicalObjectRoots(seal SnapshotSeal, roots []ObjectRoot) error {
+	if len(roots) != 2 {
+		return fmt.Errorf("%w: recovery set requires exactly one ducklake and one serving-artifact root", ErrInvalid)
+	}
+	seenDuckLake, seenArtifact := false, false
+	for _, root := range roots {
+		switch root.Kind {
+		case ObjectRootDuckLake:
+			if seenDuckLake || root.URI != seal.ObjectRoot || root.Digest != seal.ObjectRootDigest {
+				return fmt.Errorf("%w: ducklake object root must match the serving seal", ErrInvalid)
+			}
+			seenDuckLake = true
+		case ObjectRootServingArtifact:
+			if seenArtifact || root.URI != seal.ArtifactRoot || root.Digest != seal.ArtifactRootDigest {
+				return fmt.Errorf("%w: serving-artifact root must match the serving seal", ErrInvalid)
+			}
+			seenArtifact = true
+		default:
+			return fmt.Errorf("%w: unsupported recovery object root kind %q", ErrInvalid, root.Kind)
+		}
+	}
+	if !seenDuckLake || !seenArtifact {
+		return fmt.Errorf("%w: recovery set requires ducklake and serving-artifact roots", ErrInvalid)
 	}
 	return nil
 }

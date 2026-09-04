@@ -22,9 +22,9 @@ func testSet(t *testing.T) RecoverySet {
 		ID: "018f3f83-7b2f-7b37-9f9e-000000000010", SchemaVersion: SchemaVersion,
 		ClusterPoints: []ClusterRecoveryPoint{{DatabaseRole: DatabaseControl, ClusterIdentity: "cluster-a", DatabaseIdentity: "control-db", RecoveryIdentity: "lsn:0/100"}, {DatabaseRole: DatabaseDuckLake, ClusterIdentity: "cluster-a", DatabaseIdentity: "ducklake-db", RecoveryIdentity: "lsn:0/100"}},
 		Delivery:      DeliveryPointer{TargetID: "target/prod", GenerationID: "018f3f83-7b2f-7b37-9f9e-000000000002", PublicationID: "018f3f83-7b2f-7b37-9f9e-000000000003", TargetRevision: 4},
-		Serving:       SnapshotSeal{SealID: sealID, PhysicalPoolID: "pool-a", TenantDomain: "tenant-a", Region: "us-east", EncryptionDomain: "enc-a", ObjectNamespace: "objects/prod", CatalogDatabase: "ducklake-db", CatalogID: "catalog-a", CatalogUUID: "catalog-uuid-a", CatalogVersion: 9, DuckLakeSnapshotID: 42, RelationManifestDigest: testDigest('a'), RelationNamespace: "candidate/1", ClosureDigest: testDigest('b'), ObjectRoot: "objects/prod", ObjectRootDigest: testDigest('c'), ArtifactRoot: "artifacts/prod", ArtifactRootDigest: testDigest('d'), ServingArtifactID: "artifact-a", ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('f'), CompiledConfigDigest: testDigest('0'), SecurityDomainFingerprint: testDigest('1'), RequestDigest: testDigest('2'), PlanDigest: testDigest('3'), CompatibilityDigest: compatDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1"},
+		Serving:       SnapshotSeal{SealID: sealID, PhysicalPoolID: "pool-a", TenantDomain: "tenant-a", Region: "us-east", EncryptionDomain: "enc-a", ObjectNamespace: "objects/prod", CatalogDatabase: "ducklake-db", CatalogID: "catalog-a", CatalogUUID: "catalog-uuid-a", CatalogVersion: 9, DuckLakeSnapshotID: 42, RelationManifestDigest: testDigest('a'), RelationNamespace: "candidate/1", ClosureDigest: testDigest('b'), ObjectRoot: "s3://bucket/prod", ObjectRootDigest: testDigest('c'), ArtifactRoot: "artifacts/prod", ArtifactRootDigest: testDigest('d'), ServingArtifactID: "artifact-a", ServingArtifactDigest: testDigest('e'), CompiledGraphDigest: testDigest('f'), CompiledConfigDigest: testDigest('0'), SecurityDomainFingerprint: testDigest('1'), RequestDigest: testDigest('2'), PlanDigest: testDigest('3'), CompatibilityDigest: compatDigest, DuckDBVersion: "1", RuntimeVersion: "runtime-1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1"},
 		Catalog:       CatalogCommit{CatalogID: "catalog-a", CatalogDatabase: "ducklake-db", CatalogUUID: "catalog-uuid-a", CatalogVersion: 9, SnapshotID: 42},
-		ObjectRoots:   []ObjectRoot{{Kind: "catalog", URI: "s3://bucket/catalog", VersionID: "v9", Digest: testDigest('6'), ProviderRecoveryFrontier: "version:v9"}, {Kind: "artifact", URI: "artifacts/prod", VersionID: "v4", Digest: testDigest('7')}},
+		ObjectRoots:   []ObjectRoot{{Kind: ObjectRootDuckLake, URI: "s3://bucket/prod", VersionID: "v9", Digest: testDigest('c'), ProviderRecoveryFrontier: "version:v9"}, {Kind: ObjectRootServingArtifact, URI: "artifacts/prod", VersionID: "v4", Digest: testDigest('d')}},
 		Compatibility: compat, FenceEpoch: 3, AuditIdentity: "audit-1", Status: StatusPrepared, CreatedBy: "operator", CreatedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.FixedZone("offset", 3600)),
 	}
 }
@@ -35,6 +35,20 @@ func TestRecoverySetValidateStrictBindings(t *testing.T) {
 	s := testSet(t)
 	if err := s.Validate(); err != nil {
 		t.Fatalf("valid set rejected: %v", err)
+	}
+	s.ObjectRoots[0].Kind = "catalog"
+	if err := s.Validate(); err == nil {
+		t.Fatal("arbitrary object-root kind accepted")
+	}
+	s = testSet(t)
+	s.ObjectRoots = s.ObjectRoots[:1]
+	if err := s.Validate(); err == nil {
+		t.Fatal("missing canonical object root accepted")
+	}
+	s = testSet(t)
+	s.ObjectRoots[0].Digest = testDigest('6')
+	if err := s.Validate(); err == nil {
+		t.Fatal("object-root digest unrelated to serving seal accepted")
 	}
 	s.ClusterPoints[1].RecoveryIdentity = "lsn:0/101"
 	if err := s.Validate(); err == nil {

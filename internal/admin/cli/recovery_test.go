@@ -161,8 +161,8 @@ func recoveryCLISet(t *testing.T) recoveryset.RecoverySet {
 		},
 		Catalog: recoveryset.CatalogCommit{CatalogID: "catalog", CatalogDatabase: "ducklake", CatalogUUID: "catalog-uuid", CatalogVersion: 1, SnapshotID: 1},
 		ObjectRoots: []recoveryset.ObjectRoot{
-			{Kind: recoveryset.ObjectRootDuckLake, URI: "s3://bucket/catalog", VersionID: "v1", Digest: digest('4'), ProviderRecoveryFrontier: "s3-version:v1"},
-			{Kind: recoveryset.ObjectRootServingArtifact, URI: "artifacts/prod", VersionID: "v1", Digest: digest('5')},
+			{Kind: recoveryset.ObjectRootDuckLake, URI: "objects/prod", VersionID: "v1", Digest: digest('c')},
+			{Kind: recoveryset.ObjectRootServingArtifact, URI: "artifacts/prod", VersionID: "v1", Digest: digest('d')},
 		},
 		Compatibility: compatibility, FenceEpoch: 1, AuditIdentity: "audit", Status: recoveryset.StatusPrepared, CreatedBy: "operator", CreatedAt: time.Date(2026, 9, 1, 12, 0, 0, 0, time.UTC),
 	}

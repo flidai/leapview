@@ -102,8 +102,11 @@ available. Keep writes stopped, then run the following qualification sequence.
 
 1. Prepare an immutable recovery-set JSON document containing the restored
    control and DuckLake recovery identities, delivery pointer, snapshot seal,
-   catalog commit, object roots, and compatibility tuple. Record it in
-   PostgreSQL with the production maintenance identity:
+   catalog commit, object roots, and compatibility tuple. The object-roots
+   list must contain exactly the two roots named by the serving seal: one
+   `ducklake` root equal to the seal's DuckLake object URI and digest, and one
+   `serving-artifact` root equal to its serving-artifact URI and digest. Record
+   it in PostgreSQL with the production maintenance identity:
 
    ```sh
    leapview admin recovery prepare \
