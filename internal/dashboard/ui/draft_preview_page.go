@@ -15,39 +15,31 @@ import (
 )
 
 // DashboardDraftPreviewPage renders an exact draft revision through the same
-// report component as a published dashboard. The surface is intentionally
-// read-only: authoring remains in the builder and the preview stream never
-// exposes dashboard mutation command bridges.
-func DashboardDraftPreviewPage(title, dashboardID, pageID, revisionLabel, backHref, updatesURL string, providers ...webpage.Provider) g.Node {
-	layout := builderFocusLayout(firstProvider(providers), webpage.Context{
+// application dashboard shell as a published dashboard. The surface remains
+// read-only and exposes one explicit transition into the builder.
+func DashboardDraftPreviewPage(title, dashboardID, pageID, editHref, updatesURL, csrfToken string, commands AgentCommandBindings, providers ...webpage.Provider) g.Node {
+	layout := webpage.Resolve(firstProvider(providers), webpage.Context{
 		Active: "dashboards", SectionID: dashboardID, SectionTitle: title,
-		PageID: pageID, PageTitle: "Draft preview", Compact: true,
+		PageID: pageID, PageTitle: title, Compact: true,
 	})
+	componentAttrs := []g.Node{
+		g.Attr("slot", "page"),
+		g.Attr("dashboard-id", dashboardID),
+		g.Attr("page-id", pageID),
+		g.Attr("presentation", PresentationApp),
+		g.Attr("read-only", ""),
+		g.Attr("authoring-action-label", "Edit dashboard"),
+		g.Attr("authoring-action-href", editHref),
+	}
+	componentAttrs = append(componentAttrs, dashboardAgentComponentAttrs(commands)...)
 	return webpage.Render(layout, webpage.Spec{
-		Title:      title + " preview",
-		Scripts:    []string{"/static/dashboard-page.js"},
-		MainAttrs:  []g.Node{h.ID("dashboard-draft-preview"), h.Class(webpage.RootClass)},
-		UpdatesURL: updatesURL,
-		Content: h.Div(h.Class("flex min-h-svh flex-col"),
-			h.Header(h.Class("flex min-h-14 items-center justify-between gap-3 border-b border-border-default bg-canvas-default px-4 py-2"),
-				h.Div(h.Class("flex min-w-0 items-center gap-3"),
-					h.A(h.Class("button"), h.Href(backHref), g.Text("Back to builder")),
-					h.Div(h.Class("min-w-0"),
-						h.P(h.Class("truncate text-sm font-semibold text-fg-default"), g.Text(title)),
-						h.P(h.Class("truncate text-xs text-fg-muted"), g.Text("Draft preview · "+revisionLabel)),
-					),
-				),
-				h.Span(h.Class("rounded-full border border-border-default bg-canvas-subtle px-2 py-1 text-xs font-medium text-fg-muted"), g.Text("Read only")),
-			),
-			g.El("lv-dashboard-page",
-				h.Class("min-h-0 flex-1"),
-				g.Attr("dashboard-id", dashboardID),
-				g.Attr("page-id", pageID),
-				g.Attr("presentation", "public"),
-				g.Attr("read-only", ""),
-				g.Attr("aria-label", "Draft dashboard preview"),
-			),
-		),
+		Title:        title,
+		CSRFToken:    csrfToken,
+		Scripts:      []string{"/static/dashboard-page.js"},
+		MainAttrs:    []g.Node{h.ID("dashboard"), h.Class(webpage.RootClass)},
+		UpdatesURL:   updatesURL,
+		ContentAttrs: dashboardAgentContentAttrs(),
+		Content:      g.El("lv-dashboard-page", componentAttrs...),
 	})
 }
 
@@ -93,7 +85,7 @@ func DashboardDraftPreviewRevisionChangedPage(backHref string, providers ...webp
 // DashboardDraftPreviewBootstrapSignals projects a successful exact-revision
 // preview into the production dashboard signal contract. This keeps the
 // builder and preview renderers on one visual implementation.
-func DashboardDraftPreviewBootstrapSignals(definition dashboarddefinition.Definition, patch dashboard.Patch, pageID, servingStateID string, pageHrefs map[string]string) (map[string]any, error) {
+func DashboardDraftPreviewBootstrapSignals(definition dashboarddefinition.Definition, patch dashboard.Patch, pageID, servingStateID string, pageHrefs map[string]string, providers ...webpage.Provider) (map[string]any, error) {
 	activePage, ok := definition.PageOrDefault(strings.TrimSpace(pageID))
 	if !ok {
 		return nil, fmt.Errorf("draft preview page %q is unavailable", pageID)
@@ -108,7 +100,7 @@ func DashboardDraftPreviewBootstrapSignals(definition dashboarddefinition.Defini
 		filters.ServingStateID = strings.TrimSpace(servingStateID)
 	}
 	envelope := uisignals.DashboardInitialEnvelope("", "", dashboard.Catalog{}, definition, nil, definition.Visualizations, definition.Pages, activePage, filters)
-	envelope.Page.Presentation = "public"
+	envelope.Page.Presentation = PresentationApp
 	for index := range envelope.Page.Pages {
 		if href := strings.TrimSpace(pageHrefs[envelope.Page.Pages[index].ID]); href != "" {
 			envelope.Page.Pages[index].Href = href
@@ -150,7 +142,11 @@ func DashboardDraftPreviewBootstrapSignals(definition dashboarddefinition.Defini
 	if err := uisignals.ValidateDashboardEnvelope(envelope); err != nil {
 		return nil, fmt.Errorf("validate draft preview dashboard signals: %w", err)
 	}
-	return map[string]any{
+	signals := map[string]any{
+		"agent":                     envelope.Agent,
+		"agentContext":              envelope.AgentContext,
+		"agentReferenceSearch":      envelope.AgentReferenceSearch,
+		"agentVisuals":              envelope.AgentVisuals,
 		"page":                      envelope.Page,
 		"runtime":                   envelope.Runtime,
 		"filterContract":            envelope.FilterContract,
@@ -169,5 +165,10 @@ func DashboardDraftPreviewBootstrapSignals(definition dashboarddefinition.Defini
 		"urlParams":                 envelope.URLParams,
 		"visuals":                   envelope.Visuals,
 		"status":                    envelope.Status,
-	}, nil
+	}
+	layout := webpage.Resolve(firstProvider(providers), webpage.Context{
+		Active: "dashboards", SectionID: definition.ID, SectionTitle: definition.Title,
+		PageID: activePage.ID, PageTitle: activePage.Title, Compact: true,
+	})
+	return webpage.WithSignal(layout, signals), nil
 }
