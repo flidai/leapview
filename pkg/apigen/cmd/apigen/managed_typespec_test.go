@@ -170,7 +170,7 @@ func TestEnsureTypeSpecToolchain_UsesSharedNPMCacheAcrossManagedPackages(t *test
 	logPath := filepath.Join(t.TempDir(), "npm-cache.log")
 	npmPath := filepath.Join(binDir, "npm")
 	script := `#!/bin/sh
-printf '%s\n' "$NPM_CONFIG_CACHE" >> "$APIGEN_TEST_NPM_CACHE_LOG"
+printf '%s|%s\n' "$NPM_CONFIG_CACHE" "$npm_config_cache" >> "$APIGEN_TEST_NPM_CACHE_LOG"
 mkdir -p node_modules/@typespec/compiler/cmd
 touch node_modules/@typespec/compiler/cmd/tsp.js
 `
@@ -194,8 +194,10 @@ touch node_modules/@typespec/compiler/cmd/tsp.js
 	cachePaths := strings.Split(strings.TrimSpace(string(cacheLog)), "\n")
 	require.Len(t, cachePaths, 2)
 	require.Equal(t, cachePaths[0], cachePaths[1])
-	require.NotEqual(t, firstPkg.Dir, cachePaths[0])
-	require.NotEqual(t, secondPkg.Dir, cachePaths[0])
+	cacheValues := strings.Split(cachePaths[0], "|")
+	require.Equal(t, []string{os.Getenv("NPM_CONFIG_CACHE"), os.Getenv("npm_config_cache")}, cacheValues)
+	require.NotEqual(t, firstPkg.Dir, cacheValues[0])
+	require.NotEqual(t, secondPkg.Dir, cacheValues[0])
 	require.FileExists(t, filepath.Join(firstPkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
 	require.FileExists(t, filepath.Join(secondPkg.Dir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
 	firstNodeModules, err := filepath.EvalSymlinks(filepath.Join(firstPkg.Dir, "node_modules"))
@@ -281,6 +283,7 @@ func setupManagedTypeSpecEnvironment(t *testing.T) {
 func (f *managedTypeSpecTestFixture) setupEnvironment(t *testing.T) {
 	t.Helper()
 
+	// These tests intentionally remain serial because t.Setenv mutates process state.
 	t.Setenv(typeSpecPackageDirEnv, "")
 	home := t.TempDir()
 	t.Setenv("HOME", home)
@@ -290,4 +293,5 @@ func (f *managedTypeSpecTestFixture) setupEnvironment(t *testing.T) {
 	})
 	require.NoError(t, f.npmCacheErr)
 	t.Setenv("NPM_CONFIG_CACHE", f.npmCachePath)
+	t.Setenv("npm_config_cache", f.npmCachePath)
 }
