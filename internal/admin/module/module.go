@@ -14,13 +14,11 @@ import (
 	adminstorage "github.com/flidai/leapview/internal/admin/storage"
 	"github.com/flidai/leapview/internal/agent/api"
 	"github.com/flidai/leapview/internal/analytics/queryaudit"
-	"github.com/flidai/leapview/internal/analytics/resource"
 	dashboardapi "github.com/flidai/leapview/internal/dashboard/api"
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
-	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
 
@@ -73,15 +71,7 @@ type StorageConfig struct {
 	// supply this so storage reads use the sealed PostgreSQL DuckLake catalog,
 	// never a node-local catalog path.
 	Runtime      projectruntime.Provider
-	CatalogPath  string
-	DataPath     string
-	Environment  string
 	ControlPlane productsettings.Pinger
-	Analytics    interface {
-		resource.Provider
-		resource.SessionProvider
-	}
-	Admitter workload.Admitter
 }
 
 type Config struct {
@@ -137,11 +127,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
-		StorageService: adminstorage.Service{
-			Runtime:     config.Storage.Runtime,
-			CatalogPath: config.Storage.CatalogPath, DataPath: config.Storage.DataPath,
-			Analytics: config.Storage.Analytics, Admitter: config.Storage.Admitter,
-		},
+		StorageService:   adminstorage.Service{Runtime: config.Storage.Runtime},
 		QueryAuditReader: adminhttp.QueryAuditReaderProvider(config.QueryAuditReader), CSRFToken: config.CSRFToken,
 		CurrentPrincipal: func(r *http.Request) (adminhttp.Principal, bool) {
 			if config.CurrentPrincipal == nil {

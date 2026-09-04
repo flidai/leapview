@@ -343,7 +343,6 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/analytics/infisical", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/environment", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/dashboard/analyticsruntime", Capability: "dashboard", Layer: LayerAdapter},
-	{Prefix: "internal/refresh/analyticsruntime", Capability: "refresh", Layer: LayerAdapter},
 	{Prefix: "internal/refresh/presentation", Capability: "refresh", Layer: LayerContract},
 	{Prefix: "internal/refresh/plan", Capability: "refresh", Layer: LayerUseCase},
 	{Prefix: "internal/refresh/run", Capability: "refresh", Layer: LayerUseCase},

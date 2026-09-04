@@ -8,12 +8,12 @@ import (
 	accessmodule "github.com/flidai/leapview/internal/access/module"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
+	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 type bootstrapStateStoreFake struct {
-	refreshmodule.ServingStateRepository
+	refreshrun.ServingStateReader
 	scopes []servingstate.ActiveScope
 	err    error
 }

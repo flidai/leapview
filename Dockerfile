@@ -84,13 +84,6 @@ COPY --from=sourcegen /src/internal/release/api/gen ./internal/release/api/gen
 COPY --from=sourcegen /src/internal/app/cli/gen ./internal/app/cli/gen
 COPY --from=sourcegen /src/internal/app/config/config_gen.go ./internal/app/config/config_gen.go
 COPY --from=sourcegen /src/internal/app/config/spec/names_gen.go ./internal/app/config/spec/names_gen.go
-COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db
-COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db
-COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db
-COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db
-COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db
-COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db
-COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db
 # Every PostgreSQL sqlc package is generated in sourcegen and excluded from the
 # build context, so copy each package into the build stage explicitly.
 COPY --from=sourcegen /src/internal/project/postgres/internal/db ./internal/project/postgres/internal/db
@@ -120,12 +113,6 @@ COPY --from=sourcegen /src/internal/analytics/queryaudit/postgres/internal/db ./
 COPY --from=sourcegen /src/internal/analytics/cache/postgres/internal/db ./internal/analytics/cache/postgres/internal/db
 COPY --from=sourcegen /src/internal/release/postgres/internal/db ./internal/release/postgres/internal/db
 COPY --from=sourcegen /src/internal/recoveryset/postgres/internal/db ./internal/recoveryset/postgres/internal/db
-COPY --from=sourcegen /src/internal/platform/db/db.go ./internal/platform/db/db.go
-COPY --from=sourcegen /src/internal/platform/db/models.go ./internal/platform/db/models.go
-COPY --from=sourcegen /src/internal/platform/db/*.sql.go ./internal/platform/db/
-COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb
-COPY --from=sourcegen /src/internal/platform/http/idempotency/sqlite/idempotencydb ./internal/platform/http/idempotency/sqlite/idempotencydb
-COPY --from=sourcegen /src/internal/platform/jobs/sqlite/jobdb ./internal/platform/jobs/sqlite/jobdb
 COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/access/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/admin/ui/signals/models.gen.go ./internal/admin/ui/signals/models.gen.go
 COPY --from=sourcegen /src/internal/agent/ui/signals/models.gen.go ./internal/agent/ui/signals/models.gen.go

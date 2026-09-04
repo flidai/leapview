@@ -44,7 +44,7 @@ func RecoverWithPersistence(ctx context.Context, recovery TerminalRunRecovery, e
 type Persistence struct {
 	Runs             RunPersistence
 	Schedules        refreshschedule.Repository
-	Publication      refreshrun.PublicationUnitOfWork
+	Publication      refreshrun.CanonicalPublicationUnitOfWork
 	Recovery         RecoveryRepository
 	TerminalRecovery TerminalRunRecovery
 

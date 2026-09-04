@@ -1,9 +1,8 @@
 package runtimefactory
 
-// PostgreSQL-backed serving runtime. This seam is intentionally parallel to
-// the legacy sealed object-catalog adapter: it opens a target-owned DuckDB
-// session attached directly to DuckLake PostgreSQL metadata and never stages,
-// hashes, uploads, or downloads a catalog file.
+// PostgreSQL-backed serving runtime. It opens a target-owned DuckDB session
+// attached directly to DuckLake PostgreSQL metadata and never stages, hashes,
+// uploads, or downloads a catalog file.
 
 import (
 	"context"
@@ -250,7 +249,7 @@ func checkPostgresRuntimeAttachEligibility(ctx context.Context, checker DuckLake
 }
 
 func (f postgresSealedFactory) Prepare(context.Context, runtimehost.RuntimeInput) (runtimehost.PreparedRuntime, error) {
-	return nil, fmt.Errorf("PostgreSQL sealed serving factory cannot use legacy Prepare")
+	return nil, fmt.Errorf("PostgreSQL sealed serving factory only supports PrepareSealed")
 }
 
 // PinnedSnapshotSealed marks this target as implementing exact
@@ -585,4 +584,13 @@ func (h *postgresLeaseHandle) Close() error {
 		})
 	})
 	return h.releaseErr
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }

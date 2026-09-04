@@ -261,22 +261,4 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 		t.Fatal("source synchronization path retains a candidate-construction fallback")
 	}
 
-	canonicalBytes, err := os.ReadFile(filepath.Join(root, "internal/deployment/module/canonical_delivery.go"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	canonicalSource := string(canonicalBytes)
-	for _, required := range []string{
-		"func (m *CanonicalDeliveryMutations) CreatePlan",
-		"func (m *CanonicalDeliveryMutations) BuildPlan",
-		"m.Lifecycle.Store.CreatePlan(",
-		"m.Lifecycle.Build(",
-	} {
-		if !strings.Contains(canonicalSource, required) {
-			t.Errorf("canonical native delivery path is missing evidence %q", required)
-		}
-	}
-	if strings.Contains(canonicalSource, "resolveLegacyCandidatePlan") {
-		t.Fatal("canonical delivery retains a legacy candidate plan fallback")
-	}
 }

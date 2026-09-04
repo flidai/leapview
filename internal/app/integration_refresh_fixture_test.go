@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
@@ -18,7 +17,6 @@ import (
 	projectcompiler "github.com/flidai/leapview/internal/project/compiler"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
-	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshsqlite "github.com/flidai/leapview/internal/refresh/sqlite"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -118,7 +116,7 @@ func newCanonicalRefreshHarness(t *testing.T) *canonicalRefreshHarness {
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{
 		Auth:        testAuth(store, accessmodule.AuthConfig{DevBypass: true}),
 		RuntimeHost: runtimeHost, ProjectID: project.ProjectID(), DefaultEnvironment: string(environment), Reloader: runtimeHost,
-		RefreshPersistence: &refreshPersistence, RefreshMaterializer: canonicalRefreshMaterializer{}, EnableRefreshDispatcher: true,
+		RefreshPersistence: &refreshPersistence, EnableRefreshDispatcher: true,
 	}))
 	if err := server.routes.refreshModule.Start(ctx); err != nil {
 		t.Fatalf("start refresh module: %v", err)
@@ -188,15 +186,6 @@ type canonicalRefreshAuthorizationInstaller struct{}
 
 func (canonicalRefreshAuthorizationInstaller) InstallAuthorizationSnapshot(context.Context, accesssnapshot.AuthorizationSnapshot) error {
 	return nil
-}
-
-type canonicalRefreshMaterializer struct{}
-
-func (canonicalRefreshMaterializer) Materialize(_ context.Context, input refreshrun.MaterializeInput) (int64, error) {
-	if input.Active.DuckLakeSnapshotID <= 0 {
-		return 0, fmt.Errorf("canonical refresh fixture active snapshot is missing")
-	}
-	return input.Active.DuckLakeSnapshotID + 1, nil
 }
 
 func canonicalProjectPath(t *testing.T) string {

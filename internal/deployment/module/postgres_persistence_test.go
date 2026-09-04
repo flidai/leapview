@@ -151,9 +151,6 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 	if _, ok := m.jobs.Coordinator.(*nativeCoordinator); !ok {
 		t.Fatalf("built production coordinator has type %T, want native coordinator", m.jobs.Coordinator)
 	}
-	if m.api.Releases != nil || m.deliveryMutations != nil || m.deliveryReader != nil {
-		t.Fatalf("native module retained legacy delivery seams: api releases=%T mutations=%T reader=%T", m.api.Releases, m.deliveryMutations, m.deliveryReader)
-	}
 }
 
 func TestBuildProductionNativePersistenceRequiresMutationAuthority(t *testing.T) {

@@ -204,10 +204,8 @@ type persistenceInputs struct {
 }
 
 type workflowInputs struct {
-	managedDataValidation          refreshmodule.CandidateValidationHook
 	managedDataResolver            runtimehostmodule.ManagedDataResolver
 	refreshPipelineClock           refreshmodule.Clock
-	refreshMaterializer            refreshrun.Materializer
 	refreshTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
 	refreshSourceDigest            func(context.Context, projectgraph.ServingIdentity) (string, error)
 	canonicalRefreshExecutor       func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
@@ -225,11 +223,9 @@ type workflowInputs struct {
 }
 
 type storageInputs struct {
-	instanceID          string
-	duckLakeCatalogPath string
-	duckLakeDataPath    string
-	jobLeaseTimeout     time.Duration
-	publicURL           string
+	instanceID      string
+	jobLeaseTimeout time.Duration
+	publicURL       string
 }
 
 func newCompositionSurfaces(
@@ -314,7 +310,6 @@ type capabilityAssemblyInputs struct {
 
 type workflowAssemblyInputs struct {
 	AgentSettings                  agentmodule.Settings
-	ManagedDataValidation          refreshmodule.CandidateValidationHook
 	ManagedDataResolver            runtimehostmodule.ManagedDataResolver
 	AgentConfig                    agentmodule.ModelConfig
 	Auth                           *accessmodule.Auth
@@ -323,7 +318,6 @@ type workflowAssemblyInputs struct {
 	DeploymentConfig               deploymentmodule.Config
 	ServingArtifacts               projectbundle.ArtifactObjectReader
 	RefreshPipelineClock           refreshmodule.Clock
-	RefreshMaterializer            refreshrun.Materializer
 	RefreshTargetRevision          func(context.Context, projectgraph.ServingIdentity) (int64, error)
 	RefreshSourceDigest            func(context.Context, projectgraph.ServingIdentity) (string, error)
 	CanonicalRefreshExecutor       func(context.Context, refreshrun.JobRecord) (refreshrun.CanonicalRefreshResult, error)
@@ -351,8 +345,6 @@ type runtimeAssemblyInputs struct {
 	ServingSnapshotResolver func(context.Context) (string, error)
 	InstanceID              string
 	DuckDBDir               string
-	DuckLakeCatalogPath     string
-	DuckLakeDataPath        string
 	DefaultEnvironment      string
 	SCIMBearerToken         string
 	MetricsBearerToken      string
@@ -551,11 +543,11 @@ func validateDashboardAssemblyInputs(data dataAssemblyInputs, capabilities capab
 	return nil
 }
 
-// nativeDeliveryComposition reports whether the deployment config selects the
-// clean-slate delivery authority. Production is always native; profile-only
-// composition may continue to use its topology-neutral reader.
+// nativeDeliveryComposition reports whether deployment delivery is composed.
+// The module is native-only; production assemblies must provide the canonical
+// PostgreSQL reader and mutation ports as one authority.
 func nativeDeliveryComposition(config deploymentmodule.Config, production bool) bool {
-	return production || config.NativeDeliveryMutations != nil || config.NativeDeliveryPublication != nil ||
+	return production || config.Persistence != nil || config.NativeDeliveryMutations != nil || config.NativeDeliveryPublication != nil ||
 		config.NativeDeliveryApproval != nil || config.NativeDeliveryReader != nil || config.NativeDeliveryEvents != nil ||
 		config.NativeDeliveryAudit != nil || config.NativeDeliveryWorkflow != nil || config.NativeOperationAuthority != nil
 }
@@ -569,9 +561,6 @@ func validateDeliveryAssemblyInputs(config deploymentmodule.Config, production b
 	}
 	if config.NativeDeliveryReader == nil {
 		return errors.New("native delivery composition requires a native delivery authorization reader")
-	}
-	if config.DeliveryReader != nil || config.DeliveryMutations != nil || config.API.Releases != nil {
-		return errors.New("native delivery composition rejects legacy delivery/release projections")
 	}
 	return nil
 }
@@ -673,7 +662,6 @@ func buildApplicationSurfaces(
 	moduleWorkflow := workflowInputs{}
 	storage := storageInputs{}
 	moduleWorkflow.refreshPipelineClock = workflow.RefreshPipelineClock
-	moduleWorkflow.refreshMaterializer = workflow.RefreshMaterializer
 	moduleWorkflow.refreshSourceDigest = workflow.RefreshSourceDigest
 	moduleWorkflow.refreshTargetRevision = workflow.RefreshTargetRevision
 	moduleWorkflow.canonicalRefreshExecutor = workflow.CanonicalRefreshExecutor
@@ -754,7 +742,6 @@ func buildApplicationSurfaces(
 		}
 	}
 	persistence.servingStateRepo = servingStateRepo
-	moduleWorkflow.managedDataValidation = workflow.ManagedDataValidation
 	moduleWorkflow.managedDataResolver = workflow.ManagedDataResolver
 	runtime.analyticsModule = capabilities.AnalyticsModule
 	routes.dashboardAssets = capabilities.DashboardAssets
@@ -766,8 +753,6 @@ func buildApplicationSurfaces(
 	platform.auth = workflow.Auth
 	routes.accessModule = capabilities.AccessModule
 	moduleWorkflow.reloader = workflow.Reloader
-	storage.duckLakeCatalogPath = runtimeConfig.DuckLakeCatalogPath
-	storage.duckLakeDataPath = runtimeConfig.DuckLakeDataPath
 	storage.instanceID = runtimeConfig.InstanceID
 	policy.defaultEnvironment = string(servingstatemodule.NormalizeEnvironment(servingstatemodule.Environment(runtimeConfig.DefaultEnvironment)))
 	storage.publicURL = strings.TrimSuffix(strings.TrimSpace(httpConfig.PublicURL), "/")
@@ -1143,10 +1128,11 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			Logger: platform.logger,
 		}
 		apiConfig := deploymentmodule.APIConfig{Jobs: platform.asyncJobs, Committer: platform.jobModule}
-		if !nativeDeliveryComposition(config, runtimeConfig.Production) {
-			if routes.releaseModule != nil {
-				apiConfig.Releases = routes.releaseModule.DeploymentLinkage()
-			}
+		// Release linkage remains an independent job-domain input for activation
+		// qualification. Delivery mutations and reads are native-only, but sealed
+		// activation workers may still resolve their release identity here.
+		if routes.releaseModule != nil {
+			apiConfig.Releases = routes.releaseModule.DeploymentLinkage()
 		}
 		config.API = apiConfig
 		config.PublicationAuthorization = deploymentmodule.PublicationAuthorizationConfig{
@@ -1600,16 +1586,8 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			activeRuntime = runtimeConfig.RuntimeHost.Provider()
 		}
 		storageConfig := adminmodule.StorageConfig{
-			Runtime:     activeRuntime,
-			Environment: policy.defaultEnvironment, ControlPlane: persistence.product,
-			Analytics: runtime.analyticsModule.AdminResources(), Admitter: workloadController(&runtime.workloads),
-		}
-		// File-backed catalog paths are an explicit local/evaluation-only
-		// capability. Production always supplies the active serving runtime,
-		// whose sealed PostgreSQL DuckLake catalog is the sole storage reader.
-		if activeRuntime == nil {
-			storageConfig.CatalogPath = storage.duckLakeCatalogPath
-			storageConfig.DataPath = storage.duckLakeDataPath
+			Runtime:      activeRuntime,
+			ControlPlane: persistence.product,
 		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
@@ -1749,15 +1727,9 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			if snapshot.Identity() != lease.Identity() {
 				return false, fmt.Errorf("authorization snapshot identity does not match leased serving generation")
 			}
-			reader := moduleWorkflow.deploymentConfig.DeliveryReader
 			nativeReader := moduleWorkflow.deploymentConfig.NativeDeliveryReader
-			native := nativeDeliveryComposition(moduleWorkflow.deploymentConfig, runtimeConfig.Production)
-			if native {
-				if nativeReader == nil {
-					return false, fmt.Errorf("native delivery authorization reader is unavailable")
-				}
-			} else if reader == nil {
-				return false, fmt.Errorf("delivery authorization reader is unavailable")
+			if nativeReader == nil {
+				return false, fmt.Errorf("native delivery authorization reader is unavailable")
 			}
 			if operationID == "createDeliveryPlan" || operationID == "getDeliveryOperatorSnapshot" {
 				// Local development skips authored snapshot grants only after the
@@ -1771,12 +1743,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 				}
 				return deliveryRoleAllows(snapshot, subjects, capability), nil
 			}
-			var plan deployment.DeliveryPlan
-			if native {
-				plan, err = nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
-			} else {
-				plan, err = deliveryAuthorizationPlan(ctx, reader, operationID, objectID)
-			}
+			plan, err := nativeDeliveryAuthorizationPlan(ctx, nativeReader, operationID, objectID)
 			if err != nil {
 				if errors.Is(err, sql.ErrNoRows) {
 					return false, nil

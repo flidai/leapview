@@ -26,9 +26,6 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	if err != nil && (persistence.refreshPersistence != nil || persistence.requireNativePersistence) {
 		return fmt.Errorf("configure refresh service: %w", err)
 	}
-	if workflow.refreshMaterializer != nil {
-		service.Materializer = workflow.refreshMaterializer
-	}
 	service.ResolveSourceDigest = workflow.refreshSourceDigest
 	service.ResolveTargetRevision = workflow.refreshTargetRevision
 	service.CanonicalExecutor = workflow.canonicalRefreshExecutor
@@ -78,7 +75,6 @@ func configureRefreshModule(routes *capabilityRoutes, runtime *runtimeServices, 
 	}
 	config := refreshmodule.Config{
 		Persistence: refreshPersistence, Production: persistence.requireNativePersistence, Service: service,
-		Analytics: runtime.analyticsModule.ProjectMaterializer(), ManagedData: workflow.managedDataResolver,
 		Artifacts: appruntimefactory.NewRefreshArtifactLoader(workflow.servingArtifacts),
 		HTTP: refreshmodule.HTTPConfig{
 			RunnerConfigured: func() bool { return runtime.metrics != nil },

@@ -163,7 +163,6 @@ func NewPostgresPersistence(repository *refreshpostgres.Repository, config Postg
 
 var _ refreshschedule.Repository = (*postgresSchedulePersistence)(nil)
 var _ RunPersistence = (*postgresRunPersistence)(nil)
-var _ refreshrun.PublicationUnitOfWork = (*postgresPublicationPersistence)(nil)
 var _ refreshrun.CanonicalPublicationUnitOfWork = (*postgresPublicationPersistence)(nil)
 
 type postgresSchedulePersistence struct {

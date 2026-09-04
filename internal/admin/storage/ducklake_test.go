@@ -11,52 +11,13 @@ import (
 	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 )
 
-func TestFormatDuckLakeUUID(t *testing.T) {
-	t.Parallel()
-	tests := []struct {
-		name  string
-		value []byte
-		want  string
-	}{
-		{
-			name:  "binary UUID",
-			value: []byte{0x01, 0xb5, 0xee, 0x02, 0xaa, 0x5d, 0x73, 0x53, 0x99, 0x20, 0x1e, 0xa7, 0x1f, 0x67, 0x88, 0xfe},
-			want:  "01b5ee02-aa5d-7353-9920-1ea71f6788fe",
-		},
-		{
-			name:  "text UUID",
-			value: []byte("01B5EE02-AA5D-7353-9920-1EA71F6788FE"),
-			want:  "01b5ee02-aa5d-7353-9920-1ea71f6788fe",
-		},
-		{
-			name:  "compact text UUID",
-			value: []byte("01b5ee02aa5d735399201ea71f6788fe"),
-			want:  "01b5ee02-aa5d-7353-9920-1ea71f6788fe",
-		},
-		{
-			name:  "unexpected binary value",
-			value: []byte{0xff, 0x00},
-			want:  "ff00",
-		},
-	}
-	for _, test := range tests {
-		test := test
-		t.Run(test.name, func(t *testing.T) {
-			t.Parallel()
-			if got := formatDuckLakeUUID(test.value); got != test.want {
-				t.Fatalf("formatDuckLakeUUID() = %q, want %q", got, test.want)
-			}
-		})
-	}
-}
-
 func TestServiceReadsActiveRuntimeCatalogForProduction(t *testing.T) {
 	tables := []catalogstats.Table{{
 		Schema: "model", Name: "orders", RowCount: 42, ColumnCount: 3,
 		FileCount: 2, SizeBytes: 4096, SnapshotID: 17,
 	}}
 	provider := &storageRuntimeProvider{runtime: &storageRuntimeStub{tables: tables}}
-	service := Service{Runtime: provider, CatalogPath: "/must/not/be/read", DataPath: "/must/not/be/read"}
+	service := Service{Runtime: provider}
 
 	data := service.Data(context.Background())
 	if data.Status != "" {
@@ -78,6 +39,22 @@ func TestServiceReadsActiveRuntimeCatalogForProduction(t *testing.T) {
 	}
 	if _, err := service.Table(context.Background(), "model", "missing"); !errors.Is(err, sql.ErrNoRows) {
 		t.Fatalf("missing Table() error = %v, want sql.ErrNoRows", err)
+	}
+}
+
+func TestServiceDoesNotFallBackWithoutActiveRuntime(t *testing.T) {
+	service := Service{}
+
+	data := service.Data(context.Background())
+	if data.Status != "no active LeapView serving state" {
+		t.Fatalf("Data() status = %q, want no-active-runtime status", data.Status)
+	}
+	if data.TableCount != 0 || data.DataFileCount != 0 || data.TotalDataSizeBytes != 0 || len(data.Tables) != 0 {
+		t.Fatalf("Data() without runtime = %#v, want empty data", data)
+	}
+
+	if _, err := service.Table(context.Background(), "model", "orders"); !errors.Is(err, errNoActiveRuntime) {
+		t.Fatalf("Table() error = %v, want errNoActiveRuntime", err)
 	}
 }
 

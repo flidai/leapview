@@ -14,16 +14,13 @@ import (
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/access"
-	analyticsmaterialization "github.com/flidai/leapview/internal/analytics/materialization"
 	uicommand "github.com/flidai/leapview/internal/platform/web/uicommand"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	refreshanalytics "github.com/flidai/leapview/internal/refresh/analyticsruntime"
 	refreshgen "github.com/flidai/leapview/internal/refresh/api/gen"
 	materializehttp "github.com/flidai/leapview/internal/refresh/http"
 	refreshpostgres "github.com/flidai/leapview/internal/refresh/postgres"
 	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	"github.com/flidai/leapview/internal/runtimehost"
 	"github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/internal/workload"
 )
@@ -63,9 +60,7 @@ type Config struct {
 	HTTP                HTTPConfig
 	Authorization       AuthorizationConfig
 	Service             refreshrun.Service
-	Analytics           analyticsmaterialization.Executor
 	Artifacts           refreshrun.ArtifactLoader
-	ManagedData         runtimehost.ManagedDataResolver
 	Admission           workload.Admitter
 	LeaseTimeout        time.Duration
 	ResolveIdentity     func(context.Context) (projectgraph.ServingIdentity, error)
@@ -250,13 +245,7 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 	if m.service.Artifacts == nil {
 		m.service.Artifacts = config.Artifacts
 	}
-	if m.service.Materializer == nil {
-		m.service.Materializer = refreshanalytics.RefreshMaterializer{
-			Executor: config.Analytics, ManagedData: config.ManagedData,
-		}
-	}
 	m.service.Runs = m.runs
-	m.service.DataVersions = m.schedules
 	m.service.Publication = persistence.Publication
 	m.terminalRecovery = persistence.TerminalRecovery
 	m.recoveryEnvironment = strings.TrimSpace(config.RecoveryEnvironment)

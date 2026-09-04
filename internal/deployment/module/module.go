@@ -24,7 +24,6 @@ type Module struct {
 	projectClaims             *deployment.ProjectClaimService
 	approvals                 *deployment.ApprovalService
 	candidateRuntimes         CandidateRuntimePreparer
-	candidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
 	candidateSources          deployment.CandidateSourceSynchronizer
 	candidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
 	candidateSourceBlobAudit  func(context.Context, CandidateSourceAuditEvent) error
@@ -32,7 +31,6 @@ type Module struct {
 	candidateArtifactRecovery release.CandidateArtifactRecovery
 	candidateAdmission        CandidatePreparationAdmitter
 	nativeMetadataSchema      func(string) string
-	deliveryCandidateBuilder  func(context.Context, deployment.DeliveryCandidateBuildInput) (deployment.Candidate, error)
 	logger                    *slog.Logger
 	jobs                      JobConfig
 	api                       APIConfig
@@ -55,9 +53,7 @@ type Module struct {
 	sealedReconcile           func(context.Context, string) error
 	sealedRollbackFence       func(context.Context, string) (string, int64, error)
 	requireSealedCoordinator  bool
-	deliveryReader            deployment.DeliveryReader
 	nativeDeliveryReader      NativeDeliveryReader
-	deliveryMutations         DeliveryMutationPort
 	nativeDeliveryMutations   NativeDeliveryMutationPort
 	nativeDeliveryPublication NativeDeliveryPublicationPort
 	nativeDeliveryApproval    NativeDeliveryApprovalPort
@@ -184,19 +180,18 @@ type Config struct {
 	// Persistence is the native PostgreSQL delivery authority. Production
 	// callers construct it with NewPostgresPersistence; the module never infers
 	// an adapter from a raw database handle.
-	Persistence               *Persistence
-	Production                bool
-	Logger                    *slog.Logger
-	InstanceID                string
-	CanonicalOrigin           string
-	InstanceEnvironment       string
-	CandidateSourceAudit      func(context.Context, CandidateSourceAuditEvent) error
-	CandidateSourceBlobAudit  func(context.Context, CandidateSourceAuditEvent) error
-	CandidateConnections      deployment.CandidateConnectionLeaser
-	CandidateRuntime          deployment.CandidateRuntimeHost
-	CandidateRuntimeLifecycle deployment.CandidateRuntimeLifecycle
-	CandidateSources          deployment.CandidateSourceSynchronizer
-	CandidateArtifacts        release.CandidateArtifactPreparer
+	Persistence              *Persistence
+	Production               bool
+	Logger                   *slog.Logger
+	InstanceID               string
+	CanonicalOrigin          string
+	InstanceEnvironment      string
+	CandidateSourceAudit     func(context.Context, CandidateSourceAuditEvent) error
+	CandidateSourceBlobAudit func(context.Context, CandidateSourceAuditEvent) error
+	CandidateConnections     deployment.CandidateConnectionLeaser
+	CandidateRuntime         deployment.CandidateRuntimeHost
+	CandidateSources         deployment.CandidateSourceSynchronizer
+	CandidateArtifacts       release.CandidateArtifactPreparer
 	// CandidateArtifactRecovery is the value-only native serving-bundle
 	// recovery authority used to replay candidate runtime preparation after a
 	// process restart. It is deliberately separate from source/artifact
@@ -241,14 +236,9 @@ type Config struct {
 	SealedReconcile          func(context.Context, string) error
 	SealedRollbackFence      func(context.Context, string) (string, int64, error)
 	RequireSealedCoordinator bool
-	// DeliveryMutations owns the canonical plan -> build -> publish/rollback
-	// use cases. It is deliberately a narrow callback port so HTTP/CLI cannot
-	// bypass target admission, sealing, or the authoritative CAS fence.
-	DeliveryMutations DeliveryMutationPort
 	// NativeDeliveryMutations is the clean-slate PostgreSQL plan/build port.
-	// Native production composition must inject this port; it is deliberately
-	// separate from DeliveryMutations so the HTTP plan/build handlers cannot
-	// fall back to the legacy DeliveryLifecycle or text-ID contracts.
+	// Native production composition must inject this port; HTTP plan/build
+	// handlers never fall back to a broad delivery lifecycle contract.
 	NativeDeliveryMutations NativeDeliveryMutationPort
 	// NativeDeliveryPublication is the clean-slate PostgreSQL publication and
 	// rollback request port. It is intentionally separate from plan/build so
@@ -258,12 +248,9 @@ type Config struct {
 	// transitions. Production must provide it whenever native persistence is
 	// enabled; no candidate-wide approval fallback is permitted.
 	NativeDeliveryApproval NativeDeliveryApprovalPort
-	// DeliveryReader is retained as a topology-neutral read contract for
-	// non-native callers; production uses NativeDeliveryReader.
-	DeliveryReader deployment.DeliveryReader
 	// NativeDeliveryReader is the clean-slate PostgreSQL read port. It is
-	// deliberately distinct from DeliveryReader so production handlers cannot
-	// silently fall back to projections with weaker identity guarantees.
+	// the only delivery read authority; projections with weaker identity
+	// guarantees are not accepted by the production module.
 	NativeDeliveryReader NativeDeliveryReader
 	// Native source-mutation capabilities are strict transaction-bound ports.
 	// Production PostgreSQL composition must provide all four; no
@@ -287,7 +274,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if config.Persistence.isPostgres() {
 		// Native PostgreSQL delivery is the only production mutation authority.
 		// Requiring this port here prevents a partially composed module from
-		// falling through to the legacy DeliveryMutationPort at request time.
+		// exposing a mutation route without its canonical authority.
 		if config.NativeDeliveryMutations == nil {
 			return nil, errors.New("production native deployment requires delivery mutation authority")
 		}
@@ -330,9 +317,6 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		// Keep the native module from retaining optional compatibility seams
 		// supplied by broad application composition. Native handlers fail closed
 		// when their native ports are absent rather than falling back to them.
-		config.DeliveryMutations = nil
-		config.DeliveryReader = nil
-		config.API.Releases = nil
 		config.SealedCoordinator = nil
 		config.SealedPublishRequest = nil
 		config.SealedRollbackRequest = nil
@@ -408,7 +392,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	m := &Module{
 		handler:           deploymenthttp.NewHandler(options),
 		projectClaims:     projectClaims,
-		candidateRuntimes: candidateRuntimes, candidateRuntimeLifecycle: config.CandidateRuntimeLifecycle, candidateSources: config.CandidateSources,
+		candidateRuntimes: candidateRuntimes, candidateSources: config.CandidateSources,
 		candidateArtifacts: config.CandidateArtifacts, candidateArtifactRecovery: config.CandidateArtifactRecovery,
 		candidateAdmission:       config.CandidateAdmission,
 		nativeMetadataSchema:     config.NativeMetadataSchemaForPool,
@@ -425,9 +409,9 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		sealedCoordinator: config.SealedCoordinator, sealedPublishRequest: config.SealedPublishRequest,
 		sealedRollbackRequest: config.SealedRollbackRequest, sealedActivationMarker: config.SealedActivationMarker,
 		sealedReconcile: config.SealedReconcile, sealedRollbackFence: config.SealedRollbackFence,
-		requireSealedCoordinator: config.RequireSealedCoordinator, deliveryReader: config.DeliveryReader,
-		nativeDeliveryReader: config.NativeDeliveryReader,
-		deliveryMutations:    config.DeliveryMutations, nativeDeliveryMutations: config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
+		requireSealedCoordinator: config.RequireSealedCoordinator,
+		nativeDeliveryReader:     config.NativeDeliveryReader,
+		nativeDeliveryMutations:  config.NativeDeliveryMutations, nativeDeliveryPublication: config.NativeDeliveryPublication,
 		nativeDeliveryApproval: config.NativeDeliveryApproval,
 		persistence:            config.Persistence,
 	}

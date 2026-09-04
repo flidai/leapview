@@ -9,11 +9,9 @@ import (
 
 type Clock = refreshschedule.Clock
 type RunRecord = refreshrun.RunRecord
-type CandidateValidationHook = refreshrun.CandidateValidationHook
 type Service = refreshrun.Service
 type QueuePipelineInput = refreshrun.QueuePipelineInput
 type QueueAssetResult = refreshrun.QueueAssetResult
-type ServingStateRepository = refreshrun.ServingStateRepository
 type WorkloadStats = workload.Stats
 type AssetRefreshState = refreshpresentation.AssetRefreshState
 type AssetDataVersion = refreshpresentation.AssetDataVersion

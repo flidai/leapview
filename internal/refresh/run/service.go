@@ -15,37 +15,16 @@ import (
 	refreshartifact "github.com/flidai/leapview/internal/refresh/artifact"
 	refreshplan "github.com/flidai/leapview/internal/refresh/plan"
 	refreshschedule "github.com/flidai/leapview/internal/refresh/schedule"
-	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
 
 // ServingStateReader is the immutable read surface needed to resolve the
-// active generation and inspect candidate artifacts. Native PostgreSQL
-// serving state intentionally exposes this surface without legacy candidate
-// mutation methods.
+// active generation and inspect its artifact.
 type ServingStateReader interface {
 	ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error)
 	ByID(context.Context, servingstate.ID) (servingstate.State, error)
 	ArtifactByServingState(context.Context, servingstate.ID) (servingstate.Artifact, error)
 }
-
-// ServingStateRepository is the legacy mutable lifecycle used by noncanonical
-// refresh execution. Keeping it as a refinement of ServingStateReader makes
-// the mutation authority explicit while preserving the existing adapter
-// contract for SQLite callers.
-type ServingStateRepository interface {
-	ServingStateReader
-	Create(context.Context, servingstate.CreateInput) (servingstate.State, error)
-	SaveValidated(context.Context, servingstate.ID, servingstate.Validation, servingstate.Artifact) (servingstate.State, error)
-	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
-	Activate(context.Context, projectgraph.ResourceID, servingstate.Environment, servingstate.ID, servingstate.ID) (servingstate.State, error)
-	MarkFailed(context.Context, servingstate.ID, error) error
-}
-
-// ErrServingStateMutationsRequired is returned whenever a legacy refresh path
-// reaches a lifecycle write without an explicitly supplied mutation authority.
-// Canonical delivery paths do not require this authority.
-var ErrServingStateMutationsRequired = errors.New("refresh serving-state mutation authority is required")
 
 type WorkflowRepository interface {
 	RunTreeRepository
@@ -75,42 +54,8 @@ type ArtifactLoader interface {
 	Load(context.Context, servingstate.Artifact) (LoadedArtifact, error)
 }
 
-type Materializer interface {
-	Materialize(context.Context, MaterializeInput) (int64, error)
-}
-
-type MaterializeInput struct {
-	Definition  *refreshartifact.Definition
-	Active      servingstate.State
-	Candidate   servingstate.State
-	Artifact    servingstate.Artifact
-	Environment servingstate.Environment
-	Plan        refreshplan.Plan
-}
-
-type RuntimeHost interface {
-	PrepareServingState(context.Context, string) (*runtimehost.Prepared, error)
-	ActivatePrepared(*runtimehost.Prepared, func() error) error
-}
-
-type RetentionRunner interface {
-	Run(context.Context, bool) error
-}
-
 type Publisher interface {
 	PublishRefreshTarget(context.Context, projectgraph.ServingIdentity, string, projectgraph.ResourceID)
-}
-
-type DataVersionRepository interface {
-	SaveDataVersion(context.Context, refreshschedule.DataVersion) error
-}
-
-type CandidateValidationHook interface {
-	AfterArtifactValidation(context.Context, servingstate.State, servingstate.Validation) error
-}
-
-type PublicationUnitOfWork interface {
-	Publish(context.Context, projectgraph.ServingIdentity, servingstate.ID, refreshschedule.DataVersion) error
 }
 
 type CanonicalPublicationUnitOfWork interface {
@@ -149,15 +94,11 @@ type CanonicalRefreshResult struct {
 }
 
 type Service struct {
-	// ServingStates is the read-only serving authority used by both canonical
-	// and legacy refresh flows. Native PostgreSQL composition supplies its
-	// immutable repository directly.
+	// ServingStates is the read-only serving authority used to resolve the
+	// active generation. Native PostgreSQL composition supplies its immutable
+	// repository directly.
 	ServingStates ServingStateReader
-	// ServingStateMutations is required only for the legacy candidate/activate
-	// flow. Native canonical execution leaves it nil and performs lifecycle
-	// writes through its canonical delivery executor instead.
-	ServingStateMutations ServingStateRepository
-	ResolveActive         func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
+	ResolveActive func(context.Context, projectgraph.ServingIdentity) (ServingState, error)
 	// ResolveTargetRevision reads the authoritative deployment target fence at
 	// queue time. Native PostgreSQL refreshes must carry this exact revision
 	// into the durable run; a zero or inferred revision is never publishable.
@@ -168,19 +109,21 @@ type Service struct {
 	CanonicalResultReconciler      CanonicalResultReconciler
 	Runs                           WorkflowRepository
 	Artifacts                      ArtifactLoader
-	Materializer                   Materializer
-	Runtime                        RuntimeHost
-	Retention                      RetentionRunner
 	Publisher                      Publisher
-	DataVersions                   DataVersionRepository
-	Publication                    PublicationUnitOfWork
-	CandidateValidationHooks       []CandidateValidationHook
-	Now                            func() time.Time
+	Publication                    CanonicalPublicationUnitOfWork
 }
 
 type ServingState struct {
 	State    servingstate.State
 	Artifact servingstate.Artifact
+}
+
+func (s Service) Active(ctx context.Context, projectID projectgraph.ResourceID, environment servingstate.Environment) (ServingState, error) {
+	state, artifact, err := s.ServingStates.ActiveArtifact(ctx, projectID, environment)
+	if err != nil {
+		return ServingState{}, err
+	}
+	return ServingState{State: state, Artifact: artifact}, nil
 }
 
 func stateIdentity(state servingstate.State) (projectgraph.ServingIdentity, error) {
@@ -301,6 +244,9 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if s.ServingStates == nil || s.Runs == nil || s.Artifacts == nil {
 		return QueueAssetResult{}, fmt.Errorf("serving state, refresh run, and artifact repositories are required")
 	}
+	if s.CanonicalExecutor == nil {
+		return QueueAssetResult{}, fmt.Errorf("canonical refresh executor is required")
+	}
 	if err := input.Identity.Validate(); err != nil {
 		return QueueAssetResult{}, err
 	}
@@ -346,7 +292,7 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 			}
 		}
 	}
-	if s.CanonicalExecutor != nil && s.ResolveTargetRevision == nil {
+	if s.ResolveTargetRevision == nil {
 		return QueueAssetResult{}, fmt.Errorf("canonical refresh target revision resolver is required")
 	}
 	active, err := s.activeForIdentity(ctx, input.Identity)
@@ -396,26 +342,13 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	if err != nil {
 		return QueueAssetResult{}, err
 	}
-	candidate := active
-	if s.CanonicalExecutor == nil {
-		if s.ServingStateMutations == nil {
-			return QueueAssetResult{}, fmt.Errorf("%w for noncanonical execution", ErrServingStateMutationsRequired)
-		}
-		candidate, err = s.CreateRefreshCandidate(ctx, RefreshCandidateInput{Identity: input.Identity, CreatedBy: input.PrincipalID, Active: active, ArtifactGraph: loaded.Graph, ManagedDataRevisions: loaded.ManagedDataRevisions})
-		if err != nil {
-			return QueueAssetResult{}, err
-		}
+	runIdentity := mustStateIdentity(active.State)
+	if s.ResolveSourceDigest == nil {
+		return QueueAssetResult{}, fmt.Errorf("canonical refresh source digest resolver is required")
 	}
-	runIdentity := mustStateIdentity(candidate.State)
-	planArtifactDigest := active.Artifact.Digest
-	if s.CanonicalExecutor != nil {
-		if s.ResolveSourceDigest == nil {
-			return QueueAssetResult{}, fmt.Errorf("canonical refresh source digest resolver is required")
-		}
-		planArtifactDigest, err = s.ResolveSourceDigest(ctx, input.Identity)
-		if err != nil {
-			return QueueAssetResult{}, fmt.Errorf("resolve canonical refresh source digest: %w", err)
-		}
+	planArtifactDigest, err := s.ResolveSourceDigest(ctx, input.Identity)
+	if err != nil {
+		return QueueAssetResult{}, fmt.Errorf("resolve canonical refresh source digest: %w", err)
 	}
 	plan, err = plan.BindGeneration(runIdentity, planArtifactDigest)
 	if err != nil {
@@ -458,16 +391,13 @@ func (s Service) QueuePipelineRefresh(ctx context.Context, input QueuePipelineIn
 	}
 	root, children, err := s.Runs.CreateRunTree(ctx, RunTreeInput{Root: rootInput, DependencyTargets: dependencyTargets, Occurrence: input.Occurrence, IdempotencyKey: idempotencyKey, RequestDigest: requestDigest})
 	if err != nil {
-		if s.CanonicalExecutor == nil {
-			_ = s.MarkFailed(ctx, candidate, err)
-		}
 		return QueueAssetResult{}, err
 	}
 	if root.Status == RunStatusSkipped {
-		return QueueAssetResult{Run: root, ServingStateID: candidate.State.ID}, nil
+		return QueueAssetResult{Run: root, ServingStateID: active.State.ID}, nil
 	}
 	s.publish(ctx, root.Identity, root.TargetType, root.TargetID)
-	return QueueAssetResult{Run: root, DependencyRuns: children, ServingStateID: candidate.State.ID}, nil
+	return QueueAssetResult{Run: root, DependencyRuns: children, ServingStateID: active.State.ID}, nil
 }
 
 func validatePipelineInvocation(pipeline refreshschedule.Definition, input *QueuePipelineInput) error {
@@ -529,191 +459,66 @@ func mustStateIdentity(state servingstate.State) projectgraph.ServingIdentity {
 }
 
 func (s Service) ExecuteClaimedJob(ctx context.Context, job JobRecord) error {
-	if s.CanonicalExecutor != nil {
-		if s.Runs == nil {
-			return fmt.Errorf("refresh run repository is required")
-		}
-		if err := job.Validate(); err != nil {
-			return err
-		}
-		if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
-			return err
-		}
-		result, err := s.CanonicalExecutor(ctx, job)
-		if err != nil {
-			if errors.Is(err, ErrRunStale) {
-				if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
-					if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error()); supersedeErr != nil {
-						return fmt.Errorf("supersede stale refresh tree: %w", supersedeErr)
-					}
-				} else {
-					return fmt.Errorf("supersede stale refresh tree: %w", ErrLeaseLost)
-				}
-				return err
-			}
-			_ = markRunFailedForWorker(ctx, s.Runs, job, err.Error())
-			return err
-		}
-		publication, ok := s.Publication.(CanonicalPublicationUnitOfWork)
-		if !ok {
-			return fmt.Errorf("canonical refresh publication unit of work is required")
-		}
-		completionCalled := false
-		var completionErr error
-		complete := func() error {
-			if completionCalled {
-				completionErr = errors.Join(completionErr, errors.New("canonical refresh completion callback invoked more than once"))
-				return completionErr
-			}
-			completionCalled = true
-			completionErr = publication.CompleteCanonicalRefresh(ctx, job, result)
-			return completionErr
-		}
-		if s.CanonicalCompletionCoordinator != nil {
-			if err := s.CanonicalCompletionCoordinator(ctx, job, result, complete); err != nil {
-				return fmt.Errorf("coordinate canonical refresh completion: %w", err)
-			}
-			if !completionCalled {
-				return errors.New("coordinate canonical refresh completion: completion callback was not invoked")
-			}
-			if completionErr != nil {
-				return fmt.Errorf("coordinate canonical refresh completion: %w", completionErr)
-			}
-		} else if err := complete(); err != nil {
-			return err
-		}
-		if s.CanonicalResultReconciler != nil {
-			if err := s.CanonicalResultReconciler(ctx, job, result); err != nil {
-				return fmt.Errorf("reconcile canonical refresh result: %w", err)
-			}
-		}
-		s.publish(ctx, job.Identity, job.TargetType, job.TargetID)
-		return nil
+	if s.CanonicalExecutor == nil {
+		return fmt.Errorf("canonical refresh executor is required")
 	}
-	if s.ServingStates == nil || s.Runs == nil || s.Artifacts == nil || s.Materializer == nil {
-		return fmt.Errorf("serving state, refresh run, artifact loader, and materializer are required")
-	}
-	if s.ServingStateMutations == nil {
-		return fmt.Errorf("%w for noncanonical execution", ErrServingStateMutationsRequired)
+	if s.Runs == nil {
+		return fmt.Errorf("refresh run repository is required")
 	}
 	if err := job.Validate(); err != nil {
 		return err
 	}
-	candidateState, err := s.ServingStates.ByID(ctx, servingstate.ID(job.Identity.GenerationID))
-	if err != nil {
-		return err
-	}
-	candidateIdentity := mustStateIdentity(candidateState)
-	if candidateIdentity != job.Identity {
-		return fmt.Errorf("refresh job serving identity does not match candidate")
-	}
-	if candidateState.Status == servingstate.StatusActive && candidateState.DuckLakeSnapshotID > 0 {
-		return markRunSucceededForWorker(ctx, s.Runs, job)
-	}
-	candidateArtifact, err := s.ServingStates.ArtifactByServingState(ctx, candidateState.ID)
-	if err != nil {
-		return err
-	}
-	active, err := s.Active(ctx, job.Identity.ProjectID, servingstate.Environment(job.Identity.Environment))
-	if err != nil {
-		return err
-	}
-	loaded, err := s.Artifacts.Load(ctx, candidateArtifact)
-	if err != nil {
-		return err
-	}
-	if loaded.Definition == nil {
-		return fmt.Errorf("compiled project definition is required")
-	}
-	plan, err := refreshplan.ForPipeline(loaded.Definition, job.Identity.ProjectID, job.PipelineID)
-	if err != nil {
-		return err
-	}
-	readScope, err := ReadScopeForIdentity(job.Identity)
-	if err != nil {
-		return err
-	}
-	children, err := s.Runs.ListChildRuns(ctx, readScope, job.RunID)
-	if err != nil {
-		return err
-	}
-	// Child runs are queued records owned by the same root command. They do
-	// not have an independently inferred worker fence here: the root worker
-	// performs the governed materialization and the fenced tree terminal
-	// transition closes every child. Calling MarkRunRunning on a child would
-	// silently invent a lease owner/fence in PostgreSQL.
-	_ = children
-	candidate := ServingState{State: candidateState, Artifact: candidateArtifact}
-	snapshotID, err := s.Materializer.Materialize(ctx, MaterializeInput{Definition: loaded.Definition, Active: active.State, Candidate: candidate.State, Artifact: candidate.Artifact, Environment: candidateState.Environment, Plan: plan})
-	if err != nil {
-		_ = s.failJob(ctx, job, candidate, err)
-		return err
-	}
-	if err := s.RecordSnapshot(ctx, candidate, snapshotID); err != nil {
-		_ = s.failJob(ctx, job, candidate, err)
-		return err
-	}
-	if s.Runtime == nil {
-		err = fmt.Errorf("runtime host is required for refresh activation")
-		_ = s.failJob(ctx, job, candidate, err)
-		return err
-	}
-	prepared, err := s.Runtime.PrepareServingState(ctx, string(candidateState.ID))
-	if err != nil {
-		_ = s.failJob(ctx, job, candidate, err)
-		return err
-	}
-	if prepared == nil {
-		err = fmt.Errorf("runtime host returned a nil prepared runtime")
-		_ = s.failJob(ctx, job, candidate, err)
-		return err
-	}
 	if _, err := s.Runs.MarkRunPrepared(ctx, job); err != nil {
-		_ = prepared.Close()
 		return err
 	}
-	mayPublish, err := s.Runs.RunMayPublish(ctx, job)
+	result, err := s.CanonicalExecutor(ctx, job)
 	if err != nil {
-		_ = prepared.Close()
-		return err
-	}
-	if !mayPublish {
-		_ = prepared.Close()
-		return ErrLeaseLost
-	}
-	now := time.Now()
-	if s.Now != nil {
-		now = s.Now()
-	}
-	version := refreshschedule.DataVersion{Identity: candidateIdentity, SemanticModelID: job.SemanticModelID, SnapshotID: snapshotID, RefreshedAt: now.UTC(), Source: refreshschedule.DataVersionSourceRefresh, PipelineID: job.PipelineID, RunID: job.RunID, TargetRevision: job.TargetRevision, LeaseOwner: job.LeaseOwner, LeaseRevision: job.LeaseRevision}
-	activate := func() error { return s.activateRefresh(ctx, candidate, version) }
-	if err := s.Runtime.ActivatePrepared(prepared, activate); err != nil {
-		_ = prepared.Close()
-		if errors.Is(err, ErrLeaseLost) {
+		if errors.Is(err, ErrRunStale) {
+			if fenced, ok := s.Runs.(LeaseFencedSupersedeRepository); ok {
+				if supersedeErr := fenced.MarkRunTreeSupersededClaimed(ctx, job, err.Error()); supersedeErr != nil {
+					return fmt.Errorf("supersede stale refresh tree: %w", supersedeErr)
+				}
+			} else {
+				return fmt.Errorf("supersede stale refresh tree: %w", ErrLeaseLost)
+			}
 			return err
 		}
-		_ = s.failJob(ctx, job, candidate, err)
+		_ = markRunFailedForWorker(ctx, s.Runs, job, err.Error())
 		return err
 	}
-	if s.Retention != nil {
-		_ = s.Retention.Run(ctx, false)
+	publication := s.Publication
+	if publication == nil {
+		return fmt.Errorf("canonical refresh publication unit of work is required")
 	}
-	s.publish(ctx, candidateIdentity, job.TargetType, job.TargetID)
-	return nil
-}
-
-func (s Service) activateRefresh(ctx context.Context, candidate ServingState, version refreshschedule.DataVersion) error {
-	if s.Publication == nil {
-		return fmt.Errorf("refresh publication unit of work is required")
+	completionCalled := false
+	var completionErr error
+	complete := func() error {
+		if completionCalled {
+			completionErr = errors.Join(completionErr, errors.New("canonical refresh completion callback invoked more than once"))
+			return completionErr
+		}
+		completionCalled = true
+		completionErr = publication.CompleteCanonicalRefresh(ctx, job, result)
+		return completionErr
 	}
-	identity := mustStateIdentity(candidate.State)
-	return s.Publication.Publish(ctx, identity, candidate.State.ID, version)
-}
-func (s Service) failJob(ctx context.Context, job JobRecord, candidate ServingState, cause error) error {
-	if err := markRunFailedForWorker(ctx, s.Runs, job, cause.Error()); err != nil {
+	if s.CanonicalCompletionCoordinator != nil {
+		if err := s.CanonicalCompletionCoordinator(ctx, job, result, complete); err != nil {
+			return fmt.Errorf("coordinate canonical refresh completion: %w", err)
+		}
+		if !completionCalled {
+			return errors.New("coordinate canonical refresh completion: completion callback was not invoked")
+		}
+		if completionErr != nil {
+			return fmt.Errorf("coordinate canonical refresh completion: %w", completionErr)
+		}
+	} else if err := complete(); err != nil {
 		return err
 	}
-	_ = s.MarkFailed(ctx, candidate, cause)
+	if s.CanonicalResultReconciler != nil {
+		if err := s.CanonicalResultReconciler(ctx, job, result); err != nil {
+			return fmt.Errorf("reconcile canonical refresh result: %w", err)
+		}
+	}
 	s.publish(ctx, job.Identity, job.TargetType, job.TargetID)
 	return nil
 }

@@ -4053,16 +4053,6 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 		"Dockerfile": {
 			"./scripts/generate_build_sources.sh",
 			"FROM go-deps AS build",
-			"COPY --from=sourcegen /src/internal/access/internal/db ./internal/access/internal/db",
-			"COPY --from=sourcegen /src/internal/agent/internal/db ./internal/agent/internal/db",
-			"COPY --from=sourcegen /src/internal/dashboard/internal/db ./internal/dashboard/internal/db",
-			"COPY --from=sourcegen /src/internal/manageddata/internal/db ./internal/manageddata/internal/db",
-			"COPY --from=sourcegen /src/internal/refresh/internal/db ./internal/refresh/internal/db",
-			"COPY --from=sourcegen /src/internal/servingstate/internal/db ./internal/servingstate/internal/db",
-			"COPY --from=sourcegen /src/internal/project/internal/db ./internal/project/internal/db",
-			"COPY --from=sourcegen /src/internal/platform/http/cursorsigning/sqlite/cursordb ./internal/platform/http/cursorsigning/sqlite/cursordb",
-			"COPY --from=sourcegen /src/internal/platform/http/idempotency/sqlite/idempotencydb ./internal/platform/http/idempotency/sqlite/idempotencydb",
-			"COPY --from=sourcegen /src/internal/platform/jobs/sqlite/jobdb ./internal/platform/jobs/sqlite/jobdb",
 		},
 	}
 	for name, fragments := range files {
@@ -4081,10 +4071,30 @@ func TestSQLCOutputsAreGeneratedBuildInputs(t *testing.T) {
 		t.Fatalf("read Dockerfile: %v", err)
 	}
 	dockerfileText := string(dockerfile)
+	if strings.Contains(dockerfileText, "COPY --from=sourcegen /src/internal/platform/db") {
+		t.Error("Dockerfile copies the SQLite platform fixture sqlc output into the production build")
+	}
 	for _, output := range postgresOutputs {
 		copy := fmt.Sprintf("COPY --from=sourcegen /src/%s ./%s", output, output)
 		if !strings.Contains(dockerfileText, copy) {
 			t.Errorf("Dockerfile missing generated PostgreSQL sqlc output %s", output)
+		}
+	}
+	for _, output := range []string{
+		"internal/access/internal/db",
+		"internal/agent/internal/db",
+		"internal/dashboard/internal/db",
+		"internal/manageddata/internal/db",
+		"internal/refresh/internal/db",
+		"internal/servingstate/internal/db",
+		"internal/project/internal/db",
+		"internal/platform/http/cursorsigning/sqlite/cursordb",
+		"internal/platform/http/idempotency/sqlite/idempotencydb",
+		"internal/platform/jobs/sqlite/jobdb",
+	} {
+		copy := fmt.Sprintf("COPY --from=sourcegen /src/%s ./%s", output, output)
+		if strings.Contains(dockerfileText, copy) {
+			t.Errorf("Dockerfile copies SQLite fixture sqlc output %s into the production build", output)
 		}
 	}
 }
@@ -4405,7 +4415,6 @@ func TestAnalyticsModuleConstructsTheProcessDuckDBExactlyOnce(t *testing.T) {
 	for _, path := range []string{
 		"internal/app/runtimefactory/factory.go",
 		"internal/analytics/duckdb/materialize.go",
-		"internal/refresh/analyticsruntime/materializer.go",
 		"internal/dashboard/analyticsruntime/factory.go",
 		"internal/runtimehost/manager.go",
 	} {

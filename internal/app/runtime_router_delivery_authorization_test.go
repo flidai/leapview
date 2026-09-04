@@ -24,13 +24,6 @@ type nativeDeliveryAuthorizationReaderFake struct {
 	calls          []string
 }
 
-// legacyDeliveryAuthorizationReaderFake is deliberately methodless: the
-// embedded contract is enough to prove that a legacy projection was supplied
-// to native composition without ever allowing a test call to reach it.
-type legacyDeliveryAuthorizationReaderFake struct {
-	deployment.DeliveryReader
-}
-
 func (r *nativeDeliveryAuthorizationReaderFake) Plan(_ context.Context, id string) (deploymentpostgres.DeliveryPlan, error) {
 	r.calls = append(r.calls, "plan:"+id)
 	return r.plan, nil
@@ -80,16 +73,6 @@ func TestNativeDeliveryAuthorizationPlanMapsUnresolvablePublicationToNoRows(t *t
 	}
 }
 
-func TestNativeDeliveryAssemblyRejectsLegacyDeliveryAndReleaseProjections(t *testing.T) {
-	config := deploymentmodule.Config{
-		NativeDeliveryReader: &nativeDeliveryAuthorizationReaderFake{},
-		DeliveryReader:       &legacyDeliveryAuthorizationReaderFake{},
-	}
-	if err := validateDeliveryAssemblyInputs(config, false); err == nil || !strings.Contains(err.Error(), "legacy delivery/release projections") {
-		t.Fatalf("native delivery validation error = %v, want legacy projection rejection", err)
-	}
-}
-
 func TestNativeDeliveryAssemblyRequiresNativeReader(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -105,13 +88,6 @@ func TestNativeDeliveryAssemblyRequiresNativeReader(t *testing.T) {
 				t.Fatalf("native delivery validation error = %v, want missing native reader", err)
 			}
 		})
-	}
-}
-
-func TestLocalDeliveryAssemblyKeepsExplicitLegacyReader(t *testing.T) {
-	config := deploymentmodule.Config{DeliveryReader: &legacyDeliveryAuthorizationReaderFake{}}
-	if err := validateDeliveryAssemblyInputs(config, false); err != nil {
-		t.Fatalf("explicit local delivery reader rejected: %v", err)
 	}
 }
 

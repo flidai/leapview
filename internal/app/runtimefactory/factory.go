@@ -27,7 +27,6 @@ import (
 type FactoryConfig struct {
 	DuckDBDir          string
 	RuntimeDir         string
-	SealedLeaseHolder  string
 	ActivationEvidence ActivationEvidenceSource
 }
 
@@ -43,7 +42,7 @@ type servingStateRuntimeFactory struct {
 // immutable locator rather than a process-local filesystem path.
 type ServingArtifactReader = projectbundle.ArtifactObjectReader
 
-// prepareDashboard is the common sealed path project-artifact loader. The
+// prepareDashboard is the PostgreSQL sealed path project-artifact loader. The
 // catalog environment is supplied by the caller after durable lease/fence
 // acquisition; this helper never opens or writes a DuckLake catalog itself.
 func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace, targetID, snapshotSealID string, resultTier resulttier.Tier) (*dashboardRuntimeWithGraph, error) {
@@ -51,8 +50,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		return nil, fmt.Errorf("sealed dashboard builder and environment are required")
 	}
 	// PostgreSQL serving roots carry the exact candidate schema selected by
-	// durable delivery state. Never allow the downstream runtime to fall back
-	// to the legacy model schema for this path.
+	// durable delivery state.
 	if environment.IsPostgresCatalog() {
 		if relationNamespace == "" || relationNamespace != strings.TrimSpace(relationNamespace) {
 			return nil, fmt.Errorf("%w: PostgreSQL relation namespace is unavailable", ErrSealedRootUnavailable)
@@ -134,8 +132,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 	}
 	// PostgreSQL-backed serving environments pin an exact snapshot at ATTACH;
 	// propagate that identity into the dashboard runtime so it cannot fall back
-	// to the catalog's moving head. Legacy sealed file readers retain their
-	// existing state-driven behavior.
+	// to the catalog's moving head.
 	if environment.IsPostgresCatalog() {
 		runtimeInput.SnapshotID = environment.PostgresSnapshotVersion()
 		runtimeInput.RelationNamespace = relationNamespace

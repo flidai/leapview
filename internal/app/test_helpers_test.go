@@ -36,7 +36,6 @@ import (
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	projecthttp "github.com/flidai/leapview/internal/project/http"
 	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
-	refreshrun "github.com/flidai/leapview/internal/refresh/run"
 	releasemodule "github.com/flidai/leapview/internal/release/module"
 	"github.com/flidai/leapview/internal/runtimehost"
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
@@ -247,7 +246,6 @@ type assemblyConfig struct {
 	AgentSettings           agentmodule.Settings
 	AgentPersistence        *agentmodule.Persistence
 	ServingStateRepo        servingStateRepository
-	ManagedDataValidation   refreshmodule.CandidateValidationHook
 	ManagedDataResolver     runtimehostmodule.ManagedDataResolver
 	ReleaseModule           *releasemodule.Module
 	JobModule               *jobsmodule.Module
@@ -279,7 +277,6 @@ type assemblyConfig struct {
 	PublicURL               string
 	DesktopDiscovery        desktopdiscovery.Config
 	RefreshPipelineClock    refreshmodule.Clock
-	RefreshMaterializer     refreshrun.Materializer
 	EnableRefreshDispatcher bool
 	RecoveryLifecycle       *refreshmodule.RecoveryLifecycle
 	RecoveryInterval        time.Duration
@@ -425,20 +422,19 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 			ProjectCatalog: options.ProjectCatalog, ProjectGraph: options.ProjectGraph,
 		},
 		workflowAssemblyInputs{
-			AgentSettings: options.AgentSettings, ManagedDataValidation: options.ManagedDataValidation,
+			AgentSettings:       options.AgentSettings,
 			ManagedDataResolver: options.ManagedDataResolver, AgentConfig: options.AgentConfig,
 			Auth: options.Auth, Reloader: options.Reloader, Workload: options.Workload,
 			DeploymentConfig: options.DeploymentConfig, RefreshPipelineClock: options.RefreshPipelineClock,
-			RefreshMaterializer: options.RefreshMaterializer, EnableRefreshDispatcher: options.EnableRefreshDispatcher,
-			RecoveryLifecycle: options.RecoveryLifecycle, RecoveryInterval: options.RecoveryInterval,
+			EnableRefreshDispatcher: options.EnableRefreshDispatcher,
+			RecoveryLifecycle:       options.RecoveryLifecycle, RecoveryInterval: options.RecoveryInterval,
 			QueryAudit: options.QueryAudit,
 		},
 		runtimeAssemblyInputs{
 			RuntimeHost: options.RuntimeHost, ProjectID: options.ProjectID,
 			ProjectIDResolver: options.ProjectIDResolver, ServingSnapshotResolver: options.ServingSnapshotResolver,
-			InstanceID: instanceID,
-			DuckDBDir:  options.DuckDBDir, DuckLakeCatalogPath: options.DuckLakeCatalogPath,
-			DuckLakeDataPath:   options.DuckLakeDataPath,
+			InstanceID:         instanceID,
+			DuckDBDir:          options.DuckDBDir,
 			DefaultEnvironment: options.DefaultEnvironment, SCIMBearerToken: options.SCIMBearerToken,
 			MetricsBearerToken: options.MetricsBearerToken, AllowedHosts: options.AllowedHosts, Assets: options.Assets,
 			AllowDevAuthBypass: true,

@@ -10,8 +10,8 @@ import (
 	servingstatemodule "github.com/flidai/leapview/internal/servingstate/module"
 )
 
-// readOnlyRefreshServingStates intentionally omits every legacy candidate
-// mutation method. Native PostgreSQL serving state uses this shape.
+// readOnlyRefreshServingStates models the immutable serving-state reader used
+// by canonical refresh composition.
 type readOnlyRefreshServingStates struct{}
 
 func (readOnlyRefreshServingStates) ActiveArtifact(context.Context, projectgraph.ResourceID, servingstate.Environment) (servingstate.State, servingstate.Artifact, error) {
@@ -30,7 +30,7 @@ func (readOnlyRefreshServingStates) ListActiveScopes(context.Context) ([]serving
 	return nil, nil
 }
 
-func TestProjectRefreshServiceUsesExplicitServingStateMutations(t *testing.T) {
+func TestProjectRefreshServiceUsesReadOnlyServingState(t *testing.T) {
 	reader := readOnlyRefreshServingStates{}
 	service, err := projectRefreshService(
 		persistenceInputs{servingStateRepo: reader},
@@ -42,8 +42,5 @@ func TestProjectRefreshServiceUsesExplicitServingStateMutations(t *testing.T) {
 	}
 	if service.ServingStates != reader {
 		t.Fatal("projectRefreshService() did not preserve read-only serving-state authority")
-	}
-	if service.ServingStateMutations != nil {
-		t.Fatal("projectRefreshService() inferred a mutable serving-state authority")
 	}
 }
