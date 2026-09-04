@@ -103,6 +103,7 @@ Focused slices are available at `/docs/agent-tools/tools/{name}.json|md`, `/docs
 - [API quickstart](/docs/guides/integrate/api-quickstart): Authenticate and call the headless API.
 - [API conventions](/docs/guides/integrate/api-conventions): Handle authentication, errors, and pagination consistently.
 - [Headless BI queries](/docs/guides/integrate/headless-bi): Query dashboards and semantic models through stable contracts.
+- [Use dbt at the warehouse boundary](/docs/guides/integrate/dbt-warehouse-boundary): Publish tested dbt marts and consume their physical contract through ordinary LeapView resources.
 - [Public and embedded dashboards](/docs/guides/integrate/public-dashboards): Publish an anonymous governed dashboard and embed it on an allowed origin.
 - [Agent integrations](/docs/guides/integrate/agent): Use global conversations and the shared governed tool catalog.
 - [Use the agent tool catalog](/docs/guides/integrate/agent-tools): Find, inspect, and query governed resources through the curated tool surface.
