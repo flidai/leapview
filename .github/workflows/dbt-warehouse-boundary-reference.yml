@@ -1,0 +1,168 @@
+name: dbt warehouse boundary reference
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write
+
+concurrency:
+  group: dbt-warehouse-boundary-production
+  cancel-in-progress: false
+
+env:
+  AZURE_CORE_OUTPUT: none
+  AZURE_STORAGE_ACCOUNT: ${{ vars.DBT_PRODUCER_STORAGE_ACCOUNT }}
+  AZURE_SOURCE_CONTAINER: ${{ vars.DBT_PRODUCER_SOURCE_CONTAINER }}
+  AZURE_PUBLICATION_CONTAINER: ${{ vars.DBT_PRODUCER_PUBLICATION_CONTAINER }}
+  LEAPVIEW_TARGET: ${{ vars.LEAPVIEW_TARGET }}
+  LEAPVIEW_WORKLOAD_PROJECT: ${{ vars.LEAPVIEW_PROJECT_ID }}
+
+jobs:
+  publish-and-activate:
+    name: Publish dbt marts and activate LeapView
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: dbt-warehouse-boundary-production
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up pinned Python
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405 # v6.2.0
+        with:
+          python-version: "3.13.14"
+          cache: pip
+          cache-dependency-path: examples/dbt-warehouse-boundary/dbt/requirements.txt
+
+      - name: Install pinned dbt Core
+        run: python -m pip install --disable-pip-version-check 'dbt-core==1.11.14'
+
+      - name: Install pinned dbt-duckdb
+        run: python -m pip install --disable-pip-version-check 'dbt-duckdb==1.11.0'
+
+      - name: Authenticate the producer with Azure OIDC
+        uses: azure/login@7ddb5af1ef8758cf1353cf3b42f940aee27ba21c # v3.0.2
+        with:
+          client-id: ${{ vars.DBT_PRODUCER_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Read the bounded producer inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          seed_dir="examples/dbt-warehouse-boundary/dbt/seeds"
+          for input in raw_customers.csv raw_orders.csv; do
+            az storage blob download \
+              --auth-mode login \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --container-name "$AZURE_SOURCE_CONTAINER" \
+              --name "dbt-warehouse-boundary/$input" \
+              --file "$seed_dir/$input" \
+              --overwrite true \
+              --no-progress \
+              --output none
+          done
+
+      - name: Run dbt build and verify physical Parquet
+        run: DBT_BIN="$(command -v dbt)" ./scripts/dbt-warehouse-boundary.sh build
+
+      - name: Select a new immutable publication prefix
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="dbt-warehouse-boundary/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}"
+          existing="$(az storage blob list \
+            --auth-mode login \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --container-name "$AZURE_PUBLICATION_CONTAINER" \
+            --prefix "$prefix/" \
+            --query 'length(@)' \
+            --output tsv)"
+          test "$existing" = 0 || {
+            echo "immutable publication prefix already exists" >&2
+            exit 1
+          }
+          printf 'PUBLICATION_PREFIX=%s\n' "$prefix" >> "$GITHUB_ENV"
+
+      - name: Upload the complete selected mart set
+        shell: bash
+        run: |
+          set -euo pipefail
+          for mart in dim_customers.parquet fct_orders.parquet; do
+            az storage blob upload \
+              --auth-mode login \
+              --account-name "$AZURE_STORAGE_ACCOUNT" \
+              --container-name "$AZURE_PUBLICATION_CONTAINER" \
+              --name "$PUBLICATION_PREFIX/$mart" \
+              --file "examples/dbt-warehouse-boundary/published/$mart" \
+              --overwrite false \
+              --no-progress \
+              --output none
+          done
+
+      - name: Verify the exact published mart set
+        shell: bash
+        run: |
+          set -euo pipefail
+          expected="$(printf '%s\n' \
+            "$PUBLICATION_PREFIX/dim_customers.parquet" \
+            "$PUBLICATION_PREFIX/fct_orders.parquet")"
+          actual="$(az storage blob list \
+            --auth-mode login \
+            --account-name "$AZURE_STORAGE_ACCOUNT" \
+            --container-name "$AZURE_PUBLICATION_CONTAINER" \
+            --prefix "$PUBLICATION_PREFIX/" \
+            --query '[].name' \
+            --output tsv | LC_ALL=C sort)"
+          test "$actual" = "$expected" || {
+            echo "published prefix does not contain the exact expected mart set" >&2
+            exit 1
+          }
+
+      - name: End the producer credential session
+        run: az logout
+
+      - name: Render the ordinary Azure-backed LeapView bundle
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle="$RUNNER_TEMP/dbt-warehouse-boundary-leapview"
+          cp -R examples/dbt-warehouse-boundary/leapview "$bundle"
+          sed -i 's/type: managed/type: azure_blob/' "$bundle/connections/warehouse.yaml"
+          sed -i "s|path: dim_customers.parquet|path: az://$AZURE_PUBLICATION_CONTAINER/$PUBLICATION_PREFIX/dim_customers.parquet|" "$bundle/sources/dim_customers.yaml"
+          sed -i "s|path: fct_orders.parquet|path: az://$AZURE_PUBLICATION_CONTAINER/$PUBLICATION_PREFIX/fct_orders.parquet|" "$bundle/sources/fct_orders.yaml"
+          printf 'LEAPVIEW_PROJECT_FILE=%s/leapview.yaml\n' "$bundle" >> "$GITHUB_ENV"
+
+      - name: Set up the cached LeapView CI toolchain
+        uses: ./.github/actions/setup-ci
+        with:
+          browser: "false"
+
+      - name: Build the ordinary LeapView CLI
+        run: |
+          task ci:prepare
+          go build -o "$RUNNER_TEMP/leapview" ./cmd/leapview
+
+      - name: Qualify the physical publication through LeapView
+        shell: bash
+        env:
+          LEAPVIEW_WORKLOAD_CLIENT_ID: ${{ secrets.LEAPVIEW_WORKLOAD_CLIENT_ID }}
+          LEAPVIEW_WORKLOAD_CLIENT_SECRET: ${{ secrets.LEAPVIEW_WORKLOAD_CLIENT_SECRET }}
+        run: |
+          set -euo pipefail
+          candidate_key="github:dbt-warehouse:${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          candidate_json="$("$RUNNER_TEMP/leapview" dev --once --no-browser --format json \
+            --project "$LEAPVIEW_PROJECT_FILE" \
+            --target "$LEAPVIEW_TARGET" \
+            --candidate-key "$candidate_key" \
+            --source-repository "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY" \
+            --source-ref "$GITHUB_REF" \
+            --source-revision "$GITHUB_SHA")"
+          candidate_id="$(jq -er '.candidateId | select(type == "string" and test("^cand_[A-Za-z0-9_-]+$"))' <<<"$candidate_json")"
+          "$RUNNER_TEMP/leapview" publish "$candidate_id" --format json
