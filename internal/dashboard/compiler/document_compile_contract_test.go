@@ -176,6 +176,100 @@ func TestCanonicalVisualizationSpecBoxplotAndCandlestickContracts(t *testing.T) 
 	}
 }
 
+func TestCanonicalVisualizationSpecsCompileProportionalAndPolarAuthoredOptions(t *testing.T) {
+	model := dashboardQueryTestModel()
+	dimension := []visualizationdefinition.FieldBinding{{FieldID: "status", Alias: "status"}}
+	metric := []visualizationdefinition.FieldBinding{{FieldID: "revenue", Alias: "revenue"}}
+	categoryQuery := LoweredDashboardQuery{
+		Type: "aggregate",
+		Binding: visualizationdefinition.QueryBinding{
+			ResultShape: visualizationdefinition.ResultCategoryValue,
+			Aggregate:   &visualizationdefinition.AggregateQueryBinding{Dimensions: dimension, Metrics: metric},
+		},
+		ResultFrame: []DashboardQueryResultField{{Name: "status"}, {Name: "revenue"}},
+	}
+	valueQuery := LoweredDashboardQuery{
+		Type: "aggregate",
+		Binding: visualizationdefinition.QueryBinding{
+			ResultShape: visualizationdefinition.ResultCategoryValue,
+			Aggregate:   &visualizationdefinition.AggregateQueryBinding{Metrics: metric},
+		},
+		ResultFrame: []DashboardQueryResultField{{Name: "revenue"}},
+	}
+	outerRadius := 1.0
+	minimum, maximum := 0.0, 100.0
+	showPointer := false
+	cases := []struct {
+		name       string
+		visualType document.DashboardVisualType
+		visual     document.DashboardVisual
+		query      LoweredDashboardQuery
+		check      func(t *testing.T, spec visualizationir.VisualizationSpec)
+	}{
+		{
+			name: "donut authored geometry", visualType: document.DashboardVisualTypeDonut, query: categoryQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeDonut, Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", InnerRadius: floatPointer(0), OuterRadius: &outerRadius, CenterLabel: stringPointer("Orders")}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.ProportionalVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationProportionalMarkDonut || got.Category.Field != "status" || got.Value.Field != "revenue" || got.Presentation.InnerRadius == nil || *got.Presentation.InnerRadius != 0 || got.Presentation.CenterLabel == nil || *got.Presentation.CenterLabel != "Orders" {
+					t.Fatalf("donut spec = %#v", got)
+				}
+			},
+		},
+		{
+			name: "funnel authored ordering", visualType: document.DashboardVisualTypeFunnel, query: categoryQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeFunnel, Presentation: document.DashboardPresentation{Value: &document.ProportionalDashboardPresentation{Type: "proportional", Align: alignmentPointer(document.DashboardProportionalAlignmentCenter), Sort: sortPointer(visualizationir.VisualizationSortDirectionDescending)}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.ProportionalVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationProportionalMarkFunnel || got.Presentation.Align == nil || *got.Presentation.Align != "center" || got.Presentation.Sort == nil || *got.Presentation.Sort != visualizationir.VisualizationSortDirectionDescending {
+					t.Fatalf("funnel spec = %#v", got)
+				}
+			},
+		},
+		{
+			name: "gauge authored domain and pointer", visualType: document.DashboardVisualTypeGauge, query: valueQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeGauge, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Minimum: &minimum, Maximum: &maximum, ShowPointer: &showPointer}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.PolarVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationPolarMarkGauge || got.Value.Field != "revenue" || got.Presentation.Minimum == nil || *got.Presentation.Minimum != 0 || got.Presentation.Maximum == nil || *got.Presentation.Maximum != 100 || got.Presentation.ShowPointer {
+					t.Fatalf("gauge spec = %#v", got)
+				}
+			},
+		},
+		{
+			name: "radar authored maximum", visualType: document.DashboardVisualTypeRadar, query: categoryQuery,
+			visual: document.DashboardVisual{Type: document.DashboardVisualTypeRadar, Presentation: document.DashboardPresentation{Value: &document.PolarDashboardPresentation{Type: "polar", Maximum: floatPointer(10)}}},
+			check: func(t *testing.T, spec visualizationir.VisualizationSpec) {
+				got := spec.Value.(*visualizationir.PolarVisualizationSpec)
+				if got.Mark != visualizationir.VisualizationPolarMarkRadar || got.Category == nil || got.Category.Field != "status" || got.Presentation.Maximum == nil || *got.Presentation.Maximum != 10 {
+					t.Fatalf("radar spec = %#v", got)
+				}
+			},
+		},
+	}
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			presentation, err := LowerCanonicalDashboardPresentationForQuery(test.visual.Presentation, test.visualType, test.query)
+			if err != nil {
+				t.Fatalf("lower presentation: %v", err)
+			}
+			spec, err := canonicalVisualizationSpec(test.name, test.visual, test.query, presentation, nil, model)
+			if err != nil {
+				t.Fatalf("compile spec: %v", err)
+			}
+			test.check(t, spec)
+		})
+	}
+}
+
+func alignmentPointer(value document.DashboardProportionalAlignment) *document.DashboardProportionalAlignment {
+	return &value
+}
+
+func sortPointer(value visualizationir.VisualizationSortDirection) *visualizationir.VisualizationSortDirection {
+	return &value
+}
+
 func fieldIDs(fields []visualizationir.VisualizationField) string {
 	ids := make([]string, len(fields))
 	for i, field := range fields {

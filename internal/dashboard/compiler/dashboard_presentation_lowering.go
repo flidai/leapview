@@ -161,18 +161,40 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		}
 		out.InnerRadius = variant.InnerRadius
 		out.OuterRadius = variant.OuterRadius
-		if out.InnerRadius != nil && (*out.InnerRadius < 0 || *out.InnerRadius > 1) {
-			return nil, fmt.Errorf("proportional innerRadius must be between zero and one")
+		if out.InnerRadius != nil {
+			if !finiteDashboardFloat(*out.InnerRadius) {
+				return nil, fmt.Errorf("presentation.innerRadius must be finite")
+			}
+			if *out.InnerRadius < 0 || *out.InnerRadius > 1 {
+				return nil, fmt.Errorf("presentation.innerRadius must be between zero and one")
+			}
 		}
-		if out.OuterRadius != nil && (*out.OuterRadius <= 0 || *out.OuterRadius > 1) {
-			return nil, fmt.Errorf("proportional outerRadius must be greater than zero and at most one")
+		if out.OuterRadius != nil {
+			if !finiteDashboardFloat(*out.OuterRadius) {
+				return nil, fmt.Errorf("presentation.outerRadius must be finite")
+			}
+			if *out.OuterRadius <= 0 || *out.OuterRadius > 1 {
+				return nil, fmt.Errorf("presentation.outerRadius must be greater than zero and at most one")
+			}
 		}
 		if out.InnerRadius != nil && out.OuterRadius != nil && *out.InnerRadius >= *out.OuterRadius {
-			return nil, fmt.Errorf("proportional innerRadius must be less than outerRadius")
+			return nil, fmt.Errorf("presentation.innerRadius must be less than outerRadius")
 		}
 		if variant.Align != nil {
+			switch *variant.Align {
+			case document.DashboardProportionalAlignmentLeft, document.DashboardProportionalAlignmentCenter, document.DashboardProportionalAlignmentRight:
+			default:
+				return nil, fmt.Errorf("presentation.align must be left, center, or right")
+			}
 			align := string(*variant.Align)
 			out.Align = &align
+		}
+		if variant.Sort != nil {
+			switch *variant.Sort {
+			case visualizationir.VisualizationSortDirectionAscending, visualizationir.VisualizationSortDirectionDescending:
+			default:
+				return nil, fmt.Errorf("presentation.sort must be ascending or descending")
+			}
 		}
 		out.Sort = variant.Sort
 		return out, nil
@@ -240,11 +262,51 @@ func LowerCanonicalDashboardPresentation(value document.DashboardPresentation, v
 		if variant.ShowPointer != nil {
 			out.ShowPointer = *variant.ShowPointer
 		}
-		if out.Minimum != nil && out.Maximum != nil && *out.Minimum >= *out.Maximum {
-			return nil, fmt.Errorf("polar minimum must be less than maximum")
+		if out.Minimum != nil && !finiteDashboardFloat(*out.Minimum) {
+			return nil, fmt.Errorf("presentation.minimum must be finite")
 		}
-		if out.ProgressWidth != nil && *out.ProgressWidth <= 0 {
-			return nil, fmt.Errorf("polar progressWidth must be greater than zero")
+		if out.Maximum != nil && !finiteDashboardFloat(*out.Maximum) {
+			return nil, fmt.Errorf("presentation.maximum must be finite")
+		}
+		if visualType == document.DashboardVisualTypeGauge && (out.Minimum == nil || out.Maximum == nil) {
+			return nil, fmt.Errorf("presentation.minimum and presentation.maximum are required for gauge visuals")
+		}
+		if out.Minimum != nil && out.Maximum != nil && *out.Minimum >= *out.Maximum {
+			return nil, fmt.Errorf("presentation.minimum must be less than maximum")
+		}
+		if visualType == document.DashboardVisualTypeRadar && out.Maximum != nil && *out.Maximum <= 0 {
+			return nil, fmt.Errorf("presentation.maximum must be greater than zero for radar visuals")
+		}
+		if out.Target != nil {
+			if !finiteDashboardFloat(*out.Target) {
+				return nil, fmt.Errorf("presentation.target must be finite")
+			}
+			if out.Minimum != nil && out.Maximum != nil && (*out.Target < *out.Minimum || *out.Target > *out.Maximum) {
+				return nil, fmt.Errorf("presentation.target must be within the gauge domain")
+			}
+		}
+		if out.ProgressWidth != nil {
+			if !finiteDashboardFloat(*out.ProgressWidth) {
+				return nil, fmt.Errorf("presentation.progressWidth must be finite")
+			}
+			if *out.ProgressWidth <= 0 {
+				return nil, fmt.Errorf("presentation.progressWidth must be greater than zero")
+			}
+		}
+		if out.Thresholds != nil {
+			var previous float64
+			for index, threshold := range *out.Thresholds {
+				if !finiteDashboardFloat(threshold.Value) {
+					return nil, fmt.Errorf("presentation.thresholds[%d].value must be finite", index)
+				}
+				if out.Minimum != nil && out.Maximum != nil && (threshold.Value < *out.Minimum || threshold.Value > *out.Maximum) {
+					return nil, fmt.Errorf("presentation.thresholds[%d].value must be within the gauge domain", index)
+				}
+				if index > 0 && threshold.Value <= previous {
+					return nil, fmt.Errorf("presentation.thresholds[%d].value must be greater than the previous threshold", index)
+				}
+				previous = threshold.Value
+			}
 		}
 		return out, nil
 	case *document.GeographicDashboardPresentation:
@@ -370,39 +432,91 @@ func LowerCanonicalDashboardPresentationForQuery(value document.DashboardPresent
 }
 
 func validateCanonicalPresentationApplicability(value document.DashboardPresentation, visualType document.DashboardVisualType) error {
-	variant, ok := value.Value.(*document.HierarchyDashboardPresentation)
-	if !ok || variant == nil {
-		return nil
-	}
-
 	optionSupported := func(option string, present bool, supported bool) error {
 		if present && !supported {
 			return fmt.Errorf("presentation.%s is not supported for %s visuals", option, visualType)
 		}
 		return nil
 	}
-	if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeSankey); err != nil {
-		return err
+	switch variant := value.Value.(type) {
+	case *document.HierarchyDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeSankey); err != nil {
+			return err
+		}
+		if err := optionSupported("initialDepth", variant.InitialDepth != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap); err != nil {
+			return err
+		}
+		if err := optionSupported("roam", variant.Roam != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap || visualType == document.DashboardVisualTypeSunburst); err != nil {
+			return err
+		}
+		if err := optionSupported("layout", variant.Layout != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree); err != nil {
+			return err
+		}
+		if err := optionSupported("breadcrumb", variant.Breadcrumb != nil, visualType == document.DashboardVisualTypeTreemap); err != nil {
+			return err
+		}
+		if err := optionSupported("nodeGap", variant.NodeGap != nil, visualType == document.DashboardVisualTypeSankey); err != nil {
+			return err
+		}
+		if err := optionSupported("curveness", variant.Curveness != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeSankey); err != nil {
+			return err
+		}
+		return optionSupported("focus", variant.Focus != nil, visualType == document.DashboardVisualTypeGraph)
+	case *document.ProportionalDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if err := optionSupported("orientation", variant.Orientation != nil, visualType == document.DashboardVisualTypeFunnel); err != nil {
+			return err
+		}
+		if err := optionSupported("rose", variant.Rose != nil, visualType == document.DashboardVisualTypePie || visualType == document.DashboardVisualTypeDonut); err != nil {
+			return err
+		}
+		if err := optionSupported("centerLabel", variant.CenterLabel != nil, visualType == document.DashboardVisualTypeDonut); err != nil {
+			return err
+		}
+		if err := optionSupported("innerRadius", variant.InnerRadius != nil, visualType == document.DashboardVisualTypeDonut); err != nil {
+			return err
+		}
+		if err := optionSupported("outerRadius", variant.OuterRadius != nil, visualType == document.DashboardVisualTypePie || visualType == document.DashboardVisualTypeDonut); err != nil {
+			return err
+		}
+		if err := optionSupported("align", variant.Align != nil, visualType == document.DashboardVisualTypeFunnel); err != nil {
+			return err
+		}
+		return optionSupported("sort", variant.Sort != nil, visualType == document.DashboardVisualTypeFunnel)
+	case *document.PolarDashboardPresentation:
+		if variant == nil {
+			return nil
+		}
+		if err := optionSupported("legend", variant.Legend != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+			return err
+		}
+		if err := optionSupported("minimum", variant.Minimum != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+			return err
+		}
+		if err := optionSupported("maximum", variant.Maximum != nil, visualType == document.DashboardVisualTypeGauge || visualType == document.DashboardVisualTypeRadar); err != nil {
+			return err
+		}
+		if err := optionSupported("target", variant.Target != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+			return err
+		}
+		if err := optionSupported("showPointer", variant.ShowPointer != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+			return err
+		}
+		if err := optionSupported("area", variant.Area != nil, visualType == document.DashboardVisualTypeRadar); err != nil {
+			return err
+		}
+		if err := optionSupported("progressWidth", variant.ProgressWidth != nil, visualType == document.DashboardVisualTypeGauge); err != nil {
+			return err
+		}
+		return optionSupported("thresholds", variant.Thresholds != nil, visualType == document.DashboardVisualTypeGauge)
+	default:
+		return nil
 	}
-	if err := optionSupported("initialDepth", variant.InitialDepth != nil, visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap); err != nil {
-		return err
-	}
-	if err := optionSupported("roam", variant.Roam != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree || visualType == document.DashboardVisualTypeTreemap || visualType == document.DashboardVisualTypeSunburst); err != nil {
-		return err
-	}
-	if err := optionSupported("layout", variant.Layout != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeTree); err != nil {
-		return err
-	}
-	if err := optionSupported("breadcrumb", variant.Breadcrumb != nil, visualType == document.DashboardVisualTypeTreemap); err != nil {
-		return err
-	}
-	if err := optionSupported("nodeGap", variant.NodeGap != nil, visualType == document.DashboardVisualTypeSankey); err != nil {
-		return err
-	}
-	if err := optionSupported("curveness", variant.Curveness != nil, visualType == document.DashboardVisualTypeGraph || visualType == document.DashboardVisualTypeSankey); err != nil {
-		return err
-	}
-	return optionSupported("focus", variant.Focus != nil, visualType == document.DashboardVisualTypeGraph)
 }
 
 // lowerCanonicalComboSeries maps the closed Dashboard combo policy into the
