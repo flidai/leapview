@@ -59,7 +59,7 @@ Rotating a static password does not itself revoke database sessions already acce
 
 ## Persistent storage
 
-Configure a durable `LEAPVIEW_HOME` and the paths required for the control-plane database, global DuckLake catalog, analytical data, artifacts, and managed-data runtime. The service identity must own these private paths; they should not be served by the reverse proxy.
+Configure a durable `LEAPVIEW_HOME` for runtime state, DuckDB temporary data, artifacts, and managed-data runtime. Production DuckLake catalog authority is the configured PostgreSQL DuckLake database; do not provision or configure a writable local DuckLake catalog path. The service identity must own local runtime paths; they should not be served by the reverse proxy.
 
 Choose `local` or `s3` for managed data. The S3 backend requires bucket and region, a private local staging/cache directory, and either ambient credentials or a complete key pair. Enable bucket versioning and provider-native replication or backup for authoritative S3 objects; LeapView does not create an instance archive for them. Coordinate those external recovery points with PostgreSQL and DuckLake using the [PostgreSQL operations guide](/docs/guides/operate/postgresql-operations) and [Backup and restore guide](/docs/guides/operate/backup-restore).
 

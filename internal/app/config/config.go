@@ -124,13 +124,6 @@ func (c Config) DeliveryRollbackRetention() time.Duration {
 	return c.DeliveryRollbackRetentionWindow
 }
 
-func (c Config) DuckLakeCatalogPath() string {
-	if c.DuckLakeCatalog != "" {
-		return c.DuckLakeCatalog
-	}
-	return filepath.Join(c.HomeDir, "ducklake", "catalog.duckdb")
-}
-
 func (c Config) DuckDBDirPath() string {
 	if c.DuckDBDir != "" {
 		return c.DuckDBDir

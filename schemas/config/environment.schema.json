@@ -2207,12 +2207,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_DUCKLAKE_CATALOG_PATH": {
-      "description": "Path to the node's DuckDB-backed DuckLake catalog.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve,admin"
-    },
     "LEAPVIEW_DUCKLAKE_RETENTION_FILE_GRACE_PERIOD": {
       "default": "24h",
       "description": "Minimum age of DuckLake files before bounded retention cleanup.",

@@ -70,11 +70,12 @@ func TestCatalogIsCompleteAndDeterministic(t *testing.T) {
 
 func TestCatalogExcludesRemovedLegacySettings(t *testing.T) {
 	removed := map[string]struct{}{
-		"ADDR":                  {},
-		"PORT":                  {},
-		"LEAPVIEW_CATALOG_PATH": {},
-		"LEAPVIEW_DATA_DIR":     {},
-		"LEAPVIEW_DUCKDB_PATH":  {},
+		"ADDR":                           {},
+		"PORT":                           {},
+		"LEAPVIEW_CATALOG_PATH":          {},
+		"LEAPVIEW_DATA_DIR":              {},
+		"LEAPVIEW_DUCKDB_PATH":           {},
+		"LEAPVIEW_DUCKLAKE_CATALOG_PATH": {},
 	}
 	for _, setting := range Settings() {
 		if _, ok := removed[setting.Name]; ok {

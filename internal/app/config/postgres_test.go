@@ -218,28 +218,6 @@ func TestValidatePostgresProductionRequiresDistinctMaintenanceCredentials(t *tes
 	}
 }
 
-func TestValidatePostgresProductionRejectsFileBackedDuckLakeCatalog(t *testing.T) {
-	cfg := Config{
-		Production:                              true,
-		PostgresRequireTLS:                      true,
-		PostgresControlURL:                      "postgres://runtime:secret@db/control?sslmode=require",
-		PostgresControlMigratorURL:              "postgres://migrator:secret@db/control?sslmode=require",
-		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@db/control?sslmode=require",
-		PostgresDuckLakeURL:                     "postgres://ducklake:secret@db/ducklake?sslmode=require",
-		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@db/ducklake?sslmode=require",
-		PostgresControlRuntimeRole:              "runtime_role",
-		PostgresControlMigratorRole:             "migrator_role",
-		PostgresControlMaintenanceRole:          postgresControlMaintenanceRole,
-		PostgresDuckLakeRuntimeRole:             "ducklake_role",
-		DeliveryPhysicalPoolID:                  "pool-prod",
-		DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
-		DuckLakeCatalog:                         "/var/lib/leapview/ducklake/catalog.duckdb",
-	}
-	if err := cfg.ValidatePostgresProduction(); err == nil || !strings.Contains(err.Error(), "rejects LEAPVIEW_DUCKLAKE_CATALOG_PATH") {
-		t.Fatalf("file-backed production catalog accepted: %v", err)
-	}
-}
-
 func TestValidatePostgresProductionRequiresDeliveryPoolContract(t *testing.T) {
 	base := Config{
 		Production:                              true,

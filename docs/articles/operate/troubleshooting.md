@@ -10,7 +10,7 @@ Run production validation in the same environment as the service:
 leapview config validate --production
 ```
 
-Confirm `LEAPVIEW_HOME`, DuckLake catalog, analytical data, and managed-data directories exist and are writable by the service identity. Check remote catalog and object-store connectivity, free space, file descriptor limits, and port binding.
+Confirm `LEAPVIEW_HOME`, analytical data, and managed-data runtime directories exist and are writable by the service identity. Check PostgreSQL DuckLake catalog and object-store connectivity, free space, file descriptor limits, and port binding; production does not use a writable local DuckLake catalog directory.
 
 Verify required secrets are present by name without printing their values. An incomplete OIDC, Azure, S3, or credential pair is intentionally rejected.
 

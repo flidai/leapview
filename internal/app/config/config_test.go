@@ -226,26 +226,6 @@ func TestWorkloadConfigAppliesLeapViewDefaultsOnlyWhenUnset(t *testing.T) {
 	}
 }
 
-func TestDuckLakeCatalogPathDefaultsOutsidePlatformDB(t *testing.T) {
-	cfg := Config{HomeDir: "/var/lib/leapview"}
-	if got, want := cfg.DBPath(), "/var/lib/leapview/leapview.db"; got != want {
-		t.Fatalf("DBPath = %q, want %q", got, want)
-	}
-	if got, want := cfg.DuckLakeCatalogPath(), "/var/lib/leapview/ducklake/catalog.duckdb"; got != want {
-		t.Fatalf("DuckLakeCatalogPath = %q, want %q", got, want)
-	}
-	if cfg.DuckLakeCatalogPath() == cfg.DBPath() {
-		t.Fatal("DuckLake catalog must not default to the platform database")
-	}
-}
-
-func TestDuckLakeCatalogPathHonorsExplicitPath(t *testing.T) {
-	cfg := Config{HomeDir: "/var/lib/leapview", DuckLakeCatalog: "/mnt/catalog.duckdb"}
-	if got, want := cfg.DuckLakeCatalogPath(), "/mnt/catalog.duckdb"; got != want {
-		t.Fatalf("DuckLakeCatalogPath = %q, want %q", got, want)
-	}
-}
-
 func TestValidateProductionAuthRequiresCSRFKey(t *testing.T) {
 	cfg := Config{Production: true, APITokenOnlyAuth: true}
 	if err := cfg.ValidateProductionAuth(); err == nil {

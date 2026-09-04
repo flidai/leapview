@@ -34,7 +34,6 @@ const server = Bun.spawn([binary], {
     LEAPVIEW_HOME: home,
     LEAPVIEW_MANAGED_DATA_DIR: join(home, 'managed-data'),
     LEAPVIEW_DUCKDB_DIR: join(home, 'duckdb'),
-    LEAPVIEW_DUCKLAKE_CATALOG_PATH: join(home, 'ducklake', 'catalog.sqlite'),
     LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_PATH: extensionSupplyPath,
     LEAPVIEW_DUCKDB_EXTENSION_SUPPLY_SHA256: extensionSupplySHA256,
   },
