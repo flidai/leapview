@@ -11,13 +11,10 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	"github.com/flidai/leapview/internal/access"
-	accessmcp "github.com/flidai/leapview/internal/access/http/mcpoauth"
 	accessmodule "github.com/flidai/leapview/internal/access/module"
-	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
 	"github.com/flidai/leapview/internal/app/brand"
 	"github.com/flidai/leapview/internal/deployment/extensionsupply"
@@ -126,37 +123,20 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 		if cfg.PostgresDB == nil {
 			return accessCapabilityBundle{}, errors.New("production access composition requires the identity PostgreSQL pool")
 		}
+		if cfg.CurrentProject == nil {
+			return accessCapabilityBundle{}, errors.New("access current-project resolver is required")
+		}
 		key, err := postgresFingerprintKey(cfg.TokenHashKey, cfg.CSRFKey)
 		if err != nil {
 			return accessCapabilityBundle{}, err
 		}
-		repository, err := accesspostgres.NewAccess(cfg.PostgresDB, accesspostgres.FingerprintConfig{Key: key})
+		module, err := accessmodule.BuildPostgres(ctx, accessConfig, accessmodule.PostgresBuildConfig{
+			Database: cfg.PostgresDB, FingerprintKey: key,
+		})
 		if err != nil {
-			return accessCapabilityBundle{}, fmt.Errorf("build PostgreSQL access repository: %w", err)
+			return accessCapabilityBundle{}, fmt.Errorf("build access capability: %w", err)
 		}
-		var auth *accessmodule.Auth
-		if !cfg.Auth.Disabled {
-			auth = accessmodule.NewAuth(repository, cfg.Auth)
-		}
-		var oauth *accessmcp.Service
-		if auth != nil && strings.TrimSpace(cfg.MCPIssuerURL) == "" {
-			publicURL := strings.TrimSuffix(strings.TrimSpace(cfg.PublicURL), "/")
-			if publicURL == "" {
-				publicURL = "http://localhost:8080"
-			}
-			oauth, err = accessmcp.NewPostgres(cfg.PostgresDB, repository, accessmcp.Config{
-				IssuerURL: publicURL, ResourceURL: publicURL + "/mcp", Secret: auth.MCPOAuthSecret(),
-			})
-			if err != nil {
-				return accessCapabilityBundle{}, fmt.Errorf("build PostgreSQL MCP OAuth service: %w", err)
-			}
-		}
-		persistence, err := accessmodule.NewPostgresPersistence(repository, oauth)
-		if err != nil {
-			return accessCapabilityBundle{}, fmt.Errorf("build PostgreSQL access persistence: %w", err)
-		}
-		accessConfig.Persistence = &persistence
-		accessConfig.ExistingAuth = auth
+		return completeAccessCapability(module)
 	} else {
 		if cfg.PostgresDB != nil {
 			return accessCapabilityBundle{}, errors.New("local access composition rejects PostgreSQL database")
@@ -174,6 +154,10 @@ func buildAccessCapability(ctx context.Context, cfg accessCapabilityConfig) (acc
 	if err != nil {
 		return accessCapabilityBundle{}, fmt.Errorf("build access capability: %w", err)
 	}
+	return completeAccessCapability(module)
+}
+
+func completeAccessCapability(module *accessmodule.Module) (accessCapabilityBundle, error) {
 	repository, err := accessRepository(module)
 	if err != nil {
 		return accessCapabilityBundle{}, err

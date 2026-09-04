@@ -189,6 +189,7 @@ func TestEnterpriseAuthoringPackagesRemainCapabilityOwned(t *testing.T) {
 	}{
 		{path: "internal/platform/securestore", capability: "platform", layer: LayerPlatform},
 		{path: "internal/access/cli", capability: "access", layer: LayerAdapter},
+		{path: "internal/access/postgres", capability: "access", layer: LayerAdapter},
 		{path: "internal/project/devloop", capability: "project", layer: LayerUseCase},
 		{path: "internal/analytics/connectionbinding", capability: "analytics", layer: LayerUseCase},
 		{path: "internal/analytics/modelsql", capability: "analytics", layer: LayerContract},

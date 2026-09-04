@@ -818,6 +818,9 @@ qualified.
   production access composition now reuses the identity authority's exact
   bounded PostgreSQL pool, rejects SQLite and non-transactional database
   inputs, and derives the access fingerprint key through a dedicated purpose.
+  The application injects only the shared database contract into the access
+  module; concrete PostgreSQL repository and MCP OAuth construction remain
+  behind that capability-owned module boundary.
   PostgreSQL revision 007 upgrades the existing access rows in place, revokes
   unverifiable legacy sessions, preserves principal/group/membership identity,
   enables canonical generation-scoped audit writes, quarantines superseded

@@ -276,6 +276,7 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/platform/http/idempotency", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/platform/http/api/gen", Capability: "platform", Layer: LayerAdapter},
 	{Prefix: "internal/access/api/gen", Capability: "access", Layer: LayerAdapter},
+	{Prefix: "internal/access/postgres", Capability: "access", Layer: LayerAdapter},
 	{Prefix: "internal/agent/api/gen", Capability: "agent", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/api/gen", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/dashboard/api/gen", Capability: "dashboard", Layer: LayerAdapter},

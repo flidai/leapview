@@ -27,11 +27,15 @@ func TestFAI617PostgresAccessComposition(t *testing.T) {
 		},
 		"internal/app/runtime_capabilities.go": {
 			"PostgresDB     platformpostgres.DBTX",
-			"accesspostgres.NewAccess(cfg.PostgresDB",
-			"accessmodule.NewPostgresPersistence(repository, oauth)",
-			"accessConfig.Persistence = &persistence",
-			"accessConfig.ExistingAuth = auth",
+			"accessmodule.BuildPostgres(ctx, accessConfig",
 			"accessConfig.LegacySQLite = true",
+		},
+		"internal/access/module/postgres.go": {
+			"accesspostgres.NewAccess(postgres.Database",
+			"mcpoauth.NewPostgres(postgres.Database",
+			"NewPostgresPersistence(repository, oauth)",
+			"config.Persistence = &persistence",
+			"config.ExistingAuth = auth",
 		},
 		"internal/app/composition.go": {
 			"accessDatabase = nil",
@@ -61,7 +65,9 @@ func TestFAI617PostgresAccessComposition(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(runtimeCapabilities), "accessConfig.PostgresRepository") {
-		t.Error("access capability config leaks the concrete PostgreSQL repository adapter")
+	for _, forbidden := range []string{"internal/access/postgres", "internal/access/http/mcpoauth", "accessConfig.PostgresRepository"} {
+		if strings.Contains(string(runtimeCapabilities), forbidden) {
+			t.Errorf("access capability config leaks concrete adapter %q", forbidden)
+		}
 	}
 }
