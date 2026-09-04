@@ -35,9 +35,18 @@ ownership and names:
 | `Security gates / Selected SAST (go)` and `(javascript-typescript)` | Selected CodeQL analysis | Go and frontend owners |
 | `Security gates / Security gate` | Requires every security lane to pass | Security owner |
 
-The dependency lane runs pinned `govulncheck` for every maintained Go module,
-`bun audit` for every Bun lockfile, and `npm audit` for every npm lockfile. The
-source lane runs Gitleaks over the current tree and candidate history, then
+The dependency lane has two deliberately different inputs. Its required
+default evaluates the checked-in
+`.security/javascript-vulnerability-evidence.json` offline for JavaScript, then
+runs a live, source-aware `govulncheck` evaluation for every maintained Go
+module. The JavaScript evidence covers exactly five graphs: the root Bun graph,
+Desktop Bun, qualification Bun, the malicious-instance Electron Bun graph, and
+the APIGen TypeSpec npm graph. Every graph binds both its manifest and lockfile
+to SHA-256 identities and carries bounded UTC generation and expiry timestamps.
+The evaluator rejects missing, stale, future-dated, malformed, or mismatched
+evidence; it never turns unavailable input into a pass.
+
+The source lane runs Gitleaks over the current tree and candidate history, then
 uses pinned Trivy secret and misconfiguration scanning for Terraform,
 Dockerfile, and GitHub Actions surfaces. The policy lane independently rejects
 unpinned third-party actions. The repository's coverage inventory is the
@@ -46,16 +55,30 @@ commands are:
 
 | Scan | Command | Primary owner | Evidence |
 | --- | --- | --- | --- |
-| JavaScript dependency audit | `task security:dependencies` → `bun audit` / `npm audit` | Frontend owner | Every declared lockfile and audit output |
-| Go dependency and call-path audit | `task security:dependencies` → `go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...` | Go/platform owner | Every declared Go module and govulncheck output |
+| JavaScript vulnerability evidence evaluation | `task security:dependencies` → repository-owned evaluator (offline default) | Frontend/security owner | `.security/javascript-vulnerability-evidence.json`; five manifest+lock graphs and SHA-256 bindings |
+| JavaScript vulnerability evidence refresh | `task security:dependencies:evidence:refresh` → same evaluator with `-refresh-javascript-evidence` | Frontend/security owner | Atomic replacement of the evidence document after live Bun/npm scans |
+| Go dependency and call-path audit | `task security:dependencies` → live `go run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...` | Go/platform owner | Current source, every declared Go module, and govulncheck output |
 
-JavaScript audits block Critical findings. High findings remain visible in the
-bounded audit output and are triaged by the component owner; this distinction
+JavaScript evidence blocks Critical findings. High findings remain visible in
+the bounded evidence and are triaged by the component owner; this distinction
 keeps unshipped build-tool advisories visible without equating them to
 reachable runtime vulnerabilities. `govulncheck` blocks every reachable Go
 finding regardless of advisory severity. Source/IaC and candidate-image scans
 block High and Critical findings. Changes to these thresholds require the same
 review as changes to the required workflow.
+
+The evidence refresh is intentionally separate from the required gate. It is
+the only required dependency-evidence operation that refreshes JavaScript
+vulnerability data from live registries. After an unsuccessful Bun audit, Bun
+may make one process-wide retry only when the exact recognized transport
+diagnostic is present: the retry starts a fresh process after a five-second
+backoff. Critical findings, malformed or unknown
+output, another transport failure, and retry exhaustion are not retried and
+remain failures. npm audit has no retry. A complete authoritative refresh,
+including a result with a blocking finding, replaces the document atomically;
+an operationally failed refresh cannot leave a newly claimed clean document or
+extend the old document's expiry. The required default remains offline for
+JavaScript evidence, while the live Go scan remains source-aware on every run.
 
 The security owner triages both feeds, assigns each accepted finding to the
 component owner, and verifies the remediation or exception evidence. The
@@ -121,13 +144,17 @@ convert an outage to “no findings,” reuse an old pass, or create an emergenc
 exception. Retry the same reviewed commit after restoring the scanner or use a
 separately approved maintenance window that still leaves promotion blocked.
 
-The repository-owned dependency scanner may make one process-wide retry when
-an unsuccessful Bun audit includes an exact, recognized transport-failure
-diagnostic. It starts a fresh Bun process after a five-second backoff. A valid
-Critical finding is evaluated immediately and is never retried as an outage;
-unknown or malformed output, another transport failure, and retry exhaustion
-all remain gate failures. The single retry is shared by every Bun lockfile in
-the scan so it cannot multiply against the 45-minute dependency-job budget.
+The repository-owned dependency scanner may make one process-wide retry during
+the explicit JavaScript evidence refresh when an unsuccessful Bun audit
+includes an exact, recognized transport-failure diagnostic. It starts a fresh
+Bun process after a five-second backoff. A valid Critical finding is evaluated
+immediately and is never retried as an outage; unknown or malformed output,
+another transport failure, and retry exhaustion all remain gate failures. The
+single retry is shared by all five JavaScript graphs in the refresh so it cannot
+multiply against the dependency-job budget. npm has no retry path. The
+required default never refreshes evidence. A refresh outage fails the refresh
+and cannot create or extend evidence; already reviewed evidence remains usable
+only until its explicit bounded expiry.
 
 The same rule applies to provenance and SBOM verification: a missing or
 unverifiable attestation is a failed candidate, even when the image starts and

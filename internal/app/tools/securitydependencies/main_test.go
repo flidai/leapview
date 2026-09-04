@@ -39,16 +39,14 @@ func TestRunnerUsesPinnedScannersAndRejectsFindings(t *testing.T) {
 	setFakeScannerEnv(t, bin, log, "")
 	var stdout, stderr bytes.Buffer
 	r := &runner{root: root, timeout: time.Second, stdout: &stdout, stderr: &stderr}
-	if err := r.run(); err != nil {
+	if err := r.runRefresh(); err != nil {
 		t.Fatalf("run() error = %v\nstdout=%s\nstderr=%s\nlog=%s", err, stdout.String(), stderr.String(), mustRead(t, log))
 	}
 	logs := mustRead(t, log)
 	for _, fragment := range []string{
-		"go|" + root + "|run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
-		"go|" + filepath.Join(root, "nested") + "|run golang.org/x/vuln/cmd/govulncheck@v1.6.0 ./...",
-		"bun|" + root + "|audit --audit-level critical",
-		"bun|" + filepath.Join(root, "desktop") + "|audit --audit-level critical",
-		"npm|" + filepath.Join(root, "typespec") + "|audit --package-lock-only --audit-level=critical --ignore-scripts",
+		"bun|" + root + "|audit --audit-level critical --json",
+		"bun|" + filepath.Join(root, "desktop") + "|audit --audit-level critical --json",
+		"npm|" + filepath.Join(root, "typespec") + "|audit --package-lock-only --audit-level=critical --ignore-scripts --json",
 	} {
 		if !strings.Contains(logs, fragment) {
 			t.Errorf("scanner log does not contain %q:\n%s", fragment, logs)
@@ -58,7 +56,7 @@ func TestRunnerUsesPinnedScannersAndRejectsFindings(t *testing.T) {
 	setFakeScannerMode(t, "vulnerable")
 	stdout.Reset()
 	stderr.Reset()
-	if err := r.run(); err == nil || !strings.Contains(stderr.String(), "critical dependency finding") {
+	if err := r.runRefresh(); err == nil || !strings.Contains(err.Error(), "Critical JavaScript dependency finding") {
 		t.Fatalf("vulnerable scanner was not rejected: err=%v stderr=%q", err, stderr.String())
 	}
 }
@@ -152,7 +150,7 @@ func TestDiagnosticsAreBoundedAndRedacted(t *testing.T) {
 func scannerFixture(t *testing.T) (root, bin, log string) {
 	t.Helper()
 	root = t.TempDir()
-	for _, path := range []string{"go.mod", "nested/go.mod", "bun.lock", "desktop/bun.lock", "typespec/package-lock.json"} {
+	for _, path := range []string{"go.mod", "nested/go.mod", "bun.lock", "package.json", "desktop/bun.lock", "desktop/package.json", "typespec/package-lock.json", "typespec/package.json"} {
 		writeFixture(t, root, path, "{}\n")
 	}
 	bin = filepath.Join(root, "bin")
@@ -164,10 +162,12 @@ func scannerFixture(t *testing.T) (root, bin, log string) {
 set -eu
 tool="$(basename "$0")"
 printf '%s|%s|%s\n' "$tool" "$PWD" "$*" >> "$SECURITY_TEST_LOG"
-if [[ "$tool" == "go" || "$tool" == "npm" ]]; then exit 0; fi
+if [[ "$1" == "--version" ]]; then printf '1.0.0\n'; exit 0; fi
+if [[ "$tool" == "go" ]]; then exit 0; fi
+if [[ "$tool" == "npm" ]]; then printf '{"metadata":{"dependencies":{"total":1},"vulnerabilities":{"info":0,"low":0,"moderate":0,"high":0,"critical":0,"total":0}},"vulnerabilities":{}}\n'; exit 0; fi
 case "${SECURITY_TEST_MODE:-}" in
 vulnerable)
-  if [[ "$tool" == "bun" ]]; then printf 'critical dependency finding\n' >&2; exit 1; fi ;;
+  if [[ "$tool" == "bun" ]]; then printf '{"example-package":[{"id":"GHSA-test-1","severity":"critical"}]}\n'; exit 1; fi ;;
 bun-malformed)
   if [[ "$tool" == "bun" ]]; then printf 'malformed scanner output\n'; exit 1; fi ;;
 bun-nonblocking)
@@ -220,6 +220,8 @@ bun-critical-transport)
     exit 1
   fi ;;
 esac
+if [[ "$tool" == "bun" ]]; then printf '{}\n'; fi
+if [[ "$tool" == "npm" ]]; then printf '{"vulnerabilities":{}}\n'; fi
 exit 0
 `
 	for _, tool := range []string{"go", "bun", "npm"} {

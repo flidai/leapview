@@ -54,9 +54,12 @@ type runner struct {
 	timeout       time.Duration
 	stdout        io.Writer
 	stderr        io.Writer
+	now           func() time.Time
 	bunRetryUsed  bool
 	bunRetrySleep func(time.Duration)
 	bunCommand    func(string, ...string) commandResult
+	goCommand     func(string, ...string) commandResult
+	npmCommand    func(string, ...string) commandResult
 }
 
 // commandOutput is used instead of passing scanner output directly to a
@@ -118,17 +121,30 @@ func (r *runner) run() error {
 			return err
 		}
 	}
-	for _, path := range buns {
-		if err := r.scanBun(path, contract); err != nil {
-			return err
-		}
+	return r.evaluateCheckedInJavaScriptEvidence(buns, npms, contract)
+}
+
+// runRefresh performs the opt-in live JavaScript scan and atomically publishes
+// its normalized evidence only after every discovered graph has succeeded.
+func (r *runner) runRefresh() error {
+	r.bunRetryUsed = false
+	contract, err := r.loadContract()
+	if err != nil {
+		return err
 	}
-	for _, path := range npms {
-		if err := r.scanNPM(path, contract); err != nil {
-			return err
-		}
+	_, buns, npms, err := discover(r.root)
+	if err != nil {
+		return err
 	}
-	return nil
+	evidence, err := r.refreshJavaScriptEvidence(buns, npms)
+	if err != nil {
+		return err
+	}
+	path := filepath.Join(r.root, javascriptEvidenceRelativePath)
+	if err := writeJavaScriptEvidenceAtomic(path, evidence); err != nil {
+		return err
+	}
+	return r.evaluateJavaScriptFindings(evidence, contract)
 }
 
 func (r *runner) loadContract() (*exceptionContract, error) {
@@ -138,7 +154,7 @@ func (r *runner) loadContract() (*exceptionContract, error) {
 		return nil, nil
 	}
 	fmt.Fprintln(r.stdout, "dependency security: validating exception contract")
-	contract, err := securitypolicy.LoadValidatedExceptions(r.root, time.Now().UTC())
+	contract, err := securitypolicy.LoadValidatedExceptions(r.root, r.nowUTC())
 	if err != nil {
 		return nil, fmt.Errorf("validated exception contract is unavailable: %w", err)
 	}
@@ -167,15 +183,24 @@ func discover(root string) (modules, buns, npms []string, err error) {
 				return nil
 			}
 		}
-		if info.IsDir() || !info.Mode().IsRegular() {
+		if info.IsDir() {
 			return nil
 		}
 		switch info.Name() {
 		case "go.mod":
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("maintained dependency file %s must be a regular file", path)
+			}
 			modules = append(modules, path)
 		case "bun.lock":
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("maintained dependency file %s must be a regular file", path)
+			}
 			buns = append(buns, path)
 		case "package-lock.json":
+			if !info.Mode().IsRegular() {
+				return fmt.Errorf("maintained dependency file %s must be a regular file", path)
+			}
 			npms = append(npms, path)
 		}
 		return nil
@@ -204,7 +229,7 @@ func (r *runner) scanGo(moduleFile string, contract *exceptionContract) error {
 		args = append(args, "-json")
 	}
 	args = append(args, "./...")
-	result := r.command(dir, "go", args...)
+	result := r.runGoCommand(dir, args...)
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("govulncheck", dir, result)
@@ -294,6 +319,20 @@ func (r *runner) runBunCommand(dir string, args ...string) commandResult {
 	return r.command(dir, "bun", args...)
 }
 
+func (r *runner) runGoCommand(dir string, args ...string) commandResult {
+	if r.goCommand != nil {
+		return r.goCommand(dir, args...)
+	}
+	return r.command(dir, "go", args...)
+}
+
+func (r *runner) runNPMCommand(dir string, args ...string) commandResult {
+	if r.npmCommand != nil {
+		return r.npmCommand(dir, args...)
+	}
+	return r.command(dir, "npm", args...)
+}
+
 func (r *runner) waitForBunRetry() {
 	if r.bunRetrySleep != nil {
 		r.bunRetrySleep(bunRetryBackoff)
@@ -328,7 +367,7 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	if contract != nil {
 		args = append(args, "--json")
 	}
-	result := r.command(dir, "npm", args...)
+	result := r.runNPMCommand(dir, args...)
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("npm audit", dir, result)
@@ -342,6 +381,13 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	}
 	r.emitFailure(result)
 	return commandError("npm audit", dir, result)
+}
+
+func (r *runner) nowUTC() time.Time {
+	if r.now != nil {
+		return r.now().UTC()
+	}
+	return time.Now().UTC()
 }
 
 func (r *runner) emitDirect(result commandResult) {
@@ -427,6 +473,9 @@ func decodeGovulnFindings(data []byte) ([]govulnFinding, bool) {
 }
 
 func bunFindingCounts(data []byte) (findingCount, criticalCount int, err error) {
+	if err = rejectDuplicateJSONKeys(data); err != nil {
+		return
+	}
 	var packages map[string]json.RawMessage
 	if err = json.Unmarshal(data, &packages); err != nil || packages == nil {
 		if err == nil {
@@ -493,6 +542,9 @@ func usableBunSeverity(severity string) bool {
 }
 
 func allBunFindingsWaived(data []byte, contract exceptionContract) bool {
+	if rejectDuplicateJSONKeys(data) != nil {
+		return false
+	}
 	var packages map[string][]json.RawMessage
 	if json.Unmarshal(data, &packages) != nil || packages == nil {
 		return false
@@ -525,6 +577,9 @@ func allBunFindingsWaived(data []byte, contract exceptionContract) bool {
 }
 
 func allNPMFindingsWaived(data []byte, contract exceptionContract) bool {
+	if rejectDuplicateJSONKeys(data) != nil {
+		return false
+	}
 	var root struct {
 		Vulnerabilities map[string]npmVulnerability `json:"vulnerabilities"`
 	}
@@ -588,18 +643,84 @@ func jsonScalar(raw json.RawMessage) string {
 	if len(raw) == 0 || bytes.Equal(raw, []byte("null")) {
 		return ""
 	}
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
 	var value any
-	if json.Unmarshal(raw, &value) != nil {
+	if decoder.Decode(&value) != nil {
 		return ""
 	}
 	switch value := value.(type) {
 	case string:
 		return value
-	case float64:
-		return strconv.FormatFloat(value, 'g', -1, 64)
+	case json.Number:
+		return value.String()
 	case bool:
 		return strconv.FormatBool(value)
 	default:
 		return ""
 	}
+}
+
+func rejectDuplicateJSONKeys(data []byte) error {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.UseNumber()
+	if err := consumeJSONValue(decoder); err != nil {
+		return err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		if err == nil {
+			return errors.New("multiple JSON values")
+		}
+		return err
+	}
+	return nil
+}
+
+func consumeJSONValue(decoder *json.Decoder) error {
+	token, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	delimiter, ok := token.(json.Delim)
+	if !ok {
+		return nil
+	}
+	switch delimiter {
+	case '{':
+		seen := map[string]struct{}{}
+		for decoder.More() {
+			keyToken, err := decoder.Token()
+			if err != nil {
+				return err
+			}
+			key, ok := keyToken.(string)
+			if !ok {
+				return errors.New("JSON object key is not a string")
+			}
+			if _, duplicate := seen[key]; duplicate {
+				return fmt.Errorf("duplicate JSON object key %q", key)
+			}
+			seen[key] = struct{}{}
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	case '[':
+		for decoder.More() {
+			if err := consumeJSONValue(decoder); err != nil {
+				return err
+			}
+		}
+	default:
+		return errors.New("unexpected JSON delimiter")
+	}
+	closing, err := decoder.Token()
+	if err != nil {
+		return err
+	}
+	closingDelimiter, ok := closing.(json.Delim)
+	if !ok || (delimiter == '{' && closingDelimiter != '}') || (delimiter == '[' && closingDelimiter != ']') {
+		return errors.New("mismatched JSON delimiter")
+	}
+	return nil
 }

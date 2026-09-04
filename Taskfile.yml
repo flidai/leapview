@@ -1390,11 +1390,18 @@ tasks:
       - go run ./internal/app/tools/securitypolicy -root .
 
   security:dependencies:
-    desc: Scan every maintained Go and JavaScript dependency graph
+    desc: Evaluate .security/javascript-vulnerability-evidence.json offline and run live source-aware Go dependency checks
     deps:
       - ci:prepare
     cmds:
       - go run ./internal/app/tools/securitydependencies -root .
+
+  security:dependencies:evidence:refresh:
+    desc: Refresh the checked-in JavaScript vulnerability evidence from live registries
+    deps:
+      - ci:prepare
+    cmds:
+      - go run ./internal/app/tools/securitydependencies -root . -refresh-javascript-evidence
 
   security:source:
     desc: Scan secrets, infrastructure, Dockerfiles, and workflows with pinned tools

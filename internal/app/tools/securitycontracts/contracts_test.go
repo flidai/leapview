@@ -105,6 +105,35 @@ func TestScannerJobsInvokeTheirRepositoryOwnedGoGates(t *testing.T) {
 	}
 }
 
+func TestDependencyGateUsesOfflineEvidenceAndSeparateRefresh(t *testing.T) {
+	taskfile := repositoryText(t, "Taskfile.yml")
+	required := taskDefinition(t, taskfile, "security:dependencies")
+	refresh := taskDefinition(t, taskfile, "security:dependencies:evidence:refresh")
+	workflow := repositoryYAML(t, ".github/workflows/security.yml")
+
+	if !strings.Contains(required, ".security/javascript-vulnerability-evidence.json") {
+		t.Fatal("required dependency task does not name the offline JavaScript evidence document")
+	}
+	if !strings.Contains(required, "go run ./internal/app/tools/securitydependencies -root .") {
+		t.Fatal("required dependency task does not invoke the default security dependency evaluator")
+	}
+	if strings.Contains(required, "-refresh-javascript-evidence") {
+		t.Fatal("required dependency task refreshes JavaScript evidence instead of evaluating the checked-in document")
+	}
+	if strings.Contains(required, "bun audit") || strings.Contains(required, "npm audit") {
+		t.Fatal("required dependency task embeds a live JavaScript audit command")
+	}
+	if !strings.Contains(refresh, "go run ./internal/app/tools/securitydependencies -root . -refresh-javascript-evidence") {
+		t.Fatal("JavaScript evidence refresh task does not invoke the explicit refresh flag")
+	}
+	if strings.Contains(workflow, "task security:dependencies:evidence:refresh") {
+		t.Fatal("required Security workflow invokes the opt-in JavaScript evidence refresh")
+	}
+	if !strings.Contains(workflow, "task security:dependencies") {
+		t.Fatal("required Security workflow does not invoke the offline dependency gate")
+	}
+}
+
 func TestNativeOCIRefsAreAdmittedBeforeManifestAssembly(t *testing.T) {
 	for _, path := range []string{".github/workflows/release.yml", ".github/workflows/site-image.yml"} {
 		t.Run(filepath.Base(path), func(t *testing.T) {
@@ -162,6 +191,37 @@ func repositoryYAML(t *testing.T, relative string) string {
 		t.Fatalf("%s must contain one YAML document", relative)
 	}
 	return string(data)
+}
+
+func repositoryText(t *testing.T, relative string) string {
+	t.Helper()
+	_, filename, _, ok := runtime.Caller(0)
+	if !ok {
+		t.Fatal("resolve contract test location")
+	}
+	root := filepath.Clean(filepath.Join(filepath.Dir(filename), "../../../.."))
+	data, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(relative)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+func taskDefinition(t *testing.T, taskfile, name string) string {
+	t.Helper()
+	start := strings.Index(taskfile, "\n  "+name+":\n")
+	if start < 0 {
+		t.Fatalf("Taskfile is missing task %q", name)
+	}
+	lines := strings.Split(taskfile[start+1:], "\n")
+	for index := 1; index < len(lines); index++ {
+		// Taskfile task names are indented by exactly two spaces; nested
+		// properties and commands use at least four.
+		if len(lines[index]) >= 3 && lines[index][:2] == "  " && lines[index][2] != ' ' {
+			return strings.Join(lines[:index], "\n")
+		}
+	}
+	return strings.Join(lines, "\n")
 }
 
 func containsPinnedAction(workflow, action string) bool {
