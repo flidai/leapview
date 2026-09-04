@@ -12,7 +12,7 @@ It is a release candidate for controlled testing, not GA. Its immutable image
 is:
 
 ```text
-ghcr.io/yacobolo/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9
+ghcr.io/flidai/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9
 ```
 
 Download the version-matched operations bundle and checksum for the machine

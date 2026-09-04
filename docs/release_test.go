@@ -76,13 +76,8 @@ func TestInstallationGuideMatchesCurrentPublicRelease(t *testing.T) {
 	if !regexp.MustCompile(`^[0-9a-f]{40}$`).MatchString(manifest.Revision) {
 		t.Errorf("public release revision is not a full Git commit: %q", manifest.Revision)
 	}
-	legacyRC1Image := "ghcr.io/" + "yacobolo" + "/leapview@sha256:8b32fc291c86005c69c2ca1fa673dcaa4cb84d39cfc951e065a2775b122f81d9"
-	if manifest.Tag == "v0.2.0-rc.1" {
-		if manifest.Image != legacyRC1Image {
-			t.Errorf("rc.1 image = %q, want immutable pre-transfer image %q", manifest.Image, legacyRC1Image)
-		}
-	} else if !regexp.MustCompile(`^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$`).MatchString(manifest.Image) {
-		t.Errorf("post-transfer public release image is not in the organization namespace: %q", manifest.Image)
+	if !regexp.MustCompile(`^ghcr\.io/flidai/leapview@sha256:[0-9a-f]{64}$`).MatchString(manifest.Image) {
+		t.Errorf("public release image is not in the organization namespace: %q", manifest.Image)
 	}
 	wantReleaseURL := "https://github.com/flidai/leapview/releases/tag/" + manifest.Tag
 	if manifest.ReleaseURL != wantReleaseURL {
