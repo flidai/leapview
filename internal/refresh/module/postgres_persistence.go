@@ -3,6 +3,7 @@ package module
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -753,6 +754,9 @@ func (p *postgresRunPersistence) GetRun(ctx context.Context, scope refreshrun.Re
 
 func (p *postgresRunPersistence) getRun(ctx context.Context, scope refreshrun.ReadScope, runID string) (refreshrun.RunRecord, error) {
 	run, err := p.repository.GetRun(ctx, refreshpostgres.Scope{ProjectID: scope.ProjectID.String(), Environment: scope.Environment}, runID)
+	if errors.Is(err, refreshpostgres.ErrNotFound) {
+		return refreshrun.RunRecord{}, sql.ErrNoRows
+	}
 	if err != nil {
 		return refreshrun.RunRecord{}, err
 	}

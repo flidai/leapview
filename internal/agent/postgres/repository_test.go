@@ -41,6 +41,18 @@ func TestPostgreSQL18AgentCRUDScopingAndMessageSequence(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	conversations, err := repo.ListConversations(ctx, "owner")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(conversations) != 1 || conversations[0] != conversation {
+		t.Fatalf("listed conversations = %#v, want %#v", conversations, []agent.Conversation{conversation})
+	}
+	if conversations, err := repo.ListConversations(ctx, "other"); err != nil {
+		t.Fatal(err)
+	} else if len(conversations) != 0 {
+		t.Fatalf("cross-principal conversation list = %#v, want empty", conversations)
+	}
 	if _, err := repo.GetConversation(ctx, "other", conversation.ID); !errors.Is(err, agent.ErrNotFound) {
 		t.Fatalf("cross-principal conversation lookup = %v", err)
 	}

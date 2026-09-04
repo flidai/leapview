@@ -1165,6 +1165,8 @@ func mapConversation(row any) agent.Conversation {
 		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.GetAgentConversationRow:
 		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
+	case agentdb.ListAgentConversationsRow:
+		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.ArchiveAgentConversationRow:
 		return agent.Conversation{ID: v.ID, PrincipalID: v.PrincipalID, Title: v.Title, Status: v.Status, MetadataJSON: v.MetadataJson, TranscriptJSON: v.TranscriptJson, CreatedAt: timestampString(v.CreatedAt), UpdatedAt: timestampString(v.UpdatedAt), ArchivedAt: timestampString(v.ArchivedAt)}
 	case agentdb.UpdateAgentConversationTitleRow:
