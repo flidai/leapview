@@ -2184,6 +2184,14 @@
       "x-lifecycle": "development",
       "x-scope": "dev server"
     },
+    "LEAPVIEW_DEV_ONCE": {
+      "default": "false",
+      "description": "Stop the managed development server after one successful candidate publication and MCP smoke check.",
+      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
+      "type": "string",
+      "x-lifecycle": "development",
+      "x-scope": "dev server"
+    },
     "LEAPVIEW_DEV_PORT_COUNT": {
       "default": "100",
       "description": "Number of ports scanned by the managed development server.",

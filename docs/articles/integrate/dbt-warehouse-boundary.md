@@ -15,6 +15,22 @@ freshness, and publication state. `manifest.json` and `run_results.json` are not
 serving inputs and are not accepted as evidence that physical publication
 completed.
 
+## Evidence status
+
+The integration has three deliberately separate evidence classes:
+
+- **Proven local** — `task dbt:warehouse` builds the pinned dbt project,
+  verifies the exact two physical Parquet marts, and runs them through the
+  ordinary local LeapView candidate lifecycle.
+- **Structurally validated, not live Azure** — the CI contract and the manual
+  Azure reference are YAML-validated for ordering, trusted-ref gating,
+  immutable publication, credential scope, and CI-gate wiring. Repository CI
+  does not exercise live Azure OIDC, storage retention, or Azure RBAC.
+- **Blocked on ADR-0018** — the current authored profile still contains a
+  `kind: Project` document. The reference workflow temporarily asserts that
+  its authored `metadata.id` matches `LEAPVIEW_WORKLOAD_PROJECT`; this check is
+  required only until ADR-0018 moves the profile to Project-free discovery.
+
 ## Run the local showcase
 
 From the repository root, run:
@@ -56,24 +72,37 @@ dbt profile, package credentials, or transformation credentials.
 ## Use the production Azure reference
 
 `.github/workflows/dbt-warehouse-boundary-reference.yml` is a deliberately
-manual, copyable reference. Configure its `dbt-warehouse-boundary-production`
-GitHub environment with:
+manual, copyable reference. Its production job runs only when manually
+dispatched from the repository's protected default branch, using GitHub's
+`github.ref`, `github.event.repository.default_branch`, and
+`github.ref_protected` context. Configure its
+`dbt-warehouse-boundary-production` GitHub environment with:
 
 - `DBT_PRODUCER_CLIENT_ID`, `AZURE_TENANT_ID`, and
   `AZURE_SUBSCRIPTION_ID` variables for the producer's Azure OIDC login;
 - `DBT_PRODUCER_STORAGE_ACCOUNT`, `DBT_PRODUCER_SOURCE_CONTAINER`, and
   `DBT_PRODUCER_PUBLICATION_CONTAINER` variables;
-- `LEAPVIEW_TARGET` and `LEAPVIEW_PROJECT_ID` variables; and
+- the LeapView target URL and workload Project ID variables; and
 - `LEAPVIEW_WORKLOAD_CLIENT_ID` and `LEAPVIEW_WORKLOAD_CLIENT_SECRET` secrets.
 
-The producer identity may read only the two bounded reference inputs and may
-create objects in the publication container. It does not receive LeapView
-serving-state access. The workflow runs dbt and its tests, verifies the local
-physical files, creates a unique prefix from the workflow run, attempt, and Git
-revision, uploads exactly the selected marts without overwrite, and lists the
-prefix to prove that the complete expected set exists. Only then does it render
-an ordinary Azure-backed Connection/Source bundle and invoke `leapview dev
---once --no-browser` followed by `leapview publish`.
+The following IAM scopes are operator requirements, not live authorization
+evidence supplied by this repository: the producer identity must read only the
+two bounded reference inputs and create objects only in the publication
+container; the LeapView `azure_blob` Source binding must read only that
+publication container (and, where supported, its selected prefix); and the
+DuckLake/serving binding must write only LeapView-owned physical storage. The
+reference workflow does not claim live Azure RBAC or checksum evidence.
+
+The workflow runs dbt and its tests, verifies the local physical files, creates
+a globally namespaced prefix from the repository, workflow run, attempt, and
+Git revision, uploads exactly the selected marts without overwrite, and lists
+the prefix to prove that the complete expected set exists. The producer job
+then ends its Azure session and exposes only the non-secret prefix to a separate
+activation job. That job has no Azure OIDC permission; it asserts that the
+authored current-profile Project ID matches `LEAPVIEW_WORKLOAD_PROJECT` (a
+temporary check until ADR-0018), renders an ordinary Azure-backed
+Connection/Source bundle, and invokes `leapview dev --once --no-browser`
+followed by `leapview publish`.
 
 The LeapView target owns two credentials that are not present in the producer
 workflow:
@@ -102,7 +131,9 @@ versioned prefix (or use a warehouse transaction/snapshot with equivalent
 semantics). Start LeapView only after exact file-set verification succeeds.
 The reference workflow never selects a partially uploaded prefix and never
 rewrites an admitted prefix. No publication marker, dbt-specific release type,
-or custom release envelope is involved.
+or custom release envelope is involved. If an upload fails, an orphan partial
+prefix remains unselected; storage lifecycle retention is the cleanup and
+retention mechanism. Recovery must not mutate or reinterpret that prefix.
 
 ## Verify failure and recovery behavior
 
@@ -117,7 +148,9 @@ or custom release envelope is involved.
 
 Producer objects are not deleted or mutated to recover LeapView. Existing
 Project/environment-scoped candidate cleanup, retained generations, rollback,
-leases, and recovery remain authoritative.
+leases, and recovery remain authoritative. Orphan partial publication prefixes
+remain unselected and require storage lifecycle retention, not recovery
+mutation.
 
 Ingestion minimization and semantic policy solve different problems. The
 producer should omit unnecessary columns and rows before publication. LeapView

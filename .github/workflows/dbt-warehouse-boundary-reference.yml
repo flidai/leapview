@@ -5,26 +5,33 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 concurrency:
   group: dbt-warehouse-boundary-production
   cancel-in-progress: false
 
-env:
-  AZURE_CORE_OUTPUT: none
-  AZURE_STORAGE_ACCOUNT: ${{ vars.DBT_PRODUCER_STORAGE_ACCOUNT }}
-  AZURE_SOURCE_CONTAINER: ${{ vars.DBT_PRODUCER_SOURCE_CONTAINER }}
-  AZURE_PUBLICATION_CONTAINER: ${{ vars.DBT_PRODUCER_PUBLICATION_CONTAINER }}
-  LEAPVIEW_TARGET: ${{ vars.LEAPVIEW_TARGET }}
-  LEAPVIEW_WORKLOAD_PROJECT: ${{ vars.LEAPVIEW_PROJECT_ID }}
-
 jobs:
-  publish-and-activate:
-    name: Publish dbt marts and activate LeapView
+  publish-dbt:
+    name: Publish dbt marts
+    # Production credentials and OIDC are available only for a manual run from
+    # this repository's protected default branch. Keep this guard in the
+    # copyable reference so a copied workflow fails closed by default.
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     environment: dbt-warehouse-boundary-production
+    permissions:
+      contents: read
+      id-token: write
+    outputs:
+      publication_prefix: ${{ steps.select-prefix.outputs.publication_prefix }}
+    env:
+      AZURE_CORE_OUTPUT: none
+      AZURE_STORAGE_ACCOUNT: ${{ vars.DBT_PRODUCER_STORAGE_ACCOUNT }}
+      AZURE_SOURCE_CONTAINER: ${{ vars.DBT_PRODUCER_SOURCE_CONTAINER }}
+      AZURE_PUBLICATION_CONTAINER: ${{ vars.DBT_PRODUCER_PUBLICATION_CONTAINER }}
 
     steps:
       - name: Check out repository
@@ -73,10 +80,11 @@ jobs:
         run: DBT_BIN="$(command -v dbt)" ./scripts/dbt-warehouse-boundary.sh build
 
       - name: Select a new immutable publication prefix
+        id: select-prefix
         shell: bash
         run: |
           set -euo pipefail
-          prefix="dbt-warehouse-boundary/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}"
+          prefix="dbt-warehouse-boundary/${GITHUB_REPOSITORY}/${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}-${GITHUB_SHA}"
           existing="$(az storage blob list \
             --auth-mode login \
             --account-name "$AZURE_STORAGE_ACCOUNT" \
@@ -89,6 +97,7 @@ jobs:
             exit 1
           }
           printf 'PUBLICATION_PREFIX=%s\n' "$prefix" >> "$GITHUB_ENV"
+          printf 'publication_prefix=%s\n' "$prefix" >> "$GITHUB_OUTPUT"
 
       - name: Upload the complete selected mart set
         shell: bash
@@ -128,6 +137,32 @@ jobs:
       - name: End the producer credential session
         run: az logout
 
+  activate-leapview:
+    name: Activate LeapView
+    # Keep the activation job behind the same trusted-ref guard. It receives
+    # only the producer's non-secret publication output, never its OIDC token.
+    if: >-
+      github.ref == format('refs/heads/{0}', github.event.repository.default_branch) &&
+      github.ref_protected == true
+    needs: [publish-dbt]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    environment: dbt-warehouse-boundary-production
+    permissions:
+      contents: read
+    env:
+      AZURE_CORE_OUTPUT: none
+      AZURE_PUBLICATION_CONTAINER: ${{ vars.DBT_PRODUCER_PUBLICATION_CONTAINER }}
+      LEAPVIEW_TARGET: ${{ vars.LEAPVIEW_TARGET }}
+      LEAPVIEW_WORKLOAD_PROJECT: ${{ vars.LEAPVIEW_PROJECT_ID }}
+      PUBLICATION_PREFIX: ${{ needs.publish-dbt.outputs.publication_prefix }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+
       - name: Render the ordinary Azure-backed LeapView bundle
         shell: bash
         run: |
@@ -138,6 +173,24 @@ jobs:
           sed -i "s|path: dim_customers.parquet|path: az://$AZURE_PUBLICATION_CONTAINER/$PUBLICATION_PREFIX/dim_customers.parquet|" "$bundle/sources/dim_customers.yaml"
           sed -i "s|path: fct_orders.parquet|path: az://$AZURE_PUBLICATION_CONTAINER/$PUBLICATION_PREFIX/fct_orders.parquet|" "$bundle/sources/fct_orders.yaml"
           printf 'LEAPVIEW_PROJECT_FILE=%s/leapview.yaml\n' "$bundle" >> "$GITHUB_ENV"
+
+      - name: Assert authored current-profile Project identity
+        shell: bash
+        run: |
+          set -euo pipefail
+          project_id="$(awk '
+            $0 == "kind: Project" { in_project = 1; next }
+            in_project && $0 == "metadata:" { in_metadata = 1; next }
+            in_project && in_metadata && $0 ~ /^  id:[[:space:]]*/ {
+              sub(/^  id:[[:space:]]*/, "")
+              print
+              exit
+            }
+          ' "$LEAPVIEW_PROJECT_FILE")"
+          test -n "$project_id" && test "$project_id" = "$LEAPVIEW_WORKLOAD_PROJECT" || {
+            echo "authored current-profile Project id does not match LEAPVIEW_WORKLOAD_PROJECT" >&2
+            exit 1
+          }
 
       - name: Set up the cached LeapView CI toolchain
         uses: ./.github/actions/setup-ci

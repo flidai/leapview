@@ -32,7 +32,7 @@ var warehouseBoundaryNow = time.Date(2026, 9, 4, 12, 0, 0, 0, time.UTC)
 
 type warehouseBoundarySpec struct {
 	root        string
-	coordinated bool
+	multiSource bool
 	freshness   bool
 }
 
@@ -188,21 +188,25 @@ func TestProducerNeutralWarehouseBoundaryQualification(t *testing.T) {
 	tests := []struct {
 		name               string
 		publication        string
-		coordinated        bool
+		multiSource        bool
+		immutablePrefix    bool
 		freshness          bool
 		prepareFails       bool
 		qualificationFails bool
 		activationFails    bool
 	}{
 		{name: "compatible physical Parquet activates atomically", publication: "compatible"},
-		{name: "complete immutable multi-mart prefix activates atomically", publication: "compatible", coordinated: true},
+		{name: "compatible ordinary multi-source multi-mart publication activates atomically", publication: "compatible", multiSource: true},
+		{name: "complete immutable multi-mart prefix activates atomically", publication: "compatible", multiSource: true, immutablePrefix: true},
 		{name: "incompatible physical type is blocked", publication: "incompatible_schema", prepareFails: true},
 		{name: "removed physical field is blocked", publication: "missing_column", prepareFails: true},
+		{name: "unexpected physical field is blocked by strict schema", publication: "unexpected_column", prepareFails: true},
 		{name: "stale freshness is blocked", publication: "stale", freshness: true, qualificationFails: true},
 		{name: "invalid grain is blocked", publication: "duplicate_grain", qualificationFails: true},
 		{name: "failed Model check is blocked", publication: "failed_check", qualificationFails: true},
 		{name: "malformed Parquet is blocked", publication: "malformed", prepareFails: true},
-		{name: "partial coordinated publication is blocked", publication: "partial", coordinated: true, prepareFails: true},
+		{name: "metadata-only publication is blocked without physical Parquet", publication: "metadata_only", prepareFails: true},
+		{name: "partial coordinated publication is blocked", publication: "partial", multiSource: true, immutablePrefix: true, prepareFails: true},
 		{name: "activation failure preserves the old generation", publication: "compatible", activationFails: true},
 	}
 
@@ -211,11 +215,11 @@ func TestProducerNeutralWarehouseBoundaryQualification(t *testing.T) {
 			baseRoot := filepath.Join(t.TempDir(), "ordinary-current")
 			writeWarehouseBoundaryPublication(t, baseRoot, "compatible", false)
 			candidatePrefix := "ordinary-next"
-			if test.coordinated {
+			if test.immutablePrefix {
 				candidatePrefix = "version-2026-09-04T120000Z"
 			}
 			candidateRoot := filepath.Join(t.TempDir(), candidatePrefix)
-			writeWarehouseBoundaryPublication(t, candidateRoot, test.publication, test.coordinated)
+			writeWarehouseBoundaryPublication(t, candidateRoot, test.publication, test.multiSource)
 
 			baseID := servingstate.ID(fmt.Sprintf("generation_base_%d", index))
 			candidateID := servingstate.ID(fmt.Sprintf("generation_candidate_%d", index))
@@ -231,7 +235,7 @@ func TestProducerNeutralWarehouseBoundaryQualification(t *testing.T) {
 			}
 			repo := &warehouseBoundaryRepo{active: baseID, states: states, artifacts: artifacts}
 			factory := &warehouseBoundaryFactory{admission: admission, specs: map[servingstate.ID]warehouseBoundarySpec{
-				baseID: {root: baseRoot}, candidateID: {root: candidateRoot, coordinated: test.coordinated, freshness: test.freshness},
+				baseID: {root: baseRoot}, candidateID: {root: candidateRoot, multiSource: test.multiSource, freshness: test.freshness},
 			}}
 			registry := runtimehost.NewRegistryWithFactory(runtimehost.RegistryOptions{
 				Repo: repo, ProjectID: "project:warehouse-boundary", Environment: "test", Factory: factory, Authorization: warehouseBoundaryAuthorization{},
@@ -260,11 +264,14 @@ func TestProducerNeutralWarehouseBoundaryQualification(t *testing.T) {
 			if err != nil {
 				t.Fatalf("prepare candidate: %v", err)
 			}
-			if test.coordinated {
+			if test.multiSource {
 				observations := factory.runtime(candidateID).SourceObservations()
-				if len(observations) != 2 || !strings.HasPrefix(filepath.Base(candidateRoot), "version-") {
-					t.Fatalf("coordinated candidate observations=%d prefix=%q", len(observations), filepath.Base(candidateRoot))
+				if len(observations) != 2 {
+					t.Fatalf("multi-source candidate observations=%d, want 2", len(observations))
 				}
+			}
+			if test.immutablePrefix && !strings.HasPrefix(filepath.Base(candidateRoot), "version-") {
+				t.Fatalf("immutable candidate prefix=%q", filepath.Base(candidateRoot))
 			}
 			activationErr := registry.ActivatePrepared(prepared, func() error {
 				if err := qualifyWarehouseBoundary(t.Context(), factory.runtime(candidateID), warehouseBoundaryModel(factory.specs[candidateID]), candidateID); err != nil {
@@ -366,7 +373,7 @@ func warehouseBoundaryModel(spec warehouseBoundarySpec) *semanticmodel.Model {
 			"revenue": {Type: "aggregate", Dataset: "orders", Aggregation: "sum", Input: &semanticmodel.MetricInput{Field: "orders.revenue"}, Empty: "zero", Label: "Revenue"},
 		},
 	}
-	if spec.coordinated {
+	if spec.multiSource {
 		model.Sources["customers"] = semanticmodel.Source{
 			Connection: "warehouse", Path: "customers.parquet", Format: "parquet", SchemaMode: "strict",
 			Fields:                map[string]semanticmodel.SourceField{"customer_id": {Datatype: semanticmodel.DataTypeString}, "region": {Datatype: semanticmodel.DataTypeString}},
@@ -387,10 +394,21 @@ func warehouseBoundaryParquetLocation(path string) *projectcontracts.PathSourceL
 	return &projectcontracts.PathSourceLocation{Value: &projectcontracts.ParquetPathSourceLocation{PathSourceLocationBase: base, Format: "parquet", Options: projectcontracts.DefaultParquetReaderOptions()}}
 }
 
-func writeWarehouseBoundaryPublication(t *testing.T, root, kind string, coordinated bool) {
+func writeWarehouseBoundaryPublication(t *testing.T, root, kind string, multiSource bool) {
 	t.Helper()
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		t.Fatal(err)
+	}
+	if kind == "metadata_only" {
+		for name, contents := range map[string]string{
+			"manifest.json":    `{"nodes":{"model.warehouse.orders":{"resource_type":"model"}}}`,
+			"run_results.json": `{"results":[{"unique_id":"model.warehouse.orders","status":"success"}]}`,
+		} {
+			if err := os.WriteFile(filepath.Join(root, name), []byte(contents), 0o600); err != nil {
+				t.Fatalf("write metadata-only %s: %v", name, err)
+			}
+		}
+		return
 	}
 	if kind == "malformed" {
 		if err := os.WriteFile(filepath.Join(root, "orders.parquet"), []byte("not parquet"), 0o600); err != nil {
@@ -423,11 +441,15 @@ func writeWarehouseBoundaryPublication(t *testing.T, root, kind string, coordina
 		rows = fmt.Sprintf("('o1', 'c1', %s), ('o2', 'c2', %s)", updatedAt, updatedAt)
 		columns = "order_id, customer_id, updated_at"
 	}
+	if kind == "unexpected_column" {
+		rows = fmt.Sprintf("('o1', 'c1', %s, %s, 'source-only'), ('o2', 'c2', CAST(20 AS DOUBLE), %s, 'source-only-2')", revenue, updatedAt, updatedAt)
+		columns = "order_id, customer_id, revenue, updated_at, unexpected"
+	}
 	statement := fmt.Sprintf("COPY (SELECT * FROM (VALUES %s) AS orders(%s)) TO '%s' (FORMAT PARQUET)", rows, columns, analyticsduckdb.SQLString(filepath.Join(root, "orders.parquet")))
 	if _, err := db.Exec(statement); err != nil {
 		t.Fatal(err)
 	}
-	if coordinated && kind != "partial" {
+	if multiSource && kind != "partial" {
 		customers := fmt.Sprintf("COPY (SELECT * FROM (VALUES ('c1', 'north'), ('c2', 'south')) AS customers(customer_id, region)) TO '%s' (FORMAT PARQUET)", analyticsduckdb.SQLString(filepath.Join(root, "customers.parquet")))
 		if _, err := db.Exec(customers); err != nil {
 			t.Fatal(err)
@@ -444,7 +466,7 @@ func writeWarehouseBoundaryPublication(t *testing.T, root, kind string, coordina
 		}
 	}
 	sort.Strings(files)
-	if coordinated && kind != "partial" && strings.Join(files, ",") != "customers.parquet,orders.parquet" {
-		t.Fatalf("coordinated publication contains %v", files)
+	if multiSource && kind != "partial" && strings.Join(files, ",") != "customers.parquet,orders.parquet" {
+		t.Fatalf("multi-source publication contains %v", files)
 	}
 }
