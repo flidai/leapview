@@ -224,7 +224,7 @@ func newNativePGFixture(t *testing.T) *nativePGFixture {
 	createdAt := time.Date(2026, 8, 29, 12, 0, 0, 0, time.UTC)
 	richPlan, err := deployment.NewDeliveryPlan(deployment.DeliveryPlan{
 		ID: planID, TargetID: targetID, ProjectID: "project_sales", Environment: "prod",
-		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: digest('e'),
+		Operation: deployment.DeliveryOperationCodeChange, SourceDigest: digest('e'), ServingArtifactDigest: digest('e'),
 		Execution:  deployment.DeliveryExecutionInputs{SourceArtifactDigest: digest('e'), CompilerDigest: digest('b'), ExecutableDigest: digest('4'), DependencyDigest: digest('5'), ConfigDigest: digest('c'), BindingDigest: digest('d'), RuntimeDigest: digest('0'), CapabilityDigest: digest('9')},
 		Provenance: deployment.DeliveryProvenance{Builder: "native-coordinator-test"},
 		Governance: deployment.DeliveryGovernance{PolicyDigest: digest('2'), AuthorizationDigest: digest('d'), QualificationDigest: digest('3'), ApprovalPolicyRevision: 1, ExpiresAt: createdAt.Add(time.Hour)},

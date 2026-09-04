@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"time"
 
 	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
@@ -14,7 +13,6 @@ import (
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	nativepostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
@@ -346,108 +344,6 @@ func mapSealedDeployment(row deployment.Deployment) apiadapter.Deployment {
 		CreatedBy: row.CreatedBy, CreatedAt: row.CreatedAt, ActivatedAt: row.ActivatedAt,
 		ActivationPrincipal: row.ActivationPrincipal, VerificationDigest: row.VerificationDigest, VerifiedAt: row.VerifiedAt, Error: row.Error,
 	}
-}
-
-func activationWorkflow(
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-	environment string,
-) jobs.WorkflowIntent {
-	workflow, _ := activationWorkflowForOperation("delivery.activate", execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, environment)
-	return workflow
-}
-
-func activationWorkflowForOperation(
-	operationID string,
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-	environment string,
-) (jobs.WorkflowIntent, error) {
-	return activationWorkflowForOperationWithBootstrap(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, false, environment)
-}
-
-func activationWorkflowForOperationWithBootstrap(
-	operationID string,
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-	bootstrap bool,
-	environment string,
-) (jobs.WorkflowIntent, error) {
-	return activationWorkflowForOperationWithRollbackFence(operationID, execution, enqueue, project, deploymentID, releaseID, actor, approval, idempotencyKey, bootstrap, "", 0, false, environment)
-}
-
-func activationWorkflowForOperationWithRollbackFence(
-	operationID string,
-	execution apigencommand.AsyncExecutionContract,
-	enqueue bool,
-	project,
-	deploymentID,
-	releaseID string,
-	actor deployment.ApprovalActor,
-	approval deployment.Approval,
-	idempotencyKey string,
-	bootstrap bool,
-	expectedBaseGenerationID string,
-	expectedTargetRevision int64,
-	rollbackIntent bool,
-	environment string,
-) (jobs.WorkflowIntent, error) {
-	if err := servingstate.ValidateEnvironment(servingstate.Environment(environment)); err != nil || strings.TrimSpace(environment) != environment {
-		return jobs.WorkflowIntent{}, fmt.Errorf("deployment environment is required")
-	}
-	payload, _ := json.Marshal(ActivateJob{
-		Project: project, Deployment: deploymentID,
-		Actor: actor.PrincipalID, Credential: actor,
-		ApprovalID:       approval.ID,
-		ApprovalRevision: approval.Revision,
-		IdempotencyKey:   idempotencyKey, Bootstrap: bootstrap,
-		Rollback:                 rollbackIntent,
-		ExpectedBaseGenerationID: expectedBaseGenerationID,
-		ExpectedTargetRevision:   expectedTargetRevision,
-	})
-	eventData, eventErr := json.Marshal(map[string]any{
-		"operationId": operationID, "deploymentId": deploymentID,
-		"projectId": project, "releaseId": releaseID, "status": execution.InitialState,
-	})
-	if eventErr != nil {
-		return jobs.WorkflowIntent{}, eventErr
-	}
-	workflow := jobs.WorkflowIntent{
-		Event: jobs.EventInput{
-			Key:          execution.InitialEvent,
-			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
-			EventType: execution.InitialEvent, Data: eventData,
-		},
-	}
-	if enqueue {
-		workflow.Job = jobs.EnqueueInput{
-			ID:            execution.ResourceKind + ":" + deploymentID + ":activate",
-			Kind:          execution.JobKind,
-			WorkloadClass: "control", PrincipalID: actor.PrincipalID, GroupIDs: nil, EstimatedMemoryBytes: 16 << 20,
-			PartitionKey: "deployment:" + project + ":" + environment,
-			ResourceKind: execution.ResourceKind, ResourceID: deploymentID,
-			Payload: payload,
-		}
-	}
-	return workflow, nil
 }
 
 func (m *Module) appendEvent(ctx context.Context, deploymentID, event, status string) {

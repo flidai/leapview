@@ -8,33 +8,12 @@ import (
 	"testing"
 	"time"
 
-	apigencommand "github.com/Yacobolo/toolbelt/apigen/runtime/command"
 	"github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/deployment/apiadapter"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	"github.com/flidai/leapview/pkg/jobs"
 )
-
-func TestActivationWorkflowDistinguishesImmediateAndApprovalGatedStarts(t *testing.T) {
-	execution := apigencommand.AsyncExecutionContract{
-		JobKind: "deployment.activate", ResourceKind: "deployment",
-		InitialEvent: "deployment.queued", InitialState: "queued",
-	}
-	actor := deployment.ApprovalActor{PrincipalID: "publisher"}
-	immediate := activationWorkflow(execution, true, "project", "deployment-1", "release-1", actor, deployment.Approval{}, "key", "prod")
-	gated := activationWorkflow(execution, false, "project", "deployment-2", "release-1", actor, deployment.Approval{}, "key", "prod")
-
-	if immediate.Event.EventType != execution.InitialEvent || immediate.Event.ResourceKind != execution.ResourceKind || immediate.Job.Kind != execution.JobKind {
-		t.Fatalf("immediate workflow = %#v", immediate)
-	}
-	if immediate.Job.PartitionKey != "deployment:project:prod" {
-		t.Fatalf("immediate workflow partition = %q", immediate.Job.PartitionKey)
-	}
-	if gated.Event.EventType != execution.InitialEvent || gated.Event.ResourceKind != execution.ResourceKind || gated.Job.ID != "" {
-		t.Fatalf("approval-gated workflow = %#v", gated)
-	}
-}
 
 func TestActivationJobsBoundCrashRecoveryLease(t *testing.T) {
 	handlers := (&Module{}).JobHandlers()
