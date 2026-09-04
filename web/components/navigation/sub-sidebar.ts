@@ -2,6 +2,7 @@ import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
 import { ArrowLeft, PanelLeft, Search, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
+import { sidebarControlStyles } from './sidebar-controls'
 import '../shared/loading-spinner'
 
 type SubSidebarItem = {
@@ -94,7 +95,7 @@ class SubSidebar extends LitElement {
   private loadedWidthStorageKey = ''
   private resizeDrag?: { pointerId: number; startX: number; startWidth: number }
 
-  static styles = css`
+  static styles = [sidebarControlStyles, css`
     :host {
       --lv-sub-sidebar-resized-width: var(--lv-sub-sidebar-width-expanded);
       --lv-sub-sidebar-width: var(--lv-sub-sidebar-resized-width);
@@ -185,6 +186,11 @@ class SubSidebar extends LitElement {
     }
 
     header.with-controls {
+      --lv-sidebar-control-font: var(--lv-type-body-compact);
+      --lv-sidebar-control-gap: var(--base-size-6);
+      --lv-sidebar-control-height: var(--control-small-size);
+      --lv-sidebar-control-icon-column: var(--control-xsmall-size);
+      --lv-sidebar-control-search-gap: var(--base-size-6);
       height: auto;
       min-height: var(--lv-sub-sidebar-header-height, calc(var(--base-size-16) + var(--control-small-size)));
       align-content: start;
@@ -212,91 +218,6 @@ class SubSidebar extends LitElement {
       font: var(--lv-type-caption);
       letter-spacing: 0;
       text-transform: none;
-    }
-
-    .back-link {
-      display: grid;
-      min-width: 0;
-      flex: 1 1 auto;
-      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
-      min-height: var(--control-small-size);
-      align-items: center;
-      gap: var(--base-size-6);
-      border: var(--lv-border-transparent);
-      border-radius: var(--lv-radius-default);
-      color: var(--lv-fg-muted);
-      padding: 0 var(--control-xsmall-paddingInline-normal);
-      text-decoration: none;
-      font: var(--lv-type-body-compact);
-    }
-
-    .back-link:hover,
-    .back-link:focus-visible {
-      background: var(--control-bgColor-hover);
-      color: var(--lv-fg-default);
-      outline: 0;
-    }
-
-    .back-link:focus-visible,
-    .sidebar-search input:focus-visible {
-      outline: var(--focus-outline);
-      outline-offset: var(--focus-outline-offset);
-    }
-
-    .back-icon {
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      place-items: center;
-    }
-
-    .back-icon svg,
-    .search-icon svg {
-      width: var(--base-size-16);
-      height: var(--base-size-16);
-    }
-
-    .back-label {
-      overflow: hidden;
-      text-overflow: ellipsis;
-      white-space: nowrap;
-    }
-
-    .sidebar-search {
-      position: relative;
-      display: grid;
-      min-width: 0;
-    }
-
-    .search-icon {
-      position: absolute;
-      top: 50%;
-      left: var(--control-xsmall-paddingInline-normal);
-      z-index: 1;
-      display: grid;
-      width: var(--control-xsmall-size);
-      height: var(--control-xsmall-size);
-      place-items: center;
-      color: var(--lv-fg-muted);
-      pointer-events: none;
-      transform: translateY(-50%);
-    }
-
-    .sidebar-search input {
-      box-sizing: border-box;
-      width: 100%;
-      min-height: var(--control-small-size);
-      border: var(--lv-border-muted);
-      border-radius: var(--lv-radius-default);
-      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
-      color: var(--lv-fg-default);
-      padding: 0 var(--control-xsmall-paddingInline-normal) 0 calc(var(--control-xsmall-size) + var(--base-size-6));
-      font: var(--lv-type-body-compact);
-    }
-
-    .sidebar-search input::placeholder {
-      color: var(--lv-fg-muted);
-      opacity: 1;
     }
 
     .collapse {
@@ -671,7 +592,7 @@ class SubSidebar extends LitElement {
       }
     }
 
-  `
+  `]
 
   updated(changed: PropertyValues<this>): void {
     const config = this.resolvedConfig
@@ -712,9 +633,9 @@ class SubSidebar extends LitElement {
         <header class=${controlledHeader ? 'with-controls' : ''}>
           <div class="top-row">
             ${config.backAction ? html`
-              <a class="back-link" href=${config.backAction.href} aria-label=${config.backAction.title || config.backAction.label} title=${config.backAction.title || config.backAction.label}>
-                <span class="back-icon" aria-hidden="true">${icon('back')}</span>
-                <span class="back-label">${config.backAction.label}</span>
+              <a class="back-link sidebar-control-back" href=${config.backAction.href} aria-label=${config.backAction.title || config.backAction.label} title=${config.backAction.title || config.backAction.label}>
+                <span class="back-icon sidebar-control-back-icon" aria-hidden="true">${icon('back')}</span>
+                <span class="back-label sidebar-control-back-label">${config.backAction.label}</span>
               </a>
             ` : html`<strong class="section-title">${config.label}</strong>`}
             <button
@@ -731,7 +652,7 @@ class SubSidebar extends LitElement {
           </div>
           ${config.searchable && !collapsed ? html`
             <label class="sidebar-search">
-              <span class="search-icon" aria-hidden="true">${icon('search')}</span>
+              <span class="search-icon sidebar-search-icon" aria-hidden="true">${icon('search')}</span>
               <input
                 type="search"
                 aria-label=${config.searchPlaceholder}
