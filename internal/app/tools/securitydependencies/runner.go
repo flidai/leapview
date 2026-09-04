@@ -287,6 +287,10 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 		args = append(args, "--json")
 	}
 	result := r.command(dir, "npm", args...)
+	if retryableNPMAuditTransport(result) {
+		fmt.Fprintf(r.stderr, "npm audit %s: transient transport failure; retrying once\n", dir)
+		result = r.command(dir, "npm", args...)
+	}
 	if contract == nil {
 		r.emitDirect(result)
 		return commandError("npm audit", dir, result)
@@ -301,6 +305,28 @@ func (r *runner) scanNPM(lockFile string, contract *exceptionContract) error {
 	r.emitFailure(result)
 	return commandError("npm audit", dir, result)
 }
+
+func retryableNPMAuditTransport(result commandResult) bool {
+	if result.status == 0 {
+		return false
+	}
+	var payload struct {
+		StatusCode      int             `json:"statusCode"`
+		Message         string          `json:"message"`
+		Vulnerabilities json.RawMessage `json:"vulnerabilities"`
+	}
+	if err := json.Unmarshal(result.stdout, &payload); err != nil || payload.Vulnerabilities != nil {
+		return false
+	}
+	if payload.StatusCode != 503 || payload.Message != npmAuditBulk503Message {
+		return false
+	}
+	diagnostic := strings.ToLower(string(result.stderr))
+	return strings.Contains(diagnostic, "npm warn audit 503 service unavailable") ||
+		strings.Contains(diagnostic, "npm error audit endpoint returned an error")
+}
+
+const npmAuditBulk503Message = "503 Service Unavailable - POST https://registry.npmjs.org/-/npm/v1/security/advisories/bulk - Service Unavailable"
 
 func (r *runner) emitDirect(result commandResult) {
 	if len(result.stdout) > 0 {
