@@ -179,7 +179,7 @@
         "best-effort": ["candidate source/blob command callbacks", "candidate ready/failed/retried observations"]
       },
       "failureBehavior": "Durable lifecycle transitions fail closed in their repository; best-effort callbacks preserve the committed delivery result and log failures.",
-      "implementation": ["internal/deployment/candidate_service.go", "internal/deployment/module/candidate_sync.go", "internal/deployment/module/api.go", "internal/deployment/postgres/repository.go", "internal/deployment/postgres/approval_authority.go"],
+      "implementation": ["internal/app/projectsource/native.go", "internal/app/deploymentpostgres/native_delivery.go", "internal/deployment/module/candidate_sync.go", "internal/deployment/module/native_delivery.go", "internal/deployment/postgres/repository.go", "internal/deployment/postgres/approval_authority.go"],
       "contractSources": ["api/typespec/deployments.tsp"],
       "evidence": ["internal/deployment/postgres/repository_test.go", "internal/deployment/postgres/approval_authority_test.go", "internal/deployment/module/native_coordinator_pg_test.go"]
     },

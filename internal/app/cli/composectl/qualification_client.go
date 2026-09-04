@@ -90,10 +90,9 @@ func parseQualificationCandidateWithPlan(output, sourceRevision string, requireP
 }
 
 // validateQualificationNativeCandidate keeps image qualification tied to the
-// PostgreSQL delivery identity domain. The general parser remains permissive
-// because local SQLite targets intentionally retain their opaque candidate
-// identifiers; the qualification client, however, only runs against the
-// native production target.
+// PostgreSQL delivery identity domain. The transport parser accepts opaque
+// identifiers, while the qualification client only runs against the native
+// production target and therefore requires its UUID identities.
 func validateQualificationNativeCandidate(candidate QualificationCandidate) error {
 	for name, value := range map[string]string{
 		"candidate": candidate.ID,

@@ -192,7 +192,7 @@ func (s *Service) UploadArtifact(ctx context.Context, projectID, releaseID, cont
 	}
 	item := Artifact{ReleaseID: current.ID, ServingIdentity: current.ServingIdentity, ExpectedDigest: current.ArtifactDigest, ActualDigest: current.ArtifactDigest, SizeBytes: size}
 	// The upload bytes are written to the external artifact store before the
-	// SQLite transition. Refresh the source-built audit handoff with the
+	// durable repository transition. Refresh the source-built audit handoff with the
 	// authoritative size observed by the verifier so RecordArtifact can commit
 	// the complete payload atomically with the release row update.
 	if intent, ok := AuditIntentFromContext(ctx); ok {

@@ -80,20 +80,6 @@ enum DeliveryLeaseStatus {
   expired;
 }
 
-enum DeliveryGCStatus {
-  running;
-  marked;
-  deleting;
-  complete;
-  aborted;
-}
-
-enum DeliveryGCDeleteStatus {
-  pending;
-  deleted;
-  ambiguous;
-}
-
 enum DeliveryAuditStatus {
   accepted;
   rejected;
@@ -279,12 +265,16 @@ model DeliveryBuildStatusResponse {
   sourceDigest: string;
   executionDigest: string;
   baseGenerationId?: string;
-  baseCatalogDigest?: string;
   basePhysicalPoolId?: string;
   physicalPoolId: string;
   writerLeaseId: string;
   status: DeliveryBuildStatus;
-  sealId?: string;
+  // Populated once the build has committed a qualified DuckLake snapshot.
+  snapshotSealId?: string;
+  ducklakeSnapshotId?: int64;
+  relationManifestDigest?: string;
+  closureDigest?: string;
+  qualificationDigest?: string;
   candidateId?: string;
   failureCode?: string;
   revision: int64;
@@ -295,21 +285,19 @@ model DeliveryBuildStatusResponse {
 }
 
 model DeliverySealStatusResponse {
-  id: string;
+  snapshotSealId: string;
   attemptId: string;
   planId: string;
   planDigest: string;
   executionDigest: string;
   physicalPoolId: string;
-  catalogDigest: string;
-  baseCatalogDigest?: string;
-  basePhysicalPoolId?: string;
+  ducklakeSnapshotId: int64;
+  relationManifestDigest: string;
+  closureDigest: string;
   compatibilityDigest: string;
   servingArtifactId: string;
   servingArtifactDigest: string;
   servingStateId: string;
-  objectSize: int64;
-  closureDigest?: string;
   qualificationDigest?: string;
   status: DeliverySealStatus;
   createdAt: utcDateTime;
@@ -328,9 +316,10 @@ model DeliveryCandidateStatusResponse {
   executionDigest: string;
   baseGenerationId?: string;
   baseTargetRevision: int64;
-  sealId: string;
-  catalogDigest: string;
-  baseCatalogDigest?: string;
+  snapshotSealId?: string;
+  ducklakeSnapshotId?: int64;
+  relationManifestDigest?: string;
+  closureDigest?: string;
   basePhysicalPoolId?: string;
   compatibilityDigest: string;
   physicalPoolId: string;
@@ -355,7 +344,10 @@ model DeliveryGenerationStatusResponse {
   targetId: string;
   projectId: ResourceId;
   environment: string;
-  catalogDigest: string;
+  snapshotSealId: string;
+  ducklakeSnapshotId: int64;
+  relationManifestDigest: string;
+  closureDigest: string;
   physicalPoolId: string;
   servingArtifactId: string;
   servingArtifactDigest: string;
@@ -409,7 +401,7 @@ model DeliveryRootView {
   candidateId?: string;
   generationId?: string;
   leaseId?: string;
-  catalogDigest: string;
+  snapshotSealId?: string;
   status: DeliveryRootStatus;
   createdAt: utcDateTime;
   expiresAt?: utcDateTime;
@@ -421,7 +413,7 @@ model DeliveryQueryLeaseView {
   candidateId?: string;
   generationId?: string;
   poolId: string;
-  catalogDigest: string;
+  snapshotSealId?: string;
   status: DeliveryLeaseStatus;
   createdAt: utcDateTime;
   expiresAt: utcDateTime;
@@ -439,29 +431,6 @@ model DeliveryWriterLeaseView {
   releasedAt?: utcDateTime;
 }
 
-model DeliveryGCCycleView {
-  id: string;
-  poolId: string;
-  epoch: int64;
-  rootRevision: int64;
-  markDigest?: string;
-  status: DeliveryGCStatus;
-  createdAt: utcDateTime;
-  completedAt?: utcDateTime;
-  abortReason?: string;
-}
-
-model DeliveryGCDeleteIntentView {
-  id: string;
-  cycleId: string;
-  poolId: string;
-  objectDigest: string;
-  objectVersion?: string;
-  status: DeliveryGCDeleteStatus;
-  createdAt: utcDateTime;
-  completedAt?: utcDateTime;
-}
-
 model DeliveryOperatorSnapshotResponse {
   projectId: ResourceId;
   environment: string;
@@ -474,8 +443,6 @@ model DeliveryOperatorSnapshotResponse {
   roots: DeliveryRootView[];
   queryLeases: DeliveryQueryLeaseView[];
   writerLeases: DeliveryWriterLeaseView[];
-  gcCycles: DeliveryGCCycleView[];
-  gcDeleteIntents: DeliveryGCDeleteIntentView[];
 }
 
 model DeliveryPlanRequest {
@@ -625,10 +592,10 @@ model CandidateQuotaExceededFailure {}
 @apigen.failureDefinition(#{
   kind: "candidate_unavailable",
   statusCode: 503,
-  code: "CANDIDATE_SERVICE_UNAVAILABLE",
-  publicDetail: "Candidate service is unavailable.",
+  code: "CANDIDATE_UNAVAILABLE",
+  publicDetail: "Candidate is unavailable.",
 })
-model CandidateServiceUnavailableFailure {}
+model CandidateUnavailableFailure {}
 
 @apigen.failureDefinition(#{
   kind: "approval_conflict",
@@ -745,7 +712,7 @@ interface CandidateSynchronization {
   @extension("x-leapview-object-scope", "project")
   @apigen.command(#{ auditAction: "candidate.source_sync_planned" })
   @apigen.auditPayload(CandidateSourceSyncPlannedAuditPayload)
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
+  @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.failsWith(AuditUnavailableFailure)
@@ -760,7 +727,7 @@ interface CandidateSynchronization {
   @route("/source")
   @post
   @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
+  @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.command(#{ auditAction: "candidate.source_retained" })
@@ -771,7 +738,7 @@ interface CandidateSynchronization {
   @route("/blobs/{digest}")
   @put
   @extension("x-leapview-object-scope", "project")
-  @apigen.failsWith(CandidateServiceUnavailableFailure)
+  @apigen.failsWith(CandidateUnavailableFailure)
   @apigen.failsWith(CandidateConflictFailure)
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.failsWith(InvalidCandidateSourceBlobFailure)
@@ -1041,7 +1008,7 @@ interface DeliveryStatus {
   @apigen.failsWith(DeliveryReadInvalidFailure)
   getDeliveryBuildStatus(@path project: ResourceId, @path build: string): OkJson<DeliveryBuildStatusResponse> | CommonErrors;
 
-  @summary("Get catalog-seal verification status and evidence digests")
+  @summary("Get snapshot-seal verification status and relation evidence digests")
   @route("/seals/{seal}")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "RESOURCE_READ" })
@@ -1085,7 +1052,7 @@ interface DeliveryStatus {
   @apigen.failsWith(DeliveryReadInvalidFailure)
   getDeliveryPublicationEvidence(@path project: ResourceId, @path publication: string): OkJson<DeliveryPublicationEvidenceResponse> | CommonErrors;
 
-  @summary("Inspect physical-pool admissions, roots, leases, GC, and degraded state")
+  @summary("Inspect target snapshot state and degraded status")
   @route("/operator")
   @get
   @apigen.authz(#{ mode: "privilege", privilege: "PROJECT_ADMIN" })

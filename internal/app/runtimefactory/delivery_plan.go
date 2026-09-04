@@ -1,7 +1,6 @@
 package runtimefactory
 
 import (
-	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -11,50 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/flidai/leapview/internal/analytics/candidatecatalog"
 	"github.com/flidai/leapview/internal/deployment"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/release"
 )
-
-// ExpectedRelations derives the physical relation contract from the compiled
-// semantic models rather than from a hand-maintained table list.
-func ExpectedRelations(artifacts release.CandidateArtifactSet) []candidatecatalog.LogicalRelation {
-	seen := map[string]struct{}{}
-	result := make([]candidatecatalog.LogicalRelation, 0)
-	for _, model := range artifacts.Compiler.Artifact.Models() {
-		if model == nil {
-			continue
-		}
-		for table := range model.Tables {
-			relation := candidatecatalog.LogicalRelation{Schema: "model", Table: table}
-			key := relation.Schema + "\x00" + relation.Table
-			if _, ok := seen[key]; ok {
-				continue
-			}
-			seen[key] = struct{}{}
-			result = append(result, relation)
-		}
-	}
-	return result
-}
-
-// VerifyExpectedRelations is the reuse-mode read-only relation assertion.
-func VerifyExpectedRelations(actual []candidatecatalog.CatalogTable, expected []candidatecatalog.LogicalRelation) error {
-	seen := make(map[string]struct{}, len(actual))
-	for _, relation := range actual {
-		seen[relation.Schema+"\x00"+relation.Table] = struct{}{}
-	}
-	if len(seen) != len(expected) {
-		return fmt.Errorf("reused catalog relation count %d does not match compiled contract %d", len(seen), len(expected))
-	}
-	for _, relation := range expected {
-		if _, ok := seen[relation.Schema+"\x00"+relation.Table]; !ok {
-			return fmt.Errorf("reused catalog is missing compiled relation %s.%s", relation.Schema, relation.Table)
-		}
-	}
-	return nil
-}
 
 func planDigest(value string) string {
 	sum := sha256.Sum256([]byte(value))
@@ -544,41 +503,6 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		finalizeReuseEvidence(&request.Evidence, request.Evidence.Reuse)
 	}
 	return finalizeCandidatePlanExecution(request, input.Candidate.ID, artifacts)
-}
-
-// QualificationRequestForCandidate declares only checks with independent
-// evidence. candidatecatalog itself performs object probes, snapshot
-// normalization, and read-only attach; this policy adds exact relation
-// closure and compatibility admission. Publication approval and live access
-// authorization remain separate target-owned boundaries.
-func QualificationRequestForCandidate(artifacts release.CandidateArtifactSet) candidatecatalog.QualificationRequest {
-	expected := candidatecatalog.QualificationExpectations{}
-	for _, model := range artifacts.Compiler.Artifact.Models() {
-		if model == nil {
-			continue
-		}
-		for table := range model.Tables {
-			expected.Relations = append(expected.Relations, candidatecatalog.LogicalRelation{Schema: "model", Table: table})
-		}
-	}
-	return candidatecatalog.QualificationRequest{
-		CatalogID:            artifacts.Generation.Identity.GenerationID,
-		Expected:             expected,
-		PolicyDigest:         artifacts.AuthorizationFingerprint,
-		ReviewerPolicyDigest: artifacts.AuthorizationFingerprint,
-		Policy: func(_ context.Context, input candidatecatalog.QualificationInput) error {
-			if err := VerifyExpectedRelations(input.Record.Closure.Tables, input.Expectations.Relations); err != nil {
-				return err
-			}
-			if err := input.Record.Compatibility.Validate(); err != nil {
-				return fmt.Errorf("admitted compatibility evidence: %w", err)
-			}
-			if strings.TrimSpace(input.Record.Closure.Digest) == "" {
-				return fmt.Errorf("normalized closure digest is missing")
-			}
-			return nil
-		},
-	}
 }
 
 func qualificationSteps() []deployment.DeliveryQualificationStep {

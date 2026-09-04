@@ -212,7 +212,6 @@ type NativeDeliveryBuild struct {
 	SourceDigest          string
 	ExecutionDigest       string
 	BaseGenerationID      uuid.UUID
-	BaseCatalogDigest     string
 	BasePhysicalPoolID    string
 	PhysicalPoolID        string
 	WriterLeaseID         uuid.UUID
@@ -575,10 +574,10 @@ func nativeBuildStatusResponse(build NativeDeliveryBuild) deploymentgen.Delivery
 	return deploymentgen.DeliveryBuildStatusResponse{
 		Id: build.ID.String(), PlanId: build.PlanID.String(), PlanDigest: build.PlanDigest,
 		SourceDigest: build.SourceDigest, ExecutionDigest: build.ExecutionDigest,
-		BaseGenerationId: optionalNativeUUID(build.BaseGenerationID), BaseCatalogDigest: optionalText(build.BaseCatalogDigest),
+		BaseGenerationId:   optionalNativeUUID(build.BaseGenerationID),
 		BasePhysicalPoolId: optionalText(build.BasePhysicalPoolID), PhysicalPoolId: build.PhysicalPoolID,
 		WriterLeaseId: build.WriterLeaseID.String(), Status: deploymentgen.DeliveryBuildStatus(build.Status),
-		SealId: optionalNativeUUID(build.SealID), CandidateId: optionalNativeUUID(build.CandidateID),
+		SnapshotSealId: optionalNativeUUID(build.SealID), CandidateId: optionalNativeUUID(build.CandidateID),
 		FailureCode: optionalText(build.FailureCode), Revision: build.Revision, CandidateRevision: optionalNativeInt64(build.CandidateRevision),
 		CreatedAt: isoTime(build.CreatedAt), UpdatedAt: isoTime(build.UpdatedAt), TerminalAt: optionalText(isoTime(build.TerminalAt)),
 	}

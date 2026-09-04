@@ -12,7 +12,7 @@ var (
 	ErrCandidateConflict    = apigenfailure.New("candidate_conflict", "candidate conflict")
 	ErrCandidateQuota       = apigenfailure.New("candidate_quota", "candidate quota exceeded")
 	ErrCandidateInvalid     = apigenfailure.New("candidate_invalid", "candidate invalid")
-	ErrCandidateUnavailable = apigenfailure.New("candidate_unavailable", "candidate service unavailable")
+	ErrCandidateUnavailable = apigenfailure.New("candidate_unavailable", "candidate unavailable")
 )
 
 type CandidateStatus string

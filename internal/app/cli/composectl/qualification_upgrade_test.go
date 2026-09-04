@@ -52,8 +52,8 @@ func TestQualificationDeliveryPersistenceEvidenceDiagnosesMismatchedFieldsWithou
 		{name: "candidate status", field: "candidate.status", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
 			candidate.Status = deploymentgen.DeliveryCandidateStatusFailed
 		}},
-		{name: "candidate seal", field: "candidate.sealId", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
-			candidate.SealId = ""
+		{name: "candidate snapshot seal", field: "candidate.snapshotSealId", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
+			candidate.SnapshotSealId = nil
 		}},
 		{name: "serving state", field: "candidate.servingStateId", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
 			candidate.ServingStateId = secret
@@ -70,8 +70,8 @@ func TestQualificationDeliveryPersistenceEvidenceDiagnosesMismatchedFieldsWithou
 		{name: "physical pool", field: "candidate.physicalPoolId", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
 			candidate.PhysicalPoolId = secret
 		}},
-		{name: "catalog digest", field: "candidate.catalogDigest", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
-			candidate.CatalogDigest = secret
+		{name: "closure digest", field: "candidate.closureDigest", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
+			candidate.ClosureDigest = strptr(secret)
 		}},
 		{name: "compatibility digest", field: "candidate.compatibilityDigest", mutate: func(candidate *deploymentgen.DeliveryCandidateStatusResponse, _ *deploymentgen.DeliveryGenerationStatusResponse) {
 			candidate.CompatibilityDigest = secret
@@ -122,17 +122,21 @@ func qualificationDeliveryEvidenceFixture(
 	candidateID, generationID, sealID, planID, planDigest string,
 ) (deploymentgen.DeliveryCandidateStatusResponse, deploymentgen.DeliveryGenerationStatusResponse) {
 	return deploymentgen.DeliveryCandidateStatusResponse{
-			Id: candidateID, Status: deploymentgen.DeliveryCandidateStatusReady, SealId: sealID,
+			Id: candidateID, Status: deploymentgen.DeliveryCandidateStatusReady, SnapshotSealId: &sealID,
 			ServingStateId: generationID, PlanId: planID, PlanDigest: planDigest,
-			TargetId: "target-1", PhysicalPoolId: "pool-1", CatalogDigest: "catalog-1",
+			TargetId: "target-1", PhysicalPoolId: "pool-1", DucklakeSnapshotId: int64ptr(42), RelationManifestDigest: strptr("relation-1"), ClosureDigest: strptr("closure-1"),
 			CompatibilityDigest: "compat-1", ServingArtifactId: "artifact-1", ServingArtifactDigest: "artifact-digest",
 		}, deploymentgen.DeliveryGenerationStatusResponse{
 			Id: generationID, CandidateId: candidateID, Status: deploymentgen.DeliveryGenerationStatusActive,
 			ServingStateId: generationID, PlanId: planID, PlanDigest: planDigest,
-			TargetId: "target-1", PhysicalPoolId: "pool-1", CatalogDigest: "catalog-1",
+			TargetId: "target-1", PhysicalPoolId: "pool-1", SnapshotSealId: sealID, DucklakeSnapshotId: 42, RelationManifestDigest: "relation-1", ClosureDigest: "closure-1",
 			CompatibilityDigest: "compat-1", ServingArtifactId: "artifact-1", ServingArtifactDigest: "artifact-digest",
 		}
 }
+
+func strptr(value string) *string { return &value }
+
+func int64ptr(value int64) *int64 { return &value }
 
 func qualificationDeliveryEvidenceServer(
 	t *testing.T,

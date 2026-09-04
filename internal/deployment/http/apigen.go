@@ -44,7 +44,7 @@ func (d *APIGenDispatcher) RetainProjectCandidateSource(w stdhttp.ResponseWriter
 		handler.RetainProjectCandidateSource(w, r, project, headers.IdempotencyKey, headers.SourceSynchronizationPlan)
 		return
 	}
-	apitransport.WriteProblem(w, r, stdhttp.StatusServiceUnavailable, "CANDIDATE_SERVICE_UNAVAILABLE", "Candidate source retention is unavailable", nil)
+	apitransport.WriteProblem(w, r, stdhttp.StatusServiceUnavailable, "CANDIDATE_UNAVAILABLE", "Candidate is unavailable", nil)
 }
 
 func (d *APIGenDispatcher) UploadProjectCandidateSourceBlob(w stdhttp.ResponseWriter, r *stdhttp.Request, project, digest string, headers deploymentgen.GenUploadProjectCandidateSourceBlobHeaders) {

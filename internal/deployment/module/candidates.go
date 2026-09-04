@@ -286,7 +286,7 @@ func (m *Module) ServeCandidateReview(
 }
 
 func writeCandidateUnavailable(w http.ResponseWriter, r *http.Request) {
-	apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "CANDIDATE_SERVICE_UNAVAILABLE", "Candidate service is unavailable", nil)
+	apitransport.WriteProblem(w, r, http.StatusServiceUnavailable, "CANDIDATE_UNAVAILABLE", "Candidate is unavailable", nil)
 }
 
 func writeCandidateAPIError(w http.ResponseWriter, r *http.Request, err error) {
@@ -294,7 +294,7 @@ func writeCandidateAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	if kind, ok := apigenfailure.KindOf(err); ok {
 		switch kind {
 		case "candidate_unavailable":
-			status, code, detail = http.StatusServiceUnavailable, "CANDIDATE_SERVICE_UNAVAILABLE", "Candidate service is unavailable"
+			status, code, detail = http.StatusServiceUnavailable, "CANDIDATE_UNAVAILABLE", "Candidate is unavailable"
 		case "candidate_not_found":
 			status, code, detail = http.StatusNotFound, "CANDIDATE_NOT_FOUND", "Candidate not found"
 		case "candidate_conflict":
@@ -312,7 +312,7 @@ func writeCandidateAPIError(w http.ResponseWriter, r *http.Request, err error) {
 	switch {
 	case errors.Is(err, deployment.ErrCandidateUnavailable),
 		errors.Is(err, project.ErrCandidateSourceUnavailable):
-		status, code, detail = http.StatusServiceUnavailable, "CANDIDATE_SERVICE_UNAVAILABLE", "Candidate service is unavailable"
+		status, code, detail = http.StatusServiceUnavailable, "CANDIDATE_UNAVAILABLE", "Candidate is unavailable"
 	case errors.Is(err, deployment.ErrCandidateNotFound):
 		status, code, detail = http.StatusNotFound, "CANDIDATE_NOT_FOUND", "Candidate not found"
 	case errors.Is(err, deployment.ErrCandidateConflict), errors.Is(err, project.ErrCandidateSourceConflict):
@@ -340,6 +340,8 @@ func classifyCandidateFailure(err error) error {
 		return apigenfailure.Wrap("candidate_conflict", err)
 	case errors.Is(err, deployment.ErrProjectClaimInvalid):
 		return apigenfailure.Wrap("candidate_invalid", err)
+	case errors.Is(err, deployment.ErrCandidateUnavailable):
+		return apigenfailure.Wrap("candidate_unavailable", err)
 	case errors.Is(err, project.ErrCandidateSourceUnavailable):
 		return apigenfailure.Wrap("candidate_unavailable", err)
 	case errors.Is(err, project.ErrCandidateSourceConflict):

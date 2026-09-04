@@ -221,7 +221,7 @@ func (m *Module) reconcileActive(ctx context.Context, resolve func(context.Conte
 func (m *Module) Reload(ctx context.Context) error { return m.registry.Reload(ctx) }
 
 // ReconcileSealed activates a delivery-committed generation through the
-// sealed runtime factory without invoking the legacy deployment service.
+// snapshot-bound runtime factory.
 func (m *Module) ReconcileSealed(ctx context.Context, id servingstate.ID) error {
 	if m == nil || m.registry == nil {
 		return errors.New("runtime host is unavailable")

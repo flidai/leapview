@@ -27046,9 +27046,9 @@ paths:
             kind: candidate_invalid
             public_detail: The candidate request is invalid.
             status_code: 422
-          - code: CANDIDATE_SERVICE_UNAVAILABLE
+          - code: CANDIDATE_UNAVAILABLE
             kind: candidate_unavailable
-            public_detail: Candidate service is unavailable.
+            public_detail: Candidate is unavailable.
             status_code: 503
           - code: INVALID_CANDIDATE_SOURCE_BLOB
             kind: source_blob_invalid
@@ -27393,9 +27393,9 @@ paths:
             kind: candidate_invalid
             public_detail: The candidate request is invalid.
             status_code: 422
-          - code: CANDIDATE_SERVICE_UNAVAILABLE
+          - code: CANDIDATE_UNAVAILABLE
             kind: candidate_unavailable
-            public_detail: Candidate service is unavailable.
+            public_detail: Candidate is unavailable.
             status_code: 503
         idempotency: required
         owner: LeapViewAPI.Deployment
@@ -27741,9 +27741,9 @@ paths:
             kind: candidate_invalid
             public_detail: The candidate request is invalid.
             status_code: 422
-          - code: CANDIDATE_SERVICE_UNAVAILABLE
+          - code: CANDIDATE_UNAVAILABLE
             kind: candidate_unavailable
-            public_detail: Candidate service is unavailable.
+            public_detail: Candidate is unavailable.
             status_code: 503
         idempotency: required
         owner: LeapViewAPI.Deployment
@@ -36450,20 +36450,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeliveryBuildStatusResponse'
               example:
-                baseCatalogDigest: example
                 baseGenerationId: example
                 basePhysicalPoolId: example
                 candidateId: example
                 candidateRevision: 1
+                closureDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
+                ducklakeSnapshotId: 1
                 executionDigest: example
                 failureCode: example
                 id: example
                 physicalPoolId: example
                 planDigest: example
                 planId: example
+                qualificationDigest: example
+                relationManifestDigest: example
                 revision: 1
-                sealId: example
+                snapshotSealId: example
                 sourceDigest: example
                 status: building
                 terminalAt: "2026-01-02T15:04:05Z"
@@ -36740,13 +36743,13 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeliveryCandidateStatusResponse'
               example:
-                baseCatalogDigest: example
                 baseGenerationId: example
                 basePhysicalPoolId: example
                 baseTargetRevision: 1
-                catalogDigest: example
+                closureDigest: example
                 compatibilityDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
+                ducklakeSnapshotId: 1
                 environment: example
                 executionDigest: example
                 failureCode: example
@@ -36757,6 +36760,7 @@ paths:
                 projectId: example
                 qualificationDigest: example
                 readyAt: "2026-01-02T15:04:05Z"
+                relationManifestDigest: example
                 resolvedInputs:
                   - actualBound: example
                     actualRevision: example
@@ -36768,10 +36772,10 @@ paths:
                     plannedRevision: example
                 resolvedInputsDigest: example
                 retiredAt: "2026-01-02T15:04:05Z"
-                sealId: example
                 servingArtifactDigest: example
                 servingArtifactId: example
                 servingStateId: example
+                snapshotSealId: example
                 sourceDigest: example
                 status: preparing
                 targetId: example
@@ -37416,21 +37420,24 @@ paths:
               example:
                 activatedAt: "2026-01-02T15:04:05Z"
                 candidateId: example
-                catalogDigest: example
+                closureDigest: example
                 compatibilityDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
+                ducklakeSnapshotId: 1
                 environment: example
                 id: example
                 physicalPoolId: example
                 planDigest: example
                 planId: example
                 projectId: example
+                relationManifestDigest: example
                 retiredAt: "2026-01-02T15:04:05Z"
                 rollbackClass: rollback_safe
                 rollbackUntil: "2026-01-02T15:04:05Z"
                 servingArtifactDigest: example
                 servingArtifactId: example
                 servingStateId: example
+                snapshotSealId: example
                 status: prepared
                 targetId: example
         '400':
@@ -38047,7 +38054,7 @@ paths:
   /api/v1/projects/{project}/delivery/operator:
     get:
       operationId: getDeliveryOperatorSnapshot
-      summary: Inspect physical-pool admissions, roots, leases, GC, and degraded state
+      summary: Inspect target snapshot state and degraded status
       parameters:
         - name: project
           in: path
@@ -38071,25 +38078,6 @@ paths:
                 degradedReasons:
                   - example
                 environment: example
-                gcCycles:
-                  - abortReason: example
-                    completedAt: "2026-01-02T15:04:05Z"
-                    createdAt: "2026-01-02T15:04:05Z"
-                    epoch: 1
-                    id: example
-                    markDigest: example
-                    poolId: example
-                    rootRevision: 1
-                    status: running
-                gcDeleteIntents:
-                  - completedAt: "2026-01-02T15:04:05Z"
-                    createdAt: "2026-01-02T15:04:05Z"
-                    cycleId: example
-                    id: example
-                    objectDigest: example
-                    objectVersion: example
-                    poolId: example
-                    status: pending
                 physicalPools:
                   - admittedAt: "2026-01-02T15:04:05Z"
                     catalogFormat: example
@@ -38105,23 +38093,23 @@ paths:
                 projectId: example
                 queryLeases:
                   - candidateId: example
-                    catalogDigest: example
                     createdAt: "2026-01-02T15:04:05Z"
                     expiresAt: "2026-01-02T15:04:05Z"
                     generationId: example
                     holderId: example
                     id: example
                     poolId: example
+                    snapshotSealId: example
                     status: active
                 roots:
                   - candidateId: example
-                    catalogDigest: example
                     createdAt: "2026-01-02T15:04:05Z"
                     expiresAt: "2026-01-02T15:04:05Z"
                     generationId: example
                     kind: candidate
                     leaseId: example
                     poolId: example
+                    snapshotSealId: example
                     sourceId: example
                     status: active
                 targetId: example
@@ -38738,20 +38726,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/DeliveryBuildStatusResponse'
               example:
-                baseCatalogDigest: example
                 baseGenerationId: example
                 basePhysicalPoolId: example
                 candidateId: example
                 candidateRevision: 1
+                closureDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
+                ducklakeSnapshotId: 1
                 executionDigest: example
                 failureCode: example
                 id: example
                 physicalPoolId: example
                 planDigest: example
                 planId: example
+                qualificationDigest: example
+                relationManifestDigest: example
                 revision: 1
-                sealId: example
+                snapshotSealId: example
                 sourceDigest: example
                 status: building
                 terminalAt: "2026-01-02T15:04:05Z"
@@ -41052,7 +41043,7 @@ paths:
   /api/v1/projects/{project}/delivery/seals/{seal}:
     get:
       operationId: getDeliverySealStatus
-      summary: Get catalog-seal verification status and evidence digests
+      summary: Get snapshot-seal verification status and relation evidence digests
       parameters:
         - name: project
           in: path
@@ -41078,23 +41069,21 @@ paths:
                 $ref: '#/components/schemas/DeliverySealStatusResponse'
               example:
                 attemptId: example
-                baseCatalogDigest: example
-                basePhysicalPoolId: example
-                catalogDigest: example
                 closureDigest: example
                 compatibilityDigest: example
                 createdAt: "2026-01-02T15:04:05Z"
+                ducklakeSnapshotId: 1
                 executionDigest: example
                 failureCode: example
-                id: example
-                objectSize: 1
                 physicalPoolId: example
                 planDigest: example
                 planId: example
                 qualificationDigest: example
+                relationManifestDigest: example
                 servingArtifactDigest: example
                 servingArtifactId: example
                 servingStateId: example
+                snapshotSealId: example
                 status: preparing
                 verifiedAt: "2026-01-02T15:04:05Z"
         '400':
@@ -71169,9 +71158,6 @@ components:
         baseGenerationId:
           type: string
           example: example
-        baseCatalogDigest:
-          type: string
-          example: example
         basePhysicalPoolId:
           type: string
           example: example
@@ -71183,7 +71169,20 @@ components:
           example: example
         status:
           $ref: '#/components/schemas/DeliveryBuildStatus'
-        sealId:
+        snapshotSealId:
+          type: string
+          example: example
+        ducklakeSnapshotId:
+          type: integer
+          format: int64
+          example: 1
+        relationManifestDigest:
+          type: string
+          example: example
+        closureDigest:
+          type: string
+          example: example
+        qualificationDigest:
           type: string
           example: example
         candidateId:
@@ -71213,20 +71212,23 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        baseCatalogDigest: example
         baseGenerationId: example
         basePhysicalPoolId: example
         candidateId: example
         candidateRevision: 1
+        closureDigest: example
         createdAt: "2026-01-02T15:04:05Z"
+        ducklakeSnapshotId: 1
         executionDigest: example
         failureCode: example
         id: example
         physicalPoolId: example
         planDigest: example
         planId: example
+        qualificationDigest: example
+        relationManifestDigest: example
         revision: 1
-        sealId: example
+        snapshotSealId: example
         sourceDigest: example
         status: building
         terminalAt: "2026-01-02T15:04:05Z"
@@ -71252,8 +71254,6 @@ components:
         - sourceDigest
         - executionDigest
         - baseTargetRevision
-        - sealId
-        - catalogDigest
         - compatibilityDigest
         - physicalPoolId
         - servingArtifactId
@@ -71297,13 +71297,17 @@ components:
           type: integer
           format: int64
           example: 1
-        sealId:
+        snapshotSealId:
           type: string
           example: example
-        catalogDigest:
+        ducklakeSnapshotId:
+          type: integer
+          format: int64
+          example: 1
+        relationManifestDigest:
           type: string
           example: example
-        baseCatalogDigest:
+        closureDigest:
           type: string
           example: example
         basePhysicalPoolId:
@@ -71361,13 +71365,13 @@ components:
           format: date-time
           example: "2026-01-02T15:04:05Z"
       example:
-        baseCatalogDigest: example
         baseGenerationId: example
         basePhysicalPoolId: example
         baseTargetRevision: 1
-        catalogDigest: example
+        closureDigest: example
         compatibilityDigest: example
         createdAt: "2026-01-02T15:04:05Z"
+        ducklakeSnapshotId: 1
         environment: example
         executionDigest: example
         failureCode: example
@@ -71378,6 +71382,7 @@ components:
         projectId: example
         qualificationDigest: example
         readyAt: "2026-01-02T15:04:05Z"
+        relationManifestDigest: example
         resolvedInputs:
           - actualBound: example
             actualRevision: example
@@ -71389,10 +71394,10 @@ components:
             plannedRevision: example
         resolvedInputsDigest: example
         retiredAt: "2026-01-02T15:04:05Z"
-        sealId: example
         servingArtifactDigest: example
         servingArtifactId: example
         servingStateId: example
+        snapshotSealId: example
         sourceDigest: example
         status: preparing
         targetId: example
@@ -71430,116 +71435,6 @@ components:
         - bounded
         - observed
       example: pinned
-    DeliveryGCCycleView:
-      type: object
-      required:
-        - id
-        - poolId
-        - epoch
-        - rootRevision
-        - status
-        - createdAt
-      properties:
-        id:
-          type: string
-          example: example
-        poolId:
-          type: string
-          example: example
-        epoch:
-          type: integer
-          format: int64
-          example: 1
-        rootRevision:
-          type: integer
-          format: int64
-          example: 1
-        markDigest:
-          type: string
-          example: example
-        status:
-          $ref: '#/components/schemas/DeliveryGCStatus'
-        createdAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
-        completedAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
-        abortReason:
-          type: string
-          example: example
-      example:
-        abortReason: example
-        completedAt: "2026-01-02T15:04:05Z"
-        createdAt: "2026-01-02T15:04:05Z"
-        epoch: 1
-        id: example
-        markDigest: example
-        poolId: example
-        rootRevision: 1
-        status: running
-    DeliveryGCDeleteIntentView:
-      type: object
-      required:
-        - id
-        - cycleId
-        - poolId
-        - objectDigest
-        - status
-        - createdAt
-      properties:
-        id:
-          type: string
-          example: example
-        cycleId:
-          type: string
-          example: example
-        poolId:
-          type: string
-          example: example
-        objectDigest:
-          type: string
-          example: example
-        objectVersion:
-          type: string
-          example: example
-        status:
-          $ref: '#/components/schemas/DeliveryGCDeleteStatus'
-        createdAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
-        completedAt:
-          type: string
-          format: date-time
-          example: "2026-01-02T15:04:05Z"
-      example:
-        completedAt: "2026-01-02T15:04:05Z"
-        createdAt: "2026-01-02T15:04:05Z"
-        cycleId: example
-        id: example
-        objectDigest: example
-        objectVersion: example
-        poolId: example
-        status: pending
-    DeliveryGCDeleteStatus:
-      type: string
-      enum:
-        - pending
-        - deleted
-        - ambiguous
-      example: pending
-    DeliveryGCStatus:
-      type: string
-      enum:
-        - running
-        - marked
-        - deleting
-        - complete
-        - aborted
-      example: running
     DeliveryGenerationStatus:
       type: string
       enum:
@@ -71557,7 +71452,10 @@ components:
         - targetId
         - projectId
         - environment
-        - catalogDigest
+        - snapshotSealId
+        - ducklakeSnapshotId
+        - relationManifestDigest
+        - closureDigest
         - physicalPoolId
         - servingArtifactId
         - servingArtifactDigest
@@ -71591,7 +71489,17 @@ components:
         environment:
           type: string
           example: example
-        catalogDigest:
+        snapshotSealId:
+          type: string
+          example: example
+        ducklakeSnapshotId:
+          type: integer
+          format: int64
+          example: 1
+        relationManifestDigest:
+          type: string
+          example: example
+        closureDigest:
           type: string
           example: example
         physicalPoolId:
@@ -71632,21 +71540,24 @@ components:
       example:
         activatedAt: "2026-01-02T15:04:05Z"
         candidateId: example
-        catalogDigest: example
+        closureDigest: example
         compatibilityDigest: example
         createdAt: "2026-01-02T15:04:05Z"
+        ducklakeSnapshotId: 1
         environment: example
         id: example
         physicalPoolId: example
         planDigest: example
         planId: example
         projectId: example
+        relationManifestDigest: example
         retiredAt: "2026-01-02T15:04:05Z"
         rollbackClass: rollback_safe
         rollbackUntil: "2026-01-02T15:04:05Z"
         servingArtifactDigest: example
         servingArtifactId: example
         servingStateId: example
+        snapshotSealId: example
         status: prepared
         targetId: example
     DeliveryLeaseStatus:
@@ -71685,8 +71596,6 @@ components:
         - roots
         - queryLeases
         - writerLeases
-        - gcCycles
-        - gcDeleteIntents
       properties:
         projectId:
           type: string
@@ -71738,13 +71647,13 @@ components:
             $ref: '#/components/schemas/DeliveryRootView'
           example:
             - candidateId: example
-              catalogDigest: example
               createdAt: "2026-01-02T15:04:05Z"
               expiresAt: "2026-01-02T15:04:05Z"
               generationId: example
               kind: candidate
               leaseId: example
               poolId: example
+              snapshotSealId: example
               sourceId: example
               status: active
         queryLeases:
@@ -71753,13 +71662,13 @@ components:
             $ref: '#/components/schemas/DeliveryQueryLeaseView'
           example:
             - candidateId: example
-              catalogDigest: example
               createdAt: "2026-01-02T15:04:05Z"
               expiresAt: "2026-01-02T15:04:05Z"
               generationId: example
               holderId: example
               id: example
               poolId: example
+              snapshotSealId: example
               status: active
         writerLeases:
           type: array
@@ -71775,58 +71684,12 @@ components:
               poolId: example
               releasedAt: "2026-01-02T15:04:05Z"
               status: active
-        gcCycles:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeliveryGCCycleView'
-          example:
-            - abortReason: example
-              completedAt: "2026-01-02T15:04:05Z"
-              createdAt: "2026-01-02T15:04:05Z"
-              epoch: 1
-              id: example
-              markDigest: example
-              poolId: example
-              rootRevision: 1
-              status: running
-        gcDeleteIntents:
-          type: array
-          items:
-            $ref: '#/components/schemas/DeliveryGCDeleteIntentView'
-          example:
-            - completedAt: "2026-01-02T15:04:05Z"
-              createdAt: "2026-01-02T15:04:05Z"
-              cycleId: example
-              id: example
-              objectDigest: example
-              objectVersion: example
-              poolId: example
-              status: pending
       example:
         activeGeneration: example
         degraded: true
         degradedReasons:
           - example
         environment: example
-        gcCycles:
-          - abortReason: example
-            completedAt: "2026-01-02T15:04:05Z"
-            createdAt: "2026-01-02T15:04:05Z"
-            epoch: 1
-            id: example
-            markDigest: example
-            poolId: example
-            rootRevision: 1
-            status: running
-        gcDeleteIntents:
-          - completedAt: "2026-01-02T15:04:05Z"
-            createdAt: "2026-01-02T15:04:05Z"
-            cycleId: example
-            id: example
-            objectDigest: example
-            objectVersion: example
-            poolId: example
-            status: pending
         physicalPools:
           - admittedAt: "2026-01-02T15:04:05Z"
             catalogFormat: example
@@ -71842,23 +71705,23 @@ components:
         projectId: example
         queryLeases:
           - candidateId: example
-            catalogDigest: example
             createdAt: "2026-01-02T15:04:05Z"
             expiresAt: "2026-01-02T15:04:05Z"
             generationId: example
             holderId: example
             id: example
             poolId: example
+            snapshotSealId: example
             status: active
         roots:
           - candidateId: example
-            catalogDigest: example
             createdAt: "2026-01-02T15:04:05Z"
             expiresAt: "2026-01-02T15:04:05Z"
             generationId: example
             kind: candidate
             leaseId: example
             poolId: example
+            snapshotSealId: example
             sourceId: example
             status: active
         targetId: example
@@ -72376,7 +72239,6 @@ components:
         - id
         - holderId
         - poolId
-        - catalogDigest
         - status
         - createdAt
         - expiresAt
@@ -72396,7 +72258,7 @@ components:
         poolId:
           type: string
           example: example
-        catalogDigest:
+        snapshotSealId:
           type: string
           example: example
         status:
@@ -72411,13 +72273,13 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         candidateId: example
-        catalogDigest: example
         createdAt: "2026-01-02T15:04:05Z"
         expiresAt: "2026-01-02T15:04:05Z"
         generationId: example
         holderId: example
         id: example
         poolId: example
+        snapshotSealId: example
         status: active
     DeliveryResolvedInputView:
       type: object
@@ -72517,7 +72379,6 @@ components:
         - poolId
         - kind
         - sourceId
-        - catalogDigest
         - status
         - createdAt
       properties:
@@ -72538,7 +72399,7 @@ components:
         leaseId:
           type: string
           example: example
-        catalogDigest:
+        snapshotSealId:
           type: string
           example: example
         status:
@@ -72553,13 +72414,13 @@ components:
           example: "2026-01-02T15:04:05Z"
       example:
         candidateId: example
-        catalogDigest: example
         createdAt: "2026-01-02T15:04:05Z"
         expiresAt: "2026-01-02T15:04:05Z"
         generationId: example
         kind: candidate
         leaseId: example
         poolId: example
+        snapshotSealId: example
         sourceId: example
         status: active
     DeliverySealStatus:
@@ -72573,22 +72434,23 @@ components:
     DeliverySealStatusResponse:
       type: object
       required:
-        - id
+        - snapshotSealId
         - attemptId
         - planId
         - planDigest
         - executionDigest
         - physicalPoolId
-        - catalogDigest
+        - ducklakeSnapshotId
+        - relationManifestDigest
+        - closureDigest
         - compatibilityDigest
         - servingArtifactId
         - servingArtifactDigest
         - servingStateId
-        - objectSize
         - status
         - createdAt
       properties:
-        id:
+        snapshotSealId:
           type: string
           example: example
         attemptId:
@@ -72606,13 +72468,14 @@ components:
         physicalPoolId:
           type: string
           example: example
-        catalogDigest:
+        ducklakeSnapshotId:
+          type: integer
+          format: int64
+          example: 1
+        relationManifestDigest:
           type: string
           example: example
-        baseCatalogDigest:
-          type: string
-          example: example
-        basePhysicalPoolId:
+        closureDigest:
           type: string
           example: example
         compatibilityDigest:
@@ -72625,13 +72488,6 @@ components:
           type: string
           example: example
         servingStateId:
-          type: string
-          example: example
-        objectSize:
-          type: integer
-          format: int64
-          example: 1
-        closureDigest:
           type: string
           example: example
         qualificationDigest:
@@ -72652,23 +72508,21 @@ components:
           example: example
       example:
         attemptId: example
-        baseCatalogDigest: example
-        basePhysicalPoolId: example
-        catalogDigest: example
         closureDigest: example
         compatibilityDigest: example
         createdAt: "2026-01-02T15:04:05Z"
+        ducklakeSnapshotId: 1
         executionDigest: example
         failureCode: example
-        id: example
-        objectSize: 1
         physicalPoolId: example
         planDigest: example
         planId: example
         qualificationDigest: example
+        relationManifestDigest: example
         servingArtifactDigest: example
         servingArtifactId: example
         servingStateId: example
+        snapshotSealId: example
         status: preparing
         verifiedAt: "2026-01-02T15:04:05Z"
     DeliveryStalePolicyMode:

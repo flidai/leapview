@@ -333,15 +333,15 @@ func (plan DeliveryPlan) Stale(activeGenerationID string, targetRevision int64) 
 // in and the build has supplied both exact sealed-base identities. Input
 // declarations remain those persisted on the plan; callers cannot substitute
 // a new base or silently widen the planned inputs during qualification.
-func (plan DeliveryPlan) ValidateRetainedBaseRequest(baseCatalogDigest, basePhysicalPoolID string) error {
+func (plan DeliveryPlan) ValidateRetainedBaseRequest(baseClosureDigest, basePhysicalPoolID string) error {
 	if plan.Evidence.StalePolicy.Mode != "allow_retained_base" || !plan.Evidence.StalePolicy.AllowRetainedBase {
 		return fmt.Errorf("%w: stale policy does not permit retained base", ErrDeliveryStale)
 	}
 	if plan.BaseGenerationID == "" {
 		return fmt.Errorf("%w: retained base requires a planned base generation", ErrDeliveryStale)
 	}
-	if err := ValidateDeliveryDigest(baseCatalogDigest); err != nil {
-		return fmt.Errorf("%w: retained base catalog is required: %v", ErrDeliveryStale, err)
+	if err := ValidateDeliveryDigest(baseClosureDigest); err != nil {
+		return fmt.Errorf("%w: retained base closure is required: %v", ErrDeliveryStale, err)
 	}
 	if err := ValidateDeliveryID(basePhysicalPoolID); err != nil {
 		return fmt.Errorf("%w: retained base physical pool is required: %v", ErrDeliveryStale, err)

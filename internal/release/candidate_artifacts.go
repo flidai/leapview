@@ -194,7 +194,7 @@ type CandidateCompilerEvidence struct {
 	Plan     projectcompiler.ProjectPlan
 	// RelationExecution and BaseRelationExecution are per-materialization
 	// identities. They let delivery retain unchanged sealed relation refs while
-	// rebuilding only changed/removed relations from the same base catalog.
+	// rebuilding only changed/removed relations from the same base snapshot.
 	RelationExecution     map[string]string
 	BaseRelationExecution map[string]string
 	// Artifact is the decoded portable artifact whose digest is bound by

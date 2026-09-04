@@ -7,14 +7,18 @@ source objects remain in their configured object stores.
 
 ## Storage ownership
 
-PostgreSQL owns users, grants, projects, environments, deployments, jobs, audit
-records, and active serving pointers. DuckLake owns analytical schemas,
-snapshots, changesets, statistics, and physical-file manifests. Parquet files
-and managed-data objects hold the bytes described by those authorities. Runtime
-directories and query caches are disposable.
+The `leapview_control` PostgreSQL database owns users, grants, projects,
+environments, deployments, jobs, event and audit records, lineage projections,
+cache coordination, leases, and active serving pointers. The separately owned
+`leapview_ducklake` database contains DuckLake metadata: analytical schemas,
+snapshots, changesets, statistics, and physical-file manifests. Parquet files,
+managed-data objects, immutable serving artifacts, and optional shared-cache
+objects hold the bytes described by those authorities. Runtime directories and
+L1/L2 query caches are disposable.
 
-A recoverable analytical state therefore requires the PostgreSQL control-plane
-recovery point and the matching DuckLake catalog and data recovery points.
+A recoverable analytical state therefore requires the control-database
+recovery point and the matching DuckLake-database and object-store recovery
+points.
 Backing up only a local `leapview.db`, a catalog file, or copied Parquet objects
 does not recover a production target.
 
@@ -38,11 +42,15 @@ metadata.
 ## Verify a recovery
 
 Keep writes stopped while native recovery runs. Start LeapView with the matching
-image and configuration only after PostgreSQL and the corresponding DuckLake
-and object-store points are restored. Before reopening traffic, verify instance
-identity, active deployment pointers, authorization, managed-data revisions,
-representative semantic queries, and dashboards. Preserve recovery evidence and
-the failed state until verification is complete.
+image and configuration only after both PostgreSQL databases and the
+corresponding object-store points are restored. Follow the backup and restore
+guide's `leapview admin recovery prepare`, `validate`, and `publish` sequence
+for one immutable recovery-set document and its provider-produced evidence.
+That sequence checks the exact control, DuckLake, object, active-generation,
+snapshot-seal, and compatibility frontier before traffic can resume. Then
+verify authorization, managed-data revisions, representative semantic queries,
+and dashboards. Preserve recovery evidence and the failed state until
+verification is complete.
 
 Development and evaluation fixtures may use embedded SQLite and a local DuckLake
 catalog, but those adapters are not a production fallback. Test fixture backup

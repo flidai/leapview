@@ -19,11 +19,24 @@ import (
 // package is not part of this production closure.
 func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 	root := repoRoot(t)
+	for _, retired := range []string{
+		"internal/analytics/candidatecatalog",
+		"internal/deployment/gc",
+		"internal/app/gcadapter/inspector.go",
+		"internal/app/gcadapter/maintenance.go",
+		"internal/app/gcadapter/repair.go",
+		"internal/app/gcadapter/runner.go",
+	} {
+		if _, err := os.Stat(filepath.Join(root, filepath.FromSlash(retired))); err == nil {
+			t.Errorf("retired file-catalog authority %s must not exist", retired)
+		} else if !os.IsNotExist(err) {
+			t.Fatalf("stat retired file-catalog authority %s: %v", retired, err)
+		}
+	}
 	// build.go dispatches every app entrypoint to postgres_build.go. Local
 	// SQLite authority is intentionally absent from the application graph.
 	productionRoots := []string{
 		"internal/deployment", "internal/app/runtimefactory", "internal/app/build.go", "internal/app/postgres_build.go",
-		"internal/analytics/candidatecatalog",
 	}
 	forbidden := []string{
 		"file_membership", "table_membership", "reference_count",

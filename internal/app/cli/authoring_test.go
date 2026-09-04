@@ -288,7 +288,7 @@ func (stub *nativeDeliveryTransportStub) DoAPIGen(
 		stub.sawNativeBuild = true
 		stub.nativeBuildKey = request.Headers.Get("Idempotency-Key")
 		candidateRevision := int64(17)
-		response = deploymentgen.DeliveryBuildStatusResponse{Id: buildID, PlanId: planID, PlanDigest: planDigest, SourceDigest: source, ExecutionDigest: execution, Status: deploymentgen.DeliveryBuildStatusSealed, CandidateId: testPointer(candidateID), CandidateRevision: &candidateRevision, SealId: testPointer(sealID), Revision: 9}
+		response = deploymentgen.DeliveryBuildStatusResponse{Id: buildID, PlanId: planID, PlanDigest: planDigest, SourceDigest: source, ExecutionDigest: execution, Status: deploymentgen.DeliveryBuildStatusSealed, CandidateId: testPointer(candidateID), CandidateRevision: &candidateRevision, SnapshotSealId: testPointer(sealID), Revision: 9}
 	case accessgen.GenOperationGetCurrentPrincipal:
 		response = accessgen.CurrentPrincipalResponse{Id: "principal_native"}
 	}

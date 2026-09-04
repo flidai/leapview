@@ -72,7 +72,7 @@ func TestPipelinePlanRejectsRefreshOfRelationOutsideExactScope(t *testing.T) {
 		Candidate: deployment.Candidate{ID: "candidate_pipeline", TargetID: "target_prod", Scope: deployment.CandidateScope{ProjectID: projectID, Environment: "prod", BaseGenerationID: "generation_0"}},
 	}
 	_, err = CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC), &deployment.DeliveryReuseInput{
-		CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
+		ClosureDigest: deliveryPlanDigest('c'), BaseClosureDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
 	})
 	if err == nil || !strings.Contains(err.Error(), `relation "model:customers" is outside materialization scope`) {
 		t.Fatalf("pipeline plan error = %v, want exact-scope rejection", err)
@@ -119,7 +119,7 @@ func TestPipelinePlanRetainsExactUnselectedRelationWithoutReexecutingIt(t *testi
 		t.Fatal(err)
 	}
 	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, base.CreatedAt, &deployment.DeliveryReuseInput{
-		BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
+		BaseContextDigest: baseContext, ClosureDigest: deliveryPlanDigest('c'), BaseClosureDigest: deliveryPlanDigest('c'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
 	})
 	if err != nil {
 		t.Fatalf("plan scoped refresh with an exact sealed sibling: %v", err)
@@ -185,25 +185,6 @@ func TestCandidatePlanExecutionIdentityIncludesDataModeAndEffectiveBindings(t *t
 
 	if firstPlan.ExecutionDigest == "" {
 		t.Fatal("candidate plan did not compute execution identity")
-	}
-}
-
-func TestQualificationRequestForCandidateCarriesReviewerPolicyDigest(t *testing.T) {
-	authorizationFingerprint := deliveryPlanDigest('c')
-	request := QualificationRequestForCandidate(release.CandidateArtifactSet{
-		AuthorizationFingerprint: authorizationFingerprint,
-		Generation: release.CandidateGenerationArtifact{
-			Identity: projectgraph.ServingIdentity{GenerationID: "candidate_qualification"},
-		},
-	})
-	if request.PolicyDigest != authorizationFingerprint {
-		t.Fatalf("qualification policy digest = %q, want authorization fingerprint %q", request.PolicyDigest, authorizationFingerprint)
-	}
-	if request.ReviewerPolicyDigest != authorizationFingerprint {
-		t.Fatalf("qualification reviewer policy digest = %q, want authorization fingerprint %q", request.ReviewerPolicyDigest, authorizationFingerprint)
-	}
-	if request.Policy == nil {
-		t.Fatal("qualification request has no policy callback")
 	}
 }
 
@@ -283,7 +264,7 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 		t.Fatal(err)
 	}
 	reuse := &deployment.DeliveryReuseInput{
-		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('d'), BaseCatalogDigest: deliveryPlanDigest('d'),
+		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, ClosureDigest: deliveryPlanDigest('d'), BaseClosureDigest: deliveryPlanDigest('d'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true,
 	}
 	exact, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, reuse)
@@ -302,7 +283,7 @@ func TestCandidatePlanReuseDecisionUsesExactActiveIdentity(t *testing.T) {
 		t.Fatalf("missing active context identity error = %v, want fail-closed rejection", err)
 	}
 	changed := *reuse
-	changed.BaseCatalogDigest = deliveryPlanDigest('f')
+	changed.BaseClosureDigest = deliveryPlanDigest('f')
 	mismatch, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &changed)
 	if err != nil {
 		t.Fatal(err)
@@ -355,7 +336,7 @@ func TestCandidatePlanEmitsRelationScopedReuseDecisions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, base.CreatedAt, &deployment.DeliveryReuseInput{BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, CatalogDigest: deliveryPlanDigest('d'), BaseCatalogDigest: deliveryPlanDigest('d'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true})
+	request, err := CandidatePlanRequestWithPolicyAndReuse(input, artifacts, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, base.CreatedAt, &deployment.DeliveryReuseInput{BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext, ClosureDigest: deliveryPlanDigest('d'), BaseClosureDigest: deliveryPlanDigest('d'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('e'), BaseCompatibilityDigest: deliveryPlanDigest('e'), Deterministic: true})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +378,7 @@ func TestCandidatePlanPolicyOnlyChangeRetainsPhysicalRelations(t *testing.T) {
 	changed.AuthorizationFingerprint = deliveryPlanDigest('d')
 	request, err := CandidatePlanRequestWithPolicyAndReuse(input, changed, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &deployment.DeliveryReuseInput{
 		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext,
-		CatalogDigest: deliveryPlanDigest('e'), BaseCatalogDigest: deliveryPlanDigest('e'),
+		ClosureDigest: deliveryPlanDigest('e'), BaseClosureDigest: deliveryPlanDigest('e'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('f'), BaseCompatibilityDigest: deliveryPlanDigest('f'), Deterministic: true,
 	})
 	if err != nil {
@@ -466,7 +447,7 @@ func TestCandidatePlanDashboardOnlyChangeRetainsPhysicalRelations(t *testing.T) 
 	changed.Compiler.Artifact = changedArtifact
 	request, err := CandidatePlanRequestWithPolicyAndReuse(input, changed, "runtime:v1", CandidateDeliveryPolicy{ApprovalPolicyRevision: CurrentApprovalPolicyRevision}, baseRequest.CreatedAt, &deployment.DeliveryReuseInput{
 		BaseExecutionDigest: baseExecution, BaseContextDigest: baseContext,
-		CatalogDigest: deliveryPlanDigest('c'), BaseCatalogDigest: deliveryPlanDigest('c'),
+		ClosureDigest: deliveryPlanDigest('c'), BaseClosureDigest: deliveryPlanDigest('c'),
 		PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1", CompatibilityDigest: deliveryPlanDigest('d'), BaseCompatibilityDigest: deliveryPlanDigest('d'), Deterministic: true,
 	})
 	if err != nil {

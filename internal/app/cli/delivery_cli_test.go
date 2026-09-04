@@ -226,7 +226,7 @@ func (transport *deliveryBuildRetryTransport) DoAPIGen(_ context.Context, reques
 	response := deploymentgen.DeliveryBuildStatusResponse{
 		Id: "attempt-2", PlanId: "plan-1", PlanDigest: "sha256:plan", SourceDigest: "sha256:source",
 		ExecutionDigest: "sha256:execution", PhysicalPoolId: "pool-1", WriterLeaseId: "writer-2",
-		CandidateId: &candidateID, SealId: &sealID, Status: deploymentgen.DeliveryBuildStatusSealed, Revision: 2,
+		CandidateId: &candidateID, SnapshotSealId: &sealID, Status: deploymentgen.DeliveryBuildStatusSealed, Revision: 2,
 	}
 	encoded, err := json.Marshal(response)
 	if err != nil {

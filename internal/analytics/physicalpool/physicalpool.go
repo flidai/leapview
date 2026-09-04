@@ -50,8 +50,6 @@ var (
 	ErrCompatibilityMismatch = errors.New("physical pool compatibility mismatch")
 	ErrEvidenceInvalid       = errors.New("physical pool admission evidence is invalid")
 	ErrPoolNotAdmitted       = errors.New("physical pool is not admitted")
-	ErrInvalidCatalog        = errors.New("catalog binding is invalid")
-	ErrSealedBinding         = errors.New("catalog binding is sealed")
 	ErrPoolMismatch          = errors.New("physical pool mismatch")
 )
 
@@ -66,8 +64,6 @@ const (
 	DiagnosticEvidenceMismatch DiagnosticCode = "evidence_digest_mismatch"
 	DiagnosticFailedCheck      DiagnosticCode = "evidence_check_failed"
 	DiagnosticPoolMismatch     DiagnosticCode = "physical_pool_mismatch"
-	DiagnosticBaseMismatch     DiagnosticCode = "base_catalog_mismatch"
-	DiagnosticSealedMutation   DiagnosticCode = "sealed_binding_mutation"
 )
 
 // Diagnostic identifies one fail-closed validation reason. Field is a stable
@@ -656,146 +652,6 @@ func VerifyAdmission(pool PhysicalPool, tuple Compatibility, admission PoolAdmis
 	return nil
 }
 
-// CatalogBinding is control metadata for one immutable catalog artifact. The
-// artifact's table/file membership is intentionally not represented here.
-type CatalogBinding struct {
-	PhysicalPoolID      PoolID        `json:"physical_pool_id"`
-	CatalogDigest       string        `json:"catalog_digest"`
-	ObjectKey           string        `json:"object_key"`
-	SizeBytes           int64         `json:"size_bytes"`
-	Compatibility       Compatibility `json:"compatibility"`
-	CompatibilityDigest string        `json:"compatibility_digest"`
-	BaseCatalogDigest   string        `json:"base_catalog_digest,omitempty"`
-	BasePhysicalPoolID  PoolID        `json:"base_physical_pool_id,omitempty"`
-	EvidenceDigest      string        `json:"evidence_digest"`
-	Sealed              bool          `json:"sealed"`
-}
-
-type CatalogBindingInput struct {
-	PhysicalPoolID      PoolID
-	CatalogDigest       string
-	ObjectKey           string
-	SizeBytes           int64
-	Compatibility       Compatibility
-	CompatibilityDigest string
-	BaseCatalogDigest   string
-	BasePhysicalPoolID  PoolID
-	EvidenceDigest      string
-}
-
-func NewCatalogBinding(input CatalogBindingInput) (CatalogBinding, error) {
-	binding := CatalogBinding{PhysicalPoolID: input.PhysicalPoolID, CatalogDigest: input.CatalogDigest, ObjectKey: input.ObjectKey, SizeBytes: input.SizeBytes, Compatibility: input.Compatibility, CompatibilityDigest: input.CompatibilityDigest, BaseCatalogDigest: input.BaseCatalogDigest, BasePhysicalPoolID: input.BasePhysicalPoolID, EvidenceDigest: input.EvidenceDigest}
-	if err := binding.Validate(); err != nil {
-		return CatalogBinding{}, err
-	}
-	return binding, nil
-}
-
-func (b CatalogBinding) Validate() error {
-	if err := validateDigest(string(b.PhysicalPoolID)); err != nil {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "physical_pool_id"})
-	}
-	if err := validateDigest(b.CatalogDigest); err != nil {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "catalog_digest"})
-	}
-	if err := validateCatalogKey(b.ObjectKey); err != nil {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "object_key"})
-	}
-	if b.SizeBytes < 0 {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "size_bytes"})
-	}
-	if err := b.Compatibility.Validate(); err != nil {
-		return err
-	}
-	if err := validateDigest(b.CompatibilityDigest); err != nil {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "compatibility_digest"})
-	}
-	if digest, err := b.Compatibility.Digest(); err != nil || digest != b.CompatibilityDigest {
-		return diagnostics(ErrCompatibilityMismatch, Diagnostic{Code: DiagnosticTupleMismatch, Field: "compatibility_digest"})
-	}
-	if err := validateDigest(b.EvidenceDigest); err != nil {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "evidence_digest"})
-	}
-	if (b.BaseCatalogDigest == "") != (b.BasePhysicalPoolID == "") {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticBaseMismatch, Field: "base_catalog_digest"})
-	}
-	if b.BaseCatalogDigest != "" {
-		if err := validateDigest(b.BaseCatalogDigest); err != nil {
-			return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "base_catalog_digest"})
-		}
-		if err := validateDigest(string(b.BasePhysicalPoolID)); err != nil {
-			return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "base_physical_pool_id"})
-		}
-		if b.BasePhysicalPoolID != b.PhysicalPoolID {
-			return diagnostics(ErrPoolMismatch, Diagnostic{Code: DiagnosticPoolMismatch, Field: "base_physical_pool_id"})
-		}
-	}
-	return nil
-}
-
-// Seal returns a sealed value after binding it to an admitted pool tuple.
-// Sealed values have no mutating methods; persistence must reject updates to
-// their pool, digest, key, size, or compatibility tuple.
-func (b CatalogBinding) Seal(admission PoolAdmission) (CatalogBinding, error) {
-	if b.Sealed {
-		return b, diagnostics(ErrSealedBinding, Diagnostic{Code: DiagnosticSealedMutation, Field: "sealed"})
-	}
-	if b.SizeBytes == 0 {
-		return CatalogBinding{}, diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "size_bytes"})
-	}
-	if err := b.Validate(); err != nil {
-		return CatalogBinding{}, err
-	}
-	if admission.PoolID != b.PhysicalPoolID || admission.EvidenceDigest != b.EvidenceDigest {
-		return CatalogBinding{}, diagnostics(ErrPoolMismatch, Diagnostic{Code: DiagnosticPoolMismatch, Field: "physical_pool_id"})
-	}
-	if b.CompatibilityDigest != admission.CompatibilityDigest {
-		return CatalogBinding{}, diagnostics(ErrCompatibilityMismatch, Diagnostic{Code: DiagnosticTupleMismatch, Field: "compatibility"})
-	}
-	b.Sealed = true
-	return b, nil
-}
-
-// RebindPool is intentionally a no-op for unsealed values and a fail-closed
-// error for sealed artifacts. It returns a copy to make ownership explicit.
-func (b CatalogBinding) RebindPool(poolID PoolID) (CatalogBinding, error) {
-	if b.Sealed {
-		return b, diagnostics(ErrSealedBinding, Diagnostic{Code: DiagnosticSealedMutation, Field: "physical_pool_id"})
-	}
-	if err := validateDigest(string(poolID)); err != nil {
-		return b, diagnostics(ErrPoolMismatch, Diagnostic{Code: DiagnosticInvalidField, Field: "physical_pool_id"})
-	}
-	if b.BasePhysicalPoolID != "" && b.BasePhysicalPoolID != poolID {
-		return b, diagnostics(ErrPoolMismatch, Diagnostic{Code: DiagnosticPoolMismatch, Field: "base_physical_pool_id"})
-	}
-	b.PhysicalPoolID = poolID
-	return b, nil
-}
-
-// ValidateZeroCopyBaseChild verifies that a child can reuse a sealed base's
-// physical objects without crossing retention or compatibility boundaries.
-func ValidateZeroCopyBaseChild(base, child CatalogBinding) error {
-	if err := base.Validate(); err != nil {
-		return err
-	}
-	if !base.Sealed {
-		return diagnostics(ErrInvalidCatalog, Diagnostic{Code: DiagnosticInvalidField, Field: "base.sealed"})
-	}
-	if err := child.Validate(); err != nil {
-		return err
-	}
-	if child.PhysicalPoolID != base.PhysicalPoolID {
-		return diagnostics(ErrPoolMismatch, Diagnostic{Code: DiagnosticPoolMismatch, Field: "physical_pool_id"})
-	}
-	if !child.Compatibility.Equal(base.Compatibility) {
-		return diagnostics(ErrCompatibilityMismatch, Diagnostic{Code: DiagnosticTupleMismatch, Field: "compatibility"})
-	}
-	if child.BaseCatalogDigest != base.CatalogDigest || child.BasePhysicalPoolID != base.PhysicalPoolID {
-		return diagnostics(ErrPoolMismatch, Diagnostic{Code: DiagnosticBaseMismatch, Field: "base_catalog_digest"})
-	}
-	return nil
-}
-
 func invalidFieldCode(missing bool) DiagnosticCode {
 	if missing {
 		return DiagnosticMissingField
@@ -821,17 +677,6 @@ func validateDigest(value string) error {
 	}
 	_, err := hex.DecodeString(strings.TrimPrefix(value, "sha256:"))
 	return err
-}
-
-func validateCatalogKey(value string) error {
-	if err := validateCanonicalString(value); err != nil || strings.HasPrefix(value, "/") || strings.Contains(value, "\\") {
-		return errors.New("invalid object key")
-	}
-	clean := path.Clean(value)
-	if clean != value || clean == "." || strings.HasPrefix(clean, "../") || strings.Contains(clean, "/../") {
-		return errors.New("invalid object key")
-	}
-	return nil
 }
 
 func validateStorageLocation(value string) error {

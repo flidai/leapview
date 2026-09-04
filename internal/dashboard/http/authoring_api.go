@@ -932,8 +932,8 @@ func canonicalUUIDv7(value string) bool {
 
 // executeAuthoringMutation applies the generated transactional command policy
 // around the source-owned authoring mutation. The repository receives the
-// intent through context and records it in the same SQLite transaction as the
-// lifecycle/revision write; no post-commit audit callback is involved.
+// intent through context and records it in the same repository transaction as
+// the lifecycle/revision write; no post-commit audit callback is involved.
 type authoringAuditTarget struct {
 	dashboardID string
 	draftID     string

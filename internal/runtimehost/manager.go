@@ -450,10 +450,9 @@ func (m *Manager) Reload(ctx context.Context) error {
 }
 
 // ReconcileSealed activates the exact durable serving-state generation named
-// by the sealed delivery commit. It performs only read-only catalog attach and
-// runtime cutover; delivery metadata has already been committed by the
-// sealed-control coordinator, so no legacy activation callback or snapshot
-// pinning is reachable here.
+// by the delivery commit. It performs only a read-only attach to the exact
+// DuckLake snapshot and runtime cutover; delivery metadata and the active
+// pointer have already been committed by the PostgreSQL delivery authority.
 func (m *Manager) ReconcileSealed(ctx context.Context, id servingstate.ID) error {
 	if m == nil || id == "" {
 		return errors.New("sealed serving generation is required")

@@ -225,8 +225,8 @@ func (s *Store) CreateMultipart(ctx context.Context, expected storage.Blob) (sto
 }
 
 // ListMultipartUploads returns in-flight uploads for one deterministic object
-// key. It is used by recovery to discover provider success before SQLite
-// committed the upload identifier.
+// key. It is used by recovery to discover provider success before the control
+// plane has committed the upload identifier.
 func (s *Store) ListMultipartUploads(ctx context.Context, expected storage.Blob) ([]storage.MultipartUpload, error) {
 	key := s.blobKey(expected.SHA256)
 	lister, ok := s.client.(interface {

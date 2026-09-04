@@ -44,8 +44,8 @@ func WriteJSON(w http.ResponseWriter, status int, value any) {
 }
 
 // writeNormalizedJSON applies the public timestamp representation at the
-// transport boundary. Persisted SQLite rows may still contain legacy
-// space-separated timestamps; API resources must never expose those values.
+// transport boundary. Persistence adapters may use backend-native timestamp
+// encodings; API resources must expose one canonical representation.
 func writeNormalizedJSON(w http.ResponseWriter, value any) error {
 	encoded, err := CanonicalJSON(value)
 	if err != nil {

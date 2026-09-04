@@ -116,8 +116,8 @@ func ResolveDeliveryReuseDecision(plan *DeliveryPlan, resourceID string) (Delive
 
 // DeliveryReuseInput is the target-owned physical identity used to decide
 // whether one resource may retain its exact sealed base references. A reuse
-// decision is stricter than an execution-digest comparison: catalog, pool,
-// and compatibility identities must also remain unchanged. Determinism is
+// decision is stricter than an execution-digest comparison: snapshot closure,
+// pool, and compatibility identities must also remain unchanged. Determinism is
 // explicit so undeclared nondeterministic work cannot be reused accidentally.
 type DeliveryReuseInput struct {
 	ResourceID string
@@ -127,8 +127,8 @@ type DeliveryReuseInput struct {
 	RelationScoped          bool
 	ExecutionDigest         string
 	BaseExecutionDigest     string
-	CatalogDigest           string
-	BaseCatalogDigest       string
+	ClosureDigest           string
+	BaseClosureDigest       string
 	PhysicalPoolID          string
 	BasePhysicalPoolID      string
 	CompatibilityDigest     string
@@ -149,7 +149,7 @@ func EvaluateDeliveryReuse(input DeliveryReuseInput) (DeliveryReuseDecision, err
 	}
 	for name, value := range map[string]string{
 		"execution": input.ExecutionDigest, "base execution": input.BaseExecutionDigest,
-		"catalog": input.CatalogDigest, "base catalog": input.BaseCatalogDigest, "physical pool": input.PhysicalPoolID,
+		"closure": input.ClosureDigest, "base closure": input.BaseClosureDigest, "physical pool": input.PhysicalPoolID,
 		"base physical pool": input.BasePhysicalPoolID,
 		"compatibility":      input.CompatibilityDigest, "base compatibility": input.BaseCompatibilityDigest,
 	} {
@@ -184,8 +184,8 @@ func EvaluateDeliveryReuse(input DeliveryReuseInput) (DeliveryReuseDecision, err
 	if !input.Deterministic {
 		return DeliveryReuseDecision{ResourceID: input.ResourceID, Reusable: false, Reason: "undeclared nondeterminism disables reuse"}, nil
 	}
-	if input.CatalogDigest != input.BaseCatalogDigest || input.PhysicalPoolID != input.BasePhysicalPoolID || input.CompatibilityDigest != input.BaseCompatibilityDigest {
-		return DeliveryReuseDecision{ResourceID: input.ResourceID, Reusable: false, Reason: "catalog compatibility identity changed"}, nil
+	if input.ClosureDigest != input.BaseClosureDigest || input.PhysicalPoolID != input.BasePhysicalPoolID || input.CompatibilityDigest != input.BaseCompatibilityDigest {
+		return DeliveryReuseDecision{ResourceID: input.ResourceID, Reusable: false, Reason: "snapshot closure compatibility identity changed"}, nil
 	}
 	if input.ExecutionDigest != input.BaseExecutionDigest {
 		return DeliveryReuseDecision{ResourceID: input.ResourceID, Reusable: false, RetainBase: true, Reason: "execution identity changed; rebuild affected relations from retained base"}, nil
@@ -193,19 +193,19 @@ func EvaluateDeliveryReuse(input DeliveryReuseInput) (DeliveryReuseDecision, err
 	key, err := canonicalJSONDigest(struct {
 		ResourceID          string `json:"resourceId"`
 		ExecutionDigest     string `json:"executionDigest"`
-		BaseCatalogDigest   string `json:"baseCatalogDigest"`
+		BaseClosureDigest   string `json:"baseClosureDigest"`
 		PhysicalPoolID      string `json:"physicalPoolId"`
 		CompatibilityDigest string `json:"compatibilityDigest"`
 		EquivalenceToken    string `json:"equivalenceToken,omitempty"`
 	}{
 		ResourceID: input.ResourceID, ExecutionDigest: input.ExecutionDigest,
-		BaseCatalogDigest: input.BaseCatalogDigest, PhysicalPoolID: input.PhysicalPoolID,
+		BaseClosureDigest: input.BaseClosureDigest, PhysicalPoolID: input.PhysicalPoolID,
 		CompatibilityDigest: input.CompatibilityDigest, EquivalenceToken: strings.TrimSpace(input.EquivalenceToken),
 	})
 	if err != nil {
 		return DeliveryReuseDecision{}, err
 	}
-	return DeliveryReuseDecision{ResourceID: input.ResourceID, Reusable: true, Reason: "exact execution, catalog, pool, and compatibility identities match", ReuseKeyDigest: key}, nil
+	return DeliveryReuseDecision{ResourceID: input.ResourceID, Reusable: true, Reason: "exact execution, snapshot closure, pool, and compatibility identities match", ReuseKeyDigest: key}, nil
 }
 
 type DeliveryQualificationStep struct {

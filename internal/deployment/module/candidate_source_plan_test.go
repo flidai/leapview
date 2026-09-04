@@ -55,7 +55,7 @@ func TestNativeCandidateSourcePlanRequiresProjectClaimAuthority(t *testing.T) {
 	})
 
 	require.Equal(t, http.StatusServiceUnavailable, response.Code, response.Body.String())
-	require.Contains(t, response.Body.String(), "CANDIDATE_SERVICE_UNAVAILABLE")
+	require.Contains(t, response.Body.String(), "CANDIDATE_UNAVAILABLE")
 	require.Zero(t, sources.plans)
 }
 

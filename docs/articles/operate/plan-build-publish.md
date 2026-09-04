@@ -3,7 +3,7 @@
 Production delivery is target-bound and immutable. The supported sequence is:
 
 ```text
-plan (target revision) → build (private candidate) → publish (exact candidate)
+plan (target revision) → build (attempt-qualified snapshot) → publish (exact candidate)
 ```
 
 `dev` remains an optional private watch/preview loop. It is not a production
@@ -81,21 +81,24 @@ itself.
 
 Plan records the exact target, project/environment, base generation and target
 revision, execution inputs, provenance, policy, qualification, and rollback
-class. Build leases the admitted physical pool and produces a private
-candidate. Physical work uses a copy-on-write catalog and ends by sealing one
-immutable catalog object, serving artifact, and serving-state identity.
+class. Build leases the admitted physical pool and writes only to the immutable
+relation namespace derived from its attempt identity and fencing epoch. Before
+one DuckLake transaction commits, it records the attempt, request, plan, pool,
+and fence in persistent snapshot commit metadata. Qualification attaches that
+exact snapshot read-only, verifies its relation manifest and compiled closure,
+and records one immutable snapshot seal plus the serving artifact identity.
 
 Publish accepts only that exact plan digest, candidate ID, compatibility
-evidence, and base target revision. A stale revision is rejected; it is never
-silently rebased. Activation performs a compare-and-swap pointer update. The
-append-only delivery event ledger records plan, qualification/approval,
-build/seal, publication, activation, retirement, rollback, lease, and GC
-outcomes with actor and digest evidence.
+evidence, snapshot seal, and base target revision. A stale revision is rejected;
+it is never silently rebased. Activation advances the one PostgreSQL active
+pointer with compare-and-swap revision evidence and appends the canonical event
+and immutable audit evidence in the same control transaction.
 
-No query can select a preparing candidate or an unverified seal. Rows migrated
-from an older schema that lack serving-state identity remain inspectable but
-cannot become ready or active until repaired. Production composition exposes
-only the sealed serving factory; the legacy process catalog is not a fallback.
+No query can select a preparing candidate or an unverified seal. Production is
+clean-install only: there is no SQLite migration chain, catalog-object repair
+path, or file-catalog fallback. The serving runtime resolves the active
+generation to its exact snapshot seal and holds a durable query lease while the
+snapshot is attached.
 
 ## Rollback and garbage collection
 
@@ -104,12 +107,21 @@ revision CAS. It does not rebuild a project, rewrite a catalog, or delete the
 current generation first. Keep the prior generation's lease and root until the
 replacement is verified.
 
-GC marks roots, leases, generations, candidates, and in-flight publications
-before deleting anything. A pool fence and epoch prevent an expired writer or
-GC worker from acting after restart. The sealed DuckLake catalog is authoritative
-for physical membership; PostgreSQL stores control evidence and roots, never
-file membership or reference counts. Native DuckLake cleanup/checkpoint
-operations are rejected on shared pools.
+Snapshot retirement locks the PostgreSQL retention record and moves it out of
+`live` only after candidate, generation, rollback, recovery, and other durable
+roots are absent. Existing query leases may drain, but no new root or lease can
+be created after retirement begins. A fenced maintenance transaction freezes
+the exact snapshot set before DuckLake expires it; replay never widens that
+set. Newly discovered snapshots without control records remain quarantined for
+the configured attempt/orphan grace while their persistent commit markers are
+reconciled. DuckLake remains authoritative for table, file, delete-file, and
+snapshot membership; PostgreSQL stores lifecycle evidence and roots, not a
+duplicate physical manifest.
+
+Shared L3 query-cache objects use a separate cache-owned maintenance authority.
+Its pool/security-domain lease and durable scan cursor make deletion resumable,
+and it rechecks exact global reachability immediately before a conditional
+object delete. Cache cleanup never uses the retired delivery catalog GC path.
 
 ## Qualification lanes and support boundary
 

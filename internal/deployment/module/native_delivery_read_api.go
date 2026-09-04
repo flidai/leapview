@@ -109,9 +109,15 @@ func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deplo
 		BaseGenerationId: optionalText(plan.BaseGenerationID), PhysicalPoolId: attempt.PhysicalPoolID,
 		Status: nativeBuildStatus(attempt.State, sealed), Revision: attempt.FencingEpoch,
 		CreatedAt: isoTime(attempt.CreatedAt), UpdatedAt: isoTime(attempt.UpdatedAt),
-		SealId: optionalText(seal.SealID), CandidateId: optionalText(attempt.CandidateID),
+		SnapshotSealId: optionalText(seal.SealID), CandidateId: optionalText(attempt.CandidateID),
 		CandidateRevision: optionalNativeInt64(candidate.CandidateRevision),
 	}
+	if seal.SealID != "" {
+		response.DucklakeSnapshotId = optionalNativeInt64(seal.DuckLakeSnapshotID)
+		response.RelationManifestDigest = optionalText(seal.RelationManifestDigest)
+		response.ClosureDigest = optionalText(seal.ClosureDigest)
+	}
+	response.QualificationDigest = optionalText(candidate.QualificationDigest)
 	if attempt.FencingEpoch <= 0 {
 		response.Revision = 1
 	}
@@ -120,20 +126,16 @@ func nativeBuildResponse(attempt nativepostgres.DeliveryBuildAttempt, plan deplo
 		response.CandidateId = nil
 	}
 	if seal.SealID == "" {
-		response.SealId = nil
+		response.SnapshotSealId = nil
 	}
 	return response
 }
 
 func nativeSealResponse(seal nativepostgres.SnapshotSeal, plan deployment.DeliveryPlan) deploymentgen.DeliverySealStatusResponse {
-	catalogDigest := seal.ClosureDigest
-	if catalogDigest == "" {
-		catalogDigest = seal.RelationManifestDigest
-	}
 	return deploymentgen.DeliverySealStatusResponse{
-		Id: seal.SealID, AttemptId: seal.AttemptID, PlanId: plan.ID, PlanDigest: seal.PlanDigest,
+		SnapshotSealId: seal.SealID, AttemptId: seal.AttemptID, PlanId: plan.ID, PlanDigest: seal.PlanDigest,
 		ExecutionDigest: plan.ExecutionDigest, PhysicalPoolId: seal.PhysicalPoolID,
-		CatalogDigest: catalogDigest, ClosureDigest: optionalText(seal.ClosureDigest),
+		DucklakeSnapshotId: seal.DuckLakeSnapshotID, RelationManifestDigest: seal.RelationManifestDigest, ClosureDigest: seal.ClosureDigest,
 		CompatibilityDigest: seal.CompatibilityDigest, ServingArtifactId: seal.ServingArtifactID,
 		ServingArtifactDigest: seal.ServingArtifactDigest, ServingStateId: "",
 		Status: nativeSealStatus(seal), CreatedAt: isoTime(seal.QualifiedAt), VerifiedAt: optionalText(isoTime(seal.QualifiedAt)),
@@ -141,21 +143,21 @@ func nativeSealResponse(seal nativepostgres.SnapshotSeal, plan deployment.Delive
 }
 
 func nativeCandidateResponse(candidate nativepostgres.DeliveryCandidate, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, servingStateID string) deploymentgen.DeliveryCandidateStatusResponse {
-	catalogDigest := seal.ClosureDigest
-	if catalogDigest == "" {
-		catalogDigest = seal.RelationManifestDigest
-	}
 	response := deploymentgen.DeliveryCandidateStatusResponse{
 		Id: candidate.CandidateID, PlanId: candidate.PlanID, PlanDigest: plan.Digest,
 		TargetId: candidate.TargetID, ProjectId: plan.ProjectID.String(), Environment: plan.Environment,
 		SourceDigest: plan.SourceDigest, ExecutionDigest: plan.ExecutionDigest,
 		BaseGenerationId: optionalText(plan.BaseGenerationID), BaseTargetRevision: plan.BaseTargetRevision,
-		SealId: candidate.SnapshotSealID, CatalogDigest: catalogDigest, CompatibilityDigest: seal.CompatibilityDigest,
+		SnapshotSealId: optionalText(candidate.SnapshotSealID), DucklakeSnapshotId: optionalNativeInt64(seal.DuckLakeSnapshotID),
+		RelationManifestDigest: optionalText(seal.RelationManifestDigest), ClosureDigest: optionalText(seal.ClosureDigest), CompatibilityDigest: seal.CompatibilityDigest,
 		PhysicalPoolId: seal.PhysicalPoolID, ServingArtifactId: seal.ServingArtifactID, ServingArtifactDigest: seal.ServingArtifactDigest,
 		ServingStateId: servingStateID,
 		Status:         nativeCandidateStatus(candidate.Status), ResolvedInputs: []deploymentgen.DeliveryResolvedInputView{},
 		CreatedAt: isoTime(candidate.CreatedAt), ReadyAt: optionalText(isoTime(candidate.QualifiedAt)), RetiredAt: optionalText(isoTime(candidate.RetiredAt)),
 		QualificationDigest: optionalText(candidate.QualificationDigest),
+	}
+	if candidate.SnapshotSealID == "" {
+		response.SnapshotSealId = nil
 	}
 	return response
 }
@@ -206,14 +208,11 @@ func resolveNativeCandidateServingState(ctx context.Context, reader NativeDelive
 }
 
 func nativeGenerationResponse(generation nativepostgres.DeliveryGeneration, plan deployment.DeliveryPlan, seal nativepostgres.SnapshotSeal, active bool) deploymentgen.DeliveryGenerationStatusResponse {
-	catalogDigest := seal.ClosureDigest
-	if catalogDigest == "" {
-		catalogDigest = seal.RelationManifestDigest
-	}
 	return deploymentgen.DeliveryGenerationStatusResponse{
 		Id: generation.GenerationID, CandidateId: generation.CandidateID, PlanId: generation.PlanID,
 		PlanDigest: generation.PlanDigest, TargetId: generation.TargetID, ProjectId: plan.ProjectID.String(), Environment: plan.Environment,
-		CatalogDigest: catalogDigest, PhysicalPoolId: seal.PhysicalPoolID, ServingArtifactId: seal.ServingArtifactID,
+		SnapshotSealId: seal.SealID, DucklakeSnapshotId: seal.DuckLakeSnapshotID, RelationManifestDigest: seal.RelationManifestDigest, ClosureDigest: seal.ClosureDigest,
+		PhysicalPoolId: seal.PhysicalPoolID, ServingArtifactId: seal.ServingArtifactID,
 		ServingArtifactDigest: generation.ServingArtifactDigest, ServingStateId: generation.GenerationID,
 		CompatibilityDigest: seal.CompatibilityDigest, RollbackClass: deploymentgen.DeliveryRollbackClass(plan.Evidence.Rollback.Class),
 		Status: nativeGenerationStatus(active), CreatedAt: isoTime(generation.CreatedAt),
@@ -232,7 +231,7 @@ func nativePublicationResponse(publication nativepostgres.DeliveryPublication, g
 }
 
 func nativeOperatorResponse(snapshot nativepostgres.DeliveryOperatorSnapshot) deploymentgen.DeliveryOperatorSnapshotResponse {
-	response := deploymentgen.DeliveryOperatorSnapshotResponse{ProjectId: snapshot.ProjectID, Environment: snapshot.Environment, TargetId: snapshot.TargetID, TargetRevision: snapshot.TargetRevision, DegradedReasons: []string{}, PhysicalPools: []deploymentgen.DeliveryPhysicalPoolAdmissionView{}, Roots: []deploymentgen.DeliveryRootView{}, QueryLeases: []deploymentgen.DeliveryQueryLeaseView{}, WriterLeases: []deploymentgen.DeliveryWriterLeaseView{}, GcCycles: []deploymentgen.DeliveryGCCycleView{}, GcDeleteIntents: []deploymentgen.DeliveryGCDeleteIntentView{}}
+	response := deploymentgen.DeliveryOperatorSnapshotResponse{ProjectId: snapshot.ProjectID, Environment: snapshot.Environment, TargetId: snapshot.TargetID, TargetRevision: snapshot.TargetRevision, DegradedReasons: []string{}, PhysicalPools: []deploymentgen.DeliveryPhysicalPoolAdmissionView{}, Roots: []deploymentgen.DeliveryRootView{}, QueryLeases: []deploymentgen.DeliveryQueryLeaseView{}, WriterLeases: []deploymentgen.DeliveryWriterLeaseView{}}
 	response.ActiveGeneration = optionalText(snapshot.ActiveGenerationID)
 	return response
 }

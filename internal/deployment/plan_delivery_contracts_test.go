@@ -214,7 +214,7 @@ func TestDeliveryGovernanceAndCredentialRotationPreserveExecutionReuseIdentity(t
 func TestDeliveryReusePolicyRequiresExactPhysicalIdentity(t *testing.T) {
 	base := DeliveryReuseInput{
 		ResourceID: "orders", ExecutionDigest: deliveryTestDigest('a'), BaseExecutionDigest: deliveryTestDigest('a'),
-		CatalogDigest: deliveryTestDigest('b'), BaseCatalogDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
+		ClosureDigest: deliveryTestDigest('b'), BaseClosureDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
 		CompatibilityDigest: deliveryTestDigest('c'), BaseCompatibilityDigest: deliveryTestDigest('c'), Deterministic: true,
 	}
 	decision, err := EvaluateDeliveryReuse(base)
@@ -226,7 +226,7 @@ func TestDeliveryReusePolicyRequiresExactPhysicalIdentity(t *testing.T) {
 	}
 	for name, mutate := range map[string]func(*DeliveryReuseInput){
 		"execution":     func(input *DeliveryReuseInput) { input.ExecutionDigest = deliveryTestDigest('d') },
-		"catalog":       func(input *DeliveryReuseInput) { input.CatalogDigest = deliveryTestDigest('e') },
+		"closure":       func(input *DeliveryReuseInput) { input.ClosureDigest = deliveryTestDigest('e') },
 		"pool":          func(input *DeliveryReuseInput) { input.PhysicalPoolID = "pool-2" },
 		"compatibility": func(input *DeliveryReuseInput) { input.CompatibilityDigest = deliveryTestDigest('f') },
 	} {
@@ -246,7 +246,7 @@ func TestDeliveryReuseRelationContextFailsClosedWhenIncomplete(t *testing.T) {
 	base := DeliveryReuseInput{
 		ResourceID: "orders", RelationScoped: true,
 		ExecutionDigest: deliveryTestDigest('a'), BaseExecutionDigest: deliveryTestDigest('a'),
-		CatalogDigest: deliveryTestDigest('b'), BaseCatalogDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
+		ClosureDigest: deliveryTestDigest('b'), BaseClosureDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
 		CompatibilityDigest: deliveryTestDigest('c'), BaseCompatibilityDigest: deliveryTestDigest('c'), Deterministic: true,
 	}
 	if _, err := EvaluateDeliveryReuse(base); err == nil {
@@ -267,7 +267,7 @@ func TestDeliveryReuseRelationContextFailsClosedWhenIncomplete(t *testing.T) {
 func TestDeliveryReusePolicyDisablesUndeclaredNondeterminism(t *testing.T) {
 	base := DeliveryReuseInput{
 		ResourceID: "events", ExecutionDigest: deliveryTestDigest('a'), BaseExecutionDigest: deliveryTestDigest('a'),
-		CatalogDigest: deliveryTestDigest('b'), BaseCatalogDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
+		ClosureDigest: deliveryTestDigest('b'), BaseClosureDigest: deliveryTestDigest('b'), PhysicalPoolID: "pool-1", BasePhysicalPoolID: "pool-1",
 		CompatibilityDigest: deliveryTestDigest('c'), BaseCompatibilityDigest: deliveryTestDigest('c'), Deterministic: false,
 	}
 	decision, err := EvaluateDeliveryReuse(base)
@@ -511,23 +511,5 @@ func TestDeliveryCanonicalTimeAndCatalogKeyValidation(t *testing.T) {
 		if err := validateCatalogObjectKey("catalog", key); err == nil {
 			t.Fatalf("unsafe object key %q unexpectedly accepted", key)
 		}
-	}
-}
-
-func TestDeliveryGCFencesAreIdempotent(t *testing.T) {
-	plan := deliveryTestPlan(t)
-	now := plan.CreatedAt
-	cycle, err := NewDeliveryGCCycle(DeliveryGCCycle{ID: "gc-1", PhysicalPoolID: "pool-1", Epoch: 1, RootRevision: 4, CreatedAt: now})
-	if err != nil {
-		t.Fatalf("new GC cycle: %v", err)
-	}
-	cycle, _ = cycle.Mark(deliveryTestDigest('a'))
-	cycle, _ = cycle.BeginDelete()
-	cycle, err = cycle.Complete(now.Add(3 * time.Minute))
-	if err != nil {
-		t.Fatalf("complete GC cycle: %v", err)
-	}
-	if _, err := cycle.Abort("late", now.Add(4*time.Minute)); !errors.Is(err, ErrDeliveryConflict) {
-		t.Fatalf("abort completed cycle error = %v, want conflict", err)
 	}
 }

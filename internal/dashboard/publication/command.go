@@ -21,7 +21,7 @@ type CommandInvocation struct {
 }
 
 // WithAuditIntent carries the source-built audit intent into the publication
-// repository. The repository owns the SQLite transaction and records this
+// repository. The repository owns the transaction and records this
 // intent before committing the publication mutation; callers never hand a
 // concrete database adapter across the service boundary.
 func WithAuditIntent(ctx context.Context, intent access.AuditIntent) context.Context {

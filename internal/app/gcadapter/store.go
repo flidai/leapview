@@ -10,7 +10,6 @@ import (
 	"github.com/aws/aws-sdk-go-v2/credentials"
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	"github.com/flidai/leapview/internal/deployment/gc"
 	"github.com/flidai/leapview/internal/deployment/gcstore"
 	"github.com/flidai/leapview/internal/extension"
 )
@@ -33,7 +32,7 @@ type S3Config struct {
 // NewPoolStore selects a pool-scoped read/stat/list/delete adapter from the
 // admitted physical-pool contract. Unsupported implementations fail closed;
 // callers must never fall back to a process-wide mutable store.
-func NewPoolStore(ctx context.Context, contract *ducklake.PoolContract, config S3Config) (gc.PoolStore, error) {
+func NewPoolStore(ctx context.Context, contract *ducklake.PoolContract, config S3Config) (gcstore.PoolStore, error) {
 	if contract == nil {
 		return nil, fmt.Errorf("physical-pool contract is required")
 	}

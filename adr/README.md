@@ -38,7 +38,7 @@ customer site.
 | [ADR-0017](0017-adopt-a-looker-aligned-semantic-access-contract.md) | Adopt a Looker-aligned semantic access contract | Accepted | 2026-09-01 | Pending | — |
 | [ADR-0018](0018-retain-project-as-the-durable-deployment-namespace.md) | Retain Project as the durable deployment namespace | Accepted | 2026-09-02 | Pending | [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md), dbt mapping and external-source examples only |
 | [ADR-0019](0019-integrate-dbt-at-the-warehouse-contract-boundary.md) | Integrate dbt at the warehouse contract boundary | Accepted | 2026-09-03 | Pending | — |
-| [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md) | Adopt a PostgreSQL-centered target data architecture | Accepted | 2026-08-28 | Pending (target architecture) | — |
+| [ADR-0020](0020-adopt-a-postgresql-centered-target-data-architecture.md) | Adopt a PostgreSQL-centered target data architecture | Accepted | 2026-08-28 | In progress (clean-slate target architecture) | — |
 
 ## Companion specifications
 

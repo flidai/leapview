@@ -314,7 +314,7 @@ func (operations projectDeliveryBuildOperations) Build(ctx context.Context, opti
 		return projectcli.DeliveryBuildResult{}, mapDeliveryCLIError("build delivery plan", err)
 	}
 	value := response.Body
-	result := projectcli.DeliveryBuildResult{SchemaVersion: 1, BuildID: value.Id, PlanID: value.PlanId, PlanDigest: value.PlanDigest, SourceDigest: value.SourceDigest, ExecutionDigest: value.ExecutionDigest, CandidateID: optionalString(value.CandidateId), SealID: optionalString(value.SealId), Status: string(value.Status), Revision: value.Revision}
+	result := projectcli.DeliveryBuildResult{SchemaVersion: 1, BuildID: value.Id, PlanID: value.PlanId, PlanDigest: value.PlanDigest, SourceDigest: value.SourceDigest, ExecutionDigest: value.ExecutionDigest, CandidateID: optionalString(value.CandidateId), SealID: optionalString(value.SnapshotSealId), Status: string(value.Status), Revision: value.Revision}
 	if result.CandidateID != "" && operations.checkpoints != nil {
 		if planCheckpoint.PlanID == "" {
 			planCheckpoint, _ = operations.checkpoints.LoadPlan(options.PlanID)

@@ -788,12 +788,16 @@ func qualificationCanonicalPublicationEvidence(
 	if err != nil {
 		return QualificationPublication{}, QualificationDeployment{}, err
 	}
+	snapshotSealID := ""
+	if serverCandidate.Body.SnapshotSealId != nil {
+		snapshotSealID = strings.TrimSpace(*serverCandidate.Body.SnapshotSealId)
+	}
 	if serverCandidate.Body.Id != candidate.ID ||
 		serverCandidate.Body.Status != deploymentgen.DeliveryCandidateStatusReady ||
 		serverCandidate.Body.PlanId != candidate.PlanID ||
 		serverCandidate.Body.PlanDigest != candidate.PlanDigest ||
 		serverCandidate.Body.SourceDigest != candidate.ArtifactDigest ||
-		serverCandidate.Body.TargetId != candidate.TargetID {
+		serverCandidate.Body.TargetId != candidate.TargetID || snapshotSealID == "" {
 		return QualificationPublication{}, QualificationDeployment{}, fmt.Errorf("canonical candidate evidence does not match the previewed candidate")
 	}
 	generation, err := client.GetDeliveryGenerationStatus(
@@ -824,7 +828,7 @@ func qualificationCanonicalPublicationEvidence(
 		TargetID: candidate.TargetID, PrincipalID: candidate.PrincipalID,
 		ArtifactDigest: generation.Body.ServingArtifactDigest,
 		ReleaseDigest:  candidate.ProvenanceDigest,
-		GenerationID:   generation.Body.Id, SnapshotSealID: serverCandidate.Body.SealId,
+		GenerationID:   generation.Body.Id, SnapshotSealID: snapshotSealID,
 		PlanID:     generation.Body.PlanId,
 		PlanDigest: generation.Body.PlanDigest, Status: string(generation.Body.Status),
 	}, nil

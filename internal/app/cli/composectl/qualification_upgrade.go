@@ -16,18 +16,20 @@ const qualificationProjectID = "project:leapview-evaluation"
 // qualificationDeliveryPersistenceEvidence is the canonical, read-only
 // delivery identity captured around a controller-side application upgrade.
 type qualificationDeliveryPersistenceEvidence struct {
-	CandidateID           string
-	GenerationID          string
-	SnapshotSealID        string
-	PlanID                string
-	PlanDigest            string
-	TargetID              string
-	PhysicalPoolID        string
-	CatalogDigest         string
-	CompatibilityDigest   string
-	ServingArtifactID     string
-	ServingArtifactDigest string
-	ServingStateID        string
+	CandidateID            string
+	GenerationID           string
+	SnapshotSealID         string
+	PlanID                 string
+	PlanDigest             string
+	TargetID               string
+	PhysicalPoolID         string
+	DuckLakeSnapshotID     int64
+	RelationManifestDigest string
+	ClosureDigest          string
+	CompatibilityDigest    string
+	ServingArtifactID      string
+	ServingArtifactDigest  string
+	ServingStateID         string
 }
 
 // runQualificationApplicationUpgrade recreates the immutable application and
@@ -121,8 +123,12 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	if candidate.Body.Status != deploymentgen.DeliveryCandidateStatusReady {
 		candidateMismatches = append(candidateMismatches, "candidate.status")
 	}
-	if strings.TrimSpace(candidate.Body.SealId) == "" {
-		candidateMismatches = append(candidateMismatches, "candidate.sealId")
+	candidateSealID := ""
+	if candidate.Body.SnapshotSealId != nil {
+		candidateSealID = strings.TrimSpace(*candidate.Body.SnapshotSealId)
+	}
+	if candidateSealID == "" {
+		candidateMismatches = append(candidateMismatches, "candidate.snapshotSealId")
 	}
 	if candidate.Body.ServingStateId != generationID {
 		candidateMismatches = append(candidateMismatches, "candidate.servingStateId")
@@ -144,8 +150,25 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	if candidate.Body.PhysicalPoolId != generation.Body.PhysicalPoolId {
 		crossMismatches = append(crossMismatches, "candidate.physicalPoolId vs generation.physicalPoolId")
 	}
-	if candidate.Body.CatalogDigest != generation.Body.CatalogDigest {
-		crossMismatches = append(crossMismatches, "candidate.catalogDigest vs generation.catalogDigest")
+	if candidateSealID != generation.Body.SnapshotSealId {
+		crossMismatches = append(crossMismatches, "candidate.snapshotSealId vs generation.snapshotSealId")
+	}
+	if candidate.Body.DucklakeSnapshotId == nil || *candidate.Body.DucklakeSnapshotId != generation.Body.DucklakeSnapshotId {
+		crossMismatches = append(crossMismatches, "candidate.ducklakeSnapshotId vs generation.ducklakeSnapshotId")
+	}
+	candidateRelationManifestDigest := ""
+	if candidate.Body.RelationManifestDigest != nil {
+		candidateRelationManifestDigest = *candidate.Body.RelationManifestDigest
+	}
+	if candidateRelationManifestDigest != generation.Body.RelationManifestDigest {
+		crossMismatches = append(crossMismatches, "candidate.relationManifestDigest vs generation.relationManifestDigest")
+	}
+	candidateClosureDigest := ""
+	if candidate.Body.ClosureDigest != nil {
+		candidateClosureDigest = *candidate.Body.ClosureDigest
+	}
+	if candidateClosureDigest != generation.Body.ClosureDigest {
+		crossMismatches = append(crossMismatches, "candidate.closureDigest vs generation.closureDigest")
 	}
 	if candidate.Body.CompatibilityDigest != generation.Body.CompatibilityDigest {
 		crossMismatches = append(crossMismatches, "candidate.compatibilityDigest vs generation.compatibilityDigest")
@@ -186,9 +209,10 @@ func (c *Controller) qualificationDeliveryPersistenceEvidence(
 	}
 	return qualificationDeliveryPersistenceEvidence{
 		CandidateID: candidate.Body.Id, GenerationID: generation.Body.Id,
-		SnapshotSealID: candidate.Body.SealId, PlanID: generation.Body.PlanId,
+		SnapshotSealID: candidateSealID, PlanID: generation.Body.PlanId,
 		PlanDigest: generation.Body.PlanDigest, TargetID: generation.Body.TargetId,
-		PhysicalPoolID: generation.Body.PhysicalPoolId, CatalogDigest: generation.Body.CatalogDigest,
+		PhysicalPoolID: generation.Body.PhysicalPoolId, DuckLakeSnapshotID: generation.Body.DucklakeSnapshotId,
+		RelationManifestDigest: generation.Body.RelationManifestDigest, ClosureDigest: generation.Body.ClosureDigest,
 		CompatibilityDigest:   generation.Body.CompatibilityDigest,
 		ServingArtifactID:     generation.Body.ServingArtifactId,
 		ServingArtifactDigest: generation.Body.ServingArtifactDigest,

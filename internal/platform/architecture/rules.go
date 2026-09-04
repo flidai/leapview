@@ -103,7 +103,6 @@ var CompositionContractPrefixes = map[string]struct{}{
 	// this list exact (rather than allowing capability roots) so a new app
 	// import still requires an architecture review while composition constructs
 	// its concrete physical/control-plane ports and evaluation seams here.
-	"internal/analytics/candidatecatalog":  {},
 	"internal/analytics/ducklake":          {},
 	"internal/analytics/physicalpool":      {},
 	"internal/analytics/runtime":           {},
@@ -341,7 +340,6 @@ var PackageRules = []PackageRule{
 	{Prefix: "internal/analytics/physicalpool", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogartifact", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/catalogstats", Capability: "analytics", Layer: LayerContract},
-	{Prefix: "internal/analytics/candidatecatalog", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/connectionadmin", Capability: "analytics", Layer: LayerContract},
 	{Prefix: "internal/analytics/infisical", Capability: "analytics", Layer: LayerAdapter},
 	{Prefix: "internal/analytics/environment", Capability: "analytics", Layer: LayerAdapter},

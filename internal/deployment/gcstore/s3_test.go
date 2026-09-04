@@ -15,7 +15,6 @@ import (
 	awss3 "github.com/aws/aws-sdk-go-v2/service/s3"
 	"github.com/aws/aws-sdk-go-v2/service/s3/types"
 	"github.com/flidai/leapview/internal/analytics/physicalpool"
-	"github.com/flidai/leapview/internal/deployment/gc"
 )
 
 type fakeS3 struct {
@@ -148,7 +147,7 @@ func TestS3StoreUnversionedObjectUsesETagTokenAndByteDigest(t *testing.T) {
 	if object.Version != `etag:"etag-1"` || object.Digest == "" {
 		t.Fatalf("object identity = %#v, want ETag token and computed digest", object)
 	}
-	if _, err := store.DeleteConditional(context.Background(), gc.DeleteRequest{PhysicalPoolID: "pool", Key: "orphan", Digest: object.Digest, Version: object.Version}); err != nil {
+	if _, err := store.DeleteConditional(context.Background(), DeleteRequest{PhysicalPoolID: "pool", Key: "orphan", Digest: object.Digest, Version: object.Version}); err != nil {
 		t.Fatalf("unversioned conditional delete: %v", err)
 	}
 	if f.getIfMatch != `"etag-1"` || f.deleteIfMatch != `"etag-1"` {
@@ -193,10 +192,10 @@ func TestS3StoreConditionalVersionAndPoolPrefix(t *testing.T) {
 	if err != nil || len(objects) != 1 {
 		t.Fatalf("objects=%v err=%v", objects, err)
 	}
-	if _, err := store.DeleteConditional(context.Background(), gc.DeleteRequest{PhysicalPoolID: "pool", Key: "orphan", Digest: f.digest, Version: "v2"}); err == nil {
+	if _, err := store.DeleteConditional(context.Background(), DeleteRequest{PhysicalPoolID: "pool", Key: "orphan", Digest: f.digest, Version: "v2"}); err == nil {
 		t.Fatal("wrong S3 version deleted")
 	}
-	if _, err := store.DeleteConditional(context.Background(), gc.DeleteRequest{PhysicalPoolID: "pool", Key: "orphan", Digest: f.digest, Version: "v1"}); err != nil || !f.deleted {
+	if _, err := store.DeleteConditional(context.Background(), DeleteRequest{PhysicalPoolID: "pool", Key: "orphan", Digest: f.digest, Version: "v1"}); err != nil || !f.deleted {
 		t.Fatalf("delete err=%v deleted=%v", err, f.deleted)
 	}
 }

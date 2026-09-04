@@ -858,7 +858,7 @@ func (c *NativeCreatePlanCoordinator) readBaseTx(ctx context.Context, tx deploym
 		return nil, nil, fmt.Errorf("%w: active plan execution context: %v", deployment.ErrDeliveryConflict, err)
 	}
 	reuse := &deployment.DeliveryReuseInput{
-		BaseExecutionDigest: basePlan.ExecutionDigest, CatalogDigest: seal.ClosureDigest, BaseCatalogDigest: seal.ClosureDigest,
+		BaseExecutionDigest: basePlan.ExecutionDigest, ClosureDigest: seal.ClosureDigest, BaseClosureDigest: seal.ClosureDigest,
 		PhysicalPoolID: seal.PhysicalPoolID, BasePhysicalPoolID: seal.PhysicalPoolID,
 		CompatibilityDigest: seal.CompatibilityDigest, BaseCompatibilityDigest: seal.CompatibilityDigest,
 		BaseContextDigest: baseContext, Deterministic: true,

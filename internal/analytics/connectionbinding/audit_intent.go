@@ -25,7 +25,7 @@ type AdministrationAuditInvocation struct {
 }
 
 // WithAuditIntent carries a source-built audit intent to the connection
-// binding repository.  The repository owns the SQLite transaction and records
+// binding repository. The repository owns the transaction and records
 // the intent before committing the binding mutation.
 func WithAuditIntent(ctx context.Context, intent access.AuditIntent) context.Context {
 	return context.WithValue(ctx, auditIntentContextKey{}, intent)

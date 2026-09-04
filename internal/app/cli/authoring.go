@@ -260,10 +260,10 @@ func (transport *candidateSynchronizationTransport) SynchronizeNative(
 	if err != nil {
 		return projectdevloop.Candidate{}, err
 	}
-	if build.SealId == nil || strings.TrimSpace(*build.SealId) == "" {
+	if build.SnapshotSealId == nil || strings.TrimSpace(*build.SnapshotSealId) == "" {
 		return projectdevloop.Candidate{}, fmt.Errorf("native delivery build returned no seal identity")
 	}
-	if _, err := canonicalNativeUUID(*build.SealId, "seal"); err != nil {
+	if _, err := canonicalNativeUUID(*build.SnapshotSealId, "seal"); err != nil {
 		return projectdevloop.Candidate{}, err
 	}
 	previewURL, err := nativeCandidatePreviewURL(transport.canonicalOrigin, candidateID)
