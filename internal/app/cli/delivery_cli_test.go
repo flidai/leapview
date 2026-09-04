@@ -315,7 +315,6 @@ func (transport *deliveryPlanSourceHandoffTransport) DoAPIGen(_ context.Context,
 		response = deploymentgen.CandidateSynchronizationPlanResponse{PlanId: "plan-delivery", ArtifactDigest: body.ArtifactDigest}
 	case deploymentgen.GenOperationRetainProjectCandidateSource:
 		transport.retainCalls++
-		status = http.StatusCreated
 		response = transport.retained
 	case deploymentgen.GenOperationCreateDeliveryPlan:
 		transport.createCalls++

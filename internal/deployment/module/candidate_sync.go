@@ -148,7 +148,7 @@ func (m *Module) RetainProjectCandidateSource(w http.ResponseWriter, r *http.Req
 		m.writeCandidateCommandFailure(w, r, operationID, apigenfailure.New("audit_unavailable", "Candidate source audit is temporarily unavailable"))
 		return
 	}
-	apitransport.WriteJSON(w, http.StatusCreated, deploymentgen.CandidateSourceSnapshotResponse{
+	apitransport.WriteJSON(w, http.StatusOK, deploymentgen.CandidateSourceSnapshotResponse{
 		ProjectId: project, SourceDigest: source.ArtifactDigest, ProjectDigest: source.ProjectDigest,
 		SourceAttestationDigest: source.SourceAttestationDigest,
 		TargetId:                m.instanceID, Environment: m.handlerEnvironment(),

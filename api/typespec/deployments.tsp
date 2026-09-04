@@ -767,7 +767,7 @@ interface CandidateSynchronization {
   @apigen.failsWith(InvalidCandidateFailure)
   @apigen.command(#{ auditAction: "candidate.source_retained" })
   @apigen.auditPayload(CandidateSourceRetainedAuditPayload)
-  retainProjectCandidateSource(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: CandidateSynchronizationRequest): CreatedJson<CandidateSourceSnapshotResponse> | CommonErrors;
+  retainProjectCandidateSource(@path @apigen.target project: ResourceId, @header("Idempotency-Key") idempotencyKey: IdempotencyKey, @header("Source-Synchronization-Plan") sourceSynchronizationPlan: string, @body body: CandidateSynchronizationRequest): OkJson<CandidateSourceSnapshotResponse> | CommonErrors;
 
   @summary("Upload a missing immutable private-candidate source blob")
   @route("/blobs/{digest}")

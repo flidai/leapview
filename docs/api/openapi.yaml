@@ -27441,14 +27441,8 @@ paths:
             type: string
           example: example
       responses:
-        '201':
-          description: The request has succeeded and a new resource has been created
-            as a result.
-          headers:
-            location:
-              required: true
-              schema:
-                type: string
+        '200':
+          description: The request has succeeded.
           content:
             application/json:
               schema:
