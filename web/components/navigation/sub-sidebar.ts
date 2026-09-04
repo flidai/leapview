@@ -1,6 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { ArrowLeft, PanelLeft, Search, type IconNode } from 'lucide'
+import { ArrowLeft, PanelLeft, PanelRight, Search, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import { sidebarControlStyles } from './sidebar-controls'
 import '../shared/loading-spinner'
@@ -132,7 +132,7 @@ class SubSidebar extends LitElement {
       height: 100%;
       min-height: 0;
       max-height: 100svh;
-      grid-template-rows: auto minmax(0, 1fr);
+      grid-template-rows: auto minmax(0, 1fr) auto;
       overflow: hidden;
       background: var(--lv-sidebar-bg);
       transition: width var(--motion-transition-stateChange);
@@ -226,7 +226,6 @@ class SubSidebar extends LitElement {
       height: var(--control-xsmall-size);
       flex: 0 0 auto;
       place-items: center;
-      margin-left: auto;
       border: var(--lv-border-transparent);
       border-radius: var(--lv-radius-default);
       background: transparent;
@@ -255,6 +254,18 @@ class SubSidebar extends LitElement {
 
     .collapse[hidden] {
       display: none;
+    }
+
+    .sidebar-footer {
+      box-sizing: border-box;
+      display: flex;
+      min-width: 0;
+      min-height: var(--lv-sub-sidebar-footer-height, var(--control-medium-size));
+      height: var(--lv-sub-sidebar-footer-height, var(--control-medium-size));
+      align-items: center;
+      justify-content: flex-end;
+      border-top: var(--lv-border-muted);
+      padding: 0 var(--base-size-8);
     }
 
     nav {
@@ -435,8 +446,9 @@ class SubSidebar extends LitElement {
       padding: 0;
     }
 
-    :host([data-collapsed]) .collapse {
-      margin-left: 0;
+    :host([data-collapsed]) .sidebar-footer {
+      justify-content: center;
+      padding-inline: 0;
     }
 
     :host([data-collapsed]) nav {
@@ -559,7 +571,8 @@ class SubSidebar extends LitElement {
 
       .rail-label,
       .hover-title,
-      .resize-handle {
+      .resize-handle,
+      .sidebar-footer {
         display: none;
       }
 
@@ -638,17 +651,6 @@ class SubSidebar extends LitElement {
                 <span class="back-label sidebar-control-back-label">${config.backAction.label}</span>
               </a>
             ` : html`<strong class="section-title">${config.label}</strong>`}
-            <button
-              class="collapse"
-              type="button"
-              ?hidden=${!config.collapsible}
-              aria-label=${collapsed ? `Expand ${config.ariaLabel}` : `Collapse ${config.ariaLabel}`}
-              aria-pressed=${String(collapsed)}
-              title=${collapsed ? `Expand ${config.ariaLabel}` : `Collapse ${config.ariaLabel}`}
-              @click=${() => this.toggleCollapsed(config.storageKey)}
-            >
-              ${icon('panel-left')}
-            </button>
           </div>
           ${config.searchable && !collapsed ? html`
             <label class="sidebar-search">
@@ -670,6 +672,20 @@ class SubSidebar extends LitElement {
           ${items.length === 0 ? html`<div class="empty">${this.searchQuery.trim() ? `No ${config.label.toLocaleLowerCase()} match your search.` : config.emptyText}</div>` : null}
           ${items.map((item, index) => this.renderItem(config, item, index, items.length))}
         </nav>
+        ${config.collapsible ? html`
+          <footer class="sidebar-footer">
+            <button
+              class="collapse"
+              type="button"
+              aria-label=${collapsed ? `Expand ${config.ariaLabel}` : `Collapse ${config.ariaLabel}`}
+              aria-pressed=${String(collapsed)}
+              title=${collapsed ? `Expand ${config.ariaLabel}` : `Collapse ${config.ariaLabel}`}
+              @click=${() => this.toggleCollapsed(config.storageKey)}
+            >
+              ${icon(collapsed ? 'panel-right' : 'panel-left')}
+            </button>
+          </footer>
+        ` : null}
         ${collapsed && this.hoverTitle ? html`
           <div
             class="hover-title"
@@ -937,10 +953,11 @@ function resolvedBackAction(value: SubSidebarConfig['backAction']): ResolvedConf
   return { label, href, ...(title ? { title } : {}) }
 }
 
-function icon(name: 'back' | 'panel-left' | 'search') {
-  const icons: Record<'back' | 'panel-left' | 'search', IconNode> = {
+function icon(name: 'back' | 'panel-left' | 'panel-right' | 'search') {
+  const icons: Record<'back' | 'panel-left' | 'panel-right' | 'search', IconNode> = {
     back: ArrowLeft,
     'panel-left': PanelLeft,
+    'panel-right': PanelRight,
     search: Search,
   }
 
