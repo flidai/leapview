@@ -5,16 +5,23 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 
 	ui "github.com/flidai/leapview/internal/admin/view"
+	"github.com/flidai/leapview/internal/analytics/catalogstats"
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/workload"
 )
 
 type Service struct {
+	// Runtime is the active serving-generation provider. Production storage
+	// reads must come from this provider so PostgreSQL-backed DuckLake metadata
+	// is inspected through the exact sealed snapshot admitted to the runtime.
+	Runtime projectruntime.Provider
+	// Analytics is retained for local/evaluation composition where an explicit
+	// process-owned DuckLake environment is intentionally available.
 	CatalogPath string
 	DataPath    string
 	Analytics   AnalyticalProvider
@@ -27,28 +34,46 @@ type AnalyticalProvider interface {
 }
 
 func (s Service) Data(ctx context.Context) ui.AdminStorageData {
+	if s.Runtime != nil {
+		return s.dataFromRuntime(ctx)
+	}
+	return s.dataFromAnalytics(ctx)
+}
+
+func (s Service) dataFromRuntime(ctx context.Context) ui.AdminStorageData {
 	data := ui.AdminStorageData{}
-	if strings.TrimSpace(s.CatalogPath) == "" {
-		data.Status = "No DuckLake catalog has been initialized."
-		return data
-	}
-	catalogInfo, err := os.Stat(s.CatalogPath)
+	lease, err := s.Runtime.Acquire(ctx)
 	if err != nil {
-		if os.IsNotExist(err) {
-			data.Status = "No DuckLake catalog has been initialized."
-		} else {
-			data.Status = fmt.Sprintf("DuckLake catalog cannot be read: %v", err)
-		}
+		data.Status = err.Error()
 		return data
 	}
-	if catalogInfo.IsDir() {
-		data.Status = "DuckLake catalog path is a directory."
+	defer lease.Release()
+	reader, ok := lease.Runtime().(catalogstats.Reader)
+	if !ok {
+		data.Status = "Active DuckLake runtime does not expose catalog metadata."
 		return data
 	}
-	if strings.TrimSpace(s.DataPath) == "" {
-		data.Status = "DuckLake data path is not configured."
+	tables, err := reader.CatalogTableStatistics(ctx)
+	if err != nil {
+		data.Status = err.Error()
 		return data
 	}
+	if len(tables) > maxStorageTables {
+		data.Status = fmt.Sprintf("DuckLake catalog contains more than %d tables.", maxStorageTables)
+		return data
+	}
+	data.Tables = storageTablesFromStatistics(tables)
+	data.TableCount = len(data.Tables)
+	for _, table := range data.Tables {
+		data.DataFileCount += table.FileCount
+		data.TotalDataSizeBytes += table.SizeBytes
+	}
+	data.TotalDataSizeLabel = formatBytes(data.TotalDataSizeBytes)
+	return data
+}
+
+func (s Service) dataFromAnalytics(ctx context.Context) ui.AdminStorageData {
+	data := ui.AdminStorageData{}
 
 	ctx, analytics, release, err := s.acquireAnalytics(ctx, "admin.storage.read")
 	if err != nil {
@@ -78,6 +103,32 @@ func (s Service) Table(ctx context.Context, schema, tableName string) (*ui.Admin
 	if strings.TrimSpace(schema) == "" || strings.TrimSpace(tableName) == "" {
 		return nil, fmt.Errorf("storage table selection is incomplete")
 	}
+	if s.Runtime != nil {
+		lease, err := s.Runtime.Acquire(ctx)
+		if err != nil {
+			return nil, err
+		}
+		defer lease.Release()
+		reader, ok := lease.Runtime().(catalogstats.Reader)
+		if !ok {
+			return nil, fmt.Errorf("active DuckLake runtime does not expose catalog metadata")
+		}
+		tables, err := reader.CatalogTableStatistics(ctx)
+		if err != nil {
+			return nil, err
+		}
+		if len(tables) > maxStorageTables {
+			return nil, fmt.Errorf("DuckLake catalog contains more than %d tables", maxStorageTables)
+		}
+		for _, stats := range tables {
+			if stats.Schema != schema || stats.Name != tableName {
+				continue
+			}
+			table := storageTableFromStatistics(stats)
+			return &table, nil
+		}
+		return nil, sql.ErrNoRows
+	}
 	if strings.TrimSpace(s.CatalogPath) == "" || strings.TrimSpace(s.DataPath) == "" {
 		return nil, fmt.Errorf("DuckLake catalog is not configured")
 	}
@@ -95,6 +146,26 @@ func (s Service) Table(ctx context.Context, schema, tableName string) (*ui.Admin
 		return nil, err
 	}
 	return table, nil
+}
+
+const maxStorageTables = 10000
+
+func storageTablesFromStatistics(tables []catalogstats.Table) []ui.AdminStorageTable {
+	result := make([]ui.AdminStorageTable, 0, len(tables))
+	for _, stats := range tables {
+		result = append(result, storageTableFromStatistics(stats))
+	}
+	return result
+}
+
+func storageTableFromStatistics(stats catalogstats.Table) ui.AdminStorageTable {
+	return ui.AdminStorageTable{
+		Schema: stats.Schema, Name: stats.Name, Type: "table",
+		BeginSnapshot: stats.SnapshotID, RowCount: stats.RowCount,
+		RowCountLabel: formatCount(stats.RowCount), ColumnCount: int(stats.ColumnCount),
+		FileCount: int(stats.FileCount), SizeBytes: stats.SizeBytes,
+		SizeLabel: formatBytes(stats.SizeBytes),
+	}
 }
 
 func (s Service) acquireAnalytics(ctx context.Context, operation string) (context.Context, analyticsresource.Session, func(), error) {

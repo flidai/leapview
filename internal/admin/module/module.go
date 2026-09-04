@@ -19,6 +19,7 @@ import (
 	"github.com/flidai/leapview/internal/dashboard/publication"
 	webpage "github.com/flidai/leapview/internal/platform/web/page"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
+	projectruntime "github.com/flidai/leapview/internal/project/runtime"
 	"github.com/flidai/leapview/internal/workload"
 	"github.com/flidai/leapview/pkg/pagestream"
 )
@@ -68,6 +69,10 @@ type AuthoringSessions interface {
 type QueryAuditReaderProvider func() (queryaudit.Reader, error)
 
 type StorageConfig struct {
+	// Runtime is the active serving-generation provider. Production callers
+	// supply this so storage reads use the sealed PostgreSQL DuckLake catalog,
+	// never a node-local catalog path.
+	Runtime      projectruntime.Provider
 	CatalogPath  string
 	DataPath     string
 	Environment  string
@@ -133,6 +138,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	readModel := adminhttp.ReadModel{
 		Access: config.Access, Avatars: config.PersonalAvatar, AgentDetails: config.AgentDetails,
 		StorageService: adminstorage.Service{
+			Runtime:     config.Storage.Runtime,
 			CatalogPath: config.Storage.CatalogPath, DataPath: config.Storage.DataPath,
 			Analytics: config.Storage.Analytics, Admitter: config.Storage.Admitter,
 		},

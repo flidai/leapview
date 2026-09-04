@@ -1595,6 +1595,22 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		if commandErr != nil {
 			return fmt.Errorf("build product command executor: %w", commandErr)
 		}
+		var activeRuntime runtimehostmodule.Provider
+		if runtimeConfig.RuntimeHost != nil {
+			activeRuntime = runtimeConfig.RuntimeHost.Provider()
+		}
+		storageConfig := adminmodule.StorageConfig{
+			Runtime:     activeRuntime,
+			Environment: policy.defaultEnvironment, ControlPlane: persistence.product,
+			Analytics: runtime.analyticsModule.AdminResources(), Admitter: workloadController(&runtime.workloads),
+		}
+		// File-backed catalog paths are an explicit local/evaluation-only
+		// capability. Production always supplies the active serving runtime,
+		// whose sealed PostgreSQL DuckLake catalog is the sole storage reader.
+		if activeRuntime == nil {
+			storageConfig.CatalogPath = storage.duckLakeCatalogPath
+			storageConfig.DataPath = storage.duckLakeDataPath
+		}
 		var err error
 		routes.adminModule, err = adminmodule.Build(ctx, adminmodule.Config{
 			Access: accessReader,
@@ -1617,11 +1633,7 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 			AuthConfigured:               platform.auth != nil,
 			LocalPasswordEnabled:         localPasswordEnabled,
 			AccessConfigured:             accessReader != nil,
-			Storage: adminmodule.StorageConfig{
-				CatalogPath: storage.duckLakeCatalogPath, DataPath: storage.duckLakeDataPath,
-				Environment: policy.defaultEnvironment, ControlPlane: persistence.product,
-				Analytics: runtime.analyticsModule.AdminResources(), Admitter: workloadController(&runtime.workloads),
-			},
+			Storage:                      storageConfig,
 			Layout: func(r *http.Request) webpage.Provider {
 				return applicationLayout(routes.accessModule, routes.agentModule, routes.product, platform.assets, r)
 			},
