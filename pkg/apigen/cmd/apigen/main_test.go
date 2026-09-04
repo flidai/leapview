@@ -6,12 +6,27 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	openapiemit "github.com/Yacobolo/toolbelt/apigen/emit/openapi"
 	"github.com/Yacobolo/toolbelt/apigen/ir"
 	"github.com/stretchr/testify/require"
 )
+
+var (
+	managedTypeSpecNPMCacheOnce sync.Once
+	managedTypeSpecNPMCachePath string
+	managedTypeSpecNPMCacheErr  error
+)
+
+func TestMain(m *testing.M) {
+	code := m.Run()
+	if managedTypeSpecNPMCachePath != "" {
+		_ = os.RemoveAll(managedTypeSpecNPMCachePath)
+	}
+	os.Exit(code)
+}
 
 func jsonContent(ref ir.SchemaRef) []ir.BodyContent {
 	return []ir.BodyContent{{ContentType: "application/json", BodyKind: "json", Schema: &ref}}
@@ -960,6 +975,48 @@ func TestInstallBundledTypeSpecPackage_UsesWritableCache(t *testing.T) {
 	require.FileExists(t, filepath.Join(pkg.Dir, "dist", "src", "index.js"))
 }
 
+func TestEnsureTypeSpecToolchain_UsesSharedNPMCacheAcrossManagedPackages(t *testing.T) {
+	t.Helper()
+	setupManagedTypeSpecCache(t)
+
+	binDir := t.TempDir()
+	logPath := filepath.Join(t.TempDir(), "npm-cache.log")
+	npmPath := filepath.Join(binDir, "npm")
+	script := `#!/bin/sh
+printf '%s\n' "$NPM_CONFIG_CACHE" >> "$APIGEN_TEST_NPM_CACHE_LOG"
+mkdir -p node_modules/@typespec/compiler/cmd
+touch node_modules/@typespec/compiler/cmd/tsp.js
+`
+	require.NoError(t, os.WriteFile(npmPath, []byte(script), 0o700))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("APIGEN_TEST_NPM_CACHE_LOG", logPath)
+
+	firstDir := filepath.Join(t.TempDir(), "first")
+	secondDir := filepath.Join(t.TempDir(), "second")
+	for _, dir := range []string{firstDir, secondDir} {
+		require.NoError(t, os.MkdirAll(filepath.Join(dir, "dist", "src"), 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dir, "dist", "src", "index.js"), []byte("module.exports = {};\n"), 0o644))
+	}
+
+	require.NoError(t, ensureTypeSpecToolchain(typeSpecPackage{Dir: firstDir, Managed: true}))
+	require.NoError(t, ensureTypeSpecToolchain(typeSpecPackage{Dir: secondDir, Managed: true}))
+
+	cacheLog, err := os.ReadFile(logPath)
+	require.NoError(t, err)
+	cachePaths := strings.Split(strings.TrimSpace(string(cacheLog)), "\n")
+	require.Len(t, cachePaths, 2)
+	require.Equal(t, cachePaths[0], cachePaths[1])
+	require.NotEqual(t, firstDir, cachePaths[0])
+	require.NotEqual(t, secondDir, cachePaths[0])
+	require.FileExists(t, filepath.Join(firstDir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
+	require.FileExists(t, filepath.Join(secondDir, "node_modules", "@typespec", "compiler", "cmd", "tsp.js"))
+	firstNodeModules, err := filepath.EvalSymlinks(filepath.Join(firstDir, "node_modules"))
+	require.NoError(t, err)
+	secondNodeModules, err := filepath.EvalSymlinks(filepath.Join(secondDir, "node_modules"))
+	require.NoError(t, err)
+	require.NotEqual(t, firstNodeModules, secondNodeModules)
+}
+
 func TestCompileTypeSpec_FailurePreservesExistingOutputs(t *testing.T) {
 	t.Helper()
 
@@ -1868,6 +1925,11 @@ func setupManagedTypeSpecCache(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("XDG_CACHE_HOME", filepath.Join(home, ".cache"))
+	managedTypeSpecNPMCacheOnce.Do(func() {
+		managedTypeSpecNPMCachePath, managedTypeSpecNPMCacheErr = os.MkdirTemp("", "apigen-test-npm-cache-")
+	})
+	require.NoError(t, managedTypeSpecNPMCacheErr)
+	t.Setenv("NPM_CONFIG_CACHE", managedTypeSpecNPMCachePath)
 }
 
 func writeCanonicalOpenAPI(t *testing.T, dir string, doc ir.Document) string {
