@@ -68,7 +68,7 @@ func TestRuntimeFactoryHasNoControlPlaneSQLiteDependencies(t *testing.T) {
 		t.Fatalf("read production build entrypoint: %v", err)
 	}
 	buildText := string(buildSource)
-	for _, required := range []string{"func BuildProduction(", "buildPostgresProductionTarget("} {
+	for _, required := range []string{"func BuildProduction(", "buildPostgresTarget("} {
 		if !strings.Contains(buildText, required) {
 			t.Errorf("production entrypoint missing %q", required)
 		}

@@ -52,16 +52,15 @@ type Config struct {
 	// NewPostgresPersistence. Build never infers a backend from a raw database
 	// handle.
 	Persistence *Persistence
-	// Catalog is the project/connection read authority. Native production
-	// composition injects a PostgreSQL-marked catalog independently from the
-	// release mutation authority.
-	Catalog    Catalog
-	Production bool
+	// Catalog is the project/connection read authority. Native PostgreSQL
+	// composition injects a PostgreSQL-marked catalog independently
+	// from the release mutation authority.
+	Catalog Catalog
 	// Deployments is optional for native authorities that expose deployment
 	// linkage through the cross-capability contract.
 	Deployments release.DeploymentLinkage
-	// States is the immutable serving-state authority used by native
-	// production composition.
+	// States is the immutable serving-state authority used by native PostgreSQL
+	// composition.
 	States               ServingStateReader
 	ManagedDataPins      ManagedDataPins
 	Environment          servingstate.Environment
@@ -93,8 +92,8 @@ type Catalog interface {
 // module. It intentionally contains only Release domain contracts; concrete
 // PostgreSQL transaction and pool types stay inside the authority package.
 // PostgreSQL implementations must also expose PostgreSQLAuthority and
-// Configured so production cannot be accidentally backed by a nil handle that
-// happens to satisfy the domain methods.
+// Configured so native PostgreSQL composition cannot be accidentally backed
+// by a nil handle that happens to satisfy the domain methods.
 type NativePersistence interface {
 	release.Repository
 	release.FinalizationUnitOfWork
@@ -104,7 +103,7 @@ type NativePersistence interface {
 
 // Persistence is the typed release storage selection passed into Build.
 // native is private so callers cannot forge a PostgreSQL marker or route an
-// arbitrary repository through the production path.
+// arbitrary repository through the native PostgreSQL path.
 type Persistence struct {
 	Repository          release.Repository
 	Finalization        release.FinalizationUnitOfWork
@@ -116,7 +115,7 @@ type Persistence struct {
 
 // NewPostgresPersistence wraps the concrete native release authority. The
 // concrete PostgreSQL marker and capability checks prevent a test double from
-// being labelled as production persistence.
+// being labelled as native PostgreSQL persistence.
 func NewPostgresPersistence(native NativePersistence) (Persistence, error) {
 	if native == nil {
 		return Persistence{}, errors.New("PostgreSQL release persistence is required")
@@ -198,46 +197,43 @@ func Build(_ context.Context, config Config) (*Module, error) {
 		return nil, err
 	}
 	native := config.Persistence.native
-	if !config.Production {
-		return nil, errors.New("native PostgreSQL persistence requires production release mode")
-	}
 	if !config.Persistence.isPostgres() || native == nil {
-		return nil, errors.New("production release module requires native PostgreSQL persistence")
+		return nil, errors.New("native PostgreSQL release module requires native PostgreSQL persistence")
 	}
 	authority, ok := native.(postgresAuthority)
 	if !ok || !authority.Configured() {
-		return nil, errors.New("production release module requires configured native PostgreSQL persistence")
+		return nil, errors.New("native PostgreSQL release module requires configured native PostgreSQL persistence")
 	}
 	if !authority.AuditCapable() {
-		return nil, errors.New("production release module requires transactional audit capability")
+		return nil, errors.New("native PostgreSQL release module requires transactional audit capability")
 	}
 	if !authority.EventCapable() {
-		return nil, errors.New("production release module requires durable event capability")
+		return nil, errors.New("native PostgreSQL release module requires durable event capability")
 	}
 	if !authority.WorkflowCapable() {
-		return nil, errors.New("production release module requires transactional workflow capability")
+		return nil, errors.New("native PostgreSQL release module requires transactional workflow capability")
 	}
 	catalogAuthority, ok := config.Catalog.(postgresCatalog)
 	if !ok || !catalogAuthority.Configured() {
-		return nil, errors.New("production release module requires configured native PostgreSQL catalog")
+		return nil, errors.New("native PostgreSQL release module requires configured native PostgreSQL catalog")
 	}
 	if config.Deployments != nil {
 		deploymentsAuthority, ok := config.Deployments.(postgresDeployments)
 		if !ok || !deploymentsAuthority.Configured() {
-			return nil, errors.New("production release module requires configured native PostgreSQL deployments")
+			return nil, errors.New("native PostgreSQL release module requires configured native PostgreSQL deployments")
 		}
 	}
 	if config.States == nil {
-		return nil, errors.New("production release module requires immutable serving-state reader")
+		return nil, errors.New("native PostgreSQL release module requires immutable serving-state reader")
 	}
 	hasSourceReader := config.CandidateSourceReader != nil
 	hasArtifactStore := config.CandidateArtifactStore != nil
 	hasStorageDomain := config.StorageSecurityDomain != ""
 	if !hasSourceReader || !hasArtifactStore || !hasStorageDomain {
-		return nil, errors.New("production release module requires candidate source reader, artifact store, and storage security domain together")
+		return nil, errors.New("native PostgreSQL release module requires candidate source reader, artifact store, and storage security domain together")
 	}
 	if !validNativeStorageDomain(config.StorageSecurityDomain) {
-		return nil, errors.New("production release module requires canonical candidate artifact storage security domain")
+		return nil, errors.New("native PostgreSQL release module requires canonical candidate artifact storage security domain")
 	}
 	environment := config.Environment
 	if string(environment) != strings.TrimSpace(string(environment)) {

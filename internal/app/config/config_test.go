@@ -39,6 +39,36 @@ func TestParseListenAddrGrammar(t *testing.T) {
 	}
 }
 
+func TestDevelopmentAuthBypassRequiresExplicitLoopbackListener(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		addr string
+		ok   bool
+	}{
+		{name: "IPv4 loopback", addr: "127.0.0.1:8080", ok: true},
+		{name: "IPv6 loopback", addr: "[::1]:8080", ok: true},
+		{name: "localhost", addr: "localhost:8080", ok: true},
+		{name: "wildcard", addr: ":8080"},
+		{name: "IPv4 wildcard", addr: "0.0.0.0:8080"},
+		{name: "remote", addr: "dev.example.com:8080"},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			cfg := withAnalyticalTestDefaults(Config{
+				Addr:          test.addr,
+				DevAuthBypass: true,
+				CSRFKey:       "development-csrf-key-000000000000",
+			})
+			err := cfg.Validate(ProfileServe)
+			if test.ok && err != nil {
+				t.Fatalf("loopback development bypass rejected: %v", err)
+			}
+			if !test.ok && (err == nil || !strings.Contains(err.Error(), "explicit loopback")) {
+				t.Fatalf("non-loopback development bypass error = %v", err)
+			}
+		})
+	}
+}
+
 func TestLoadRejectsMalformedWorkloadConfiguration(t *testing.T) {
 	t.Setenv("LEAPVIEW_WORKLOAD_INTERACTIVE_MAX_RUNNING", "many")
 	if _, err := Load(); err == nil {

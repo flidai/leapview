@@ -16,7 +16,7 @@ import (
 // ProjectIdentityRecord is the capability-neutral project projection needed
 // by the release catalog. It keeps the release module independent of the
 // project PostgreSQL package; application-owned adapters provide concrete
-// implementations for production composition.
+// implementations for native PostgreSQL composition.
 type ProjectIdentityRecord struct {
 	ID, Title, Description string
 	CreatedAt, UpdatedAt   string

@@ -31,7 +31,7 @@ type NativeDeliveryMutationPort interface {
 }
 
 // NativeDeliveryCommandCompleter is optional for ports used outside the
-// generated HTTP transport. Production ports should implement it so the
+// generated HTTP transport. Native PostgreSQL ports should implement it so the
 // APIGen command guard can verify native event/audit evidence without forcing
 // the module to depend on a compatibility delivery reader.
 type NativeDeliveryCommandCompleter interface {
@@ -49,8 +49,8 @@ type NativeDeliveryPublicationPort interface {
 	RollbackGeneration(context.Context, NativeDeliveryRollbackRequest) (NativeDeliveryPublication, error)
 }
 
-// NativeDeliveryPublicationCommandCompleter is implemented by production
-// native publication authorities. The generated command guard calls it after
+// NativeDeliveryPublicationCommandCompleter is implemented by native PostgreSQL
+// publication authorities. The generated command guard calls it after
 // the mutation and it must verify the durable operation, event, and audit
 // consequences before the HTTP command is acknowledged.
 type NativeDeliveryPublicationCommandCompleter interface {
@@ -149,7 +149,7 @@ type NativeDeliveryPlan struct {
 	ID uuid.UUID
 	// ActorID, RequestDigest, EventID, and AuditID are internal completion
 	// evidence. The HTTP response intentionally does not expose them; the
-	// production command completer uses them to re-read the exact durable
+	// native PostgreSQL command completer uses them to re-read the exact durable
 	// consequences before acknowledging the mutation.
 	ActorID                 string
 	SourceOwnerID           string
@@ -195,7 +195,7 @@ type NativeDeliveryBuildRequest struct {
 type NativeDeliveryBuild struct {
 	// ActorID, IdempotencyKey, RequestDigest, OperationID, EventID, and
 	// AuditID are internal completion evidence. The HTTP response deliberately
-	// omits them; the production command completer uses them to re-read the
+	// omits them; the native PostgreSQL command completer uses them to re-read the
 	// exact durable build consequences before acknowledging the mutation.
 	ActorID string
 	// OperationOwnerID is the server-allocated owner of the durable operation;

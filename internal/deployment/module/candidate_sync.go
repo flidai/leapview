@@ -29,7 +29,7 @@ import (
 const maxCandidateSourceBlobBytes = 16 << 20
 
 // RetainProjectCandidateSourceOperationID exposes the generated source-retention
-// command identity through the deployment module boundary. Native production
+// command identity through the deployment module boundary. Native PostgreSQL
 // composition uses it for the narrowly reviewed expired-lease reclaim policy.
 const RetainProjectCandidateSourceOperationID = string(deploymentgen.GenOperationRetainProjectCandidateSource)
 

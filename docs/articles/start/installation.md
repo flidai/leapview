@@ -196,8 +196,11 @@ task generate
 task dev
 ```
 
-`task dev` starts one worktree-local target and opens the private authoring
-watcher. For a durable rollout, use the canonical `plan`, `build`, and
+`task dev` provisions a loopback-only PostgreSQL 18 service scoped to the
+worktree, runs the local physical-pool qualification/bootstrap once, and
+starts one native PostgreSQL target with the private authoring watcher. The
+generated credentials remain in `.tmp/postgres-dev.env` (mode 0600); do not
+reuse them outside this worktree. For a durable rollout, use the canonical `plan`, `build`, and
 `publish CANDIDATE_ID` commands shown above. Use `task dev:status`,
 `task dev:logs`, and `task dev:stop` for lifecycle operations. Run `task ci`
 before handing off substantial changes.

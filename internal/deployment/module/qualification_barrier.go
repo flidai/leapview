@@ -7,7 +7,7 @@ import (
 )
 
 // WaitBeforeQualificationActivation exposes the inert evaluation hook through
-// Deployment's composition surface. Native production activation is unchanged
+// Deployment's composition surface. Native PostgreSQL activation is unchanged
 // unless the exact evaluation marker has been armed by the qualification
 // harness.
 func WaitBeforeQualificationActivation(ctx context.Context, environment string) error {

@@ -217,8 +217,12 @@ func (c Config) Validate(profile Profile) error {
 	if profile != ProfileServe {
 		return fmt.Errorf("unsupported configuration profile %q", profile)
 	}
-	if _, err := ParseListenAddr(c.ListenAddr()); err != nil {
+	listen, err := ParseListenAddr(c.ListenAddr())
+	if err != nil {
 		return err
+	}
+	if c.DevAuthBypass && !loopbackListenHost(listen.Host) {
+		return errors.New("LEAPVIEW_DEV_AUTH_BYPASS requires LEAPVIEW_ADDR to bind an explicit loopback host")
 	}
 	if _, err := c.AllowedHostList(); err != nil {
 		return err
@@ -242,6 +246,15 @@ func (c Config) Validate(profile Profile) error {
 		return fmt.Errorf("LEAPVIEW_DELIVERY_ROLLBACK_RETENTION_WINDOW must not be negative")
 	}
 	return nil
+}
+
+func loopbackListenHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func (c Config) validateAnalyticalResources() error {

@@ -16,6 +16,7 @@ import (
 	deploymenthttp "github.com/flidai/leapview/internal/deployment/http"
 	deploymentpostgres "github.com/flidai/leapview/internal/deployment/postgres"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
+	jobpolicy "github.com/flidai/leapview/internal/platform/jobs"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/pkg/jobs"
 	"github.com/google/uuid"
@@ -329,6 +330,7 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 	}
 	var generation deploymentpostgres.DeliveryGeneration
 	var candidate deploymentpostgres.DeliveryCandidate
+	var plan deploymentpostgres.DeliveryPlan
 	if rollback {
 		generation, err = c.repository.GenerationTx(ctx, tx, generationID.String())
 		if err != nil {
@@ -369,6 +371,10 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 			return NativeDeliveryPublication{}, fmt.Errorf("%w: candidate/generation identity differs", deployment.ErrDeliveryConflict)
 		}
 	}
+	plan, err = c.repository.PlanTx(ctx, tx, generation.PlanID)
+	if err != nil {
+		return NativeDeliveryPublication{}, mapNativeError(err)
+	}
 	if generationID != uuid.Nil && generation.GenerationID != generationID.String() {
 		return NativeDeliveryPublication{}, fmt.Errorf("%w: rollback generation identity differs", deployment.ErrDeliveryConflict)
 	}
@@ -396,7 +402,11 @@ func (c *nativeCoordinator) createNativePublication(ctx context.Context, project
 	if rollback {
 		eventType = "delivery.rollback.requested"
 	}
-	if err := c.appendMutationEvidence(ctx, tx, publication, eventType, actor, requestDigest, eventID, auditID, nil); err != nil {
+	var workflowFn func(string) (jobs.WorkflowIntent, error)
+	if !plan.ApprovalRequired {
+		workflowFn = nativePublicationActivationWorkflow(project.String(), environment, actor)
+	}
+	if err := c.appendMutationEvidence(ctx, tx, publication, eventType, actor, requestDigest, eventID, auditID, workflowFn); err != nil {
 		return NativeDeliveryPublication{}, err
 	}
 	outcome, _ := json.Marshal(nativeMutationOutcome{PublicationID: publication.PublicationID, EventID: eventID, AuditID: auditID})
@@ -829,6 +839,44 @@ func (c *nativeCoordinator) appendMutationEvidence(ctx context.Context, tx deplo
 		}
 	}
 	return nil
+}
+
+// nativePublicationActivationWorkflow schedules the unprotected publication
+// leaf after its request transaction commits. The worker re-reads the pending
+// publication and then executes the same fenced Activate transaction used by
+// protected approval workers; no activation is performed inline with publish.
+func nativePublicationActivationWorkflow(projectID, environment, actor string) func(string) (jobs.WorkflowIntent, error) {
+	return func(publicationID string) (jobs.WorkflowIntent, error) {
+		activationID := "deployment:" + publicationID + ":activate"
+		payload, err := json.Marshal(ActivateJob{
+			Project: projectID, Deployment: publicationID, Actor: actor,
+			IdempotencyKey: activationID,
+		})
+		if err != nil {
+			return jobs.WorkflowIntent{}, err
+		}
+		eventData, err := json.Marshal(map[string]any{
+			"operationId": "delivery.activate", "deploymentId": publicationID,
+			"projectId": projectID, "status": "queued",
+		})
+		if err != nil {
+			return jobs.WorkflowIntent{}, err
+		}
+		return jobs.WorkflowIntent{
+			Event: jobs.EventInput{
+				Key:          "deployment.activation_requested",
+				ResourceKind: "deployment", ResourceID: publicationID,
+				EventType: "deployment.activation_requested", Data: eventData,
+			},
+			Job: jobs.EnqueueInput{
+				ID: activationID, Kind: "deployment.activate",
+				WorkloadClass: jobpolicy.WorkloadClassControl, PrincipalID: actor,
+				PartitionKey: "deployment:" + projectID + ":" + environment,
+				ResourceKind: "deployment", ResourceID: publicationID,
+				EstimatedMemoryBytes: 16 << 20, Payload: payload,
+			},
+		}, nil
+	}
 }
 
 // retireNativeRollbackRootTx retires the temporary root whose identity is the

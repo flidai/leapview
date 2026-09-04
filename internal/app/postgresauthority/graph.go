@@ -66,9 +66,8 @@ import (
 // PostgresAuthorityGraph is the application-owned native control-plane graph.
 // Each field is a capability authority over the already-retained PostgreSQL
 // pool; no field opens a pool, migrates a schema, or owns lifecycle shutdown.
-// The graph is intentionally separate from BuildProduction while the HTTP
-// surface is being migrated, so construction and validation can be tested in
-// isolation.
+// The graph remains separate from the runnable composition root so its
+// construction and authority validation can be tested in isolation.
 type PostgresAuthorityGraph struct {
 	Bootstrap *platformbootstrappostgres.Repository
 	// Settings is an explicit alias for the platform bootstrap/settings

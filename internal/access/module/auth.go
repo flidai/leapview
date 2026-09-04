@@ -990,8 +990,14 @@ func WithAPICredential(ctx context.Context, credential access.APICredential) con
 	return context.WithValue(ctx, apiCredentialContextKey{}, credential)
 }
 
+// DevelopmentPrincipalID is the stable UUID used by the local development
+// bypass identity. PostgreSQL audit and profile authorities require canonical
+// UUID principal IDs, so the bypass identity is durable without relying on a
+// text sentinel such as "dev".
+const DevelopmentPrincipalID = "00000000-0000-7000-8000-000000000001"
+
 func LocalDeveloperPrincipal() Principal {
-	return Principal{ID: "dev", Email: "dev@localhost", DisplayName: "Local Developer", DevBypass: true}
+	return Principal{ID: DevelopmentPrincipalID, Email: "dev@localhost", DisplayName: "Local Developer", DevBypass: true}
 }
 
 func BearerToken(r *http.Request) string { return bearerToken(r) }

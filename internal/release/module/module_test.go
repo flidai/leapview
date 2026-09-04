@@ -16,13 +16,6 @@ import (
 
 var _ NativePersistence = (*releasepostgres.Repository)(nil)
 
-func TestBuildProductionRequiresNativeAuthority(t *testing.T) {
-	_, err := Build(t.Context(), Config{Production: true})
-	if err == nil || !strings.Contains(err.Error(), "persistence is required") {
-		t.Fatalf("production missing authority error = %v", err)
-	}
-}
-
 func TestBuildRequiresPersistence(t *testing.T) {
 	_, err := Build(t.Context(), Config{})
 	if err == nil || !strings.Contains(err.Error(), "persistence is required") {
@@ -64,7 +57,7 @@ type nativeCatalogStub struct {
 }
 
 // nativeServingStateReaderStub models the immutable graph-owned authority
-// injected by production composition. It intentionally has no lifecycle
+// injected by native PostgreSQL composition. It intentionally has no lifecycle
 // mutation methods from the serving-state repository.
 type nativeServingStateReaderStub struct{}
 
@@ -88,7 +81,7 @@ func (s deploymentStub) Configured() bool   { return s.configured }
 
 type unmarkedDeploymentStub struct{ release.DeploymentLinkage }
 
-func TestBuildProductionRejectsUnmarkedNativeAuthority(t *testing.T) {
+func TestBuildRejectsUnmarkedNativePostgreSQLAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	// Deliberately bypass NewPostgresPersistence to ensure Build still validates
 	// the native authority marker.
@@ -99,21 +92,21 @@ func TestBuildProductionRejectsUnmarkedNativeAuthority(t *testing.T) {
 		CandidateProvenanceRepository:    stub.CandidateProvenanceRepository,
 		ServingStateProvenanceRepository: stub.ServingStateProvenanceRepository,
 	}
-	_, err := Build(t.Context(), Config{Production: true, Persistence: &Persistence{Repository: unmarked, Finalization: unmarked, CandidateProvenance: unmarked, ServingProvenance: unmarked, native: unmarked}, Environment: "dev"})
+	_, err := Build(t.Context(), Config{Persistence: &Persistence{Repository: unmarked, Finalization: unmarked, CandidateProvenance: unmarked, ServingProvenance: unmarked, native: unmarked}, Environment: "dev"})
 	if err == nil || !strings.Contains(err.Error(), "PostgreSQL release persistence") {
 		t.Fatalf("unmarked native error = %v", err)
 	}
 }
 
-func TestBuildProductionRejectsUnconfiguredNativeAuthority(t *testing.T) {
+func TestBuildRejectsUnconfiguredNativePostgreSQLAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: false, audit: true, events: true, workflow: true}
-	_, err := Build(t.Context(), Config{Production: true, Persistence: &Persistence{Repository: stub, Finalization: stub, CandidateProvenance: stub, ServingProvenance: stub, native: stub}, Environment: "dev"})
+	_, err := Build(t.Context(), Config{Persistence: &Persistence{Repository: stub, Finalization: stub, CandidateProvenance: stub, ServingProvenance: stub, native: stub}, Environment: "dev"})
 	if err == nil || !strings.Contains(err.Error(), "PostgreSQL release persistence") {
 		t.Fatalf("unconfigured native error = %v", err)
 	}
 }
 
-func TestBuildProductionAcceptsConfiguredNativeAuthority(t *testing.T) {
+func TestBuildAcceptsConfiguredNativePostgreSQLAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	persistence, err := NewPostgresPersistence(stub)
 	if err != nil {
@@ -125,21 +118,21 @@ func TestBuildProductionAcceptsConfiguredNativeAuthority(t *testing.T) {
 		t.Fatal(err)
 	}
 	if module == nil {
-		t.Fatal("production native module is nil")
+		t.Fatal("native PostgreSQL module is nil")
 	}
 	if module.DeploymentLinkage() != nil {
 		t.Fatal("native module exposed deployment linkage before deployment-owned adapter injection")
 	}
 }
 
-func TestBuildProductionRequiresNativeArtifactLifecycle(t *testing.T) {
+func TestBuildRequiresNativePostgreSQLArtifactLifecycle(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	persistence, err := NewPostgresPersistence(stub)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := Build(t.Context(), Config{
-		Production: true, Persistence: &persistence, Catalog: nativeCatalogStub{configured: true},
+		Persistence: &persistence, Catalog: nativeCatalogStub{configured: true},
 		States: nativeServingStateReaderStub{}, Environment: "dev",
 	}); err == nil || !strings.Contains(err.Error(), "candidate source reader, artifact store, and storage security domain") {
 		t.Fatalf("missing native artifact lifecycle error = %v", err)
@@ -150,7 +143,7 @@ func TestBuildProductionRequiresNativeArtifactLifecycle(t *testing.T) {
 		t.Fatal(err)
 	}
 	if module.nativeCandidatePhases == nil {
-		t.Fatal("production native candidate artifact lifecycle is unavailable")
+		t.Fatal("native PostgreSQL candidate artifact lifecycle is unavailable")
 	}
 	config.StorageSecurityDomain = " invalid "
 	if _, err := Build(t.Context(), config); err == nil || !strings.Contains(err.Error(), "canonical candidate artifact storage security domain") {
@@ -158,31 +151,31 @@ func TestBuildProductionRequiresNativeArtifactLifecycle(t *testing.T) {
 	}
 }
 
-func TestBuildProductionRequiresConfiguredNativeCatalog(t *testing.T) {
+func TestBuildRequiresConfiguredNativePostgreSQLCatalog(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	persistence, err := NewPostgresPersistence(stub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Build(t.Context(), Config{Production: true, Persistence: &persistence, Environment: "dev"})
+	_, err = Build(t.Context(), Config{Persistence: &persistence, Environment: "dev"})
 	if err == nil || !strings.Contains(err.Error(), "native PostgreSQL catalog") {
 		t.Fatalf("missing catalog error = %v", err)
 	}
 }
 
-func TestBuildProductionRejectsUnmarkedDeploymentAuthority(t *testing.T) {
+func TestBuildRejectsUnmarkedNativePostgreSQLDeploymentAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	persistence, err := NewPostgresPersistence(stub)
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = Build(t.Context(), Config{Production: true, Persistence: &persistence, Catalog: nativeCatalogStub{configured: true}, Deployments: unmarkedDeploymentStub{}, Environment: "dev"})
+	_, err = Build(t.Context(), Config{Persistence: &persistence, Catalog: nativeCatalogStub{configured: true}, Deployments: unmarkedDeploymentStub{}, Environment: "dev"})
 	if err == nil || !strings.Contains(err.Error(), "native PostgreSQL deployments") {
 		t.Fatalf("unmarked deployments error = %v", err)
 	}
 }
 
-func TestBuildProductionAcceptsConfiguredDeploymentAuthority(t *testing.T) {
+func TestBuildAcceptsConfiguredNativePostgreSQLDeploymentAuthority(t *testing.T) {
 	stub := nativeReleaseStub{configured: true, audit: true, events: true, workflow: true}
 	persistence, err := NewPostgresPersistence(stub)
 	if err != nil {
@@ -206,7 +199,7 @@ func configuredNativeReleaseConfig(t *testing.T, persistence *Persistence) Confi
 		t.Fatal(err)
 	}
 	return Config{
-		Production: true, Persistence: persistence, Catalog: nativeCatalogStub{configured: true},
+		Persistence: persistence, Catalog: nativeCatalogStub{configured: true},
 		States: nativeServingStateReaderStub{}, Environment: "dev",
 		CandidateSourceReader: &nativeInspectReaderStub{}, CandidateArtifactStore: store,
 		StorageSecurityDomain: "release-test",

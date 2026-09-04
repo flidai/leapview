@@ -200,7 +200,7 @@ func TestPostgresBuildComposesPoolScopedL3Maintenance(t *testing.T) {
 	}
 	source := string(contents)
 	for _, required := range []string{
-		"if cfg.QueryCacheL3Enabled",
+		"shouldResolveL3CacheMaintenance(cfg)",
 		"analyticsl3.NewCollector(",
 		"cachepostgres.NewMaintenance(bootstrap.MaintenancePool())",
 		"SecurityDomain: contract.PhysicalPoolID",

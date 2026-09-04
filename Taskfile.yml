@@ -7,6 +7,7 @@ tasks:
   dev:
     desc: Start the managed LeapView dev server for this worktree
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap
@@ -16,6 +17,7 @@ tasks:
   dev:movielens:
     desc: Start the managed LeapView dev server with the MovieLens 32M experiment project
     cmds:
+      - task: postgres:dev:up
       - task: generate
       - task: build
       - task: bootstrap:movielens
@@ -334,6 +336,8 @@ tasks:
 
   site:product-screenshot:
     desc: Refresh light and dark homepage screenshots from the deployed Visual Showcase
+    deps:
+      - postgres:dev:up
     cmds:
       - task: generate
       - task: build
@@ -1305,12 +1309,19 @@ tasks:
   ci:lane:go:
     desc: Run the bounded Go unit and integration lane
     cmds:
+      # Local PR/full CI enters through this aggregate lane rather than the
+      # hosted package shard, so retain the SQL quality gate here as well.
+      - task: db:check
       - task: apigen:test
       - task: test:go:prepared
 
   ci:lane:go:packages:
     desc: Run non-application Go package tests
     cmds:
+      # Keep the SQL generation, PostgreSQL conformance, and audit gate out
+      # of the watchdog-wrapped shared preparation. It runs once here after
+      # preparation instead of being repeated on every preparation retry.
+      - task: db:check
       - task: quality:budget:check
       - task: quality:exceptions:check
       - task: quality:trends:report
@@ -1341,8 +1352,6 @@ tasks:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
       - task: ci:extensions:prepare
-      # Check sqlc generation before downstream aggregate generation and builds.
-      - task: db:check
       - task: generate
       - task: build
       - task: site:build
@@ -1549,5 +1558,7 @@ tasks:
 
   agent:e2e:
     desc: Run opt-in DeepSeek-backed headless agent E2E
+    deps:
+      - postgres:dev:up
     cmds:
       - bash scripts/agent_e2e.sh

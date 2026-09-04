@@ -27,10 +27,11 @@ func newPostgresDuckLakeCredentialBootstrapFactory(cfg config.Config, extensionA
 
 func newPostgresDuckLakeCredentialBootstrap(cfg config.Config, contract *ducklake.PoolContract, extensionAdmission extension.Admission) (ducklake.CredentialBootstrap, error) {
 	return postgresducklake.NewCredentialBootstrap(postgresducklake.CredentialConfig{
-		PostgresURL:        cfg.PostgresDuckLakeURL,
-		Contract:           contract,
-		ExtensionAdmission: extensionAdmission,
-		S3:                 postgresPoolS3Config(cfg, extensionAdmission),
+		PostgresURL:            cfg.PostgresDuckLakeURL,
+		AllowPlaintextLoopback: !cfg.Production,
+		Contract:               contract,
+		ExtensionAdmission:     extensionAdmission,
+		S3:                     postgresPoolS3Config(cfg, extensionAdmission),
 	})
 }
 

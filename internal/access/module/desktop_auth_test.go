@@ -103,8 +103,8 @@ func TestDesktopAuthorizationEstablishesHttpOnlySessionWithoutReturningSecret(t 
 
 	protected := module.Auth().Middleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		principal, ok := PrincipalFromContext(r.Context())
-		if !ok || principal.ID != "dev" {
-			t.Fatalf("authenticated desktop principal = %#v, %v; want dev", principal, ok)
+		if !ok || principal.ID != DevelopmentPrincipalID {
+			t.Fatalf("authenticated desktop principal = %#v, %v; want development UUID", principal, ok)
 		}
 		w.WriteHeader(http.StatusNoContent)
 	}))
@@ -329,7 +329,7 @@ func newDesktopAuthTestModule(t *testing.T) desktopAuthTestFixture {
 	if err := module.SeedLocalDeveloperPlatformAdmin(t.Context()); err != nil {
 		t.Fatalf("seed development principal: %v", err)
 	}
-	token, err := module.repositoryValue().CreateSession(t.Context(), "dev", time.Hour)
+	token, err := module.repositoryValue().CreateSession(t.Context(), DevelopmentPrincipalID, time.Hour)
 	if err != nil {
 		t.Fatalf("create browser session: %v", err)
 	}

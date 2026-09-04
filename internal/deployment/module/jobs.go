@@ -233,7 +233,11 @@ func (m *Module) activate(ctx context.Context, job jobs.Job) error {
 	})
 	if err == nil && m.jobs.ReconcileActivation != nil {
 		if reconcileErr := m.jobs.ReconcileActivation(ctx, row); reconcileErr != nil {
-			err = reconcileErr
+			// The native activation CAS commits before runtime/dashboard
+			// reconciliation. Keep the durable job retryable so a transient
+			// cutover failure does not mark an already-active publication as
+			// terminally failed; coordinator replay is idempotent.
+			return jobs.Retryable(reconcileErr, time.Second)
 		}
 	}
 	if err == nil && m.jobs.Reconcile != nil {

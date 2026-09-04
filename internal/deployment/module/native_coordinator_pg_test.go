@@ -26,7 +26,7 @@ import (
 )
 
 // These adapters intentionally live in the module's PostgreSQL conformance
-// test. Production composition owns the equivalent mappings; the module only
+// test. Native PostgreSQL composition owns the equivalent mappings; the module only
 // sees its capability-neutral projections.
 type nativePGEventPort struct {
 	repo *eventspostgres.Repository
@@ -311,6 +311,36 @@ func TestNativeCoordinatorPostgresPublishCandidatePersistsEvidenceAndReplays(t *
 	}
 	if stored.State != "pending" || stored.PublicationID != first.ID.String() || stored.TargetID != f.targetID || stored.CandidateID != f.candidate || stored.GenerationID != f.generation || stored.ActorID != request.PrincipalID || stored.RequestDigest != first.RequestDigest {
 		t.Fatalf("stored publication = %#v", stored)
+	}
+	var activationKind, activationStatus, activationPrincipal, activationPartition, activationResourceKind, activationResourceID string
+	var activationPayload []byte
+	if err := f.db.QueryRow(ctx, `SELECT kind,status,principal_id,partition_key,resource_kind,resource_id,payload::text FROM jobs.job WHERE id=$1`, "deployment:"+first.ID.String()+":activate").Scan(&activationKind, &activationStatus, &activationPrincipal, &activationPartition, &activationResourceKind, &activationResourceID, &activationPayload); err != nil {
+		t.Fatalf("unprotected activation job missing: %v", err)
+	}
+	if activationKind != "deployment.activate" || activationStatus != "queued" || activationPrincipal != request.PrincipalID || activationPartition != "deployment:project_sales:prod" || activationResourceKind != "deployment" || activationResourceID != first.ID.String() {
+		t.Fatalf("activation job identity = %q %q %q %q %q %q", activationKind, activationStatus, activationPrincipal, activationPartition, activationResourceKind, activationResourceID)
+	}
+	var activationPayloadValue ActivateJob
+	if err := json.Unmarshal(activationPayload, &activationPayloadValue); err != nil {
+		t.Fatalf("decode activation job payload: %v", err)
+	}
+	if activationPayloadValue.Project != "project_sales" || activationPayloadValue.Deployment != first.ID.String() || activationPayloadValue.Actor != request.PrincipalID || activationPayloadValue.IdempotencyKey == "" {
+		t.Fatalf("activation job payload = %#v", activationPayloadValue)
+	}
+	var activationEventType, activationEventKey string
+	var activationEventData []byte
+	if err := f.db.QueryRow(ctx, `SELECT event_type,event_key,data::text FROM jobs.event WHERE resource_kind='deployment' AND resource_id=$1`, first.ID.String()).Scan(&activationEventType, &activationEventKey, &activationEventData); err != nil {
+		t.Fatalf("activation event missing: %v", err)
+	}
+	if activationEventType != "deployment.activation_requested" || activationEventKey != "deployment.activation_requested" {
+		t.Fatalf("activation event identity = %q %q", activationEventType, activationEventKey)
+	}
+	var activationEventValue map[string]any
+	if err := json.Unmarshal(activationEventData, &activationEventValue); err != nil {
+		t.Fatalf("decode activation event data: %v", err)
+	}
+	if activationEventValue["operationId"] != "delivery.activate" || activationEventValue["deploymentId"] != first.ID.String() || activationEventValue["projectId"] != "project_sales" || activationEventValue["status"] != "queued" {
+		t.Fatalf("activation event data = %s", activationEventData)
 	}
 
 	var operationType, operationState, operationOwner, operationDigest string

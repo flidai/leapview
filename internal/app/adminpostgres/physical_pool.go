@@ -35,7 +35,13 @@ func (o Operations) BootstrapPhysicalPool(ctx context.Context, request adminoffl
 		return err
 	}
 	if !cfg.Production {
-		return ErrNativeAdminUnavailable
+		// Local development may bootstrap its loopback-only physical pool so
+		// `task dev` can exercise the complete candidate/MCP journey. The same
+		// PostgreSQL role and database boundaries remain mandatory; only TLS and
+		// production admission gates differ.
+		if err := cfg.ValidatePostgresDevelopment(); err != nil {
+			return fmt.Errorf("validate development PostgreSQL physical-pool configuration: %w", err)
+		}
 	}
 	pool, compatibilityDigest, err := validatePhysicalPoolBootstrap(request)
 	if err != nil {
@@ -120,7 +126,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 	if err != nil {
 		return result, err
 	}
-	if !cfg.PostgresRequireTLS {
+	if cfg.Production && !cfg.PostgresRequireTLS {
 		return result, errors.New("production physical-pool bootstrap requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true")
 	}
 	controlConfig := cfg.PostgresControlPlaneConfig().Migrator
@@ -229,7 +235,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 		return result, err
 	}
 	credentialBootstrap, err := postgresducklake.NewCredentialBootstrap(postgresducklake.CredentialConfig{
-		PostgresURL: catalogConfig.URL, Contract: contract, ExtensionAdmission: extensionSupply, S3: s3Config,
+		PostgresURL: catalogConfig.URL, AllowPlaintextLoopback: !cfg.Production, Contract: contract, ExtensionAdmission: extensionSupply, S3: s3Config,
 	})
 	if err != nil {
 		return result, err

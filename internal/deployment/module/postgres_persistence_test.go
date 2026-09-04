@@ -120,7 +120,7 @@ func TestNewPostgresPersistenceRejectsNonTransactionalHandle(t *testing.T) {
 	}
 }
 
-func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
+func TestBuildNativePostgreSQLPersistenceExposesModule(t *testing.T) {
 	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
@@ -138,7 +138,7 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 			return NativeDeliveryBuild{}, nil
 		},
 	}
-	m, err := Build(t.Context(), Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: nativeMutations})
+	m, err := Build(t.Context(), Config{Persistence: &persistence, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: nativeMutations})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -149,11 +149,11 @@ func TestBuildProductionNativePersistenceExposesModule(t *testing.T) {
 		t.Fatal("module did not construct the native project-claim service")
 	}
 	if _, ok := m.jobs.Coordinator.(*nativeCoordinator); !ok {
-		t.Fatalf("built production coordinator has type %T, want native coordinator", m.jobs.Coordinator)
+		t.Fatalf("built native PostgreSQL coordinator has type %T, want native coordinator", m.jobs.Coordinator)
 	}
 }
 
-func TestBuildProductionNativePersistenceRequiresMutationAuthority(t *testing.T) {
+func TestBuildNativePostgreSQLPersistenceRequiresMutationAuthority(t *testing.T) {
 	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
@@ -165,7 +165,6 @@ func TestBuildProductionNativePersistenceRequiresMutationAuthority(t *testing.T)
 	}
 	config := Config{
 		Persistence:          &persistence,
-		Production:           true,
 		InstanceID:           "target",
 		InstanceEnvironment:  "prod",
 		NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{},
@@ -176,13 +175,13 @@ func TestBuildProductionNativePersistenceRequiresMutationAuthority(t *testing.T)
 	}
 }
 
-func TestBuildProductionNativePersistenceRejectsMissingMutationAuthority(t *testing.T) {
+func TestBuildNativePostgreSQLPersistenceRejectsMissingMutationAuthority(t *testing.T) {
 	repository := postgres.NewWithOptions(deploymentDBStub{}, postgres.Options{ActivationAudit: activationAuditStub{}})
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {
 		t.Fatal(err)
 	}
-	base := Config{Persistence: &persistence, Production: true, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: NativeDeliveryMutationFuncs{Plan: func(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error) {
+	base := Config{Persistence: &persistence, InstanceID: "target", InstanceEnvironment: "prod", NativeDeliveryEvents: nativeEventStub{}, NativeDeliveryAudit: nativeAuditStub{}, NativeDeliveryWorkflow: nativeWorkflowStub{}, NativeOperationAuthority: nativeOperationStub{}, NativeDeliveryMutations: NativeDeliveryMutationFuncs{Plan: func(context.Context, NativeDeliveryPlanRequest) (NativeDeliveryPlan, error) {
 		return NativeDeliveryPlan{}, nil
 	}, Build: func(context.Context, NativeDeliveryBuildRequest) (NativeDeliveryBuild, error) {
 		return NativeDeliveryBuild{}, nil

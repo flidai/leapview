@@ -67,6 +67,30 @@ func TestPostgresCredentialBootstrapRejectsUnsafeURLOptions(t *testing.T) {
 	}
 }
 
+func TestPostgresCredentialBootstrapAllowsLoopbackDevelopmentTLSDisable(t *testing.T) {
+	bootstrap, err := newPostgresDuckLakeCredentialBootstrap(config.Config{PostgresDuckLakeURL: "postgres://user:secret@127.0.0.1:55432/ducklake?sslmode=disable"}, nil, postgresCredentialAdmission{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	execer := &postgresCredentialExecer{}
+	if err := bootstrap(context.Background(), execer); err != nil {
+		t.Fatal(err)
+	}
+	if len(execer.statements) != 2 || !strings.Contains(execer.statements[1], "SSLMODE 'disable'") {
+		t.Fatalf("loopback development bootstrap statements = %#v", execer.statements)
+	}
+}
+
+func TestPostgresCredentialBootstrapProductionRejectsLoopbackTLSDisable(t *testing.T) {
+	_, err := newPostgresDuckLakeCredentialBootstrap(config.Config{
+		Production:          true,
+		PostgresDuckLakeURL: "postgres://user:secret@127.0.0.1:55432/ducklake?sslmode=disable",
+	}, nil, postgresCredentialAdmission{})
+	if err == nil || !strings.Contains(err.Error(), "requires TLS") {
+		t.Fatalf("production loopback plaintext credential unexpectedly accepted: %v", err)
+	}
+}
+
 func TestPostgresCredentialBootstrapRejectsUntrustedScannerAdmission(t *testing.T) {
 	base := extension.AdmittedExtension{Name: "postgres", Identity: "fixture/postgres", Version: "v1", Platform: "linux_amd64", Digest: "sha256:0000000000000000000000000000000000000000000000000000000000000000", Path: "/opt/leapview/extensions/postgres_scanner.duckdb_extension"}
 	for _, mutate := range []func(*extension.AdmittedExtension){

@@ -106,8 +106,10 @@ func TestActivationJobRequiresPostCommitReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := module.activate(t.Context(), jobs.Job{Payload: payload}); !errors.Is(err, reconcileErr) {
-		t.Fatalf("activation reconciliation error = %v, want %v", err, reconcileErr)
+	firstErr := module.activate(t.Context(), jobs.Job{Payload: payload})
+	var retryErr *jobs.RetryError
+	if !errors.As(firstErr, &retryErr) || !errors.Is(firstErr, reconcileErr) || retryErr.Delay != time.Second {
+		t.Fatalf("activation reconciliation error = %v, want retryable %v", firstErr, reconcileErr)
 	}
 	if !coordinator.activated || reconciled != 1 {
 		t.Fatalf("activated=%t reconciled=%d", coordinator.activated, reconciled)

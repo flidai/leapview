@@ -16,7 +16,7 @@ import (
 // Persistence is the deployment module's native authority bundle.  It is
 // deliberately constructed only by NewPostgresPersistence: the unexported
 // authority marker and repository identity prevent a test double from being
-// labelled as the production PostgreSQL authority.
+// labelled as the native PostgreSQL authority.
 //
 // The native delivery repository exposes the clean-slate candidate, project
 // claim, delivery-reader, and activation surfaces directly. These surfaces use
@@ -37,7 +37,7 @@ type Persistence struct {
 }
 
 // NativePersistenceCapabilities is the complete cross-capability dependency
-// set required by production HTTP mutations. Each port receives the same
+// set required by native PostgreSQL HTTP mutations. Each port receives the same
 // caller-owned pgx transaction as the delivery repository.
 type NativePersistenceCapabilities struct {
 	Events     NativeDeliveryEventAppender
@@ -288,7 +288,7 @@ type NativeCandidateRepository interface {
 }
 
 // NativeDeliveryReader is the read-only clean-slate PostgreSQL delivery
-// surface used by production composition.
+// surface used by native PostgreSQL composition.
 type NativeDeliveryReader interface {
 	Plan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)
 	LoadPlan(context.Context, string) (deploymentpostgres.DeliveryPlan, error)
@@ -347,9 +347,10 @@ func NewPostgresPersistence(repository *deploymentpostgres.Repository) (Persiste
 	}, nil
 }
 
-// NewPostgresPersistenceWithCapabilities constructs the production authority
-// bundle and fails closed when any transactional consequence port is absent.
-// Build applies the same strict check whenever production is enabled.
+// NewPostgresPersistenceWithCapabilities constructs the native PostgreSQL
+// authority bundle and fails closed when any transactional consequence port is absent.
+// Build applies the same strict check whenever native PostgreSQL persistence is
+// enabled.
 func NewPostgresPersistenceWithCapabilities(repository *deploymentpostgres.Repository, capabilities NativePersistenceCapabilities) (Persistence, error) {
 	persistence, err := NewPostgresPersistence(repository)
 	if err != nil {

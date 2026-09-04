@@ -24,7 +24,9 @@ flowchart LR
 
 ## Start the sample project
 
-Prepare the Olist sample data and start the managed development server:
+Prepare the Olist sample data and start the managed development server. The
+development task provisions a worktree-local PostgreSQL service and admits
+its local physical pool before publishing the sample candidate:
 
 ```sh
 task bootstrap

@@ -3349,6 +3349,17 @@ func TestContinuousIntegrationHasExplicitPRFullAndNightlyTiers(t *testing.T) {
 			t.Fatalf("ci:prepare missing %q", want)
 		}
 	}
+	if strings.Contains(prepare, "- task: db:check") {
+		t.Fatal("ci:prepare must not repeat the SQL quality gate on watchdog retries")
+	}
+	packagesLane := taskfileTaskBlock(t, taskfile, "ci:lane:go:packages")
+	if !strings.Contains(packagesLane, "- task: db:check") {
+		t.Fatal("Go package lane must run the SQL quality gate once after shared preparation")
+	}
+	aggregateGoLane := taskfileTaskBlock(t, taskfile, "ci:lane:go")
+	if !strings.Contains(aggregateGoLane, "- task: db:check") {
+		t.Fatal("local Go aggregate lane must retain the SQL quality gate")
+	}
 	for _, lane := range []string{"ci:lane:go", "ci:lane:frontend"} {
 		if !strings.Contains(taskfile, "  "+lane+":\n") {
 			t.Fatalf("Taskfile missing bounded CI lane %q", lane)
@@ -4373,7 +4384,7 @@ func TestFixedPlatformSQLiteQueriesUseSQLC(t *testing.T) {
 func TestAPIv1SQLiteAdaptersUseSQLC(t *testing.T) {
 	packages := map[string]struct{}{
 		"internal/platform/http/idempotency/sqlite": {},
-		"internal/jobs/sqlite":                      {},
+		"internal/platform/jobs/sqlite":             {},
 	}
 	for _, file := range productionGoFiles(t) {
 		if _, ok := packages[file.pkgDir]; !ok {

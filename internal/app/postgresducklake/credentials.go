@@ -7,6 +7,7 @@ import (
 	"database/sql/driver"
 	"errors"
 	"fmt"
+	"net"
 	"net/url"
 	"path/filepath"
 	"strconv"
@@ -24,10 +25,15 @@ const (
 )
 
 type CredentialConfig struct {
-	PostgresURL        string
-	Contract           *ducklake.PoolContract
-	ExtensionAdmission extension.Admission
-	S3                 gcadapter.S3Config
+	PostgresURL string
+	// AllowPlaintextLoopback is an explicit development-only policy. TLS may
+	// be disabled for the worktree-scoped loopback PostgreSQL helper, but
+	// callers must opt in; a loopback URL alone never weakens production
+	// transport requirements.
+	AllowPlaintextLoopback bool
+	Contract               *ducklake.PoolContract
+	ExtensionAdmission     extension.Admission
+	S3                     gcadapter.S3Config
 }
 
 // NewCredentialBootstrap validates one explicit PostgreSQL credential and
@@ -85,7 +91,7 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 	if configured := strings.TrimSpace(parsed.Query().Get("sslmode")); configured != "" {
 		sslMode = configured
 	}
-	if sslMode != "require" && sslMode != "verify-ca" && sslMode != "verify-full" {
+	if sslMode != "require" && sslMode != "verify-ca" && sslMode != "verify-full" && !(sslMode == "disable" && config.AllowPlaintextLoopback && postgresLoopbackHost(parsed.Hostname())) {
 		return nil, errors.New("PostgreSQL DuckLake credential bootstrap requires TLS")
 	}
 
@@ -126,3 +132,12 @@ func NewCredentialBootstrap(config CredentialConfig) (ducklake.CredentialBootstr
 }
 
 func sqlLiteral(value string) string { return strings.ReplaceAll(value, "'", "''") }
+
+func postgresLoopbackHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(strings.TrimSpace(host), "."))
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}

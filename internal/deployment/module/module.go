@@ -153,11 +153,10 @@ var (
 type ActivationPreCommitHook func(context.Context) error
 
 type Config struct {
-	// Persistence is the native PostgreSQL delivery authority. Production
-	// callers construct it with NewPostgresPersistence; the module never infers
-	// an adapter from a raw database handle.
+	// Persistence is the native PostgreSQL delivery authority. Callers
+	// construct it with NewPostgresPersistence; the module never infers an
+	// adapter from a raw database handle.
 	Persistence              *Persistence
-	Production               bool
 	Logger                   *slog.Logger
 	InstanceID               string
 	CanonicalOrigin          string
@@ -206,7 +205,7 @@ type Config struct {
 	API                      APIConfig
 	PublicationAuthorization PublicationAuthorizationConfig
 	// NativeDeliveryMutations is the clean-slate PostgreSQL plan/build port.
-	// Native production composition must inject this port; HTTP plan/build
+	// Native PostgreSQL composition must inject this port; HTTP plan/build
 	// handlers never fall back to a broad delivery lifecycle contract.
 	NativeDeliveryMutations NativeDeliveryMutationPort
 	// NativeDeliveryPublication is the clean-slate PostgreSQL publication and
@@ -214,15 +213,15 @@ type Config struct {
 	// those authorities cannot activate or publish inline.
 	NativeDeliveryPublication NativeDeliveryPublicationPort
 	// NativeDeliveryApproval owns publication-scoped request and decision
-	// transitions. Production must provide it whenever native persistence is
-	// enabled; no candidate-wide approval fallback is permitted.
+	// transitions. Native PostgreSQL composition must provide it whenever native
+	// persistence is enabled; no candidate-wide approval fallback is permitted.
 	NativeDeliveryApproval NativeDeliveryApprovalPort
 	// NativeDeliveryReader is the clean-slate PostgreSQL read port. It is
 	// the only delivery read authority; projections with weaker identity
-	// guarantees are not accepted by the production module.
+	// guarantees are not accepted by the native PostgreSQL module.
 	NativeDeliveryReader NativeDeliveryReader
 	// Native source-mutation capabilities are strict transaction-bound ports.
-	// Production PostgreSQL composition must provide all four; no
+	// Native PostgreSQL composition must provide all four; no
 	// cross-connection fallback is permitted.
 	NativeDeliveryEvents     NativeDeliveryEventAppender
 	NativeDeliveryAudit      NativeDeliveryAuditAppender
@@ -237,15 +236,12 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	if err := config.Persistence.validate(); err != nil {
 		return nil, err
 	}
-	if !config.Production {
-		return nil, errors.New("native PostgreSQL persistence requires production deployment mode")
-	}
 	if config.Persistence.isPostgres() {
-		// Native PostgreSQL delivery is the only production mutation authority.
+		// Native PostgreSQL delivery is the sole mutation authority.
 		// Requiring this port here prevents a partially composed module from
 		// exposing a mutation route without its canonical authority.
 		if config.NativeDeliveryMutations == nil {
-			return nil, errors.New("production native deployment requires delivery mutation authority")
+			return nil, errors.New("native PostgreSQL deployment requires delivery mutation authority")
 		}
 		if config.NativeDeliveryEvents == nil {
 			config.NativeDeliveryEvents = config.Persistence.Events
@@ -269,10 +265,10 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.NativeDeliveryApproval = approvalPort
 		}
 		if config.NativeDeliveryEvents == nil || config.NativeDeliveryAudit == nil || config.NativeDeliveryWorkflow == nil || config.NativeOperationAuthority == nil {
-			return nil, errors.New("production native deployment requires delivery event, audit, workflow, and operation authorities")
+			return nil, errors.New("native PostgreSQL deployment requires delivery event, audit, workflow, and operation authorities")
 		}
 		if config.NativeDeliveryApproval == nil {
-			return nil, errors.New("production native deployment requires publication approval authority")
+			return nil, errors.New("native PostgreSQL deployment requires publication approval authority")
 		}
 		if config.NativeDeliveryReader == nil {
 			// The validated persistence bundle owns the native reader. Keep this
@@ -281,7 +277,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 			config.NativeDeliveryReader = config.Persistence.DeliveryReader
 		}
 		if config.NativeDeliveryReader == nil {
-			return nil, errors.New("production native deployment requires a delivery reader")
+			return nil, errors.New("native PostgreSQL deployment requires a delivery reader")
 		}
 	}
 	executions, err := loadDeploymentExecutionContracts()
@@ -299,7 +295,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	var coordinator deploymenthttp.Coordinator
 	var projectClaims *deployment.ProjectClaimService
 	var candidateRuntimes *deployment.CandidateRuntimeService
-	// Native production HTTP requests are coordinated directly against the
+	// Native PostgreSQL HTTP requests are coordinated directly against the
 	// canonical PostgreSQL delivery authority. No legacy service or adapter is
 	// introduced on this path.
 	var coordinatorErr error
@@ -312,7 +308,7 @@ func Build(_ context.Context, config Config) (*Module, error) {
 	}
 	// The native coordinator owns pending publish/rollback creation as a
 	// separate authority from plan/build. Keep an explicit caller override
-	// possible, while ensuring production PostgreSQL composition cannot
+	// possible, while ensuring native PostgreSQL composition cannot
 	// accidentally fall back to a non-native mutation port.
 	if config.NativeDeliveryPublication == nil {
 		if publicationPort, ok := coordinator.(NativeDeliveryPublicationPort); ok {

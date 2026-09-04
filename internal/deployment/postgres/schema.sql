@@ -932,6 +932,36 @@ BEGIN
 END;
 $$;
 
+-- Identity reads that participate in retention-root lifecycle transitions use
+-- this narrow SECURITY DEFINER capability.  Serving roles intentionally lack
+-- direct UPDATE/DELETE (and therefore PostgreSQL row-lock privileges), while
+-- this function keeps the root locked until the caller's transaction commits.
+CREATE OR REPLACE FUNCTION delivery.lock_retention_root(p_root_id uuid)
+RETURNS TABLE (
+    target_id text,
+    candidate_id text,
+    generation_id text,
+    snapshot_seal_id text,
+    root_kind text,
+    state text,
+    expires_at timestamptz
+)
+LANGUAGE sql
+SECURITY DEFINER
+SET search_path = pg_catalog, delivery
+AS $$
+    SELECT r.target_id,
+           COALESCE(r.candidate_id::text, ''),
+           COALESCE(r.generation_id::text, ''),
+           COALESCE(r.snapshot_seal_id::text, ''),
+           r.root_kind,
+           r.state,
+           r.expires_at
+      FROM delivery.delivery_retention_root AS r
+     WHERE r.root_id = p_root_id
+     FOR UPDATE;
+$$;
+
 -- Retention-root lifecycle entry points.  Roots are capability-owned reach-
 -- ability records: callers may only advance them live -> retiring -> expired.
 -- Each function locks the root before checking state.  Serving-state reader
@@ -1342,9 +1372,11 @@ REVOKE ALL ON FUNCTION delivery.retire_retention_root(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
 DO $$
 BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_runtime') THEN
+        GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_runtime;
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
         -- Expiry is maintenance/drain-owned. Runtime activation may retire
         -- predecessors but cannot force their terminal expiry.
@@ -1352,6 +1384,7 @@ BEGIN
     IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'leapview_control_maintenance') THEN
         GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
         GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
+        GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.expire_retention_root(uuid, interval) TO leapview_control_maintenance;
         GRANT EXECUTE ON FUNCTION delivery.maintain_retention_roots(text, text, interval, integer) TO leapview_control_maintenance;

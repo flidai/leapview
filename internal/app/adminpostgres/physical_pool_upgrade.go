@@ -211,7 +211,7 @@ func upgradeNativePhysicalPoolCatalog(ctx context.Context, cfg config.Config, re
 		return admincli.CatalogUpgradeResult{}, errors.New("target physical-pool admission returned different compatibility evidence")
 	}
 	credentialBootstrap, err := postgresducklake.NewCredentialBootstrap(postgresducklake.CredentialConfig{
-		PostgresURL: catalogConfig.URL, Contract: contract, ExtensionAdmission: extensionSupply, S3: s3Config,
+		PostgresURL: catalogConfig.URL, AllowPlaintextLoopback: !cfg.Production, Contract: contract, ExtensionAdmission: extensionSupply, S3: s3Config,
 	})
 	if err != nil {
 		return admincli.CatalogUpgradeResult{}, err

@@ -99,7 +99,7 @@ func TestPlanDeliveryPhysicalAuthorityGuards(t *testing.T) {
 		t.Fatal(err)
 	}
 	productionBuildText := string(productionBuild)
-	for _, required := range []string{"BuildProduction", "buildPostgresProductionTarget"} {
+	for _, required := range []string{"BuildProduction", "buildPostgresTarget"} {
 		if !strings.Contains(productionBuildText, required) {
 			t.Errorf("production entrypoint missing PostgreSQL delivery gate %q", required)
 		}
@@ -224,7 +224,7 @@ func TestLEA414ProductionUsesSealedCanonicalPath(t *testing.T) {
 		t.Fatal(err)
 	}
 	productionBuild := string(productionBuildBytes)
-	for _, required := range []string{"BuildProduction", "buildPostgresProductionTarget"} {
+	for _, required := range []string{"BuildProduction", "buildPostgresTarget"} {
 		if !strings.Contains(productionBuild, required) {
 			t.Errorf("production entrypoint missing FAI-575 gate %q", required)
 		}

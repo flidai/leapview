@@ -34,8 +34,8 @@ func (p apiProtocolPersistence) authorities() (idempotency.Store, cursorsigning.
 		return nil, nil, errors.New("production API protocol requires explicit durable authorities")
 	}
 	// Profile-only/test assemblies may intentionally use process-local
-	// authorities. Local application composition constructs and injects its
-	// SQLite authorities explicitly before entering this seam.
+	// authorities. Runnable application composition always injects the native
+	// PostgreSQL authorities before entering this seam.
 	return idempotency.NewMemoryStore(), cursorsigning.NewEphemeralInitializer(), nil
 }
 

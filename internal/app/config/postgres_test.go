@@ -132,6 +132,44 @@ func TestValidatePostgresProductionFailsClosedWithoutMaintenance(t *testing.T) {
 	}
 }
 
+func validDevelopmentPostgresConfig() Config {
+	return Config{
+		PostgresExpectedMajor:                   18,
+		PostgresRequireTLS:                      false,
+		PostgresControlURL:                      "postgres://runtime:secret@127.0.0.1:55432/control?sslmode=disable",
+		PostgresControlMigratorURL:              "postgres://migrator:secret@127.0.0.1:55432/control?sslmode=disable",
+		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@127.0.0.1:55432/control?sslmode=disable",
+		PostgresControlReadonlyURL:              "postgres://readonly:secret@127.0.0.1:55432/control?sslmode=disable",
+		PostgresDuckLakeURL:                     "postgres://ducklake:secret@127.0.0.1:55432/ducklake?sslmode=disable",
+		PostgresDuckLakeMaintenanceURL:          "postgres://catalog-maintenance:secret@127.0.0.1:55432/ducklake?sslmode=disable",
+		PostgresControlRuntimeRole:              "runtime",
+		PostgresControlMigratorRole:             "migrator",
+		PostgresControlReadonlyRole:             "readonly",
+		PostgresControlMaintenanceRole:          postgresControlMaintenanceRole,
+		PostgresDuckLakeRuntimeRole:             "ducklake",
+		PostgresDuckLakeMaintenanceRole:         "catalog-maintenance",
+		PostgresControlIntent:                   "read-write",
+		PostgresDuckLakeIntent:                  "read-write",
+		DeliveryPhysicalPoolID:                  "",
+		DeliveryPhysicalPoolCompatibilityDigest: "",
+	}
+}
+
+func TestValidatePostgresDevelopmentAllowsLoopbackPlaintextWithoutPoolAdmission(t *testing.T) {
+	cfg := validDevelopmentPostgresConfig()
+	if err := cfg.ValidatePostgresDevelopment(); err != nil {
+		t.Fatalf("valid loopback development PostgreSQL config rejected: %v", err)
+	}
+}
+
+func TestValidatePostgresDevelopmentRejectsRemotePlaintext(t *testing.T) {
+	cfg := validDevelopmentPostgresConfig()
+	cfg.PostgresDuckLakeURL = "postgres://ducklake:secret@db.internal:5432/ducklake?sslmode=disable"
+	if err := cfg.ValidatePostgresDevelopment(); err == nil || !strings.Contains(err.Error(), "loopback") {
+		t.Fatalf("remote plaintext development URL accepted: %v", err)
+	}
+}
+
 func TestValidatePostgresProductionRejectsPlaintextAndReadOnlyRuntime(t *testing.T) {
 	base := Config{
 		Production:                     true,

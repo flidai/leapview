@@ -226,23 +226,25 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimeCatalogIdentitySelect || !runtimeDeliveryAttemptSelect || !runtimeDeliverySealSelect || !runtimeServingBundleSelect {
 		t.Fatalf("native delivery identity reads missing: catalog_identity=%t delivery_attempt=%t delivery_seal=%t serving_bundle=%t", runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect)
 	}
-	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootExpire, maintenanceRootMaintain bool
+	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenanceRootExpire, maintenanceRootMaintain bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'SELECT'),
 		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'INSERT'),
 		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'DELETE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.lock_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.retire_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
 		       has_table_privilege('leapview_control_maintenance', 'delivery.delivery_retention_root', 'SELECT'),
+		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE')`).
-		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootExpire, &maintenanceRootMaintain); err != nil {
+		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootLock, &maintenanceRootExpire, &maintenanceRootMaintain); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootExpire || !maintenanceRootMaintain {
-		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete=%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/expire/maintain=%t/%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootExpire, maintenanceRootMaintain)
+	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootLock || !maintenanceRootExpire || !maintenanceRootMaintain {
+		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock=%t/%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/lock/expire/maintain=%t/%t/%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenanceRootExpire, maintenanceRootMaintain)
 	}
 	var runtimeRetentionSelect, runtimeRetentionInsert, runtimeRetentionUpdate, runtimeRetentionDelete, runtimeRetentionExecute bool
 	var readonlyRetentionExecute, maintenanceRetentionExecute, backupRetentionExecute bool
@@ -275,6 +277,18 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if _, err := db.Exec(ctx, `UPDATE audit.audit_event SET action = 'tampered' WHERE audit_id = '00000000-0000-0000-0000-000000000002'`); err == nil {
 		t.Fatal("audit append-only trigger did not reject an update")
 	}
+	const retentionLockTarget = "target:runtime-retention-lock"
+	const retentionLockRoot = "00000000-0000-0000-0000-000000000005"
+	if _, err := db.Exec(ctx, `
+		INSERT INTO delivery.delivery_target(target_id, project_id, environment)
+		VALUES ($1, 'project:runtime-retention-lock', 'dev')`, retentionLockTarget); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `
+		INSERT INTO delivery.delivery_retention_root(root_id, target_id, root_kind, state)
+		VALUES ($1::uuid, $2, 'query', 'live')`, retentionLockRoot, retentionLockTarget); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO event.event_log
 		    (event_id, scope_id, aggregate_type, aggregate_id, aggregate_version,
@@ -294,6 +308,16 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	defer runtimeConn.Release()
 	if _, err := runtimeConn.Exec(ctx, `SET ROLE leapview_control_runtime`); err != nil {
 		t.Fatal(err)
+	}
+	var lockedTarget, lockedKind, lockedState string
+	if err := runtimeConn.QueryRow(ctx, `SELECT target_id,root_kind,state FROM delivery.lock_retention_root($1::uuid)`, retentionLockRoot).Scan(&lockedTarget, &lockedKind, &lockedState); err != nil {
+		t.Fatalf("runtime retention-root lock capability: %v", err)
+	}
+	if lockedTarget != retentionLockTarget || lockedKind != "query" || lockedState != "live" {
+		t.Fatalf("runtime retention-root lock identity = %q/%q/%q", lockedTarget, lockedKind, lockedState)
+	}
+	if _, err := runtimeConn.Exec(ctx, `UPDATE delivery.delivery_retention_root SET state = state WHERE root_id = $1::uuid`, retentionLockRoot); err == nil {
+		t.Fatal("runtime retention-root UPDATE unexpectedly succeeded")
 	}
 	if _, err := runtimeConn.Exec(ctx, `
 		INSERT INTO dashboard.view_session

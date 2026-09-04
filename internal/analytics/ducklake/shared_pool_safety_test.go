@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path"
@@ -187,24 +188,36 @@ func TestScheduledRetentionHasNoNativeDuckLakeMaintenanceSQL(t *testing.T) {
 	if !ok {
 		t.Fatal("runtime.Caller failed")
 	}
-	retentionDir := filepath.Join(filepath.Dir(filename), "..", "..", "servingstate", "retention")
-	entries, err := os.ReadDir(retentionDir)
-	if err != nil {
-		t.Fatal(err)
+	// Retention scheduling moved into the PostgreSQL-owned coordinators and
+	// serving-state inventory. The physical maintenance executor remains in
+	// this package and is intentionally excluded because it owns the native
+	// calls that the scheduler must never embed.
+	retentionRoots := []string{
+		filepath.Join(filepath.Dir(filename), "postgres"),
+		filepath.Join(filepath.Dir(filename), "..", "..", "servingstate", "postgres"),
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
-			continue
-		}
-		contents, err := os.ReadFile(filepath.Join(retentionDir, entry.Name()))
+	for _, root := range retentionRoots {
+		err := filepath.WalkDir(root, func(filePath string, entry fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") || strings.HasSuffix(entry.Name(), "_test.go") {
+				return nil
+			}
+			contents, err := os.ReadFile(filePath)
+			if err != nil {
+				return err
+			}
+			text := strings.ToLower(string(contents))
+			for _, token := range []string{"ducklake_cleanup_old_files", "ducklake_delete_orphaned_files", "ducklake_merge_adjacent_files", "ducklake_rewrite_data_files"} {
+				if strings.Contains(text, token) {
+					return fmt.Errorf("scheduled retention embeds native DuckLake maintenance SQL %q in %s", token, filePath)
+				}
+			}
+			return nil
+		})
 		if err != nil {
 			t.Fatal(err)
-		}
-		text := strings.ToLower(string(contents))
-		for _, token := range []string{"ducklake_cleanup_old_files", "ducklake_delete_orphaned_files", "ducklake_merge_adjacent_files", "ducklake_rewrite_data_files"} {
-			if strings.Contains(text, token) {
-				t.Fatalf("scheduled retention embeds native DuckLake maintenance SQL %q in %s", token, entry.Name())
-			}
 		}
 	}
 }

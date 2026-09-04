@@ -399,7 +399,14 @@ func (r *Repository) RequireGenerationRootTx(ctx context.Context, tx Tx, targetI
 	if err != nil {
 		return err
 	}
-	root, err := depdb.New(tx).LockRetainedGenerationRoot(contextOrBackground(ctx), depdb.LockRetainedGenerationRootParams{TargetID: target, GenerationID: dbUUID(generation)})
+	found, err := depdb.New(tx).FindRetainedGenerationRoot(contextOrBackground(ctx), depdb.FindRetainedGenerationRootParams{TargetID: target, GenerationID: dbUUID(generation)})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
+	}
+	if err != nil {
+		return err
+	}
+	root, err := depdb.New(tx).GetRetentionRootIdentity(contextOrBackground(ctx), dbUUID(found.RootID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: rollback generation retention root is unavailable", ErrConflict)
 	}
@@ -440,7 +447,7 @@ func (r *Repository) RequireRollbackRootTx(ctx context.Context, tx Tx, rootID, t
 	if err != nil {
 		return err
 	}
-	row, err := depdb.New(tx).LockRetentionRoot(contextOrBackground(ctx), dbUUID(root))
+	row, err := depdb.New(tx).GetRetentionRootIdentity(contextOrBackground(ctx), dbUUID(root))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return fmt.Errorf("%w: rollback publication retention root is unavailable", ErrConflict)
 	}
@@ -3819,15 +3826,22 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 			return ActivationResult{}, err
 		}
 	}
-	// Lock the predecessor generation while the target row is still locked. The
-	// root lock is held through the pointer CAS below, preventing a concurrent
-	// reader lease admission while the active generation changes. Retirement is
-	// performed after the pointer update because the definer capability refuses
-	// to retire whichever generation is still selected by the active pointer.
+	// Find and lock the predecessor generation while the target row is still
+	// locked. The target lock serializes activation; the SECURITY DEFINER
+	// identity capability retains the root lock through this transaction, and
+	// the retirement capability refuses to retire whichever generation remains
+	// selected by the active pointer.
 	// The first activation has no predecessor root.
-	var predecessor depdb.LockLiveGenerationRootRow
+	var predecessor depdb.FindLiveGenerationRootRow
 	if currentGeneration != "" {
-		locked, rootErr := depdb.New(tx).LockLiveGenerationRoot(ctx, depdb.LockLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(currentGeneration)})
+		found, rootErr := depdb.New(tx).FindLiveGenerationRoot(ctx, depdb.FindLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(currentGeneration)})
+		if errors.Is(rootErr, pgx.ErrNoRows) {
+			return ActivationResult{}, fmt.Errorf("%w: active generation retention root is unavailable", ErrConflict)
+		}
+		if rootErr != nil {
+			return ActivationResult{}, rootErr
+		}
+		locked, rootErr := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(found.RootID))
 		if errors.Is(rootErr, pgx.ErrNoRows) {
 			return ActivationResult{}, fmt.Errorf("%w: active generation retention root is unavailable", ErrConflict)
 		}
@@ -3837,7 +3851,12 @@ func (r *Repository) activateTx(ctx context.Context, tx Tx, in ActivationInput, 
 		if locked.TargetID != target || locked.GenerationID != currentGeneration || locked.RootKind != "generation" || locked.State != "live" {
 			return ActivationResult{}, fmt.Errorf("%w: predecessor retention root identity differs", ErrConflict)
 		}
-		predecessor = locked
+		if found.RootID == "" {
+			return ActivationResult{}, fmt.Errorf("%w: predecessor retention root identity is incomplete", ErrConflict)
+		}
+		// Keep the root ID returned by the lookup for the capability retirement
+		// call; the locked identity above is revalidated before proceeding.
+		predecessor = found
 	}
 	newRev := currentRev + 1
 	targetUpdated, err := depdb.New(tx).UpdateTargetRevision(ctx, depdb.UpdateTargetRevisionParams{TargetID: target, NewRevision: newRev, ExpectedRevision: currentRev})
@@ -3929,7 +3948,7 @@ func (r *Repository) verifyActivationLineage(ctx context.Context, tx Tx, targetI
 func DeliveryResultError(err error) (ActivationResult, error) { return ActivationResult{}, err }
 
 func (r *Repository) retireCandidateRootForActivation(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
-	row, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(p.CandidateID))
+	row, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(p.CandidateID))
 	if errors.Is(err, pgx.ErrNoRows) {
 		// Direct authority callers may construct already-retained generations
 		// without the higher-level generation-admission coordinator. There is no
@@ -3975,10 +3994,17 @@ func activationMetadata(p DeliveryPublication) json.RawMessage {
 }
 
 func ensureActivationRoot(ctx context.Context, tx Tx, p DeliveryPublication, target string) error {
-	row, err := depdb.New(tx).LockLiveGenerationRoot(ctx, depdb.LockLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(p.GenerationID)})
+	found, err := depdb.New(tx).FindLiveGenerationRoot(ctx, depdb.FindLiveGenerationRootParams{TargetID: target, GenerationID: dbUUID(p.GenerationID)})
 	if errors.Is(err, pgx.ErrNoRows) {
 		err = depdb.New(tx).InsertGenerationRoot(ctx, depdb.InsertGenerationRootParams{RootID: dbUUID(generationRootID(p.PublicationID)), TargetID: target, CandidateID: dbUUID(p.CandidateID), GenerationID: dbUUID(p.GenerationID), SnapshotSealID: dbUUID(p.SnapshotSealID)})
 		return err
+	}
+	if err != nil {
+		return err
+	}
+	row, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(found.RootID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return fmt.Errorf("%w: activation retention root disappeared", ErrConflict)
 	}
 	if err != nil {
 		return err
@@ -4183,7 +4209,7 @@ func (r *Repository) RetireRetentionRootTx(ctx context.Context, tx Tx, rootID st
 		return DeliveryRetentionRoot{}, err
 	}
 	ctx = contextOrBackground(ctx)
-	locked, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(id))
+	locked, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryRetentionRoot{}, ErrNotFound
 	}
@@ -4230,7 +4256,7 @@ func (r *Repository) ExpireRetentionRootTx(ctx context.Context, tx Tx, rootID st
 		interval.Microseconds = grace[0].Microseconds()
 	}
 	ctx = contextOrBackground(ctx)
-	locked, err := depdb.New(tx).LockRetentionRoot(ctx, dbUUID(id))
+	locked, err := depdb.New(tx).GetRetentionRootIdentity(ctx, dbUUID(id))
 	if errors.Is(err, pgx.ErrNoRows) {
 		return DeliveryRetentionRoot{}, ErrNotFound
 	}

@@ -126,9 +126,6 @@ func configuredListenURL(addr string) string {
 }
 
 func accessAuthConfig(cfg config.Config, production, cookieSecure bool) accessmodule.AuthConfig {
-	if !production {
-		return accessmodule.AuthConfig{DevBypass: true, DevAPIToken: cfg.DevAPIToken, CSRFKey: cfg.CSRFKey}
-	}
 	providers := []accessmodule.OIDCProviderConfig{}
 	if cfg.OIDCConfigured() {
 		providers = append(providers, accessmodule.OIDCProviderConfig{
@@ -137,7 +134,7 @@ func accessAuthConfig(cfg config.Config, production, cookieSecure bool) accessmo
 		})
 	}
 	return accessmodule.AuthConfig{
-		DevBypass: cfg.DevAuthBypass, DevAPIToken: cfg.DevAPIToken, APITokenOnly: cfg.APITokenOnlyAuth,
+		DevBypass: !production && cfg.DevAuthBypass, DevAPIToken: cfg.DevAPIToken, APITokenOnly: cfg.APITokenOnlyAuth,
 		LocalAuth: cfg.LocalAuth, AzureClientID: cfg.AzureClientID, AzureSecret: cfg.AzureSecret,
 		AzureCallback: cfg.AzureCallbackURL, AzureTenant: cfg.AzureTenant, CSRFKey: cfg.CSRFKey,
 		CookieSecure: cookieSecure, BootstrapTenant: cfg.AzureTenant, OIDCProviders: providers,

@@ -108,8 +108,8 @@ func hasActiveBootstrapServingState(
 	if activeCount > 0 {
 		return true, nil
 	}
-	// The legacy scope table is used only by local/offline compositions that do
-	// not provide a canonical target authority.
+	// A focused test/profile assembly may omit the canonical target authority;
+	// runnable application composition never reaches this fallback.
 	return false, nil
 }
 

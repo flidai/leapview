@@ -6,6 +6,24 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 COMPOSE_FILE="$ROOT/deploy/postgres/compose.yaml"
+ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$ROOT/.tmp/postgres-dev.env}"
+
+# A generated env file is the durable source for local credentials after the
+# first provision. Load only password assignments, and only when the caller
+# has not explicitly supplied a replacement, so repeated `task dev` runs keep
+# using the passwords initialized in the persistent PostgreSQL volume.
+if [[ -f "$ENV_FILE" ]]; then
+  while IFS='=' read -r generated_name generated_value; do
+    case "$generated_name" in
+      LEAPVIEW_POSTGRES_*_PASSWORD)
+        if [[ -z "${!generated_name:-}" ]]; then
+          export "$generated_name=$generated_value"
+        fi
+        ;;
+    esac
+  done < "$ENV_FILE"
+fi
+
 CONTROL_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD:-leapview-local-control}"
 CONTROL_READONLY_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD:-leapview-local-control-readonly}"
 DUCKLAKE_PASSWORD="${LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD:-leapview-local-ducklake}"
@@ -14,7 +32,6 @@ CONTROL_UPGRADE_COORDINATOR_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDI
 CONTROL_MAINTENANCE_PASSWORD="${LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD:-leapview-local-control-maintenance}"
 DUCKLAKE_MIGRATOR_PASSWORD="${LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD:-leapview-local-ducklake-migrator}"
 DUCKLAKE_MAINTENANCE_PASSWORD="${LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD:-leapview-local-ducklake-maintenance}"
-ENV_FILE="${LEAPVIEW_POSTGRES_DEV_ENV_FILE:-$ROOT/.tmp/postgres-dev.env}"
 
 # Keep worktrees isolated while retaining a stable project name for each path.
 WORKTREE_DIGEST="$(printf '%s' "$ROOT" | cksum | awk '{print $1}')"
@@ -25,6 +42,11 @@ if [[ "${LEAPVIEW_POSTGRES_TEST_MODE:-}" == "1" ]]; then
   PORT_BASE=56432
 fi
 PORT="${LEAPVIEW_POSTGRES_DEV_PORT:-$((PORT_BASE + WORKTREE_DIGEST % 1000))}"
+
+# Compose reads the host-port interpolation from the environment. Export the
+# resolved, worktree-scoped value so the URL file and the published service
+# always address the same endpoint (including test-mode overrides).
+export LEAPVIEW_POSTGRES_DEV_PORT="$PORT"
 
 if [[ ! "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   echo "LEAPVIEW_POSTGRES_DEV_PORT must be between 1 and 65535" >&2
@@ -42,9 +64,40 @@ write_runtime_env() {
     echo "PostgreSQL development runtime passwords must contain only URL-safe characters" >&2
     return 1
   fi
+  # Preserve an admitted pool identity only when this exact database still
+  # contains the corresponding immutable admission row.  The helper may be
+  # pointed at a newly-created volume (for example after `compose down
+  # --volumes`); retaining an old ID in that case would make the next server
+  # start fail its admission check instead of re-bootstraping the fresh pool.
+  local preserved_pool_id=""
+  local preserved_compatibility_digest=""
+  local previous_port=""
+  if [[ -f "$ENV_FILE" ]]; then
+    previous_port="$(awk -F= '$1 == "LEAPVIEW_POSTGRES_DEV_PORT" { print $2; exit }' "$ENV_FILE" 2>/dev/null || true)"
+    local previous_pool_id previous_compatibility_digest
+    previous_pool_id="$(awk -F= '$1 == "LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID" { print $2; exit }' "$ENV_FILE" 2>/dev/null || true)"
+    previous_compatibility_digest="$(awk -F= '$1 == "LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST" { print $2; exit }' "$ENV_FILE" 2>/dev/null || true)"
+    if [[ "$previous_port" == "$PORT" && "$previous_pool_id" =~ ^sha256:[0-9a-f]{64}$ && "$previous_compatibility_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+      local admission_match
+      admission_match="$(runtime_psql leapview_control_runtime "$CONTROL_PASSWORD" leapview_control \
+        "SELECT p.id || '|' || a.compatibility_digest FROM physical_pool.physical_pools p JOIN physical_pool.physical_pool_admissions a ON a.pool_id = p.id WHERE p.id = '$previous_pool_id' AND a.compatibility_digest = '$previous_compatibility_digest' LIMIT 1" 2>/dev/null || true)"
+      if [[ "$admission_match" == "$previous_pool_id|$previous_compatibility_digest" ]]; then
+        preserved_pool_id="$previous_pool_id"
+        preserved_compatibility_digest="$previous_compatibility_digest"
+      fi
+    fi
+  fi
   umask 077
   mkdir -p "$(dirname "$ENV_FILE")"
   {
+    printf 'LEAPVIEW_POSTGRES_CONTROL_RUNTIME_PASSWORD=%s\n' "$CONTROL_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_CONTROL_READONLY_PASSWORD=%s\n' "$CONTROL_READONLY_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_PASSWORD=%s\n' "$DUCKLAKE_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_PASSWORD=%s\n' "$CONTROL_MIGRATOR_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_PASSWORD=%s\n' "$CONTROL_UPGRADE_COORDINATOR_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_PASSWORD=%s\n' "$CONTROL_MAINTENANCE_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_PASSWORD=%s\n' "$DUCKLAKE_MIGRATOR_PASSWORD"
+    printf 'LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_PASSWORD=%s\n' "$DUCKLAKE_MAINTENANCE_PASSWORD"
     printf 'LEAPVIEW_POSTGRES_CONTROL_URL=postgres://leapview_control_runtime:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL=postgres://leapview_control_migrator:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_MIGRATOR_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_URL=postgres://leapview_control_upgrade_coordinator:%s@127.0.0.1:%s/leapview_control?sslmode=disable\n' "$CONTROL_UPGRADE_COORDINATOR_PASSWORD" "$PORT"
@@ -54,9 +107,22 @@ write_runtime_env() {
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_URL=postgres://leapview_ducklake_migrator:%s@127.0.0.1:%s/leapview_ducklake?sslmode=disable\n' "$DUCKLAKE_MIGRATOR_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL=postgres://leapview_ducklake_maintenance:%s@127.0.0.1:%s/leapview_ducklake?sslmode=disable\n' "$DUCKLAKE_MAINTENANCE_PASSWORD" "$PORT"
     printf 'LEAPVIEW_POSTGRES_EXPECTED_MAJOR=18\n'
+    printf 'LEAPVIEW_POSTGRES_DEV_PORT=%s\n' "$PORT"
     printf 'LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE=leapview_control_runtime\n'
     printf 'LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE=leapview_ducklake_runtime\n'
     printf 'LEAPVIEW_POSTGRES_REQUIRE_TLS=false\n'
+    printf 'LEAPVIEW_ENVIRONMENT=dev\n'
+    printf 'LEAPVIEW_PRODUCTION=false\n'
+    printf 'LEAPVIEW_DEV_AUTH_BYPASS=true\n'
+    printf 'LEAPVIEW_DEV_API_TOKEN=dev\n'
+    # Development still needs a stable process-local fingerprint key for
+    # PostgreSQL access/audit identities; this value is intentionally not a
+    # production credential and is scoped to the generated worktree file.
+    printf 'LEAPVIEW_CSRF_KEY=leapview-development-csrf-key-000000000000\n'
+    if [[ -n "$preserved_pool_id" ]]; then
+      printf 'LEAPVIEW_DELIVERY_PHYSICAL_POOL_ID=%s\n' "$preserved_pool_id"
+      printf 'LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST=%s\n' "$preserved_compatibility_digest"
+    fi
   } >"$ENV_FILE"
   chmod 600 "$ENV_FILE"
 }
@@ -281,6 +347,12 @@ usage() {
 case "${1:-}" in
   up)
     compose up --detach --wait
+    # The PostgreSQL image only runs init.sh for a fresh data directory. A
+    # caller can therefore override one of the role passwords while a named
+    # volume still contains the old credential. Verify every role before
+    # persisting URLs; otherwise the generated env file would advertise a
+    # password that cannot authenticate to the initialized volume.
+    check_isolation
     write_runtime_env
     ;;
   down)

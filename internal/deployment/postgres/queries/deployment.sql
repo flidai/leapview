@@ -312,12 +312,19 @@ ON CONFLICT(target_id) DO UPDATE SET generation_id=EXCLUDED.generation_id,public
 UPDATE delivery.delivery_publication SET state='committed',result_target_revision=sqlc.arg(result_revision),committed_at=clock_timestamp()
 WHERE publication_id=sqlc.arg(publication_id)::uuid AND state='pending' RETURNING true;
 
--- name: LockRetentionRoot :one
-SELECT target_id,COALESCE(candidate_id::text,'')::text AS candidate_id,COALESCE(generation_id::text,'')::text AS generation_id,COALESCE(snapshot_seal_id::text,'')::text AS snapshot_seal_id,root_kind,state
-       ,expires_at
-FROM delivery.delivery_retention_root WHERE root_id=sqlc.arg(root_id)::uuid FOR UPDATE;
+-- name: GetRetentionRootIdentity :one
+-- The narrow SECURITY DEFINER capability owns the row lock because serving
+-- roles lack direct UPDATE/DELETE row-lock privileges.
+SELECT l.target_id::text AS target_id,
+       l.candidate_id::text AS candidate_id,
+       l.generation_id::text AS generation_id,
+       l.snapshot_seal_id::text AS snapshot_seal_id,
+       l.root_kind::text AS root_kind,
+       l.state::text AS state,
+       l.expires_at::timestamptz AS expires_at
+FROM delivery.lock_retention_root(sqlc.arg(root_id)::uuid) AS l(target_id,candidate_id,generation_id,snapshot_seal_id,root_kind,state,expires_at);
 
--- name: LockRetainedGenerationRoot :one
+-- name: FindRetainedGenerationRoot :one
 SELECT r.root_id::text AS root_id,r.target_id,r.candidate_id::text AS candidate_id,r.generation_id::text AS generation_id,r.snapshot_seal_id::text AS snapshot_seal_id,r.root_kind,r.state,r.expires_at
 FROM delivery.delivery_retention_root r
 JOIN delivery.delivery_generation g
@@ -331,10 +338,9 @@ WHERE r.target_id=sqlc.arg(target_id)
   AND r.state IN ('live','retiring')
   AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp())
 ORDER BY CASE r.state WHEN 'live' THEN 0 ELSE 1 END, r.created_at DESC, r.root_id
-FOR UPDATE OF r
 LIMIT 1;
 
--- name: LockLiveGenerationRoot :one
+-- name: FindLiveGenerationRoot :one
 SELECT r.root_id::text AS root_id,r.target_id,r.candidate_id::text AS candidate_id,r.generation_id::text AS generation_id,r.snapshot_seal_id::text AS snapshot_seal_id,r.root_kind,r.state,r.expires_at
 FROM delivery.delivery_retention_root r
 JOIN delivery.delivery_generation g
@@ -348,7 +354,6 @@ WHERE r.target_id=sqlc.arg(target_id)
   AND r.state='live'
   AND (r.expires_at IS NULL OR r.expires_at>clock_timestamp())
 ORDER BY r.created_at DESC, r.root_id
-FOR UPDATE OF r
 LIMIT 1;
 
 -- name: InsertGenerationRoot :exec

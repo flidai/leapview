@@ -15,7 +15,7 @@ import (
 )
 
 // NativeDeliveryApprovalPort is the publication-scoped approval boundary
-// used by production HTTP routes. Candidate-wide approval services do not
+// used by native PostgreSQL HTTP routes. Candidate-wide approval services do not
 // implement this interface and are never selected when it is present.
 type NativeDeliveryApprovalPort interface {
 	RequestPublicationApproval(context.Context, NativeApprovalRequest) (depauth.ApprovalRequest, error)

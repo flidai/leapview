@@ -238,6 +238,57 @@ func productionAdmissionTLSURL(raw string) string {
 	return parsed.String()
 }
 
+func TestRequiresDuckLakeAdmissionDistinguishesDevelopmentBootstrapSentinel(t *testing.T) {
+	tests := []struct {
+		name       string
+		production bool
+		poolID     string
+		digest     string
+		want       bool
+	}{
+		{name: "development migration bootstrap", poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: false},
+		{name: "development admitted pool", poolID: "sha256:" + strings.Repeat("a", 64), digest: "sha256:" + strings.Repeat("b", 64), want: true},
+		{name: "development partial identity fails closed", poolID: developmentPoolSentinelID, digest: "", want: true},
+		{name: "production always verifies", production: true, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := requiresDuckLakeAdmission(config.Config{Production: tt.production, DeliveryPhysicalPoolID: tt.poolID, DeliveryPhysicalPoolCompatibilityDigest: tt.digest}); got != tt.want {
+				t.Fatalf("requiresDuckLakeAdmission() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestShouldResolveL3CacheMaintenanceWaitsForDevelopmentPoolAdmission(t *testing.T) {
+	tests := []struct {
+		name       string
+		production bool
+		enabled    bool
+		poolID     string
+		digest     string
+		want       bool
+	}{
+		{name: "disabled feature", enabled: false, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: false},
+		{name: "development migration bootstrap", enabled: true, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: false},
+		{name: "development admitted pool", enabled: true, poolID: "sha256:" + strings.Repeat("a", 64), digest: "sha256:" + strings.Repeat("b", 64), want: true},
+		{name: "production always resolves admitted contract", production: true, enabled: true, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := config.Config{
+				Production:                              tt.production,
+				QueryCacheL3Enabled:                     tt.enabled,
+				DeliveryPhysicalPoolID:                  tt.poolID,
+				DeliveryPhysicalPoolCompatibilityDigest: tt.digest,
+			}
+			if got := shouldResolveL3CacheMaintenance(cfg); got != tt.want {
+				t.Fatalf("shouldResolveL3CacheMaintenance() = %t, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func assertProductionAdmissionPoolIdentity(t *testing.T, pool *platformpostgres.Pool, database, role string) {
 	t.Helper()
 	if got, err := pool.CurrentDatabase(t.Context()); err != nil || got != database {

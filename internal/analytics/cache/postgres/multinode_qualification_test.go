@@ -63,14 +63,18 @@ func TestPostgreSQL18MultiNodeCacheQualification(t *testing.T) {
 	objectKey := "cache/l3/sd/" + storageDomain + "/" + cacheKey + "/" + objectDigest
 	const reusedOwner = "node-reused"
 
-	fillA, err := repoA.AcquireFill(ctx, AcquireFillInput{Namespace: namespace, CacheKey: cacheKey, OwnerID: reusedOwner, Lease: 25 * time.Millisecond})
+	// Keep the active lease long enough for the second pool's first connection
+	// to be established on a cold or contended CI runner. Expire both fences
+	// explicitly below so this qualification does not depend on scheduler
+	// timing (the previous 25ms lease made the active-owner assertion flaky).
+	fillA, err := repoA.AcquireFill(ctx, AcquireFillInput{Namespace: namespace, CacheKey: cacheKey, OwnerID: reusedOwner, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repoB.AcquireFill(ctx, AcquireFillInput{Namespace: namespace, CacheKey: cacheKey, OwnerID: "node-b", Lease: time.Minute}); !errors.Is(err, ErrBusy) {
 		t.Fatalf("active fill claim from second node = %v, want ErrBusy", err)
 	}
-	objectA, err := repoA.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{StorageSecurityDomain: storageDomain, ObjectKey: objectKey, OwnerID: reusedOwner, Lease: 25 * time.Millisecond})
+	objectA, err := repoA.AcquireL3ObjectFence(ctx, AcquireL3ObjectFenceInput{StorageSecurityDomain: storageDomain, ObjectKey: objectKey, OwnerID: reusedOwner, Lease: time.Minute})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -78,8 +82,17 @@ func TestPostgreSQL18MultiNodeCacheQualification(t *testing.T) {
 		t.Fatalf("active object fence claim from second node = %v, want ErrBusy", err)
 	}
 
-	if _, err := poolA.Exec(ctx, `SELECT pg_sleep(0.1)`); err != nil {
-		t.Fatal(err)
+	// The qualification uses the administrator URL, so forcing the timestamps
+	// here exercises the same expired-fence takeover path without sleeping.
+	if _, err := poolA.Exec(ctx, `UPDATE cache.cache_fill_lease
+		SET acquired_at=clock_timestamp()-interval '2 seconds', expires_at=clock_timestamp()-interval '1 second'
+		WHERE lease_id=$1`, fillA.LeaseID); err != nil {
+		t.Fatalf("expire fill fence: %v", err)
+	}
+	if _, err := poolA.Exec(ctx, `UPDATE cache.cache_l3_object_fence
+		SET acquired_at=clock_timestamp()-interval '2 seconds', expires_at=clock_timestamp()-interval '1 second'
+		WHERE lease_id=$1`, objectA.LeaseID); err != nil {
+		t.Fatalf("expire object fence: %v", err)
 	}
 	fillB, err := repoB.AcquireFill(ctx, AcquireFillInput{Namespace: namespace, CacheKey: cacheKey, OwnerID: reusedOwner, Lease: time.Minute})
 	if err != nil {
