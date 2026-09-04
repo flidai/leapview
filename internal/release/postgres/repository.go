@@ -631,6 +631,26 @@ func (r *Repository) CompleteFinalizationTx(ctx context.Context, tx Tx, projectI
 	return ready, nil
 }
 
+// CompleteFinalizationJobTx is the River worker boundary. Typed River args
+// carry only the stable product identity and canonical request digest; the
+// worker reloads the authoritative artifact digest inside the same
+// transaction that records both the product terminal state and River job
+// completion.
+func (r *Repository) CompleteFinalizationJobTx(ctx context.Context, tx Tx, projectID, releaseID, requestDigest string) (release.Release, error) {
+	id, err := projectgraph.NewResourceID(projectID)
+	if err != nil || releaseID == "" || !validDigest(requestDigest) {
+		return release.Release{}, ErrInvalid
+	}
+	current, err := r.getTx(ctx, tx, id, releaseID)
+	if err != nil {
+		return release.Release{}, err
+	}
+	if current.RequestDigest != requestDigest {
+		return release.Release{}, ErrConflict
+	}
+	return r.CompleteFinalizationTx(ctx, tx, projectID, releaseID, current.ArtifactDigest)
+}
+
 func (r *Repository) FailFinalization(ctx context.Context, projectID, releaseID string, cause error) (release.Release, error) {
 	if r == nil || r.db == nil {
 		return release.Release{}, ErrInvalid

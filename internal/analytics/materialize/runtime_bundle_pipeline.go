@@ -518,7 +518,6 @@ func (r *Runtime) splitStoreDecodeBundle(ctx context.Context, planned plannedBun
 		started := time.Now()
 		outcome := r.queryCache.scope.StoreArrowObserved(slot.address.key, slot.address.family, resultcache.Token(slot.address.generation), branches[request.ID], resultcache.Metadata{})
 		dataquery.ObserveCache(ctx, dataquery.CacheObservation{Phase: dataquery.CacheObservationStore, StoreOutcome: dataquery.CacheStoreOutcome(outcome), Duration: time.Since(started)})
-		r.queryCache.storeArrowTier(slot.address, branches[request.ID], resultcache.Metadata{})
 	}
 	r.queryCache.syncStats()
 	return execution, nil

@@ -21,7 +21,6 @@ import (
 	"github.com/flidai/leapview/internal/deployment"
 	depdb "github.com/flidai/leapview/internal/deployment/postgres/internal/db"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
-	eventswatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 	"github.com/flidai/leapview/pkg/strictjson"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -535,8 +534,7 @@ type Options struct {
 	ActivationAudit ActivationAuditPort
 	Lineage         ActivationLineageVerifier
 	// Events is the exact canonical repository used to append and read
-	// activation event evidence. The repository constructs its concrete
-	// Watermill boundary over this authority.
+	// activation event evidence.
 	Events *eventspostgres.Repository
 }
 
@@ -567,11 +565,10 @@ type ActivationResult struct {
 }
 
 type Repository struct {
-	db               DBTX
-	audit            ActivationAuditPort
-	lineage          ActivationLineageVerifier
-	events           *eventspostgres.Repository
-	activationEvents *eventswatermill.Adapter
+	db      DBTX
+	audit   ActivationAuditPort
+	lineage ActivationLineageVerifier
+	events  *eventspostgres.Repository
 }
 
 //go:embed schema.sql
@@ -612,8 +609,7 @@ func newRepository(db DBTX, options Options) *Repository {
 	if events == nil {
 		events = eventspostgres.New()
 	}
-	activationEvents, _ := eventswatermill.New(events)
-	return &Repository{db: db, audit: options.ActivationAudit, lineage: options.Lineage, events: events, activationEvents: activationEvents}
+	return &Repository{db: db, audit: options.ActivationAudit, lineage: options.Lineage, events: events}
 }
 
 // DB exposes the configured native PostgreSQL handle to composition-owned
@@ -661,10 +657,9 @@ func (r *Repository) AuditCapable() bool {
 	return r != nil && r.audit != nil
 }
 
-// EventCapable reports whether activation has both the canonical replay read
-// authority and its Watermill append boundary.
+// EventCapable reports whether activation has the canonical event authority.
 func (r *Repository) EventCapable() bool {
-	return r != nil && r.events != nil && r.activationEvents.Matches(r.events)
+	return r != nil && r.events != nil
 }
 
 func dbUUID(value string) pgtype.UUID {
@@ -4029,7 +4024,7 @@ func (r *Repository) appendActivationEvent(ctx context.Context, tx Tx, p Deliver
 		return Event{}, fmt.Errorf("%w: activation event boundary is required", ErrInvalid)
 	}
 	payload := activationPayload(p, revision)
-	e, err := r.activationEvents.AppendEvent(ctx, tx, eventswatermill.TopicDelivery, eventspostgres.EventInput{EventID: p.PublicationID, ScopeID: in.TargetID, AggregateType: "delivery_target", AggregateID: in.TargetID, EventType: "activation_committed", SchemaVersion: 1, CorrelationID: in.CorrelationID, Payload: payload})
+	e, err := r.events.AppendEvent(ctx, tx, eventspostgres.EventInput{EventID: p.PublicationID, ScopeID: in.TargetID, AggregateType: "delivery_target", AggregateID: in.TargetID, EventType: "activation_committed", SchemaVersion: 1, CorrelationID: in.CorrelationID, Payload: payload})
 	if err != nil {
 		return Event{}, err
 	}

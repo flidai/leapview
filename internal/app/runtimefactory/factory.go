@@ -12,7 +12,6 @@ import (
 
 	ducklake "github.com/flidai/leapview/internal/analytics/ducklake"
 	semanticmodel "github.com/flidai/leapview/internal/analytics/model"
-	"github.com/flidai/leapview/internal/analytics/resulttier"
 	dashboarddefinition "github.com/flidai/leapview/internal/dashboard/definition"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
@@ -45,7 +44,7 @@ type ServingArtifactReader = projectbundle.ArtifactObjectReader
 // prepareDashboard is the PostgreSQL sealed path project-artifact loader. The
 // catalog environment is supplied by the caller after durable lease/fence
 // acquisition; this helper never opens or writes a DuckLake catalog itself.
-func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace, targetID, snapshotSealID string, resultTier resulttier.Tier) (*dashboardRuntimeWithGraph, error) {
+func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input runtimehost.RuntimeInput, builder SealedDashboardRuntimeBuilder, environment *ducklake.Environment, relationNamespace, targetID, snapshotSealID string) (*dashboardRuntimeWithGraph, error) {
 	if builder == nil || environment == nil {
 		return nil, fmt.Errorf("sealed dashboard builder and environment are required")
 	}
@@ -142,7 +141,7 @@ func (f servingStateRuntimeFactory) prepareDashboard(ctx context.Context, input 
 		runtimeInput.AuthorizationFingerprint = input.Candidate.AuthorizationFingerprint
 		runtimeInput.BindingFingerprint = input.Candidate.BindingFingerprint
 	}
-	service, err := builder(ctx, runtimeInput, environment, resultTier)
+	service, err := builder(ctx, runtimeInput, environment)
 	if err != nil {
 		return nil, err
 	}

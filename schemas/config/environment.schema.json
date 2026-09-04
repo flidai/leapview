@@ -2693,13 +2693,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_POSTGRES_CONTROL_INTENT": {
-      "default": "read-write",
-      "description": "Read/write intent required for the control-plane PostgreSQL pool.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_POSTGRES_CONTROL_LOCK_TIMEOUT": {
       "default": "5s",
       "description": "Control-plane PostgreSQL session lock-wait timeout.",
@@ -2717,7 +2710,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE": {
       "default": "leapview_control_maintenance",
-      "description": "Configured PostgreSQL role expected by bounded control-plane maintenance operations.",
+      "description": "Provisioned canonical PostgreSQL role used by bounded control-plane maintenance operations; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "maintenance operation"
@@ -2738,17 +2731,17 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE": {
       "default": "leapview_control_migrator",
-      "description": "Configured PostgreSQL role expected by the control-plane migration pool.",
+      "description": "Provisioned canonical PostgreSQL role used by explicit control-plane migrations; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "initialization operation"
     },
     "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL": {
-      "description": "Explicit PostgreSQL control-plane migration connection URL; used only before readiness.",
+      "description": "Explicit PostgreSQL control-plane migration connection URL; never opened by production serving.",
       "type": "string",
       "writeOnly": true,
       "x-lifecycle": "supported",
-      "x-scope": "serve"
+      "x-scope": "initialization operation"
     },
     "LEAPVIEW_POSTGRES_CONTROL_POOL_MAX_CONNS": {
       "default": "8",
@@ -2775,7 +2768,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE": {
       "default": "leapview_control_readonly",
-      "description": "Configured PostgreSQL role expected by the optional control-plane readonly pool.",
+      "description": "Provisioned canonical PostgreSQL role used by the optional control-plane readonly pool; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -2796,7 +2789,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE": {
       "default": "leapview_control_runtime",
-      "description": "Configured PostgreSQL runtime role expected by the control-plane pool.",
+      "description": "Provisioned canonical PostgreSQL role used by the control-plane pool; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -2818,7 +2811,7 @@
     },
     "LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_ROLE": {
       "default": "leapview_control_upgrade_coordinator",
-      "description": "Configured PostgreSQL role expected by the DuckLake upgrade coordinator connection.",
+      "description": "Provisioned canonical PostgreSQL role used by the DuckLake upgrade coordinator connection; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "upgrade operation"
@@ -2866,13 +2859,6 @@
       "x-lifecycle": "supported",
       "x-scope": "serve"
     },
-    "LEAPVIEW_POSTGRES_DUCKLAKE_INTENT": {
-      "default": "read-write",
-      "description": "Read/write intent required for the DuckLake catalog PostgreSQL pool.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
     "LEAPVIEW_POSTGRES_DUCKLAKE_LOCK_TIMEOUT": {
       "default": "5s",
       "description": "DuckLake catalog PostgreSQL session lock-wait timeout.",
@@ -2890,7 +2876,7 @@
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE": {
       "default": "leapview_ducklake_maintenance",
-      "description": "Configured PostgreSQL role expected by bounded DuckLake catalog expiry and cleanup operations.",
+      "description": "Provisioned canonical PostgreSQL role used by bounded DuckLake catalog expiry and cleanup operations; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "maintenance operation"
@@ -2911,7 +2897,7 @@
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE": {
       "default": "leapview_ducklake_migrator",
-      "description": "Configured PostgreSQL role expected by the DuckLake catalog migration connection.",
+      "description": "Provisioned canonical PostgreSQL role used by the DuckLake catalog migration connection; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "upgrade operation"
@@ -2948,7 +2934,7 @@
     },
     "LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE": {
       "default": "leapview_ducklake_runtime",
-      "description": "Configured PostgreSQL runtime role expected by the DuckLake catalog pool.",
+      "description": "Provisioned canonical PostgreSQL role used by the DuckLake catalog pool; custom role names are rejected.",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"
@@ -3028,14 +3014,6 @@
     },
     "LEAPVIEW_PUBLIC_URL": {
       "description": "Canonical externally visible LeapView origin used for MCP resource identity and OAuth discovery.",
-      "type": "string",
-      "x-lifecycle": "supported",
-      "x-scope": "serve"
-    },
-    "LEAPVIEW_QUERY_CACHE_L3_ENABLED": {
-      "default": "false",
-      "description": "Enable the optional target-scoped durable query-result object cache (requires an admitted S3 physical pool).",
-      "pattern": "^(1|t|T|true|TRUE|True|0|f|F|false|FALSE|False)$",
       "type": "string",
       "x-lifecycle": "supported",
       "x-scope": "serve"

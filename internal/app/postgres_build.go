@@ -18,12 +18,9 @@ import (
 	accesssnapshot "github.com/flidai/leapview/internal/access/snapshot"
 	adminmodule "github.com/flidai/leapview/internal/admin/module"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
-	analyticsl3 "github.com/flidai/leapview/internal/analytics/cache/l3"
-	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	"github.com/flidai/leapview/internal/analytics/gates"
 	analyticsmodule "github.com/flidai/leapview/internal/analytics/module"
-	"github.com/flidai/leapview/internal/analytics/resulttier"
 	appaccesspostgres "github.com/flidai/leapview/internal/app/accesspostgres"
 	"github.com/flidai/leapview/internal/app/config"
 	appdeploymentpostgres "github.com/flidai/leapview/internal/app/deploymentpostgres"
@@ -490,54 +487,12 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	// BuildRuntime uses the analytics module's factory against the immutable
 	// DuckLake environment opened by the sealed runtime factory. The dashboard
 	// runtime implementation remains behind the app/runtimefactory seam.
-	resultTierFactory := appruntimefactory.ResultTierFactory(func(resultCtx context.Context, tierInput appruntimefactory.ResultTierFactoryInput) (resulttier.Tier, error) {
-		// L3 is opt-in and only meaningful for an admitted S3 physical pool.
-		// Local pools intentionally receive a disabled capability. When L3 is
-		// requested, startup separately resolves the admitted pool contract so an
-		// S3 tier can never run without its pool-wide maintenance collector.
-		contract := tierInput.PoolContract
-		root := tierInput.Root
-		if !cfg.QueryCacheL3Enabled || contract == nil || !strings.EqualFold(strings.TrimSpace(contract.Tuple.StorageImplementation), "s3") {
-			return nil, nil
-		}
-		if root.TargetID == "" || root.TargetID != strings.TrimSpace(root.TargetID) {
-			return nil, fmt.Errorf("L3 cache target ID is unavailable or non-canonical")
-		}
-		if err := tierInput.ProjectID.Validate(); err != nil {
-			return nil, fmt.Errorf("L3 cache project ID: %w", err)
-		}
-		environment := strings.TrimSpace(tierInput.Environment)
-		if environment == "" || environment != tierInput.Environment {
-			return nil, fmt.Errorf("L3 cache environment is unavailable or non-canonical")
-		}
-		candidateID := tierInput.CandidateID
-		partitionKind := cachepostgres.PartitionProduction
-		if candidateID != "" {
-			if candidateID != strings.TrimSpace(candidateID) {
-				return nil, fmt.Errorf("L3 cache candidate ID is unavailable or non-canonical")
-			}
-			partitionKind = cachepostgres.PartitionCandidate
-		}
-		cache, err := appruntimefactory.NewTargetL3Cache(resultCtx, contract, graph.Cache, postgresPoolS3Config(cfg, extensionSupply), appruntimefactory.TargetL3CacheConfig{
-			Namespace: cachepostgres.Namespace{
-				PartitionKind: partitionKind, TargetID: root.TargetID,
-				ProjectID: tierInput.ProjectID.String(), Environment: environment, CandidateID: candidateID,
-			},
-			OriginSnapshotSealID: root.SealID,
-			Enabled:              true,
-		})
-		if err != nil {
-			return nil, err
-		}
-		return analyticsl3.NewResultTier(cache), nil
-	})
 	postgresFactory := appruntimefactory.NewPostgresSealedFactory(appruntimefactory.PostgresSealedFactoryConfig{
 		Base:             appruntimefactory.FactoryConfig{DuckDBDir: cfg.DuckDBDirPath(), RuntimeDir: cfg.RuntimeDir(), ActivationEvidence: activeRuntimeEvidence},
 		ServingArtifacts: nativeProjectSource.Objects,
 		Resolve:          appruntimefactory.NewPostgresSealedRootResolver(instanceID, graph.DeploymentRepository, graph.PhysicalPool, graph.Lineage), SnapshotLeases: graph.ServingState, RuntimeAttachChecker: attachChecker,
 		LeaseHolder: instanceID, DuckLakeSecret: postgresDuckLakeSecret, PostgresSecret: postgresConnectionSecret, ExtensionAdmission: extensionSupply,
 		CredentialBootstrapFactory: newPostgresDuckLakeCredentialBootstrapFactory(cfg, extensionSupply),
-		ResultTierFactory:          resultTierFactory,
 		Authorize: func(ctx context.Context, input appruntimefactory.PostgresServingAuthorizationInput) error {
 			_, ok, err := readClaim(ctx)
 			if err != nil {
@@ -874,43 +829,6 @@ func buildPostgresTarget(ctx context.Context, cfg config.Config, production bool
 	if production {
 		additionalWorkers = append(additionalWorkers, platformlifecycle.Component{Start: duckLakeRetention.Start, Stop: duckLakeRetention.Stop})
 	}
-	if shouldResolveL3CacheMaintenance(cfg) {
-		contract, resolveErr := contractAuthority.Resolve(ctx, appdeploymentpostgres.NativeBuildContractRequest{
-			PhysicalPoolID: physicalPoolID, CompatibilityDigest: compatibilityDigest,
-		})
-		if resolveErr != nil {
-			return fail(fmt.Errorf("resolve L3 cache maintenance contract: %w", resolveErr))
-		}
-		if contract.PoolContract != nil && strings.EqualFold(strings.TrimSpace(contract.PoolContract.Tuple.StorageImplementation), "s3") {
-			orphanGraceSeconds := contract.PoolContract.Pool.Identity.RetentionPolicy.OrphanGracePeriodSeconds
-			if orphanGraceSeconds <= 0 || orphanGraceSeconds > int64((time.Duration(1<<63-1)/time.Second)) {
-				return fail(errors.New("admitted L3 cache orphan grace is invalid"))
-			}
-			store, storeErr := appruntimefactory.NewL3ObjectStore(ctx, contract.PoolContract, postgresPoolS3Config(cfg, extensionSupply))
-			if storeErr != nil {
-				return fail(fmt.Errorf("build L3 cache maintenance object store: %w", storeErr))
-			}
-			maintenance := cachepostgres.NewMaintenance(bootstrap.MaintenancePool())
-			collector, collectorErr := analyticsl3.NewCollector(analyticsl3.CollectorConfig{
-				Authority: maintenance, Store: store, SecurityDomain: contract.PhysicalPoolID,
-				GracePeriod: time.Duration(orphanGraceSeconds) * time.Second,
-			})
-			if collectorErr != nil {
-				return fail(fmt.Errorf("build L3 cache garbage collector: %w", collectorErr))
-			}
-			l3GC := newL3GCWorker(l3GCWorkerConfig{
-				SecurityDomain: contract.PhysicalPoolID,
-				OwnerID:        nodeID,
-				Authority:      maintenance,
-				Collector:      collector,
-				Acquire: func(acquireCtx context.Context) (workloadmodule.Lease, error) {
-					return workloadBundle.Controller.Acquire(acquireCtx, workloadmodule.MaintenanceRequest("cache.l3.gc"))
-				},
-			})
-			additionalWorkers = append(additionalWorkers, platformlifecycle.Component{Start: l3GC.Start, Stop: l3GC.Stop})
-		}
-	}
-
 	// The PostgreSQL module receives only the clean-slate native mutation port.
 	// Legacy delivery projection and candidate-builder paths remain absent.
 	// Publication/activation remain owned by refresh persistence's native

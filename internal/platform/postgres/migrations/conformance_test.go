@@ -2,6 +2,7 @@ package migrations_test
 
 import (
 	"context"
+	"database/sql"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +10,7 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 // TestBaselinePostgreSQL18 applies the clean baseline to a real PostgreSQL 18
@@ -18,7 +20,7 @@ import (
 func TestBaselinePostgreSQL18(t *testing.T) {
 	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
-	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "migration-conformance", Login: true})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_runtime"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_maintenance"})
 	h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_readonly"})
@@ -34,85 +36,41 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
-	conn, err := db.Acquire(ctx)
+	if _, err := db.Exec(ctx, `GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("pgx", database.URL(migrator))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, `SET ROLE leapview_control_migrator`); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := postgresbaseline.Apply(ctx, tx); err != nil {
-		_ = tx.Rollback(ctx)
+	defer migrationDB.Close()
+	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("apply baseline: %v", err)
 	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	// Simulate ACL drift on objects introduced by a forward migration. The
-	// product role policy runs even when every schema revision is already
-	// recorded, so restart/migration replay must restore the exact capability
-	// split without replaying migration DDL.
-	if _, err := db.Exec(ctx, `
-		GRANT SELECT ON cache.cache_l3_gc_state TO leapview_control_runtime;
-		GRANT UPDATE ON cache.cache_l3_gc_state TO leapview_control_maintenance;
-		REVOKE EXECUTE ON FUNCTION cache.acquire_l3_object_fence(uuid,text,text,text,interval) FROM leapview_control_runtime;
-		REVOKE EXECUTE ON FUNCTION cache.prepare_l3_object_gc(uuid,text,text,text,bigint) FROM leapview_control_maintenance;
-		REVOKE SELECT ON cache.cache_l3_gc_state FROM leapview_control_readonly`); err != nil {
-		t.Fatal(err)
-	}
-	// Re-running a clean baseline is safe for retries; the recorded checksum is
-	// verified rather than replaced.
-	tx, err = conn.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := postgresbaseline.Apply(ctx, tx); err != nil {
-		_ = tx.Rollback(ctx)
+	// Explicit migration replays are safe: Goose applies no DDL twice while
+	// LeapView still reconciles its role policy.
+	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("reapply baseline: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
-	}
-	var runtimeL3Table, runtimeL3Fence, maintenanceL3Table, maintenanceL3GC, readonlyL3 bool
-	if err := db.QueryRow(ctx, `
-		SELECT has_table_privilege('leapview_control_runtime','cache.cache_l3_gc_state','SELECT'),
-		       has_function_privilege('leapview_control_runtime','cache.acquire_l3_object_fence(uuid,text,text,text,interval)','EXECUTE'),
-		       has_table_privilege('leapview_control_maintenance','cache.cache_l3_gc_state','UPDATE'),
-		       has_function_privilege('leapview_control_maintenance','cache.prepare_l3_object_gc(uuid,text,text,text,bigint)','EXECUTE'),
-		       has_table_privilege('leapview_control_readonly','cache.cache_l3_gc_state','SELECT')`).
-		Scan(&runtimeL3Table, &runtimeL3Fence, &maintenanceL3Table, &maintenanceL3GC, &readonlyL3); err != nil {
-		t.Fatal(err)
-	}
-	if runtimeL3Table || !runtimeL3Fence || maintenanceL3Table || !maintenanceL3GC || !readonlyL3 {
-		t.Fatalf("L3 ACL replay drift: runtime table/fence=%t/%t maintenance table/GC=%t/%t readonly=%t", runtimeL3Table, runtimeL3Fence, maintenanceL3Table, maintenanceL3GC, readonlyL3)
 	}
 
 	var schemaCount int
 	if err := db.QueryRow(ctx, `
 		SELECT count(*) FROM information_schema.schemata
-		WHERE schema_name = ANY($1::text[])`, []string{"access", "delivery", "refresh", "event", "audit", "lineage", "cache", "agent", "ducklake", "physical_pool", "dashboard"}).Scan(&schemaCount); err != nil {
+		WHERE schema_name = ANY($1::text[])`, []string{"access", "delivery", "refresh", "event", "audit", "lineage", "agent", "ducklake", "physical_pool", "dashboard"}).Scan(&schemaCount); err != nil {
 		t.Fatal(err)
 	}
-	if schemaCount != 11 {
-		t.Fatalf("capability schema count = %d, want 11", schemaCount)
+	if schemaCount != 10 {
+		t.Fatalf("capability schema count = %d, want 10", schemaCount)
 	}
-	var schemaOwner, tableOwner, capabilityOwner string
+	var schemaOwner, capabilityOwner string
 	if err := db.QueryRow(ctx, `SELECT pg_get_userbyid(nspowner) FROM pg_namespace WHERE nspname = 'platform'`).Scan(&schemaOwner); err != nil {
-		t.Fatal(err)
-	}
-	if err := db.QueryRow(ctx, `SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'platform.schema_revision'::regclass`).Scan(&tableOwner); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.QueryRow(ctx, `SELECT pg_get_userbyid(relowner) FROM pg_class WHERE oid = 'access.principal'::regclass`).Scan(&capabilityOwner); err != nil {
 		t.Fatal(err)
 	}
-	if schemaOwner != owner.Name || tableOwner != owner.Name || capabilityOwner != owner.Name {
-		t.Fatalf("baseline ownership = schema %q/revision %q/capability %q, want %q", schemaOwner, tableOwner, capabilityOwner, owner.Name)
+	if schemaOwner != owner.Name || capabilityOwner != owner.Name {
+		t.Fatalf("baseline ownership = schema %q/capability %q, want %q", schemaOwner, capabilityOwner, owner.Name)
 	}
 	var agentExists bool
 	if err := db.QueryRow(ctx, `
@@ -123,26 +81,13 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal("agent capability namespace is missing from the clean baseline")
 	}
 
-	var revision int64
-	var migrationID, checksum string
-	if err := db.QueryRow(ctx,
-		"SELECT revision, migration_id, checksum FROM platform.schema_revision WHERE revision = $1",
-		postgresbaseline.BaselineRevision,
-	).Scan(&revision, &migrationID, &checksum); err != nil {
+	var version int64
+	var applied bool
+	if err := db.QueryRow(ctx, "SELECT version_id, is_applied FROM public.goose_db_version ORDER BY id DESC LIMIT 1").Scan(&version, &applied); err != nil {
 		t.Fatal(err)
 	}
-	if revision != postgresbaseline.BaselineRevision || migrationID != postgresbaseline.BaselineMigrationID || checksum != postgresbaseline.Checksum() {
-		t.Fatalf("baseline identity = %d/%q/%q", revision, migrationID, checksum)
-	}
-	forward := postgresbaseline.Migrations()[0]
-	if err := db.QueryRow(ctx,
-		"SELECT revision, migration_id, checksum FROM platform.schema_revision WHERE revision = $1",
-		forward.Revision,
-	).Scan(&revision, &migrationID, &checksum); err != nil {
-		t.Fatal(err)
-	}
-	if revision != forward.Revision || migrationID != forward.MigrationID || checksum != forward.Checksum() {
-		t.Fatalf("attribute registry migration identity = %d/%q/%q", revision, migrationID, checksum)
+	if version != postgresbaseline.BaselineRevision || !applied {
+		t.Fatalf("Goose baseline identity = %d/applied=%t", version, applied)
 	}
 	var registryProfile, registryDigest string
 	var registryRevision int64
@@ -155,7 +100,7 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		t.Fatalf("attribute registry state = %q/%d/%q", registryProfile, registryRevision, registryDigest)
 	}
 
-	var canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateServingBundle, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
+	var canUpdateAudit, canUpdateGoose, canReadGoose, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateServingBundle, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView bool
 	var physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite bool
 	var readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential bool
 	var dashboardRuntimeSessionInsert, dashboardRuntimeSessionDelete, dashboardRuntimeUsageInsert, dashboardRuntimeUsageDelete, dashboardRuntimeAppearanceInsert, dashboardRuntimeAppearanceDelete bool
@@ -163,8 +108,8 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	var dashboardReadonlySessionInsert, dashboardReadonlyUsageInsert, dashboardReadonlyAppearanceUpdate bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'audit.audit_event', 'UPDATE'),
-		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'UPDATE'),
-		       has_table_privilege('leapview_control_runtime', 'platform.schema_revision', 'SELECT'),
+		       has_table_privilege('leapview_control_runtime', 'public.goose_db_version', 'UPDATE'),
+		       has_table_privilege('leapview_control_runtime', 'public.goose_db_version', 'SELECT'),
 		       has_table_privilege('leapview_control_runtime', 'event.event_log', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'event.event_log', 'DELETE'),
 		       has_table_privilege('leapview_control_runtime', 'lineage.graphs', 'UPDATE'),
@@ -208,11 +153,11 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	       has_table_privilege('leapview_control_readonly', 'dashboard.view_session', 'INSERT'),
 	       has_table_privilege('leapview_control_readonly', 'dashboard.view_day', 'INSERT'),
 	       has_table_privilege('leapview_control_readonly', 'dashboard.appearance_override', 'UPDATE')`).
-		Scan(&canUpdateAudit, &canUpdateRevision, &canReadRevision, &canUpdateEvent, &canDeleteEvent, &canUpdateLineage, &canInsertLineageRevision, &canPublishLineage, &canUpdateServingBundle, &backupInsert, &backupSelect, &backupCursor, &backupProject, &readonlyCursor, &readonlyJobs, &readonlyJobView, &readonlySession, &readonlyCredential, &readonlyToken, &readonlyServiceSecret, &readonlyDesktopCode, &readonlyDeviceAuth, &readonlyAuthoringCredential, &physicalRuntimeSelect, &physicalRuntimeInsert, &physicalRuntimeUpdate, &physicalRuntimeDelete, &physicalReadonlySelect, &physicalReadonlyInsert, &physicalBackupSelect, &physicalBackupInsert, &physicalMaintenanceSelect, &physicalMaintenanceLeaseWrite, &physicalMaintenanceAdmissionWrite, &dashboardRuntimeSessionInsert, &dashboardRuntimeSessionDelete, &dashboardRuntimeUsageInsert, &dashboardRuntimeUsageDelete, &dashboardRuntimeAppearanceInsert, &dashboardRuntimeAppearanceDelete, &dashboardMaintenanceSessionDelete, &dashboardMaintenanceUsageDelete, &dashboardMaintenanceAppearanceInsert, &dashboardReadonlySessionInsert, &dashboardReadonlyUsageInsert, &dashboardReadonlyAppearanceUpdate); err != nil {
+		Scan(&canUpdateAudit, &canUpdateGoose, &canReadGoose, &canUpdateEvent, &canDeleteEvent, &canUpdateLineage, &canInsertLineageRevision, &canPublishLineage, &canUpdateServingBundle, &backupInsert, &backupSelect, &backupCursor, &backupProject, &readonlyCursor, &readonlyJobs, &readonlyJobView, &readonlySession, &readonlyCredential, &readonlyToken, &readonlyServiceSecret, &readonlyDesktopCode, &readonlyDeviceAuth, &readonlyAuthoringCredential, &physicalRuntimeSelect, &physicalRuntimeInsert, &physicalRuntimeUpdate, &physicalRuntimeDelete, &physicalReadonlySelect, &physicalReadonlyInsert, &physicalBackupSelect, &physicalBackupInsert, &physicalMaintenanceSelect, &physicalMaintenanceLeaseWrite, &physicalMaintenanceAdmissionWrite, &dashboardRuntimeSessionInsert, &dashboardRuntimeSessionDelete, &dashboardRuntimeUsageInsert, &dashboardRuntimeUsageDelete, &dashboardRuntimeAppearanceInsert, &dashboardRuntimeAppearanceDelete, &dashboardMaintenanceSessionDelete, &dashboardMaintenanceUsageDelete, &dashboardMaintenanceAppearanceInsert, &dashboardReadonlySessionInsert, &dashboardReadonlyUsageInsert, &dashboardReadonlyAppearanceUpdate); err != nil {
 		t.Fatal(err)
 	}
-	if canUpdateAudit || canUpdateRevision || !canReadRevision || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateServingBundle || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential || !physicalRuntimeSelect || physicalRuntimeInsert || physicalRuntimeUpdate || physicalRuntimeDelete || !physicalReadonlySelect || physicalReadonlyInsert || !physicalBackupSelect || physicalBackupInsert || !physicalMaintenanceSelect || !physicalMaintenanceLeaseWrite || physicalMaintenanceAdmissionWrite || !dashboardRuntimeSessionInsert || dashboardRuntimeSessionDelete || !dashboardRuntimeUsageInsert || dashboardRuntimeUsageDelete || !dashboardRuntimeAppearanceInsert || dashboardRuntimeAppearanceDelete || !dashboardMaintenanceSessionDelete || !dashboardMaintenanceUsageDelete || dashboardMaintenanceAppearanceInsert || dashboardReadonlySessionInsert || dashboardReadonlyUsageInsert || dashboardReadonlyAppearanceUpdate {
-		t.Fatalf("least-privilege grants leaked: audit update=%t revision update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t serving bundle update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t physical runtime select/write=%t/%t/%t/%t readonly select/insert=%t/%t backup select/insert=%t/%t maintenance select/lease-write/admission-write=%t/%t/%t dashboard runtime session insert/delete=%t/%t usage insert/delete=%t/%t appearance insert/delete=%t/%t maintenance session/usage delete=%t/%t appearance insert=%t readonly session/usage insert=%t/%t appearance update=%t", canUpdateAudit, canUpdateRevision, canReadRevision, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateServingBundle, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential, physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite, dashboardRuntimeSessionInsert, dashboardRuntimeSessionDelete, dashboardRuntimeUsageInsert, dashboardRuntimeUsageDelete, dashboardRuntimeAppearanceInsert, dashboardRuntimeAppearanceDelete, dashboardMaintenanceSessionDelete, dashboardMaintenanceUsageDelete, dashboardMaintenanceAppearanceInsert, dashboardReadonlySessionInsert, dashboardReadonlyUsageInsert, dashboardReadonlyAppearanceUpdate)
+	if canUpdateAudit || canUpdateGoose || !canReadGoose || canUpdateEvent || canDeleteEvent || canUpdateLineage || canInsertLineageRevision || !canPublishLineage || canUpdateServingBundle || backupInsert || !backupSelect || !backupCursor || !backupProject || readonlyCursor || readonlyJobs || !readonlyJobView || readonlySession || readonlyCredential || readonlyToken || readonlyServiceSecret || readonlyDesktopCode || readonlyDeviceAuth || readonlyAuthoringCredential || !physicalRuntimeSelect || physicalRuntimeInsert || physicalRuntimeUpdate || physicalRuntimeDelete || !physicalReadonlySelect || physicalReadonlyInsert || !physicalBackupSelect || physicalBackupInsert || !physicalMaintenanceSelect || !physicalMaintenanceLeaseWrite || physicalMaintenanceAdmissionWrite || !dashboardRuntimeSessionInsert || dashboardRuntimeSessionDelete || !dashboardRuntimeUsageInsert || dashboardRuntimeUsageDelete || !dashboardRuntimeAppearanceInsert || dashboardRuntimeAppearanceDelete || !dashboardMaintenanceSessionDelete || !dashboardMaintenanceUsageDelete || dashboardMaintenanceAppearanceInsert || dashboardReadonlySessionInsert || dashboardReadonlyUsageInsert || dashboardReadonlyAppearanceUpdate {
+		t.Fatalf("least-privilege grants leaked: audit update=%t Goose update/read=%t/%t event update=%t event delete=%t lineage update/insert-revision/publish=%t/%t/%t serving bundle update=%t backup insert=%t backup select=%t backup cursor=%t backup project=%t readonly cursor=%t readonly jobs=%t readonly job view=%t readonly credentials=%t/%t/%t/%t/%t/%t/%t physical runtime select/write=%t/%t/%t/%t readonly select/insert=%t/%t backup select/insert=%t/%t maintenance select/lease-write/admission-write=%t/%t/%t dashboard runtime session insert/delete=%t/%t usage insert/delete=%t/%t appearance insert/delete=%t/%t maintenance session/usage delete=%t/%t appearance insert=%t readonly session/usage insert=%t/%t appearance update=%t", canUpdateAudit, canUpdateGoose, canReadGoose, canUpdateEvent, canDeleteEvent, canUpdateLineage, canInsertLineageRevision, canPublishLineage, canUpdateServingBundle, backupInsert, backupSelect, backupCursor, backupProject, readonlyCursor, readonlyJobs, readonlyJobView, readonlySession, readonlyCredential, readonlyToken, readonlyServiceSecret, readonlyDesktopCode, readonlyDeviceAuth, readonlyAuthoringCredential, physicalRuntimeSelect, physicalRuntimeInsert, physicalRuntimeUpdate, physicalRuntimeDelete, physicalReadonlySelect, physicalReadonlyInsert, physicalBackupSelect, physicalBackupInsert, physicalMaintenanceSelect, physicalMaintenanceLeaseWrite, physicalMaintenanceAdmissionWrite, dashboardRuntimeSessionInsert, dashboardRuntimeSessionDelete, dashboardRuntimeUsageInsert, dashboardRuntimeUsageDelete, dashboardRuntimeAppearanceInsert, dashboardRuntimeAppearanceDelete, dashboardMaintenanceSessionDelete, dashboardMaintenanceUsageDelete, dashboardMaintenanceAppearanceInsert, dashboardReadonlySessionInsert, dashboardReadonlyUsageInsert, dashboardReadonlyAppearanceUpdate)
 	}
 	var runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect bool
 	if err := db.QueryRow(ctx, `
@@ -261,9 +206,6 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	}
 	if !runtimeRetentionSelect || runtimeRetentionInsert || runtimeRetentionUpdate || runtimeRetentionDelete || !runtimeRetentionExecute || readonlyRetentionExecute || maintenanceRetentionExecute || backupRetentionExecute {
 		t.Fatalf("snapshot retention capability leaked: runtime select/write=%t/%t/%t/%t execute=%t readonly/maintenance/backup execute=%t/%t/%t", runtimeRetentionSelect, runtimeRetentionInsert, runtimeRetentionUpdate, runtimeRetentionDelete, runtimeRetentionExecute, readonlyRetentionExecute, maintenanceRetentionExecute, backupRetentionExecute)
-	}
-	if _, err := db.Exec(ctx, `UPDATE platform.schema_revision SET migration_id = 'tampered' WHERE revision = $1`, postgresbaseline.BaselineRevision); err == nil {
-		t.Fatal("schema revision append-only trigger did not reject an update")
 	}
 	if _, err := db.Exec(ctx, `
 		INSERT INTO audit.audit_event

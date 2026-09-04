@@ -5,6 +5,7 @@ package postgres
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/url"
@@ -17,6 +18,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
 )
 
 const (
@@ -136,6 +138,23 @@ func (p *ControlPlanePools) Close() {
 // responsibility so the pool package cannot accidentally hide a transaction
 // boundary.
 func OpenControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlanePools, error) {
+	migrator, err := Open(ctx, cfg.Migrator)
+	if err != nil {
+		return nil, fmt.Errorf("open PostgreSQL control migrator pool: %w", err)
+	}
+	pools, err := OpenServingControlPlane(ctx, cfg)
+	if err != nil {
+		migrator.Close()
+		return nil, err
+	}
+	pools.Migrator = migrator
+	return pools, nil
+}
+
+// OpenServingControlPlane opens only the runtime, maintenance, and optional
+// readonly pools. Production serving uses this path so owner-capable migration
+// credentials never enter the process and startup cannot mutate the schema.
+func OpenServingControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlanePools, error) {
 	if strings.TrimSpace(cfg.Maintenance.URL) == "" {
 		return nil, errors.New("PostgreSQL control maintenance URL is required")
 	}
@@ -151,19 +170,13 @@ func OpenControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlan
 	if cfg.Maintenance.MinConns != 1 || cfg.Maintenance.MaxConns != 1 {
 		return nil, errors.New("PostgreSQL control maintenance pool must use exactly one connection")
 	}
-	migrator, err := Open(ctx, cfg.Migrator)
-	if err != nil {
-		return nil, fmt.Errorf("open PostgreSQL control migrator pool: %w", err)
-	}
 	runtime, err := Open(ctx, cfg.Runtime)
 	if err != nil {
-		migrator.Close()
 		return nil, fmt.Errorf("open PostgreSQL control runtime pool: %w", err)
 	}
 	maintenance, err := Open(ctx, cfg.Maintenance)
 	if err != nil {
 		runtime.Close()
-		migrator.Close()
 		return nil, fmt.Errorf("open PostgreSQL control maintenance pool: %w", err)
 	}
 	var readonly *Pool
@@ -172,11 +185,10 @@ func OpenControlPlane(ctx context.Context, cfg ControlPlaneConfig) (*ControlPlan
 		if err != nil {
 			maintenance.Close()
 			runtime.Close()
-			migrator.Close()
 			return nil, fmt.Errorf("open PostgreSQL control readonly pool: %w", err)
 		}
 	}
-	return &ControlPlanePools{Migrator: migrator, Runtime: runtime, Maintenance: maintenance, Readonly: readonly}, nil
+	return &ControlPlanePools{Runtime: runtime, Maintenance: maintenance, Readonly: readonly}, nil
 }
 
 // Pool is a bounded pgxpool with an acquisition deadline. The embedded pool
@@ -188,12 +200,14 @@ type Pool struct {
 	config         Config
 }
 
-// SchemaRevision is the platform-owned readiness record. The generated SQLC
-// row remains an internal implementation detail of this package.
-type SchemaRevision struct {
-	Revision    int64
-	MigrationID string
-	Checksum    string
+// SQLDB exposes the migration-only database/sql adapter required by Goose.
+// Runtime repositories continue to use native pgx. The returned handle shares
+// this pool's connections and must be closed by the caller before Pool.Close.
+func (p *Pool) SQLDB() (*sql.DB, error) {
+	if p == nil || p.pool == nil {
+		return nil, errors.New("postgres pool is nil")
+	}
+	return stdlib.OpenDBFromPool(p.pool), nil
 }
 
 // Extension is the installed PostgreSQL extension identity used by the
@@ -290,8 +304,8 @@ func (p *Pool) Begin(ctx context.Context) (pgx.Tx, error) {
 
 // BeginTx starts a caller-owned transaction with an explicit transaction
 // mode. It preserves the pool's bounded acquisition policy while allowing
-// capability adapters (such as the canonical Watermill subscriber) to require
-// READ COMMITTED rather than inheriting a server default.
+// capability adapters to request an explicit isolation level rather than
+// inheriting a server default.
 func (p *Pool) BeginTx(ctx context.Context, options pgx.TxOptions) (pgx.Tx, error) {
 	conn, err := p.Acquire(ctx)
 	if err != nil {
@@ -412,20 +426,6 @@ func (p *Pool) CurrentDatabase(ctx context.Context) (string, error) {
 		return "", errors.New("postgres pool is nil")
 	}
 	return platformdb.New(p).CurrentDatabase(ctx)
-}
-
-// SchemaRevision is the typed readiness record for one platform schema
-// revision. It is intentionally exposed on Pool so app composition does not
-// import the platform package's internal generated implementation directly.
-func (p *Pool) SchemaRevision(ctx context.Context, revision int64) (SchemaRevision, error) {
-	if p == nil || p.pool == nil {
-		return SchemaRevision{}, errors.New("postgres pool is nil")
-	}
-	record, err := platformdb.New(p).GetSchemaRevision(ctx, revision)
-	if err != nil {
-		return SchemaRevision{}, err
-	}
-	return SchemaRevision{Revision: record.Revision, MigrationID: record.MigrationID, Checksum: record.Checksum}, nil
 }
 
 // RequiredExtension returns one exact installed extension and its owning

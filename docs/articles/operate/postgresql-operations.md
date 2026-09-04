@@ -28,9 +28,9 @@ Do not add `pg_stat_*` queries to request handlers to replace the provider
 telemetry. Keep query labels normalized and low-cardinality; never put SQL
 text, user identity, project ID, or credential material in a metric label.
 
-Watermill metrics are conditional. No production consumer is admitted by the
-current deployment contract, so framework or adapter metrics must not be used
-as a production SLO or as evidence that a consumer is running.
+No asynchronous event consumer or broker is part of the current deployment
+contract. Do not publish consumer lag, retry, or broker-readiness metrics until
+a named product effect and its durable delivery mechanism are admitted.
 
 ## Application pool metrics and alerts
 
@@ -132,8 +132,10 @@ Require TLS with server certificate and hostname verification (the provider's
 `verify-full` equivalent) and keep CA material in the deployment secret store.
 For a rotation:
 
-1. Create a new role or password with the same narrowly scoped grants and
-   validate it against the intended database and TLS endpoint.
+1. Rotate the password or provider credential for the existing canonical role
+   and validate it against the intended database and TLS endpoint. Custom role
+   names are rejected because baseline ownership and grants target the
+   provisioned `leapview_control_*` and `leapview_ducklake_*` roles.
 2. Publish the new secret to the deployment mechanism, restart or roll the
    instance so every named pool reconnects, and verify `/readyz`, pool acquire
    counters, and a representative governed query.
@@ -284,9 +286,8 @@ Use the following gates before a release, migration, or planned load test:
 | Delivery and serving generations | Runtime and DuckLake pools stay below 80% acquired/max; no empty acquisitions; readiness and the operator delivery snapshot are healthy. | Any pool is at 90% for 10 minutes, a lease/fencing check fails, or serving roots are indeterminate. |
 | Jobs, refreshes, and retention | Maintenance pool has idle headroom; job claim latency and lease-expiry backlog are draining; provider CPU/WAL/storage remain below warning thresholds. | Claims queue, lease expiry, or deadlocks rise for 10 minutes, or maintenance work competes with request traffic. |
 | Lineage and metadata projections | Control runtime/read-only pools have at least 20% headroom; projection lag and query latency are at baseline; bounded payload sizes are observed. | Projection lag grows for 15 minutes, lock waits exceed 30 seconds, or metadata writes need retries. |
-| L3/object and query cache | Cache/object-store capacity, eviction rate, and network bandwidth have 20% headroom; PostgreSQL stores only catalog/metadata. | Evictions, object failures, WAL/storage growth, or cache churn threaten the RPO/RTO or database headroom. |
 
-Run delivery, jobs, lineage, and L3 checks together: passing the pool gate does
+Run delivery, jobs, lineage, and cache checks together: passing the pool gate does
 not prove that CPU, I/O, storage, object-store bandwidth, or query plans can
 carry the proposed load. Record the measured limit and rollback signal in the
 change plan.

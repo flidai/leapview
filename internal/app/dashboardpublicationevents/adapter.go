@@ -11,12 +11,11 @@ import (
 	publication "github.com/flidai/leapview/internal/dashboard/publication"
 	publicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
-	"github.com/flidai/leapview/internal/platform/events/watermill"
 	"github.com/google/uuid"
 )
 
 type Adapter struct {
-	events *watermill.Adapter
+	events *eventspostgres.Repository
 }
 
 var _ publicationpostgres.EventPort = (*Adapter)(nil)
@@ -24,17 +23,13 @@ var _ publicationpostgres.EventPort = (*Adapter)(nil)
 func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
 
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
-	shared, err := watermill.New(events)
-	if err != nil {
-		return &Adapter{}
-	}
-	return &Adapter{events: shared}
+	return &Adapter{events: events}
 }
 
 // Matches proves this adapter is bound to the exact platform event authority
 // allocated by application composition.
 func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
-	return a != nil && a.events.Matches(events)
+	return a != nil && a.events != nil && a.events == events
 }
 
 // AppendEvent appends through the exact caller-owned transaction and validates
@@ -47,7 +42,7 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx publicationpostgres.Tx, in
 		return publicationpostgres.Event{}, errors.New("dashboard publication event transaction is required")
 	}
 	// Preserve the domain port's historical conflict classification before the
-	// shared boundary inspects the remaining immutable input fields.
+	// canonical repository inspects the remaining immutable input fields.
 	if err := canonicalEventUUIDv7(input.EventID); err != nil {
 		return publicationpostgres.Event{}, fmt.Errorf("%w: publication event id: %v", publication.ErrConflict, err)
 	}
@@ -56,15 +51,12 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx publicationpostgres.Tx, in
 			return publicationpostgres.Event{}, fmt.Errorf("%w: publication correlation id: %v", publication.ErrConflict, err)
 		}
 	}
-	stored, err := a.events.AppendEvent(ctx, tx, watermill.TopicDashboard, watermill.EventInput{
+	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
 		EventID: input.EventID, ScopeID: input.ProjectID, AggregateType: "dashboard_publication",
 		AggregateID: input.PublicationID, EventType: input.Type, SchemaVersion: 1,
 		CorrelationID: input.CorrelationID, Payload: append([]byte(nil), input.Payload...),
 	})
 	if err != nil {
-		if isEventIDValidation(err) {
-			return publicationpostgres.Event{}, fmt.Errorf("%w: publication event id: %v", publication.ErrConflict, err)
-		}
 		var conflict *eventspostgres.EventConflictError
 		if errors.As(err, &conflict) {
 			return publicationpostgres.Event{}, fmt.Errorf("%w: dashboard publication event identity differs", publication.ErrConflict)
@@ -89,11 +81,6 @@ func canonicalCorrelationUUIDv7(value string) error {
 		return errors.New("must be a canonical UUIDv7")
 	}
 	return nil
-}
-
-func isEventIDValidation(err error) bool {
-	var validation *watermill.ValidationError
-	return errors.As(err, &validation) && validation.Field == "eventId"
 }
 
 func canonicalEventUUIDv7(value string) error {

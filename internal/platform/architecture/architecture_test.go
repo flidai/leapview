@@ -1993,7 +1993,7 @@ func TestRequestRuntimeDoesNotRetainConstructionDependencies(t *testing.T) {
 
 func TestAppDoesNotConstructRepositoriesFromSQLDB(t *testing.T) {
 	for _, file := range productionGoFiles(t) {
-		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && strings.Contains(file.body, ".SQLDB()") {
+		if file.pkgDir == "internal/app" && file.path != "internal/app/composition.go" && file.path != "internal/app/postgres_composition.go" && strings.Contains(file.body, ".SQLDB()") {
 			t.Errorf("%s constructs adapters from platform.Store; capability modules must receive construction ownership", file.path)
 		}
 	}
@@ -3995,7 +3995,7 @@ func TestPostgreSQLSQLCVerificationIsOfflineAndDatabaseBacked(t *testing.T) {
 			"- task: db:prepare",
 		},
 		filepath.Join("internal", "app", "postgresbaseline", "sqlc_prepare_test.go"): {
-			"postgresbaseline.Apply(ctx, tx)",
+			"postgresbaseline.Apply(ctx, migrationDB)",
 			"sqlc/db-prepare",
 			"LEAPVIEW_SQLC_PREPARE_DATABASE_URL",
 			"github.com/sqlc-dev/sqlc/cmd/sqlc@v1.31.1",

@@ -25,6 +25,7 @@ import (
 	extensionfixture "github.com/flidai/leapview/internal/app/testing/extensionfixture"
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/jackc/pgx/v5"
 )
 
 // TestPostgres18ProductionOnboardingJourney is the executable operator
@@ -315,6 +316,14 @@ func grantPostgresOnboardingDatabases(t *testing.T, h *postgrestest.Harness, con
 	h.GrantDatabase(t, catalog.Name, roles.catalogMigrator, "CONNECT", "CREATE", "TEMPORARY")
 	h.GrantDatabase(t, catalog.Name, roles.catalogRuntime, "CONNECT", "TEMPORARY")
 	h.GrantDatabase(t, catalog.Name, roles.catalogMaintenance, "CONNECT", "TEMPORARY")
+	admin, err := pgx.Connect(t.Context(), control.AdminURL())
+	if err != nil {
+		t.Fatalf("open onboarding control administrator: %v", err)
+	}
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+	if _, err := admin.Exec(t.Context(), `GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatalf("grant Goose version-schema ownership to control migrator: %v", err)
+	}
 }
 
 func postgresOnboardingConfig(t *testing.T, control, catalog *postgrestest.Database, roles postgresOnboardingRoles, fixture extensionfixture.Fixture) config.Config {

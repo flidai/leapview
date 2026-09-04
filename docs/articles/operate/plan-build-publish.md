@@ -97,8 +97,7 @@ and immutable audit evidence in the same control transaction.
 No query can select a preparing candidate or an unverified seal. Production is
 clean-install only: there is no SQLite migration chain, catalog-object repair
 path, or file-catalog fallback. The serving runtime resolves the active
-generation to its exact snapshot seal and holds a durable query lease while the
-snapshot is attached.
+generation to its exact snapshot seal while the snapshot is attached.
 
 ## Rollback and garbage collection
 
@@ -117,11 +116,6 @@ the configured attempt/orphan grace while their persistent commit markers are
 reconciled. DuckLake remains authoritative for table, file, delete-file, and
 snapshot membership; PostgreSQL stores lifecycle evidence and roots, not a
 duplicate physical manifest.
-
-Shared L3 query-cache objects use a separate cache-owned maintenance authority.
-Its pool/security-domain lease and durable scan cursor make deletion resumable,
-and it rechecks exact global reachability immediately before a conditional
-object delete. Cache cleanup never uses the retired delivery catalog GC path.
 
 ## Qualification lanes and support boundary
 

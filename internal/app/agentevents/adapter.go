@@ -11,13 +11,12 @@ import (
 
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
-	eventwatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 	"github.com/flidai/leapview/pkg/jobs"
 )
 
 // Adapter is stateless and safe to share between Agent requests.
 type Adapter struct {
-	events *eventwatermill.Adapter
+	events *eventspostgres.Repository
 }
 
 var _ agentpostgres.DomainEventAppender = (*Adapter)(nil)
@@ -29,17 +28,13 @@ func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
 // NewWithRepository is useful to composition tests and keeps the event
 // authority explicit without exposing its concrete projection to Agent.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
-	watermillAdapter, err := eventwatermill.New(events)
-	if err != nil {
-		return &Adapter{}
-	}
-	return &Adapter{events: watermillAdapter}
+	return &Adapter{events: events}
 }
 
 // Matches proves this adapter retains the exact platform event repository
 // supplied by application composition.
 func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
-	return a != nil && a.events.Matches(events)
+	return a != nil && a.events != nil && a.events == events
 }
 
 // AppendDomainEvent appends through the exact caller-owned transaction and
@@ -53,7 +48,7 @@ func (a *Adapter) AppendDomainEvent(ctx context.Context, tx agentpostgres.Tx, in
 		return agentpostgres.DomainEvent{}, errors.New("agent domain event id must be a canonical UUID")
 	}
 
-	stored, err := a.events.AppendEvent(ctx, tx, eventwatermill.TopicAgent, eventspostgres.EventInput{
+	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
 		EventID: input.EventID, ScopeID: input.ScopeID, AggregateType: input.AggregateType,
 		AggregateID: input.AggregateID, EventType: input.EventType, SchemaVersion: input.SchemaVersion,
 		CorrelationID: input.CorrelationID, Payload: append([]byte(nil), input.Payload...),

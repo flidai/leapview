@@ -7,7 +7,6 @@ import (
 
 	depauth "github.com/flidai/leapview/internal/deployment/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
-	eventswatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 )
 
 var _ depauth.ApprovalEventAppender = (*Adapter)(nil)
@@ -16,7 +15,7 @@ var _ depauth.ApprovalEventAppender = (*Adapter)(nil)
 // transaction. The event payload includes exact publication and credential
 // evidence and is replay-checked by the platform event authority.
 func (a *Adapter) AppendApprovalEvent(ctx context.Context, tx depauth.Tx, input depauth.ApprovalEvent) error {
-	if a == nil || a.events == nil || a.boundary == nil || tx == nil {
+	if a == nil || a.events == nil || tx == nil {
 		return fmt.Errorf("%w: approval event adapter is not configured", depauth.ErrInvalid)
 	}
 	eventType, err := depauth.ApprovalEventType(input.Action)
@@ -27,16 +26,13 @@ func (a *Adapter) AppendApprovalEvent(ctx context.Context, tx depauth.Tx, input 
 	if err != nil {
 		return err
 	}
-	stored, err := a.boundary.AppendEvent(ctx, tx, eventswatermill.TopicDelivery, eventspostgres.EventInput{
+	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
 		EventID: input.Evidence.EventID, ScopeID: input.Request.TargetID,
 		AggregateType: "delivery_approval", AggregateID: input.Request.RequestID,
 		EventType: eventType, SchemaVersion: 1, CorrelationID: input.Evidence.EventID,
 		Payload: payload,
 	})
 	if err != nil {
-		if isWatermillValidation(err) {
-			return fmt.Errorf("%w: approval event: %v", depauth.ErrInvalid, err)
-		}
 		var conflict *eventspostgres.EventConflictError
 		if errors.As(err, &conflict) {
 			return fmt.Errorf("%w: approval event identity differs", depauth.ErrConflict)

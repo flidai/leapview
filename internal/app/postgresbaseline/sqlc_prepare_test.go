@@ -2,6 +2,7 @@ package postgresbaseline_test
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -12,6 +13,7 @@ import (
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
 	"github.com/jackc/pgx/v5/pgxpool"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"gopkg.in/yaml.v3"
 )
 
@@ -28,7 +30,7 @@ func TestSQLCVetPreparesAgainstBaselinePostgreSQL18(t *testing.T) {
 	}
 	h := postgrestest.Start(t)
 	owner := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_owner"})
-	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator"})
+	migrator := h.EnsureRole(t, postgrestest.Role{Name: "leapview_control_migrator", Password: "sqlc-migrator", Login: true})
 	for _, name := range []string{"leapview_control_runtime", "leapview_control_maintenance", "leapview_control_readonly", "leapview_control_backup"} {
 		h.EnsureRole(t, postgrestest.Role{Name: name})
 	}
@@ -44,24 +46,16 @@ func TestSQLCVetPreparesAgainstBaselinePostgreSQL18(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer pool.Close()
-	conn, err := pool.Acquire(ctx)
+	if _, err := pool.Exec(ctx, `GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		t.Fatal(err)
+	}
+	migrationDB, err := sql.Open("pgx", database.URL(migrator))
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer conn.Release()
-	if _, err := conn.Exec(ctx, `SET ROLE leapview_control_migrator`); err != nil {
-		t.Fatal(err)
-	}
-	tx, err := conn.Begin(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := postgresbaseline.Apply(ctx, tx); err != nil {
-		_ = tx.Rollback(ctx)
+	defer migrationDB.Close()
+	if err := postgresbaseline.Apply(ctx, migrationDB); err != nil {
 		t.Fatalf("apply clean PostgreSQL baseline: %v", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		t.Fatal(err)
 	}
 	var accessFloorInsert, queryFloorInsert bool
 	if err := pool.QueryRow(ctx, `

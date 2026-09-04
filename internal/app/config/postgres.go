@@ -11,7 +11,16 @@ import (
 	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
 
-const postgresControlMaintenanceRole = "leapview_control_maintenance"
+const (
+	postgresControlMigratorRole           = "leapview_control_migrator"
+	postgresControlRuntimeRole            = "leapview_control_runtime"
+	postgresControlReadonlyRole           = "leapview_control_readonly"
+	postgresControlMaintenanceRole        = "leapview_control_maintenance"
+	postgresControlUpgradeCoordinatorRole = "leapview_control_upgrade_coordinator"
+	postgresDuckLakeMigratorRole          = "leapview_ducklake_migrator"
+	postgresDuckLakeRuntimeRole           = "leapview_ducklake_runtime"
+	postgresDuckLakeMaintenanceRole       = "leapview_ducklake_maintenance"
+)
 
 // postgresCredentialAlias compares only the credential identity carried by a
 // PostgreSQL URL. Query ordering, TLS options, and an omitted default port do
@@ -54,42 +63,6 @@ func postgresCredentialIdentity(raw string) (string, bool) {
 	return strings.ToLower(parsed.Hostname()) + "|" + strconv.Itoa(port) + "|" + database + "|" + username + "|" + password, true
 }
 
-// PostgresRuntimeConfig maps the application environment contract to the
-// capability-neutral PostgreSQL runtime policy. Control and DuckLake are
-// intentionally mapped to independent Config values: callers must open and
-// close their pools separately and must not infer a cross-database
-// transaction from this value.
-func (c Config) PostgresRuntimeConfig() platformpostgres.RuntimeConfig {
-	return platformpostgres.RuntimeConfig{
-		Control: platformpostgres.Config{
-			URL:                    c.PostgresControlURL,
-			ExpectedMajor:          c.PostgresExpectedMajor,
-			RuntimeRole:            c.PostgresControlRuntimeRole,
-			Intent:                 platformpostgres.Intent(c.PostgresControlIntent),
-			RequireTLS:             c.PostgresRequireTLS,
-			MinConns:               int32(c.PostgresControlPoolMinConns),
-			MaxConns:               int32(c.PostgresControlPoolMaxConns),
-			AcquireTimeout:         c.PostgresControlAcquireTimeout,
-			StatementTimeout:       c.PostgresControlStatementTimeout,
-			LockTimeout:            c.PostgresControlLockTimeout,
-			IdleTransactionTimeout: c.PostgresControlIdleTransactionTimeout,
-		},
-		DuckLake: platformpostgres.Config{
-			URL:                    c.PostgresDuckLakeURL,
-			ExpectedMajor:          c.PostgresExpectedMajor,
-			RuntimeRole:            c.PostgresDuckLakeRuntimeRole,
-			Intent:                 platformpostgres.Intent(c.PostgresDuckLakeIntent),
-			RequireTLS:             c.PostgresRequireTLS,
-			MinConns:               int32(c.PostgresDuckLakePoolMinConns),
-			MaxConns:               int32(c.PostgresDuckLakePoolMaxConns),
-			AcquireTimeout:         c.PostgresDuckLakeAcquireTimeout,
-			StatementTimeout:       c.PostgresDuckLakeStatementTimeout,
-			LockTimeout:            c.PostgresDuckLakeLockTimeout,
-			IdleTransactionTimeout: c.PostgresDuckLakeIdleTransactionTimeout,
-		},
-	}
-}
-
 // PostgresControlPlaneConfig maps the explicit control-plane role settings to
 // the capability-neutral pool policy. Maintenance is always represented as a
 // required one-connection read/write pool; production validation rejects an
@@ -98,15 +71,15 @@ func (c Config) PostgresRuntimeConfig() platformpostgres.RuntimeConfig {
 func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig {
 	migratorRole := strings.TrimSpace(c.PostgresControlMigratorRole)
 	if migratorRole == "" {
-		migratorRole = "leapview_control_migrator"
+		migratorRole = postgresControlMigratorRole
 	}
 	runtimeRole := strings.TrimSpace(c.PostgresControlRuntimeRole)
 	if runtimeRole == "" {
-		runtimeRole = "leapview_control_runtime"
+		runtimeRole = postgresControlRuntimeRole
 	}
 	readonlyRole := strings.TrimSpace(c.PostgresControlReadonlyRole)
 	if readonlyRole == "" {
-		readonlyRole = "leapview_control_readonly"
+		readonlyRole = postgresControlReadonlyRole
 	}
 	config := platformpostgres.ControlPlaneConfig{
 		Migrator: platformpostgres.Config{
@@ -162,7 +135,7 @@ func (c Config) PostgresControlPlaneConfig() platformpostgres.ControlPlaneConfig
 func (c Config) PostgresDuckLakeRuntimeConfig() platformpostgres.Config {
 	role := strings.TrimSpace(c.PostgresDuckLakeRuntimeRole)
 	if role == "" {
-		role = "leapview_ducklake_runtime"
+		role = postgresDuckLakeRuntimeRole
 	}
 	return platformpostgres.Config{
 		URL:                    c.PostgresDuckLakeURL,
@@ -181,12 +154,12 @@ func (c Config) PostgresDuckLakeRuntimeConfig() platformpostgres.Config {
 
 // PostgresDuckLakeMaintenanceConfig describes the separately authenticated,
 // one-connection read/write pool used only by bounded physical DuckLake
-// expiry and cleanup. It is intentionally not part of PostgresRuntimeConfig:
-// ordinary serving must never open or borrow this credential.
+// expiry and cleanup. Ordinary serving must never open or borrow this
+// credential.
 func (c Config) PostgresDuckLakeMaintenanceConfig() platformpostgres.Config {
 	role := strings.TrimSpace(c.PostgresDuckLakeMaintenanceRole)
 	if role == "" {
-		role = "leapview_ducklake_maintenance"
+		role = postgresDuckLakeMaintenanceRole
 	}
 	return platformpostgres.Config{
 		URL: c.PostgresDuckLakeMaintenanceURL, ExpectedMajor: c.PostgresExpectedMajor,
@@ -198,17 +171,16 @@ func (c Config) PostgresDuckLakeMaintenanceConfig() platformpostgres.Config {
 }
 
 // PostgresDuckLakeUpgradeConfig returns the two explicitly independent pools
-// used by the catalog upgrade operation. They are intentionally not included
-// in PostgresRuntimeConfig: serving never opens owner-capable catalog
-// credentials or the guarded control coordinator pool.
+// used by the catalog upgrade operation. Serving never opens owner-capable
+// catalog credentials or the guarded control coordinator pool.
 func (c Config) PostgresDuckLakeUpgradeConfig() (platformpostgres.Config, platformpostgres.Config) {
 	coordinatorRole := strings.TrimSpace(c.PostgresControlUpgradeCoordinatorRole)
 	if coordinatorRole == "" {
-		coordinatorRole = "leapview_control_upgrade_coordinator"
+		coordinatorRole = postgresControlUpgradeCoordinatorRole
 	}
 	catalogRole := strings.TrimSpace(c.PostgresDuckLakeMigratorRole)
 	if catalogRole == "" {
-		catalogRole = "leapview_ducklake_migrator"
+		catalogRole = postgresDuckLakeMigratorRole
 	}
 	coordinator := platformpostgres.Config{
 		URL: c.PostgresControlUpgradeCoordinatorURL, ExpectedMajor: c.PostgresExpectedMajor,
@@ -250,6 +222,9 @@ func (c Config) PostgresControlMaintenanceConfig() platformpostgres.Config {
 // contract. It is called by an upgrade command, never by serving startup, so
 // an ordinary runtime process cannot accidentally open owner-capable pools.
 func (c Config) ValidatePostgresUpgrade() error {
+	if err := c.validateCanonicalPostgresRoles("upgrade"); err != nil {
+		return err
+	}
 	coordinator, catalog := c.PostgresDuckLakeUpgradeConfig()
 	if err := coordinator.Validate(); err != nil {
 		return fmt.Errorf("invalid PostgreSQL upgrade coordinator configuration: %w", err)
@@ -273,8 +248,8 @@ func (c Config) ValidatePostgresUpgrade() error {
 }
 
 // ValidatePostgresProduction enforces the clean-slate production startup
-// contract.  Production must have separate migrator and runtime credentials;
-// an optional readonly URL is validated when supplied.  This method is kept
+// contract. Production serving carries no migrator credential; an optional
+// readonly URL is validated when supplied. This method is kept
 // separate from Config.Validate so embedded development/test fixtures can
 // continue to use their approved local SQLite cache without weakening the
 // production serve command's fail-closed check.
@@ -282,7 +257,7 @@ func (c Config) ValidatePostgresProduction() error {
 	if !c.Production {
 		return nil
 	}
-	return c.validatePostgresServeTarget("production", true, true)
+	return c.validatePostgresServeTarget("production", true, true, false)
 }
 
 // ValidatePostgresDevelopment validates the local PostgreSQL composition used
@@ -291,14 +266,14 @@ func (c Config) ValidatePostgresProduction() error {
 // URLs and does not require an admitted delivery pool. The latter is supplied
 // by an explicit bootstrap operation when a developer publishes a candidate.
 func (c Config) ValidatePostgresDevelopment() error {
-	return c.validatePostgresServeTarget("development", false, false)
+	return c.validatePostgresServeTarget("development", false, false, true)
 }
 
 // validatePostgresServeTarget contains the common control/DuckLake connection
 // contract. Keep production's error wording stable because it is part of the
 // startup diagnostics consumed by deployment tooling; development uses the
 // same checks with a mode-specific prefix.
-func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeliveryPool bool) error {
+func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeliveryPool, requireMigrator bool) error {
 	require := func(value, name string) error {
 		if strings.TrimSpace(value) == "" {
 			return fmt.Errorf("%s serve requires %s", mode, name)
@@ -307,7 +282,6 @@ func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeli
 	}
 	for _, required := range [][2]string{
 		{c.PostgresControlURL, "LEAPVIEW_POSTGRES_CONTROL_URL"},
-		{c.PostgresControlMigratorURL, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL"},
 		{c.PostgresDuckLakeURL, "LEAPVIEW_POSTGRES_DUCKLAKE_URL"},
 		{c.PostgresControlMaintenanceURL, "LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_URL"},
 		{c.PostgresDuckLakeMaintenanceURL, "LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_URL"},
@@ -316,8 +290,16 @@ func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeli
 			return err
 		}
 	}
+	if requireMigrator {
+		if err := require(c.PostgresControlMigratorURL, "LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_URL"); err != nil {
+			return err
+		}
+	}
 	if requireTLS && !c.PostgresRequireTLS {
 		return fmt.Errorf("%s serve requires LEAPVIEW_POSTGRES_REQUIRE_TLS=true", mode)
+	}
+	if err := c.validateCanonicalPostgresRoles(mode); err != nil {
+		return err
 	}
 	if !c.PostgresRequireTLS {
 		for _, connection := range []struct {
@@ -345,19 +327,13 @@ func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeli
 			}
 		}
 	}
-	if c.PostgresControlIntent != "" && c.PostgresControlIntent != string(platformpostgres.IntentReadWrite) {
-		return fmt.Errorf("%s serve requires LEAPVIEW_POSTGRES_CONTROL_INTENT=%q", mode, platformpostgres.IntentReadWrite)
-	}
-	if c.PostgresDuckLakeIntent != "" && c.PostgresDuckLakeIntent != string(platformpostgres.IntentReadWrite) {
-		return fmt.Errorf("%s serve requires LEAPVIEW_POSTGRES_DUCKLAKE_INTENT=%q", mode, platformpostgres.IntentReadWrite)
-	}
 	control := c.PostgresControlPlaneConfig()
 	ducklake := c.PostgresDuckLakeRuntimeConfig()
 	ducklakeMaintenance := c.PostgresDuckLakeMaintenanceConfig()
 	if control.Migrator.RuntimeRole == control.Runtime.RuntimeRole {
 		return fmt.Errorf("%s control migrator and runtime roles must be distinct", mode)
 	}
-	if postgresCredentialAlias(control.Migrator.URL, control.Runtime.URL) {
+	if strings.TrimSpace(control.Migrator.URL) != "" && postgresCredentialAlias(control.Migrator.URL, control.Runtime.URL) {
 		return fmt.Errorf("%s control migrator and runtime URLs must use distinct credentials", mode)
 	}
 	if ducklake.RuntimeRole == control.Runtime.RuntimeRole || ducklake.RuntimeRole == control.Migrator.RuntimeRole || ducklake.RuntimeRole == control.Maintenance.RuntimeRole || ducklakeMaintenance.RuntimeRole == control.Runtime.RuntimeRole || ducklakeMaintenance.RuntimeRole == control.Migrator.RuntimeRole || ducklakeMaintenance.RuntimeRole == control.Maintenance.RuntimeRole {
@@ -366,8 +342,10 @@ func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeli
 	if postgresCredentialAlias(ducklake.URL, control.Runtime.URL) || postgresCredentialAlias(ducklake.URL, control.Migrator.URL) || postgresCredentialAlias(ducklake.URL, control.Maintenance.URL) || postgresCredentialAlias(ducklakeMaintenance.URL, control.Runtime.URL) || postgresCredentialAlias(ducklakeMaintenance.URL, control.Migrator.URL) || postgresCredentialAlias(ducklakeMaintenance.URL, control.Maintenance.URL) {
 		return fmt.Errorf("%s DuckLake and control PostgreSQL URLs must use distinct database credentials", mode)
 	}
-	if err := control.Migrator.Validate(); err != nil {
-		return fmt.Errorf("invalid PostgreSQL control migrator configuration: %w", err)
+	if strings.TrimSpace(control.Migrator.URL) != "" {
+		if err := control.Migrator.Validate(); err != nil {
+			return fmt.Errorf("invalid PostgreSQL control migrator configuration: %w", err)
+		}
 	}
 	if err := control.Runtime.Validate(); err != nil {
 		return fmt.Errorf("invalid PostgreSQL control runtime configuration: %w", err)
@@ -414,6 +392,33 @@ func (c Config) validatePostgresServeTarget(mode string, requireTLS, requireDeli
 		}
 		if err := platformdigest.ValidateSHA256Identity(c.DeliveryPhysicalPoolCompatibilityDigest); err != nil {
 			return fmt.Errorf("production serve requires LEAPVIEW_DELIVERY_PHYSICAL_POOL_COMPATIBILITY_DIGEST: %w", err)
+		}
+	}
+	return nil
+}
+
+// validateCanonicalPostgresRoles keeps the environment contract truthful: the
+// baseline and its role policy provision a fixed set of durable authority
+// roles. Accepting arbitrary names here would produce pools that cannot be
+// admitted or granted the capability-owned privileges.
+func (c Config) validateCanonicalPostgresRoles(mode string) error {
+	roles := []struct {
+		name string
+		got  string
+		want string
+	}{
+		{"LEAPVIEW_POSTGRES_CONTROL_RUNTIME_ROLE", c.PostgresControlRuntimeRole, postgresControlRuntimeRole},
+		{"LEAPVIEW_POSTGRES_CONTROL_MIGRATOR_ROLE", c.PostgresControlMigratorRole, postgresControlMigratorRole},
+		{"LEAPVIEW_POSTGRES_CONTROL_READONLY_ROLE", c.PostgresControlReadonlyRole, postgresControlReadonlyRole},
+		{"LEAPVIEW_POSTGRES_CONTROL_MAINTENANCE_ROLE", c.PostgresControlMaintenanceRole, postgresControlMaintenanceRole},
+		{"LEAPVIEW_POSTGRES_CONTROL_UPGRADE_COORDINATOR_ROLE", c.PostgresControlUpgradeCoordinatorRole, postgresControlUpgradeCoordinatorRole},
+		{"LEAPVIEW_POSTGRES_DUCKLAKE_RUNTIME_ROLE", c.PostgresDuckLakeRuntimeRole, postgresDuckLakeRuntimeRole},
+		{"LEAPVIEW_POSTGRES_DUCKLAKE_MIGRATOR_ROLE", c.PostgresDuckLakeMigratorRole, postgresDuckLakeMigratorRole},
+		{"LEAPVIEW_POSTGRES_DUCKLAKE_MAINTENANCE_ROLE", c.PostgresDuckLakeMaintenanceRole, postgresDuckLakeMaintenanceRole},
+	}
+	for _, role := range roles {
+		if got := strings.TrimSpace(role.got); got != "" && got != role.want {
+			return fmt.Errorf("%s requires %s=%q because only provisioned PostgreSQL roles are supported", mode, role.name, role.want)
 		}
 	}
 	return nil

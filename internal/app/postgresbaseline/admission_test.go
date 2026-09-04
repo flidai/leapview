@@ -45,9 +45,9 @@ func TestServingAdmissionsAcceptReviewedPrivileges(t *testing.T) {
 				return VerifyControlRuntimeAdmission(ctx, reader)
 			},
 			allowed: map[string]bool{
-				"schema:recovery:USAGE":                 true,
-				"table:platform.schema_revision:SELECT": true,
-				"table:recovery.recovery_set:SELECT":    true,
+				"schema:recovery:USAGE":                true,
+				"table:public.goose_db_version:SELECT": true,
+				"table:recovery.recovery_set:SELECT":   true,
 				"function:managed_data.publish_binding_set(text,text,text,text,bigint,jsonb):EXECUTE": true,
 			},
 		},
@@ -69,9 +69,9 @@ func TestServingAdmissionsAcceptReviewedPrivileges(t *testing.T) {
 				return VerifyControlReadonlyAdmission(ctx, reader)
 			},
 			allowed: map[string]bool{
-				"schema:platform:USAGE":                 true,
-				"table:platform.schema_revision:SELECT": true,
-				"table:recovery.recovery_set:SELECT":    true,
+				"schema:platform:USAGE":                true,
+				"table:public.goose_db_version:SELECT": true,
+				"table:recovery.recovery_set:SELECT":   true,
 			},
 		},
 		"ducklake": {
@@ -98,9 +98,9 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 	valid := admissionReaderFake{
 		extension: platformpostgres.Extension{Name: "pgcrypto", Schema: "managed_data"},
 		allowed: map[string]bool{
-			"schema:recovery:USAGE":                 true,
-			"table:platform.schema_revision:SELECT": true,
-			"table:recovery.recovery_set:SELECT":    true,
+			"schema:recovery:USAGE":                true,
+			"table:public.goose_db_version:SELECT": true,
+			"table:recovery.recovery_set:SELECT":   true,
 			"function:managed_data.publish_binding_set(text,text,text,text,bigint,jsonb):EXECUTE": true,
 		},
 	}
@@ -110,7 +110,7 @@ func TestServingAdmissionsRejectExtensionAndPrivilegeDrift(t *testing.T) {
 	}{
 		{name: "extension schema", mutate: func(f *admissionReaderFake) { f.extension.Schema = "public" }},
 		{name: "missing positive privilege", mutate: func(f *admissionReaderFake) { delete(f.allowed, "schema:recovery:USAGE") }},
-		{name: "forbidden privilege", mutate: func(f *admissionReaderFake) { f.allowed["table:platform.schema_revision:UPDATE"] = true }},
+		{name: "forbidden privilege", mutate: func(f *admissionReaderFake) { f.allowed["table:public.goose_db_version:UPDATE"] = true }},
 		{name: "runtime recovery-root function grant", mutate: func(f *admissionReaderFake) {
 			f.allowed["function:delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb):EXECUTE"] = true
 		}},

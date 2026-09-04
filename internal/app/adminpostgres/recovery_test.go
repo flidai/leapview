@@ -105,7 +105,7 @@ func TestRecoveryOperationsBaselineFailureClosesPool(t *testing.T) {
 	ops := New(Dependencies{
 		LoadConfig:      func() (config.Config, error) { return validProductionMaintenanceConfig(), nil },
 		OpenMaintenance: func(context.Context, platformpostgres.Config) (MaintenancePool, error) { return p, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return errors.New("baseline mismatch") },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return errors.New("baseline mismatch") },
 	})
 	for name, call := range map[string]func() error{
 		"validate": func() error {

@@ -13,7 +13,6 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
-	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
@@ -55,11 +54,6 @@ type EventsPruner interface {
 // EventTxRunner owns begin/commit/rollback for one event-prune batch.
 type EventTxRunner interface {
 	Run(context.Context, func(eventspostgres.Tx) error) error
-}
-
-// CachePruner is the cache coordination retention surface.
-type CachePruner interface {
-	Prune(context.Context, cachepostgres.PruneOptions) (cachepostgres.PruneStats, error)
 }
 
 // DashboardSessionPruner is the bounded expired-session cleanup surface.
@@ -120,7 +114,6 @@ type Options struct {
 	Jobs              JobsPruner
 	Events            EventsPruner
 	EventTransactions EventTxRunner
-	Cache             CachePruner
 	DashboardSession  DashboardSessionPruner
 	DashboardUsage    DashboardUsagePruner
 	DashboardStreams  DashboardPublicationPruner
@@ -152,7 +145,6 @@ func New(options Options) (*Coordinator, error) {
 		{"jobs", options.Jobs},
 		{"events", options.Events},
 		{"event transaction runner", options.EventTransactions},
-		{"cache", options.Cache},
 		{"dashboard session", options.DashboardSession},
 		{"dashboard usage", options.DashboardUsage},
 		{"dashboard publication streams", options.DashboardStreams},
@@ -203,12 +195,6 @@ type JobsPolicy struct {
 // the owner function.
 type EventsPolicy struct{ Before time.Time }
 
-// CachePolicy controls one bounded coordination-row batch.
-type CachePolicy struct {
-	Before time.Time
-	Limit  int
-}
-
 // DashboardSessionPolicy controls one bounded expired-session batch.
 type DashboardSessionPolicy struct{ Limit int }
 
@@ -252,7 +238,6 @@ type Policy struct {
 	CursorSigning    CursorSigningPolicy
 	Jobs             JobsPolicy
 	Events           EventsPolicy
-	Cache            CachePolicy
 	DashboardSession DashboardSessionPolicy
 	DashboardUsage   DashboardUsagePolicy
 	DashboardStreams DashboardPublicationPolicy
@@ -281,12 +266,6 @@ func (p Policy) Validate() error {
 	}
 	if p.Events.Before.IsZero() {
 		return errors.New("events retention cutoff is required")
-	}
-	if p.Cache.Before.IsZero() {
-		return errors.New("cache retention cutoff is required")
-	}
-	if err := validateLimit("cache", p.Cache.Limit); err != nil {
-		return err
 	}
 	if err := validateLimit("dashboard session", p.DashboardSession.Limit); err != nil {
 		return err
@@ -347,7 +326,6 @@ type Result struct {
 	CursorSigningRemoved             int64
 	JobsRemoved                      int64
 	EventsRemoved                    int64
-	Cache                            cachepostgres.PruneStats
 	DashboardSessionsRemoved         int64
 	DashboardUsageRemoved            int64
 	DashboardPublicationBatchDone    bool
@@ -386,9 +364,6 @@ func (c *Coordinator) Run(ctx context.Context, policy Policy) (Result, error) {
 	}
 	if result.EventsRemoved, err = pruneEvents(ctx, c.options.EventTransactions, c.options.Events, policy.Events.Before); err != nil {
 		return result, fmt.Errorf("prune events: %w", err)
-	}
-	if result.Cache, err = c.options.Cache.Prune(ctx, cachepostgres.PruneOptions{Before: policy.Cache.Before, Limit: policy.Cache.Limit}); err != nil {
-		return result, fmt.Errorf("prune cache coordination: %w", err)
 	}
 	if result.DashboardSessionsRemoved, err = c.options.DashboardSession.DeleteExpiredBatch(ctx, policy.DashboardSession.Limit); err != nil {
 		return result, fmt.Errorf("prune dashboard sessions: %w", err)
@@ -503,7 +478,6 @@ var (
 	_ CursorSigningPruner        = (*cursorsigningpostgres.Maintenance)(nil)
 	_ JobsPruner                 = (*jobspostgres.Maintenance)(nil)
 	_ EventsPruner               = (*eventspostgres.Repository)(nil)
-	_ CachePruner                = (*cachepostgres.Maintenance)(nil)
 	_ DashboardSessionPruner     = (*dashboardsessionpostgres.Maintenance)(nil)
 	_ DashboardUsagePruner       = (*dashboardusagepostgres.Maintenance)(nil)
 	_ DashboardPublicationPruner = (*dashboardpublicationpostgres.Maintenance)(nil)

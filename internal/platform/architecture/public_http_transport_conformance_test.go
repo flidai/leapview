@@ -12,13 +12,13 @@ import (
 	"testing"
 )
 
-// TestPublicHTTPAPISurfacesDoNotReferenceWatermillTransport keeps the public
+// TestPublicHTTPAPISurfacesDoNotReferenceEventTransport keeps the public
 // request/response boundary independent from the event transport.  The
 // scanner intentionally visits authored handler/API Go files only: capability
 // adapters and persistence packages are allowed to depend on their internal
 // event implementation, while a route handler may only see the domain event
 // contract.
-func TestPublicHTTPAPISurfacesDoNotReferenceWatermillTransport(t *testing.T) {
+func TestPublicHTTPAPISurfacesDoNotReferenceEventTransport(t *testing.T) {
 	root := repoRoot(t)
 	references, err := observePublicHTTPAPITransportReferences(root)
 	if err != nil {
@@ -58,7 +58,6 @@ var forbiddenEventTransportLiterals = []string{
 	"claim_generation",
 	"claimed_by",
 	"claimed_until",
-	"watermill_",
 }
 
 func observePublicHTTPAPITransportReferences(root string) ([]publicHTTPAPITransportReference, error) {
@@ -111,8 +110,6 @@ func observePublicHTTPAPITransportReferences(root string) ([]publicHTTPAPITransp
 
 func isForbiddenEventTransportImport(path string) bool {
 	for _, prefix := range []string{
-		"github.com/ThreeDotsLabs/watermill",
-		"github.com/flidai/leapview/internal/platform/events/watermill",
 		"github.com/flidai/leapview/internal/platform/events/postgres",
 	} {
 		if path == prefix || strings.HasPrefix(path, prefix+"/") {

@@ -129,10 +129,10 @@ still be required to bridge PostgreSQL mutations to an external broker.
 analytical and cache tiers
 
 PostgreSQL owns transactional application state, durable domain events, work
-coordination, lineage projections, and small shared cache metadata. DuckLake
-owns analytical metadata and snapshot history, object storage owns immutable
-analytical and cache objects, DuckDB performs analytical execution, and local
-memory or disk owns disposable hot cache state. This option is selected.
+coordination, and lineage projections. DuckLake owns analytical metadata and
+snapshot history, object storage owns immutable analytical files and artifacts,
+DuckDB performs analytical execution, and local memory or disk owns disposable
+hot cache state. This option is selected.
 
 ## Decision outcome
 
@@ -152,7 +152,6 @@ Application nodes ----------> PostgreSQL HA service
         |                      │   ├── capability-owned schemas
         |                      │   ├── jobs and durable events
         |                      │   ├── lineage projection
-        |                      │   └── shared cache metadata
         |                      └── leapview_ducklake database
         |                          └── DuckLake-owned catalog schema
         |
@@ -161,8 +160,7 @@ Application nodes ----------> PostgreSQL HA service
         |                                      v
         +----> L1 memory cache            Object storage
         +----> L2 node-local cache        ├── Parquet and delete files
-                                          ├── immutable artifacts
-                                          └── optional shared cache objects
+                                          └── immutable artifacts
 ```
 
 One managed, highly available PostgreSQL service is the default target, with
@@ -270,7 +268,6 @@ The PostgreSQL control database becomes the sole durable runtime authority for:
 - idempotency records, leases, fencing tokens and compare-and-swap revisions;
 - immutable audit events and transactional domain events;
 - admitted immutable lineage projections and their active pointers; and
-- shared cache manifests, fill leases, watermarks and retention metadata.
 
 Typed columns and constraints own identity, routing, tenancy, state, time, and
 fencing. `jsonb` may hold versioned, bounded metadata and event payloads; it is
@@ -414,7 +411,7 @@ expiration. DuckLake schedules unreferenced files for deletion; cleanup and
 orphan collection run only after the configured file grace. LeapView records
 the maintenance decision and outcome but does not duplicate DuckLake's per-file
 manifest as a second authority. This is the same prevent-new-references,
-remove-reachability, then delete invariant used for shared cache objects.
+  remove-reachability, then delete invariant used for immutable physical files.
 
 A physical pool is also the catalog retention and failure-isolation unit. It
 contains exactly one long-lived DuckLake catalog and one dedicated object
@@ -474,308 +471,54 @@ retired, but can never satisfy the successor seal or relation closure.
 
 ### Durable events, audit, and process fan-out
 
-A domain mutation and its durable event commit in one PostgreSQL transaction.
-The event log itself is the transactional outbox; an additional same-database
-intent-to-event materialization step is not part of the target. The durable
-event contains an opaque UUIDv7 identity, project or instance scope, aggregate
-identity and version, event type and schema version, occurred time, correlation
-identity, and a bounded canonical payload. Consumers process events at least
-once and must be idempotent.
+A domain mutation and its durable event commit in one caller-owned PostgreSQL
+transaction. The canonical event log stores a UUIDv7 identity, scope,
+aggregate identity and version, event type and schema version, database-owned
+occurrence time, optional correlation identity, and a bounded canonical JSON
+payload. Aggregate versions come from a locked counter row; `MAX(...) + 1` is
+prohibited. Exact producer retries return the existing event and any immutable
+field conflict fails closed.
 
-Aggregate versions are allocated by locking and advancing the aggregate row or
-another explicit version row. `MAX(sequence) + 1` is prohibited. A global
-identity or commit position may support scanning, but it does not imply
-business order across aggregates.
+The current target has no asynchronous event consumer. It therefore retains no
+consumer enrollment, fan-out delivery, claim/retry/dead-letter/replay,
+notification listener, or transport runtime. Product projections, audit, and
+integrity evidence remain synchronous in the owner transaction. A bounded
+maintenance-role function may prune old canonical events according to the
+operator-supplied retention policy.
 
-The target selects the canonical PostgreSQL event log/delivery authority and
-the mature Watermill Router plus custom Subscriber adapter, but production
-consumer enrollment is conditional. A consumer may be admitted only when a
-named product capability owns a bounded, idempotent effect with a reviewed
-identity, authorization, retention, and recovery contract. As of this target
-release no real production consumer is admitted. Do not invent a placeholder
-consumer, read-model sink, or export merely to exercise Watermill. Owner
-projections (including lineage, cache, audit, and product histories) remain
-synchronous in their source transaction unless a later admission explicitly
-proves an asynchronous effect.
+`LISTEN/NOTIFY` may be introduced later only as a lossy wake-up hint for a
+named durable worker; it is never authority. Pagestream remains the
+process-local browser/SSE transport and does not consume the canonical event
+log.
 
-Until that admission exists, the event log and producer-side event contract
-are production concerns, while the Router/subscriber runtime, readiness,
-backlog/lag/dead-letter metrics, restore exercises, and operator runbooks are
-qualification-only. No production event runtime is started or advertised as
-ready for an unadmitted consumer.
 
-When a consumer is admitted, durable broadcast delivery uses rows keyed by
-`(consumer_id, event_id)` and a consumer lifecycle of `backfilling`,
-`enabled`, `paused`, and `retired`. `Backfilling`, `enabled`, and `paused`
-consumers receive new delivery rows; `retired` consumers do not.
-Event-producing transactions use `READ COMMITTED`.
-The event repository rejects registry-fenced append, enrollment, backfill, and
-retirement operations under stronger transaction isolation before performing
-event work; their transaction-wide snapshots cannot satisfy this protocol.
-They lock one fan-out registry row `FOR KEY SHARE` in a SQL statement that
-completes before a subsequent statement reads the delivery-eligible consumers
-and inserts their delivery rows. The separate statement gives the consumer scan
-a snapshot taken after the fence was acquired. Fence acquisition and consumer
-scan must not be combined in one statement or CTE unless an equivalent
-visibility protocol is proven. PostgreSQL documents the per-command snapshot
-and mixed-view behavior in its
-[Read Committed contract](https://www.postgresql.org/docs/18/transaction-iso.html#XACT-READ-COMMITTED).
+### Framework boundary: canonical events and River jobs
 
-Enrollment and retirement lock that registry row `FOR UPDATE`, so their
-boundary cannot race an in-flight event transaction while independent producers
-can still proceed concurrently. Source mutation, event insertion, consumer
-scan, and delivery insertion still commit in the same transaction.
+The canonical PostgreSQL event log is mutation evidence, not a transport
+framework. Producers append immutable UUIDv7 events in the caller-owned
+transaction, with aggregate-scoped ordering, idempotent retry, bounded JSON
+payload validation, and database integrity checks. There is no admitted
+asynchronous consumer, so the target contains no consumer registry, delivery
+claims, retry/dead-letter/replay state, Watermill runtime, or replacement
+broker. Pagestream remains the browser/SSE transport.
 
-The enrollment transaction creates the consumer as `backfilling` while holding
-that fence, establishes an event-retention root over the admitted replay
-interval, and commits before backfill begins. It then idempotently backfills the
-interval in bounded transactions with
-`INSERT ... ON CONFLICT DO NOTHING`, and finally changes the consumer to
-`enabled`. Backfill progress advances a recorded frontier transactionally; the
-event-retention floor cannot pass its root until the frontier completes or the
-remaining interval receives an explicit audited waiver. The frontier is an
-idempotent scan-progress cursor only; it implies neither PostgreSQL commit order
-nor aggregate business order.
+A future asynchronous effect must supply its requirements before a delivery
+mechanism is selected. Modest in-monolith work should prefer a small
+PostgreSQL worker with durable claims; `LISTEN/NOTIFY` may only wake it.
+Cross-service or high-throughput fan-out may justify an outbox and broker.
+No generic pub/sub abstraction is retained speculatively.
 
-Retirement fences producers before stopping new fan-out; existing deliveries
-must drain or receive an explicit audited waiver. Each consumer claims only its
-own rows atomically, records attempts and terminal outcome, and may replay by
-event identity. This avoids treating a global sequence watermark as a safe
-commit-order cursor across concurrent transactions. Consumers that only need
-current authority may instead reconcile that authority and use events as
-wake-up hints.
+River OSS owns operational job execution after the `release.finalize`
+compatibility proof passes. LeapView continues to own product job IDs,
+authorization, audit/events/history/evidence, canonical request digests, and
+workload admission. Enqueue uses River's caller-owned transaction, terminal
+domain state and River completion share one transaction, returned worker
+errors are sanitized before River persists them, and there is no dual-run or
+fallback custom executor.
 
-Transactional fan-out is limited to a small, configured maximum number of
-durable consumers. A consumer declares a replay start no earlier than the
-published event-retention floor. Event and delivery rows may be pruned only
-after that replay window closes and every applicable delivery is successfully
-terminal, explicitly resolved, or audited as waived. Exhausted poison
-deliveries enter a visible dead-letter terminal processing state, but that state
-does not satisfy retention and prevents pruning until resolved or waived. A
-large or dynamically growing subscriber set requires one external-broker
-dispatcher consumer rather than unbounded `event × consumer` rows.
-
-Compliance audit events are inserted directly and immutably through the source
-mutation's transaction. The runtime role receives append-only access and
-cannot update or delete audit history. Consumer delivery state is introduced
-only when an approved asynchronous effect exists (for example, an audit
-export); it is not required to make an owner projection or audit event visible
-inside the same database. No such consumer is currently admitted.
-
-`LISTEN`/`NOTIFY` is only a low-latency wake-up mechanism. A notification
-contains an opaque event or reconciliation key, never the authoritative event
-payload or sensitive metadata. A listener establishes `LISTEN`, commits it,
-then reads durable state before relying on subsequent notifications. On
-disconnect or restart it reconciles the event log, consumer checkpoint or
-delivery state, or current aggregate state. Missed, folded, or duplicate
-notifications cannot change correctness. PostgreSQL documents both the
-transaction behavior and
-the setup race of this mechanism in [`NOTIFY`](https://www.postgresql.org/docs/current/sql-notify.html)
-and [`LISTEN`](https://www.postgresql.org/docs/current/sql-listen.html).
-
-Competing durable workers claim queue-like rows atomically with a locking
-selection and `UPDATE ... RETURNING`; `FOR UPDATE SKIP LOCKED` avoids workers
-waiting on already-claimed rows, as described by the PostgreSQL
-[`SELECT` locking clause](https://www.postgresql.org/docs/current/sql-select.html#SQL-FOR-UPDATE-SHARE).
-Candidate enumeration followed by a separate claim is not the production
-correctness path. Durable leases and fencing tokens remain required when work
-survives the claiming transaction. Broadcast consumers do not share one
-competing claim. They use consumer-specific delivery state or
-reconcile current authority. Strict global event order is not inferred from a
-PostgreSQL sequence; ordering requirements are explicit and normally scoped to
-an aggregate.
-
-The existing bounded, in-process Pagestream broker remains the final delivery
-mechanism for browser signal patches. PostgreSQL wakes or reconciles
-application nodes; it does not transport every user-specific SSE patch.
-
-An external broker may later consume the same event log through a dispatcher or
-logical decoding when independent retention, throughput, stream processing,
-or cross-region consumers justify it. It does not replace the transactional
-event write.
-
-### Framework boundary: Watermill for messages; jobs remain capability-owned
-
-River is a preferred future generic runtime, not an immediate target or
-cutover requirement. No current production job kind is eligible for River.
-Until a kind passes the [FAI-595 admission specification](specifications/fai-595-river-job-admission.md),
-the capability-owned PostgreSQL jobs tables and runner remain its sole
-execution authority.
-
-The target is framework-first above the PostgreSQL authority, but framework
-tables and defaults do not redefine LeapView's durable contracts.
-
-| Concern | Target owner | Framework role |
-| --- | --- | --- |
-| source mutation, aggregate version, canonical event envelope, and immutable product history | capability-owned PostgreSQL schema | the canonical producer appends once; owner projections stay synchronous in that transaction; an admitted consumer may receive a deterministic Watermill projection |
-| delivery claim, attempt, acknowledgement, dead-letter state, replay root, and retention floor | canonical event-delivery schema | only an admitted consumer's Watermill Subscriber and Router drive the existing fenced transitions through the selected adapter |
-| handler orchestration, approved retry/recovery/timeout middleware, and handler metrics | Watermill router, when admitted | LeapView supplies bounded policy and idempotent domain handlers; no production runtime/readiness/ops burden exists before admission; canonical correlation remains envelope data, not mutable Watermill metadata |
-| compliance audit | append-only audit schema and audit writer | synchronous in the source transaction; outside Watermill unless a separately admitted asynchronous export effect exists |
-| lineage and cache projections | lineage and cache capability schemas | synchronous owner projections in the source transaction; no Watermill topic, placeholder, or concrete consumer is implied |
-| long-running commands and scheduled work | capability-owned PostgreSQL jobs tables and runner; River only for a future kind admitted by FAI-595 | never executed as a Watermill message handler |
-| browser signal delivery | Pagestream and the instance-local SSE fan-out | outside Watermill; durable events only wake or reconcile application state |
-
-[Watermill](https://watermill.io/docs/) is the selected standard
-application-level Router and handler orchestration boundary for a future
-admitted consumer. Domain code will consume typed LeapView events through
-Watermill rather than a second product-owned router once a concrete bounded
-idempotent effect is admitted. The canonical PostgreSQL `event_log`,
-`event_delivery`, and persisted aggregate-filtered consumer records remain the
-sole authority for claims, attempts, acknowledgement state, retries, replay,
-dead letters, and retention.
-The canonical event row, aggregate version, consumer enrollment fence, replay
-root, delivery attempt, dead-letter state, and retention decision remain in
-LeapView-owned PostgreSQL schemas.
-
-`watermill-sql/v4` was the preferred PostgreSQL transport candidate because it
-supports caller-supplied schema and offset adapters, consumer groups,
-at-least-once delivery, and PostgreSQL transaction integration, including pgx
-handles. Its [SQL Pub/Sub contract](https://watermill.io/pubsubs/sql/) also
-documents an important boundary: the default adapter is an ordered integer
-offset log with transaction-ID caveats. That default is not evidence for
-LeapView's UUIDv7 event identities, aggregate-scoped order, per-consumer fenced
-deliveries, backfill roots, poison resolution, or retention floor. It is not
-the production transport. The target uses the canonical producer adapter for
-the one transactional append and, only after admission, a small Watermill
-`Subscriber` over the canonical delivery tables; it does not create a second
-Watermill-owned event authority.
-
-The [FAI-591 qualification](specifications/watermill-postgresql-proof.md)
-qualifies Watermill core `v1.5.3` and `watermill-sql/v4` `v4.1.5` for package
-and caller-owned transaction integration only. Its PostgreSQL 18 proof records
-that the stock SQL tables and integer offsets are unsuitable as an event
-authority. The [FAI-592 envelope decision](specifications/watermill-canonical-envelope.md)
-admits the strict message projection and canonical producer boundary, but not
-production consumer enrollment. The selected target is the Watermill core
-Router with a deterministic canonical-event message projection and a custom
-`message.Subscriber` over `event_log`/`event_delivery` and persisted
-aggregate-filtered consumers when a concrete effect is admitted; the stock SQL
-transport remains
-qualification-only. The [FAI-593 runtime specification](specifications/watermill-router-runtime.md)
-fixes claim-before-emit, exact worker/claim-generation fencing, fresh claims after
-`Nack`, approved middleware, bounded deadlines, lease recovery, and terminal
-completion-before-`Ack`. Lost-ack redelivery, dead-letter/replay retention, and
-router adapter conformance are separate FAI-592/FAI-593 work and are not
-claimed by this proof.
-
-LeapView migrations own every transport table, index, role grant, and rollback.
-The stock Watermill SQL publisher `AutoInitializeSchema` and subscriber
-`InitializeSchema` are always disabled, including tests outside the framework
-qualification fixture.
-The SQL adapter's documented runtime initialization is therefore not a
-production DDL path. The current topic vocabulary is exactly the allowlisted
-capability families `agent`, `dashboard`, `delivery`, and `release`; they are
-not conceptual control, lineage, or cache topics. No topic currently has a
-production consumer. When one is admitted, its identity is a stable
-migration-owned record, never a per-process UUID.
-
-The message UUID is the canonical domain event UUID. Its versioned envelope
-contains only event identity, scope, aggregate identity and version, event type
-and schema version, occurrence and correlation identities, and a bounded
-privacy-reviewed payload. Watermill's integer transport offset, when an
-adapter needs one, is scan mechanics only. It is neither exposed as domain
-identity nor used as business ordering. Aggregate version is the only default
-ordering contract.
-
-Watermill's `message.Publisher` is not used for the canonical producer write.
-Its interface has no transaction parameter, while event ID, aggregate version,
-occurrence time, and stored JSONB payload are finalized inside the caller-owned
-PostgreSQL transaction. Binding a shared publisher to a transaction or
-dispatching an in-memory message before commit would weaken the boundary. The
-canonical producer instead appends the event and any delivery rows for
-admitted consumers once, then the selected Subscriber reconstructs the
-byte-identical Watermill message from that durable row after it is claimable.
-
-Capability-owned `jobs.event` progress records and Agent-local conversation/run
-history are product read models, not message transports. They have separate API
-cursor and retention contracts, are never subscribed to by Watermill, and do
-not acknowledge canonical deliveries. Their ownership and any genuinely
-duplicate projections are audited by FAI-594; their existence does not create
-a second asynchronous event authority.
-
-For an admitted consumer, Watermill `Ack` occurs only after the handler's
-idempotent domain effect and terminal `Complete` transition have committed.
-`Nack` and process loss may redeliver, consistent with Watermill's documented
-[at-least-once model](https://watermill.io/docs/pub-sub/#at-least-once-delivery);
-each retry starts with a fresh durable claim, and process loss is handled by
-lease recovery. The existing consumer lifecycle, replay, dead-letter, and pruning
-invariants remain the acceptance contract for the adapter. If the adapter
-requires dual writes, generic offsets as a second checkpoint, unbounded
-translation state, or weaker fencing, it fails confirmation and the
-purpose-built PostgreSQL event adapter remains behind Watermill's router
-interfaces.
-
-The transactional flows are:
-
-1. A command locks its aggregate/version authority, writes the mutation and
-   canonical event envelope, keeps owner projections in that same transaction,
-   and, when a consumer is admitted, creates the delivery rows required by the
-   fenced consumer registry. All rows commit through the caller-owned pgx
-   transaction. The canonical producer adapter uses that exact transaction;
-   no framework-owned row is committed separately.
-2. When a consumer is admitted, its Subscriber claims one consumer-specific delivery with exact worker and
-   claim-generation fences, commits that claim before emitting the message,
-   reconstructs the Watermill message from the canonical event, and invokes
-   the router without holding the claim transaction. The handler commits its
-   idempotent effect and terminal `Complete` transition before returning
-   success and allowing `Ack`; a failed terminal commit is nacked.
-3. Handler error, process loss, or an expired acknowledgement deadline leaves
-   or returns the delivery to a replayable state. Bounded attempts eventually
-   enter visible dead-letter state; pruning remains blocked until resolution or an
-   audited waiver.
-
-For an admitted consumer, poll interval, resend interval, handler and
-acknowledgement deadlines, batch size, positive bounded `max_in_flight`, claim
-lease, recovery grace, and retry backoff are explicit bounded configuration
-with production metrics. Deadlines are positive and the lease must outlive the
-acknowledgement and recovery window (for example,
-`handler_deadline < acknowledgement_deadline < claim_lease -
-recovery_margin`); zero values cannot silently disable these protections.
-Watermill handlers must keep their transaction short; long work persists a
-request in the capability-owned jobs runner and acknowledges only that
-admission transaction. A future River request is allowed only after one job
-kind passes FAI-595; no current production handler assumes River.
-The Router uses only the mature `Retry`, `Recoverer`, `Timeout`, `Prometheus`,
-and `slog` middleware; metadata-mutating `CorrelationID` and `Delay`,
-`PoisonQueue`, `InstantAck`, and `IgnoreErrors` are not part of the canonical
-path. Publisher, subscriber, handler, ack/nack, failure, and latency signals
-use Watermill's [Prometheus metrics integration](https://watermill.io/advanced/metrics/)
-plus LeapView's delivery backlog, fence, dead-letter, lease-recovery, and
-retention-floor metrics.
-
-Watermill's [Forwarder](https://watermill.io/advanced/forwarder/) is deferred.
-It becomes relevant only when a concrete external broker or cross-service
-boundary requires forwarding the canonical PostgreSQL outbox. Introducing it
-before that need would add another subscriber and operational path without
-changing local correctness; it never replaces the canonical event write.
-
-[River](https://github.com/riverqueue/river) remains the preferred future
-generic runtime for a single admitted job kind whose domain completion can be
-expressed through River's transactional enqueue, bounded attempts, scheduled
-execution, uniqueness, queue isolation, cancellation, and retry model. It is
-not the current worker target: no production kind has passed the candidate
-gates, and every current kind stays on the purpose-built PostgreSQL runner.
-The capability continues to own request identity, authorization, stable
-request digests, immutable publication or refresh evidence, fencing, product
-history, and terminal state. River may own generic execution mechanics only
-after a reviewed adapter proves those contracts without a second authority.
-
-River is not an event bus and does not replace broadcast consumer state. It
-must not become the authority for refresh occurrences, refresh active pointers,
-deployment approvals, delivery publications, DuckLake build attempts, or
-retention roots. Those records remain capability-owned. A future candidate
-must preserve transactional enqueue and completion, stable product identity
-and canonical digest, workload admission and fairness, fencing/cancellation/
-recovery, and must delete more custom machinery than it adds as adapters. The
-complete candidate matrix and gates are in [FAI-595](specifications/fai-595-river-job-admission.md).
-
-Framework admission is a pass/fail confirmation gate, not an invitation to
-maintain two systems. There is one durable queue authority and one runtime
-path per kind: the current PostgreSQL jobs authority until admission, or a
-passing River adapter after an explicit cutover. Shadow writes, dual workers,
-durable fallback authorities, or a translation layer larger than the runner it
-replaces are rejected. A failed or unrun gate keeps the current
-purpose-built PostgreSQL component.
+River is not an event bus and does not own refresh occurrences, deployment
+approvals, release records, serving activation, DuckLake build evidence, or
+retention roots. Those remain capability-owned product records.
 
 ### Versioned resource and lineage graph
 
@@ -883,52 +626,6 @@ The target cache hierarchy is:
    files. SQLite may index path, digest, size, expiry and approximate recency.
    Both files and index are disposable and must be rebuildable without an
    authoritative local mirror of PostgreSQL.
-3. **L3 shared cache, optional.** Store immutable result objects in object
-   storage. PostgreSQL stores only manifests, ownership, dependency identity,
-   admitted tenant/security/encryption domain, fill leases, fencing and
-   retention metadata.
-
-Content-addressed identity is not authorization. Every L3 manifest and object
-key remains inside its admitted tenant, security, credential, region, and
-encryption domain. Identical bytes do not by themselves authorize cross-domain
-deduplication or object reachability; physical reuse is allowed only within the
-same admitted storage-security domain.
-
-Large Arrow payloads, dashboard result rows, and per-hit recency writes do not
-belong in PostgreSQL. Shared cache publication writes a content-addressed
-object before committing its manifest. A failed manifest commit may leave an
-orphan object, which is reclaimed after the configured grace and fencing
-protocol. Retirement removes or tombstones reachability before asynchronous
-physical deletion. This follows ADR-0009's existing immutable publication and
-orphan-reconciliation model.
-
-L3 orphan collection is scoped to one admitted storage-security domain, never
-to one target or serving namespace. A producer acquires an exact
-`(storage-security-domain, object-key)` fence before the create-only write and
-holds it through PostgreSQL manifest admission; that admission locks and
-validates the same fencing epoch in its transaction. The collector acquires
-the same exact fence before checking pool-wide reachability and deleting an
-unreachable object. Physical deletion is conditional on the exact provider
-version or ETag observed by the collector, so a changed object fails closed
-instead of being removed by a stale request. The collector unions admitted
-manifests and live or retiring retention roots across every namespace in the
-domain, and its metadata-preparation transaction locks and validates the same
-exact-object fencing epoch before tombstoning terminal manifests. It uses the
-pool's admitted orphan grace, and persists a fenced per-domain scan cursor so
-another node can resume without broad rescans or skipped pages. Runtime composition receives
-only the object-store `Put/Open` capability. `List/Delete`, global
-reachability, and GC lease/cursor mutation are composed only for bounded
-maintenance work using the separately authenticated PostgreSQL maintenance
-role.
-
-Shared fill ownership uses a persisted, expiring fence acquired with a unique
-insert or locked transition. `NOTIFY` may wake waiters after manifest commit;
-waiters always re-read the manifest. Shared cache manifests are ordinary logged
-tables because they must survive failover. PostgreSQL unlogged tables are not a
-shared cache tier: their crash truncation and lack of standby replication do
-not match this contract. See PostgreSQL's
-[`UNLOGGED` table contract](https://www.postgresql.org/docs/current/sql-createtable.html#SQL-CREATETABLE-UNLOGGED).
-
 Mutable external or streaming sources contribute an explicit watermark or
 custom cache-key value with a bounded lookup TTL. Failure to establish that
 identity bypasses reuse. Immutable managed snapshots rotate by content identity
@@ -943,8 +640,8 @@ using a DuckLake-owned metadata schema suitable for multiple remote clients;
 DuckLake recommends PostgreSQL for a multi-user lakehouse in
 its [catalog selection guidance](https://ducklake.select/docs/stable/duckdb/usage/choosing_a_catalog_database).
 
-Object storage owns immutable Parquet and delete files, compiled serving
-artifacts, and optional shared cache objects. It does not contain a serialized
+Object storage owns immutable Parquet and delete files and compiled serving
+artifacts. It does not contain a serialized
 DuckLake catalog in the target architecture. DuckDB remains replaceable
 analytical compute and does not become a durable control authority. DuckLake
 snapshot commits, object writes, and control-plane activation remain separate
@@ -1087,8 +784,7 @@ exact DuckLake snapshot seal, relation closure, and required objects. Missing
 evidence blocks readiness or requires an explicit, audited recovery selection
 of a retained verifiable generation; the system must not silently bind a
 generation to the latest DuckLake snapshot. L1 and L2 cache state is excluded
-from backup, and L3 cache objects may be discarded when their logged manifests
-cannot be verified.
+from backup because it is disposable.
 
 Repository and integration conformance run against the supported PostgreSQL
 version with real concurrent connections. SQLite fixtures may test pure domain
@@ -1121,18 +817,10 @@ SQLite import, upgrade, cutover, or backward-compatibility contract.
 ### Prohibited shortcuts
 
 - Do not use `LISTEN`/`NOTIFY` as the only record of a domain event.
-- Do not treat Watermill's default integer offset or consumer group as proof of
-  LeapView's aggregate ordering, consumer enrollment, replay, poison, fencing,
-  or event-retention contracts.
 - Do not dual-write events or jobs into both framework-owned and LeapView-owned
   mutable authorities during steady state.
 - Do not use River as an event bus or move refresh occurrence, active-pointer,
   publication, approval, or retention-root authority into generic job rows.
-- Do not enroll or retire a durable event consumer without the transactional
-  fan-out registry fence.
-- Do not combine fan-out fence acquisition and consumer scanning in one
-  `READ COMMITTED` statement without proving equivalent post-fence visibility,
-  or advance event retention past a backfill root.
 - Do not treat a backfill frontier as commit or business ordering.
 - Do not route per-client Pagestream patches through PostgreSQL.
 - Do not make event delivery or eager deletion part of cache validity.
@@ -1173,8 +861,7 @@ SQLite import, upgrade, cutover, or backward-compatibility contract.
   retention boundaries, or allow a pool to grow past its admission thresholds.
 - Do not enable DuckLake automatic catalog migration on ordinary runtime
   attachments.
-- Do not use PostgreSQL unlogged tables for cache manifests or other state that
-  must survive failover.
+  - Do not use PostgreSQL unlogged tables for state that must survive failover.
 
 ## Consequences
 
@@ -1182,7 +869,7 @@ The target supports multiple application and compute nodes with one remotely
 recoverable control authority. Durable mutation, domain events, lineage
 admission, job scheduling, leases and active pointers can use PostgreSQL
 transactions and constraints. Cache entries can survive a serving-generation
-change or, when L2/L3 is enabled, a process restart without making disposable
+change or, when L2 is enabled, a process restart without making disposable
 bytes authoritative.
 
 PostgreSQL becomes required production infrastructure. LeapView must own
@@ -1193,9 +880,9 @@ so readiness and degraded read behavior must be deliberate.
 
 The architecture still contains unavoidable cross-store boundaries.
 PostgreSQL, DuckLake and object storage do not commit atomically. Candidate
-publication, shared-cache manifests and physical garbage collection must retain
-the same create-before-reference, immutable identity, orphan tolerance,
-fencing, and reconciliation discipline already required by ADR-0009.
+publication and physical garbage collection must retain the same
+create-before-reference, immutable identity, orphan tolerance, fencing, and
+reconciliation discipline already required by ADR-0009.
 
 When a consumer is admitted, at-least-once delivery creates duplicate-delivery
 and retention obligations. That consumer must be idempotent, poison or stalled
@@ -1237,14 +924,9 @@ Linear; this ADR records the destination and its invariants.
   restart, and transaction rollback for every durable capability currently
   backed by SQLite.
 - Audit and domain-event tests prove source mutation/event atomicity, owner
-  projection synchronicity, canonical envelope encoding, and absence of a
-  Watermill SQL authority. Adapter/conformance tests also cover the selected
-  subscriber's claim and completion protocol in qualification fixtures. Once a
-  concrete consumer is admitted, its acceptance suite must additionally prove
-  at-least-once idempotency, listener startup reconciliation, disconnect
-  recovery, duplicate notification tolerance, terminal delivery visibility,
-  replay retention, poison/dead-letter handling, and concurrent enrollment
-  backfill fences; those tests are not a blocker for the current target.
+  projection synchronicity, UUIDv7 identity, aggregate ordering, idempotent
+  replay, canonical payload handling, and absence of an event transport.
+  A future consumer must bring its own delivery and recovery acceptance suite.
 - Multi-node tests prove that durable workers do not execute one lease
   concurrently, stale owners cannot publish, and active serving transitions
   converge after a missed notification or node restart. Event-consumer
@@ -1269,10 +951,8 @@ Linear; this ADR records the destination and its invariants.
   lookup. They also cover identical query text with distinct typed parameter
   values, two authorized principals with distinct row filters or masks, and
   volatile-query bypass unless every volatile input is represented.
-- Cache storage tests prove L2 loss is rebuildable, L3 publication never exposes
-  an uncommitted or mismatched object, stale fill owners are fenced, orphan
-  objects are reclaimed, identical bytes cannot cross admitted storage-security
-  domains, and PostgreSQL contains no bulk Arrow payloads.
+- Cache storage tests prove L1/L2 loss is rebuildable and PostgreSQL contains no
+  bulk Arrow payloads.
 - DuckLake qualification tests exercise a PostgreSQL-backed catalog with
   concurrent remote clients while preserving exact snapshot seals, relation
   closure, retention and active-query leases. Lost-commit-acknowledgement tests

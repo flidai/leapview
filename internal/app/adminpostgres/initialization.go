@@ -217,16 +217,13 @@ func prepareProductionBaseline(ctx context.Context, cfg config.Config) error {
 		return fmt.Errorf("open PostgreSQL control migrator: %w", err)
 	}
 	defer pool.Close()
-	tx, err := pool.Begin(ctx)
+	db, err := pool.SQLDB()
 	if err != nil {
-		return fmt.Errorf("begin PostgreSQL control baseline migration: %w", err)
+		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
 	}
-	defer tx.Rollback(context.WithoutCancel(ctx))
-	if err := postgresbaseline.Apply(ctx, tx); err != nil {
+	defer db.Close()
+	if err := postgresbaseline.Apply(ctx, db); err != nil {
 		return fmt.Errorf("apply PostgreSQL control baseline: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit PostgreSQL control baseline: %w", err)
 	}
 	return nil
 }

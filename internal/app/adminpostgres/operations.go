@@ -30,7 +30,6 @@ const (
 	// backlog without turning one operator command into an unbounded delete.
 	maintenanceBatchLimit  = 1000
 	defaultJobRetention    = 30 * 24 * time.Hour
-	defaultCacheRetention  = 24 * time.Hour
 	defaultUploadRetention = 30 * 24 * time.Hour
 	// Prevent integer-to-duration overflow from turning an old-data cutoff into
 	// a future cutoff. Zero remains the explicit way to disable a category.
@@ -54,7 +53,7 @@ type Native interface {
 // and ownership shutdown. It intentionally has no runtime or DuckLake pools.
 type MaintenancePool interface {
 	postgresmaintenance.NativeDB
-	postgresbaseline.RevisionReader
+	postgresbaseline.SQLDBProvider
 	Close()
 }
 
@@ -63,7 +62,7 @@ type MaintenancePool interface {
 // reader, and lifecycle close operation; it cannot migrate the schema.
 type AccessPool interface {
 	accesspostgres.DBTX
-	postgresbaseline.RevisionReader
+	postgresbaseline.SQLDBProvider
 	Begin(context.Context) (pgx.Tx, error)
 	Close()
 }
@@ -90,7 +89,7 @@ type Dependencies struct {
 	OpenMaintenance func(context.Context, platformpostgres.Config) (MaintenancePool, error)
 	OpenAccess      func(context.Context, platformpostgres.Config) (AccessPool, error)
 	PrepareBaseline func(context.Context, config.Config) error
-	VerifyBaseline  func(context.Context, postgresbaseline.RevisionReader) error
+	VerifyBaseline  func(context.Context, postgresbaseline.SQLDBProvider) error
 	NewNative       func(postgresmaintenance.NativeDB) (Native, error)
 	NewAccess       func(AccessPool, []byte) (AccessInitializer, error)
 	NewBootstrap    func(AccessPool) Bootstrap
@@ -123,7 +122,7 @@ func (d Dependencies) withDefaults() Dependencies {
 		d.PrepareBaseline = prepareProductionBaseline
 	}
 	if d.VerifyBaseline == nil {
-		d.VerifyBaseline = postgresbaseline.Verify
+		d.VerifyBaseline = postgresbaseline.VerifyProvider
 	}
 	if d.NewNative == nil {
 		d.NewNative = func(db postgresmaintenance.NativeDB) (Native, error) {
@@ -274,7 +273,6 @@ func MapMaintenanceRequest(request admincli.MaintenanceRequest, now time.Time) (
 		CursorSigning:    postgresmaintenance.CursorSigningPolicy{Limit: maintenanceBatchLimit},
 		Jobs:             postgresmaintenance.JobsPolicy{Before: now.Add(-defaultJobRetention), Limit: maintenanceBatchLimit},
 		Events:           postgresmaintenance.EventsPolicy{Before: eventsBefore},
-		Cache:            postgresmaintenance.CachePolicy{Before: now.Add(-defaultCacheRetention), Limit: maintenanceBatchLimit},
 		DashboardSession: postgresmaintenance.DashboardSessionPolicy{Limit: maintenanceBatchLimit},
 		DashboardUsage:   postgresmaintenance.DashboardUsagePolicy{Before: now.Add(-dashboardusage.RetentionWindow), Limit: maintenanceBatchLimit},
 		DashboardStreams: postgresmaintenance.DashboardPublicationPolicy{Now: now, Limit: maintenanceBatchLimit},
@@ -316,8 +314,6 @@ func writeEvidence(out io.Writer, mode string, result postgresmaintenance.Result
 	fmt.Fprintf(&builder, "cursor signing removed: %d\n", result.CursorSigningRemoved)
 	fmt.Fprintf(&builder, "jobs removed: %d\n", result.JobsRemoved)
 	fmt.Fprintf(&builder, "events removed: %d\n", result.EventsRemoved)
-	fmt.Fprintf(&builder, "cache invalidations: %d\n", result.Cache.Invalidations)
-	fmt.Fprintf(&builder, "cache expired leases: %d\n", result.Cache.ExpiredLeases)
 	fmt.Fprintf(&builder, "dashboard sessions removed: %d\n", result.DashboardSessionsRemoved)
 	fmt.Fprintf(&builder, "dashboard usage removed: %d\n", result.DashboardUsageRemoved)
 	fmt.Fprintf(&builder, "dashboard publication batch complete: %t\n", result.DashboardPublicationBatchDone)

@@ -140,7 +140,7 @@ func upgradeNativePhysicalPoolCatalog(ctx context.Context, cfg config.Config, re
 		return admincli.CatalogUpgradeResult{}, fmt.Errorf("open PostgreSQL control migrator: %w", err)
 	}
 	defer controlMigrator.Close()
-	if err := postgresbaseline.Verify(ctx, controlMigrator); err != nil {
+	if err := postgresbaseline.VerifyProvider(ctx, controlMigrator); err != nil {
 		return admincli.CatalogUpgradeResult{}, fmt.Errorf("verify PostgreSQL control baseline: %w", err)
 	}
 	coordinatorDB, err := platformpostgres.OpenControl(ctx, coordinatorConfig)

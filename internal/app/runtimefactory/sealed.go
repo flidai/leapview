@@ -8,7 +8,6 @@ import (
 	"errors"
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
-	"github.com/flidai/leapview/internal/analytics/resulttier"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
 	dashboardruntimefactory "github.com/flidai/leapview/internal/dashboard/runtimefactory"
 	"github.com/flidai/leapview/internal/runtimehost"
@@ -82,4 +81,4 @@ type SealedRootResolver func(context.Context, runtimehost.RuntimeInput) (SealedS
 // SealedDashboardRuntimeBuilder opens dashboard data runtimes against the
 // supplied immutable read-only environment. It must not retain the
 // environment after the returned dashboard service is closed.
-type SealedDashboardRuntimeBuilder func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment, resulttier.Tier) (*dashboardruntime.Service, error)
+type SealedDashboardRuntimeBuilder func(context.Context, dashboardruntimefactory.Input, *ducklake.Environment) (*dashboardruntime.Service, error)

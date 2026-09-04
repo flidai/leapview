@@ -3,6 +3,7 @@ package adminpostgres
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
 	"strings"
 	"testing"
@@ -18,8 +19,7 @@ import (
 )
 
 type testMaintenancePool struct {
-	revision platformpostgres.SchemaRevision
-	closed   bool
+	closed bool
 }
 
 func (p *testMaintenancePool) Exec(context.Context, string, ...any) (pgconn.CommandTag, error) {
@@ -32,10 +32,8 @@ func (p *testMaintenancePool) QueryRow(context.Context, string, ...any) pgx.Row 
 func (p *testMaintenancePool) Begin(context.Context) (pgx.Tx, error) {
 	return nil, errors.New("unused")
 }
-func (p *testMaintenancePool) SchemaRevision(context.Context, int64) (platformpostgres.SchemaRevision, error) {
-	return p.revision, nil
-}
-func (p *testMaintenancePool) Close() { p.closed = true }
+func (p *testMaintenancePool) SQLDB() (*sql.DB, error) { return nil, errors.New("unused") }
+func (p *testMaintenancePool) Close()                  { p.closed = true }
 
 type testNative struct {
 	preview bool
@@ -75,8 +73,8 @@ func TestMapMaintenanceRequestUsesExplicitBoundedDefaults(t *testing.T) {
 	if !policy.Operations.Before.Equal(utc) || policy.Operations.Limit != maintenanceBatchLimit {
 		t.Fatalf("operations policy = %#v", policy.Operations)
 	}
-	if !policy.Jobs.Before.Equal(utc.Add(-30*24*time.Hour)) || !policy.Cache.Before.Equal(utc.Add(-24*time.Hour)) || !policy.ManagedData.Before.Equal(utc.Add(-30*24*time.Hour)) {
-		t.Fatalf("default cutoffs = jobs %s cache %s uploads %s", policy.Jobs.Before, policy.Cache.Before, policy.ManagedData.Before)
+	if !policy.Jobs.Before.Equal(utc.Add(-30*24*time.Hour)) || !policy.ManagedData.Before.Equal(utc.Add(-30*24*time.Hour)) {
+		t.Fatalf("default cutoffs = jobs %s uploads %s", policy.Jobs.Before, policy.ManagedData.Before)
 	}
 	if !policy.DashboardUsage.Before.Equal(utc.Add(-90*24*time.Hour)) || !policy.DashboardStreams.Now.Equal(utc) {
 		t.Fatalf("dashboard defaults = usage %s streams %s", policy.DashboardUsage.Before, policy.DashboardStreams.Now)
@@ -101,7 +99,7 @@ func TestMapMaintenanceRequestZeroDisablesOnlyRequestedEvidence(t *testing.T) {
 	if !policy.Events.Before.Equal(now.Add(-defaultEventRetention)) {
 		t.Fatalf("events cutoff = %s, want safe default %s", policy.Events.Before, now.Add(-defaultEventRetention))
 	}
-	if policy.Operations.Limit != maintenanceBatchLimit || policy.Jobs.Limit != maintenanceBatchLimit || policy.Cache.Limit != maintenanceBatchLimit {
+	if policy.Operations.Limit != maintenanceBatchLimit || policy.Jobs.Limit != maintenanceBatchLimit {
 		t.Fatalf("operational limits were disabled: %#v", policy)
 	}
 }
@@ -116,7 +114,7 @@ func TestProductionMaintenanceUsesOnePoolBaselineAndPreviewOrApply(t *testing.T)
 		{name: "apply", apply: true},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			pool := &testMaintenancePool{revision: platformpostgres.SchemaRevision{Revision: postgresbaseline.BaselineRevision, MigrationID: postgresbaseline.BaselineMigrationID, Checksum: postgresbaseline.Checksum()}}
+			pool := &testMaintenancePool{}
 			native := &testNative{result: postgresmaintenance.Result{OperationsRemoved: 2}}
 			var opened platformpostgres.Config
 			var verified bool
@@ -129,7 +127,7 @@ func TestProductionMaintenanceUsesOnePoolBaselineAndPreviewOrApply(t *testing.T)
 					opened = cfg
 					return pool, nil
 				},
-				VerifyBaseline: func(_ context.Context, _ postgresbaseline.RevisionReader) error {
+				VerifyBaseline: func(_ context.Context, _ postgresbaseline.SQLDBProvider) error {
 					verified = true
 					return nil
 				},
@@ -172,7 +170,7 @@ func TestProductionMaintenanceBaselineMismatchFailsClosed(t *testing.T) {
 			return validProductionMaintenanceConfig(), nil
 		},
 		OpenMaintenance: func(context.Context, platformpostgres.Config) (MaintenancePool, error) { return pool, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return errors.New("baseline mismatch") },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return errors.New("baseline mismatch") },
 		NewNative: func(postgresmaintenance.NativeDB) (Native, error) {
 			constructed = true
 			return &testNative{}, nil

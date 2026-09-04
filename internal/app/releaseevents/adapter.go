@@ -7,15 +7,16 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
-	eventwatermill "github.com/flidai/leapview/internal/platform/events/watermill"
 	releasepostgres "github.com/flidai/leapview/internal/release/postgres"
+	"github.com/google/uuid"
 )
 
 // Adapter is stateless and safe to share between release requests.
 type Adapter struct {
-	events *eventwatermill.Adapter
+	events *eventspostgres.Repository
 }
 
 var _ releasepostgres.EventAppender = (*Adapter)(nil)
@@ -27,17 +28,13 @@ func New() *Adapter { return NewWithRepository(eventspostgres.New()) }
 // NewWithRepository binds the adapter to the exact platform event authority
 // allocated by application composition.
 func NewWithRepository(events *eventspostgres.Repository) *Adapter {
-	watermillAdapter, err := eventwatermill.New(events)
-	if err != nil {
-		return &Adapter{}
-	}
-	return &Adapter{events: watermillAdapter}
+	return &Adapter{events: events}
 }
 
 // Matches proves this adapter retains the exact platform event repository
 // supplied by application composition rather than a sibling allocation.
 func (a *Adapter) Matches(events *eventspostgres.Repository) bool {
-	return a != nil && a.events.Matches(events)
+	return a != nil && events != nil && a.events == events
 }
 
 // AppendEvent appends through the caller-owned release transaction and
@@ -47,7 +44,13 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx releasepostgres.Tx, input 
 	if a == nil || a.events == nil {
 		return releasepostgres.Event{}, fmt.Errorf("release event adapter is not configured")
 	}
-	stored, err := a.events.AppendEvent(ctx, tx, eventwatermill.TopicRelease, eventspostgres.EventInput{
+	if input.EventID != "" {
+		parsed, err := uuid.Parse(input.EventID)
+		if input.EventID != strings.TrimSpace(input.EventID) || err != nil || parsed.String() != input.EventID || parsed.Version() != 7 {
+			return releasepostgres.Event{}, fmt.Errorf("%w: release event id must be a canonical UUIDv7", releasepostgres.ErrInvalid)
+		}
+	}
+	stored, err := a.events.AppendEvent(ctx, tx, eventspostgres.EventInput{
 		EventID: input.EventID, ScopeID: input.ScopeID, AggregateType: input.AggregateType,
 		AggregateID: input.AggregateID, EventType: input.EventType, SchemaVersion: input.SchemaVersion,
 		CorrelationID: input.CorrelationID, Payload: input.Payload,
@@ -57,11 +60,7 @@ func (a *Adapter) AppendEvent(ctx context.Context, tx releasepostgres.Tx, input 
 		if errors.As(err, &conflict) {
 			return releasepostgres.Event{}, fmt.Errorf("%w: release event identity differs", releasepostgres.ErrConflict)
 		}
-		// Keep the release domain's invalid sentinel while delegating strict
-		// identity/payload validation to the shared event boundary.
-		if errors.Is(err, eventwatermill.ErrInvalid) {
-			return releasepostgres.Event{}, fmt.Errorf("%w: %v", releasepostgres.ErrInvalid, err)
-		}
+		// Keep the release domain's invalid sentinel for malformed inputs.
 		return releasepostgres.Event{}, err
 	}
 	return releasepostgres.Event{

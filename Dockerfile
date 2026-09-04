@@ -110,7 +110,6 @@ COPY --from=sourcegen /src/internal/analytics/physicalpool/postgres/internal/db 
 COPY --from=sourcegen /src/internal/analytics/connectionbinding/postgres/internal/db ./internal/analytics/connectionbinding/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/ducklake/postgres/internal/db ./internal/analytics/ducklake/postgres/internal/db
 COPY --from=sourcegen /src/internal/analytics/queryaudit/postgres/internal/db ./internal/analytics/queryaudit/postgres/internal/db
-COPY --from=sourcegen /src/internal/analytics/cache/postgres/internal/db ./internal/analytics/cache/postgres/internal/db
 COPY --from=sourcegen /src/internal/release/postgres/internal/db ./internal/release/postgres/internal/db
 COPY --from=sourcegen /src/internal/recoveryset/postgres/internal/db ./internal/recoveryset/postgres/internal/db
 COPY --from=sourcegen /src/internal/access/ui/signals/models.gen.go ./internal/access/ui/signals/models.gen.go

@@ -13,6 +13,7 @@ package app
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"io"
 	"net/http"
@@ -37,6 +38,7 @@ import (
 	runtimehostmodule "github.com/flidai/leapview/internal/runtimehost/module"
 	workloadmodule "github.com/flidai/leapview/internal/workload/module"
 	"github.com/jackc/pgx/v5"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 const (
@@ -171,31 +173,25 @@ func provisionPostgresJourneyRoles(t *testing.T, h *postgrestest.Harness) postgr
 
 func applyPostgresJourneyBaseline(t *testing.T, database *postgrestest.Database, roles postgresJourneyRoles) {
 	t.Helper()
-	conn, err := pgx.Connect(t.Context(), database.AdminURL())
+	admin, err := pgx.Connect(t.Context(), database.AdminURL())
+	if err != nil {
+		t.Fatalf("open PostgreSQL journey administrator: %v", err)
+	}
+	if _, err := admin.Exec(t.Context(), `GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		_ = admin.Close(context.Background())
+		t.Fatalf("grant PostgreSQL Goose version-table authority: %v", err)
+	}
+	if err := admin.Close(t.Context()); err != nil {
+		t.Fatalf("close PostgreSQL journey administrator: %v", err)
+	}
+	db, err := sql.Open("pgx", database.URL(roles.migrator))
 	if err != nil {
 		t.Fatalf("open PostgreSQL journey baseline administrator: %v", err)
 	}
-	t.Cleanup(func() { _ = conn.Close(context.Background()) })
-	if _, err := conn.Exec(t.Context(), "SET ROLE "+roles.owner.Name); err != nil {
-		t.Fatalf("assume PostgreSQL journey owner role: %v", err)
-	}
-	tx, err := conn.Begin(t.Context())
-	if err != nil {
-		t.Fatalf("begin PostgreSQL journey baseline transaction: %v", err)
-	}
-	committed := false
-	t.Cleanup(func() {
-		if !committed {
-			_ = tx.Rollback(context.Background())
-		}
-	})
-	if err := postgresbaseline.Apply(t.Context(), tx); err != nil {
+	t.Cleanup(func() { _ = db.Close() })
+	if err := postgresbaseline.Apply(t.Context(), db); err != nil {
 		t.Fatalf("apply PostgreSQL journey baseline: %v", err)
 	}
-	if err := tx.Commit(t.Context()); err != nil {
-		t.Fatalf("commit PostgreSQL journey baseline: %v", err)
-	}
-	committed = true
 }
 
 func openPostgresJourneyPool(t *testing.T, database *postgrestest.Database, role postgrestest.Role, maxConns int32) *platformpostgres.Pool {

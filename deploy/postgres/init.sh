@@ -121,6 +121,7 @@ GRANT CONNECT ON DATABASE leapview_control TO
     leapview_control_backup;
 REVOKE CONNECT ON DATABASE leapview_control FROM leapview_ducklake_runtime, leapview_ducklake_migrator, leapview_ducklake_maintenance;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
+GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator;
 SQL
 
 psql_db leapview_ducklake <<'SQL'

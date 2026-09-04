@@ -90,7 +90,7 @@ func TestProductionInitializeUsesNativeAccessAndDurableRecovery(t *testing.T) {
 			openedConfig = openedCfg
 			return &testMaintenancePool{}, nil
 		},
-		VerifyBaseline: func(context.Context, postgresbaseline.RevisionReader) error { verified++; return nil },
+		VerifyBaseline: func(context.Context, postgresbaseline.SQLDBProvider) error { verified++; return nil },
 		NewAccess:      func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:   func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock: func(string) (adminoffline.Lock, error) {
@@ -136,7 +136,7 @@ func TestProductionInitializeReplayAndAcknowledgeRedactsRecovery(t *testing.T) {
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewAccess:       func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock:     func(string) (adminoffline.Lock, error) { acquired++; return &testAdminLock{}, nil },
@@ -175,7 +175,7 @@ func TestProductionInitializeBaselineMismatchStopsBeforeNativeMutation(t *testin
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return p, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return errors.New("baseline mismatch") },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return errors.New("baseline mismatch") },
 		NewAccess: func(AccessPool, []byte) (AccessInitializer, error) {
 			constructed = true
 			return &testAccessInitializer{}, nil
@@ -200,7 +200,7 @@ func TestProductionInitializeEnvironmentConflictStopsBeforeNativeMutation(t *tes
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewAccess:       func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock:     func(string) (adminoffline.Lock, error) { acquired = true; return &testAdminLock{}, nil },
@@ -259,7 +259,7 @@ func TestProductionAcknowledgeUninitializedDoesNotBindEnvironment(t *testing.T) 
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewAccess:       func(AccessPool, []byte) (AccessInitializer, error) { return initializer, nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 		AcquireLock:     func(string) (adminoffline.Lock, error) { acquired = true; return &testAdminLock{}, nil },
@@ -280,7 +280,7 @@ func TestProductionInitializeRejectsTypedNilBootstrap(t *testing.T) {
 		LoadConfig:      func() (config.Config, error) { return cfg, nil },
 		PrepareBaseline: skipProductionBaseline,
 		OpenAccess:      func(context.Context, platformpostgres.Config) (AccessPool, error) { return &testMaintenancePool{}, nil },
-		VerifyBaseline:  func(context.Context, postgresbaseline.RevisionReader) error { return nil },
+		VerifyBaseline:  func(context.Context, postgresbaseline.SQLDBProvider) error { return nil },
 		NewBootstrap:    func(AccessPool) Bootstrap { return bootstrap },
 	})
 	err := ops.Initialize(t.Context(), adminoffline.InitializeRequest{Format: "json"}, &bytes.Buffer{})

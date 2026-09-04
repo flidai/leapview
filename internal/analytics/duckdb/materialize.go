@@ -24,7 +24,6 @@ import (
 	analyticsresource "github.com/flidai/leapview/internal/analytics/resource"
 	"github.com/flidai/leapview/internal/analytics/resultcache"
 	"github.com/flidai/leapview/internal/analytics/resultidentity"
-	"github.com/flidai/leapview/internal/analytics/resulttier"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	extensiondomain "github.com/flidai/leapview/internal/extension"
 	"github.com/flidai/leapview/internal/platform/transaction"
@@ -616,7 +615,6 @@ type ProjectRuntimeConfig struct {
 	MaterializationOnly bool
 	ResultPartition     resultidentity.Partition
 	QueryResultCache    *resultcache.Scope
-	ResultTier          resulttier.Tier
 	ImmutableByteCache  *resultcache.Scope
 	ExecutionScope      *resultcache.ExecutionScope
 	ResultLimits        dataquery.ResultLimits
@@ -789,7 +787,6 @@ func (r *ProjectRuntime) rebuildViews(ctx context.Context) error {
 			Database: r.db, Sources: r.sources, Resolver: r.sources,
 			SnapshotOnly: config.SnapshotID > 0, TableRelation: tableRelation,
 			QueryResultCache: config.QueryResultCache, ImmutableByteCache: config.ImmutableByteCache,
-			ResultTier:         config.ResultTier,
 			ExecutionScope:     config.ExecutionScope,
 			ResultLimits:       config.ResultLimits,
 			DependencyEvidence: dependencyEvidence,

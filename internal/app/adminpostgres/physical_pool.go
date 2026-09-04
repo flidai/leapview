@@ -150,7 +150,7 @@ func bootstrapNativePhysicalPool(ctx context.Context, cfg config.Config, request
 		return result, fmt.Errorf("open PostgreSQL control migrator: %w", err)
 	}
 	defer control.Close()
-	if err := postgresbaseline.Verify(ctx, control); err != nil {
+	if err := postgresbaseline.VerifyProvider(ctx, control); err != nil {
 		return result, fmt.Errorf("verify PostgreSQL control baseline: %w", err)
 	}
 	catalogAdmin, err := platformpostgres.OpenDuckLake(ctx, catalogConfig)

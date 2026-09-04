@@ -83,7 +83,6 @@ func (f projectRuntimeFactory) OpenProject(ctx context.Context, request analytic
 		ConnectionResolver: connectionResolver,
 		ResultPartition:    partition, QueryResultCache: queryResultCache,
 		ImmutableByteCache: immutableByteCache, ResultLimits: request.ResultLimits,
-		ResultTier: request.ResultTier,
 		SnapshotID: request.SnapshotID, ServingStateID: request.ServingStateID,
 		ProjectID: request.ProjectID, Environment: request.Environment,
 		TargetType: "deployment", TargetID: request.TargetID,

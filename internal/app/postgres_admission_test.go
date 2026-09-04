@@ -42,6 +42,17 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	h.GrantDatabase(t, control.Name, migrator, "CONNECT", "CREATE")
 	h.GrantDatabase(t, control.Name, runtime, "CONNECT")
 	h.GrantDatabase(t, control.Name, maintenance, "CONNECT")
+	bootstrapAdmin, err := pgx.Connect(t.Context(), control.AdminURL())
+	if err != nil {
+		t.Fatalf("open control administrator: %v", err)
+	}
+	if _, err := bootstrapAdmin.Exec(t.Context(), `GRANT USAGE, CREATE ON SCHEMA public TO leapview_control_migrator`); err != nil {
+		_ = bootstrapAdmin.Close(context.Background())
+		t.Fatalf("grant Goose version-schema ownership to control migrator: %v", err)
+	}
+	if err := bootstrapAdmin.Close(context.Background()); err != nil {
+		t.Fatalf("close control administrator: %v", err)
+	}
 	ducklakeAdmin, err := pgx.Connect(t.Context(), ducklake.AdminURL())
 	if err != nil {
 		t.Fatalf("open DuckLake admission administrator: %v", err)
@@ -111,6 +122,15 @@ func TestPostgres18ProductionAdmission(t *testing.T) {
 	cfg.Environment = "prod"
 	cfg.DeliveryPhysicalPoolID = physicalPoolID
 	cfg.DeliveryPhysicalPoolCompatibilityDigest = "sha256:" + strings.Repeat("a", 64)
+	migrationPool, err := platformpostgres.Open(t.Context(), cfg.PostgresControlPlaneConfig().Migrator)
+	if err != nil {
+		t.Fatalf("open explicit control migrator: %v", err)
+	}
+	if err := applyPostgresControlPlaneMigrations(t.Context(), migrationPool); err != nil {
+		migrationPool.Close()
+		t.Fatalf("apply explicit control migrations: %v", err)
+	}
+	migrationPool.Close()
 
 	target, targetErr := BuildProduction(t.Context(), cfg)
 	if targetErr != nil {
@@ -255,35 +275,6 @@ func TestRequiresDuckLakeAdmissionDistinguishesDevelopmentBootstrapSentinel(t *t
 		t.Run(tt.name, func(t *testing.T) {
 			if got := requiresDuckLakeAdmission(config.Config{Production: tt.production, DeliveryPhysicalPoolID: tt.poolID, DeliveryPhysicalPoolCompatibilityDigest: tt.digest}); got != tt.want {
 				t.Fatalf("requiresDuckLakeAdmission() = %t, want %t", got, tt.want)
-			}
-		})
-	}
-}
-
-func TestShouldResolveL3CacheMaintenanceWaitsForDevelopmentPoolAdmission(t *testing.T) {
-	tests := []struct {
-		name       string
-		production bool
-		enabled    bool
-		poolID     string
-		digest     string
-		want       bool
-	}{
-		{name: "disabled feature", enabled: false, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: false},
-		{name: "development migration bootstrap", enabled: true, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: false},
-		{name: "development admitted pool", enabled: true, poolID: "sha256:" + strings.Repeat("a", 64), digest: "sha256:" + strings.Repeat("b", 64), want: true},
-		{name: "production always resolves admitted contract", production: true, enabled: true, poolID: developmentPoolSentinelID, digest: developmentPoolSentinelDigest, want: true},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			cfg := config.Config{
-				Production:                              tt.production,
-				QueryCacheL3Enabled:                     tt.enabled,
-				DeliveryPhysicalPoolID:                  tt.poolID,
-				DeliveryPhysicalPoolCompatibilityDigest: tt.digest,
-			}
-			if got := shouldResolveL3CacheMaintenance(cfg); got != tt.want {
-				t.Fatalf("shouldResolveL3CacheMaintenance() = %t, want %t", got, tt.want)
 			}
 		})
 	}

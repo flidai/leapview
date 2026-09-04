@@ -46,29 +46,27 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 	if validationErr != nil {
 		return nil, validationErr
 	}
-	pools, err := platformpostgres.OpenControlPlane(ctx, cfg.PostgresControlPlaneConfig())
+	controlConfig := cfg.PostgresControlPlaneConfig()
+	var pools *platformpostgres.ControlPlanePools
+	var err error
+	if cfg.Production {
+		pools, err = platformpostgres.OpenServingControlPlane(ctx, controlConfig)
+	} else {
+		pools, err = platformpostgres.OpenControlPlane(ctx, controlConfig)
+	}
 	if err != nil {
 		return nil, err
 	}
-	if pools == nil || pools.Migrator == nil || pools.Runtime == nil || pools.Maintenance == nil {
+	if pools == nil || pools.Runtime == nil || pools.Maintenance == nil || (!cfg.Production && pools.Migrator == nil) {
 		if pools != nil {
 			pools.Close()
 		}
 		return nil, errors.New("PostgreSQL control-plane pools are incomplete")
 	}
-	migratorDatabase, err := postgresDatabaseName(ctx, pools.Migrator)
-	if err != nil {
-		pools.Close()
-		return nil, fmt.Errorf("identify PostgreSQL control migrator database: %w", err)
-	}
 	runtimeDatabase, err := postgresDatabaseName(ctx, pools.Runtime)
 	if err != nil {
 		pools.Close()
 		return nil, fmt.Errorf("identify PostgreSQL control runtime database: %w", err)
-	}
-	if migratorDatabase != runtimeDatabase {
-		pools.Close()
-		return nil, fmt.Errorf("PostgreSQL control migrator database %q differs from runtime database %q", migratorDatabase, runtimeDatabase)
 	}
 	maintenanceDatabase, err := postgresDatabaseName(ctx, pools.Maintenance)
 	if err != nil {
@@ -79,15 +77,23 @@ func openPostgresControlPlane(ctx context.Context, cfg config.Config) (*postgres
 		pools.Close()
 		return nil, fmt.Errorf("PostgreSQL control maintenance database %q differs from runtime database %q", maintenanceDatabase, runtimeDatabase)
 	}
-	if err := applyPostgresControlPlaneMigrations(ctx, pools.Migrator); err != nil {
-		pools.Close()
-		return nil, err
+	if !cfg.Production {
+		migratorDatabase, identifyErr := postgresDatabaseName(ctx, pools.Migrator)
+		if identifyErr != nil {
+			pools.Close()
+			return nil, fmt.Errorf("identify PostgreSQL control migrator database: %w", identifyErr)
+		}
+		if migratorDatabase != runtimeDatabase {
+			pools.Close()
+			return nil, fmt.Errorf("PostgreSQL control migrator database %q differs from runtime database %q", migratorDatabase, runtimeDatabase)
+		}
+		if err := applyPostgresControlPlaneMigrations(ctx, pools.Migrator); err != nil {
+			pools.Close()
+			return nil, err
+		}
+		pools.Migrator.Close()
+		pools.Migrator = nil
 	}
-	// Migration credentials are privileged and must not remain in the serving
-	// process.  Closing this pool also releases any connection that assumed the
-	// owner role during DDL.
-	pools.Migrator.Close()
-	pools.Migrator = nil
 	ducklake, err := platformpostgres.Open(ctx, cfg.PostgresDuckLakeRuntimeConfig())
 	if err != nil {
 		pools.Close()
@@ -175,17 +181,6 @@ func requiresDuckLakeAdmission(cfg config.Config) bool {
 	return !(id == developmentPoolSentinelID && digest == developmentPoolSentinelDigest)
 }
 
-// shouldResolveL3CacheMaintenance gates the build-time L3 maintenance
-// contract lookup on both the feature flag and physical-pool admission. The
-// migration-only development process carries the explicit local sentinel
-// before the dev-server bootstrap command creates the real pool admission;
-// resolving that sentinel here would fail a fresh development volume before
-// bootstrap can run. Production and a restarted development process with a
-// real identity remain admission-required.
-func shouldResolveL3CacheMaintenance(cfg config.Config) bool {
-	return cfg.QueryCacheL3Enabled && requiresDuckLakeAdmission(cfg)
-}
-
 // validatePostgresDuckLakeRuntimeIdentity is the production admission seam
 // for the separately authenticated DuckLake pool. Both the pool's current
 // database probe and PostgreSQL's login/session identity must agree with the
@@ -226,23 +221,14 @@ func applyPostgresControlPlaneMigrations(ctx context.Context, migrator *platform
 	if migrator == nil {
 		return errors.New("PostgreSQL control migrator pool is nil")
 	}
-	tx, err := migrator.Begin(ctx)
+	db, err := migrator.SQLDB()
 	if err != nil {
-		return fmt.Errorf("begin PostgreSQL control-plane migration transaction: %w", err)
+		return fmt.Errorf("open PostgreSQL Goose migration adapter: %w", err)
 	}
-	committed := false
-	defer func() {
-		if !committed {
-			_ = tx.Rollback(context.Background())
-		}
-	}()
-	if err := postgresbaseline.Apply(ctx, tx); err != nil {
+	defer db.Close()
+	if err := postgresbaseline.Apply(ctx, db); err != nil {
 		return err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit PostgreSQL control-plane migrations: %w", err)
-	}
-	committed = true
 	return nil
 }
 
@@ -259,7 +245,12 @@ func (l *postgresControlPlaneLifecycle) Start(ctx context.Context) error {
 	if err := l.pools.Maintenance.Ping(ctx); err != nil {
 		return fmt.Errorf("ping PostgreSQL control maintenance pool: %w", err)
 	}
-	if err := postgresbaseline.Verify(ctx, l.pools.Runtime); err != nil {
+	runtimeDB, err := l.pools.Runtime.SQLDB()
+	if err != nil {
+		return fmt.Errorf("open PostgreSQL Goose verification adapter: %w", err)
+	}
+	defer runtimeDB.Close()
+	if err := postgresbaseline.Verify(ctx, runtimeDB); err != nil {
 		return fmt.Errorf("verify PostgreSQL control schema revision: %w", err)
 	}
 	if err := postgresbaseline.VerifyControlRuntimeAdmission(ctx, l.pools.Runtime); err != nil {

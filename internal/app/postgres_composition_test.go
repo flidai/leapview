@@ -193,24 +193,20 @@ func TestPostgresBuildComposesOnlyNativeDeliveryMutations(t *testing.T) {
 	}
 }
 
-func TestPostgresBuildComposesPoolScopedL3Maintenance(t *testing.T) {
+func TestPostgresBuildDoesNotComposeRemovedL3Cache(t *testing.T) {
 	contents, err := os.ReadFile("postgres_build.go")
 	if err != nil {
 		t.Fatal(err)
 	}
 	source := string(contents)
-	for _, required := range []string{
-		"shouldResolveL3CacheMaintenance(cfg)",
+	for _, forbidden := range []string{
+		"shouldResolveL3CacheMaintenance",
 		"analyticsl3.NewCollector(",
-		"cachepostgres.NewMaintenance(bootstrap.MaintenancePool())",
-		"SecurityDomain: contract.PhysicalPoolID",
-		"GracePeriod: time.Duration(orphanGraceSeconds) * time.Second",
+		"cachepostgres.NewMaintenance(",
 		"newL3GCWorker(",
-		"workloadmodule.MaintenanceRequest(\"cache.l3.gc\")",
-		"AdditionalWorkers: additionalWorkers",
 	} {
-		if !strings.Contains(source, required) {
-			t.Fatalf("PostgreSQL composition is missing L3 maintenance seam %q", required)
+		if strings.Contains(source, forbidden) {
+			t.Fatalf("PostgreSQL composition retains removed L3 cache seam %q", forbidden)
 		}
 	}
 }
@@ -296,11 +292,11 @@ func TestBuildProductionRejectsSecurityBypassBeforeConnecting(t *testing.T) {
 		PostgresControlMaintenanceURL:           "postgres://maintenance:secret@localhost/control?sslmode=require",
 		PostgresDuckLakeURL:                     "postgres://ducklake:secret@localhost/ducklake?sslmode=require",
 		PostgresDuckLakeMaintenanceURL:          "postgres://ducklake-maintenance:secret@localhost/ducklake?sslmode=require",
-		PostgresControlRuntimeRole:              "runtime",
-		PostgresControlMigratorRole:             "migrator",
+		PostgresControlRuntimeRole:              "leapview_control_runtime",
+		PostgresControlMigratorRole:             "leapview_control_migrator",
 		PostgresControlMaintenanceRole:          "leapview_control_maintenance",
-		PostgresDuckLakeRuntimeRole:             "ducklake",
-		PostgresDuckLakeMaintenanceRole:         "ducklake-maintenance",
+		PostgresDuckLakeRuntimeRole:             "leapview_ducklake_runtime",
+		PostgresDuckLakeMaintenanceRole:         "leapview_ducklake_maintenance",
 		DeliveryPhysicalPoolID:                  "pool-prod",
 		DeliveryPhysicalPoolCompatibilityDigest: "sha256:" + strings.Repeat("a", 64),
 	}

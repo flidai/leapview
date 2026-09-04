@@ -7,7 +7,6 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
-	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	dashboardpublicationpostgres "github.com/flidai/leapview/internal/dashboard/publication/postgres"
 	dashboardsessionpostgres "github.com/flidai/leapview/internal/dashboard/session/postgres"
@@ -52,7 +51,6 @@ func NewNative(db NativeDB) (*Native, error) {
 		Jobs:              jobspostgres.NewMaintenance(db),
 		Events:            eventspostgres.New(),
 		EventTransactions: eventTransactions,
-		Cache:             cachepostgres.NewMaintenance(db),
 		DashboardSession:  dashboardsessionpostgres.NewMaintenance(db),
 		DashboardUsage:    dashboardusagepostgres.NewMaintenance(db),
 		DashboardStreams:  dashboardpublicationpostgres.NewMaintenance(db),

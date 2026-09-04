@@ -34,8 +34,8 @@ func VerifyControlRuntimeAdmission(ctx context.Context, reader AdmissionReader) 
 	}
 	return verifyPrivileges(ctx, reader, []privilegeProbe{
 		{kind: "schema", object: "recovery", privilege: "USAGE", want: true},
-		{kind: "table", object: "platform.schema_revision", privilege: "SELECT", want: true},
-		{kind: "table", object: "platform.schema_revision", privilege: "UPDATE", want: false},
+		{kind: "table", object: "public.goose_db_version", privilege: "SELECT", want: true},
+		{kind: "table", object: "public.goose_db_version", privilege: "UPDATE", want: false},
 		{kind: "table", object: "recovery.recovery_set", privilege: "SELECT", want: true},
 		{kind: "table", object: "recovery.recovery_set", privilege: "UPDATE", want: false},
 		{kind: "function", object: "managed_data.publish_binding_set(text,text,text,text,bigint,jsonb)", privilege: "EXECUTE", want: true},
@@ -63,8 +63,8 @@ func VerifyControlMaintenanceAdmission(ctx context.Context, reader AdmissionRead
 func VerifyControlReadonlyAdmission(ctx context.Context, reader AdmissionReader) error {
 	return verifyPrivileges(ctx, reader, []privilegeProbe{
 		{kind: "schema", object: "platform", privilege: "USAGE", want: true},
-		{kind: "table", object: "platform.schema_revision", privilege: "SELECT", want: true},
-		{kind: "table", object: "platform.schema_revision", privilege: "INSERT", want: false},
+		{kind: "table", object: "public.goose_db_version", privilege: "SELECT", want: true},
+		{kind: "table", object: "public.goose_db_version", privilege: "INSERT", want: false},
 		{kind: "table", object: "recovery.recovery_set", privilege: "SELECT", want: true},
 		{kind: "table", object: "recovery.recovery_set", privilege: "UPDATE", want: false},
 		{kind: "function", object: "delivery.create_recovery_retention_root(uuid,text,uuid,uuid,timestamptz,jsonb)", privilege: "EXECUTE", want: false},

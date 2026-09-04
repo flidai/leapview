@@ -9,7 +9,6 @@ import (
 
 	accesspostgres "github.com/flidai/leapview/internal/access/postgres"
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
-	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	queryauditpostgres "github.com/flidai/leapview/internal/analytics/queryaudit/postgres"
 	eventspostgres "github.com/flidai/leapview/internal/platform/events/postgres"
 	"github.com/jackc/pgx/v5"
@@ -64,13 +63,6 @@ func (fakeEventTx) Exec(context.Context, string, ...any) (pgconn.CommandTag, err
 }
 func (fakeEventTx) Query(context.Context, string, ...any) (pgx.Rows, error) { return nil, nil }
 func (fakeEventTx) QueryRow(context.Context, string, ...any) pgx.Row        { return nil }
-
-type fakeCache struct{ calls *[]string }
-
-func (f fakeCache) Prune(context.Context, cachepostgres.PruneOptions) (cachepostgres.PruneStats, error) {
-	*f.calls = append(*f.calls, "cache")
-	return cachepostgres.PruneStats{Invalidations: 5, ExpiredLeases: 6}, nil
-}
 
 type fakeDashboardSession struct{ calls *[]string }
 
@@ -135,7 +127,6 @@ func testOptions(calls *[]string, events *fakeEvents) Options {
 		Jobs:              fakeJobs{calls},
 		Events:            events,
 		EventTransactions: fakeEventTransactions{calls},
-		Cache:             fakeCache{calls},
 		DashboardSession:  fakeDashboardSession{calls},
 		DashboardUsage:    fakeDashboardUsage{calls},
 		DashboardStreams:  fakeDashboardStreams{calls},
@@ -154,7 +145,6 @@ func testPolicy() Policy {
 		CursorSigning:    CursorSigningPolicy{Limit: 10},
 		Jobs:             JobsPolicy{Before: cutoff, Limit: 10},
 		Events:           EventsPolicy{Before: cutoff},
-		Cache:            CachePolicy{Before: cutoff, Limit: 10},
 		DashboardSession: DashboardSessionPolicy{Limit: 10},
 		DashboardUsage:   DashboardUsagePolicy{Before: cutoff, Limit: 10},
 		DashboardStreams: DashboardPublicationPolicy{Now: cutoff, Limit: 10},
@@ -174,9 +164,9 @@ func TestNewRejectsMissingAuthority(t *testing.T) {
 	calls := []string{}
 	events := &fakeEvents{calls: &calls}
 	options := testOptions(&calls, events)
-	options.Cache = nil
-	if _, err := New(options); err == nil || !strings.Contains(err.Error(), "cache") {
-		t.Fatalf("New() error = %v, want missing cache authority", err)
+	options.Jobs = nil
+	if _, err := New(options); err == nil || !strings.Contains(err.Error(), "jobs") {
+		t.Fatalf("New() error = %v, want missing jobs authority", err)
 	}
 }
 
@@ -191,7 +181,7 @@ func TestRunInvokesEveryBoundedAuthorityAndPreservesEventTransaction(t *testing.
 	if err != nil {
 		t.Fatalf("Run() error = %v", err)
 	}
-	wantCalls := []string{"operations", "cursor signing", "jobs", "event transaction", "events", "cache", "dashboard session", "dashboard usage", "dashboard streams", "managed data", "access audit short", "access audit standard", "access audit security", "access auth state", "query audit", "agent history"}
+	wantCalls := []string{"operations", "cursor signing", "jobs", "event transaction", "events", "dashboard session", "dashboard usage", "dashboard streams", "managed data", "access audit short", "access audit standard", "access audit security", "access auth state", "query audit", "agent history"}
 	if strings.Join(calls, ",") != strings.Join(wantCalls, ",") {
 		t.Fatalf("calls = %v, want %v", calls, wantCalls)
 	}
@@ -201,8 +191,7 @@ func TestRunInvokesEveryBoundedAuthorityAndPreservesEventTransaction(t *testing.
 	cutoff := testPolicy().AccessAudit.Short.Before
 	want := Result{
 		OperationsRemoved: 1, CursorSigningRemoved: 2, JobsRemoved: 3, EventsRemoved: 4,
-		Cache: cachepostgres.PruneStats{Invalidations: 5, ExpiredLeases: 6}, DashboardSessionsRemoved: 7,
-		DashboardUsageRemoved: 8, DashboardPublicationBatchDone: true, ManagedDataUploadSessionsRemoved: 9,
+		DashboardSessionsRemoved: 7, DashboardUsageRemoved: 8, DashboardPublicationBatchDone: true, ManagedDataUploadSessionsRemoved: 9,
 		AccessAuditShort:    accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionShort, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
 		AccessAuditStandard: accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionStandard, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
 		AccessAuditSecurity: accesspostgres.AuditRetentionResult{RetentionClass: accesspostgres.RetentionSecurity, RequestedCutoff: cutoff, Cutoff: cutoff, RequestedLimit: 10, RemovedCount: 10, RetainedFloor: cutoff},
@@ -222,9 +211,9 @@ func TestRunValidatesPolicyBeforeCallingAuthorities(t *testing.T) {
 		t.Fatal(err)
 	}
 	policy := testPolicy()
-	policy.Cache.Limit = 0
-	if _, err := coordinator.Run(context.Background(), policy); err == nil || !strings.Contains(err.Error(), "cache") {
-		t.Fatalf("Run() error = %v, want cache limit validation", err)
+	policy.DashboardSession.Limit = 0
+	if _, err := coordinator.Run(context.Background(), policy); err == nil || !strings.Contains(err.Error(), "dashboard session") {
+		t.Fatalf("Run() error = %v, want dashboard-session limit validation", err)
 	}
 	if len(calls) != 0 {
 		t.Fatalf("authorities called during invalid policy: %v", calls)

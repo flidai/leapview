@@ -77,7 +77,7 @@ func TestEventHistoryUsesResourceScopedDomainIDsForJSONAndSSE(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt", "watermill"} {
+		for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt"} {
 			if strings.Contains(strings.ToLower(string(encoded)), strings.ToLower(transportField)) {
 				t.Fatalf("JSON event leaked transport metadata %q: %s", transportField, encoded)
 			}
@@ -93,7 +93,7 @@ func TestEventHistoryUsesResourceScopedDomainIDsForJSONAndSSE(t *testing.T) {
 	if !strings.Contains(body, fmt.Sprintf("id: %020d", a2.ID)) || !strings.Contains(body, "event: release.a.ready") || strings.Contains(body, "release.b.") {
 		t.Fatalf("SSE resume crossed resource boundary: %s", body)
 	}
-	for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt", "watermill"} {
+	for _, transportField := range []string{"event_id", "eventId", "offset", "claim", "attempt"} {
 		if strings.Contains(strings.ToLower(body), strings.ToLower(transportField)) {
 			t.Fatalf("SSE event leaked transport metadata %q: %s", transportField, body)
 		}

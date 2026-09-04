@@ -1,7 +1,7 @@
-// Package cache contains dependency-addressed result-cache contracts.  It is
-// deliberately independent of result storage: Arrow bytes belong in L1/L2/L3
-// tiers while this package owns the immutable identity used to coordinate
-// those tiers.
+// Package cache contains dependency-addressed result-cache contracts. It is
+// deliberately independent of result storage: the process-local cache owns
+// Arrow bytes while this package owns the immutable identity used to address
+// them.
 package cache
 
 import (

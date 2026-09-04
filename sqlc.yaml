@@ -426,21 +426,6 @@ sql:
         omit_unused_structs: true
 
   - engine: "postgresql"
-    queries: "internal/analytics/cache/postgres/queries"
-    schema:
-      - "internal/analytics/cache/postgres/schema.sql"
-      - "internal/analytics/cache/postgres/migrations/004_l3_object_gc.sql"
-    gen:
-      go:
-        package: "db"
-        out: "internal/analytics/cache/postgres/internal/db"
-        sql_package: "pgx/v5"
-        emit_json_tags: true
-        emit_empty_slices: true
-        emit_pointers_for_null_types: true
-        omit_unused_structs: true
-
-  - engine: "postgresql"
     queries: "internal/release/postgres/queries"
     schema: "internal/release/postgres/schema.sql"
     gen:

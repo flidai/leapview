@@ -17,7 +17,6 @@ import (
 
 	"github.com/flidai/leapview/internal/analytics/ducklake"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
-	"github.com/flidai/leapview/internal/analytics/resulttier"
 	analyticsruntime "github.com/flidai/leapview/internal/analytics/runtime"
 	dashboardmodule "github.com/flidai/leapview/internal/dashboard/module"
 	dashboardruntime "github.com/flidai/leapview/internal/dashboard/runtime"
@@ -25,7 +24,6 @@ import (
 	deploymentdomain "github.com/flidai/leapview/internal/deployment"
 	"github.com/flidai/leapview/internal/extension"
 	platformdigest "github.com/flidai/leapview/internal/platform/digest"
-	projectgraph "github.com/flidai/leapview/internal/project/graph"
 	"github.com/flidai/leapview/internal/runtimehost"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
@@ -53,22 +51,6 @@ type PostgresDashboardRuntimeConfig struct {
 	MaxBytes int64
 }
 
-// ResultTierFactoryInput is the least-privilege identity projection needed to
-// construct a durable result-cache tier. It intentionally excludes managed
-// data, credentials, and candidate owner/authorization context.
-type ResultTierFactoryInput struct {
-	Root         SealedServingRoot
-	PoolContract *ducklake.PoolContract
-	ProjectID    projectgraph.ResourceID
-	Environment  string
-	CandidateID  string
-}
-
-// ResultTierFactory constructs an optional durable result-cache tier only
-// after the sealed serving root and its admitted physical-pool contract have
-// been resolved.
-type ResultTierFactory func(context.Context, ResultTierFactoryInput) (resulttier.Tier, error)
-
 // NewPostgresDashboardRuntimeBuilder projects the dashboard module builder
 // behind this composition seam. Callers do not need to import dashboard
 // runtime implementation or factory packages.
@@ -76,22 +58,12 @@ func NewPostgresDashboardRuntimeBuilder(config PostgresDashboardRuntimeConfig) S
 	if config.Projects == nil {
 		return nil
 	}
-	return func(ctx context.Context, input dashboardruntimefactory.Input, environment *ducklake.Environment, tier resulttier.Tier) (*dashboardruntime.Service, error) {
-		projects := projectFactoryWithResultTier(config.Projects(environment), tier)
+	return func(ctx context.Context, input dashboardruntimefactory.Input, environment *ducklake.Environment) (*dashboardruntime.Service, error) {
+		projects := config.Projects(environment)
 		return dashboardmodule.NewRuntimeFactory(dashboardmodule.RuntimeFactoryConfig{
 			Projects: projects, MaxRows: config.MaxRows, MaxBytes: config.MaxBytes,
 		})(ctx, input)
 	}
-}
-
-func projectFactoryWithResultTier(base analyticsruntime.ProjectFactory, tier resulttier.Tier) analyticsruntime.ProjectFactory {
-	if base == nil || tier == nil {
-		return base
-	}
-	return analyticsruntime.ProjectFactoryFunc(func(ctx context.Context, request analyticsruntime.ProjectRequest) (analyticsruntime.Project, error) {
-		request.ResultTier = tier
-		return base.OpenProject(ctx, request)
-	})
 }
 
 // PostgresSealedFactoryConfig supplies only target-owned capabilities. The
@@ -111,7 +83,6 @@ type PostgresSealedFactoryConfig struct {
 	ExtensionAdmission         extension.Admission
 	DuckLakeSecret             string
 	PostgresSecret             string
-	ResultTierFactory          ResultTierFactory
 }
 
 type postgresSealedFactory struct {
@@ -126,7 +97,6 @@ type postgresSealedFactory struct {
 	extensionAdmission         extension.Admission
 	duckLakeSecret             string
 	postgresSecret             string
-	resultTierFactory          ResultTierFactory
 }
 
 // PostgresServingAuthorizationInput carries the exact immutable root and
@@ -148,8 +118,7 @@ func NewPostgresSealedFactory(config PostgresSealedFactoryConfig) runtimehost.Ru
 		resolve: config.Resolve, buildRuntime: config.BuildRuntime,
 		credentialBootstrapFactory: config.CredentialBootstrapFactory, extensionAdmission: config.ExtensionAdmission,
 		duckLakeSecret: config.DuckLakeSecret, postgresSecret: config.PostgresSecret,
-		resultTierFactory: config.ResultTierFactory,
-		snapshotLeases:    config.SnapshotLeases, authorize: config.Authorize,
+		snapshotLeases: config.SnapshotLeases, authorize: config.Authorize,
 		runtimeAttachChecker: config.RuntimeAttachChecker,
 		leaseHolder:          config.LeaseHolder,
 	}
@@ -381,32 +350,6 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		_ = leaseHandle.Close()
 		return nil, fmt.Errorf("verify PostgreSQL DuckLake runtime attach eligibility: %w", err)
 	}
-	var resultTier resulttier.Tier
-	if f.resultTierFactory != nil {
-		environment := servingstate.NormalizeEnvironment(input.State.Environment)
-		if err := servingstate.ValidateEnvironment(environment); err != nil {
-			_ = leaseHandle.Close()
-			return nil, fmt.Errorf("build PostgreSQL result cache tier: invalid environment: %w", err)
-		}
-		projectID := input.State.ProjectID
-		if err := projectID.Validate(); err != nil {
-			_ = leaseHandle.Close()
-			return nil, fmt.Errorf("build PostgreSQL result cache tier: invalid project ID: %w", err)
-		}
-		candidateID := ""
-		if input.Candidate != nil {
-			candidateID = input.Candidate.CandidateID
-			if candidateID == "" || candidateID != strings.TrimSpace(candidateID) || candidateID != root.CandidateID {
-				_ = leaseHandle.Close()
-				return nil, fmt.Errorf("build PostgreSQL result cache tier: candidate identity is not bound to sealed root")
-			}
-		}
-		resultTier, err = f.resultTierFactory(ctx, ResultTierFactoryInput{Root: root, PoolContract: poolContract, ProjectID: projectID, Environment: string(environment), CandidateID: candidateID})
-		if err != nil {
-			_ = leaseHandle.Close()
-			return nil, fmt.Errorf("build PostgreSQL result cache tier: %w", err)
-		}
-	}
 	credentialBootstrap, err := f.credentialBootstrapFactory(ctx, poolContract)
 	if err != nil {
 		_ = leaseHandle.Close()
@@ -434,7 +377,7 @@ func (f postgresSealedFactory) PrepareSealed(ctx context.Context, input runtimeh
 		_ = leaseHandle.Close()
 		return nil, err
 	}
-	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env, root.RelationNamespace, root.TargetID, root.SealID, resultTier)
+	runtime, err := f.base.prepareDashboard(ctx, input, f.buildRuntime, env, root.RelationNamespace, root.TargetID, root.SealID)
 	if err != nil {
 		_ = env.Close()
 		_ = leaseHandle.Close()

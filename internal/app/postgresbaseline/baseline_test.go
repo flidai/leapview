@@ -1,108 +1,9 @@
 package postgresbaseline
 
 import (
-	"context"
-	"errors"
 	"strings"
 	"testing"
-
-	platformpostgres "github.com/flidai/leapview/internal/platform/postgres"
 )
-
-// revisionReader models the authoritative platform.schema_revision table.
-// Keeping revisions keyed by number ensures Verify checks every immutable
-// baseline and forward-migration identity rather than only the foundation.
-type revisionReader struct {
-	revisions map[int64]platformpostgres.SchemaRevision
-	err       error
-}
-
-func (r revisionReader) SchemaRevision(_ context.Context, revision int64) (platformpostgres.SchemaRevision, error) {
-	if r.err != nil {
-		return platformpostgres.SchemaRevision{}, r.err
-	}
-	value, ok := r.revisions[revision]
-	if !ok {
-		return platformpostgres.SchemaRevision{}, errors.New("revision not found")
-	}
-	return value, nil
-}
-
-func TestVerifyRequiresExactBaselineAndMigrationIdentity(t *testing.T) {
-	revisions := map[int64]platformpostgres.SchemaRevision{
-		BaselineRevision: {Revision: BaselineRevision, MigrationID: BaselineMigrationID, Checksum: Checksum()},
-	}
-	for _, migration := range Migrations() {
-		revisions[migration.Revision] = platformpostgres.SchemaRevision{
-			Revision: migration.Revision, MigrationID: migration.MigrationID, Checksum: migration.Checksum(),
-		}
-	}
-	if err := Verify(t.Context(), revisionReader{revisions: revisions}); err != nil {
-		t.Fatalf("Verify() error = %v", err)
-	}
-
-	tests := []struct {
-		name   string
-		mutate func(map[int64]platformpostgres.SchemaRevision)
-	}{
-		{name: "baseline revision", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
-			value := values[BaselineRevision]
-			value.Revision++
-			values[BaselineRevision] = value
-		}},
-		{name: "baseline migration", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
-			value := values[BaselineRevision]
-			value.MigrationID = "tampered"
-			values[BaselineRevision] = value
-		}},
-		{name: "baseline checksum", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
-			value := values[BaselineRevision]
-			value.Checksum = "tampered"
-			values[BaselineRevision] = value
-		}},
-		{name: "forward migration checksum", mutate: func(values map[int64]platformpostgres.SchemaRevision) {
-			for _, migration := range Migrations() {
-				value := values[migration.Revision]
-				value.Checksum = strings.Repeat("f", 64)
-				values[migration.Revision] = value
-			}
-		}},
-	}
-	for _, test := range tests {
-		t.Run(test.name, func(t *testing.T) {
-			copy := make(map[int64]platformpostgres.SchemaRevision, len(revisions))
-			for key, value := range revisions {
-				copy[key] = value
-			}
-			test.mutate(copy)
-			if err := Verify(t.Context(), revisionReader{revisions: copy}); err == nil {
-				t.Fatal("Verify() accepted mismatched schema identity")
-			}
-		})
-	}
-	if err := Verify(t.Context(), revisionReader{err: errors.New("connection failed")}); err == nil {
-		t.Fatal("Verify() accepted a revision reader error")
-	}
-	if err := Verify(t.Context(), nil); err == nil {
-		t.Fatal("Verify(nil) unexpectedly succeeded")
-	}
-}
-
-func TestProductBaselineComponentOrder(t *testing.T) {
-	want := []string{"platform.bootstrap", "platform.operation", "platform.cursor_signing", "project", "access", "admin.product", "dashboard.session", "dashboard.usage", "dashboard.appearance", "dashboard.authoring", "dashboard.publication", "connection_binding", "event", "managed_data", "physical_pool", "deployment", "serving_state", "release", "ducklake", "jobs", "agent", "refresh", "recoveryset", "lineage", "cache", "queryaudit"}
-	components := Components()
-	if len(components) != len(want) {
-		t.Fatalf("component count = %d, want %d", len(components), len(want))
-	}
-	for index, component := range components {
-		if component.Name != want[index] || component.SQL == "" {
-			t.Fatalf("component[%d] = %#v, want name %q with SQL", index, component, want[index])
-		}
-	}
-	if Checksum() == "" {
-		t.Fatal("baseline checksum is empty")
-	}
-}
 
 func TestProductRolePolicyDoesNotRestoreDuckLakeMigrationAuthority(t *testing.T) {
 	for _, forbidden := range []string{
@@ -166,23 +67,6 @@ func TestProductRolePolicyKeepsRetentionOutOfRuntime(t *testing.T) {
 	}
 }
 
-func TestProductRolePolicyRepairsL3CapabilitySplit(t *testing.T) {
-	for _, required := range []string{
-		"REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_runtime",
-		"cache.prepare_l3_object_gc(uuid,text,text,text,bigint) FROM leapview_control_runtime",
-		"cache.acquire_l3_object_fence(uuid,text,text,text,interval)",
-		"cache.admit_manifest(uuid,uuid,text,text,bigint",
-		"REVOKE ALL ON cache.cache_l3_object_fence, cache.cache_l3_gc_state FROM leapview_control_maintenance",
-		"cache.prepare_l3_object_gc(uuid,text,text,text,bigint) TO leapview_control_maintenance",
-		"GRANT SELECT ON cache.cache_l3_object_fence, cache.cache_l3_gc_state TO leapview_control_readonly",
-		"GRANT SELECT ON cache.cache_l3_object_fence, cache.cache_l3_gc_state TO leapview_control_backup",
-	} {
-		if !strings.Contains(rolePolicySQL, required) {
-			t.Fatalf("role policy is missing L3 capability repair %q", required)
-		}
-	}
-}
-
 func TestProductRolePolicyKeepsRecoveryFrontierFenced(t *testing.T) {
 	for _, required := range []string{
 		"GRANT SELECT ON ALL TABLES IN SCHEMA recovery TO leapview_control_runtime",
@@ -236,23 +120,5 @@ func TestProductRolePolicyDoesNotBroadenDashboardProjectionMutation(t *testing.T
 		if !strings.Contains(rolePolicySQL, required) {
 			t.Fatalf("dashboard role policy is missing guarded-mutation boundary %q", required)
 		}
-	}
-}
-
-func TestProductBaselineMigrationOrderIsUnique(t *testing.T) {
-	previous := BaselineRevision
-	seenIDs := map[string]struct{}{BaselineMigrationID: {}}
-	for _, migration := range Migrations() {
-		if migration.Revision <= previous {
-			t.Fatalf("migration %q revision %d is not strictly after %d", migration.MigrationID, migration.Revision, previous)
-		}
-		if _, exists := seenIDs[migration.MigrationID]; exists {
-			t.Fatalf("migration ID %q is duplicated", migration.MigrationID)
-		}
-		seenIDs[migration.MigrationID] = struct{}{}
-		previous = migration.Revision
-	}
-	if previous != LatestRevision {
-		t.Fatalf("latest migration revision = %d, want %d", previous, LatestRevision)
 	}
 }

@@ -130,9 +130,6 @@ var CompositionContractPrefixes = map[string]struct{}{
 	"internal/servingstate":                {},
 	"internal/servingstate/postgres":       {},
 	"internal/deployment/postgres":         {},
-	"internal/analytics/cache/l3":          {},
-	"internal/analytics/cache/postgres":    {},
-	"internal/analytics/resulttier":        {},
 }
 
 // SQLiteFixturePackagePrefixes enumerates the local/evaluation SQLite

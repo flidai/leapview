@@ -1245,7 +1245,6 @@ tasks:
     desc: Run container-backed external-service integration tests serially
     cmds:
       - go test ./internal/app -run '^TestMinIOParquetSourceRefreshContract$' -count=1
-      - go test -tags 'ducklake_minio' -count=1 -run '^Test(S3ObjectStore|TargetL3Cache)MinIO' -v ./internal/analytics/cache/l3
       - task: test:go:postgres-conformance
 
   test:go:postgres-conformance:
@@ -1260,7 +1259,7 @@ tasks:
     env:
       LEAPVIEW_POSTGRES_CONFORMANCE_REQUIRED: "1"
     cmds:
-      - go test -tags 'integration duckdb_arrow' -p 1 -count=1 -run '^TestPostgreSQL18MultiNode.*Qualification$' ./internal/platform/jobs/postgres ./internal/analytics/cache/postgres
+      - go test -tags 'integration duckdb_arrow' -p 1 -count=1 -run '^TestPostgreSQL18MultiNode.*Qualification$' ./internal/platform/jobs/postgres
 
   test:workload:qualify:
     desc: Qualify the reusable workload scheduler independently of LeapView

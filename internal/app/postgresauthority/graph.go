@@ -11,7 +11,6 @@ import (
 	adminproductpostgres "github.com/flidai/leapview/internal/admin/product/postgres"
 	agentmodule "github.com/flidai/leapview/internal/agent/module"
 	agentpostgres "github.com/flidai/leapview/internal/agent/postgres"
-	cachepostgres "github.com/flidai/leapview/internal/analytics/cache/postgres"
 	connectionbindingpostgres "github.com/flidai/leapview/internal/analytics/connectionbinding/postgres"
 	ducklakepostgres "github.com/flidai/leapview/internal/analytics/ducklake/postgres"
 	physicalpoolpostgres "github.com/flidai/leapview/internal/analytics/physicalpool/postgres"
@@ -95,8 +94,6 @@ type PostgresAuthorityGraph struct {
 	ConnectionBindingAudit *connectionbindingaudit.Adapter
 	QueryAudit             *queryauditpostgres.Repository
 	QueryAuditMaintenance  *queryauditpostgres.Maintenance
-	Cache                  *cachepostgres.Repository
-	CacheMaintenance       *cachepostgres.Maintenance
 	Lineage                *lineagepostgres.Repository
 
 	// PhysicalPool is the control-database identity/admission authority for a
@@ -338,7 +335,6 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	}
 	jobsMaintenance := jobspostgres.NewMaintenance(maintenance)
 	queryAuditMaintenance := queryauditpostgres.NewMaintenance(maintenance)
-	cacheMaintenance := cachepostgres.NewMaintenance(maintenance)
 	agentMaintenance := agentpostgres.NewMaintenance(maintenance)
 	managedDataMaintenance := manageddatapostgres.NewMaintenance(maintenance)
 	dashboardSessionMaintenance := dashboardsessionpostgres.NewMaintenance(maintenance)
@@ -349,8 +345,8 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 	retention, err := postgresmaintenance.New(postgresmaintenance.Options{
 		Operations: operationMaintenance, CursorSigning: cursorSigningMaintenance,
 		Jobs: jobsMaintenance, Events: events, EventTransactions: eventTransactions,
-		Cache: cacheMaintenance, DashboardSession: dashboardSessionMaintenance,
-		DashboardUsage: dashboardUsageMaintenance, DashboardStreams: dashboardStreamsMaintenance,
+		DashboardSession: dashboardSessionMaintenance,
+		DashboardUsage:   dashboardUsageMaintenance, DashboardStreams: dashboardStreamsMaintenance,
 		ManagedData: managedDataMaintenance, AccessAudit: accessAuditMaintenance, AccessAuthState: accessAuthStateMaintenance,
 		QueryAudit: queryAuditMaintenance, AgentHistory: agentMaintenance,
 	})
@@ -390,7 +386,7 @@ func NewPostgresAuthorityGraph(runtime, maintenance *platformpostgres.Pool, opti
 		Project: project, Access: accessRepository, AccessAudit: audit, Product: product, ProductAudit: productAudit,
 		Idempotency:   idempotencypostgres.NewStoreFromRepository(operations),
 		CursorSigning: cursorsigningpostgres.NewRepository(runtime), CursorSigningMaintenance: cursorSigningMaintenance,
-		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Cache: cachepostgres.New(runtime), CacheMaintenance: cacheMaintenance, Lineage: lineageRepository,
+		ConnectionBinding: binding, ConnectionBindingAudit: connectionBindingAudit, QueryAudit: queryauditpostgres.New(runtime), QueryAuditMaintenance: queryAuditMaintenance, Lineage: lineageRepository,
 		PhysicalPool: physicalPool, DuckLakeControlLedger: duckLakeControlLedger, ServingState: servingState, Refresh: refresh,
 		RefreshJobs: refreshJobs, RefreshCancelAudit: refreshCancelAudit,
 		Release: releaseRepository, ReleaseAudit: releaseAudit, ReleaseEvents: releaseEvents, ReleaseCatalog: releaseCatalog,
@@ -481,7 +477,7 @@ func (g *PostgresAuthorityGraph) Validate() error {
 		{"jobs authority", g.Jobs}, {"jobs maintenance authority", g.JobsMaintenance}, {"event authority", g.Events}, {"project authority", g.Project},
 		{"access authority", g.Access}, {"access audit authority", g.AccessAudit}, {"product authority", g.Product}, {"product audit authority", g.ProductAudit},
 		{"idempotency authority", g.Idempotency}, {"cursor-signing authority", g.CursorSigning}, {"cursor-signing maintenance authority", g.CursorSigningMaintenance},
-		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"query-audit maintenance authority", g.QueryAuditMaintenance}, {"cache authority", g.Cache}, {"cache maintenance authority", g.CacheMaintenance}, {"lineage authority", g.Lineage},
+		{"connection-binding authority", g.ConnectionBinding}, {"connection-binding audit authority", g.ConnectionBindingAudit}, {"query-audit authority", g.QueryAudit}, {"query-audit maintenance authority", g.QueryAuditMaintenance}, {"lineage authority", g.Lineage},
 		{"physical-pool authority", g.PhysicalPool}, {"DuckLake control ledger authority", g.DuckLakeControlLedger}, {"serving-state authority", g.ServingState},
 		{"refresh authority", g.Refresh}, {"refresh jobs authority", g.RefreshJobs}, {"refresh cancellation audit authority", g.RefreshCancelAudit},
 		{"release authority", g.Release}, {"release audit authority", g.ReleaseAudit}, {"release event authority", g.ReleaseEvents}, {"release catalog authority", g.ReleaseCatalog},
