@@ -1,0 +1,44 @@
+apiVersion: leapview.dev/v1
+kind: Model
+metadata:
+  id: model:orders
+  name: orders
+  displayName: Warehouse orders serving contract
+  description: Thin projection and safe-cast boundary over the dbt-owned order mart.
+spec:
+  definition:
+    type: sql
+    sql: |
+      SELECT
+        CAST(order_id AS VARCHAR) AS order_id,
+        CAST(customer_id AS VARCHAR) AS customer_id,
+        TRY_CAST(order_date AS DATE) AS order_date,
+        CAST(order_status AS VARCHAR) AS order_status,
+        TRY_CAST(revenue AS DOUBLE) AS revenue
+      FROM source."warehouse.fct_orders"
+  entities:
+    order:
+      type: primary
+      fields: [order_id]
+    customer:
+      type: foreign
+      fields: [customer_id]
+  grain:
+    entity: order
+  fields:
+    order_id: {datatype: String, description: Stable warehouse order identifier.}
+    customer_id: {datatype: String, description: Customer attached to the order.}
+    order_date: {datatype: Date, description: Order calendar date.}
+    order_status: {datatype: String, description: dbt-normalized order state.}
+    revenue: {datatype: Float, description: dbt-aggregated order revenue.}
+  checks:
+    - {type: non_null, field: order_id, severity: error}
+    - {type: non_null, field: customer_id, severity: error}
+    - {type: non_null, field: order_date, severity: error}
+    - {type: non_null, field: order_status, severity: error}
+    - {type: non_null, field: revenue, severity: error}
+    - type: accepted_values
+      field: order_status
+      values: [shipped, delivered, processing, cancelled]
+      severity: error
+    - {type: row_count, minimum: 1, severity: error}

@@ -21,6 +21,40 @@ tasks:
       - task: bootstrap:movielens
       - LEAPVIEW_DEV_RESTART=1 LEAPVIEW_DEV_READY_ATTEMPTS=1800 ./scripts/dev-server.sh start dashboards/experiments/movielens/leapview.yaml movielens .data/movielens
 
+  dbt:warehouse:build:
+    desc: Build and verify the pinned dbt-duckdb warehouse-boundary Parquet publication
+    sources:
+      - examples/dbt-warehouse-boundary/dbt/**/*.sql
+      - examples/dbt-warehouse-boundary/dbt/**/*.yml
+      - examples/dbt-warehouse-boundary/dbt/**/*.csv
+      - examples/dbt-warehouse-boundary/dbt/requirements.txt
+      - scripts/dbt-warehouse-boundary.sh
+    generates:
+      - examples/dbt-warehouse-boundary/published/dim_customers.parquet
+      - examples/dbt-warehouse-boundary/published/fct_orders.parquet
+    cmds:
+      - ./scripts/dbt-warehouse-boundary.sh build
+
+  dbt:warehouse:qualify:
+    desc: Run the physical dbt Parquet publication through the ordinary headless LeapView candidate lifecycle
+    deps:
+      - generate
+      - build
+      - map-assets:install
+      - dbt:warehouse:build
+    cmds:
+      - ./scripts/dev-server.sh once examples/dbt-warehouse-boundary/leapview/leapview.yaml warehouse examples/dbt-warehouse-boundary/published
+
+  dbt:warehouse:
+    desc: Build the dbt-duckdb showcase and start LeapView through the managed development flow
+    deps:
+      - generate
+      - build
+      - map-assets:install
+      - dbt:warehouse:build
+    cmds:
+      - ./scripts/dev-server.sh start examples/dbt-warehouse-boundary/leapview/leapview.yaml warehouse examples/dbt-warehouse-boundary/published
+
   bootstrap:
     desc: Download/sync Olist CSVs if missing
     cmds:

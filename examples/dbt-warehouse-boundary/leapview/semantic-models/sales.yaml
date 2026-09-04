@@ -1,0 +1,65 @@
+apiVersion: leapview.dev/v1
+kind: SemanticModel
+metadata:
+  id: semantic-model:warehouse_sales
+  name: warehouse_sales
+  displayName: Warehouse Sales
+  description: Governed BI semantics over dbt-published marts.
+spec:
+  datasets:
+    orders:
+      model: orders
+      defaultTimeDimension: order_date
+    customers:
+      model: customers
+  relationships:
+    orders_customers:
+      from: {dataset: orders, entity: customer}
+      to: {dataset: customers, entity: customer}
+      description: Joins each order to its dbt-published customer row.
+  dimensions:
+    order_date:
+      datatype: Date
+      label: Order date
+      bindings:
+        orders: {field: orders.order_date}
+      time:
+        nativeGrain: day
+        grains: [day, week, month, quarter, year]
+        calendar: iso8601
+    order_status:
+      datatype: String
+      label: Order status
+      bindings:
+        orders: {field: orders.order_status}
+    customer_region:
+      datatype: String
+      label: Customer region
+      bindings:
+        orders:
+          field: customers.region
+          path: [orders_customers]
+  metrics:
+    revenue:
+      type: aggregate
+      dataset: orders
+      aggregation: sum
+      input: {field: orders.revenue}
+      empty: zero
+      label: Revenue
+      description: Revenue produced at order grain by dbt.
+      format: currency
+    order_count:
+      type: aggregate
+      dataset: orders
+      aggregation: count_distinct
+      input: {field: orders.order_id}
+      empty: zero
+      label: Orders
+      format: integer
+    average_order_value:
+      type: ratio
+      numerator: revenue
+      denominator: order_count
+      label: Average order value
+      format: currency

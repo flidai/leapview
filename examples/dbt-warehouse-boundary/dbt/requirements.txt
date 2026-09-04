@@ -1,0 +1,2 @@
+dbt-core==1.11.14
+dbt-duckdb==1.11.0
