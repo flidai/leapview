@@ -48,6 +48,13 @@ func Build(ctx context.Context, config Config) (*Module, error) {
 			Presentation:       config.Presentation, Assets: config.Assets,
 		}
 		if auth != nil {
+			// ExistingAuth is an explicitly injected profile/test authority. Keep
+			// its repository available to the HTTP surface so authenticated
+			// persistence-free assemblies retain the same subject and credential
+			// lookups as the auth middleware.
+			if auth.repo != nil {
+				surface.Repository = func() (access.Repository, error) { return auth.repo, nil }
+			}
 			surface.CurrentPrincipal = auth.Principal
 			surface.CurrentCredential = auth.APICredential
 		}

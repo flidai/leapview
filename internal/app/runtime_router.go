@@ -1800,10 +1800,12 @@ func configureModules(routes *capabilityRoutes, runtime *runtimeServices, platfo
 		apigencommand.DependencyIdempotency:   platform.apiProtocol != nil,
 		apigencommand.DependencyConcurrency:   true,
 		apigencommand.DependencyAudit:         true,
-		// The persistence-free developer/test composition does not activate
-		// durable async commands. Once persistence is enabled, their generated
-		// dependency must be present and startup fails closed if it is not.
-		apigencommand.DependencyJobQueue: platform.asyncJobs != nil || !runtime.persistenceConfigured,
+		// Production always requires the canonical jobs module for generated
+		// async commands. Profile/test assemblies may expose durable read/auth
+		// surfaces without composing the PostgreSQL job authority; those
+		// commands remain unavailable at dispatch time rather than preventing
+		// unrelated API surfaces from starting.
+		apigencommand.DependencyJobQueue: platform.asyncJobs != nil || !runtimeConfig.Production,
 	}); err != nil {
 		return fmt.Errorf("validate generated command dependencies: %w", err)
 	}

@@ -20,6 +20,7 @@ func nativePlanFixture(t *testing.T, input deploymentnative.PlanInput, projectID
 	plan, err := deploymentdomain.NewDeliveryPlan(deploymentdomain.DeliveryPlan{
 		ID: input.PlanID, TargetID: input.TargetID, ProjectID: projectgraph.ResourceID(projectID), Environment: "prod",
 		Operation: deploymentdomain.DeliveryOperationCodeChange, SourceDigest: input.ArtifactDigest,
+		ServingArtifactDigest: input.ArtifactDigest,
 		Execution: deploymentdomain.DeliveryExecutionInputs{
 			SourceArtifactDigest: input.ArtifactDigest,
 			CompilerDigest:       input.CompiledGraphDigest,
