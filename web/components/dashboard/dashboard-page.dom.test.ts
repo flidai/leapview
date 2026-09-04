@@ -438,7 +438,7 @@ test('embed presentation keeps page navigation and removes non-navigation chrome
   }
 })
 
-test('app report frame puts page navigation at the top and dashboard navigation in the footer', async () => {
+test('app report frame uses a settings-style searchable page sidebar with Back at the top', async () => {
   const page = await browser.newPage({ viewport: { width: 1280, height: 820 } })
   try {
     await page.addInitScript(() => localStorage.setItem('leapview-report-sidebar-collapsed', 'false'))
@@ -457,11 +457,11 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       const root = sidebar.shadowRoot!
       const reportHeader = element.shadowRoot.querySelector('.header') as HTMLElement
       const railFooter = element.shadowRoot.querySelector('.rail-footer') as HTMLElement
-      const back = railFooter.querySelector('.dashboard-back-link') as HTMLAnchorElement
-      const backLabel = back.querySelector('.rail-back-label') as HTMLElement
+      const back = root.querySelector('.back-link') as HTMLAnchorElement
+      const backLabel = back.querySelector('.back-label') as HTMLElement
+      const search = root.querySelector('.sidebar-search input') as HTMLInputElement
       const collapse = root.querySelector('.collapse') as HTMLButtonElement
       const header = root.querySelector('header') as HTMLElement
-      const sectionTitle = root.querySelector('.section-title') as HTMLElement
       const firstPage = root.querySelector('.item-link') as HTMLElement
       const main = element.shadowRoot.querySelector('.main') as HTMLElement
       const reportFooter = element.shadowRoot.querySelector('lv-report-footer') as HTMLElement
@@ -479,8 +479,15 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       const sidebarRect = sidebar.getBoundingClientRect()
       const mainRect = main.getBoundingClientRect()
       const breadcrumbRect = breadcrumb.getBoundingClientRect()
-      const sectionTitleRect = sectionTitle.getBoundingClientRect()
       const reportFooterRect = reportFooter.getBoundingClientRect()
+      const searchRect = search.getBoundingClientRect()
+      search.value = 'det'
+      search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await sidebar.updateComplete
+      const filteredPages = Array.from(root.querySelectorAll('.item-title')).map(item => item.textContent?.trim())
+      search.value = ''
+      search.dispatchEvent(new InputEvent('input', { bubbles: true, composed: true }))
+      await sidebar.updateComplete
       collapse.click()
       await sidebar.updateComplete
       await new Promise(resolve => setTimeout(resolve, 200))
@@ -527,15 +534,15 @@ test('app report frame puts page navigation at the top and dashboard navigation 
         sidebarBackCount: root.querySelectorAll('.back-link').length,
         backInRailFooter: railFooter.contains(back),
         railFooterAligned: Math.round(railFooterRect.left) === Math.round(sidebarRect.left),
-        backInset: Math.round(backRect.left - railFooterRect.left),
+        backInset: Math.round(backRect.left - sidebarRect.left),
+        backAtTop: backRect.top < expandedPageTop,
+        searchBelowBack: searchRect.top >= backRect.bottom,
+        searchLabel: search.getAttribute('aria-label'),
+        searchPlaceholder: search.getAttribute('placeholder'),
+        filteredPages,
         reportHeaderAligned: Math.round(reportHeaderRect.left) === Math.round(mainRect.left),
         breadcrumbInset: Math.round(breadcrumbRect.left - mainRect.left),
-        pagesTitleBreadcrumbCenterDelta: Math.abs(
-          (sectionTitleRect.top + sectionTitleRect.bottom) / 2
-            - (breadcrumbRect.top + breadcrumbRect.bottom) / 2,
-        ),
         sidebarStartsWithHeader: Math.abs(sidebarRect.top - reportHeaderRect.top) < 2,
-        pagesTitleAboveCanvas: sectionTitle.getBoundingClientRect().top < mainRect.top,
         mainBelowHeader: Math.abs(mainRect.top - reportHeaderRect.bottom) < 2,
         railHeaderCount: element.shadowRoot.querySelectorAll('.rail-header').length,
         sidebarEndsAtFooter: Math.abs(sidebarRect.bottom - railFooterRect.top) < 2,
@@ -549,20 +556,18 @@ test('app report frame puts page navigation at the top and dashboard navigation 
         collapsedFooterAligned: Math.round(collapsedReportFooterRect.left) === Math.round(collapsedMainRect.left),
         collapsedBackCentered: Math.abs(
           (collapsedBackRect.left + collapsedBackRect.width / 2)
-            - (collapsedRailFooterRect.left + collapsedRailFooterRect.width / 2),
+            - (collapsedSidebarRect.left + collapsedSidebarRect.width / 2),
         ) < 2,
         collapsedBackWidth: Math.round(collapsedBackRect.width),
         breadcrumbMovesWithCanvas: Math.round(collapsedBreadcrumbRect.left - breadcrumbRect.left)
           === Math.round(collapsedMainRect.left - mainRect.left),
         collapseInHeader: header.contains(collapse),
-        sectionTitle: sectionTitle.textContent?.trim(),
-        sectionTitleTransform: getComputedStyle(sectionTitle).textTransform,
         expandedWidth,
         collapseTag: collapse.tagName,
         collapseLabel: collapse.getAttribute('aria-label'),
         collapsed: sidebar.hasAttribute('data-collapsed'),
         railLabelDisplay: getComputedStyle(root.querySelector('.rail-label')).display,
-        pageTopShift: collapsedPageTop - expandedPageTop,
+        collapsedPageMovesUp: collapsedPageTop < expandedPageTop,
         toggleIconDistinctFromBack: expandedToggleIconMarkup !== backIconMarkup,
         toggleIconChanges: collapsedToggleIconMarkup !== expandedToggleIconMarkup,
       }
@@ -573,7 +578,7 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       label: 'Back to dashboards',
       text: 'Back',
       backTag: 'A',
-      title: 'All dashboards',
+      title: 'Back to dashboards',
       expandedBackLabelDisplay: 'block',
       collapsedBackLabelDisplay: 'none',
       reportTitle: 'Executive Sales Dashboard',
@@ -596,15 +601,18 @@ test('app report frame puts page navigation at the top and dashboard navigation 
         svgCount: 1,
       },
       sidebarTitleCount: 0,
-      sidebarBackCount: 0,
-      backInRailFooter: true,
+      sidebarBackCount: 1,
+      backInRailFooter: false,
       railFooterAligned: true,
-      backInset: 16,
+      backInset: 8,
+      backAtTop: true,
+      searchBelowBack: true,
+      searchLabel: 'Search pages',
+      searchPlaceholder: 'Search pages',
+      filteredPages: ['Details'],
       reportHeaderAligned: true,
       breadcrumbInset: 16,
-      pagesTitleBreadcrumbCenterDelta: expect.any(Number),
       sidebarStartsWithHeader: true,
-      pagesTitleAboveCanvas: true,
       mainBelowHeader: true,
       railHeaderCount: 0,
       sidebarEndsAtFooter: true,
@@ -615,21 +623,18 @@ test('app report frame puts page navigation at the top and dashboard navigation 
       collapsedBreadcrumbInset: 16,
       collapsedFooterAligned: true,
       collapsedBackCentered: true,
-      collapsedBackWidth: 32,
+      collapsedBackWidth: 28,
       breadcrumbMovesWithCanvas: true,
       collapseInHeader: true,
-      sectionTitle: 'Pages',
-      sectionTitleTransform: 'none',
       expandedWidth: 144,
       collapseTag: 'BUTTON',
       collapseLabel: 'Expand Report pages',
       collapsed: true,
       railLabelDisplay: 'none',
-      pageTopShift: 0,
+      collapsedPageMovesUp: true,
       toggleIconDistinctFromBack: true,
       toggleIconChanges: false,
     })
-    expect(state.pagesTitleBreadcrumbCenterDelta).toBeLessThanOrEqual(2)
   } finally {
     await page.close()
   }

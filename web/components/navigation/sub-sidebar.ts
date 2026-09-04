@@ -1,6 +1,6 @@
 import { LitElement, css, html, type PropertyValues } from 'lit'
 import { property, state } from 'lit/decorators.js'
-import { PanelLeft, type IconNode } from 'lucide'
+import { ArrowLeft, PanelLeft, Search, type IconNode } from 'lucide'
 import { lucideIcon } from '../shared/lucide-icons'
 import '../shared/loading-spinner'
 
@@ -25,14 +25,19 @@ type SubSidebarConfig = {
   disabled?: boolean
   collapsible?: boolean
   numbered?: boolean
+  backAction?: { label: string; href: string; title?: string }
+  searchable?: boolean
+  searchPlaceholder?: string
   items?: SubSidebarItem[]
 }
 
-type ResolvedConfig = Required<Pick<SubSidebarConfig, 'label' | 'railLabel' | 'ariaLabel' | 'storageKey' | 'widthStorageKey' | 'emptyText'>> & {
+type ResolvedConfig = Required<Pick<SubSidebarConfig, 'label' | 'railLabel' | 'ariaLabel' | 'storageKey' | 'widthStorageKey' | 'emptyText' | 'searchPlaceholder'>> & {
   activeId: string
   disabled: boolean
   collapsible: boolean
   numbered: boolean
+  backAction?: { label: string; href: string; title?: string }
+  searchable: boolean
   items: SubSidebarItem[]
 }
 
@@ -54,6 +59,8 @@ const defaultConfig: ResolvedConfig = {
   disabled: false,
   collapsible: true,
   numbered: true,
+  searchable: false,
+  searchPlaceholder: 'Search...',
   items: [],
 }
 
@@ -81,6 +88,7 @@ class SubSidebar extends LitElement {
   @property({ attribute: 'config', converter: configConverter }) config: SubSidebarConfig = {}
   @state() private collapsed = storedCollapsed(defaultConfig.storageKey)
   @state() private hoverTitle?: HoverTitle
+  @state() private searchQuery = ''
   @state() private sidebarWidth = SUB_SIDEBAR_DEFAULT_WIDTH
   private loadedStorageKey = defaultConfig.storageKey
   private loadedWidthStorageKey = ''
@@ -176,6 +184,13 @@ class SubSidebar extends LitElement {
       padding: var(--lv-sub-sidebar-header-padding-block, var(--base-size-8)) var(--base-size-8);
     }
 
+    header.with-controls {
+      height: auto;
+      min-height: var(--lv-sub-sidebar-header-height, calc(var(--base-size-16) + var(--control-small-size)));
+      align-content: start;
+      gap: var(--base-size-8);
+    }
+
     .top-row {
       display: flex;
       min-width: 0;
@@ -197,6 +212,91 @@ class SubSidebar extends LitElement {
       font: var(--lv-type-caption);
       letter-spacing: 0;
       text-transform: none;
+    }
+
+    .back-link {
+      display: grid;
+      min-width: 0;
+      flex: 1 1 auto;
+      grid-template-columns: var(--control-xsmall-size) minmax(0, 1fr);
+      min-height: var(--control-small-size);
+      align-items: center;
+      gap: var(--base-size-6);
+      border: var(--lv-border-transparent);
+      border-radius: var(--lv-radius-default);
+      color: var(--lv-fg-muted);
+      padding: 0 var(--control-xsmall-paddingInline-normal);
+      text-decoration: none;
+      font: var(--lv-type-body-compact);
+    }
+
+    .back-link:hover,
+    .back-link:focus-visible {
+      background: var(--control-bgColor-hover);
+      color: var(--lv-fg-default);
+      outline: 0;
+    }
+
+    .back-link:focus-visible,
+    .sidebar-search input:focus-visible {
+      outline: var(--focus-outline);
+      outline-offset: var(--focus-outline-offset);
+    }
+
+    .back-icon {
+      display: grid;
+      width: var(--control-xsmall-size);
+      height: var(--control-xsmall-size);
+      place-items: center;
+    }
+
+    .back-icon svg,
+    .search-icon svg {
+      width: var(--base-size-16);
+      height: var(--base-size-16);
+    }
+
+    .back-label {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .sidebar-search {
+      position: relative;
+      display: grid;
+      min-width: 0;
+    }
+
+    .search-icon {
+      position: absolute;
+      top: 50%;
+      left: var(--control-xsmall-paddingInline-normal);
+      z-index: 1;
+      display: grid;
+      width: var(--control-xsmall-size);
+      height: var(--control-xsmall-size);
+      place-items: center;
+      color: var(--lv-fg-muted);
+      pointer-events: none;
+      transform: translateY(-50%);
+    }
+
+    .sidebar-search input {
+      box-sizing: border-box;
+      width: 100%;
+      min-height: var(--control-small-size);
+      border: var(--lv-border-muted);
+      border-radius: var(--lv-radius-default);
+      background: var(--lv-bg-control, var(--lv-bg-panel-muted));
+      color: var(--lv-fg-default);
+      padding: 0 var(--control-xsmall-paddingInline-normal) 0 calc(var(--control-xsmall-size) + var(--base-size-6));
+      font: var(--lv-type-body-compact);
+    }
+
+    .sidebar-search input::placeholder {
+      color: var(--lv-fg-muted);
+      opacity: 1;
     }
 
     .collapse {
@@ -391,6 +491,8 @@ class SubSidebar extends LitElement {
     }
 
     :host([data-collapsed]) .section-title,
+    :host([data-collapsed]) .back-label,
+    :host([data-collapsed]) .sidebar-search,
     :host([data-collapsed]) .item-text,
     :host([data-collapsed]) .empty {
       display: none;
@@ -398,7 +500,18 @@ class SubSidebar extends LitElement {
 
     :host([data-collapsed]) .top-row {
       display: grid;
+      width: 100%;
+      gap: var(--base-size-4);
       justify-items: center;
+    }
+
+    :host([data-collapsed]) .back-link {
+      width: var(--control-small-size);
+      height: var(--control-small-size);
+      box-sizing: border-box;
+      grid-template-columns: 1fr;
+      justify-items: center;
+      padding: 0;
     }
 
     :host([data-collapsed]) .collapse {
@@ -575,6 +688,8 @@ class SubSidebar extends LitElement {
   render() {
     const config = this.resolvedConfig
     const collapsed = this.isCollapsed(config)
+    const items = this.visibleItems(config)
+    const controlledHeader = Boolean(config.backAction || config.searchable)
     return html`
       <aside aria-label=${config.ariaLabel}>
         <span
@@ -594,9 +709,14 @@ class SubSidebar extends LitElement {
           @pointercancel=${this.endSidebarResize}
           @dblclick=${this.resetSidebarWidth}
         ></span>
-        <header>
+        <header class=${controlledHeader ? 'with-controls' : ''}>
           <div class="top-row">
-            <strong class="section-title">${config.label}</strong>
+            ${config.backAction ? html`
+              <a class="back-link" href=${config.backAction.href} aria-label=${config.backAction.title || config.backAction.label} title=${config.backAction.title || config.backAction.label}>
+                <span class="back-icon" aria-hidden="true">${icon('back')}</span>
+                <span class="back-label">${config.backAction.label}</span>
+              </a>
+            ` : html`<strong class="section-title">${config.label}</strong>`}
             <button
               class="collapse"
               type="button"
@@ -609,12 +729,25 @@ class SubSidebar extends LitElement {
               ${icon('panel-left')}
             </button>
           </div>
+          ${config.searchable && !collapsed ? html`
+            <label class="sidebar-search">
+              <span class="search-icon" aria-hidden="true">${icon('search')}</span>
+              <input
+                type="search"
+                aria-label=${config.searchPlaceholder}
+                placeholder=${config.searchPlaceholder}
+                autocomplete="off"
+                .value=${this.searchQuery}
+                @input=${this.updateSearchQuery}
+              >
+            </label>
+          ` : null}
         </header>
 
         <nav aria-label=${config.ariaLabel} @scroll=${this.hideHoverTitle}>
           <span class="rail-label" aria-hidden="true">${config.railLabel}</span>
-          ${config.items.length === 0 ? html`<div class="empty">${config.emptyText}</div>` : null}
-          ${config.items.map((item, index) => this.renderItem(config, item, index, config.items.length))}
+          ${items.length === 0 ? html`<div class="empty">${this.searchQuery.trim() ? `No ${config.label.toLocaleLowerCase()} match your search.` : config.emptyText}</div>` : null}
+          ${items.map((item, index) => this.renderItem(config, item, index, items.length))}
         </nav>
         ${collapsed && this.hoverTitle ? html`
           <div
@@ -643,8 +776,21 @@ class SubSidebar extends LitElement {
       disabled: Boolean(this.config.disabled),
       collapsible: this.config.collapsible !== false,
       numbered: this.config.numbered !== false,
+      backAction: resolvedBackAction(this.config.backAction),
+      searchable: Boolean(this.config.searchable),
+      searchPlaceholder: cleanText(this.config.searchPlaceholder) || defaultConfig.searchPlaceholder,
       items: Array.isArray(this.config.items) ? this.config.items.filter((item) => cleanText(item.id) !== '') : [],
     }
+  }
+
+  private visibleItems(config: ResolvedConfig): SubSidebarItem[] {
+    const query = this.searchQuery.trim().toLocaleLowerCase()
+    if (!config.searchable || !query) return config.items
+    return config.items.filter(item => `${cleanText(item.title)} ${cleanText(item.meta)}`.toLocaleLowerCase().includes(query))
+  }
+
+  private updateSearchQuery = (event: Event): void => {
+    this.searchQuery = (event.target as HTMLInputElement).value
   }
 
   private renderItem(config: ResolvedConfig, item: SubSidebarItem, index: number, count: number) {
@@ -862,9 +1008,19 @@ function cleanText(value: unknown): string {
   return typeof value === 'string' ? value.trim() : ''
 }
 
-function icon(name: 'panel-left') {
-  const icons: Record<'panel-left', IconNode> = {
+function resolvedBackAction(value: SubSidebarConfig['backAction']): ResolvedConfig['backAction'] {
+  const label = cleanText(value?.label)
+  const href = cleanText(value?.href)
+  if (!label || !href) return undefined
+  const title = cleanText(value?.title)
+  return { label, href, ...(title ? { title } : {}) }
+}
+
+function icon(name: 'back' | 'panel-left' | 'search') {
+  const icons: Record<'back' | 'panel-left' | 'search', IconNode> = {
+    back: ArrowLeft,
     'panel-left': PanelLeft,
+    search: Search,
   }
 
   return lucideIcon(icons[name])
