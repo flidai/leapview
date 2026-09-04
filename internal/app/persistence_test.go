@@ -16,7 +16,6 @@ import (
 	"github.com/flidai/leapview/internal/platform"
 	projectcatalog "github.com/flidai/leapview/internal/project/catalog"
 	projectgraph "github.com/flidai/leapview/internal/project/graph"
-	refreshmodule "github.com/flidai/leapview/internal/refresh/module"
 	servingstate "github.com/flidai/leapview/internal/servingstate"
 	servingstatesqlite "github.com/flidai/leapview/internal/servingstate/sqlite"
 )

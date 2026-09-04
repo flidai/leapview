@@ -503,9 +503,7 @@ sql:
             go_type: "time.Time"
 
   - engine: "sqlite"
-    queries:
-      - "internal/dashboard/publication/sqlite/queries"
-      - "internal/dashboard/authoring/sqlite/queries"
+    queries: "internal/dashboard/publication/sqlite/queries"
     schema: "internal/platform/migrations"
     gen:
       go:
