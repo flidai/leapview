@@ -162,6 +162,8 @@ tasks:
 
   test:qualification:native-postgres:
     desc: Run the required container-backed native PostgreSQL 18 qualification contract
+    deps:
+      - api:generate
     env:
       LEAPVIEW_TEST_CONTAINERS: "1"
     cmds:
