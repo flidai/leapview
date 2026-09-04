@@ -843,7 +843,7 @@ func discoverSnapshotModelSchemas(ctx context.Context, provider analyticsresourc
 		}
 		// Reopened snapshots are intentionally source-free: source credentials and
 		// files may no longer exist. Validate the resolved materialized model
-		// contract against an execution snapshot, which retains model-table facts
+		// contract against an execution snapshot, which retains materialized-table facts
 		// while omitting authored source state.
 		if err := model.ResolveDiscoveredModelFields(); err != nil {
 			return fmt.Errorf("snapshot schema discovery semantic model %q: %w", modelID, err)
@@ -1031,7 +1031,7 @@ func (r *ProjectRuntime) RefreshProjectTables(ctx context.Context, tableNames []
 		return fmt.Errorf("project runtime is not initialized")
 	}
 	if len(tableNames) == 0 {
-		return fmt.Errorf("model table refresh plan is empty")
+		return fmt.Errorf("Model materialization refresh plan is empty")
 	}
 
 	r.mu.Lock()
@@ -1135,14 +1135,14 @@ func ProjectModelTableDependencyOrder(models map[string]*semanticmodel.Model, se
 				selectedTable = physical
 			}
 		} else if len(matches) > 1 {
-			return nil, fmt.Errorf("semantic dataset alias %q resolves to multiple Model tables", selectedTable)
+			return nil, fmt.Errorf("semantic dataset alias %q resolves to multiple Model materializations", selectedTable)
 		}
 	}
 	return analyticsmaterialize.ModelTableDependencyOrder(model, selectedTable)
 }
 
 // physicalTableName resolves a semantic dataset alias to the authored backing
-// Model table that is materialized in the project catalog. Missing dataset
+// Model that is materialized in the project catalog. Missing dataset
 // bindings are activation errors and are never inferred at runtime.
 func physicalTableName(model *semanticmodel.Model, table string) (string, error) {
 	if model == nil {
@@ -1150,7 +1150,7 @@ func physicalTableName(model *semanticmodel.Model, table string) (string, error)
 	}
 	table = strings.TrimSpace(table)
 	if table == "" {
-		return "", fmt.Errorf("model table is required")
+		return "", fmt.Errorf("Model is required")
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(model)
 	if err != nil {
@@ -1428,7 +1428,7 @@ func physicalProjectModel(models map[string]*semanticmodel.Model, authoredTables
 		model := models[modelID]
 		// A semantic model exposes dataset aliases, but project materialization
 		// must emit one physical table per authored Model. Resolve aliases before
-		// merging so two semantic datasets can safely reuse one Model table.
+		// merging so two semantic datasets can safely reuse one Model materialization.
 		compiled, err := semanticquery.CompileDatasetBindings(model)
 		if err != nil {
 			return nil, fmt.Errorf("semantic model %q dataset bindings: %w", modelID, err)
@@ -1453,7 +1453,7 @@ func physicalProjectModel(models map[string]*semanticmodel.Model, authoredTables
 			}
 			existing, ok := projectModel.Tables[physicalName]
 			if ok && !reflect.DeepEqual(tablePhysicalSignature(existing), tablePhysicalSignature(table)) {
-				return nil, fmt.Errorf("semantic model %q model table %q conflicts with another project model", modelID, physicalName)
+				return nil, fmt.Errorf("semantic model %q materialization for Model %q conflicts with another project Model", modelID, physicalName)
 			}
 			projectModel.Tables[physicalName] = table
 		}

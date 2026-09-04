@@ -21,7 +21,7 @@ func TestRepositoryRecordsAndFiltersQueryEvents(t *testing.T) {
 	repo := NewRepository(store.SQLDB())
 	events := []queryaudit.EventInput{
 		{ProjectID: "sales", PrincipalID: "p1", Surface: "api", Operation: "api_query", QueryKind: "semantic_aggregate", ModelID: "sales", Target: "orders", Status: "success", QueueWaitMS: 7, PlanningMS: 3, ConnectionWaitMS: 5, DatabaseMS: 9, ExecutionMS: 11, ExecutionState: "succeeded", RowsReturned: 10, SQL: "select * from orders", QueryJSON: `{"target":"orders"}`},
-		{ProjectID: "sales", PrincipalID: "p2", Surface: "data_explorer", Operation: "preview_window", QueryKind: "model_table_rows", ModelID: "sales", Target: "customers", Status: "error", Error: "missing table", QueryJSON: `{"target":"customers"}`},
+		{ProjectID: "sales", PrincipalID: "p2", Surface: "data_explorer", Operation: "preview_window", QueryKind: "model_rows", ModelID: "sales", Target: "customers", Status: "error", Error: "missing model materialization", QueryJSON: `{"target":"customers"}`},
 		{ProjectID: "operations", PrincipalID: "p1", Surface: "agent", Operation: "agent_query", QueryKind: "semantic_rows", ModelID: "operations", Target: "reviews", Status: "success", QueryJSON: `{"target":"reviews"}`},
 	}
 	for _, event := range events {

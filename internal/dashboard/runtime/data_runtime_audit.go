@@ -217,7 +217,7 @@ func (r *governedDataRuntime) RefreshTables(ctx context.Context, tableNames []st
 		RefreshTables(context.Context, []string) error
 	})
 	if !ok {
-		return fmt.Errorf("dashboard data runtime does not support model table refresh")
+		return fmt.Errorf("dashboard data runtime does not support Model refresh")
 	}
 	return port.RefreshTables(ctx, tableNames)
 }

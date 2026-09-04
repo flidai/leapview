@@ -197,7 +197,7 @@ func TestAssetRefreshStateMapsModelRunHistory(t *testing.T) {
 		}, requestedModelID: &requestedModelID},
 	}
 	state, err := h.assetRefreshState(t.Context(), "project:test", projectview.DevelopAssetView{
-		ID: "model:sales_customers", Key: "sales_customers", Type: string(projectview.AssetTypeModelTable),
+		ID: "model:sales_customers", Key: "sales_customers", Type: string(projectview.AssetTypeModel),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -339,7 +339,7 @@ func TestModelAssetBootstrapUsesActiveCompiledDefinition(t *testing.T) {
 	const assetID = "model:zip_geolocations"
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
-			ID: assetID, ProjectID: projectID, ServingStateID: "state", Type: "model_table", Key: "zip_geolocations", Title: "ZIP locations", PayloadJSON: `{"kind":"model"}`,
+			ID: assetID, ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "zip_geolocations", Title: "ZIP locations", PayloadJSON: `{"kind":"model"}`,
 		}}}},
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
 			ID: projectID,
@@ -456,7 +456,7 @@ func TestInvalidAssetSectionsReturnNotFoundBeforeDefinitionEnrichment(t *testing
 	const assetID = "model:orders"
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{{
-			ID: assetID, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "orders", PayloadJSON: `{}`,
+			ID: assetID, ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "orders", PayloadJSON: `{}`,
 		}}}},
 		ProjectDefinitionReader: browserProjectDefinitionStub{err: errors.New("definition unavailable")},
 		ResolveProjectID:        func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil },
@@ -569,8 +569,8 @@ func (r *notifyingResponseRecorder) Write(p []byte) (int, error) {
 func TestModelAssetBootstrapUsesAuthoredSQLWhenRuntimeProjectionIsTargetBound(t *testing.T) {
 	const projectID = "project:test"
 	assets := []servingstate.Asset{
-		{ID: "model:zip_geolocations", ProjectID: projectID, ServingStateID: "state", Type: "model_table", Key: "zip_geolocations", Title: "ZIP locations", PayloadJSON: `{}`},
-		{ID: "model:sales_orders", ProjectID: projectID, ServingStateID: "state", Type: "model_table", Key: "sales_orders", Title: "Sales orders", PayloadJSON: `{}`},
+		{ID: "model:zip_geolocations", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "zip_geolocations", Title: "ZIP locations", PayloadJSON: `{}`},
+		{ID: "model:sales_orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "sales_orders", Title: "Sales orders", PayloadJSON: `{}`},
 	}
 	definition := projectmanifest.Project{
 		ID: projectID,
@@ -630,7 +630,7 @@ func TestModelAssetReadModelIncludesServingCatalogStatistics(t *testing.T) {
 		}},
 	}
 	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
-		ID: assetID, ProjectID: "project:test", Type: string(projectview.AssetTypeModelTable), Key: "zip_geolocations", Payload: map[string]any{},
+		ID: assetID, ProjectID: "project:test", Type: string(projectview.AssetTypeModel), Key: "zip_geolocations", Payload: map[string]any{},
 	})
 	if err != nil {
 		t.Fatalf("projectAssetReadModel() error = %v", err)
@@ -660,7 +660,7 @@ func TestModelAssetReadModelRemainsAvailableWhenServingCatalogStatisticsAreUnava
 		PhysicalCatalog: browserUnavailablePhysicalCatalogStub{},
 	}
 	asset, err := h.projectAssetReadModel(t.Context(), projectview.DevelopAssetView{
-		ID: assetID, ProjectID: "project:test", Type: string(projectview.AssetTypeModelTable), Key: "zip_geolocations", Payload: map[string]any{},
+		ID: assetID, ProjectID: "project:test", Type: string(projectview.AssetTypeModel), Key: "zip_geolocations", Payload: map[string]any{},
 	})
 	if err != nil {
 		t.Fatalf("projectAssetReadModel() error = %v", err)
@@ -842,7 +842,7 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
 			{ID: "source:orders", ProjectID: projectID, ServingStateID: "state", Type: "source", Key: "orders", Title: "Orders source", PayloadJSON: `{}`},
-			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model_table", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: "semantic:sales", ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
@@ -867,10 +867,10 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	if explorer.SelectedObject == nil || explorer.SelectedObject.ResourceID != "model:orders" {
 		t.Fatalf("selected object = %#v, want model:orders", explorer.SelectedObject)
 	}
-	if len(explorer.Explore.Models) != 1 || len(explorer.Explore.Datasets) != 1 || len(explorer.Explore.Fields) != 1 {
+	if len(explorer.Explore.SemanticModels) != 1 || len(explorer.Explore.Datasets) != 1 || len(explorer.Explore.Fields) != 1 {
 		t.Fatalf("explore signal = %#v", explorer.Explore)
 	}
-	_, semanticExplorer, ok := h.dataExplorerSignals(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore?v=1&mode=explore&model=semantic:sales&dataset=orders&dimension=orders.status&filter=%7B%22field%22%3A%22orders.status%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22paid%22%5D%7D&sort=%7B%22field%22%3A%22orders.status%22%2C%22direction%22%3A%22asc%22%7D&limit=25", nil))
+	_, semanticExplorer, ok := h.dataExplorerSignals(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore?v=1&mode=explore&semanticModel=semantic:sales&dataset=orders&dimension=orders.status&filter=%7B%22field%22%3A%22orders.status%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22paid%22%5D%7D&sort=%7B%22field%22%3A%22orders.status%22%2C%22direction%22%3A%22asc%22%7D&limit=25", nil))
 	if !ok || projectsignals.ValueOrZero(semanticExplorer.Command.Mode) != "explore" || semanticExplorer.SelectedObject == nil || semanticExplorer.SelectedObject.ResourceID != "model:orders" {
 		t.Fatalf("semantic deep link = %#v", semanticExplorer)
 	}
@@ -879,7 +879,7 @@ func TestDataExplorerSignalsUseAuthorizedActiveDefinition(t *testing.T) {
 	}
 }
 
-func TestDataExploreCommandFromQueryRoundTripsDurableState(t *testing.T) {
+func TestDataExploreCommandFromQueryRoundTripsCanonicalSpec(t *testing.T) {
 	values, err := url.ParseQuery("v=1&mode=explore&model=semantic%3Asales&dataset=orders&dimension=orders.month&dimension=customers.state&metric=revenue&filter=%7B%22field%22%3A%22customers.state%22%2C%22operator%22%3A%22equals%22%2C%22values%22%3A%5B%22CA%22%5D%7D&sort=%7B%22field%22%3A%22revenue%22%2C%22direction%22%3A%22desc%22%7D&time=%7B%22field%22%3A%22orders.created_at%22%2C%22grain%22%3A%22month%22%7D&limit=250")
 	if err != nil {
 		t.Fatal(err)
@@ -908,6 +908,22 @@ func TestDataExploreCommandFromQueryRoundTripsDurableState(t *testing.T) {
 	}
 }
 
+func TestDataExploreCommandFromQueryRejectsMalformedState(t *testing.T) {
+	tests := []url.Values{
+		{"v": {"2"}},
+		{"limit": {"0"}},
+		{"limit": {"1001"}},
+		{"filter": {`{"field":"status","operator":"equals","values":[],"unexpected":true}`}},
+		{"sort": {`{"field":"revenue","direction":"sideways"}`}},
+		{"time": {`{"field":"created_at","grain":"month"} trailing`}},
+	}
+	for _, values := range tests {
+		if command, err := dataExploreCommandFromQuery(values); err == nil {
+			t.Fatalf("query %#v accepted as %#v", values, command)
+		}
+	}
+}
+
 func TestDataExplorerSignalsRejectsMalformedQueryEscaping(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	if _, _, ok := (&BrowserHandler{}).dataExplorerSignals(recorder, httptest.NewRequest(stdhttp.MethodGet, "/explore?mode=explore&filter=%ZZ", nil)); ok {
@@ -918,7 +934,7 @@ func TestDataExplorerSignalsRejectsMalformedQueryEscaping(t *testing.T) {
 	}
 }
 
-func TestDataExplorerPreviewExecutesGovernedModelTableQuery(t *testing.T) {
+func TestDataExplorerPreviewExecutesGovernedModelQuery(t *testing.T) {
 	executor := &browserDataQueryStub{result: dataquery.Result{
 		Rows:           []dataquery.Row{{"order_id": int64(42), "status": "paid"}},
 		TotalRows:      1,
@@ -927,8 +943,8 @@ func TestDataExplorerPreviewExecutesGovernedModelTableQuery(t *testing.T) {
 	}}
 	columns := []projectsignals.DataPreviewColumnSignal{{Key: "order_id", Label: "Order ID"}, {Key: "status", Label: "Status"}}
 	object := projectsignals.DataExplorerObjectSignal{
-		Key: "model_table:model:orders:semantic-model:sales", ResourceID: "model:orders", Layer: "model_table",
-		ModelID: projectsignals.Pointer("semantic-model:sales"), Table: projectsignals.Pointer("orders"), Columns: &columns,
+		Key: "model:model:orders:semantic-model:sales", ResourceID: "model:orders", Layer: "model",
+		SemanticModelID: projectsignals.Pointer("semantic-model:sales"), DatasetID: projectsignals.Pointer("orders"), Columns: &columns,
 	}
 	preview := dataExplorerPreview(t.Context(), executor, "project:test", object, projectsignals.DataExplorerCommand{
 		ObjectKey: projectsignals.Pointer(object.Key), Count: 100, Limit: 100, Block: projectsignals.Pointer("all"),
@@ -940,7 +956,7 @@ func TestDataExplorerPreviewExecutesGovernedModelTableQuery(t *testing.T) {
 	if preview.AvailableRows != 1 || len(preview.Blocks["a"].Rows) != 1 {
 		t.Fatalf("preview = %#v", preview)
 	}
-	if executor.query.ProjectID != "project:test" || executor.query.ModelID != "semantic-model:sales" || executor.query.Target != "orders" {
+	if executor.query.Kind != dataquery.KindModelRows || executor.query.ProjectID != "project:test" || executor.query.ModelID != "semantic-model:sales" || executor.query.Target != "orders" {
 		t.Fatalf("query = %#v", executor.query)
 	}
 	if executor.query.Surface != dataquery.SurfaceDataExplorer || executor.query.Operation != dataquery.OperationPreviewWindow {
@@ -960,8 +976,8 @@ func TestDataExplorerSemanticExploreExecutesGovernedAggregate(t *testing.T) {
 			Dimensions: []exploration.ExplorationDimensionRef{{Field: "orders.status", Alias: &dimensionAlias, Grain: &dimensionGrain}}, Metrics: []exploration.ExplorationMetricRef{{Field: "orders"}}, Filters: []exploration.ExplorationFilter{},
 			Sort: []exploration.ExplorationSort{{Field: "orders", Direction: "desc"}}, Limit: 100},
 	}, []projectsignals.DataExploreFieldSignal{
-		{ID: "orders.status", Label: "Status", Kind: "dimension", Compatible: true},
-		{ID: "orders", Label: "Orders", Kind: "metric", Compatible: true},
+		{ID: "orders.status", Label: "Status", Kind: "dimension", DatasetID: "orders", Compatible: true},
+		{ID: "orders", Label: "Orders", Kind: "metric", DatasetID: "orders", Compatible: true},
 	}, &semanticmodel.Model{
 		Tables:   map[string]semanticmodel.Table{"orders": {Dimensions: map[string]semanticmodel.MetricDimension{"status": {Type: "timestamp", Datatype: semanticmodel.DataTypeDateTimeTZ}}}},
 		Metrics:  map[string]semanticmodel.Metric{"orders": {Type: "aggregate"}},
@@ -991,7 +1007,7 @@ func TestDataExplorerSemanticExploreUnscopesMultiRootMetric(t *testing.T) {
 		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic-model:sales", DatasetID: projectsignals.Pointer("customers"),
 			Dimensions: []exploration.ExplorationDimensionRef{}, Metrics: []exploration.ExplorationMetricRef{{Field: "order_share"}}, Filters: []exploration.ExplorationFilter{}, Sort: []exploration.ExplorationSort{}, Limit: 100},
 	}, []projectsignals.DataExploreFieldSignal{
-		// An empty modelTable is the projection contract for a derived/ratio
+		// An empty datasetId is the projection contract for a derived/ratio
 		// metric whose dependencies span more than one physical dataset.
 		{ID: "order_share", Label: "Order share", Kind: "metric", Compatible: true},
 	}, &semanticmodel.Model{
@@ -1025,7 +1041,7 @@ func TestAssetDataExplorerScopesModelsAndSemanticModels(t *testing.T) {
 	executor := &browserDataQueryStub{result: dataquery.Result{Rows: []dataquery.Row{{"status": "paid"}}, TotalRows: 1, TotalRowsKnown: true}}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
-			{ID: "model:orders", ProjectID: projectID, Type: "model_table", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+			{ID: "model:orders", ProjectID: projectID, Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: "semantic-model:sales", ProjectID: projectID, Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
@@ -1194,7 +1210,7 @@ func TestAssetsFilterUnauthorizedSiblingAndEdges(t *testing.T) {
 	denied := projectgraph.ResourceID("model:denied")
 	h := &BrowserHandler{
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
-			Assets: []servingstate.Asset{{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", Title: "Allowed", PayloadJSON: "{}"}, {ID: denied, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "denied", Title: "Denied", PayloadJSON: "{}"}},
+			Assets: []servingstate.Asset{{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "allowed", Title: "Allowed", PayloadJSON: "{}"}, {ID: denied, ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "denied", Title: "Denied", PayloadJSON: "{}"}},
 			Edges:  []servingstate.AssetEdge{{ID: "edge", ProjectID: "project:test", ServingStateID: "state", FromAssetID: allowed, ToAssetID: denied, Type: "depends_on"}},
 		}},
 		Catalog: browserCatalogStub{}, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
@@ -1279,7 +1295,7 @@ func TestSourceSurfacesRetainOnlyAuthorizedConnectionContext(t *testing.T) {
 func TestAssetsConsumeCatalogPages(t *testing.T) {
 	h := &BrowserHandler{
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev", Graph: browserGraphStub{graph: servingstate.AssetGraph{
-			Assets: []servingstate.Asset{{ID: "model:allowed", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", PayloadJSON: "{}"}, {ID: "model:second", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "second", PayloadJSON: "{}"}},
+			Assets: []servingstate.Asset{{ID: "model:allowed", ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "allowed", PayloadJSON: "{}"}, {ID: "model:second", ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "second", PayloadJSON: "{}"}},
 		}},
 		Catalog: pagedBrowserCatalogStub{}, CurrentUser: func(*stdhttp.Request) (Principal, bool) { return Principal{ID: "alice"}, true },
 	}
@@ -1293,8 +1309,8 @@ func TestAssetsDoesNotMutateSharedServingGraph(t *testing.T) {
 	denied := projectgraph.ResourceID("model:denied")
 	allowed := projectgraph.ResourceID("model:allowed")
 	graph := servingstate.AssetGraph{Assets: []servingstate.Asset{
-		{ID: denied, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "denied", PayloadJSON: "{}"},
-		{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "allowed", PayloadJSON: "{}"},
+		{ID: denied, ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "denied", PayloadJSON: "{}"},
+		{ID: allowed, ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "allowed", PayloadJSON: "{}"},
 	}}
 	h := &BrowserHandler{
 		ResolveProjectID: func(context.Context) (projectgraph.ResourceID, error) { return "project:test", nil }, Environment: "dev", Graph: browserGraphStub{graph: graph},

@@ -36,7 +36,7 @@ import {
   filterValues,
   localPreviewDimensions,
   makeExplorationFilter,
-  objectTableID,
+  objectDatasetID,
   removeExplorationField,
   explorationSortsWithoutField,
   explorationSpecFor,
@@ -68,7 +68,7 @@ const emptyExplorer: DataExplorerSignal = {
   preview: emptyPreview,
   explore: {
     command: emptyDataExploreCommand,
-    models: [], datasets: [], fields: [],
+    semanticModels: [], datasets: [], fields: [],
     result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
   },
   command: { mode: 'browse', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: emptyDataExploreCommand },
@@ -604,6 +604,24 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       font-weight: var(--base-text-weight-medium);
     }
 
+    .object-label {
+      min-width: 0;
+    }
+
+    .object-label small {
+      display: block;
+      overflow: hidden;
+      color: var(--lv-fg-muted);
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      font: var(--lv-type-caption);
+      font-weight: var(--base-text-weight-normal);
+    }
+
+    .object-button.is-selected .object-label small {
+      color: var(--lv-fg-accent);
+    }
+
     .column-list {
       display: grid;
       gap: var(--base-size-2);
@@ -1067,7 +1085,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const selected = explorer.selectedObject
     const semanticActive = explorer.command?.mode === 'explore' || this.optimisticExplore !== null
     const filtered = filterObjects(explorer.objects ?? [], this.search)
-    const grouped = groupObjectsByModel(filtered, explorer.explore?.models ?? [])
+    const grouped = groupObjectsBySemanticModel(filtered, explorer.explore?.semanticModels ?? [])
     const agentEnabled = this.signal<unknown | null>('agent', null) !== null
     const columns = this.headerColumns(explorer, semanticActive)
     const visibleColumnKeys = this.headerVisibleColumnKeys(explorer, columns, semanticActive)
@@ -1178,25 +1196,25 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const explore = exploreSignal ?? emptyExplorer.explore
     const command = this.optimisticExplore ?? explore.command
     const spec = explorationSpecFor(command)
-    const selectedModel = explore.models.find((model) => model.id === spec.modelId) ?? explore.selectedModel
-    const datasets = selectedModel?.datasets ?? explore.datasets ?? []
+    const selectedSemanticModel = (explore.semanticModels ?? []).find((model) => model.id === spec.modelId) ?? explore.selectedSemanticModel
+    const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
     const queryFields = new Set([...spec.dimensions.map((field) => field.field), ...spec.metrics.map((field) => field.field)])
     const visibleFields = (explore.fields ?? []).filter((field) => {
       const query = this.fieldSearch.trim().toLowerCase()
-      return !query || [field.label, field.id, field.modelTable, field.description, field.type]
+      return !query || [field.label, field.id, field.datasetId, field.description, field.type]
         .some((value) => String(value ?? '').toLowerCase().includes(query))
     })
     const fieldGroups = groupExploreFields(visibleFields)
-    const result = explore.result
+    const result = explore.result ?? emptyExplorer.explore.result
     const hasQuery = spec.dimensions.length > 0 || spec.metrics.length > 0 || Boolean(spec.time)
     return html`
       <div class="explorer">
         <aside class="browser explore-browser" aria-label="Semantic fields">
           <div class="selectors">
             <label>Semantic model
-              <select .value=${spec.modelId ?? ''} @change=${(event: Event) => this.changeExploreModel((event.target as HTMLSelectElement).value, explore)}>
-                ${(explore.models ?? []).map((model) => html`<option value=${model.id}>${model.title}</option>`)}
+              <select .value=${spec.modelId ?? ''} @change=${(event: Event) => this.changeExploreSemanticModel((event.target as HTMLSelectElement).value, explore)}>
+                ${(explore.semanticModels ?? []).map((model) => html`<option value=${model.id}>${model.title}</option>`)}
               </select>
             </label>
             <label>Starting dataset
@@ -1237,7 +1255,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                         @click=${() => this.toggleExploreField(field, command)}
                       >
                         <span aria-hidden="true">${queryFields.has(field.id) ? lucideIcon(X, { size: 14 }) : lucideIcon(Plus, { size: 14 })}</span>
-                        <span><strong>${field.label}</strong><small>${field.modelTable} · ${field.type || field.kind}</small></span>
+                        <span><strong>${field.label}</strong><small>${field.datasetId} · ${field.type || field.kind}</small></span>
                       </button>
                       ${field.kind === 'dimension' ? html`<button type="button" class="field-action" title="Filter ${field.label}" aria-label="Filter ${field.label}" @click=${() => this.openFilter(field)}>${lucideIcon(Filter, { size: 14 })}</button>` : nothing}
                     </div>
@@ -1281,7 +1299,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           </section>
           ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
           <div class="result-meta" aria-live="polite">
-            <span><strong>${selectedModel?.title ?? 'Semantic model'}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
+            <span><strong>${selectedSemanticModel?.title ?? 'Semantic model'}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
             ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
             ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
             ${result.error ? this.renderExploreFailure(result.error, command) : nothing}
@@ -1355,11 +1373,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.emitCommand({ mode, explore: this.optimisticExplore ?? current.explore ?? this.dataExplorer.explore.command })
   }
 
-  private changeExploreModel(modelId: string, explore: DataExploreSignal) {
-    const model = explore.models.find((candidate) => candidate.id === modelId)
+  private changeExploreSemanticModel(semanticModelId: string, explore: DataExploreSignal) {
+    const model = (explore.semanticModels ?? []).find((candidate) => candidate.id === semanticModelId)
     const current = this.optimisticExplore ?? explore.command
     this.emitExplore({
-      ...explorationSpecFor(current), modelId, datasetId: model?.datasets?.[0]?.id || undefined, dimensions: [], metrics: [], filters: [], sort: [],
+      ...explorationSpecFor(current), modelId: semanticModelId, datasetId: model?.datasets?.[0]?.id || undefined, dimensions: [], metrics: [], filters: [], sort: [],
     }, true, current)
   }
 
@@ -1376,22 +1394,22 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   ) {
     if (field.compatible === false && !field.rebaseDatasetId) return
     const selected = this.dataExplorer.selectedObject
-    const baseObject = selected && selected.modelId === object.modelId
+    const baseObject = selected && selected.semanticModelId === object.semanticModelId
       ? selected
       : object
     const current = this.optimisticExplore ?? explore.command ?? emptyExplorer.explore.command
     const contextMatches = exploreContextMatchesObject(current, baseObject)
     const activeCommand = semanticActive && contextMatches
     const baseDimensions = (explore.fields ?? [])
-      .filter((candidate) => candidate.compatible !== false && candidate.kind !== 'metric' && candidate.modelTable === objectTableID(baseObject))
+      .filter((candidate) => candidate.compatible !== false && candidate.kind !== 'metric' && candidate.datasetId === objectDatasetID(baseObject))
       .map((candidate) => candidate.id)
-    const fallbackDimensions = (baseObject.columns ?? []).map((column) => `${objectTableID(baseObject)}.${column.key}`)
+    const fallbackDimensions = (baseObject.columns ?? []).map((column) => `${objectDatasetID(baseObject)}.${column.key}`)
     const command: DataExploreCommand = activeCommand ? current : {
       ...current,
       spec: {
         ...explorationSpecFor(current),
-        modelId: baseObject.modelId ?? '',
-        datasetId: objectTableID(baseObject),
+        modelId: baseObject.semanticModelId ?? '',
+        datasetId: objectDatasetID(baseObject),
         dimensions: baseDimensions.length ? baseDimensions.map((field) => ({ field })) : fallbackDimensions.map((field) => ({ field })),
         metrics: [],
         filters: [],
@@ -1399,8 +1417,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       },
       columnWidths: {},
     }
-    const key = field.kind === 'metric' ? 'metrics' : 'dimensions'; const spec = explorationSpecFor(command)
-    const selectedByDefault = !activeCommand && field.kind !== 'metric' && field.modelTable === objectTableID(baseObject); const values = spec[key] ?? []
+    const key = field.kind === 'metric' ? 'metrics' : 'dimensions'
+    const spec = explorationSpecFor(command)
+    const selectedByDefault = !activeCommand && field.kind !== 'metric' && field.datasetId === objectDatasetID(baseObject)
+    const values = spec[key] ?? []
     const selectedNow = values.some((value) => value.field === field.id) || selectedByDefault
     const next = selectedNow ? values.filter((value) => value.field !== field.id) : [...values, { field: field.id }]
     this.emitExplore({ ...spec, [key]: next, sort: explorationSortsWithoutField(spec, field.id) }, false, command)
@@ -1437,7 +1457,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
       : []
     if (needsValue && !values.length) return
     const field = this.dataExplorer.explore.fields.find((candidate) => candidate.id === this.filterField)
-    const filter = makeExplorationFilter(this.filterField, this.filterOperator, values, field?.type)
+    const filter = makeExplorationFilter(field ?? this.filterField, this.filterOperator, values, field?.type)
     if (!filter) return
     this.closeFilter(); const spec = explorationSpecFor(command)
     this.emitExplore({ ...spec, filters: [...spec.filters.filter((current) => current.field !== filter.field), filter] }, false, command)
@@ -1471,16 +1491,16 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const context = this.page?.context
     const projectId = context?.projectId ?? ''
     const generationId = context?.generationId ?? ''
-    const modelId = spec.modelId ?? ''
+    const semanticModelId = spec.modelId ?? ''
     const datasetId = spec.datasetId ?? ''
-    if (!projectId || !generationId || !modelId || !datasetId) return []
+    if (!projectId || !generationId || !semanticModelId || !datasetId) return []
     const dataset = explorer.explore.datasets.find((candidate) => candidate.id === datasetId)
     const href = dataExplorerURL({ mode: 'explore', objectKey: '', explore: command, count: 100, limit: 100, offset: 0, start: 0, sort: {}, requestSeq: command.requestSeq, resetVersion: command.resetVersion })
     return [{
-      reference: { kind: 'dataset', id: `${modelId}/${datasetId}` },
+      reference: { kind: 'dataset', id: `${semanticModelId}/${datasetId}` },
       name: dataset?.title ?? datasetId,
       description: dataset?.description,
-      hierarchy: [projectId, modelId], href, locations: [], context: ['active_project_generation'],
+      hierarchy: [projectId, semanticModelId], href, locations: [], context: ['active_project_generation'],
     }]
   }
 
@@ -1569,7 +1589,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <summary>
           <span class="chevron" aria-hidden="true">${lucideIcon(ChevronRight, { size: 14 })}</span>
           <span class="resource-icon" aria-hidden="true" title="Project resource">${lucideIcon(Database, { size: 14 })}</span>
-          <span title=${`${group.objects.length} model tables`}>${label(group.title)} (${group.objects.length})</span>
+          <span title=${`${group.objects.length} Models`}>${label(group.title)} (${group.objects.length})</span>
         </summary>
         <div class="object-list">
           ${this.renderObjectNodes(group.objects, selectedKey, explore, semanticActive)}
@@ -1598,21 +1618,21 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     return objects.map((object) => {
       const selected = object.key === selectedKey
       const duplicateTitle = (titleCounts.get(object.title.trim().toLowerCase()) ?? 0) > 1
-      const displayTitle = duplicateTitle && object.modelId ? `${object.modelId}.${object.title}` : object.title
+      const displayTitle = duplicateTitle && object.semanticModelId ? `${object.semanticModelId}.${object.title}` : object.title
       const columnMatch = objectColumnMatchesSearch(object, this.search)
       const command = this.optimisticExplore ?? explore.command; const spec = explorationSpecFor(command)
       const contextMatches = exploreContextMatchesObject(command, object)
       const semanticFields = contextMatches
-        ? (explore.fields ?? []).filter((field) => field.modelTable === objectTableID(object))
+        ? (explore.fields ?? []).filter((field) => field.datasetId === objectDatasetID(object))
         : []
       const dimensionByColumn = new Map(
         semanticFields.filter((field) => field.kind !== 'metric').map((field) => [fieldColumnID(field), field]),
       )
       const dimensions = (object.columns ?? []).map((column): DataExploreFieldSignal => dimensionByColumn.get(column.key) ?? {
-        id: `${objectTableID(object)}.${column.key}`,
+        id: `${objectDatasetID(object)}.${column.key}`,
         label: column.label || column.key,
         kind: 'dimension',
-        modelTable: objectTableID(object),
+        datasetId: objectDatasetID(object),
         type: column.type,
         description: column.description,
         compatible: true,
@@ -1632,7 +1652,10 @@ class DataExplorerPage extends DatastarLit(LitElement) {
           >
             <span class="chevron object-expand" title="Expand columns" aria-label="Expand columns">${lucideIcon(ChevronRight, { size: 13 })}</span>
             <span aria-hidden="true">${lucideIcon(iconForLayer(object.layer), { size: 14 })}</span>
-            <strong title=${`${object.columnCount || 0} columns`}>${label(displayTitle)}</strong>
+            <span class="object-label">
+              <strong title=${`${object.columnCount || 0} columns`}>${label(displayTitle)}</strong>
+              ${object.datasetId ? html`<small>${label(object.datasetId)}</small>` : nothing}
+            </span>
           </summary>
           <div class="column-list" aria-label=${`${object.title} fields`}>
             ${fields.map((field) => {
@@ -1647,7 +1670,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 ? relationshipPath.length
                   ? `Related through ${relationshipPath.join(' → ')}`
                   : field.description || field.id
-                : field.compatibilityReason || `Not compatible with ${spec.datasetId || objectTableID(object)}`
+                : field.compatibilityReason || `Not compatible with ${spec.datasetId || objectDatasetID(object)}`
               return html`
               <div class=${`${field.kind === 'metric' ? 'column-item metric-field' : 'column-item'}${selectable ? '' : ' is-unavailable'}${rebaseable ? ' is-rebaseable' : ''}`} title=${compatibilityTitle}>
                 <button
@@ -1691,11 +1714,11 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     const explore = exploreSignal ?? emptyExplorer.explore
     const command = this.optimisticExplore ?? explore.command
     const spec = explorationSpecFor(command)
-    const selectedModel = explore.models.find((model) => model.id === spec.modelId) ?? explore.selectedModel
-    const datasets = selectedModel?.datasets ?? explore.datasets ?? []
+    const selectedSemanticModel = (explore.semanticModels ?? []).find((model) => model.id === spec.modelId) ?? explore.selectedSemanticModel
+    const datasets = selectedSemanticModel?.datasets ?? explore.datasets ?? []
     const selectedDataset = datasets.find((dataset) => dataset.id === spec.datasetId) ?? explore.selectedDataset
     const queryFields = new Set([...(spec.dimensions ?? []).map((field) => field.field), ...(spec.metrics ?? []).map((field) => field.field)])
-    const result = explore.result
+    const result = explore.result ?? emptyExplorer.explore.result
     const hasQuery = queryFields.size > 0 || Boolean(spec.time)
     return html`
       <div class="content" aria-label="Data exploration">
@@ -1706,7 +1729,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
                 <div class="selection-shelf">
                   ${(spec.dimensions ?? []).map((field) => this.renderQueryChip(field.field, 'dimension', explore.fields, command))}
                   ${(spec.metrics ?? []).map((field) => this.renderQueryChip(field.field, 'metric', explore.fields, command))}
-                  ${!queryFields.size ? html`<span class="empty">Select fields from the expanded model tables.</span>` : nothing}
+                  ${!queryFields.size ? html`<span class="empty">Select fields from the expanded Models.</span>` : nothing}
                 </div>
                 <div class="query-actions">
                   <button type="button" class="text-button" title="Run now" @click=${() => this.emitExplore({}, true, command)}>${lucideIcon(Play, { size: 14 })} Run</button>
@@ -1732,7 +1755,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
             </section>
             ${this.filterField ? this.renderFilterEditor(command, explore.fields) : nothing}
             <div class="result-meta" aria-live="polite">
-              <span><strong>${selectedModel?.title ?? label(spec.modelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
+              <span><strong>${selectedSemanticModel?.title ?? label(spec.modelId)}</strong>${selectedDataset ? ` · ${selectedDataset.title}` : ''}</span>
               ${selectedDataset?.grainEntity ? html`<span>Grain: ${datasetGrainLabel(selectedDataset)}</span>` : nothing}
               ${hasQuery && !result.error ? html`<span>${result.rowsReturned} rows · ${result.durationMs} ms${result.truncated ? ' · truncated' : ''}</span>` : nothing}
               ${result.error ? this.renderExploreFailure(result.error, command) : nothing}
@@ -1752,7 +1775,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
   }
 
   private renderExploreQueryDetails(object: DataExplorerObjectSignal, explore: DataExploreSignal, command: DataExploreCommand) {
-    const result = explore.result; const spec = explorationSpecFor(command)
+    const result = explore.result ?? emptyExplorer.explore.result; const spec = explorationSpecFor(command)
     return html`
       <section class="query-view" aria-label="Query details">
         <dl class="metadata-grid">
@@ -1774,15 +1797,15 @@ class DataExplorerPage extends DatastarLit(LitElement) {
     this.optimisticExplore = null
     this.closeFilter()
     const currentExplore = this.dataExplorer?.explore?.command ?? emptyExplorer.explore.command
-    const tableID = objectTableID(object)
+    const datasetID = objectDatasetID(object)
     const localDimensions = localPreviewDimensions(object, this.dataExplorer?.explore?.fields ?? [])
     const semanticActive = this.dataExplorer?.command?.mode === 'explore'
     const explore: DataExploreCommand = {
       ...currentExplore,
       spec: {
         ...explorationSpecFor(currentExplore),
-        modelId: object.modelId ?? '',
-        datasetId: tableID,
+        modelId: object.semanticModelId ?? '',
+        datasetId: datasetID,
         dimensions: localDimensions.map((field) => ({ field })),
         metrics: [],
         filters: [],
@@ -1820,7 +1843,7 @@ class DataExplorerPage extends DatastarLit(LitElement) {
         <dl class="metadata-grid">
           <div class="metadata-card"><dt>Data layer</dt><dd>${layerLabel(object.layer)}</dd></div>
           <div class="metadata-card"><dt>Project generation</dt><dd>${label(this.page?.context?.projectId)} · ${label(this.page?.context?.generationId)}</dd></div>
-          <div class="metadata-card"><dt>Model</dt><dd>${label(object.modelId)}</dd></div>
+          <div class="metadata-card"><dt>Semantic Model</dt><dd>${label(object.semanticModelId)}</dd></div>
           <div class="metadata-card"><dt>Grain</dt><dd>${object.grain ? label(object.grain) : 'Not declared'}</dd></div>
           ${object.description ? html`<div class="metadata-card"><dt>Description</dt><dd>${object.description}</dd></div>` : nothing}
         </dl>
@@ -1905,8 +1928,8 @@ function objectSearchValues(object: DataExplorerObjectSignal): string[] {
     object.description,
     object.layer,
     object.resourceId,
-    object.modelId,
-    object.table,
+    object.semanticModelId,
+    object.datasetId,
     ...(object.columns ?? []).flatMap((column) => [column.key, column.label, column.type, column.description]),
   ].map((value) => String(value ?? ''))
 }
@@ -1918,14 +1941,14 @@ function objectColumnMatchesSearch(object: DataExplorerObjectSignal, query: stri
     .some((value) => String(value ?? '').toLowerCase().includes(normalized)))
 }
 
-function groupObjectsByModel(objects: DataExplorerObjectSignal[], models: DataExploreSignal['models'] = []): ResourceGroup[] {
+function groupObjectsBySemanticModel(objects: DataExplorerObjectSignal[], semanticModels: DataExploreSignal['semanticModels'] = []): ResourceGroup[] {
   const groups = new Map<string, ResourceGroup>()
-  const modelTitles = new Map(models.map((model) => [model.id, model.title]))
+  const modelTitles = new Map(semanticModels.map((model) => [model.id, model.title]))
   for (const object of objects) {
     if (object.layer === 'source') continue
-    const id = object.modelId || object.layer
+    const id = object.semanticModelId || object.layer
     if (!groups.has(id)) {
-      groups.set(id, { id, title: modelTitles.get(id) || object.modelId || 'Data objects', objects: [] })
+      groups.set(id, { id, title: modelTitles.get(id) || object.semanticModelId || 'Data objects', objects: [] })
     }
     groups.get(id)!.objects.push(object)
   }
@@ -1942,13 +1965,13 @@ type ExploreFieldGroup = {
 function groupExploreFields(fields: DataExploreFieldSignal[]): ExploreFieldGroup[] {
   const groups = new Map<string, ExploreFieldGroup>()
   for (const field of fields) {
-    const crossDatasetMetric = field.kind === 'metric' && !field.modelTable
-    const id = crossDatasetMetric ? 'cross-dataset:metric' : `${field.modelTable}:${field.kind}`
+    const crossDatasetMetric = field.kind === 'metric' && !field.datasetId
+    const id = crossDatasetMetric ? 'cross-dataset:metric' : `${field.datasetId}:${field.kind}`
     if (!groups.has(id)) {
       groups.set(id, {
         id,
         kind: field.kind,
-        label: crossDatasetMetric ? 'Multiple datasets · Metrics' : `${label(field.modelTable)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
+        label: crossDatasetMetric ? 'Multiple datasets · Metrics' : `${label(field.datasetId)} · ${field.kind === 'metric' ? 'Metrics' : 'Dimensions'}`,
         fields: [],
       })
     }
@@ -1963,7 +1986,7 @@ function iconForLayer(layer: string): any {
       return Server
     case 'semantic_view':
       return Eye
-    case 'model_table':
+    case 'model':
       return Table2
     default:
       return Database
@@ -1974,8 +1997,8 @@ function layerLabel(layer: string): string {
   switch (layer) {
     case 'source':
       return 'Source'
-    case 'model_table':
-      return 'Model table'
+    case 'model':
+      return 'Model'
     case 'semantic_view':
       return 'Semantic view'
     default:
@@ -1984,8 +2007,8 @@ function layerLabel(layer: string): string {
 }
 
 function queryTargetLabel(object: DataExplorerObjectSignal): string {
-  const target = object.source || object.table || object.title
-  const model = object.modelId ? `${object.modelId} · ` : ''
+  const target = object.source || object.datasetId || object.title
+  const model = object.semanticModelId ? `${object.semanticModelId} · ` : ''
   return `${layerLabel(object.layer)} · ${model}${target}`
 }
 

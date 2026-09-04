@@ -58,7 +58,7 @@ test('data explorer renders object browser and emits preview commands', async ()
         kind: 'data',
         title: 'Data Explorer',
         description: 'Inspect rows.',
-        selectedObject: 'model_table:model_table:olist.orders',
+        selectedObject: 'model:model:olist.orders',
         tabs: [],
       }
       const dataExplorer = {
@@ -67,7 +67,6 @@ test('data explorer renders object browser and emits preview commands', async ()
             key: 'source:source:olist.orders',
             resourceId: 'source:olist.orders',
             layer: 'source',
-            modelId: 'olist',
             source: 'orders',
             title: 'orders source',
             columnCount: 2,
@@ -75,22 +74,22 @@ test('data explorer renders object browser and emits preview commands', async ()
             columns: [{ key: 'order_id', label: 'order_id', type: 'VARCHAR' }],
           },
           {
-            key: 'model_table:model_table:olist.regions',
-            resourceId: 'model_table:olist.regions',
-            layer: 'model_table',
-            modelId: 'olist',
-            table: 'regions',
+            key: 'model:model:olist.regions',
+            resourceId: 'model:olist.regions',
+            layer: 'model',
+            semanticModelId: 'olist',
+            datasetId: 'regions',
             title: 'regions',
             columnCount: 1,
             rowCountLabel: '5',
             columns: [{ key: 'region', label: 'region', type: 'VARCHAR' }],
           },
           {
-            key: 'model_table:model_table:olist.orders',
-            resourceId: 'model_table:olist.orders',
-            layer: 'model_table',
-            modelId: 'olist',
-            table: 'orders',
+            key: 'model:model:olist.orders',
+            resourceId: 'model:olist.orders',
+            layer: 'model',
+            semanticModelId: 'olist',
+            datasetId: 'orders',
             title: 'orders',
             columnCount: 2,
             rowCountLabel: '10',
@@ -103,7 +102,6 @@ test('data explorer renders object browser and emits preview commands', async ()
             key: 'source:source:olist.orders',
             resourceId: 'source:olist.orders',
             layer: 'source',
-            modelId: 'olist',
             source: 'orders',
             title: 'orders source',
             columnCount: 2,
@@ -111,24 +109,24 @@ test('data explorer renders object browser and emits preview commands', async ()
             columns: [{ key: 'order_id', label: 'order_id', type: 'VARCHAR' }],
           },
           {
-            key: 'model_table:model_table:olist.customers',
-            resourceId: 'model_table:olist.customers',
-            layer: 'model_table',
-            modelId: 'olist',
-            table: 'customers',
+            key: 'model:model:olist.customers',
+            resourceId: 'model:olist.customers',
+            layer: 'model',
+            semanticModelId: 'olist',
+            datasetId: 'customers',
             title: 'customers',
             columnCount: 1,
             rowCountLabel: 'Unknown',
             columns: [{ key: 'status', label: 'Status', type: 'string' }],
           },
         ],
-        selectedKey: 'model_table:model_table:olist.orders',
+        selectedKey: 'model:model:olist.orders',
         selectedObject: {
-          key: 'model_table:model_table:olist.orders',
-          resourceId: 'model_table:olist.orders',
-          layer: 'model_table',
-          modelId: 'olist',
-          table: 'orders',
+          key: 'model:model:olist.orders',
+          resourceId: 'model:olist.orders',
+          layer: 'model',
+          semanticModelId: 'olist',
+          datasetId: 'orders',
           title: 'orders',
           description: 'One row per order.',
           grain: 'order_id',
@@ -162,7 +160,7 @@ test('data explorer renders object browser and emits preview commands', async ()
           sql: 'SELECT * FROM model.orders',
           error: '',
         },
-        command: { objectKey: 'model_table:model_table:olist.orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+        command: { objectKey: 'model:model:olist.orders', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
         warnings: [],
       }
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
@@ -239,7 +237,8 @@ test('data explorer renders object browser and emits preview commands', async ()
         tabs: Array.from(root.querySelectorAll('.object-tab')).map((tab) => tab.textContent?.trim()),
         selectedColumns: Array.from(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.querySelectorAll('.column-item .field-button > span:nth-child(3)') ?? []).map((item) => item.textContent?.trim()),
         selectedFieldStates: Array.from(root.querySelector('.object-button.is-selected')?.closest('.object-node')?.querySelectorAll('.column-item .field-button') ?? []).map((item) => item.getAttribute('aria-pressed')),
-        selectedNodeText: root.querySelector('.object-button.is-selected')?.textContent?.replace(/\s+/g, ' ').trim(),
+        selectedNodeText: root.querySelector('.object-button.is-selected .object-label strong')?.textContent?.trim(),
+        selectedNodeSubtitle: root.querySelector('.object-button.is-selected .object-label small')?.textContent?.trim(),
         selectedNodeExpandedByDefault,
         rowClickExpanded,
         expandClickExpanded,
@@ -274,8 +273,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.title).toBe('Data Explorer')
     expect(state.groups.join(' ')).not.toContain('Sources')
     expect(state.groups.join(' ')).toContain('olist')
-    expect(state.groups.join(' ')).not.toContain('Model tables')
-    expect(state.groups.join(' ')).not.toContain('Semantic views')
+    expect(state.groups.join(' ')).not.toContain('Models')
     expect(state.hasBreadcrumb).toBe(false)
     expect(state.hasDescription).toBe(false)
     expect(state.hasSelectedHeader).toBe(false)
@@ -287,6 +285,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.selectedFieldStates).toEqual(['true', 'true'])
     expect(state.selectedNodeText).not.toContain('olist · orders')
     expect(state.selectedNodeText).toBe('orders')
+    expect(state.selectedNodeSubtitle).toBe('orders')
     expect(state.selectedNodeExpandedByDefault).toBe(false)
     expect(state.rowClickExpanded).toBe(false)
     expect(state.expandClickExpanded).toBe(true)
@@ -297,7 +296,7 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.hasHeaderColumnsControl).toBe('Columns2/2')
     expect(state.hasPreviewTable).toBe(true)
     expect(state.hasWindowedTable).toBe(true)
-    expect(state.tableKey).toBe('model_table:model_table:olist.orders')
+    expect(state.tableKey).toBe('model:model:olist.orders')
     expect(state.tableRowHeight).toBe(32)
     expect(state.tableFooterDisplay).toBe('flex')
     expect(state.tableFooterHeight).toBeGreaterThan(0)
@@ -312,12 +311,70 @@ test('data explorer renders object browser and emits preview commands', async ()
     expect(state.rowCount).toBeGreaterThan(0)
     expect(state.tableWidth).toBeGreaterThan(700)
     expect(state.firstCellWidth).toBeGreaterThan(100)
-    expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.customers')).toBe(true)
-    expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.customers' && command.visibleColumns?.length === 0 && Object.keys(command.columnWidths ?? {}).length === 0)).toBe(true)
+    expect(state.commands.some((command) => command.objectKey === 'model:model:olist.customers')).toBe(true)
+    expect(state.commands.some((command) => command.objectKey === 'model:model:olist.customers' && command.visibleColumns?.length === 0 && Object.keys(command.columnWidths ?? {}).length === 0)).toBe(true)
     expect(state.commands.some((command) => command.sort?.column === 'order_id')).toBe(true)
     expect(state.commands.some((command) => command.visibleColumns?.length === 1 && command.visibleColumns[0] === 'order_id')).toBe(true)
-    expect(state.commands.some((command) => command.objectKey === 'model_table:model_table:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
+    expect(state.commands.some((command) => command.objectKey === 'model:model:olist.orders' && command.columnWidths?.order_id > 200)).toBe(true)
     expect(state.commands.some((command) => command.block && command.start > 0 && command.count === 100 && command.requestSeq > 0)).toBe(true)
+  } finally {
+    await page.close()
+  }
+})
+
+test('data explorer distinguishes same-title aliases with dataset subtitles', async () => {
+  const page = await browser.newPage({ viewport: { width: 900, height: 700 } })
+  try {
+    await page.goto(baseURL)
+    await page.waitForFunction(() => customElements.get('lv-data-explorer'))
+
+    const aliases = await page.evaluate(async () => {
+      const element = document.createElement('lv-data-explorer') as any
+      const objects = [
+        {
+          key: 'model:[12:model:orders][14:semantic:sales][13:order_history]', resourceId: 'model:orders', layer: 'model',
+          semanticModelId: 'semantic:sales', datasetId: 'order_history', title: 'Orders', columnCount: 1,
+          columns: [{ key: 'status', label: 'Status', type: 'string' }],
+        },
+        {
+          key: 'model:[12:model:orders][14:semantic:sales][6:orders]', resourceId: 'model:orders', layer: 'model',
+          semanticModelId: 'semantic:sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
+          columns: [{ key: 'status', label: 'Status', type: 'string' }],
+        },
+      ]
+      const exploreCommand = {
+        spec: { schemaVersion: 1, modelId: 'semantic:sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 },
+        requestSeq: 0, resetVersion: 0, columnWidths: {},
+      }
+      const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
+      mergePatch({
+        page: { kind: 'data', title: 'Data Explorer', tabs: [] },
+        dataExplorer: {
+          objects, selectedKey: objects[0].key, selectedObject: objects[0],
+          preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
+          command: { mode: 'browse', objectKey: objects[0].key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
+          explore: {
+            command: exploreCommand, semanticModels: [{ id: 'semantic:sales', title: 'Sales', datasets: [] }], datasets: [], fields: [],
+            result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
+          },
+          warnings: [],
+        },
+      })
+      document.body.append(element)
+      for (let index = 0; index < 10; index += 1) {
+        await element.updateComplete
+        await new Promise((resolve) => requestAnimationFrame(resolve))
+      }
+      return Array.from(element.shadowRoot?.querySelectorAll<HTMLElement>('.object-button') ?? []).map((button) => ({
+        title: button.querySelector('.object-label strong')?.textContent?.trim(),
+        subtitle: button.querySelector('.object-label small')?.textContent?.trim(),
+      }))
+    })
+
+    expect(aliases).toEqual([
+      { title: 'semantic:sales.Orders', subtitle: 'order_history' },
+      { title: 'semantic:sales.Orders', subtitle: 'orders' },
+    ])
   } finally {
     await page.close()
   }
@@ -336,13 +393,13 @@ test('data explorer prompts for a selection when objects are available', async (
         page: { kind: 'data', title: 'Data Explorer', tabs: [] },
         dataExplorer: {
           objects: [{
-            key: 'model_table:model:orders', resourceId: 'model:orders', layer: 'model_table',
-            modelId: 'semantic:sales', table: 'orders', title: 'Orders', columnCount: 1,
+            key: 'model:model:orders', resourceId: 'model:orders', layer: 'model',
+            semanticModelId: 'semantic:sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
             columns: [{ key: 'order_id', label: 'Order ID', type: 'string' }],
           }],
           preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} },
           command: { offset: 0, limit: 100, start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {} },
-          explore: { command: { spec: { schemaVersion: 1, modelId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }, requestSeq: 0, resetVersion: 0, columnWidths: {} }, models: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
+          explore: { command: { spec: { schemaVersion: 1, modelId: '', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }, requestSeq: 0, resetVersion: 0, columnWidths: {} }, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], warnings: [] } },
           warnings: [],
         },
       })
@@ -369,14 +426,14 @@ test('data explorer tolerates a partially hydrated legacy exploration command', 
     const rendered = await page.evaluate(async () => {
       const element = document.createElement('lv-data-explorer') as any
       const { mergePatch } = await import('/static/vendor/datastar-1.0.2.js?v=dev') as any
-      const object = { key: 'model_table:model:orders', resourceId: 'model:orders', layer: 'model_table', modelId: 'sales', table: 'orders', title: 'Orders', columnCount: 1, columns: [{ key: 'status', label: 'Status', type: 'string' }] }
+      const object = { key: 'model:model:orders', resourceId: 'model:orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1, columns: [{ key: 'status', label: 'Status', type: 'string' }] }
       const legacyExploreCommand = { modelId: 'sales', datasetId: 'orders', dimensions: [], metrics: [], filters: [], sort: [], limit: 100, requestSeq: 0, resetVersion: 0, columnWidths: {} }
       mergePatch({
         page: { kind: 'data', title: 'Data Explorer', tabs: [] },
         dataExplorer: {
           objects: [object], selectedKey: object.key, selectedObject: object,
           command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: legacyExploreCommand },
-          explore: { command: legacyExploreCommand, models: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } },
+          explore: { command: legacyExploreCommand, semanticModels: [], datasets: [], fields: [], result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] } },
           preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, resetVersion: 0, blocks: {}, sort: {} }, warnings: [],
         },
       })
@@ -411,22 +468,23 @@ test('data explorer builds a governed semantic exploration and filter command', 
         requestSeq: 1, resetVersion: 1, columnWidths: {},
       }
       const selectedObject = {
-        key: 'model_table:model_table:sales.orders', resourceId: 'model_table:sales.orders', layer: 'model_table', modelId: 'sales', table: 'orders', title: 'orders',
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model', semanticModelId: 'sales', datasetId: 'orders', title: 'orders',
         description: 'One row per order.', grain: 'order_id', columnCount: 2, rowCountLabel: '10',
         columns: [
           { key: 'order_id', label: 'Order ID', type: 'string' },
           { key: 'status', label: 'Status', type: 'string' },
+          { key: 'order_status', label: 'Order status', type: 'string' },
         ],
       }
       const customersObject = {
-        key: 'model_table:model_table:sales.customers', resourceId: 'model_table:sales.customers', layer: 'model_table', modelId: 'sales', table: 'customers', title: 'customers',
+        key: 'model:model:sales.customers', resourceId: 'model:sales.customers', layer: 'model', semanticModelId: 'sales', datasetId: 'customers', title: 'customers',
         columnCount: 2, rowCountLabel: '10', columns: [
           { key: 'customer_id', label: 'Customer ID', type: 'string' },
           { key: 'state', label: 'State', type: 'string' },
         ],
       }
       const itemsObject = {
-        key: 'model_table:model_table:sales.items', resourceId: 'model_table:sales.items', layer: 'model_table', modelId: 'sales', table: 'items', title: 'items',
+        key: 'model:model:sales.items', resourceId: 'model:sales.items', layer: 'model', semanticModelId: 'sales', datasetId: 'items', title: 'items',
         columnCount: 1, rowCountLabel: '10', columns: [{ key: 'sku', label: 'SKU', type: 'string' }],
       }
       const dataExplorer = {
@@ -436,17 +494,18 @@ test('data explorer builds a governed semantic exploration and filter command', 
         command: { mode: 'explore', objectKey: '', offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
         explore: {
           command: exploreCommand,
-          models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] }],
+          semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] }],
           datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }],
-          selectedModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] },
+          selectedSemanticModel: { id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] }] },
           selectedDataset: { id: 'orders', title: 'Orders', grainEntity: 'order_id', grainFields: ['order_id'], fieldCount: 3, entities: [] },
           fields: [
-            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: false },
-            { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: true },
-            { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
-            { id: 'customers.state', label: 'State', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
-            { id: 'items.sku', label: 'SKU', kind: 'dimension', modelTable: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
-            { id: 'revenue', label: 'Revenue', kind: 'metric', modelTable: 'orders', type: 'sum', compatible: true, selected: true },
+            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
+            { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true },
+            { id: 'order_status', label: 'Order status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: false },
+            { id: 'customers.customer_id', label: 'Customer ID', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
+            { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, relationshipPath: ['orders_customers'], selected: false },
+            { id: 'items.sku', label: 'SKU', kind: 'dimension', datasetId: 'items', type: 'string', compatible: false, compatibilityReason: 'Not available from Orders because no grain-preserving relationship path reaches Items.', selected: false },
+            { id: 'revenue', label: 'Revenue', kind: 'metric', datasetId: 'orders', type: 'sum', compatible: true, selected: true },
           ],
           result: {
             columns: [{ key: 'status', label: 'Status' }, { key: 'revenue', label: 'Revenue', type: 'decimal' }],
@@ -489,6 +548,22 @@ test('data explorer builds a governed semantic exploration and filter command', 
       applyButton.click()
       await element.updateComplete
       await new Promise((resolve) => setTimeout(resolve, 380))
+      const physicalFilter = commands.at(-1)?.explore?.spec?.filters?.at(-1)
+
+      const semanticRow = Array.from(root.querySelectorAll<HTMLElement>('.column-item')).find((row) => row.textContent?.includes('Order status'))
+      const semanticFilterButton = semanticRow?.querySelector<HTMLButtonElement>('.field-action')
+      if (!semanticFilterButton) throw new Error(`Conformed dimension filter button was not rendered: ${root.textContent}`)
+      semanticFilterButton.click()
+      await element.updateComplete
+      const semanticFilterInput = root.querySelector<HTMLInputElement>('.filter-editor label:nth-child(3) input')!
+      semanticFilterInput.value = 'paid'
+      semanticFilterInput.dispatchEvent(new Event('input', { bubbles: true, composed: true }))
+      const semanticApplyButton = Array.from(root.querySelectorAll<HTMLButtonElement>('.filter-editor .text-button')).find((button) => button.textContent?.trim() === 'Apply')
+      if (!semanticApplyButton) throw new Error(`Apply conformed filter button was not rendered: ${root.textContent}`)
+      semanticApplyButton.click()
+      await element.updateComplete
+      await new Promise((resolve) => setTimeout(resolve, 380))
+      const semanticFilter = commands.at(-1)?.explore?.spec?.filters?.find((filter: any) => filter.field === 'order_status')
 
       const table = root.querySelector('lv-data-explore-table') as any
       await table.updateComplete
@@ -535,10 +610,10 @@ test('data explorer builds a governed semantic exploration and filter command', 
           command: customerCommand,
           selectedDataset: { id: 'customers', title: 'Customers', grainEntity: 'customer_id', grainFields: ['customer_id'], fieldCount: 1, entities: [] },
           fields: [
-            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
-            { id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Status and change grain from Customers to Orders.', selected: false },
-            { id: 'customers.state', label: 'State', kind: 'dimension', modelTable: 'customers', type: 'string', compatible: true, selected: true },
-            { id: 'items.sku', label: 'SKU', kind: 'dimension', modelTable: 'items', type: 'string', compatible: false, compatibilityReason: 'No safe base supports this field with the selection.', selected: false },
+            { id: 'orders.order_id', label: 'Order ID', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Order ID and change grain from Customers to Orders.', selected: false },
+            { id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: false, rebaseDatasetId: 'orders', compatibilityReason: 'Select Status and change grain from Customers to Orders.', selected: false },
+            { id: 'customers.state', label: 'State', kind: 'dimension', datasetId: 'customers', type: 'string', compatible: true, selected: true },
+            { id: 'items.sku', label: 'SKU', kind: 'dimension', datasetId: 'items', type: 'string', compatible: false, compatibilityReason: 'No safe base supports this field with the selection.', selected: false },
           ],
           result: { columns: [{ key: 'state', label: 'State' }], rows: [{ state: 'SP' }], rowsReturned: 1, durationMs: 2, requestSeq: 100, truncated: false, warnings: [] },
         },
@@ -555,6 +630,8 @@ test('data explorer builds a governed semantic exploration and filter command', 
       const rebaseCommand = commands.at(-1)?.explore
       return {
         ...initialState,
+        physicalFilter,
+        semanticFilter,
         unavailableField,
         rebaseField: { disabled: rebaseField.disabled, text: rebaseField.textContent?.replace(/\s+/g, ' ').trim(), title: rebaseField.title },
         rebaseCommand,
@@ -574,6 +651,9 @@ test('data explorer builds a governed semantic exploration and filter command', 
     expect(state.chips.join(' ')).toContain('Revenue')
     expect(state.grain).toContain('Grain: order_id')
     expect(state.tableRows).toEqual([{ status: 'delivered', revenue: 1200 }])
+    expect(state.physicalFilter).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
+    expect(state.semanticFilter).toMatchObject({ field: 'order_status' })
+    expect(state.semanticFilter).not.toHaveProperty('datasetId')
     expect(state.relatedField.disabled).toBe(false)
     expect(state.relatedField.text).toContain('related')
     expect(state.relatedField.title).toContain('orders_customers')
@@ -629,8 +709,8 @@ test('data preview and semantic query failures expose retry and reset actions', 
       previewButtons[1].click()
 
       const object = {
-        key: 'model_table:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model_table',
-        modelId: 'sales', table: 'orders', title: 'Orders', columnCount: 1,
+        key: 'model:model:sales.orders', resourceId: 'model:sales.orders', layer: 'model',
+        semanticModelId: 'sales', datasetId: 'orders', title: 'Orders', columnCount: 1,
         columns: [{ key: 'status', label: 'Status', type: 'string' }],
       }
       const exploreCommand = {
@@ -646,9 +726,9 @@ test('data preview and semantic query failures expose retry and reset actions', 
           command: { mode: 'explore', objectKey: object.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, explore: exploreCommand },
           explore: {
             command: exploreCommand,
-            models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
+            semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
             datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }],
-            fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', modelTable: 'orders', type: 'string', compatible: true, selected: true }],
+            fields: [{ id: 'orders.status', label: 'Status', kind: 'dimension', datasetId: 'orders', type: 'string', compatible: true, selected: true }],
             result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 4, truncated: false, warnings: [], error: 'Query service is unavailable.' },
           }, warnings: [],
         },
@@ -695,9 +775,9 @@ test('non-embedded explorer reloads the selected Back/Forward entries exactly on
 
     const historyState = await page.evaluate(async () => {
       const object = (table: string) => ({
-        key: `model_table:model:sales.${table}`,
+        key: `model:model:sales.${table}`,
         resourceId: `model:sales.${table}`,
-        layer: 'model_table', modelId: 'sales', table, title: table, columnCount: 1,
+        layer: 'model', semanticModelId: 'sales', datasetId: table, title: table, columnCount: 1,
         columns: [{ key: 'status', label: 'Status', type: 'string' }],
       })
       const first = object('orders')
@@ -715,7 +795,7 @@ test('non-embedded explorer reloads the selected Back/Forward entries exactly on
           preview: { columns: [], totalRows: 0, availableRows: 0, chunkSize: 100, rowHeight: 32, blocks: {}, sort: {} },
           command: { mode: 'browse', objectKey: first.key, offset: 0, limit: 100, block: 'all', start: 0, count: 100, requestSeq: 0, resetVersion: 0, sort: {}, visibleColumns: [], columnWidths: {}, },
           explore: {
-            command: exploreCommand, models: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
+            command: exploreCommand, semanticModels: [{ id: 'sales', title: 'Sales', datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }] }],
             datasets: [{ id: 'orders', title: 'Orders', fieldCount: 1, entities: [] }], fields: [],
             result: { columns: [], rows: [], rowsReturned: 0, durationMs: 0, requestSeq: 0, truncated: false, warnings: [] },
           }, warnings: [],

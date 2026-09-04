@@ -54,7 +54,7 @@ type materializationRunRequest struct {
 }
 
 // PipelineRunResponse is the public representation of a root refresh-pipeline
-// run. Model-table dependency runs and queue implementation details are never
+// run. Model dependency runs and queue implementation details are never
 // part of the API contract.
 type PipelineRunResponse struct {
 	ID                   string                       `json:"id"`

@@ -11,7 +11,7 @@ If you are designing physical inputs first, read [Connections and sources](/docs
 ## Complete a data task
 
 - [Plan, stage, and activate a data revision](/docs/guides/data/revisions).
-- [Refresh model tables](/docs/guides/data/refresh) without disrupting active readers.
+- [Refresh Model materializations](/docs/guides/data/refresh) without disrupting active readers.
 - [Back up or recover analytical storage](/docs/guides/data/storage-recovery).
 - [Diagnose ingestion and refresh failures](/docs/guides/data/troubleshooting).
 
@@ -19,4 +19,4 @@ These guides contain goal-oriented procedures and observable verification steps.
 
 ## Look up exact contracts
 
-Use the generated [CLI data command reference](/docs/cli/data) and [data revisions command reference](/docs/cli/data-revisions) for current flags and accepted arguments. Use the [Managed Data API reference](/docs/api/managed-data) for upload-session and revision operations, and the [Configuration reference](/docs/config) for connection, source, model-table, and refresh-pipeline fields.
+Use the generated [CLI data command reference](/docs/cli/data) and [data revisions command reference](/docs/cli/data-revisions) for current flags and accepted arguments. Use the [Managed Data API reference](/docs/api/managed-data) for upload-session and revision operations, and the [Configuration reference](/docs/config) for connection, Model, and refresh-pipeline fields.

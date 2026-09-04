@@ -36,7 +36,7 @@ func CanonicalAssetSectionHref(asset project.DevelopAssetView, section string) s
 		return ConnectionAssetSectionHref(asset.ID, section)
 	case "source":
 		return ProjectAssetSectionHref(asset.ID, section)
-	case string(project.AssetTypeModelTable):
+	case string(project.AssetTypeModel):
 		return "/models/" + url.PathEscape(asset.ID) + "/" + url.PathEscape(section)
 	case string(project.AssetTypeSemanticModel):
 		return "/semantic-models/" + url.PathEscape(asset.ID) + "/" + url.PathEscape(section)

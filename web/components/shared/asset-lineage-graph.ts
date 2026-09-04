@@ -578,7 +578,7 @@ const nodePalette: Record<string, [string, string, string]> = {
   field: ['var(--lv-asset-dimension-bg)', 'var(--lv-asset-dimension-accent)', 'var(--lv-asset-dimension-border)'],
   filter: ['var(--lv-asset-filter-bg)', 'var(--lv-asset-filter-accent)', 'var(--lv-asset-filter-border)'],
   metric: ['var(--lv-asset-metric-bg)', 'var(--lv-asset-metric-accent)', 'var(--lv-asset-metric-border)'],
-  model_table: ['var(--lv-asset-model-table-bg)', 'var(--lv-asset-model-table-accent)', 'var(--lv-asset-model-table-border)'],
+  model: ['var(--lv-asset-model-bg)', 'var(--lv-asset-model-accent)', 'var(--lv-asset-model-border)'],
   page: ['var(--lv-asset-page-bg)', 'var(--lv-asset-page-accent)', 'var(--lv-asset-page-border)'],
   page_item: ['var(--lv-asset-page-bg)', 'var(--lv-asset-page-accent)', 'var(--lv-asset-page-border)'],
   relationship: ['var(--lv-asset-dimension-bg)', 'var(--lv-asset-dimension-accent)', 'var(--lv-asset-dimension-border)'],
@@ -608,8 +608,8 @@ function edgeStroke(kind: string): string {
 
 function kindLabel(kind: string): string {
   switch (kind) {
-    case 'model_table':
-      return 'Model table'
+    case 'model':
+      return 'Model'
     case 'page_item':
       return 'Page item'
     case 'semantic_model':

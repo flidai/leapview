@@ -20,11 +20,11 @@ Connection kinds include managed data and supported object, HTTP, database, and 
 
 Managed data supports local planning, immutable content-addressed revisions, resumable local-backend upload, direct multipart object-storage upload, staged revision inspection, and atomic activation with a project deployment.
 
-Model tables materialize source transformations into DuckLake-managed analytical state. Refresh builds isolated replacement state and changes the active serving pointer only after success. Storage cleanup reconciles active snapshots and query leases before deletion.
+Refreshing Models creates model materializations in DuckLake-managed analytical state. Refresh builds isolated replacement state and changes the active serving pointer only after success. Storage cleanup reconciles active snapshots and query leases before deletion.
 
 ## Semantic and BI surfaces
 
-Semantic models provide model-table datasets/fields, dimensions, metrics, and explicit relationships. Supported aggregations and cardinalities are listed by the generated schema.
+Semantic models provide semantic datasets and fields, dimensions, metrics, and explicit relationships. Supported aggregations and cardinalities are listed by the generated schema.
 
 Headless operations cover semantic model and dataset discovery, field listing, row preview, aggregate query, and explain. Dashboard operations cover dashboard/page/component discovery, filter options, coordinated page query, visual data, and bounded table data.
 

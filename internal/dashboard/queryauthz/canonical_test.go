@@ -232,6 +232,94 @@ func TestCanonicalSemanticAndPhysicalAuthorization(t *testing.T) {
 	}
 }
 
+func canonicalAliasSemanticModel() *semanticmodel.Model {
+	return &semanticmodel.Model{
+		Name:     "sales",
+		Sources:  map[string]semanticmodel.Source{"orders": {}},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"orders_alias": {Model: "orders"}},
+		Tables: map[string]semanticmodel.Table{"orders_alias": {
+			Execution:   semanticmodel.ExecutionDefinition{Source: "orders"},
+			ModelName:   "orders",
+			GrainEntity: "region",
+			Entities: map[string]semanticmodel.EntityDefinition{
+				"region": {Type: "primary", Fields: []string{"region"}},
+			},
+			Dimensions: map[string]semanticmodel.MetricDimension{
+				"region": {Field: "orders_alias.region", Table: "orders_alias", Name: "region", Type: "string", Datatype: semanticmodel.DataTypeString},
+			},
+		}},
+		Dimensions: map[string]semanticmodel.SemanticDimension{
+			"region": {Name: "region", Type: "string", Datatype: semanticmodel.DataTypeString, Bindings: map[string]semanticmodel.DimensionBinding{"orders_alias": {Field: "orders_alias.region"}}},
+		},
+		Metrics: map[string]semanticmodel.Metric{
+			"order_count": {Type: "aggregate", Dataset: "orders_alias", Aggregation: "count", Input: &semanticmodel.MetricInput{Field: "orders_alias.region"}, Empty: "zero"},
+		},
+	}
+}
+
+func canonicalAliasMetricsWithSnapshot(t testing.TB, snapshot accesssnapshot.AuthorizationSnapshot) Metrics {
+	t.Helper()
+	metrics := canonicalMetricsWithSnapshot(t, snapshot, nil)
+	metrics.Metrics = canonicalMetrics{model: canonicalAliasSemanticModel()}
+	return metrics
+}
+
+func TestCanonicalSemanticDatasetAliasUsesBackingModelGrant(t *testing.T) {
+	_, _, _, physical, _ := canonicalGraph(t)
+	snapshot := canonicalSnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"physical-read", physical, access.CapabilityResourceRead}}, nil)
+	metrics := canonicalAliasMetricsWithSnapshot(t, snapshot)
+	request := dataquery.ModelRows("semantic_sales", "orders_alias", []string{"region"}, nil, 0, 100, false)
+	request.ProjectID = canonicalProject
+	governed, _, err := metrics.GovernDataQuery(context.Background(), request)
+	if err != nil {
+		t.Fatalf("semantic dataset alias authorization: %v", err)
+	}
+	if governed.Target != "orders_alias" {
+		t.Fatalf("semantic dataset alias executor target = %q, want orders_alias", governed.Target)
+	}
+}
+
+func TestCanonicalSemanticDatasetAliasAppliesBackingModelPolicies(t *testing.T) {
+	_, _, _, physical, _ := canonicalGraph(t)
+	row, err := accesspolicy.Compile("rls", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	mask, err := accesspolicy.Compile("mask", "column_mask", `{"field":"orders.email","mask":"null"}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	policies := []accesssnapshot.DataPolicy{
+		{ID: "rls", Resource: physical, PolicyType: "row_filter", ExpressionJSON: `{"field":"orders.region","operator":"equals","values":["EU"]}`, Compiled: row},
+		{ID: "mask", Resource: physical, PolicyType: "column_mask", ExpressionJSON: `{"field":"orders.email","mask":"null"}`, Compiled: mask},
+	}
+	snapshot := canonicalSnapshot(t, []struct {
+		id         string
+		resource   access.ResourceRef
+		capability access.Capability
+	}{{"physical-read", physical, access.CapabilityResourceRead}}, policies)
+	metrics := canonicalAliasMetricsWithSnapshot(t, snapshot)
+	request := dataquery.ModelRows("semantic_sales", "orders_alias", []string{"email"}, nil, 0, 100, false)
+	request.ProjectID = canonicalProject
+	governed, _, err := metrics.GovernDataQuery(context.Background(), request)
+	if err != nil {
+		t.Fatalf("semantic dataset alias policies: %v", err)
+	}
+	if governed.Target != "orders_alias" {
+		t.Fatalf("semantic dataset alias executor target = %q, want orders_alias", governed.Target)
+	}
+	if len(governed.Filters) != 1 || governed.Filters[0].Field != "orders.region" {
+		t.Fatalf("backing Model row policy = %#v, want orders.region filter", governed.Filters)
+	}
+	if len(governed.ColumnMasks) != 1 || governed.ColumnMasks[0].Field != "email" || governed.ColumnMasks[0].Mask != "null" {
+		t.Fatalf("backing Model mask policy = %#v, want email null mask", governed.ColumnMasks)
+	}
+}
+
 func TestCanonicalRLSMasksAndPolicyFingerprint(t *testing.T) {
 	_, _, _, physical, _ := canonicalGraph(t)
 	row, err := accesspolicy.Compile("rls", "row_filter", `{"field":"orders.region","operator":"equals","values":["EU"]}`)
@@ -394,6 +482,30 @@ func TestCanonicalPublicPublicationAndCandidateClosures(t *testing.T) {
 	outside, _ := access.NewResourceRef("model:outside", projectgraph.KindModel)
 	if err := validateDashboardPublicationQuery(capability, request, []access.ResourceRef{outside}); err == nil {
 		t.Fatal("publication accepted dependency expansion outside its compiled closure")
+	}
+}
+
+func TestCanonicalPublicPublicationQueryKinds(t *testing.T) {
+	_, _, semantic, physical, dashboard := canonicalGraph(t)
+	capability := DashboardPublicationCapability{ProjectID: canonicalProject, Publication: "public", Dashboard: dashboard, ModelID: semantic, DependencyAssetIDs: []access.ResourceRef{dashboard, semantic, physical}}
+	objects := []access.ResourceRef{semantic, physical}
+	for _, kind := range []dataquery.Kind{
+		dataquery.KindSemanticAggregate,
+		dataquery.KindSemanticRows,
+		dataquery.KindSemanticHistogram,
+		dataquery.KindSemanticDistribution,
+		dataquery.KindSemanticSpatialTile,
+		dataquery.KindSemanticSpatialTileBudget,
+		dataquery.KindSemanticSpatialMetadata,
+	} {
+		request := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationDashboardRows, ModelID: semantic.CanonicalID(), Kind: kind}
+		if err := validateDashboardPublicationQuery(capability, request, objects); err != nil {
+			t.Fatalf("publication rejected canonical query kind %q: %v", kind, err)
+		}
+	}
+	modelRows := dataquery.Query{ProjectID: canonicalProject, Surface: dataquery.SurfacePublicDashboard, Operation: dataquery.OperationDashboardRows, ModelID: semantic.CanonicalID(), Kind: dataquery.KindModelRows}
+	if err := validateDashboardPublicationQuery(capability, modelRows, objects); err == nil {
+		t.Fatal("publication accepted model_rows query kind")
 	}
 }
 

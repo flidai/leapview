@@ -78,6 +78,9 @@ func (ctx dashboardCompileContext) compileVisuals(authored map[string]document.D
 		if err != nil {
 			return nil, fmt.Errorf("visual %q: %w", visualID, err)
 		}
+		if err := lowerCanonicalDecisionContext(&spec, visual.Presentation, visual.Type, query); err != nil {
+			return nil, fmt.Errorf("visual %q: %w", visualID, err)
+		}
 		if err := appendCanonicalCalculationOutputs(&spec); err != nil {
 			return nil, fmt.Errorf("visual %q calculations: %w", visualID, err)
 		}

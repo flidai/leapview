@@ -103,7 +103,7 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 	executor := &countingDataQueryExecutor{}
 	h := &BrowserHandler{
 		Graph: browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
-			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model_table", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+			{ID: "model:orders", ProjectID: projectID, ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 			{ID: modelID, ProjectID: projectID, ServingStateID: "state", Type: "semantic_model", Key: "sales", Title: "Sales", PayloadJSON: `{}`},
 		}}},
 		ProjectDefinitionReader: browserProjectDefinitionStub{definition: projectmanifest.Project{
@@ -123,10 +123,10 @@ func newDataExplorerURLTestHandler(t *testing.T) (*BrowserHandler, *countingData
 func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.status"},
 	}
 
 	document := httptest.NewRecorder()
@@ -171,10 +171,10 @@ func TestDataExplorerDocumentDefersSemanticExecutionToCanonicalUpdates(t *testin
 func TestDataExplorerRestoredURLCanonicalizesSpacedOperandsBeforeExecution(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {" semantic:sales "},
-		"dataset":   {" orders "},
-		"dimension": {" orders.status "},
+		"mode":          {"explore"},
+		"semanticModel": {" semantic:sales "},
+		"dataset":       {" orders "},
+		"dimension":     {" orders.status "},
 	}
 	document := httptest.NewRecorder()
 	h.Explore(document, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -194,7 +194,7 @@ func TestDataExploreCommandFromQueryTrimsMetadataButPreservesFilterValues(t *tes
 	command, err := dataExploreCommandFromQuery(url.Values{
 		"dimension": {" orders.status "},
 		"metric":    {" revenue "},
-		"filter":    {`{"field":" orders.status ","operator":" equals ","dataset":" orders ","values":[" paid "]}`},
+		"filter":    {`{"field":" orders.status ","operator":" equals ","datasetId":" orders ","values":[" paid "]}`},
 		"sort":      {`{"field":" revenue ","direction":" desc "}`},
 		"time":      {`{"field":" orders.created_at ","grain":" month ","alias":" order_month "}`},
 	})
@@ -450,7 +450,10 @@ func TestDataExplorerURLRejectsAmbiguousOrIncompatibleShape(t *testing.T) {
 		{name: "duplicate limit", values: url.Values{"mode": {"explore"}, "limit": {"100", "100"}}},
 		{name: "blank browse object", values: url.Values{"object": {"  "}}},
 		{name: "blank model", values: url.Values{"mode": {"explore"}, "model": {""}}},
+		{name: "blank semantic model", values: url.Values{"mode": {"explore"}, "semanticModel": {""}}},
+		{name: "ambiguous semantic model aliases", values: url.Values{"mode": {"explore"}, "model": {"semantic:sales"}, "semanticModel": {"semantic:sales"}}},
 		{name: "blank dataset", values: url.Values{"mode": {"explore"}, "dataset": {""}}},
+		{name: "ambiguous filter dataset aliases", values: url.Values{"mode": {"explore"}, "filter": {`{"field":"orders.status","operator":"equals","dataset":"orders","datasetId":"orders","values":["paid"]}`}}},
 		{name: "blank time", values: url.Values{"mode": {"explore"}, "time": {""}}},
 		{name: "blank limit", values: url.Values{"mode": {"explore"}, "limit": {""}}},
 		{name: "unsupported version in browse", values: url.Values{"v": {"2"}, "object": {"model:orders"}}},
@@ -514,10 +517,10 @@ func TestDataExploreCommandFromQueryNormalizesBlankTimeAliasToAbsent(t *testing.
 func TestDataExplorerRestoredURLFailsClosedForStaleField(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.removed_status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.removed_status"},
 	}
 	recorder := httptest.NewRecorder()
 	h.Explore(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -535,7 +538,7 @@ func TestDataExplorerRestoredURLFailsClosedForStaleField(t *testing.T) {
 func TestDataExplorerRestoredURLFailsClosedForUnauthorizedModel(t *testing.T) {
 	h, executor := newDataExplorerURLTestHandler(t)
 	h.Graph = browserGraphStub{graph: servingstate.AssetGraph{Assets: []servingstate.Asset{
-		{ID: "model:orders", ProjectID: "project:test", ServingStateID: "state", Type: "model_table", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
+		{ID: "model:orders", ProjectID: "project:test", ServingStateID: "state", Type: "model", Key: "orders", Title: "Orders", PayloadJSON: `{}`},
 	}}}
 	recorder := httptest.NewRecorder()
 	state, err := json.Marshal(exploration.ExplorationSpec{
@@ -654,10 +657,10 @@ func TestDataExplorerRestoredURLFailsClosedWhenBindingsAreUnavailable(t *testing
 	definition.compiled = nil
 	h.ProjectDefinitionReader = definition
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.status"},
 	}
 	recorder := httptest.NewRecorder()
 	h.Explore(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -678,10 +681,10 @@ func TestDataExplorerRestoredURLFailsClosedForEmptyCompiledModel(t *testing.T) {
 	definition.compiled = map[string]*semanticquery.CompiledModel{"semantic:sales": &semanticquery.CompiledModel{}}
 	h.ProjectDefinitionReader = definition
 	values := url.Values{
-		"mode":      {"explore"},
-		"model":     {"semantic:sales"},
-		"dataset":   {"orders"},
-		"dimension": {"orders.status"},
+		"mode":          {"explore"},
+		"semanticModel": {"semantic:sales"},
+		"dataset":       {"orders"},
+		"dimension":     {"orders.status"},
 	}
 	recorder := httptest.NewRecorder()
 	h.Explore(recorder, httptest.NewRequest(http.MethodGet, "/explore?"+values.Encode(), nil))
@@ -755,10 +758,10 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 		"orders.incompatible": {ID: "orders.incompatible", Kind: "dimension", Compatible: false, CompatibilityReason: projectsignals.Optional("no safe relationship path")},
 	}
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
-		Fields:   make([]projectsignals.DataExploreFieldSignal, 0, len(fields)),
-		Command:  testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Fields:         make([]projectsignals.DataExploreFieldSignal, 0, len(fields)),
+		Command:        testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	for _, field := range fields {
 		projection.Fields = append(projection.Fields, field)
@@ -792,10 +795,10 @@ func TestValidateRestoredDataExploreStateRejectsWrongKindsAndIncompatibleOperand
 
 func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testing.T) {
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
-		Fields:   []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("string")}},
-		Command:  testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Fields:         []projectsignals.DataExploreFieldSignal{{ID: "orders.status", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("string")}},
+		Command:        testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
 		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
@@ -817,9 +820,9 @@ func TestValidateRestoredDataExploreStateRejectsEmptyMembershipFilters(t *testin
 
 func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T) {
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
-		Command:  testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		Command:        testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("orders")}),
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(&semanticmodel.Model{
 		Name: "sales", Tables: map[string]semanticmodel.Table{"orders": {ModelName: "orders"}},
@@ -833,7 +836,7 @@ func TestValidateRestoredDataExploreStateRejectsUnavailableTargets(t *testing.T)
 		command projectsignals.DataExploreCommand
 		want    string
 	}{
-		{name: "model", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:removed"}), want: "model \"semantic:removed\" is no longer available"},
+		{name: "semantic model", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:removed"}), want: "semantic model \"semantic:removed\" is no longer available"},
 		{name: "dataset", command: testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("removed")}), want: "dataset \"removed\" is no longer available"},
 	} {
 		t.Run(test.name, func(t *testing.T) {
@@ -867,8 +870,8 @@ func TestValidateRestoredDataExploreStateConstrainsFilterDatasetParticipation(t 
 	}
 	compiledModels := map[string]*semanticquery.CompiledModel{"semantic:sales": compiled}
 	base := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}, {ID: "customers"}, {ID: "other"}},
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}, {ID: "customers"}, {ID: "other"}},
 		Fields: []projectsignals.DataExploreFieldSignal{
 			{ID: "orders.status", Kind: "dimension", Compatible: true},
 			{ID: "combined", Kind: "metric", Compatible: true},
@@ -916,8 +919,8 @@ func TestValidateRestoredDataExploreStateChecksDeclaredTimeGrains(t *testing.T) 
 		},
 	}
 	projection := DataExplorerProjection{
-		Models:   []projectsignals.DataExploreModelSignal{{ID: "semantic:sales"}},
-		Datasets: []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
+		SemanticModels: []projectsignals.DataExploreSemanticModelSignal{{ID: "semantic:sales"}},
+		Datasets:       []projectsignals.DataExploreDatasetSignal{{ID: "orders"}},
 		Fields: []projectsignals.DataExploreFieldSignal{
 			{ID: "created", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("timestamp")},
 			{ID: "orders.created_at", Kind: "dimension", Compatible: true, Type: projectsignals.Optional("timestamp")},
@@ -959,8 +962,8 @@ func TestValidateRestoredDataExploreStateAcceptsSafeRebase(t *testing.T) {
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
 	}
 	assets := []projectview.DevelopAssetView{
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
-		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
 	compiled, err := semanticquery.CompileDatasetBindings(model)

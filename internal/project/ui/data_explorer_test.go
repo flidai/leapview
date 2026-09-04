@@ -45,6 +45,47 @@ func TestDataExplorerAgentContextOmitsAbsentDataset(t *testing.T) {
 	}
 }
 
+func TestDataExplorerAgentContextOmitsUnselectedExploration(t *testing.T) {
+	explorer := uisignals.DataExplorerSignal{Explore: uisignals.DataExploreSignal{Command: uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		Dimensions:    []exploration.ExplorationDimensionRef{},
+		Metrics:       []exploration.ExplorationMetricRef{},
+		Filters:       []exploration.ExplorationFilter{},
+		Sort:          []exploration.ExplorationSort{},
+		Limit:         100,
+	}}}}
+
+	context := DataExplorerAgentContext(uisignals.DataExplorerPageSignal{}, explorer)
+	if context.ModelID != "" {
+		t.Fatalf("agent context model id = %q, want empty", context.ModelID)
+	}
+	if context.Exploration != nil {
+		t.Fatalf("agent context exploration = %#v, want absent until a model is selected", context.Exploration)
+	}
+}
+
+func TestDataExplorerUpdatesURLOmitsUnselectedExplorationState(t *testing.T) {
+	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), Explore: &uisignals.DataExploreCommand{Spec: exploration.ExplorationSpec{
+		SchemaVersion: 1,
+		Dimensions:    []exploration.ExplorationDimensionRef{},
+		Metrics:       []exploration.ExplorationMetricRef{},
+		Filters:       []exploration.ExplorationFilter{},
+		Sort:          []exploration.ExplorationSort{},
+		Limit:         100,
+	}}}
+	updates, err := url.Parse(dataExplorerUpdatesURL(command))
+	if err != nil {
+		t.Fatal(err)
+	}
+	values := updates.Query()
+	if values.Get("route") != "data" || values.Get("surface") != "explore" || values.Get("mode") != "explore" {
+		t.Fatalf("routing values = %#v, want explore mode initialization", values)
+	}
+	if values.Has("v") || values.Has("state") {
+		t.Fatalf("unselected exploration emitted canonical URL state: %#v", values)
+	}
+}
+
 func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	command := uisignals.DataExplorerCommand{Mode: uisignals.Pointer("explore"), RequestSeq: 80, ResetVersion: 9, Explore: &uisignals.DataExploreCommand{
 		Spec: exploration.ExplorationSpec{SchemaVersion: 1, ModelID: "semantic:sales", DatasetID: uisignals.Pointer("orders"),
@@ -66,6 +107,9 @@ func TestDataExplorerUpdatesURLPreservesDurableExplorationState(t *testing.T) {
 	}
 	if values.Has("dimension") || values.Has("metric") || values.Has("limit") {
 		t.Fatalf("legacy exploration values = %#v", values)
+	}
+	if values.Has("semanticModel") || values.Has("model") {
+		t.Fatalf("legacy semantic model values = %#v", values)
 	}
 	if values.Has("requestSeq") || values.Has("resetVersion") {
 		t.Fatalf("runtime state leaked into updates URL: %#v", values)

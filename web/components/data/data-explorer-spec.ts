@@ -34,10 +34,10 @@ export function explorationSpecFor(command: Pick<Partial<DataExploreCommand>, 's
 }
 
 export function localPreviewDimensions(object: DataExplorerObjectSignal, fields: DataExploreFieldSignal[]): string[] {
-  const tableID = objectTableID(object)
-  const localFields = fields.filter((field) => field.kind !== 'metric' && field.modelTable === tableID)
+  const datasetID = objectDatasetID(object)
+  const localFields = fields.filter((field) => field.kind !== 'metric' && field.datasetId === datasetID)
   const localByColumn = new Map(localFields.map((field) => [fieldColumnID(field), field.id]))
-  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${tableID}.${column.key}`)
+  const ordered = (object.columns ?? []).map((column) => localByColumn.get(column.key) ?? `${datasetID}.${column.key}`)
   const seen = new Set(ordered)
   for (const field of localFields) {
     if (!seen.has(field.id)) ordered.push(field.id)
@@ -45,8 +45,8 @@ export function localPreviewDimensions(object: DataExplorerObjectSignal, fields:
   return ordered
 }
 
-export function objectTableID(object: DataExplorerObjectSignal): string {
-  return object.table?.trim() || object.title.trim()
+export function objectDatasetID(object: DataExplorerObjectSignal): string {
+  return object.datasetId?.trim() || object.title.trim()
 }
 
 export function fieldColumnID(field: DataExploreFieldSignal): string {
@@ -114,7 +114,7 @@ function explorationSortRefs(spec: ExplorationSpec): ExplorationSortRef[] {
 }
 
 export function exploreContextMatchesObject(command: DataExploreCommand, object: DataExplorerObjectSignal): boolean {
-  return explorationSpecFor(command).modelId === (object.modelId ?? '')
+  return explorationSpecFor(command).modelId === (object.semanticModelId ?? '')
 }
 
 export function fieldLabel(id: string, fields: DataExploreFieldSignal[]): string {
@@ -176,7 +176,9 @@ export function filterValues(filter: ExplorationFilter): string[] {
   return []
 }
 
-export function makeExplorationFilter(field: string, operator: string, values: string[], type?: string): ExplorationFilter | undefined {
+type ExplorationFilterField = string | Pick<DataExploreFieldSignal, 'id' | 'kind' | 'datasetId'>
+
+export function makeExplorationFilter(field: ExplorationFilterField, operator: string, values: string[], type?: string): ExplorationFilter | undefined {
   if (!explorationFilterOperators.has(operator as ExploreFilterOperator)) return undefined
   if ((operator === 'is_null' || operator === 'is_not_null') && values.length !== 0) return undefined
   if ((operator === 'in' || operator === 'not_in') && values.length < 1) return undefined
@@ -191,7 +193,19 @@ export function makeExplorationFilter(field: string, operator: string, values: s
   } else {
     expression = { kind: 'comparison', operator: operator as ComparisonFilterOperator, value: typedValues[0]! }
   }
-  return { field, expression }
+  const fieldID = typeof field === 'string' ? field : field.id
+  const datasetID = typeof field === 'string' ? undefined : localDimensionDatasetID(field)
+  return { field: fieldID, ...(datasetID ? { datasetId: datasetID } : {}), expression }
+}
+
+/** Physical dimensions are qualified by their owning dataset in the signal.
+ * Conformed dimensions use their semantic ID while datasetId identifies the
+ * binding owner, so their filters must stay unscoped for multi-dataset plans.
+ */
+function localDimensionDatasetID(field: Pick<DataExploreFieldSignal, 'id' | 'kind' | 'datasetId'>): string | undefined {
+  if (field.kind !== 'dimension') return undefined
+  const datasetID = field.datasetId.trim()
+  return datasetID && field.id.startsWith(`${datasetID}.`) ? datasetID : undefined
 }
 
 function filterValue(value: ExplorationFilterValue): string {

@@ -110,7 +110,7 @@ func pipelineScopeRelationIDs(scope []string, graph projectgraph.ProjectGraph, r
 // materializationIdentity is the execution identity for physical relations.
 // The portable project artifact also contains dashboards, access, and other
 // serving metadata; including its digest would force a full physical rebuild
-// for a dashboard-only change. Model-table descriptors are the narrow
+// for a dashboard-only change. Model materialization descriptors are the narrow
 // materialization contract, encoded canonically so unchanged relation inputs
 // retain their sealed references while changed descriptors trigger a partial
 // rebuild from that base.
@@ -327,7 +327,7 @@ func CandidatePlanRequestWithPolicyAndReuse(input deployment.DeliveryCandidateBu
 		Compatibility:         deployment.DeliveryCompatibilityImpact{Breaking: artifacts.Compiler.Plan.Summary.Breaking, SemanticChanges: []string{fmt.Sprintf("materialization impact=%t", artifacts.Compiler.Plan.Summary.MaterializationImpact)}},
 		PhysicalWork: deployment.DeliveryPhysicalWork{
 			Materializations: []string{artifacts.Compiler.Plan.Project},
-			Estimates:        []deployment.DeliveryEstimate{{Work: "candidate catalog", LowerBound: 1, UpperBound: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Expected: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Unit: "relation-set", Basis: "compiled semantic model table count", Confidence: "high"}},
+			Estimates:        []deployment.DeliveryEstimate{{Work: "candidate catalog", LowerBound: 1, UpperBound: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Expected: float64(maxInt(1, len(artifacts.Compiler.Plan.Models))), Unit: "relation-set", Basis: "compiled semantic Model count", Confidence: "high"}},
 		},
 		Qualification: deployment.DeliveryQualificationEvidence{Policy: "target-owned exact schema closure and admitted compatibility; core object probes and read-only attach", Steps: qualificationSteps()},
 		StalePolicy:   deployment.DeliveryStalePolicy{Mode: "reject", Description: "target revision or active base changes reject before physical work"},

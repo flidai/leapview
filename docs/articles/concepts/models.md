@@ -1,12 +1,14 @@
-# Model tables
+# Models
 
-Model tables are project-owned analytical tables built from permitted project sources. They form the stable boundary between physical input data and the semantic layer.
+Models are project-owned resources that transform permitted project sources. They form the stable boundary between physical input data and the semantic layer; their refreshed output is materialized analytical state.
 
-Raw inputs often contain transport-oriented names, weakly typed values, duplicate records, or joins that should not be repeated for every chart. A model table makes that cleanup and shaping explicit once.
+A LeapView Model is a logical resource, not a physical table. A refresh creates a model materialization for that resource; documentation may call the resulting physical relation a materialized table when storage details matter. Neither physical term changes the resource's identity as a Model.
+
+Raw inputs often contain transport-oriented names, weakly typed values, duplicate records, or joins that should not be repeated for every chart. A Model makes that cleanup and shaping explicit once.
 
 ## Contract
 
-A model table declares named identity entities (primary, unique, or foreign), a selected grain entity, source dependencies, documented output fields, and a SQL transformation:
+A Model declares named identity entities (primary, unique, or foreign), a selected grain entity, source dependencies, documented output fields, and a SQL transformation:
 
 ```yaml
 apiVersion: leapview.dev/v1
@@ -53,11 +55,11 @@ grain:
   entity: order_line
 ```
 
-This makes composite identity explicit instead of encoding it as a scalar grain value. Do not join a one-to-many dimension into an order-grain model table without deciding how the join changes grain. Duplicate rows will inflate sums and counts later, even if individual previews look plausible. Validate entity uniqueness, nullability, and expected row counts during development.
+This makes composite identity explicit instead of encoding it as a scalar grain value. Do not join a one-to-many dimension into an order-grain Model without deciding how the join changes grain. Duplicate rows will inflate sums and counts later, even if individual previews look plausible. Validate entity uniqueness, nullability, and expected row counts during development.
 
-## What belongs in a model table
+## What belongs in a Model
 
-Good model-table work includes:
+Good Model work includes:
 
 - parsing timestamps and numeric strings into stable types;
 - normalizing identifiers and missing values;
@@ -66,7 +68,7 @@ Good model-table work includes:
 - deriving reusable physical columns;
 - reducing expensive raw inputs to a supported analytical grain.
 
-Business aggregations such as revenue, active customers, or conversion rate generally belong in semantic metrics. Keep them out of model SQL unless the table's declared grain itself is aggregated.
+Business aggregations such as revenue, active customers, or conversion rate generally belong in semantic metrics. Keep them out of Model SQL unless the Model's declared grain itself is aggregated.
 
 ## Source namespace
 
@@ -76,11 +78,11 @@ Transform SQL reads permitted project sources through the source namespace. Quot
 
 Materialization builds replacement analytical state away from active serving state. A successful refresh validates and activates the new state. A failed or cancelled refresh leaves existing queries on the previous usable state.
 
-That boundary does not make transformations automatically safe. A valid SQL statement can still produce the wrong grain, unexpected nulls, or an empty table. Preview inputs, inspect output, and compare invariants before promoting a change.
+That boundary does not make transformations automatically safe. A valid SQL statement can still produce the wrong grain, unexpected nulls, or an empty materialized output. Preview inputs, inspect output, and compare invariants before promoting a change.
 
 ## Design checklist
 
-Before exposing a table to the semantic layer, confirm:
+Before exposing a Model to the semantic layer, confirm:
 
 - its name and field IDs are stable;
 - one sentence can describe the grain;
@@ -91,4 +93,4 @@ Before exposing a table to the semantic layer, confirm:
 - expensive repeated work is materialized once;
 - the transformation has a bounded and understandable failure mode.
 
-See [Define model tables](/docs/guides/build/model-tables) for the full workflow and [Materialization and refresh](/docs/guides/data/refresh) for operations.
+See [Define models](/docs/guides/build/models) for the full workflow and [Materialization and refresh](/docs/guides/data/refresh) for operations.

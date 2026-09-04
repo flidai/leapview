@@ -82,6 +82,15 @@ test('filter editor preserves typed scalar values and fails closed', () => {
   expect(makeExplorationFilter('orders.status', 'equals', ['open', 'closed'], 'string')).toBeUndefined()
 })
 
+test('filter editor scopes physical dimensions but leaves conformed dimensions unscoped', () => {
+  const physical = makeExplorationFilter({ id: 'orders.status', kind: 'dimension', datasetId: 'orders' }, 'equals', ['paid'], 'string')
+  expect(physical).toMatchObject({ field: 'orders.status', datasetId: 'orders' })
+
+  const conformed = makeExplorationFilter({ id: 'order_status', kind: 'dimension', datasetId: 'orders' }, 'equals', ['paid'], 'string')
+  expect(conformed).toMatchObject({ field: 'order_status', expression: { kind: 'comparison' } })
+  expect(conformed).not.toHaveProperty('datasetId')
+})
+
 test('explore URL waits for a non-empty required model', () => {
   expect(dataExplorerURL({ mode: 'explore', explore: { spec: { schemaVersion: 1, modelId: ' ', dimensions: [], metrics: [], filters: [], sort: [], limit: 100 }, requestSeq: 1, resetVersion: 1 } } as DataExplorerCommand)).toBe('/explore')
 })

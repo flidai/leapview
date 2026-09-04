@@ -1098,7 +1098,7 @@ func dataQueryCapability(request dataquery.Query) access.Capability {
 		return access.CapabilityResourceRead
 	}
 	switch request.Kind {
-	case dataquery.KindModelTableRows:
+	case dataquery.KindModelRows:
 		return access.CapabilityResourceRead
 	case dataquery.KindSemanticRows:
 		return access.CapabilityResourceUse
@@ -1111,9 +1111,18 @@ func (m Metrics) dataQueryObjects(resourceIndex projectResourceIndex, request da
 	modelID := request.ModelID
 	objects := []access.ResourceRef{}
 	switch request.Kind {
-	case dataquery.KindModelTableRows:
-		if object, ok := resourceIndex.byName(request.Target, projectgraph.KindModel); ok {
-			objects = append(objects, object)
+	case dataquery.KindModelRows:
+		// Model-row previews select a semantic dataset alias, but graph
+		// authorization is owned by the backing logical Model. Resolve the
+		// alias through the activation-owned planner so the executor can retain
+		// the alias as its target while access and policy lookup use the
+		// canonical Model name.
+		if planner, ok := m.concretePlanner(request.ModelID); ok {
+			if dataset, ok := planner.Dataset(request.Target); ok {
+				if object, ok := resourceIndex.byName(dataset.ModelName(), projectgraph.KindModel); ok {
+					objects = append(objects, object)
+				}
+			}
 		}
 	default:
 		if request.Target != "" {

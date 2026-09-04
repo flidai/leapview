@@ -224,7 +224,7 @@ VALUES ('child_job', 'project_sales', 'candidate', 'semantic_sales', 'pipeline_d
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, invocation_source, status, created_sequence)
 VALUES ('root_run', 'root_job', 'user:test', 'dev', 'refresh_pipeline', 'pipeline_daily', 1, 'manual', 'manual', 'prepared', 1);
 INSERT INTO refresh_job_runs (id, job_id, principal_id, environment, target_type, target_id, target_revision, trigger_type, invocation_source, parent_run_id, status, created_sequence)
-VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model_table', 'table_orders', 1, 'dependency', 'manual', 'root_run', ?, 2);`, childStatus); err != nil {
+VALUES ('child_run', 'child_job', 'user:test', 'dev', 'model', 'table_orders', 1, 'dependency', 'manual', 'root_run', ?, 2);`, childStatus); err != nil {
 		t.Fatal(err)
 	}
 	version := refreshschedule.DataVersion{Identity: publicationIdentity, SemanticModelID: "semantic_sales", SnapshotID: 42, RefreshedAt: time.Now().UTC(), Source: refreshschedule.DataVersionSourceRefresh, PipelineID: "pipeline_daily", RunID: "root_run", TargetRevision: 1, LeaseOwner: "worker-1", LeaseRevision: 1}

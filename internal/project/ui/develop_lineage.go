@@ -486,7 +486,7 @@ type lineageProjectionLayerPolicy struct {
 var lineageProjectionLayers = []lineageProjectionLayerPolicy{
 	{assetType: "connection", layer: 0},
 	{assetType: "source", layer: 1},
-	{assetType: "model_table", layer: 2},
+	{assetType: "model", layer: 2},
 	{assetType: "semantic_model", layer: 3},
 	{assetType: "dashboard", layer: 4},
 }
@@ -518,13 +518,13 @@ var lineageProjectionEdges = []lineageProjectionEdgePolicy{
 		label: "Provides source",
 	},
 	{
-		key:   lineageProjectionEdgeKey{sourceType: "source", targetType: "model_table"},
-		kind:  "lineage_source_model_table",
-		label: "Feeds model table",
+		key:   lineageProjectionEdgeKey{sourceType: "source", targetType: "model"},
+		kind:  "lineage_source_model",
+		label: "Feeds model",
 	},
 	{
-		key:   lineageProjectionEdgeKey{sourceType: "model_table", targetType: "semantic_model"},
-		kind:  "lineage_model_table_semantic_model",
+		key:   lineageProjectionEdgeKey{sourceType: "model", targetType: "semantic_model"},
+		kind:  "lineage_model_semantic_model",
 		label: "Feeds semantic model",
 	},
 	{

@@ -30,19 +30,19 @@ func deriveModelSQLDependencies(model *semanticmodel.Model) error {
 		}
 		analysis, err := modelsql.Analyze(context.Background(), sqlText)
 		if err != nil {
-			return fmt.Errorf("model table %q SQL: %w", tableName, err)
+			return fmt.Errorf("Model %q SQL: %w", tableName, err)
 		}
 		for _, source := range analysis.SourceRefs {
 			if _, ok := model.Sources[source]; !ok {
-				return fmt.Errorf("model table %q SQL references unknown source %q", tableName, source)
+				return fmt.Errorf("Model %q SQL references unknown source %q", tableName, source)
 			}
 		}
 		for _, dependency := range analysis.ModelRefs {
 			if dependency == tableName || (table.ModelName != "" && dependency == table.ModelName) {
-				return fmt.Errorf("model table %q cannot read itself", tableName)
+				return fmt.Errorf("Model %q cannot read itself", tableName)
 			}
 			if _, err := resolveCompilerModelDependency(model, dependency); err != nil {
-				return fmt.Errorf("model table %q SQL references %w", tableName, err)
+				return fmt.Errorf("Model %q SQL references %w", tableName, err)
 			}
 		}
 		table.SourceDependencies = append([]string(nil), analysis.SourceRefs...)
@@ -56,11 +56,11 @@ func deriveModelSQLDependencies(model *semanticmodel.Model) error {
 func resolveCompilerModelDependency(model *semanticmodel.Model, name string) (string, error) {
 	name = strings.TrimSpace(name)
 	if name == "" {
-		return "", fmt.Errorf("unknown model table %q", name)
+		return "", fmt.Errorf("unknown Model %q", name)
 	}
 	if len(model.Datasets) == 0 {
 		if _, ok := model.Tables[name]; !ok {
-			return "", fmt.Errorf("unknown model table %q", name)
+			return "", fmt.Errorf("unknown Model %q", name)
 		}
 		return name, nil
 	}
@@ -73,5 +73,5 @@ func resolveCompilerModelDependency(model *semanticmodel.Model, name string) (st
 			return name, nil
 		}
 	}
-	return "", fmt.Errorf("unknown model table %q", name)
+	return "", fmt.Errorf("unknown Model %q", name)
 }

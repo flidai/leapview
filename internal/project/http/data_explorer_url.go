@@ -66,7 +66,7 @@ func (h *BrowserHandler) dataExplorerSignalsForURL(w stdhttp.ResponseWriter, r *
 const dataExploreURLVersion = "1"
 const dataExploreCanonicalURLVersion = "2"
 
-var dataExplorerURLSingletonKeys = []string{"v", "mode", "object", "model", "dataset", "time", "limit", "state"}
+var dataExplorerURLSingletonKeys = []string{"v", "mode", "object", "model", "semanticModel", "dataset", "time", "limit", "state"}
 
 // dataExplorerURLValue returns the one value allowed for a singleton URL
 // parameter. Repeated singleton values are ambiguous because URL parsers
@@ -102,7 +102,7 @@ func validateDataExplorerURLSingletons(values url.Values) error {
 }
 
 func validateDataExplorerURLValues(values url.Values) error {
-	for _, key := range []string{"object", "model", "dataset", "time", "limit", "state"} {
+	for _, key := range []string{"object", "model", "semanticModel", "dataset", "time", "limit", "state"} {
 		if value, present := dataExplorerURLValue(values, key); present && value == "" {
 			return fmt.Errorf("%s must not be empty", key)
 		}
@@ -160,7 +160,7 @@ func validateDataExplorerURLMode(values url.Values, requireExploreMode bool) err
 }
 
 func dataExplorerURLHasExploreOperands(values url.Values) bool {
-	for _, key := range []string{"model", "dataset", "dimension", "metric", "filter", "sort", "time", "limit", "state"} {
+	for _, key := range []string{"model", "semanticModel", "dataset", "dimension", "metric", "filter", "sort", "time", "limit", "state"} {
 		if _, present := values[key]; present {
 			return true
 		}
@@ -169,7 +169,7 @@ func dataExplorerURLHasExploreOperands(values url.Values) bool {
 }
 
 func dataExplorerURLHasLegacyExploreOperands(values url.Values) bool {
-	for _, key := range []string{"model", "dataset", "dimension", "metric", "filter", "sort", "time", "limit"} {
+	for _, key := range []string{"model", "semanticModel", "dataset", "dimension", "metric", "filter", "sort", "time", "limit"} {
 		if _, present := values[key]; present {
 			return true
 		}
@@ -212,10 +212,13 @@ func dataExploreCommandFromQuery(values url.Values) (projectsignals.DataExploreC
 }
 
 type legacyDataExploreFilter struct {
-	Dataset  *string  `json:"dataset,omitempty"`
-	Field    string   `json:"field"`
-	Operator string   `json:"operator"`
-	Values   []string `json:"values"`
+	// DatasetID is the canonical spelling introduced by the asset terminology
+	// refactor. Dataset remains accepted for old v1 links only.
+	DatasetID *string  `json:"datasetId,omitempty"`
+	Dataset   *string  `json:"dataset,omitempty"`
+	Field     string   `json:"field"`
+	Operator  string   `json:"operator"`
+	Values    []string `json:"values"`
 }
 
 type legacyDataExploreSort struct {
@@ -253,8 +256,17 @@ func legacyExplorationSpecFromQuery(values url.Values) (exploration.ExplorationS
 		seen[field] = "metric"
 		spec.Metrics = append(spec.Metrics, exploration.ExplorationMetricRef{Field: field})
 	}
-	if value, present := dataExplorerURLValue(values, "model"); present && value != "" {
-		spec.ModelID = value
+	model, modelPresent := dataExplorerURLValue(values, "model")
+	semanticModel, semanticModelPresent := dataExplorerURLValue(values, "semanticModel")
+	if modelPresent && semanticModelPresent {
+		return spec, errors.New("model and semanticModel cannot both be specified")
+	}
+	if semanticModelPresent {
+		spec.ModelID = semanticModel
+	} else if modelPresent {
+		// Accept the pre-terminology spelling for old v1 links. New links use
+		// semanticModel, while v2 state always carries the canonical modelId.
+		spec.ModelID = model
 	}
 	if value, present := dataExplorerURLValue(values, "dataset"); present && value != "" {
 		spec.DatasetID = &value
@@ -268,18 +280,24 @@ func legacyExplorationSpecFromQuery(values url.Values) (exploration.ExplorationS
 			return spec, fmt.Errorf("filter %d field, operator, and values are required", index+1)
 		}
 		filter.Field, filter.Operator = strings.TrimSpace(filter.Field), strings.TrimSpace(filter.Operator)
-		if filter.Dataset != nil {
-			dataset := strings.TrimSpace(*filter.Dataset)
+		if filter.DatasetID != nil && filter.Dataset != nil {
+			return spec, fmt.Errorf("filter %d datasetId and dataset cannot both be specified", index+1)
+		}
+		if filter.DatasetID == nil {
+			filter.DatasetID = filter.Dataset
+		}
+		if filter.DatasetID != nil {
+			dataset := strings.TrimSpace(*filter.DatasetID)
 			if dataset == "" {
 				return spec, fmt.Errorf("filter %d dataset must not be empty", index+1)
 			}
-			filter.Dataset = &dataset
+			filter.DatasetID = &dataset
 		}
 		expression, err := legacyFilterExpression(filter)
 		if err != nil {
 			return spec, fmt.Errorf("filter %d: %w", index+1, err)
 		}
-		spec.Filters = append(spec.Filters, exploration.ExplorationFilter{Field: filter.Field, DatasetID: filter.Dataset, Expression: expression})
+		spec.Filters = append(spec.Filters, exploration.ExplorationFilter{Field: filter.Field, DatasetID: filter.DatasetID, Expression: expression})
 	}
 	for index, value := range values["sort"] {
 		var sorting legacyDataExploreSort
@@ -490,23 +508,23 @@ func decodeDataExploreURLValue(value string, target any) error {
 func validateRestoredDataExploreState(command projectsignals.DataExploreCommand, projection DataExplorerProjection, model *semanticmodel.Model, compiledModels map[string]*semanticquery.CompiledModel) error {
 	spec := normalizeExplorationSpec(command.Spec)
 	state := dataExploreStateFromSpec(spec)
-	modelID := strings.TrimSpace(spec.ModelID)
-	selectedModelID := strings.TrimSpace(projection.Command.Spec.ModelID)
+	semanticModelID := strings.TrimSpace(spec.ModelID)
+	selectedSemanticModelID := strings.TrimSpace(projection.Command.Spec.ModelID)
 
-	if modelID != "" {
-		if !explorerModelByID(projection.Models, modelID) {
-			return fmt.Errorf("model %q is no longer available; choose an active semantic model", modelID)
+	if semanticModelID != "" {
+		if !explorerSemanticModelByID(projection.SemanticModels, semanticModelID) {
+			return fmt.Errorf("semantic model %q is no longer available; choose an active semantic model", semanticModelID)
 		}
-		if selectedModelID != modelID {
-			return fmt.Errorf("model %q could not be restored; choose an active semantic model", modelID)
+		if selectedSemanticModelID != semanticModelID {
+			return fmt.Errorf("semantic model %q could not be restored; choose an active semantic model", semanticModelID)
 		}
 	}
-	if selectedModelID == "" {
+	if selectedSemanticModelID == "" {
 		return fmt.Errorf("no active semantic model is available; choose an active semantic model")
 	}
-	compiled := compiledModels[selectedModelID]
+	compiled := compiledModels[selectedSemanticModelID]
 	if compiled == nil || len(compiled.DatasetNames()) == 0 {
-		return fmt.Errorf("model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedModelID)
+		return fmt.Errorf("semantic model %q has no active compiled definition; reload the explorer after the serving state is ready", selectedSemanticModelID)
 	}
 	if model != nil {
 		// Legacy explore URLs historically allowed the model operand to be
@@ -514,8 +532,8 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 		// case. Validate the restored operands against that selected model while
 		// retaining the authored spec unchanged for the later projection.
 		validationSpec := spec
-		if modelID == "" {
-			validationSpec.ModelID = selectedModelID
+		if semanticModelID == "" {
+			validationSpec.ModelID = selectedSemanticModelID
 		}
 		if err := exploration.ValidateAgainstModel(model, &validationSpec); err != nil {
 			return fmt.Errorf("exploration state: %w; remove it from the URL or choose an active field", err)
@@ -525,7 +543,7 @@ func validateRestoredDataExploreState(command projectsignals.DataExploreCommand,
 	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(spec.DatasetID))
 	if datasetID != "" {
 		if !explorerDatasetByID(projection.Datasets, datasetID) || !compiledDataset(compiled, datasetID) {
-			return fmt.Errorf("dataset %q is no longer available in model %q; choose an active dataset", datasetID, selectedModelID)
+			return fmt.Errorf("dataset %q is no longer available in semantic model %q; choose an active dataset", datasetID, selectedSemanticModelID)
 		}
 	}
 
@@ -730,7 +748,7 @@ func restoredCompiledSemanticTimeGrain(compiled *semanticquery.CompiledModel, fi
 	return declared, supported
 }
 
-func explorerModelByID(models []projectsignals.DataExploreModelSignal, id string) bool {
+func explorerSemanticModelByID(models []projectsignals.DataExploreSemanticModelSignal, id string) bool {
 	for _, model := range models {
 		if model.ID == id {
 			return true

@@ -408,7 +408,7 @@ func (h *BrowserHandler) DataExplorerCommand(w stdhttp.ResponseWriter, r *stdhtt
 }
 
 func (h *BrowserHandler) ModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.assetDataExplorerCommand(w, r, string(projectview.AssetTypeModelTable))
+	h.assetDataExplorerCommand(w, r, string(projectview.AssetTypeModel))
 }
 
 func (h *BrowserHandler) SemanticModelDataExplorerCommand(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -445,7 +445,7 @@ func (h *BrowserHandler) Sources(w stdhttp.ResponseWriter, r *stdhttp.Request) {
 }
 
 func (h *BrowserHandler) Models(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.projectAssets(w, r, "models", string(projectview.AssetTypeModelTable))
+	h.projectAssets(w, r, "models", string(projectview.AssetTypeModel))
 }
 
 func (h *BrowserHandler) SemanticModels(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -495,7 +495,7 @@ func (h *BrowserHandler) assetDocument(w stdhttp.ResponseWriter, r *stdhttp.Requ
 		return
 	}
 	section := requestedAssetSection(r)
-	if asset.Type == string(projectview.AssetTypeModelTable) && section == "refresh" {
+	if asset.Type == string(projectview.AssetTypeModel) && section == "refresh" {
 		target := assetnav.CanonicalAssetSectionHref(asset, "refreshes")
 		if query := r.URL.Query().Encode(); query != "" {
 			target += "?" + query
@@ -603,7 +603,7 @@ func (h *BrowserHandler) SourcesSearch(w stdhttp.ResponseWriter, r *stdhttp.Requ
 }
 
 func (h *BrowserHandler) ModelsSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
-	h.projectAreaSearch(w, r, string(projectview.AssetTypeModelTable))
+	h.projectAreaSearch(w, r, string(projectview.AssetTypeModel))
 }
 
 func (h *BrowserHandler) SemanticModelsSearch(w stdhttp.ResponseWriter, r *stdhttp.Request) {
@@ -797,7 +797,7 @@ func (h *BrowserHandler) assetBootstrap(w stdhttp.ResponseWriter, r *stdhttp.Req
 	}
 	if r.URL.Query().Get("surface") == "asset" {
 		patch := projectui.ProjectAssetBootstrapSignalsForEnvironment(projection.Catalog, projection.Project, projection.Asset, projection.Assets, projection.Edges, projection.Section, h.Environment, "", projection.Refresh, projection.Versions, h.layout(r))
-		if r.URL.Query().Get("section") == "data" && (projection.Asset.Type == string(projectview.AssetTypeModelTable) || projection.Asset.Type == string(projectview.AssetTypeSemanticModel)) {
+		if r.URL.Query().Get("section") == "data" && (projection.Asset.Type == string(projectview.AssetTypeModel) || projection.Asset.Type == string(projectview.AssetTypeSemanticModel)) {
 			_, explorer, _, explorerOK := h.dataExplorerSignalsForAssetCommand(w, r, projection.Asset.ID, projectsignals.DataExplorerCommand{})
 			if !explorerOK {
 				return nil, false
@@ -846,13 +846,13 @@ func (h *BrowserHandler) assetVersionsState(ctx context.Context, projectID proje
 
 func (h *BrowserHandler) assetRefreshState(ctx context.Context, projectID projectgraph.ResourceID, asset projectview.DevelopAssetView) (projectui.AssetRefreshState, error) {
 	state := projectui.AssetRefreshState{}
-	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModelTable) && asset.Type != string(projectview.AssetTypeSemanticModel) {
+	if asset.Type != string(projectview.AssetTypeRefreshPipeline) && asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel) {
 		return state, nil
 	}
 	if h == nil || h.RefreshState == nil {
 		return projectui.AssetRefreshState{Unavailable: true}, nil
 	}
-	if asset.Type == string(projectview.AssetTypeModelTable) {
+	if asset.Type == string(projectview.AssetTypeModel) {
 		modelKey := strings.TrimSpace(asset.Key)
 		if modelKey == "" {
 			modelKey = strings.TrimPrefix(asset.ID, "model:")
@@ -971,7 +971,7 @@ func (h *BrowserHandler) enrichAssetRuntimeMetadata(ctx context.Context, asset p
 }
 
 func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset projectview.DevelopAssetView) (projectview.DevelopAssetView, error) {
-	if asset.Type != string(projectview.AssetTypeModelTable) {
+	if asset.Type != string(projectview.AssetTypeModel) {
 		return asset, nil
 	}
 	if h.PhysicalCatalog == nil {
@@ -990,7 +990,7 @@ func (h *BrowserHandler) enrichModelPhysicalMetadata(ctx context.Context, asset 
 		asset.Payload["PhysicalStatus"] = "unavailable"
 		return asset, nil
 	}
-	_, tableName := projectModelTableKeyParts(asset.Key)
+	_, tableName := projectModelKeyParts(asset.Key)
 	physical, ok := statistics[tableName]
 	if !ok {
 		asset.Payload["PhysicalStatus"] = "not refreshed"
@@ -1033,7 +1033,7 @@ func (h *BrowserHandler) enrichSourceSchemaObservation(ctx context.Context, asse
 	return asset, nil
 }
 
-func projectModelTableKeyParts(key string) (string, string) {
+func projectModelKeyParts(key string) (string, string) {
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) == 2 {
 		return parts[0], parts[1]
@@ -1079,7 +1079,7 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
 		}
 		payload = projectview.SourceAssetPayload(resource)
-	case string(projectview.AssetTypeModelTable):
+	case string(projectview.AssetTypeModel):
 		resource, ok := definition.Models[asset.ID]
 		if !ok {
 			return projectview.DevelopAssetView{}, fmt.Errorf("%w: %s", ErrProjectDefinitionUnavailable, asset.ID)
@@ -1089,9 +1089,9 @@ func projectAssetReadModelFromDefinition(asset projectview.DevelopAssetView, def
 			configuration = definition.AuthoredModelSources[asset.ID]
 		}
 		if authored, authoredOK := definition.AuthoredModelDefinitions[asset.ID]; authoredOK {
-			payload = projectview.ModelTableAssetPayloadWithAuthoredSource(resource, &authored, configuration)
+			payload = projectview.ModelAssetPayloadWithAuthoredSource(resource, &authored, configuration)
 		} else {
-			payload = projectview.ModelTableAssetPayloadWithAuthoredSource(resource, nil, configuration)
+			payload = projectview.ModelAssetPayloadWithAuthoredSource(resource, nil, configuration)
 		}
 	case string(projectview.AssetTypeSemanticModel):
 		resource, ok := definition.SemanticModels[asset.ID]
@@ -1313,7 +1313,7 @@ func (h *BrowserHandler) authorizeAny(w stdhttp.ResponseWriter, r *stdhttp.Reque
 	}
 	selector := strings.TrimSpace(r.URL.Query().Get("asset"))
 	if selector == "" {
-		selector = strings.TrimSpace(r.URL.Query().Get("model"))
+		selector = strings.TrimSpace(r.URL.Query().Get("semanticModel"))
 	}
 	if selector == "" {
 		selector = strings.TrimSpace(chi.URLParam(r, "asset"))
@@ -1473,7 +1473,7 @@ func catalogKindForAssetType(typ string) (projectgraph.Kind, bool) {
 		return projectgraph.KindConnection, true
 	case string(projectview.AssetTypeSource):
 		return projectgraph.KindSource, true
-	case string(projectview.AssetTypeModelTable):
+	case string(projectview.AssetTypeModel):
 		return projectgraph.KindModel, true
 	case string(projectview.AssetTypeSemanticModel):
 		return projectgraph.KindSemanticModel, true
@@ -1491,7 +1491,7 @@ func projectAreaType(area string) string {
 	case "dashboards":
 		return string(projectview.AssetTypeDashboard)
 	case "models":
-		return string(projectview.AssetTypeModelTable)
+		return string(projectview.AssetTypeModel)
 	case "semantic-models":
 		return string(projectview.AssetTypeSemanticModel)
 	default:
@@ -1518,11 +1518,18 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 	if value := strings.TrimSpace(r.URL.Query().Get("model")); value != "" && strings.TrimSpace(exploreCommand.Spec.ModelID) == "" {
 		exploreCommand.Spec.ModelID = value
 	}
+	// The canonical URL uses semanticModel terminology, while the v1/v2
+	// exploration spec retains ModelID for its semantic-model resource. Accept
+	// both at this boundary so restored SavedExploration state remains portable
+	// across the terminology migration.
+	if value := strings.TrimSpace(r.URL.Query().Get("semanticModel")); value != "" && strings.TrimSpace(exploreCommand.Spec.ModelID) == "" {
+		exploreCommand.Spec.ModelID = value
+	}
 	if value := strings.TrimSpace(r.URL.Query().Get("dataset")); value != "" && exploreCommand.Spec.DatasetID == nil {
 		exploreCommand.Spec.DatasetID = projectsignals.Optional(value)
 	}
 	command.Explore = &exploreCommand
-	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, Models: []projectsignals.DataExploreModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight}}
+	explorer := projectsignals.DataExplorerSignal{Command: command, Explore: projectsignals.DataExploreSignal{Command: exploreCommand, SemanticModels: []projectsignals.DataExploreSemanticModelSignal{}, Datasets: []projectsignals.DataExploreDatasetSignal{}, Fields: []projectsignals.DataExploreFieldSignal{}, Result: projectsignals.DataExploreResultSignal{Columns: []projectsignals.DataPreviewColumnSignal{}, Rows: []map[string]any{}, Warnings: []string{}}}, Objects: []projectsignals.DataExplorerObjectSignal{}, Preview: projectsignals.DataPreviewSignal{Blocks: emptyDataExplorerBlocks(command), Columns: []projectsignals.DataPreviewColumnSignal{}, ChunkSize: command.Count, RowHeight: dataExplorerRowHeight}}
 	_, assets, _, ok := h.assets(w, r)
 	if !ok {
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, false
@@ -1555,8 +1562,8 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		}
 	}
 	explorer.Objects = projection.Objects
-	explorer.Explore.Models = projection.Models
-	explorer.Explore.SelectedModel = projection.SelectedModel
+	explorer.Explore.SemanticModels = projection.SemanticModels
+	explorer.Explore.SelectedSemanticModel = projection.SelectedSemanticModel
 	explorer.Explore.Datasets = projection.Datasets
 	explorer.Explore.SelectedDataset = projection.SelectedDataset
 	explorer.Explore.Fields = projection.Fields
@@ -1583,7 +1590,7 @@ func (h *BrowserHandler) dataExplorerSignalsForCommandWithOptions(w stdhttp.Resp
 		modelID := strings.TrimSpace(exploreCommand.Spec.ModelID)
 		datasetID := strings.TrimSpace(projectsignals.ValueOrZero(exploreCommand.Spec.DatasetID))
 		for _, object := range explorer.Objects {
-			if object.Layer == "model_table" && projectsignals.ValueOrZero(object.ModelID) == modelID && projectsignals.ValueOrZero(object.Table) == datasetID {
+			if object.Layer == "model" && projectsignals.ValueOrZero(object.SemanticModelID) == modelID && projectsignals.ValueOrZero(object.DatasetID) == datasetID {
 				requestedObject = object.Key
 				break
 			}
@@ -1619,12 +1626,12 @@ func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWr
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
 	}
 	asset, found := projectview.AssetByID(assets, assetID)
-	if !found || (asset.Type != string(projectview.AssetTypeModelTable) && asset.Type != string(projectview.AssetTypeSemanticModel)) {
+	if !found || (asset.Type != string(projectview.AssetTypeModel) && asset.Type != string(projectview.AssetTypeSemanticModel)) {
 		stdhttp.NotFound(w, r)
 		return projectsignals.DataExplorerPageSignal{}, projectsignals.DataExplorerSignal{}, projectview.DevelopAssetView{}, false
 	}
 
-	if asset.Type == string(projectview.AssetTypeModelTable) {
+	if asset.Type == string(projectview.AssetTypeModel) {
 		command.Mode = projectsignals.Pointer("browse")
 		command.ObjectKey = projectsignals.Pointer(asset.ID)
 	} else {
@@ -1643,8 +1650,8 @@ func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWr
 	}
 	objects := make([]projectsignals.DataExplorerObjectSignal, 0, len(explorer.Objects))
 	for _, object := range explorer.Objects {
-		include := asset.Type == string(projectview.AssetTypeModelTable) && explorer.SelectedObject != nil && object.Key == explorer.SelectedObject.Key
-		include = include || asset.Type == string(projectview.AssetTypeSemanticModel) && projectsignals.ValueOrZero(object.ModelID) == asset.ID
+		include := asset.Type == string(projectview.AssetTypeModel) && explorer.SelectedObject != nil && object.Key == explorer.SelectedObject.Key
+		include = include || asset.Type == string(projectview.AssetTypeSemanticModel) && projectsignals.ValueOrZero(object.SemanticModelID) == asset.ID
 		if include {
 			objects = append(objects, object)
 		}
@@ -1666,13 +1673,13 @@ func (h *BrowserHandler) dataExplorerSignalsForAssetCommand(w stdhttp.ResponseWr
 		}
 	}
 	if asset.Type == string(projectview.AssetTypeSemanticModel) {
-		models := make([]projectsignals.DataExploreModelSignal, 0, 1)
-		for _, model := range explorer.Explore.Models {
+		semanticModels := make([]projectsignals.DataExploreSemanticModelSignal, 0, 1)
+		for _, model := range explorer.Explore.SemanticModels {
 			if model.ID == asset.ID {
-				models = append(models, model)
+				semanticModels = append(semanticModels, model)
 			}
 		}
-		explorer.Explore.Models = models
+		explorer.Explore.SemanticModels = semanticModels
 	}
 	return page, explorer, asset, true
 }

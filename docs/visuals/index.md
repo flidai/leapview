@@ -25,7 +25,10 @@ presentation:
   displayUnits: auto
   axes:
     - id: primary_y
+      scale: linear
+      zero: exclude
       displayUnits: millions
+      tickDensity: dense
 ```
 
 Fixed units remain fixed even when the current filtered values are smaller or larger. Use them when comparable visuals must retain the same scale; otherwise prefer `auto`. Label visibility is a separate explicit choice and is never inferred from number formatting.

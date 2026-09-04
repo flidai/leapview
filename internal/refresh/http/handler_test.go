@@ -41,7 +41,7 @@ func TestPipelineRunResponseForExposesOnlyPipelineContract(t *testing.T) {
 
 func TestPipelineRunResponseForRejectsDependencyRun(t *testing.T) {
 	_, ok := PipelineRunResponseFor(refreshrun.RunRecord{
-		ID: "task_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: refreshrun.TargetModelTable,
+		ID: "task_1", Identity: testIdentity(), SemanticModelID: "sales", PipelineID: "sales-refresh", TargetType: refreshrun.TargetModel,
 		TargetID: "sales.orders", ParentRunID: "run_1", TriggerType: refreshrun.TriggerDependency,
 	})
 	if ok {

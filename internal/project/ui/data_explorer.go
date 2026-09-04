@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"net/url"
+	"strings"
 
 	"github.com/flidai/leapview/internal/dashboard"
 	uiactions "github.com/flidai/leapview/internal/platform/web/actions"
@@ -66,6 +67,12 @@ func dataExplorerUpdatesURL(command uisignals.DataExplorerCommand) string {
 	}
 	explore := command.Explore
 	values.Set("mode", "explore")
+	// The browser initializes the explorer with an empty model placeholder.
+	// That is useful incremental UI state, but it is not a valid canonical
+	// ExplorationSpec and must not be emitted as v2 URL state.
+	if strings.TrimSpace(explore.Spec.ModelID) == "" {
+		return "/updates?" + values.Encode()
+	}
 	values.Set("v", "2")
 	encoded, _ := canonicalExplorationJSON(explore.Spec)
 	values.Set("state", string(encoded))
@@ -125,9 +132,13 @@ func DataExplorerAgentContext(page uisignals.DataExplorerPageSignal, explorer ui
 	command := explorer.Explore.Command
 	spec := command.Spec
 	modelID := spec.ModelID
+	explorationSpec := &spec
+	if strings.TrimSpace(modelID) == "" {
+		explorationSpec = nil
+	}
 	return uisignals.AgentContextSignal{
 		Surface: "data", ModelID: modelID, DatasetID: spec.DatasetID,
-		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "", Exploration: &spec,
+		DashboardID: "", DashboardTitle: "", PageID: "", PageTitle: "", Exploration: explorationSpec,
 		Filters: uisignals.DashboardFilterState{
 			AppliedControls: map[string]uisignals.DashboardAppliedFilterState{},
 			DraftControls:   map[string]uisignals.DashboardFilterExpression{}, DirtyBindings: []string{},

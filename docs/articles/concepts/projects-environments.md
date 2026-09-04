@@ -22,7 +22,7 @@ spec:
   access: {include: [access/*.yaml]}
 ```
 
-The graph has exactly seven kinds: `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Access declarations and publication declarations are project inputs compiled into authorization/publication snapshots; they are not additional graph nodes. Stable IDs make dependencies explicit, so a semantic model can reuse a shared model table or dimension without copying files into another container.
+The graph has exactly seven kinds: `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Access declarations and publication declarations are project inputs compiled into authorization/publication snapshots; they are not additional graph nodes. Stable IDs make dependencies explicit, so a semantic model can reuse a shared Model or dimension without copying files into another container.
 
 ## Environment
 

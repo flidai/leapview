@@ -236,7 +236,7 @@ func projectAssetTypePriority(typ string) int {
 	switch typ {
 	case "dashboard":
 		return 0
-	case "model_table":
+	case "model":
 		return 1
 	case "semantic_model":
 		return 2
@@ -382,7 +382,7 @@ func baseProjectAssetPageSignalWithRefreshAndVersions(project projectview.Develo
 	}
 	if asset.Type == "refresh_pipeline" || asset.Type == "semantic_model" {
 		page.Refresh = uisignals.Pointer(assetRefreshSignal(refresh))
-	} else if asset.Type == "model_table" {
+	} else if asset.Type == "model" {
 		page.Refresh = uisignals.Pointer(modelRefreshSignal(asset))
 	}
 	if activeSection == "details" {
@@ -502,8 +502,8 @@ func projectAssetDefinitionSignal(asset projectview.DevelopAssetView) uisignals.
 		lang, code := formattedResourceConfiguration(configuration)
 		sections = append(sections, assetDetailSection{Title: "Configuration", Lang: lang, Code: code})
 	}
-	if asset.Type == string(projectview.AssetTypeModelTable) {
-		if sql := modelTableSQL(asset.Payload); sql != "" {
+	if asset.Type == string(projectview.AssetTypeModel) {
+		if sql := modelSQL(asset.Payload); sql != "" {
 			sections = append(sections, assetDetailSection{Title: "SQL", Lang: "sql", Code: sql})
 		}
 	}

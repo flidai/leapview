@@ -10,7 +10,7 @@ First identify whether the failure occurs during:
 2. local managed-data planning;
 3. object upload and revision staging;
 4. project deployment and revision activation;
-5. model-table materialization;
+5. Model materialization;
 6. semantic or dashboard query serving;
 7. storage cleanup.
 
@@ -67,9 +67,9 @@ If a refresh run cannot resolve inputs:
 
 Troubleshoot the active deployed configuration. A locally fixed file has no effect until it is validated and deployed.
 
-## Model-table SQL fails
+## Model SQL fails
 
-Inspect the first failing table and its compiler-derived dependency graph. Common causes include:
+Inspect the first failing Model materialization and its compiler-derived dependency graph. Common causes include:
 
 - renamed or missing source fields;
 - invalid casts after source values changed;

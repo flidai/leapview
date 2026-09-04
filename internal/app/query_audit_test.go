@@ -21,12 +21,12 @@ func TestAuditedQueryMetricsRecordsSuccessWithoutRows(t *testing.T) {
 	defer store.Close()
 
 	server := assembleRuntime(fakeMetrics{}, testStoreOptions(store, assemblyConfig{}))
-	request := dataquery.ModelTableRows("test", "orders", []string{"order_id", "status"}, nil, 0, 2, false)
+	request := dataquery.ModelRows("test", "orders", []string{"order_id", "status"}, nil, 0, 2, false)
 	request.ProjectID = projectgraph.ResourceID("project:test")
 	request.Surface = dataquery.SurfaceDataExplorer
 	request.Operation = dataquery.OperationPreviewWindow
-	request.ObjectType = "model_table"
-	request.ObjectID = "test:model_table:test.orders"
+	request.ObjectType = "model"
+	request.ObjectID = "test:model:test.orders"
 	ctx = accessmodule.WithPrincipal(ctx, accessmodule.Principal{ID: "principal_admin@example.test"})
 
 	if _, err := server.runtime.metrics.ExecuteDataQuery(ctx, request); err != nil {

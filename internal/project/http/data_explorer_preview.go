@@ -136,13 +136,13 @@ func dataExplorerPreview(ctx context.Context, executor DataQueryExecutor, projec
 }
 
 func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projectsignals.DataExplorerObjectSignal, command projectsignals.DataExplorerCommand, columns []projectsignals.DataPreviewColumnSignal, start, count int64, includeTotal bool) (dataquery.Query, error) {
-	modelID := strings.TrimSpace(projectsignals.ValueOrZero(object.ModelID))
-	table := strings.TrimSpace(projectsignals.ValueOrZero(object.Table))
-	if object.Layer != "model_table" {
+	semanticModelID := strings.TrimSpace(projectsignals.ValueOrZero(object.SemanticModelID))
+	datasetID := strings.TrimSpace(projectsignals.ValueOrZero(object.DatasetID))
+	if object.Layer != "model" {
 		return dataquery.Query{}, fmt.Errorf("data preview is not supported for %s resources", object.Layer)
 	}
-	if modelID == "" || table == "" {
-		return dataquery.Query{}, fmt.Errorf("model table preview target is incomplete")
+	if semanticModelID == "" || datasetID == "" {
+		return dataquery.Query{}, fmt.Errorf("model preview target is incomplete")
 	}
 	columnNames := make([]string, 0, len(columns))
 	for _, column := range columns {
@@ -154,7 +154,7 @@ func dataExplorerPreviewQuery(projectID projectgraph.ResourceID, object projects
 	if column := strings.TrimSpace(projectsignals.ValueOrZero(command.Sort.Column)); column != "" {
 		sortSpec = append(sortSpec, dataquery.Sort{Field: column, Direction: projectsignals.ValueOrZero(command.Sort.Direction)})
 	}
-	query := dataquery.ModelTableRows(modelID, table, columnNames, sortSpec, int(start), int(count), includeTotal)
+	query := dataquery.ModelRows(semanticModelID, datasetID, columnNames, sortSpec, int(start), int(count), includeTotal)
 	return query.WithMetadata(dataquery.Metadata{
 		ProjectID: projectID, Surface: dataquery.SurfaceDataExplorer, Operation: dataquery.OperationPreviewWindow,
 		ObjectType: object.Layer, ObjectID: object.ResourceID,
@@ -566,7 +566,7 @@ func lowerExplorationTemporalValue(value exploration.ExplorationTemporalValue) (
 func explorerCommandHasMultiRootMetric(metrics []string, fields map[string]projectsignals.DataExploreFieldSignal) bool {
 	for _, id := range metrics {
 		field, ok := fields[id]
-		if ok && field.Kind == "metric" && strings.TrimSpace(field.ModelTable) == "" {
+		if ok && field.Kind == "metric" && strings.TrimSpace(field.DatasetID) == "" {
 			return true
 		}
 	}

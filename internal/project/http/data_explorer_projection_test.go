@@ -112,7 +112,7 @@ func TestExplorerFieldsIncludeCompiledSemanticDimensions(t *testing.T) {
 			break
 		}
 	}
-	if got.ID == "" || !got.Compatible || got.ModelTable != "orders" || projectsignals.ValueOrZero(got.Type) != string(semanticmodel.DataTypeString) || !got.Selected {
+	if got.ID == "" || !got.Compatible || got.DatasetID != "orders" || projectsignals.ValueOrZero(got.Type) != string(semanticmodel.DataTypeString) || !got.Selected {
 		t.Fatalf("compiled semantic dimension = %#v, want selected compatible orders binding", got)
 	}
 }
@@ -151,15 +151,15 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 	}
 	assets := []projectview.DevelopAssetView{
 		{ID: "source:orders", Type: string(projectview.AssetTypeSource), Key: "orders", Title: "Orders source"},
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
 	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiledProjectionModels(t, project))
-	if len(projection.Models) != 1 || projection.Models[0].ID != "semantic:sales" {
-		t.Fatalf("models = %#v, want only authorized semantic model", projection.Models)
+	if len(projection.SemanticModels) != 1 || projection.SemanticModels[0].ID != "semantic:sales" {
+		t.Fatalf("semantic models = %#v, want only authorized semantic model", projection.SemanticModels)
 	}
-	if projection.SelectedModel == nil || projection.SelectedModel.ID != "semantic:sales" {
-		t.Fatalf("selected model = %#v, want semantic:sales", projection.SelectedModel)
+	if projection.SelectedSemanticModel == nil || projection.SelectedSemanticModel.ID != "semantic:sales" {
+		t.Fatalf("selected semantic model = %#v, want semantic:sales", projection.SelectedSemanticModel)
 	}
 	if len(projection.Datasets) != 1 || projection.Datasets[0].ID != "orders" {
 		t.Fatalf("datasets = %#v, want orders", projection.Datasets)
@@ -169,18 +169,144 @@ func TestBuildDataExplorerProjectionUsesAuthorizedAssetsAndRichManifest(t *testi
 	}
 	var modelObject projectsignals.DataExplorerObjectSignal
 	for _, object := range projection.Objects {
-		if object.Layer == "model_table" {
+		if object.Layer == "model" {
 			modelObject = object
 		}
 	}
-	if modelObject.Key != "model_table:model:orders" || modelObject.ModelID == nil || *modelObject.ModelID != "semantic:sales" {
-		t.Fatalf("model object = %#v, want canonical object and semantic model context", modelObject)
+	if modelObject.Key != "model:[12:model:orders][14:semantic:sales][6:orders]" || modelObject.ResourceID != "model:orders" || modelObject.SemanticModelID == nil || *modelObject.SemanticModelID != "semantic:sales" || projectsignals.ValueOrZero(modelObject.DatasetID) != "orders" {
+		t.Fatalf("model object = %#v, want binding identity key and backing model resource", modelObject)
 	}
 	if modelObject.ColumnCount != 2 || modelObject.Columns == nil || len(*modelObject.Columns) != 2 {
 		t.Fatalf("model object columns = %#v, want rich table columns", modelObject)
 	}
 	if len(projection.Fields) != 2 || projection.Fields[0].ID != "orders.status" || projection.Fields[1].ID != "order_count" {
 		t.Fatalf("fields = %#v, want dimension and metric", projection.Fields)
+	}
+}
+
+func TestBuildDataExplorerProjectionPreservesSemanticDatasetAlias(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"order_facts": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{"order_facts": {Model: "orders"}},
+	}
+	project := projectmanifest.Project{
+		Models:         map[string]semanticmodel.Table{"model:orders": {ModelName: "orders"}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
+		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
+	}
+	assets := []projectview.DevelopAssetView{
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
+	}
+	projection := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiledProjectionModels(t, project))
+	if len(projection.Objects) != 1 || projectsignals.ValueOrZero(projection.Objects[0].DatasetID) != "order_facts" {
+		t.Fatalf("objects = %#v, want semantic dataset alias order_facts", projection.Objects)
+	}
+}
+
+func TestBuildDataExplorerProjectionKeysEachSemanticDatasetBinding(t *testing.T) {
+	model := &semanticmodel.Model{
+		Name: "sales",
+		Tables: map[string]semanticmodel.Table{
+			"orders":        {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+			"order_history": {ModelName: "orders", Dimensions: map[string]semanticmodel.MetricDimension{"status": {Label: "Status"}}},
+		},
+		Datasets: map[string]semanticmodel.SemanticDatasetSpec{
+			"orders":        {Model: "orders"},
+			"order_history": {Model: "orders"},
+		},
+	}
+	project := projectmanifest.Project{
+		Models:         map[string]semanticmodel.Table{"model:orders": {ModelName: "orders"}},
+		SemanticModels: map[string]*semanticmodel.Model{"semantic:sales": model},
+		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
+	}
+	assets := []projectview.DevelopAssetView{
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
+	}
+	compiled := compiledProjectionModels(t, project)
+	first := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiled)
+	second := BuildDataExplorerProjection(assets, project, projectsignals.DataExploreCommand{}, compiled)
+	if len(first.Objects) != 2 || len(second.Objects) != 2 {
+		t.Fatalf("objects = %#v / %#v, want one object per dataset alias", first.Objects, second.Objects)
+	}
+	wantKeys := []string{
+		"model:[12:model:orders][14:semantic:sales][13:order_history]",
+		"model:[12:model:orders][14:semantic:sales][6:orders]",
+	}
+	for index, wantKey := range wantKeys {
+		left, right := first.Objects[index], second.Objects[index]
+		if left.Key != wantKey || right.Key != wantKey || left.Key != right.Key {
+			t.Fatalf("objects[%d] = %#v / %#v, want stable key %q", index, left, right, wantKey)
+		}
+		if left.ResourceID != "model:orders" || projectsignals.ValueOrZero(left.SemanticModelID) != "semantic:sales" {
+			t.Fatalf("objects[%d] identity = %#v, want backing model and semantic model", index, left)
+		}
+	}
+
+	for _, datasetID := range []string{"orders", "order_history"} {
+		projection := BuildDataExplorerProjection(assets, project, testExplorationCommand(exploration.ExplorationSpec{
+			ModelID: "semantic:sales", DatasetID: projectsignals.Optional(datasetID),
+		}), compiled)
+		if projection.SelectedDataset == nil || projection.SelectedDataset.ID != datasetID {
+			t.Fatalf("selected dataset for %q = %#v, want alias selected independently", datasetID, projection.SelectedDataset)
+		}
+		if projection.Command.Spec.ModelID != "semantic:sales" || projectsignals.ValueOrZero(projection.Command.Spec.DatasetID) != datasetID {
+			t.Fatalf("command for %q = %#v, want semantic model and alias", datasetID, projection.Command)
+		}
+		var found bool
+		for _, object := range projection.Objects {
+			if projectsignals.ValueOrZero(object.DatasetID) != datasetID {
+				continue
+			}
+			found = true
+			if object.Key != explorerModelObjectKey("model:orders", "semantic:sales", datasetID) || object.ResourceID != "model:orders" {
+				t.Fatalf("object for %q = %#v, want independent binding selection and backing Model", datasetID, object)
+			}
+		}
+		if !found {
+			t.Fatalf("no object found for dataset alias %q", datasetID)
+		}
+	}
+}
+
+func TestExplorerModelObjectKeyIsUnambiguousForColonBearingIDs(t *testing.T) {
+	cases := []struct {
+		name            string
+		modelID         string
+		semanticModelID string
+		datasetID       string
+		want            string
+	}{
+		{name: "model and semantic boundary", modelID: "model:a:b", semanticModelID: "semantic", datasetID: "dataset", want: "model:[9:model:a:b][8:semantic][7:dataset]"},
+		{name: "semantic and model boundary", modelID: "model:a", semanticModelID: "b:semantic", datasetID: "dataset", want: "model:[7:model:a][10:b:semantic][7:dataset]"},
+		{name: "semantic and dataset boundary", modelID: "model", semanticModelID: "a:b", datasetID: "c", want: "model:[5:model][3:a:b][1:c]"},
+		{name: "dataset and semantic boundary", modelID: "model", semanticModelID: "a", datasetID: "b:c", want: "model:[5:model][1:a][3:b:c]"},
+	}
+	keys := make(map[string]string, len(cases))
+	for _, test := range cases {
+		t.Run(test.name, func(t *testing.T) {
+			got := explorerModelObjectKey(test.modelID, test.semanticModelID, test.datasetID)
+			if got != test.want {
+				t.Fatalf("key = %q, want length-prefixed key %q", got, test.want)
+			}
+			if previous, exists := keys[got]; exists {
+				t.Fatalf("key %q collides with %s", got, previous)
+			}
+			keys[got] = test.name
+		})
+	}
+	bound := explorerModelObjectKey("model:a", "semantic", "dataset")
+	unbound := explorerModelObjectKey("7:model:a:8:semantic:7:dataset", "", "ignored")
+	if bound == unbound {
+		t.Fatalf("bound key %q collides with preserved unbound key %q", bound, unbound)
+	}
+	if got := explorerModelObjectKey("model:orders", "", "ignored"); got != "model:model:orders" {
+		t.Fatalf("unbound model key = %q, want preserved fallback %q", got, "model:model:orders")
 	}
 }
 
@@ -201,8 +327,8 @@ func TestBuildDataExplorerProjectionCommandSelectsModelDatasetAndFields(t *testi
 	}
 	command := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}}, Metrics: []exploration.ExplorationMetricRef{{Field: "revenue"}}})
 	projection := BuildDataExplorerProjection([]projectview.DevelopAssetView{
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
-		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}, project, command, compiledProjectionModels(t, project))
 	if projection.SelectedDataset == nil || projection.SelectedDataset.ID != "customers" {
@@ -239,13 +365,13 @@ func TestBuildDataExplorerProjectionDoesNotFallbackUnavailableModelOrDataset(t *
 
 	missingModel := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:missing"})
 	modelProjection := BuildDataExplorerProjection(assets, project, missingModel, compiledProjectionModels(t, project))
-	if modelProjection.SelectedModel != nil || modelProjection.Command.Spec.ModelID != "semantic:missing" || len(modelProjection.Fields) != 0 {
+	if modelProjection.SelectedSemanticModel != nil || modelProjection.Command.Spec.ModelID != "semantic:missing" || len(modelProjection.Fields) != 0 {
 		t.Fatalf("unavailable model was replaced or exposed: %#v", modelProjection)
 	}
 
 	missingDataset := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("missing")})
 	datasetProjection := BuildDataExplorerProjection(assets, project, missingDataset, compiledProjectionModels(t, project))
-	if datasetProjection.SelectedModel == nil || datasetProjection.SelectedDataset != nil || projectsignals.ValueOrZero(datasetProjection.Command.Spec.DatasetID) != "missing" || len(datasetProjection.Fields) != 0 {
+	if datasetProjection.SelectedSemanticModel == nil || datasetProjection.SelectedDataset != nil || projectsignals.ValueOrZero(datasetProjection.Command.Spec.DatasetID) != "missing" || len(datasetProjection.Fields) != 0 {
 		t.Fatalf("unavailable dataset was replaced or exposed: %#v", datasetProjection)
 	}
 }
@@ -283,8 +409,8 @@ func TestBuildDataExplorerProjectionInfersSafeBaseForCrossTableFields(t *testing
 	}
 	command := testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}, {Field: "orders.status"}}})
 	assets := []projectview.DevelopAssetView{
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
-		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
 	customersProjection := BuildDataExplorerProjection(assets, project, testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers"), Dimensions: []exploration.ExplorationDimensionRef{{Field: "customers.region"}}}), compiledProjectionModels(t, project))
@@ -321,7 +447,7 @@ func TestBuildDataExplorerProjectionDoesNotUseGraphPayloadAsSchema(t *testing.T)
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders"}},
 	}
 	projection := BuildDataExplorerProjection([]projectview.DevelopAssetView{
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders", Payload: map[string]any{"kind": "model"}},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders", Payload: map[string]any{"kind": "model"}},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales", Payload: map[string]any{"kind": "semantic_model"}},
 	}, project, projectsignals.DataExploreCommand{}, compiledProjectionModels(t, project))
 	if len(projection.Objects) != 1 || projection.Objects[0].ColumnCount != 1 {
@@ -388,8 +514,8 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 		NameIndex:      projectmanifest.NameIndex{Models: map[string]string{"orders": "model:orders", "customers": "model:customers"}},
 	}
 	assets := []projectview.DevelopAssetView{
-		{ID: "model:orders", Type: string(projectview.AssetTypeModelTable), Key: "orders", Title: "Orders"},
-		{ID: "model:customers", Type: string(projectview.AssetTypeModelTable), Key: "customers", Title: "Customers"},
+		{ID: "model:orders", Type: string(projectview.AssetTypeModel), Key: "orders", Title: "Orders"},
+		{ID: "model:customers", Type: string(projectview.AssetTypeModel), Key: "customers", Title: "Customers"},
 		{ID: "semantic:sales", Type: string(projectview.AssetTypeSemanticModel), Key: "sales", Title: "Sales"},
 	}
 	projection := BuildDataExplorerProjection(assets, project, testExplorationCommand(exploration.ExplorationSpec{ModelID: "semantic:sales", DatasetID: projectsignals.Optional("customers")}), compiledProjectionModels(t, project))
@@ -397,12 +523,12 @@ func TestDataExplorerMetricsResolveSingleAndMultiRootOwnership(t *testing.T) {
 	for _, field := range projection.Fields {
 		fields[field.ID] = field
 	}
-	if got := fields["order_rate"]; got.ModelTable != "orders" || projectsignals.ValueOrZero(got.Dataset) != "orders" || got.Compatible {
+	if got := fields["order_rate"]; got.DatasetID != "orders" || got.Compatible {
 		t.Fatalf("single-root derived metric = %#v, want orders ownership and incompatibility from customers", got)
 	}
 	for _, name := range []string{"order_share"} {
 		got := fields[name]
-		if got.ModelTable != "" || got.Dataset != nil || !got.Compatible {
+		if got.DatasetID != "" || !got.Compatible {
 			t.Fatalf("multi-root metric %q = %#v, want visible without false ownership", name, got)
 		}
 	}

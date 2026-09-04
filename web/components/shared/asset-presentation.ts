@@ -52,10 +52,10 @@ export function assetPresentation(type: string): AssetPresentation {
       return { icon: ListFilter, iconName: 'filter', token: 'filter' }
     case 'metric':
       return { icon: Sigma, iconName: 'metric', token: 'metric' }
-    case 'dataset':
     case 'model':
-    case 'model_table':
-      return { icon: TableProperties, iconName: 'model-table', token: 'model-table' }
+      return { icon: TableProperties, iconName: 'model', token: 'model' }
+    case 'dataset':
+      return { icon: Table2, iconName: 'dataset', token: 'dataset' }
     case 'page':
       return { icon: PanelTop, iconName: 'page', token: 'page' }
     case 'page_item':

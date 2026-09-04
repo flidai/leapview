@@ -268,7 +268,7 @@ func projectAreaForAssetType(assetType string) string {
 	switch assetType {
 	case string(projectview.AssetTypeDashboard):
 		return "dashboards"
-	case string(projectview.AssetTypeModelTable):
+	case string(projectview.AssetTypeModel):
 		return "models"
 	case string(projectview.AssetTypeSemanticModel):
 		return "semantic-models"
@@ -303,7 +303,7 @@ func projectAssetTypeForArea(area string) string {
 	case "dashboards":
 		return string(projectview.AssetTypeDashboard)
 	case "models":
-		return string(projectview.AssetTypeModelTable)
+		return string(projectview.AssetTypeModel)
 	case "semantic-models":
 		return string(projectview.AssetTypeSemanticModel)
 	default:

@@ -4,7 +4,7 @@ LeapView authorization assigns privileges on securable resources to principals, 
 
 ## Securable hierarchy
 
-Securable objects include projects, dashboards, semantic models, sources, model tables, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants.
+Securable objects include projects, dashboards, semantic models, sources, Models, datasets, tables, and columns. Objects participate in a parent hierarchy, so effective access may include inherited privileges as well as direct grants.
 
 The authored project graph has exactly seven kinds: `project`, `connection`, `source`, `model`, `semantic_model`, `pipeline`, and `dashboard`. Groups, role bindings, grants, data policies, and dashboard-publication declarations are project inputs compiled into authorization and publication snapshots; they are not additional catalog graph nodes.
 

@@ -1125,7 +1125,7 @@ function entityIcon(type = ''): IconNode {
     case 'connection': return Plug
     case 'source': return Cable
     case 'catalog': return BookOpen
-    case 'model_table': return TableProperties
+    case 'model': return TableProperties
     case 'semantic_model': return Waypoints
     case 'table': return Table2
     case 'schema': return Database
