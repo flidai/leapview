@@ -734,6 +734,8 @@ tasks:
       - Taskfile.yml
       - api/apigen.yaml
       - api/data-resources/**/*.tsp
+      - internal/project/contractprojection/exclusions.json
+      - internal/project/contractprojection/manifest.go
       - internal/project/contracts/generate/**/*.go
       - internal/analytics/connectors/**/*.go
       - pkg/apigen/**/*.go

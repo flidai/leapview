@@ -22,6 +22,7 @@ type document struct {
 
 type schema struct {
 	Type                 string                     `json:"type"`
+	Required             []string                   `json:"required"`
 	Extensions           map[string]json.RawMessage `json:"extensions"`
 	Properties           map[string]property        `json:"properties"`
 	OneOf                []schemaRef                `json:"one_of"`

@@ -1,36 +1,26 @@
 package main
 
 import (
-	"encoding/json"
+	"crypto/sha256"
 	"fmt"
 	"os"
 	"sort"
 	"strings"
+
+	"github.com/flidai/leapview/internal/project/contractprojection"
 )
-
-type projectionCoverageManifest struct {
-	Profile   string                 `json:"profile"`
-	Resources map[string][]exclusion `json:"resources"`
-}
-
-type exclusion struct {
-	Paths []string `json:"paths"`
-}
 
 func verifyContractProjectionCoverage(doc document, manifestPath string) error {
 	raw, err := os.ReadFile(manifestPath)
 	if err != nil {
 		return err
 	}
-	var manifest projectionCoverageManifest
-	if err := json.Unmarshal(raw, &manifest); err != nil {
+	manifest, err := contractprojection.ParseExclusionManifest(raw)
+	if err != nil {
 		return err
 	}
-	if manifest.Profile != "leapview.contract/v1" {
-		return fmt.Errorf("manifest profile %q is not leapview.contract/v1", manifest.Profile)
-	}
 	for _, kind := range []string{"Source", "Model", "SemanticModel"} {
-		paths, err := contractSourcePaths(doc, kind)
+		sourceFields, err := contractSourceFields(doc, kind)
 		if err != nil {
 			return err
 		}
@@ -38,16 +28,31 @@ func verifyContractProjectionCoverage(doc document, manifestPath string) error {
 		if err != nil {
 			return err
 		}
-		excluded := make([]string, 0)
-		for _, item := range manifest.Resources[kind] {
-			excluded = append(excluded, item.Paths...)
+		stale := make([]string, 0)
+		for _, exclusion := range manifest.Resources[kind] {
+			for _, pattern := range exclusion.Paths {
+				matched := false
+				for _, field := range sourceFields {
+					if contractprojection.ExclusionPathMatches(pattern, field.Path) {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					stale = append(stale, pattern)
+				}
+			}
+		}
+		if len(stale) > 0 {
+			return fmt.Errorf("%s exclusion paths do not match generated authoring fields: %s", kind, strings.Join(stale, ", "))
 		}
 		unclassified := make([]string, 0)
 		overlapped := make([]string, 0)
-		for _, path := range paths {
+		for _, field := range sourceFields {
+			path := field.Path
 			target := projectionTarget(kind, path)
-			projected := projectionDTOContains(projectionPaths, target)
-			isExcluded := matchesExcludedProjectionPath(excluded, path)
+			projected := authoredFieldProjected(kind, path, target, projectionPaths)
+			isExcluded := manifest.Excludes(kind, path)
 			if projected && isExcluded {
 				overlapped = append(overlapped, path)
 			}
@@ -61,21 +66,15 @@ func verifyContractProjectionCoverage(doc document, manifestPath string) error {
 		if len(unclassified) > 0 {
 			return fmt.Errorf("%s authoring fields are neither projected nor excluded: %s", kind, strings.Join(unclassified, ", "))
 		}
-		stale := make([]string, 0)
-		for _, pattern := range excluded {
-			matched := false
-			for _, path := range paths {
-				if matchesExcludedProjectionPath([]string{pattern}, path) {
-					matched = true
-					break
-				}
-			}
-			if !matched {
-				stale = append(stale, pattern)
+		for index, exclusion := range manifest.Resources[kind] {
+			got := sourceShapeFingerprint(sourceFields, exclusion.Paths)
+			if got != exclusion.SourceShapeFingerprint {
+				return fmt.Errorf("%s exclusion group %d source shape changed: got %s, manifest has %s", kind, index, got, exclusion.SourceShapeFingerprint)
 			}
 		}
-		if len(stale) > 0 {
-			return fmt.Errorf("%s exclusion paths do not match generated authoring fields: %s", kind, strings.Join(stale, ", "))
+		extra := projectionExtras(kind, projectionPaths, sourceFields)
+		if len(extra) > 0 {
+			return fmt.Errorf("%s projection fields are not authored or explicitly reviewed: %s", kind, strings.Join(extra, ", "))
 		}
 	}
 	return nil
@@ -91,9 +90,117 @@ func projectionTarget(kind, path string) string {
 	return path
 }
 
-func projectionDTOContains(paths []string, target string) bool {
-	for _, path := range paths {
-		if matchesAnyProjectionPath([]string{target}, path) || strings.HasPrefix(path, strings.TrimSuffix(target, ".*")+".") {
+type sourceField struct {
+	Path   string
+	Shapes []string
+}
+
+// projectionAliases documents intentional representation changes between
+// authored values and the external DTOs. Canonical values are tagged with a
+// type and value in the projection even though authored literals are untyped
+// JSON values.
+type projectionAlias struct {
+	Authored  string
+	Projected []string
+}
+
+var projectionAliases = map[string][]projectionAlias{
+	"SemanticModel": {
+		{Authored: "spec.accessGrants.*.allowedValues.*", Projected: []string{
+			"contract.accessGrants.*.allowedValues.*.type",
+			"contract.accessGrants.*.allowedValues.*.value",
+		}},
+		{Authored: "spec.filters.*.value", Projected: []string{
+			"contract.filters.*.value.type",
+			"contract.filters.*.value.value",
+			"contract.filters.*.values.*.type",
+			"contract.filters.*.values.*.value",
+		}},
+		{Authored: "spec.filters.*.value.*", Projected: []string{
+			"contract.filters.*.value.type",
+			"contract.filters.*.value.value",
+			"contract.filters.*.values.*.type",
+			"contract.filters.*.values.*.value",
+		}},
+	},
+}
+
+var projectionOnlyAllowlist = map[string][]string{
+	"Source":        {"profile"},
+	"Model":         {"profile"},
+	"SemanticModel": {"profile", "metadata.contract.compatibility", "metadata.contract.version"},
+}
+
+func authoredFieldProjected(kind, path, target string, projectionPaths []string) bool {
+	for _, projected := range projectionPaths {
+		if matchesAnyProjectionPath([]string{target}, projected) {
+			return true
+		}
+	}
+	for _, alias := range projectionAliases[kind] {
+		if !contractprojection.ExclusionPathMatches(alias.Authored, path) {
+			continue
+		}
+		for _, projected := range projectionPaths {
+			for _, aliasTarget := range alias.Projected {
+				if matchesAnyProjectionPath([]string{aliasTarget}, projected) {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func projectionExtras(kind string, projectionPaths []string, sourceFields []sourceField) []string {
+	extras := make([]string, 0)
+	for _, projected := range projectionPaths {
+		if projectionPathAllowlisted(kind, projected) {
+			continue
+		}
+		represented := false
+		for _, field := range sourceFields {
+			if matchesAnyProjectionPath([]string{projectionTarget(kind, field.Path)}, projected) {
+				represented = true
+				break
+			}
+		}
+		if !represented {
+			for _, alias := range projectionAliases[kind] {
+				if !aliasAuthored(alias, sourceFields) {
+					continue
+				}
+				for _, aliasTarget := range alias.Projected {
+					if matchesAnyProjectionPath([]string{aliasTarget}, projected) {
+						represented = true
+						break
+					}
+				}
+				if represented {
+					break
+				}
+			}
+		}
+		if !represented {
+			extras = append(extras, projected)
+		}
+	}
+	sort.Strings(extras)
+	return extras
+}
+
+func aliasAuthored(alias projectionAlias, sourceFields []sourceField) bool {
+	for _, field := range sourceFields {
+		if contractprojection.ExclusionPathMatches(alias.Authored, field.Path) {
+			return true
+		}
+	}
+	return false
+}
+
+func projectionPathAllowlisted(kind, path string) bool {
+	for _, pattern := range projectionOnlyAllowlist[kind] {
+		if matchesAnyProjectionPath([]string{pattern}, path) {
 			return true
 		}
 	}
@@ -101,22 +208,53 @@ func projectionDTOContains(paths []string, target string) bool {
 }
 
 func contractSourcePaths(doc document, root string) ([]string, error) {
-	paths := map[string]struct{}{}
-	if err := walkContractSchema(doc, schemaRef{Ref: root}, "", map[string]bool{}, paths); err != nil {
+	fields, err := contractSourceFields(doc, root)
+	if err != nil {
 		return nil, err
 	}
-	result := make([]string, 0, len(paths))
-	for path := range paths {
-		result = append(result, path)
+	return sourceFieldPaths(fields), nil
+}
+
+func contractSourceFields(doc document, root string) ([]sourceField, error) {
+	paths := map[string]map[string]struct{}{}
+	if err := walkContractSchema(doc, schemaRef{Ref: root}, "", map[string]bool{}, paths, false); err != nil {
+		return nil, err
 	}
-	sort.Strings(result)
+	result := make([]sourceField, 0, len(paths))
+	for path, shapes := range paths {
+		field := sourceField{Path: path, Shapes: make([]string, 0, len(shapes))}
+		for shape := range shapes {
+			field.Shapes = append(field.Shapes, shape)
+		}
+		sort.Strings(field.Shapes)
+		result = append(result, field)
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Path < result[j].Path })
 	return result, nil
 }
 
-func walkContractSchema(doc document, ref schemaRef, prefix string, active map[string]bool, paths map[string]struct{}) error {
+func sourceFieldPaths(fields []sourceField) []string {
+	result := make([]string, 0, len(fields))
+	for _, field := range fields {
+		result = append(result, field.Path)
+	}
+	return result
+}
+
+func addSourceShape(paths map[string]map[string]struct{}, path, shape string) {
+	if path == "" {
+		return
+	}
+	if paths[path] == nil {
+		paths[path] = map[string]struct{}{}
+	}
+	paths[path][shape] = struct{}{}
+}
+
+func walkContractSchema(doc document, ref schemaRef, prefix string, active map[string]bool, paths map[string]map[string]struct{}, required bool) error {
 	if ref.Ref != "" {
 		if active[ref.Ref] {
-			paths[strings.TrimSuffix(prefix, ".*")] = struct{}{}
+			addSourceShape(paths, strings.TrimSuffix(prefix, ".*"), sourceRecursiveShape(ref.Ref, required))
 			return nil
 		}
 		value, ok := doc.Schemas[ref.Ref]
@@ -124,22 +262,22 @@ func walkContractSchema(doc document, ref schemaRef, prefix string, active map[s
 			return fmt.Errorf("unknown schema reference %q", ref.Ref)
 		}
 		active[ref.Ref] = true
-		err := walkContractValue(doc, value, prefix, active, paths)
+		err := walkContractValue(doc, value, prefix, active, paths, required)
 		delete(active, ref.Ref)
 		return err
 	}
-	return walkContractRefValue(doc, ref, prefix, active, paths)
+	return walkContractRefValue(doc, ref, prefix, active, paths, required)
 }
 
-func walkContractValue(doc document, value schema, prefix string, active map[string]bool, paths map[string]struct{}) error {
+func walkContractValue(doc document, value schema, prefix string, active map[string]bool, paths map[string]map[string]struct{}, required bool) error {
 	if value.Base != nil {
-		if err := walkContractSchema(doc, *value.Base, prefix, active, paths); err != nil {
+		if err := walkContractSchema(doc, *value.Base, prefix, active, paths, required); err != nil {
 			return err
 		}
 	}
 	if len(value.OneOf) > 0 {
 		for _, variant := range value.OneOf {
-			if err := walkContractSchema(doc, variant, prefix, active, paths); err != nil {
+			if err := walkContractSchema(doc, variant, prefix, active, paths, required); err != nil {
 				return err
 			}
 		}
@@ -156,36 +294,81 @@ func walkContractValue(doc document, value schema, prefix string, active map[str
 			if prefix != "" {
 				path = prefix + "." + name
 			}
-			if err := walkContractSchema(doc, value.Properties[name].Schema, path, active, paths); err != nil {
+			if err := walkContractSchema(doc, value.Properties[name].Schema, path, active, paths, schemaPropertyRequired(value, name)); err != nil {
 				return err
 			}
 		}
 		return nil
 	}
-	return walkContractRefValue(doc, schemaRef{Type: value.Type, Items: value.Items, AdditionalProperties: value.AdditionalProperties}, prefix, active, paths)
+	return walkContractRefValue(doc, schemaRef{Type: value.Type, Items: value.Items, AdditionalProperties: value.AdditionalProperties}, prefix, active, paths, required)
 }
 
-func matchesExcludedProjectionPath(patterns []string, path string) bool {
-	segments := strings.Split(path, ".")
-	for end := len(segments); end > 0; end-- {
-		if matchesAnyProjectionPath(patterns, strings.Join(segments[:end], ".")) {
+func walkContractRefValue(doc document, value schemaRef, prefix string, active map[string]bool, paths map[string]map[string]struct{}, required bool) error {
+	if value.AdditionalProperties != nil {
+		return walkContractSchema(doc, value.AdditionalProperties.Schema, prefix+".*", active, paths, required)
+	}
+	if value.Items != nil {
+		return walkContractSchema(doc, *value.Items, prefix+".*", active, paths, required)
+	}
+	if prefix != "" {
+		addSourceShape(paths, prefix, sourceRefShape(value, required))
+	}
+	return nil
+}
+
+func schemaPropertyRequired(value schema, name string) bool {
+	for _, required := range value.Required {
+		if required == name {
 			return true
 		}
 	}
 	return false
 }
 
-func walkContractRefValue(doc document, value schemaRef, prefix string, active map[string]bool, paths map[string]struct{}) error {
-	if value.AdditionalProperties != nil {
-		return walkContractSchema(doc, value.AdditionalProperties.Schema, prefix+".*", active, paths)
+func sourceRecursiveShape(ref string, required bool) string {
+	shape := "recursive:" + ref
+	if required {
+		shape += ";required"
 	}
-	if value.Items != nil {
-		return walkContractSchema(doc, *value.Items, prefix+".*", active, paths)
+	return shape
+}
+
+func sourceRefShape(value schemaRef, required bool) string {
+	shape := value.Type
+	if shape == "" {
+		shape = "ref:" + value.Ref
 	}
-	if prefix != "" {
-		paths[prefix] = struct{}{}
+	if len(value.Enum) > 0 {
+		enums := append([]string(nil), value.Enum...)
+		sort.Strings(enums)
+		shape += "[" + strings.Join(enums, ",") + "]"
 	}
-	return nil
+	if required {
+		shape += ";required"
+	}
+	return shape
+}
+
+func sourceShapeFingerprint(fields []sourceField, patterns []string) string {
+	entries := make([]string, 0)
+	for _, field := range fields {
+		matched := false
+		for _, pattern := range patterns {
+			if contractprojection.ExclusionPathMatches(pattern, field.Path) {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			continue
+		}
+		for _, shape := range field.Shapes {
+			entries = append(entries, field.Path+"\x00"+shape)
+		}
+	}
+	sort.Strings(entries)
+	hash := sha256.Sum256([]byte(strings.Join(entries, "\n")))
+	return fmt.Sprintf("sha256:%x", hash)
 }
 
 func matchesAnyProjectionPath(patterns []string, path string) bool {
