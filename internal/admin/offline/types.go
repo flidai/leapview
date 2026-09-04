@@ -24,8 +24,6 @@ type Config struct {
 	Environment           string
 	Production            bool
 	BootstrapEmail        string
-	DuckLakeCatalog       string
-	DuckLakeData          string
 	ArtifactDir           string
 	RuntimeDir            string
 	ManagedDataDir        string
