@@ -162,10 +162,6 @@ var (
 	ErrCandidateUnavailable = deployment.ErrCandidateUnavailable
 )
 
-type ServingStatePort interface {
-	deployment.ServingStateRepository
-}
-
 // SealedCoordinator contains only durable publication and rollback operations.
 // Catalog/seal lookup remains in the resolver callbacks so this HTTP module
 // never receives object-store credentials or paths.
@@ -188,10 +184,8 @@ type Config struct {
 	// Persistence is the native PostgreSQL delivery authority. Production
 	// callers construct it with NewPostgresPersistence; the module never infers
 	// an adapter from a raw database handle.
-	Persistence *Persistence
-	Production  bool
-	// States is retained for publication authorization reads.
-	States                    ServingStatePort
+	Persistence               *Persistence
+	Production                bool
 	Logger                    *slog.Logger
 	InstanceID                string
 	CanonicalOrigin           string

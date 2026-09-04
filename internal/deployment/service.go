@@ -5,12 +5,7 @@ import (
 	"fmt"
 
 	"github.com/flidai/leapview/internal/runtimehost"
-	servingstate "github.com/flidai/leapview/internal/servingstate"
 )
-
-type ServingStateRepository interface {
-	RecordDuckLakeSnapshot(context.Context, servingstate.ID, int64) error
-}
 
 type Prepared interface {
 	DuckLakeSnapshotID() int64
