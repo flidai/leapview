@@ -116,7 +116,6 @@ type TargetInput struct {
 	TargetID, ProjectID, Environment string
 	TargetRevision                   int64
 }
-type DeliveryTargetInput = TargetInput
 
 type DeliveryPlan struct {
 	PlanID, TargetID, PlanDigest                                         string
@@ -135,7 +134,6 @@ type DeliveryPlan struct {
 	CreatedAt    time.Time
 }
 type PlanInput = DeliveryPlan
-type DeliveryPlanInput = DeliveryPlan
 
 type BuildAttemptState string
 
@@ -170,7 +168,6 @@ type BuildAttemptInput struct {
 	Namespace, SessionIdentity     string
 	LeaseExpiresAt                 time.Time
 }
-type DeliveryBuildAttemptInput = BuildAttemptInput
 
 // BuildAttemptSuccessorInput is the caller-owned transaction input for
 // recovery after an exact physical marker lookup returned "absent" without
@@ -287,7 +284,6 @@ type SnapshotSeal struct {
 	QualifiedAt                                                                                                      time.Time
 }
 type SnapshotSealInput = SnapshotSeal
-type DeliverySnapshotSeal = SnapshotSeal
 
 type DeliveryCandidate struct {
 	CandidateID, TargetID, PlanID, AttemptID, SnapshotSealID string
@@ -297,7 +293,6 @@ type DeliveryCandidate struct {
 	CreatedAt, QualifiedAt, RetiredAt                        time.Time
 }
 type CandidateInput = DeliveryCandidate
-type DeliveryCandidateInput = DeliveryCandidate
 
 // CandidateGenerationResolution is the native publish binding resolved from
 // one candidate row. GenerationCount is retained so callers can fail closed
@@ -324,7 +319,6 @@ type DeliveryGeneration struct {
 	CreatedAt                                                            time.Time
 }
 type GenerationInput = DeliveryGeneration
-type DeliveryGenerationInput = DeliveryGeneration
 
 type DeliveryPublication struct {
 	PublicationID, TargetID, GenerationID, ExpectedBaseGenerationID, CandidateID, SnapshotSealID string
@@ -333,7 +327,6 @@ type DeliveryPublication struct {
 	CreatedAt, CommittedAt                                                                       time.Time
 }
 type PublicationInput = DeliveryPublication
-type DeliveryPublicationInput = DeliveryPublication
 
 type DeliveryLease struct {
 	LeaseID, TargetID, OwnerID        string
@@ -550,7 +543,6 @@ type ActivationInput struct {
 	LeaseID, OwnerID                      string
 	FencingEpoch                          int64
 }
-type ActivateInput = ActivationInput
 
 // ActivationPreCommitHook is an optional composition-owned interruption seam
 // invoked after every durable activation proof has been checked while the

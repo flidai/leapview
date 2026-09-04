@@ -69,6 +69,19 @@ func validateDeliveryText(name, value string, required bool) error {
 	return nil
 }
 
+// trim removes the ASCII whitespace accepted by the legacy delivery
+// contracts. Keep it package-local for the lease, runtime, and GC validators
+// that still canonicalize their free-form reason and object fields.
+func trim(value string) string {
+	for len(value) > 0 && (value[0] == ' ' || value[0] == '\t' || value[0] == '\n' || value[0] == '\r') {
+		value = value[1:]
+	}
+	for len(value) > 0 && (value[len(value)-1] == ' ' || value[len(value)-1] == '\t' || value[len(value)-1] == '\n' || value[len(value)-1] == '\r') {
+		value = value[:len(value)-1]
+	}
+	return value
+}
+
 func validateDeliveryTime(name string, value time.Time, required bool) error {
 	if required && value.IsZero() {
 		return fmt.Errorf("%w: %s is required", ErrDeliveryInvalid, name)
