@@ -263,6 +263,76 @@ func TestValidationResultRejectsIncompleteFrontierEvidence(t *testing.T) {
 	}
 }
 
+func TestValidationResultRejectsNoncanonicalObjectRoots(t *testing.T) {
+	db := recoverySetDB(t)
+	set := recoverySetFixture(t)
+	if _, err := New(db).Create(t.Context(), set); err != nil {
+		t.Fatal(err)
+	}
+	attemptID := "018f3f83-7c7a-7f00-8a11-000000000121"
+	started := time.Now().UTC().Truncate(time.Microsecond)
+	if _, err := New(db).BeginValidation(t.Context(), recoveryset.ValidationAttempt{AttemptID: attemptID, SetID: set.ID, OwnerID: "validator", FenceEpoch: set.FenceEpoch, AuditIdentity: set.AuditIdentity, Status: recoveryset.ValidationRunning, StartedAt: started}); err != nil {
+		t.Fatal(err)
+	}
+	envelope, err := recoveryset.NewValidationEvidenceEnvelope(set, attemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `ALTER TABLE recovery.recovery_object_root DISABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `UPDATE recovery.recovery_object_root SET root_kind='noncanonical' WHERE set_id=$1::uuid AND root_kind='ducklake'`, set.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `ALTER TABLE recovery.recovery_object_root ENABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	for i := range envelope.ObjectRoots {
+		if envelope.ObjectRoots[i].Kind == string(recoveryset.ObjectRootDuckLake) {
+			envelope.ObjectRoots[i].Kind = "noncanonical"
+		}
+	}
+	result, err := recoveryset.NewValidationResult(envelope, started)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO recovery.validation_result(attempt_id, result_digest, evidence, recorded_at)
+		VALUES ($1::uuid, $2, $3::jsonb, $4::timestamptz)`, result.AttemptID, result.ResultDigest, result.Evidence, result.RecordedAt); err == nil {
+		t.Fatal("validation result accepted noncanonical object-root evidence")
+	}
+}
+
+func TestRemoteObjectRootRequiresProviderRecoveryFrontier(t *testing.T) {
+	db := recoverySetDB(t)
+	set := recoverySetFixture(t)
+	if _, err := New(db).Create(t.Context(), set); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `ALTER TABLE recovery.recovery_object_root DISABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `DELETE FROM recovery.recovery_object_root WHERE set_id=$1::uuid AND root_kind='ducklake'`, set.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(t.Context(), `ALTER TABLE recovery.recovery_object_root ENABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	digest := "sha256:" + strings.Repeat("a", 64)
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO recovery.recovery_object_root(
+			set_id, root_kind, root_uri, version_id, digest, provider_recovery_frontier
+		) VALUES ($1::uuid, 'ducklake', 's3://bucket/root', 'version-1', $2, '')`, set.ID, digest); err == nil {
+		t.Fatal("remote object root accepted an empty provider recovery frontier")
+	}
+	if _, err := db.Exec(t.Context(), `
+		INSERT INTO recovery.recovery_object_root(
+			set_id, root_kind, root_uri, version_id, digest, provider_recovery_frontier
+		) VALUES ($1::uuid, 'ducklake', 's3://bucket/root', 'version-1', $2, 'generation-42')`, set.ID, digest); err != nil {
+		t.Fatalf("remote object root with provider recovery frontier: %v", err)
+	}
+}
+
 func TestValidationResultSQLDigestMatchesGoJSONEscaping(t *testing.T) {
 	db := recoverySetDB(t)
 	set := recoverySetFixture(t)

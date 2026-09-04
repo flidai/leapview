@@ -7,9 +7,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/flidai/leapview/internal/analytics/physicalpool"
 	"github.com/flidai/leapview/internal/app/postgresbaseline"
 	platformmigrations "github.com/flidai/leapview/internal/platform/postgres/migrations"
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	"github.com/flidai/leapview/internal/recoveryset"
+	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	"github.com/jackc/pgx/v5/pgxpool"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
@@ -205,25 +208,31 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if !runtimeCatalogIdentitySelect || !runtimeDeliveryAttemptSelect || !runtimeDeliverySealSelect || !runtimeServingBundleSelect {
 		t.Fatalf("native delivery identity reads missing: catalog_identity=%t delivery_attempt=%t delivery_seal=%t serving_bundle=%t", runtimeCatalogIdentitySelect, runtimeDeliveryAttemptSelect, runtimeDeliverySealSelect, runtimeServingBundleSelect)
 	}
-	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenanceRootExpire, maintenanceRootMaintain bool
+	var runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain bool
+	var maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain bool
+	var readonlyPhysicalRootLock, backupPhysicalRootLock bool
 	if err := db.QueryRow(ctx, `
 		SELECT has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'SELECT'),
 		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'INSERT'),
 		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'UPDATE'),
 		       has_table_privilege('leapview_control_runtime', 'delivery.delivery_retention_root', 'DELETE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.lock_retention_root(uuid)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_runtime', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.retire_retention_root(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_runtime', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
 		       has_table_privilege('leapview_control_maintenance', 'delivery.delivery_retention_root', 'SELECT'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_retention_root(uuid)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_maintenance', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
 		       has_function_privilege('leapview_control_maintenance', 'delivery.expire_retention_root(uuid,interval)', 'EXECUTE'),
-		       has_function_privilege('leapview_control_maintenance', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE')`).
-		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootLock, &maintenanceRootExpire, &maintenanceRootMaintain); err != nil {
+		       has_function_privilege('leapview_control_maintenance', 'delivery.maintain_retention_roots(text,text,interval,integer)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_readonly', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE'),
+		       has_function_privilege('leapview_control_backup', 'delivery.lock_live_snapshot_retention(uuid)', 'EXECUTE')`).
+		Scan(&runtimeRootSelect, &runtimeRootInsert, &runtimeRootUpdate, &runtimeRootDelete, &runtimeRootLock, &runtimePhysicalRootLock, &runtimeRootRetire, &runtimeRootExpire, &runtimeRootMaintain, &maintenanceRootSelect, &maintenanceRootLock, &maintenancePhysicalRootLock, &maintenanceRootExpire, &maintenanceRootMaintain, &readonlyPhysicalRootLock, &backupPhysicalRootLock); err != nil {
 		t.Fatal(err)
 	}
-	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootLock || !maintenanceRootExpire || !maintenanceRootMaintain {
-		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock=%t/%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/lock/expire/maintain=%t/%t/%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenanceRootExpire, maintenanceRootMaintain)
+	if !runtimeRootSelect || !runtimeRootInsert || runtimeRootUpdate || runtimeRootDelete || !runtimeRootLock || !runtimePhysicalRootLock || !runtimeRootRetire || runtimeRootExpire || runtimeRootMaintain || !maintenanceRootSelect || !maintenanceRootLock || !maintenancePhysicalRootLock || !maintenanceRootExpire || !maintenanceRootMaintain || readonlyPhysicalRootLock || backupPhysicalRootLock {
+		t.Fatalf("delivery retention-root capability leaked: runtime select/insert/update/delete/lock/physical-lock=%t/%t/%t/%t/%t/%t retire/expire/maintain=%t/%t/%t maintenance select/lock/physical-lock/expire/maintain=%t/%t/%t/%t/%t readonly/backup physical-lock=%t/%t", runtimeRootSelect, runtimeRootInsert, runtimeRootUpdate, runtimeRootDelete, runtimeRootLock, runtimePhysicalRootLock, runtimeRootRetire, runtimeRootExpire, runtimeRootMaintain, maintenanceRootSelect, maintenanceRootLock, maintenancePhysicalRootLock, maintenanceRootExpire, maintenanceRootMaintain, readonlyPhysicalRootLock, backupPhysicalRootLock)
 	}
 	var runtimeRetentionSelect, runtimeRetentionInsert, runtimeRetentionUpdate, runtimeRetentionDelete, runtimeRetentionExecute bool
 	var readonlyRetentionExecute, maintenanceRetentionExecute, backupRetentionExecute bool
@@ -350,6 +359,64 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 	if _, err := maintenanceConn.Exec(ctx, `SET ROLE leapview_control_maintenance`); err != nil {
 		t.Fatal(err)
 	}
+	recoveryRepo := recoverypostgres.New(maintenanceConn)
+	recoveryFrontier, err := recoveryRepo.Create(ctx, baselineRecoverySetFixture(t))
+	if err != nil {
+		t.Fatalf("create baseline recovery frontier: %v", err)
+	}
+	if _, err := db.Exec(ctx, `ALTER TABLE recovery.recovery_object_root DISABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `DELETE FROM recovery.recovery_object_root WHERE set_id=$1::uuid AND root_kind='ducklake'`, recoveryFrontier.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `ALTER TABLE recovery.recovery_object_root ENABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenanceConn.Exec(ctx, `
+		INSERT INTO recovery.recovery_object_root(
+			set_id, root_kind, root_uri, version_id, digest, provider_recovery_frontier
+		) VALUES ($1::uuid, 'ducklake', $2, 'version-1', $3, '')`, recoveryFrontier.ID, recoveryFrontier.Serving.ObjectRoot, recoveryFrontier.Serving.ObjectRootDigest); err == nil {
+		t.Fatal("baseline accepted a remote recovery root without provider frontier")
+	}
+	if _, err := maintenanceConn.Exec(ctx, `
+		INSERT INTO recovery.recovery_object_root(
+			set_id, root_kind, root_uri, version_id, digest, provider_recovery_frontier
+		) VALUES ($1::uuid, 'ducklake', $2, 'version-1', $3, 'generation-42')`, recoveryFrontier.ID, recoveryFrontier.Serving.ObjectRoot, recoveryFrontier.Serving.ObjectRootDigest); err != nil {
+		t.Fatalf("restore canonical recovery root: %v", err)
+	}
+	const recoveryAttemptID = "018f3f83-7b2f-7b37-9f9e-000000000209"
+	recoveryAttempt := recoveryset.ValidationAttempt{AttemptID: recoveryAttemptID, SetID: recoveryFrontier.ID, OwnerID: "validator", FenceEpoch: recoveryFrontier.FenceEpoch, AuditIdentity: recoveryFrontier.AuditIdentity, Status: recoveryset.ValidationRunning, StartedAt: time.Now().UTC().Truncate(time.Microsecond)}
+	if _, err := recoveryRepo.BeginValidation(ctx, recoveryAttempt); err != nil {
+		t.Fatalf("begin baseline recovery validation: %v", err)
+	}
+	recoveryEnvelope, err := recoveryset.NewValidationEvidenceEnvelope(recoveryFrontier, recoveryAttemptID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `ALTER TABLE recovery.recovery_object_root DISABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `UPDATE recovery.recovery_object_root SET root_kind='noncanonical' WHERE set_id=$1::uuid AND root_kind='ducklake'`, recoveryFrontier.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(ctx, `ALTER TABLE recovery.recovery_object_root ENABLE TRIGGER recovery_object_root_immutable`); err != nil {
+		t.Fatal(err)
+	}
+	for i := range recoveryEnvelope.ObjectRoots {
+		if recoveryEnvelope.ObjectRoots[i].Kind == recoveryset.ObjectRootDuckLake {
+			recoveryEnvelope.ObjectRoots[i].Kind = "noncanonical"
+		}
+	}
+	maliciousResult, err := recoveryset.NewValidationResult(recoveryEnvelope, recoveryAttempt.StartedAt)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := maintenanceConn.Exec(ctx, `
+		INSERT INTO recovery.validation_result(attempt_id, result_digest, evidence, recorded_at)
+		VALUES ($1::uuid, $2, $3::jsonb, $4::timestamptz)`, maliciousResult.AttemptID, maliciousResult.ResultDigest, maliciousResult.Evidence, maliciousResult.RecordedAt); err == nil {
+		t.Fatal("baseline accepted validation evidence for noncanonical recovery roots")
+	}
 	var dashboardDeleted int64
 	if _, err := db.Exec(ctx, `
 		INSERT INTO dashboard.view_session
@@ -434,5 +501,24 @@ func TestBaselinePostgreSQL18(t *testing.T) {
 		VALUES ('00000000-0000-0000-0000-000000000001', 'user', 'active', $1::jsonb)`, `{"oversized":"`+strings.Repeat("x", 20000)+`"}`)
 	if err == nil {
 		t.Fatal("oversized principal attributes unexpectedly accepted")
+	}
+}
+
+func baselineRecoverySetFixture(t *testing.T) recoveryset.RecoverySet {
+	t.Helper()
+	compat := physicalpool.Compatibility{DuckDBRuntime: "duckdb:1", DuckLakeExtension: "ducklake:1", CatalogFormat: "ducklake:v1", StorageImplementation: "s3", ObjectNamingContract: "uuidv7:v1"}
+	compatDigest, err := compat.Digest()
+	if err != nil {
+		t.Fatal(err)
+	}
+	digest := func(ch byte) string { return "sha256:" + strings.Repeat(string(ch), 64) }
+	return recoveryset.RecoverySet{
+		ID: "018f3f83-7b2f-7b37-9f9e-000000000200", SchemaVersion: recoveryset.SchemaVersion,
+		ClusterPoints: []recoveryset.ClusterRecoveryPoint{{DatabaseRole: recoveryset.DatabaseControl, ClusterIdentity: "cluster", DatabaseIdentity: "control", RecoveryIdentity: "lsn:0/1"}, {DatabaseRole: recoveryset.DatabaseDuckLake, ClusterIdentity: "cluster", DatabaseIdentity: "ducklake", RecoveryIdentity: "lsn:0/1"}},
+		Delivery:      recoveryset.DeliveryPointer{TargetID: "target", GenerationID: "018f3f83-7b2f-7b37-9f9e-000000000201", PublicationID: "018f3f83-7b2f-7b37-9f9e-000000000202", TargetRevision: 1},
+		Serving:       recoveryset.SnapshotSeal{SealID: "018f3f83-7b2f-7b37-9f9e-000000000203", PhysicalPoolID: "pool", TenantDomain: "tenant", Region: "region", EncryptionDomain: "enc", ObjectNamespace: "objects/target", CatalogDatabase: "ducklake", CatalogID: "catalog", CatalogUUID: "catalog-uuid", CatalogVersion: 1, DuckLakeSnapshotID: 1, RelationManifestDigest: digest('a'), RelationNamespace: "candidate", ClosureDigest: digest('b'), ObjectRoot: "s3://bucket/target", ObjectRootDigest: digest('c'), ArtifactRoot: "artifacts/target", ArtifactRootDigest: digest('d'), ServingArtifactID: "artifact", ServingArtifactDigest: digest('e'), CompiledGraphDigest: digest('f'), CompiledConfigDigest: digest('0'), SecurityDomainFingerprint: digest('1'), RequestDigest: digest('2'), PlanDigest: digest('3'), CompatibilityDigest: compatDigest, DuckDBVersion: "1", RuntimeVersion: "1", DuckLakeExtensionVersion: "1", DuckLakeSpecVersion: "1", CatalogSchemaVersion: "1"},
+		Catalog:       recoveryset.CatalogCommit{CatalogID: "catalog", CatalogDatabase: "ducklake", CatalogUUID: "catalog-uuid", CatalogVersion: 1, SnapshotID: 1},
+		ObjectRoots:   []recoveryset.ObjectRoot{{Kind: recoveryset.ObjectRootDuckLake, URI: "s3://bucket/target", VersionID: "version-1", Digest: digest('c'), ProviderRecoveryFrontier: "generation-42"}, {Kind: recoveryset.ObjectRootServingArtifact, URI: "artifacts/target", VersionID: "version-1", Digest: digest('d')}},
+		Compatibility: compat, FenceEpoch: 2, AuditIdentity: "audit", Status: recoveryset.StatusPrepared, CreatedBy: "operator", CreatedAt: time.Now().UTC(),
 	}
 }

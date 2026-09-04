@@ -12598,7 +12598,9 @@ CREATE TABLE IF NOT EXISTS recovery.recovery_object_root (
     CHECK (root_kind = btrim(root_kind) AND octet_length(root_kind) BETWEEN 1 AND 128),
     CHECK (root_uri = btrim(root_uri) AND octet_length(root_uri) BETWEEN 1 AND 2048),
     CHECK (version_id = btrim(version_id) AND octet_length(version_id) BETWEEN 1 AND 512),
-    CHECK (provider_recovery_frontier = btrim(provider_recovery_frontier) AND octet_length(provider_recovery_frontier) <= 512),
+    CHECK (provider_recovery_frontier = btrim(provider_recovery_frontier)
+        AND octet_length(provider_recovery_frontier) <= 512
+        AND (root_uri !~* '^(s3|gs|az)://' OR provider_recovery_frontier <> '')),
     CHECK (digest ~ '^sha256:[0-9a-f]{64}$')
 );
 
@@ -12675,7 +12677,17 @@ BEGIN
                    AND validation.result_digest = result.result_digest
              )
              AND (SELECT count(*) FROM recovery.recovery_cluster_point WHERE set_id = NEW.set_id) = 2
-             AND (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = NEW.set_id) = (SELECT expected_object_roots FROM recovery.recovery_set WHERE set_id = NEW.set_id))
+             AND (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = NEW.set_id) = 2
+             AND EXISTS (
+                 SELECT 1 FROM recovery.recovery_object_root AS root
+                  WHERE root.set_id = NEW.set_id AND root.root_kind = 'ducklake'
+                    AND root.root_uri = NEW.object_root AND root.digest = NEW.object_root_digest
+             )
+             AND EXISTS (
+                 SELECT 1 FROM recovery.recovery_object_root AS root
+                  WHERE root.set_id = NEW.set_id AND root.root_kind = 'serving-artifact'
+                    AND root.root_uri = NEW.artifact_root AND root.digest = NEW.artifact_root_digest
+             ))
          OR (OLD.status = 'published' AND NEW.status IN ('published', 'superseded') AND NEW.published_by = OLD.published_by AND NEW.published_at = OLD.published_at)) THEN
         RETURN NEW;
     END IF;
@@ -12825,6 +12837,20 @@ BEGIN
     IF (SELECT count(*) FROM recovery.recovery_cluster_point WHERE set_id = frontier.set_id) <> frontier.expected_cluster_points
        OR (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = frontier.set_id) <> frontier.expected_object_roots THEN
         RAISE EXCEPTION 'validation result requires complete recovery frontier evidence';
+    END IF;
+    IF frontier.expected_object_roots <> 2
+       OR (SELECT count(*) FROM recovery.recovery_object_root WHERE set_id = frontier.set_id) <> 2
+       OR NOT EXISTS (
+           SELECT 1 FROM recovery.recovery_object_root AS root
+            WHERE root.set_id = frontier.set_id AND root.root_kind = 'ducklake'
+              AND root.root_uri = frontier.object_root AND root.digest = frontier.object_root_digest
+       )
+       OR NOT EXISTS (
+           SELECT 1 FROM recovery.recovery_object_root AS root
+            WHERE root.set_id = frontier.set_id AND root.root_kind = 'serving-artifact'
+              AND root.root_uri = frontier.artifact_root AND root.digest = frontier.artifact_root_digest
+       ) THEN
+        RAISE EXCEPTION 'validation result requires canonical ducklake and serving-artifact roots';
     END IF;
     expected_evidence_json :=
         '{"schema_version":1,"set_id":' || recovery.canonical_json_string(frontier.set_id::text) ||

@@ -65,6 +65,11 @@ func TestRecoverySetValidateStrictBindings(t *testing.T) {
 		t.Fatal("object-root traversal accepted")
 	}
 	s = testSet(t)
+	s.ObjectRoots[0].ProviderRecoveryFrontier = ""
+	if err := s.Validate(); err == nil {
+		t.Fatal("remote object root without provider recovery frontier accepted")
+	}
+	s = testSet(t)
 	s.Status = StatusPublished
 	if err := s.Validate(); err == nil {
 		t.Fatal("published set without validation pointer accepted")

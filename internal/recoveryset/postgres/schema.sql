@@ -117,7 +117,9 @@ CREATE TABLE IF NOT EXISTS recovery.recovery_object_root (
     CHECK (root_kind = btrim(root_kind) AND octet_length(root_kind) BETWEEN 1 AND 128),
     CHECK (root_uri = btrim(root_uri) AND octet_length(root_uri) BETWEEN 1 AND 2048),
     CHECK (version_id = btrim(version_id) AND octet_length(version_id) BETWEEN 1 AND 512),
-    CHECK (provider_recovery_frontier = btrim(provider_recovery_frontier) AND octet_length(provider_recovery_frontier) <= 512),
+    CHECK (provider_recovery_frontier = btrim(provider_recovery_frontier)
+        AND octet_length(provider_recovery_frontier) <= 512
+        AND (root_uri !~* '^(s3|gs|az)://' OR provider_recovery_frontier <> '')),
     CHECK (digest ~ '^sha256:[0-9a-f]{64}$')
 );
 

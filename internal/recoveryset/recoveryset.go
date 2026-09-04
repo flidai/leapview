@@ -859,6 +859,9 @@ func (r ObjectRoot) Validate() error {
 	} else if !strings.HasPrefix(r.URI, "/") && !strings.HasPrefix(r.URI, "./") && !strings.HasPrefix(r.URI, "objects/") && !strings.HasPrefix(r.URI, "artifacts/") {
 		return fmt.Errorf("%w: object root must be an absolute or supported relative path", ErrInvalid)
 	}
+	if validationRemoteObjectRoot(r.URI) && r.ProviderRecoveryFrontier == "" {
+		return fmt.Errorf("%w: remote object roots require provider recovery frontier", ErrInvalid)
+	}
 	if err := canonicalText(r.VersionID, "object root version", 512); err != nil {
 		return err
 	}

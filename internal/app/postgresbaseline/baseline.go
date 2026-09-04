@@ -57,6 +57,7 @@ func VerifyProvider(ctx context.Context, provider SQLDBProvider) error {
 // payloads, and append-only evidence remains non-mutable at the role edge.
 const rolePolicySQL = `
 REVOKE ALL ON FUNCTION delivery.lock_retention_root(uuid) FROM PUBLIC;
+REVOKE ALL ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM PUBLIC;
 REVOKE ALL ON FUNCTION delivery.commit_activation_transition(uuid, text, uuid, bigint, bigint) FROM PUBLIC;
 DO $$
 BEGIN
@@ -107,6 +108,7 @@ BEGIN
 		-- terminal expiry.
 		REVOKE UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON delivery.delivery_retention_root FROM leapview_control_runtime;
 		GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid) TO leapview_control_runtime;
+		GRANT EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) TO leapview_control_runtime;
 		GRANT EXECUTE ON FUNCTION delivery.retire_retention_root(uuid) TO leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM leapview_control_runtime;
         REVOKE EXECUTE ON FUNCTION delivery.expire_retention_root(uuid, interval) FROM leapview_control_runtime;
@@ -155,6 +157,7 @@ BEGIN
 		GRANT USAGE ON SCHEMA delivery TO leapview_control_maintenance;
 		GRANT SELECT ON delivery.delivery_retention_root TO leapview_control_maintenance;
 		GRANT EXECUTE ON FUNCTION delivery.lock_retention_root(uuid), delivery.retire_retention_root(uuid), delivery.expire_retention_root(uuid, interval), delivery.maintain_retention_roots(text, text, interval, integer), delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) TO leapview_control_maintenance;
+		GRANT EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) TO leapview_control_maintenance;
 		GRANT SELECT, DELETE ON dashboard.view_session, dashboard.view_day TO leapview_control_maintenance;
 		GRANT SELECT ON dashboard.publication_streams TO leapview_control_maintenance;
 		REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON dashboard.publication_streams FROM leapview_control_maintenance;
@@ -182,6 +185,7 @@ BEGIN
 		REVOKE SELECT, INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON jobs.event_sequence, jobs.event FROM leapview_control_readonly;
         REVOKE INSERT, UPDATE, DELETE, TRUNCATE, REFERENCES, TRIGGER ON ALL TABLES IN SCHEMA access, delivery, event, audit, ducklake, lineage, physical_pool FROM leapview_control_readonly;
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_readonly;
+        REVOKE EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM leapview_control_readonly;
         REVOKE EXECUTE ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM leapview_control_readonly;
         REVOKE SELECT ON access.session, access.local_credential, access.api_token, access.service_principal_secret, access.desktop_authorization_code, access.device_authorization, access.authoring_credential FROM leapview_control_readonly;
         GRANT USAGE ON SCHEMA platform TO leapview_control_readonly;
@@ -203,6 +207,7 @@ BEGIN
         GRANT USAGE ON SCHEMA platform TO leapview_control_backup;
         GRANT SELECT ON platform.operation, platform.operation_successor_attempt, platform.api_cursor_signing_keys TO leapview_control_backup;
         REVOKE ALL ON FUNCTION ducklake.admit_snapshot_retention_from_seal(uuid) FROM leapview_control_backup;
+        REVOKE EXECUTE ON FUNCTION delivery.lock_live_snapshot_retention(uuid) FROM leapview_control_backup;
         REVOKE EXECUTE ON FUNCTION delivery.create_recovery_retention_root(uuid, text, uuid, uuid, timestamptz, jsonb) FROM leapview_control_backup;
     END IF;
 END

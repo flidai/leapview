@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/flidai/leapview/internal/platform/postgres/postgrestest"
+	recoverypostgres "github.com/flidai/leapview/internal/recoveryset/postgres"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -31,7 +32,7 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(contents)
-	if got, want := hex.EncodeToString(sum[:]), "d995bbdf4ef539f01638f8d33a3d63660f72218dd53085e92bf318e06332b549"; got != want {
+	if got, want := hex.EncodeToString(sum[:]), "b174f1fe5d594e41076772b3bb0b644602724583e411642bfcf7f988b94a6961"; got != want {
 		t.Fatalf("immutable Goose baseline digest = %s, want %s", got, want)
 	}
 	text := string(contents)
@@ -45,6 +46,41 @@ func TestEmbeddedGooseBaselineIsTheOnlyImmutableMigration(t *testing.T) {
 			t.Errorf("Goose baseline retains removed contract %q", forbidden)
 		}
 	}
+}
+
+func TestEmbeddedGooseBaselineMirrorsCanonicalRecoveryGuards(t *testing.T) {
+	contents, err := fs.ReadFile(MigrationFS(), "001_control_plane.sql")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseline := strings.ReplaceAll(strings.ReplaceAll(string(contents), "-- +goose StatementBegin\n", ""), "-- +goose StatementEnd\n", "")
+	canonical := recoverypostgres.SchemaSQL()
+	for _, block := range []struct {
+		name, start, end string
+	}{
+		{name: "object root constraints", start: "CREATE TABLE IF NOT EXISTS recovery.recovery_object_root (", end: "CREATE TABLE IF NOT EXISTS recovery.validation_attempt ("},
+		{name: "publication guard", start: "CREATE OR REPLACE FUNCTION recovery.reject_frontier_mutation()", end: "CREATE OR REPLACE FUNCTION recovery.reject_frontier_insert()"},
+		{name: "validation guard", start: "CREATE OR REPLACE FUNCTION recovery.guard_validation_result_insert()", end: "DROP TRIGGER IF EXISTS recovery_validation_result_guard"},
+	} {
+		want := recoverySQLBlock(t, canonical, block.start, block.end)
+		got := recoverySQLBlock(t, baseline, block.start, block.end)
+		if got != want {
+			t.Errorf("Goose baseline %s differs from canonical recovery schema", block.name)
+		}
+	}
+}
+
+func recoverySQLBlock(t *testing.T, source, start, end string) string {
+	t.Helper()
+	startAt := strings.Index(source, start)
+	if startAt < 0 {
+		t.Fatalf("SQL block start %q is missing", start)
+	}
+	endAt := strings.Index(source[startAt:], end)
+	if endAt < 0 {
+		t.Fatalf("SQL block end %q is missing", end)
+	}
+	return source[startAt : startAt+endAt]
 }
 
 func TestGooseEntryPointsRejectNilDatabase(t *testing.T) {
