@@ -1348,6 +1348,11 @@ tasks:
       - task: ci:test:frontend:data
       - task: ci:test:frontend:site
 
+  ci:lane:frontend:local:
+    desc: Run the frontend lane locally with the hosted-CI hang watchdog
+    cmds:
+      - node scripts/ci_watchdog.mjs --timeout-seconds 180 --attempts 2 -- task ci:lane:frontend
+
   ci:prepare:
     desc: Generate and build the shared inputs required by every CI validation lane
     cmds:
@@ -1371,9 +1376,11 @@ tasks:
     desc: Run the fast required contract for every pull-request update
     cmds:
       - task: ci:prepare
-      # Keep local composition bounded to two top-level lanes. GitHub-hosted CI
-      # runs each lane on its own runner to avoid cross-lane CPU contention.
-      - task --parallel --concurrency 2 ci:lane:go ci:lane:frontend
+      # Hosted CI runs these lanes in parallel on separate runners. Keep local
+      # execution sequential: concurrent Go builds can make Bun's bundler spin,
+      # costing more time than the overlap saves on a shared workstation.
+      - task: ci:lane:go
+      - task: ci:lane:frontend:local
       - task: generated:check
 
   ci:full:
