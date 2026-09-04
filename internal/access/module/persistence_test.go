@@ -38,14 +38,14 @@ func (profileOAuthResourceStub) ProtectedResourceMetadata(http.ResponseWriter, *
 func (profileOAuthResourceStub) Challenge(http.ResponseWriter)                                {}
 
 func TestBuildProductionRejectsProfileOnlyAuthorityInjection(t *testing.T) {
-	_, err := Build(context.Background(), Config{Production: true, ProfileOAuthResource: profileOAuthResourceStub{}})
+	_, err := Build(context.Background(), Config{Production: true, Profile: NewProfileSurface(nil, profileOAuthResourceStub{})})
 	if err == nil || !strings.Contains(err.Error(), "profile-only authority injection") {
 		t.Fatalf("Build() error = %v, want profile-only authority rejection", err)
 	}
 }
 
 func TestBuildPersistenceRejectsIgnoredProfileOnlyAuthorityInjection(t *testing.T) {
-	_, err := Build(context.Background(), Config{Persistence: &Persistence{}, ProfileOAuthResource: profileOAuthResourceStub{}})
+	_, err := Build(context.Background(), Config{Persistence: &Persistence{}, Profile: NewProfileSurface(nil, profileOAuthResourceStub{})})
 	if err == nil || !strings.Contains(err.Error(), "requires persistence-free access build") {
 		t.Fatalf("Build() error = %v, want mixed authority rejection", err)
 	}

@@ -382,8 +382,8 @@ func assembleRuntimeChecked(ctx context.Context, metrics QueryMetrics, options a
 		var err error
 		options.AccessModule, err = accessmodule.Build(ctx, accessmodule.Config{
 			ExistingAuth: options.Auth, Auth: accessmodule.AuthConfig{Disabled: options.Auth == nil},
-			ProfileRepository: options.AccessRepo, ProfileOAuthResource: options.MCPResource,
-			Assets: options.Assets, InstanceID: instanceID, PublicURL: publicURL,
+			Profile: accessmodule.NewProfileSurface(options.AccessRepo, options.MCPResource),
+			Assets:  options.Assets, InstanceID: instanceID, PublicURL: publicURL,
 		})
 		if err != nil {
 			return nil, err
