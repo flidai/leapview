@@ -19,6 +19,7 @@ import (
 	agentsqlite "github.com/flidai/leapview/internal/agent/sqlite"
 	"github.com/flidai/leapview/internal/platform"
 	httpmiddleware "github.com/flidai/leapview/internal/platform/http/middleware"
+	"github.com/flidai/leapview/internal/platform/transaction"
 	"github.com/flidai/leapview/internal/platform/web/uicommand"
 	agentcore "github.com/flidai/leapview/pkg/agent"
 	"github.com/go-chi/chi/v5"
@@ -294,7 +295,9 @@ func commandAuditService(t *testing.T) (*agent.Service, string) {
 		return agentcore.ModelResponse{Content: "ok", FinishReason: agentcore.FinishReasonStop}, nil
 	})
 	return agent.NewService(
-		agentsqlite.NewRepositoryWithAudit(store.SQLDB(), accesssqlite.NewRepository(store.SQLDB())),
+		agentsqlite.NewRepositoryWithAudit(store.SQLDB(), access.AuditIntentRecorderFunc(func(context.Context, transaction.Transaction, access.AuditIntent) error {
+			return nil
+		})),
 		agent.Config{APIKey: "test", Model: "test"},
 		agent.WithModel(model),
 	), principal.ID
